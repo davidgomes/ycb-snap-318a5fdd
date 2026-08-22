@@ -6,12 +6,11 @@ import asyncio
 import threading
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import AsyncIterator, Iterator, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, wait
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 from typing_extensions import TypedDict, override
 
 from langchain_core.runnables.base import RunnableBindingBase
@@ -23,6 +22,8 @@ from langchain_core.runnables.config import (
 from langchain_core.runnables.utils import Input, Output
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Iterator, Sequence
+
     from langchain_core.callbacks.manager import (
         AsyncCallbackManagerForChainRun,
         CallbackManagerForChainRun,
@@ -149,6 +150,7 @@ class InMemoryCoalesceBackend(CoalesceBackend):
     """Thread-safe in-memory coalescing backend."""
 
     def __init__(self) -> None:
+        """Initialize an empty in-memory coalescing backend."""
         self._lock = threading.RLock()
         self._entries: dict[Any, _CoalesceEntry] = {}
         self._active = 0
@@ -196,7 +198,7 @@ class InMemoryCoalesceBackend(CoalesceBackend):
         while True:
             with self._lock:
                 if entry.cancelled:
-                    raise asyncio.CancelledError()
+                    raise asyncio.CancelledError
                 if entry.complete:
                     return
             entry.sync_event.wait(timeout=0.05)
@@ -239,7 +241,7 @@ class InMemoryCoalesceBackend(CoalesceBackend):
         while True:
             with self._lock:
                 if entry.cancelled:
-                    raise asyncio.CancelledError()
+                    raise asyncio.CancelledError
                 if entry.complete:
                     return
             await entry.async_event.wait()
@@ -289,7 +291,7 @@ class RunnableCoalesce(RunnableBindingBase[Input, Output]):  # type: ignore[no-r
 
     backend: CoalesceBackend = Field(default_factory=InMemoryCoalesceBackend)
 
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def __init__(
         self,
@@ -300,6 +302,7 @@ class RunnableCoalesce(RunnableBindingBase[Input, Output]):  # type: ignore[no-r
         config: RunnableConfig | None = None,
         **other_kwargs: Any,
     ) -> None:
+        """Create a coalescing wrapper around a `Runnable`."""
         super().__init__(
             bound=bound,
             kwargs=kwargs or {},
@@ -342,11 +345,12 @@ class RunnableCoalesce(RunnableBindingBase[Input, Output]):  # type: ignore[no-r
                     self._merge_configs(config),
                     **{**self.kwargs, **kwargs},
                 )
-                self.backend.complete(key, result=result)
-                return result
             except BaseException as e:
                 self.backend.complete(key, error=e)
                 raise
+            else:
+                self.backend.complete(key, result=result)
+                return result
         self.backend.join(key)
         return self._raise_or_return(key)
 
@@ -372,11 +376,12 @@ class RunnableCoalesce(RunnableBindingBase[Input, Output]):  # type: ignore[no-r
                     self._merge_configs(config),
                     **{**self.kwargs, **kwargs},
                 )
-                await self.backend.acomplete(key, result=result)
-                return result
             except BaseException as e:
                 await self.backend.acomplete(key, error=e)
                 raise
+            else:
+                await self.backend.acomplete(key, result=result)
+                return result
         await self.backend.ajoin(key)
         return self._raise_or_return(key)
 
