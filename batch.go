@@ -369,7 +369,9 @@ type batchInternal struct {
 
 	commitStats BatchCommitStats
 
-	commitErr error
+	commitErr           error
+	durabilityReported  bool
+	commitCorrelationID uint64
 
 	// Position bools together to reduce the sizeof the struct.
 
@@ -1703,6 +1705,7 @@ func (b *Batch) Reader() batchrepr.Reader {
 // SyncWait is to be used in conjunction with DB.ApplyNoSyncWait.
 func (b *Batch) SyncWait() error {
 	now := crtime.NowMono()
+	db := b.db
 	b.fsyncWait.Wait()
 	if b.commitErr != nil {
 		b.db = nil // prevent batch reuse on error
@@ -1710,6 +1713,14 @@ func (b *Batch) SyncWait() error {
 	waitDuration := now.Elapsed()
 	b.commitStats.CommitWaitDuration += waitDuration
 	b.commitStats.TotalDuration += waitDuration
+	if db != nil && !b.durabilityReported {
+		b.durabilityReported = true
+		db.updateDurability(b.SeqNum(), b.commitErr)
+		db.opts.EventListener.BatchDurable(BatchDurableInfo{
+			SeqNum: b.SeqNum(), Err: b.commitErr, SyncDuration: waitDuration,
+			CorrelationID: b.commitCorrelationID, BatchSize: len(b.data), KeyCount: b.Count(),
+		})
+	}
 	return b.commitErr
 }
 

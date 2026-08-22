@@ -316,6 +316,13 @@ type DB struct {
 	bgCtxCancel context.CancelFunc
 	closedCh    chan struct{}
 
+	durability struct {
+		sync.Mutex
+		seq    base.SeqNum
+		err    error
+		notify chan struct{}
+	}
+
 	deletePacer *deletepacer.DeletePacer
 
 	compactionScheduler CompactionScheduler
@@ -558,6 +565,105 @@ type DB struct {
 
 	iterTracker           *inflight.Tracker
 	valueRetrievalProfile atomic.Pointer[bytesprofile.Profile]
+}
+
+// DurabilityStats is a snapshot of WAL durability progress.
+type DurabilityStats struct {
+	HighestDurableSeqNum   base.SeqNum
+	FirstErr               error
+	PendingWaiters         int64
+	TotalDurableCommits    uint64
+	TotalFailedCommits     uint64
+	CumulativeSyncDuration time.Duration
+	MaxSyncDuration        time.Duration
+}
+
+func (d *DB) updateDurability(seq base.SeqNum, err error) {
+	d.durability.Lock()
+	if err == nil && seq > d.durability.seq {
+		d.durability.seq = seq
+	}
+	if err != nil && d.durability.err == nil {
+		d.durability.err = err
+	}
+	if d.durability.notify != nil {
+		close(d.durability.notify)
+		d.durability.notify = nil
+	}
+	d.durability.Unlock()
+}
+
+// DurableState returns the highest sequence number known durable and its first error.
+func (d *DB) DurableState() (base.SeqNum, error) {
+	d.durability.Lock()
+	defer d.durability.Unlock()
+	return d.durability.seq, d.durability.err
+}
+
+// DurabilityNotify returns a channel notified when seq becomes durable.
+func (d *DB) DurabilityNotify(seq base.SeqNum) <-chan error {
+	ch := make(chan error, 1)
+	d.durability.Lock()
+	if d.durability.seq >= seq || d.durability.err != nil {
+		ch <- d.durability.err
+	} else {
+		if d.durability.notify == nil {
+			d.durability.notify = make(chan struct{})
+		}
+		n := d.durability.notify
+		go func() {
+			<-n
+			s, e := d.DurableState()
+			if s >= seq {
+				ch <- e
+			} else {
+				ch <- errors.New("pebble: durability wait failed")
+			}
+		}()
+	}
+	d.durability.Unlock()
+	return ch
+}
+
+func (d *DB) WaitForDurability(seq base.SeqNum) error {
+	for {
+		s, err := d.DurableState()
+		if err != nil {
+			return err
+		}
+		if seq == 0 || s >= seq {
+			return nil
+		}
+		<-d.DurabilityNotify(seq)
+	}
+}
+
+func (d *DB) WaitForDurabilityContext(ctx context.Context, seq base.SeqNum) error {
+	ch := d.DurabilityNotify(seq)
+	select {
+	case err := <-ch:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (d *DB) WaitForDurabilityBatch(seqs []base.SeqNum) error {
+	for _, seq := range seqs {
+		if err := d.WaitForDurability(seq); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *DB) WaitForDurabilityBatchContext(ctx context.Context, seqs []base.SeqNum) error {
+	for _, seq := range seqs {
+		if err := d.WaitForDurabilityContext(ctx, seq); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var _ Reader = (*DB)(nil)
@@ -819,6 +925,9 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 		}
 	}
 	batch.committing = true
+	if opts != nil {
+		batch.commitCorrelationID = opts.CommitCorrelationID
+	}
 
 	if batch.db == nil {
 		if err := batch.refreshMemTableSize(); err != nil {
@@ -836,6 +945,15 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 		// There isn't much we can do on an error here. The commit pipeline will be
 		// horked at this point.
 		d.opts.Logger.Fatalf("pebble: fatal commit error: %v", err)
+	}
+	if sync && !noSyncWait && !batch.durabilityReported {
+		batch.durabilityReported = true
+		d.updateDurability(batch.SeqNum(), batch.commitErr)
+		d.opts.EventListener.BatchDurable(BatchDurableInfo{
+			SeqNum: batch.SeqNum(), Err: batch.commitErr,
+			SyncDuration:  batch.commitStats.CommitWaitDuration,
+			CorrelationID: batch.commitCorrelationID, BatchSize: len(batch.data), KeyCount: batch.Count(),
+		})
 	}
 	// If this is a large batch, we need to clear the batch contents as the
 	// flushable batch may still be present in the flushables queue.
@@ -1680,6 +1798,7 @@ func (d *DB) Close() error {
 		d.iterTracker.Close()
 		d.iterTracker = nil
 	}
+	d.updateDurability(d.durability.seq, errors.New("pebble: database closed"))
 
 	return err
 }

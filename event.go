@@ -921,6 +921,8 @@ func (k APIMisuseKind) String() string {
 // block continued DB work. For a similar reason it is advisable to not perform
 // any synchronous calls back into the DB.
 type EventListener struct {
+	// BatchDurable is invoked after the WAL sync for a synchronous commit.
+	BatchDurable func(BatchDurableInfo)
 	// BackgroundError is invoked whenever an error occurs during a background
 	// operation such as flush or compaction.
 	BackgroundError func(error)
@@ -1022,11 +1024,26 @@ type EventListener struct {
 	PossibleAPIMisuse func(PossibleAPIMisuseInfo)
 }
 
+// BatchDurableInfo describes a batch whose WAL sync has completed.
+type BatchDurableInfo struct {
+	JobID         JobID
+	SeqNum        base.SeqNum
+	Err           error
+	ApplyDuration time.Duration
+	SyncDuration  time.Duration
+	CorrelationID uint64
+	BatchSize     int
+	KeyCount      uint32
+}
+
 // EnsureDefaults ensures that background error events are logged to the
 // specified logger if a handler for those events hasn't been otherwise
 // specified. Ensure all handlers are non-nil so that we don't have to check
 // for nil-ness before invoking.
 func (l *EventListener) EnsureDefaults(logger Logger) {
+	if l.BatchDurable == nil {
+		l.BatchDurable = func(BatchDurableInfo) {}
+	}
 	if l.BackgroundError == nil {
 		if logger != nil {
 			l.BackgroundError = func(err error) {
@@ -1130,6 +1147,7 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 	}
 
 	return EventListener{
+		BatchDurable: func(info BatchDurableInfo) { logger.Infof("%s", info) },
 		BackgroundError: func(err error) {
 			logger.Errorf("background error: %s", err)
 		},
@@ -1219,6 +1237,10 @@ func TeeEventListener(a, b EventListener) EventListener {
 	a.EnsureDefaults(nil)
 	b.EnsureDefaults(nil)
 	return EventListener{
+		BatchDurable: func(info BatchDurableInfo) {
+			a.BatchDurable(info)
+			b.BatchDurable(info)
+		},
 		BackgroundError: func(err error) {
 			a.BackgroundError(err)
 			b.BackgroundError(err)

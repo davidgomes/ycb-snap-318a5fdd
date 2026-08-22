@@ -405,6 +405,8 @@ type WriteOptions struct {
 	//
 	// The default value is true.
 	Sync bool
+	// CommitCorrelationID is copied to the durability event for this commit.
+	CommitCorrelationID uint64
 }
 
 // Sync specifies the default write options for writes which synchronize to
