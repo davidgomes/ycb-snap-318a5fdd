@@ -1,0 +1,36 @@
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+
+# Binary output
+updo
+main
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go directories
+bin/
+dist/
+aws/bootstrap
+
+# Go workspace
+go.work
+go.work.sum
+
+# Dependencies
+vendor/
+
+# OS files
+.DS_Store
+
+# Local files
+CLAUDE.local.md
+**/.claude/settings.local.json
+*.local.md
+*.local.toml

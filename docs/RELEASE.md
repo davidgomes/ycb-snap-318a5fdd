@@ -1,0 +1,124 @@
+# Release Process
+
+Updo uses GitHub Actions with GoReleaser to automatically create releases when a new tag is pushed.
+
+## Creating a Release
+
+1. **Ensure main branch is ready**
+
+   ```bash
+   git pull origin main
+   go test ./...
+   go mod tidy
+   ```
+
+2. **Create and push a tag**
+
+   ```bash
+   # Create tag (semantic versioning: vMAJOR.MINOR.PATCH)
+   git tag v0.1.3
+   
+   # Push tag to trigger release
+   git push origin v0.1.3
+   ```
+
+3. **Automatic process**
+   - GitHub Actions triggers on tag push
+   - GoReleaser builds binaries for all platforms
+   - Creates GitHub release with artifacts
+
+## Files Involved
+
+- `.github/workflows/release.yml` - GitHub Actions workflow
+- `.goreleaser.yaml` - Build configuration
+
+## Platforms Supported
+
+- Linux (amd64, arm64)
+- Windows (amd64, arm64)  
+- macOS (amd64, arm64)
+
+## Version Information
+
+Updo now includes version information accessible via the `--version` flag:
+
+```bash
+$ updo --version
+updo version v0.1.5 (commit: abcdef123456, built: 2023-05-21T12:00:00Z)
+```
+
+The version information is automatically injected during the build process using ldflags:
+
+- `version`: The git tag (e.g., v0.1.5)
+- `commit`: The git commit SHA
+- `date`: The build timestamp
+
+For local builds, use:
+
+```bash
+go build -ldflags="-X 'main.version=v1.0.0' -X 'main.commit=$(git rev-parse HEAD)' -X 'main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
+```
+
+## Lambda Code Changes
+
+**Important**: If you modify `lambda/lambda.go`, you must regenerate and commit the embedded Lambda binary:
+
+```bash
+# Regenerate the Lambda binary and ZIP file
+make build-lambda
+
+# Commit both source changes AND the updated ZIP
+git add lambda/lambda.go aws/bootstrap.zip
+git commit -m "feat: update lambda functionality"
+```
+
+This ensures `go install github.com/Owloops/updo@latest` continues to work for users.
+
+## Updating the Nix Flake
+
+After creating a release, update the Nix flake to make the new version available to Nix users:
+
+1. **Update the version in flake.nix**
+
+   ```bash
+   # Edit flake.nix and update the version field
+   # Change: version = "0.4.5";
+   # To:     version = "0.4.6";  (or your new version)
+   ```
+
+2. **Update vendorHash if dependencies changed**
+
+   If `go.mod` or `go.sum` changed in this release:
+
+   ```bash
+   # Build will fail and show the correct hash
+   nix build --no-link
+
+   # Copy the correct hash from the error message:
+   # "got: sha256-XXXXX..."
+   # Update vendorHash in flake.nix with this value
+   ```
+
+3. **Test the flake**
+
+   ```bash
+   # Update flake.lock
+   nix flake update
+
+   # Test the version is correct
+   nix run . -- --version
+   ```
+
+4. **Commit and push the changes**
+
+   ```bash
+   git add flake.nix flake.lock
+   git commit -m "chore: update nix flake to v0.4.6"
+   ```
+
+## Pre-release Checklist
+
+- [ ] All tests pass
+- [ ] Code merged to main
+- [ ] Dependencies updated (`go mod tidy`)
+- [ ] If lambda code changed: `bootstrap.zip` regenerated and committed
