@@ -1,5 +1,5 @@
 import Yoga, {type Node as YogaNode} from 'yoga-layout';
-import {type DOMElement, type DOMNode} from './dom.js';
+import {type DOMElement} from './dom.js';
 
 type Track = {
 	minimum: number;
