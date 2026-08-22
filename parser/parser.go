@@ -539,20 +539,7 @@ func (p *Parser) parseArrayLit() Expr {
 
 	var elements []Expr
 	for p.token != token.RBrack && p.token != token.EOF {
-		rest := false
-		if p.token == token.Ellipsis {
-			rest = true
-			p.next()
-		}
-		value := p.parseExpr()
-		if p.token == token.Assign {
-			p.next()
-			value = &DefaultExpr{Expr: value, Default: p.parseExpr()}
-		}
-		if rest {
-			value = &RestExpr{Expr: value}
-		}
-		elements = append(elements, value)
+		elements = append(elements, p.parseExpr())
 
 		if !p.expectComma(token.RBrack, "array element") {
 			break
@@ -561,11 +548,6 @@ func (p *Parser) parseArrayLit() Expr {
 
 	p.exprLevel--
 	rbrack := p.expect(token.RBrack)
-	for i, e := range elements {
-		if _, ok := e.(*RestExpr); ok && i != len(elements)-1 {
-			p.error(e.Pos(), "rest element must be last")
-		}
-	}
 	return &ArrayLit{
 		Elements: elements,
 		LBrack:   lbrack,
@@ -609,7 +591,7 @@ func (p *Parser) parseFuncType() *FuncType {
 	}
 
 	pos := p.expect(token.Func)
-	params := p.parseIdentList()
+	params := p.parseParamList()
 	return &FuncType{
 		FuncPos: pos,
 		Params:  params,
@@ -655,54 +637,6 @@ func (p *Parser) parseIdent() *Ident {
 	return &Ident{
 		NamePos: pos,
 		Name:    name,
-	}
-}
-
-func (p *Parser) parseIdentList() *IdentList {
-	if p.trace {
-		defer untracep(tracep(p, "IdentList"))
-	}
-
-	var params []*Ident
-	var patterns []Expr
-	lparen := p.expect(token.LParen)
-	isVarArgs := false
-	if p.token != token.RParen {
-		if p.token == token.Ellipsis {
-			isVarArgs = true
-			p.next()
-		}
-
-		param := p.parseExpr()
-		patterns = append(patterns, param)
-		if id, ok := param.(*Ident); ok {
-			params = append(params, id)
-		} else {
-			params = append(params, &Ident{Name: fmt.Sprintf("__tengo_param_%d", len(params)), NamePos: param.Pos()})
-		}
-		for !isVarArgs && p.token == token.Comma {
-			p.next()
-			if p.token == token.Ellipsis {
-				isVarArgs = true
-				p.next()
-			}
-			param := p.parseExpr()
-			patterns = append(patterns, param)
-			if id, ok := param.(*Ident); ok {
-				params = append(params, id)
-			} else {
-				params = append(params, &Ident{Name: fmt.Sprintf("__tengo_param_%d", len(params)), NamePos: param.Pos()})
-			}
-		}
-	}
-
-	rparen := p.expect(token.RParen)
-	return &IdentList{
-		LParen:   lparen,
-		RParen:   rparen,
-		VarArgs:  isVarArgs,
-		List:     params,
-		Patterns: patterns,
 	}
 }
 
@@ -976,6 +910,35 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 		defer untracep(tracep(p, "SimpleStmt"))
 	}
 
+	if p.token == token.LBrack || p.token == token.LBrace {
+		if p.isDestructuringAssign() {
+			pat := p.parsePattern()
+			switch p.token {
+			case token.Define:
+				pos, tok := p.pos, p.token
+				p.next()
+				y := p.parseExprList()
+				return &AssignStmt{
+					Pattern:  pat,
+					RHS:      y,
+					Token:    tok,
+					TokenPos: pos,
+				}
+			case token.Assign:
+				pos := p.pos
+				p.error(pos, "cannot use destructuring with =")
+				p.next()
+				y := p.parseExprList()
+				return &AssignStmt{
+					Pattern:  pat,
+					RHS:      y,
+					Token:    token.Assign,
+					TokenPos: pos,
+				}
+			}
+		}
+	}
+
 	x := p.parseExprList()
 
 	switch p.token {
@@ -1025,6 +988,10 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 		}
 	}
 
+	return p.finishSimpleStmt(x, forIn)
+}
+
+func (p *Parser) finishSimpleStmt(x []Expr, forIn bool) Stmt {
 	if len(x) > 1 {
 		p.errorExpected(x[0].Pos(), "1 expression")
 		// continue with first expression
@@ -1043,6 +1010,10 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 			RHS:      []Expr{y},
 			Token:    tok,
 			TokenPos: pos,
+		}
+	case token.In:
+		if forIn {
+			// handled in caller for multi-expr; should not reach here
 		}
 	case token.Inc, token.Dec:
 		// increment or decrement statement
@@ -1102,10 +1073,6 @@ func (p *Parser) parseMapLit() *MapLit {
 
 	var elements []*MapElementLit
 	for p.token != token.RBrace && p.token != token.EOF {
-		if p.token == token.Ellipsis {
-			p.error(p.pos, "map rest patterns are not supported")
-			p.next()
-		}
 		elements = append(elements, p.parseMapElementLit())
 
 		if !p.expectComma(token.RBrace, "map element") {

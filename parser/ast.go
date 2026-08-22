@@ -18,13 +18,12 @@ type Node interface {
 	String() string
 }
 
-// IdentList represents a list of identifiers.
+// IdentList represents a list of function parameters (patterns).
 type IdentList struct {
-	LParen   Pos
-	VarArgs  bool
-	List     []*Ident
-	Patterns []Expr
-	RParen   Pos
+	LParen  Pos
+	VarArgs bool
+	Params  []Pattern
+	RParen  Pos
 }
 
 // Pos returns the position of first character belonging to the node.
@@ -32,8 +31,8 @@ func (n *IdentList) Pos() Pos {
 	if n.LParen.IsValid() {
 		return n.LParen
 	}
-	if len(n.List) > 0 {
-		return n.List[0].Pos()
+	if len(n.Params) > 0 {
+		return n.Params[0].Pos()
 	}
 	return NoPos
 }
@@ -43,8 +42,8 @@ func (n *IdentList) End() Pos {
 	if n.RParen.IsValid() {
 		return n.RParen + 1
 	}
-	if l := len(n.List); l > 0 {
-		return n.List[l-1].End()
+	if l := len(n.Params); l > 0 {
+		return n.Params[l-1].End()
 	}
 	return NoPos
 }
@@ -54,14 +53,18 @@ func (n *IdentList) NumFields() int {
 	if n == nil {
 		return 0
 	}
-	return len(n.List)
+	return len(n.Params)
 }
 
 func (n *IdentList) String() string {
 	var list []string
-	for i, e := range n.List {
-		if n.VarArgs && i == len(n.List)-1 {
-			list = append(list, "..."+e.String())
+	for i, e := range n.Params {
+		if n.VarArgs && i == len(n.Params)-1 {
+			if ip, ok := e.(*IdentPattern); ok {
+				list = append(list, "..."+ip.String())
+			} else {
+				list = append(list, "..."+e.String())
+			}
 		} else {
 			list = append(list, e.String())
 		}
