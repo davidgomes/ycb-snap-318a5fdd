@@ -1921,6 +1921,35 @@ class Runnable(ABC, Generic[Input, Output]):
             exponential_jitter_params=exponential_jitter_params,
         )
 
+    def with_coalesce(
+        self,
+        *,
+        backend: Any | None = None,
+    ) -> Runnable[Input, Output]:
+        """Create a new `Runnable` that coalesces concurrent identical requests.
+
+        When multiple callers invoke the runnable with the same input concurrently,
+        only one execution runs and all callers receive the result.
+
+        Args:
+            backend: Optional coalescing backend. Defaults to
+                `InMemoryCoalesceBackend`.
+
+        Returns:
+            A new `Runnable` that coalesces concurrent identical requests.
+        """
+        # Import locally to prevent circular import
+        from langchain_core.runnables.coalesce import (  # noqa: PLC0415
+            RunnableCoalesce,
+        )
+
+        return RunnableCoalesce(
+            bound=self,
+            backend=backend,
+            kwargs={},
+            config={},
+        )
+
     def map(self) -> Runnable[list[Input], list[Output]]:
         """Return a new `Runnable` that maps a list of inputs to a list of outputs.
 
@@ -6094,6 +6123,15 @@ class RunnableBinding(RunnableBindingBase[Input, Output]):  # type: ignore[no-re
     def with_retry(self, **kwargs: Any) -> Runnable[Input, Output]:
         return self.__class__(
             bound=self.bound.with_retry(**kwargs),
+            kwargs=self.kwargs,
+            config=self.config,
+            config_factories=self.config_factories,
+        )
+
+    @override
+    def with_coalesce(self, **kwargs: Any) -> Runnable[Input, Output]:
+        return self.__class__(
+            bound=self.bound.with_coalesce(**kwargs),
             kwargs=self.kwargs,
             config=self.config,
             config_factories=self.config_factories,
