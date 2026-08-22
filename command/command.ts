@@ -89,6 +89,13 @@ import { NumberType } from "./types/number.ts";
 import { SecretType } from "./types/secret.ts";
 import { StringType } from "./types/string.ts";
 import { checkVersion } from "./upgrade/_check_version.ts";
+import {
+  ConfigParseError,
+  ConfigValidationError,
+  flattenConfig,
+  parseRc,
+  type ConfigOptions,
+} from "./config/mod.ts";
 
 export interface ArgDefinition extends CommandArgumentOptions<any, any, any> {
   arg: string;
@@ -120,6 +127,9 @@ interface CommandSettings {
   commands: Map<string, Command<any>>;
   versionOptions?: DefaultOption | false;
   helpOptions?: DefaultOption | false;
+  config?: ConfigOptions;
+  configPath?: string;
+  configValues?: Record<string, unknown>;
 }
 
 interface CommandProps {
@@ -836,6 +846,64 @@ export class Command<
     return typeof name === "undefined"
       ? this.settings.meta
       : this.settings.meta[name];
+  }
+
+  /** Configure and inspect the command configuration file. */
+  public config(options: ConfigOptions): this {
+    this.settings.config = {
+      ...options,
+      formats: options.formats ?? [".json", ".rc"],
+      searchPaths: options.searchPaths ?? ["."],
+    };
+    return this;
+  }
+
+  public getConfigPath(): string | undefined {
+    return this.settings.configPath;
+  }
+
+  public getConfigValues(): Record<string, unknown> {
+    return flattenConfig(this.settings.configValues ?? {});
+  }
+
+  private async loadConfig(): Promise<Record<string, unknown>> {
+    if (!this.settings.config) return {};
+    const { name, searchPaths = ["."], formats = [".json", ".rc"] } =
+      this.settings.config;
+    const files: string[] = [];
+    for (const searchPath of searchPaths) {
+      for (const format of formats) {
+        const path = `${searchPath.replace(/\/$/, "")}/${name}${
+          format === ".rc" ? "rc" : format
+        }`;
+        try {
+          const content = await Deno.readTextFile(path);
+          files.push(path);
+          let parsed: Record<string, unknown>;
+          try {
+            parsed = this.settings.config.parser
+              ? this.settings.config.parser(content)
+              : format === ".rc"
+              ? parseRc(content)
+              : JSON.parse(content);
+          } catch (error) {
+            throw new ConfigParseError(`Failed to parse config file "${path}".`, path);
+          }
+          if (!this.settings.config.mergeConfigs) {
+            this.settings.configPath = path;
+            return parsed;
+          }
+          this.settings.configValues = {
+            ...parsed,
+            ...(this.settings.configValues ?? {}),
+          };
+        } catch (error) {
+          if (error instanceof ConfigParseError) throw error;
+        }
+      }
+    }
+    if (files.length) this.settings.configPath = files[0];
+    return this.settings.configValues ?? {};
   }
 
   /**
@@ -2058,7 +2126,10 @@ export class Command<
       defaults: {},
       actions: [],
     };
-    return this.parseCommand(ctx) as any;
+    return this.loadConfig().then((config) => {
+      ctx.config = config;
+      return this.parseCommand(ctx) as any;
+    });
   }
 
   private async parseCommand(ctx: ParseContext): Promise<CommandResult> {
@@ -2120,7 +2191,13 @@ export class Command<
 
       // Parse rest options & env vars.
       await this.parseOptionsAndEnvVars(ctx, preParseGlobals);
-      const options = { ...ctx.env, ...ctx.flags };
+      const config = this.getConfigValues();
+      const options = {
+        ...config,
+        ...ctx.config,
+        ...ctx.env,
+        ...ctx.flags,
+      };
       const args = await this.parseArguments(ctx, options);
       this.props.literalArgs = ctx.literal;
 
@@ -2338,6 +2415,33 @@ export class Command<
       dotted = true,
     }: ParseOptionsOptions = {},
   ): void {
+    const config = ctx.config ?? {};
+    for (const option of options) {
+      if (!(option.name in config)) continue;
+      const value = config[option.name];
+      if (option.list && Array.isArray(value)) {
+        for (const item of value) {
+          ctx.flags[option.name] = [
+            ...(Array.isArray(ctx.flags[option.name])
+              ? ctx.flags[option.name]
+              : []),
+            this.parseType({
+              label: "Configuration",
+              type: option.type ?? "string",
+              name: option.name,
+              value: String(item),
+            }),
+          ];
+        }
+      } else {
+        ctx.flags[option.name] = this.parseType({
+          label: "Configuration",
+          type: option.type ?? "string",
+          name: option.name,
+          value: String(value),
+        });
+      }
+    }
     parseFlags(ctx, {
       stopEarly,
       stopOnUnknown,
@@ -3436,6 +3540,7 @@ interface DefaultOption {
 interface ParseContext extends ParseFlagsContext<Record<string, unknown>> {
   actions: Array<ActionHandler>;
   env: Record<string, unknown>;
+  config?: Record<string, unknown>;
 }
 
 interface ParseOptionsOptions {

@@ -14,6 +14,10 @@ import type { Command } from "./command.ts";
 import type { HelpOptions } from "./help/_help_generator.ts";
 import type { Type } from "./type.ts";
 import type { Merge } from "./_type_utils.ts";
+export type {
+  ConfigOptions,
+  ConfigParser,
+} from "./config/types.ts";
 
 export type { ArgumentValue, DefaultValue, TypeHandler };
 
