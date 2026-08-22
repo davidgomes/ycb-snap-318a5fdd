@@ -1,0 +1,761 @@
+---
+description: >-
+  Modifying combinators enhance existing parsers by making them optional,
+  providing defaults, transforming results, or allowing multiple occurrences
+  while preserving type safety.
+---
+
+Modifying combinators
+=====================
+
+Modifying combinators enhance and transform existing parsers without changing
+their core parsing logic. They act as decorators or wrappers that add new
+capabilities: making parsers optional, providing default values, transforming
+results, or allowing multiple occurrences. This compositional approach allows
+you to build exactly the CLI behavior you need by combining simple, focused
+modifiers.
+
+The power of modifying combinators lies in their composability. You can chain
+them together to create sophisticated parsing behavior while maintaining full
+type safety. TypeScript automatically infers how each modifier affects
+the result type, so you get complete type information without manual
+annotations.
+
+Each modifier preserves the original parser's essential characteristics—like
+priority and usage information—while extending its behavior. This ensures that
+modified parsers integrate seamlessly with Optique's priority system and help
+text generation.
+
+
+`optional()` parser
+-------------------
+
+The `optional()` modifier makes any parser optional, allowing parsing to succeed
+even when the wrapped parser fails to match. If the wrapped parser succeeds,
+`optional()` returns its value. If it fails, `optional()` returns `undefined`
+without consuming any input or reporting an error.
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { optional } from "@optique/core/modifiers";
+import type { InferValue } from "@optique/core/parser";
+import { option } from "@optique/core/primitives";
+import { string } from "@optique/core/valueparser";
+
+const parser = object({
+  name: option("-n", "--name", string()),        // Required
+  email: optional(option("-e", "--email", string())), // Optional
+// ^?
+
+
+
+  verbose: option("-v", "--verbose")             // Required boolean
+});
+~~~~
+
+### Type transformation
+
+The `optional()` modifier transforms the result type from `T` to
+`T | undefined`. This forces you to handle the case where the value might not
+be present, preventing runtime errors from assuming values exist:
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { optional } from "@optique/core/modifiers";
+import { type InferValue, parse } from "@optique/core/parser";
+import { option } from "@optique/core/primitives";
+import { string } from "@optique/core/valueparser";
+
+const parser = object({
+  name: option("-n", "--name", string()),        // Required
+  email: optional(option("-e", "--email", string())), // Optional
+  verbose: option("-v", "--verbose")             // Required boolean
+});
+// ---cut-before---
+const config = parse(parser, ["--name", "Alice", "--verbose"]);
+
+if (config.success) {
+  console.log(`Name: ${config.value.name}.`);        // Safe: always present
+  console.log(`Verbose: ${config.value.verbose}.`);  // Safe: always present
+
+  // Must check for undefined
+  if (config.value.email) {
+    console.log(`Email: ${config.value.email}.`);    // Safe: checked first
+  } else {
+    console.log("No email provided.");
+  }
+}
+~~~~
+
+### Usage patterns
+
+The `optional()` modifier is ideal when:
+
+ -  A parameter might or might not be provided
+ -  You want to explicitly handle the “not provided” case
+ -  The absence of a value has semantic meaning in your application
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { optional } from "@optique/core/modifiers";
+import { parse } from "@optique/core/parser";
+import { argument, option } from "@optique/core/primitives";
+import { choice, string } from "@optique/core/valueparser";
+// ---cut-before---
+const backupConfig = object({
+  source: argument(string({ metavar: "SRC" })), // Required source
+  destination: argument(string({ metavar: "DEST" })), // Required destination
+  compression: optional(option("-c", "--compress", choice(["gzip", "bzip2"]))),
+  encrypt: optional(option("--encrypt", string({ metavar: "KEY_FILE" })))
+});
+
+const config = parse(backupConfig, ["-c", "src", "dest"]);
+
+// Handle optional parameters explicitly
+if (config.success) {
+  const { source, destination, compression, encrypt } = config.value;
+
+  console.log(`Backing up ${source} to ${destination}.`);
+
+  if (compression) {
+    console.log(`Using ${compression} compression.`);
+  }
+
+  if (encrypt) {
+    console.log(`Encrypting with key from ${encrypt}.`);
+  }
+}
+~~~~
+
+
+`withDefault()` parser
+----------------------
+
+The `withDefault()` modifier provides a default value when the wrapped parser
+fails to match. The result type is a union of the parser's result type and the
+default value's type (`T | TDefault`). This allows for flexible default values
+that can be different types from what the parser produces, enabling patterns
+like conditional option structures.
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { option } from "@optique/core/primitives";
+import { integer, string } from "@optique/core/valueparser";
+// ---cut-before---
+import { withDefault } from "@optique/core/modifiers";
+import { cpus } from "node:os";
+
+const parser = object({
+  host: withDefault(option("-h", "--host", string()), "localhost"),
+// ^?
+
+
+
+  port: withDefault(option("-p", "--port", integer()), 8080),
+// ^?
+
+
+
+  workers: withDefault(option("-w", "--workers", integer()), () => cpus().length)
+// ^?
+
+
+
+});
+~~~~
+
+### Union type patterns
+
+When the default value is a different type from the parser result,
+`withDefault()` creates a union type. This is particularly useful for
+conditional CLI structures:
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { withDefault } from "@optique/core/modifiers";
+import type { InferValue } from "@optique/core/parser";
+import { flag, option } from "@optique/core/primitives";
+import { run } from "@optique/run";
+
+// Parser that produces complex object when flag is present
+const complexParser = object({
+  flag: flag("-f", "--flag"),
+  dependentOption: option("-d", "--dependent", { /* ... */ })
+});
+
+// Default value with different structure
+const conditionalParser = withDefault(
+  complexParser,
+  { flag: false as const }
+);
+
+// Result is a union type that handles both cases
+type Result = InferValue<typeof conditionalParser>;
+//   ^?
+
+
+
+
+
+
+
+
+const result: Result = run(conditionalParser);
+~~~~
+
+### Static vs dynamic defaults
+
+The `withDefault()` modifier supports both static values and factory functions:
+
+~~~~ typescript twoslash
+import { withDefault } from "@optique/core/modifiers";
+import { object } from "@optique/core/constructs";
+import { option } from "@optique/core/primitives";
+import { choice, integer, string } from "@optique/core/valueparser";
+import os from "node:os";
+// ---cut-before---
+// Static defaults
+const staticDefaults = object({
+  timeout: withDefault(option("--timeout", integer()), 30),
+  format: withDefault(option("--format", choice(["json", "yaml"])), "json")
+});
+
+// Dynamic defaults (computed when needed)
+const dynamicDefaults = object({
+  timestamp: withDefault(option("--time", string()), () => new Date().toISOString()),
+  tempDir: withDefault(option("--temp", string()), () => os.tmpdir()),
+  cores: withDefault(option("--cores", integer()), () => os.cpus().length)
+});
+~~~~
+
+Dynamic defaults are useful when:
+
+ -  The default value depends on runtime conditions
+ -  You want to compute expensive defaults only when needed
+ -  The default value might change between invocations
+
+### Error handling
+
+*This API is available since Optique 0.5.0.*
+
+When using function-based defaults, the `withDefault()` modifier automatically
+catches any errors thrown in the callback and converts them to parser-level
+errors. This allows you to handle validation failures (like missing environment
+variables) directly at the parser level:
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { envVar, message } from "@optique/core/message";
+import { withDefault, WithDefaultError } from "@optique/core/modifiers";
+import { option } from "@optique/core/primitives";
+import { string, url } from "@optique/core/valueparser";
+// ---cut-before---
+const parser = object({
+  // Regular error handling - converted to plain text
+  apiUrl: withDefault(option("--url", url()), () => {
+    if (!process.env.API_URL) {
+      throw new Error("Environment variable API_URL is not set.");
+    }
+    return new URL(process.env.API_URL);
+  }),
+
+  // Rich formatting with WithDefaultError
+  configPath: withDefault(option("--config", string()), () => {
+    throw new WithDefaultError(
+      message`Environment variable ${envVar("CONFIG_PATH")} is not set.`
+    );
+  })
+});
+~~~~
+
+For structured error messages with rich formatting, use the `WithDefaultError`
+class which accepts a `Message` object instead of a plain string:
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { WithDefaultError, withDefault } from "@optique/core/modifiers";
+import { option } from "@optique/core/primitives";
+import { envVar, message } from "@optique/core/message";
+import { string } from "@optique/core/valueparser";
+// ---cut-before---
+const configParser = withDefault(option("--database-url", string()), () => {
+  const envValue = process.env.DATABASE_URL;
+  if (!envValue) {
+    throw new WithDefaultError(
+      message`Environment variable ${envVar("DATABASE_URL")} is required but not set.`
+    );
+  }
+  return envValue;
+});
+~~~~
+
+This approach provides several benefits:
+
+ -  *Parser-level validation*: Errors are caught and reported as parsing
+    failures rather than runtime exceptions
+ -  *Consistent error formatting*: Errors are displayed using Optique's
+    standard error formatting and colors
+ -  *Rich error messages*: Use `WithDefaultError` with `Message` objects
+    for structured error content with highlighting and formatting
+
+### Custom help display messages
+
+*This API is available since Optique 0.5.0.*
+
+The `withDefault()` modifier accepts an optional third parameter to customize
+how default values are displayed in help text. This allows you to show
+descriptive text instead of actual default values, which is particularly
+useful for environment variables or computed defaults:
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { message, envVar } from "@optique/core/message";
+import { withDefault } from "@optique/core/modifiers";
+import { option } from "@optique/core/primitives";
+import { integer, string, url } from "@optique/core/valueparser";
+// ---cut-before---
+const parser = object({
+  // Show custom help text instead of actual URL
+  apiUrl: withDefault(
+    option("--api-url", url()),
+    new URL("https://api.example.com"),
+    { message: message`Default API endpoint` }
+  ),
+
+  // Show environment variable name in help
+  token: withDefault(
+    option("--token", string()),
+    () => process.env.API_TOKEN || "",
+    { message: message`${envVar("API_TOKEN")}` }
+  ),
+
+  // Show descriptive text for computed defaults
+  workers: withDefault(
+    option("--workers", integer()),
+    () => require("os").cpus().length,
+    { message: message`Number of CPU cores` }
+  )
+});
+~~~~
+
+When the custom `message` is provided, it will be displayed in the help output
+instead of the actual default value:
+
+~~~~
+Options:
+  --api-url URL    API endpoint [Default API endpoint]
+  --token STRING   Authentication token [API_TOKEN]
+  --workers INT    Number of workers [Number of CPU cores]
+~~~~
+
+The `message` parameter accepts a [`Message`](./messages.md) object,
+which supports rich formatting with colors, environment variables,
+option names, and other structured elements. This ensures consistent
+styling with the rest of Optique's help output.
+
+### Usage patterns
+
+The `withDefault()` modifier is ideal when:
+
+ -  You want to provide sensible defaults for optional parameters
+ -  You need different default types than the parser produces (union types)
+ -  You're building conditional CLI structures with dependent options
+ -  The default value is meaningful and commonly used
+ -  You want to customize how defaults are displayed in help text
+ -  You need to show descriptive text for environment variables or computed defaults
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { message } from "@optique/core/message";
+import { withDefault } from "@optique/core/modifiers";
+import { parse } from "@optique/core/parser";
+import { option } from "@optique/core/primitives";
+import { choice, integer, string } from "@optique/core/valueparser";
+class Server {
+  constructor(config: {
+    name: string;
+    host: string;
+    port: number;
+    logLevel: "debug" | "info" | "warn" | "error";
+    maxConnections: number;
+  }) {
+  }
+}
+// ---cut-before---
+const serverConfig = object({
+  // Required parameters
+  name: option("-n", "--name", string()),
+
+  // Optional with defaults - no undefined handling needed
+  host: withDefault(option("-h", "--host", string()), "0.0.0.0"),
+  port: withDefault(
+    option("-p", "--port", integer({ min: 1, max: 0xffff })),
+    3000
+  ),
+  logLevel: withDefault(
+    option("--log-level", choice(["debug", "info", "warn", "error"])),
+    "info" as const,
+  ),
+  maxConnections: withDefault(option("--max-conn", integer({ min: 1 })), 100)
+});
+
+// Clean usage without undefined checks
+const config = parse(serverConfig, ["--name", "my-server", "--port", "8080"]);
+if (config.success) {
+  const server = new Server({
+    name: config.value.name,
+    host: config.value.host,           // Always "0.0.0.0" if not specified
+    port: config.value.port,           // 8080 from input
+    logLevel: config.value.logLevel,   // Always "info" if not specified
+    maxConnections: config.value.maxConnections // Always 100 if not specified
+  });
+}
+
+// Help output will show actual default values:
+// Options:
+//   -h, --host STRING        Server host [0.0.0.0]
+//   -p, --port INTEGER       Server port [3000]
+//   --log-level LEVEL        Log level [info]
+//   --max-conn INTEGER       Max connections [100]
+~~~~
+
+### Dependent options with union types
+
+A powerful pattern uses `withDefault()` with different types to create
+conditional CLI structures where options depend on flags:
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { withDefault } from "@optique/core/modifiers";
+import { parse } from "@optique/core/parser";
+import { flag, option } from "@optique/core/primitives";
+
+// Define conditional configuration
+const parser = withDefault(
+  object({
+    flag: flag("-f", "--flag"),
+    dependentFlag: option("-d", "--dependent-flag"),
+    dependentFlag2: option("-d2", "--dependent-flag-2"),
+  }),
+  { flag: false as const } as const,
+);
+
+// Result type is automatically inferred as a union
+type Config =
+  | { readonly flag: false }
+  | {
+      readonly flag: true;
+      readonly dependentFlag: boolean;
+      readonly dependentFlag2?: boolean;
+    };
+
+// Usage handles both cases cleanly
+const result = parse(parser, []);
+if (result.success) {
+  if (result.value.flag) {
+    // TypeScript knows dependent flags are available
+    console.log(`Dependent flag: ${result.value.dependentFlag}.`);
+    if (result.value.dependentFlag2) {
+      console.log(`Second dependent flag: ${result.value.dependentFlag2}.`);
+    }
+  } else {
+    // TypeScript knows this is the simple case
+    console.log("Flag is disabled.");
+  }
+}
+~~~~
+
+
+`map()` parser
+--------------
+
+The `map()` modifier transforms the parsed result using a mapping function while
+preserving the original parser's logic. This allows you to convert values to
+different types, apply formatting, or compute derived values without changing
+how the parsing itself works.
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { map, multiple } from "@optique/core/modifiers";
+import { option } from "@optique/core/primitives";
+import { integer, string } from "@optique/core/valueparser";
+
+const parser = object({
+  // Transform boolean flag to its inverse
+  disallow: map(option("--allow"), allowFlag => !allowFlag),
+// ^?
+
+
+  // Transform string to uppercase
+  upperName: map(option("-n", "--name", string()), name => name.toUpperCase()),
+// ^?
+
+
+  // Transform integer to formatted string
+  portDisplay: map(option("-p", "--port", integer()), port => `port:${port}`),
+// ^?
+
+
+  // Transform multiple values
+  tags: map(
+// ^?
+
+
+
+    multiple(option("-t", "--tag", string())),
+    tags => new Set(tags.map(tag => tag.toLowerCase()))
+  )
+});
+~~~~
+
+### Transformation patterns
+
+The `map()` modifier supports various transformation patterns:
+
+~~~~ typescript twoslash
+import { map, multiple } from "@optique/core/modifiers";
+import { option } from "@optique/core/primitives";
+import { integer, string } from "@optique/core/valueparser";
+// ---cut-before---
+// Type conversions
+const convertedValue = map(option("--count", integer()), count => BigInt(count));
+
+// Data structure transformations
+const keyValuePairs = map(
+  multiple(option("-D", string())),
+  pairs => Object.fromEntries(pairs.map(pair => pair.split('=')))
+);
+
+// Validation transformations
+const validatedEmail = map(
+  option("--email", string()),
+  email => {
+    if (!email.includes('@')) throw new Error(`Invalid email: ${email}`);
+    return email.toLowerCase();
+  }
+);
+
+// Computed values
+const expiryTime = map(
+  option("--ttl", integer()),
+  ttlSeconds => new Date(Date.now() + ttlSeconds * 1000)
+);
+~~~~
+
+
+`multiple()` parser
+-------------------
+
+The `multiple()` modifier allows a parser to match multiple times, collecting
+all results into an array. This is essential for CLI options that can be
+repeated, such as multiple input files, include paths, or environment variables.
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { multiple } from "@optique/core/modifiers";
+import { argument, option } from "@optique/core/primitives";
+import { string } from "@optique/core/valueparser";
+
+const parser = object({
+  // Multiple files (at least 1 required)
+  files: multiple(argument(string()), { min: 1, max: 5 }),
+// ^?
+
+
+
+  // Multiple include paths (optional)
+  includes: multiple(option("-I", "--include", string())),
+// ^?
+
+
+
+  // Multiple environment variables (optional)
+  env: multiple(option("-e", "--env", string()))
+// ^?
+
+
+
+});
+~~~~
+
+### Constraint options
+
+The `multiple()` modifier accepts constraint options—`min` and `max`—to
+control how many occurrences are required:
+
+~~~~ typescript twoslash
+import { multiple } from "@optique/core/modifiers";
+import { argument, option } from "@optique/core/primitives";
+import { integer, string } from "@optique/core/valueparser";
+// ---cut-before---
+// Exactly 2-4 files required
+const requiredFiles = multiple(argument(string()), { min: 2, max: 4 });
+
+// At least 1 server required
+const servers = multiple(option("--server", string()), { min: 1 });
+
+// At most 3 retries allowed
+const retries = multiple(option("--retry", integer()), { max: 3 });
+~~~~
+
+### Default behavior
+
+When no matches are found, `multiple()` returns an empty array rather than
+failing. This makes repeated options truly optional:
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { multiple } from "@optique/core/modifiers";
+import { parse } from "@optique/core/parser";
+import { option } from "@optique/core/primitives";
+import { string } from "@optique/core/valueparser";
+// ---cut-before---
+const parser = object({
+  // These all return empty arrays when not provided
+  headers: multiple(option("-H", "--header", string())),
+  excludes: multiple(option("-x", "--exclude", string())),
+  defines: multiple(option("-D", "--define", string()))
+});
+
+const config = parse(parser, ["-H", "Accept: text/plain"]);
+
+// Safe to use without checking - arrays are always present
+if (config.success) {
+  config.value.headers.forEach(header => console.log(`Header: ${header}.`));
+  console.log(`Found ${config.value.excludes.length} exclusions.`);
+}
+~~~~
+
+
+`nonEmpty()` parser
+-------------------
+
+*This API is available since Optique 0.10.0.*
+
+The `nonEmpty()` modifier requires the wrapped parser to consume at least one
+input token to succeed. If the wrapped parser succeeds without consuming any
+tokens, `nonEmpty()` fails with an error. This is particularly useful with
+[`longestMatch()`](./constructs.md#longestmatch-parser) for implementing
+conditional default values.
+
+~~~~ typescript twoslash
+import { longestMatch, object } from "@optique/core/constructs";
+import { nonEmpty, optional, withDefault } from "@optique/core/modifiers";
+import { constant, option } from "@optique/core/primitives";
+import { string } from "@optique/core/valueparser";
+
+// Without nonEmpty(): activeParser always wins (consumes 0 tokens)
+// With nonEmpty(): helpParser wins when no options are provided
+const activeParser = nonEmpty(object({
+  mode: constant("active" as const),
+  cwd: withDefault(option("--cwd", string()), "./default"),
+  key: optional(option("--key", string())),
+}));
+
+const helpParser = object({
+  mode: constant("help" as const),
+});
+
+const parser = longestMatch(activeParser, helpParser);
+// cli           → helpParser matches (activeParser fails with nonEmpty)
+// cli --key foo → activeParser matches (consumes tokens)
+~~~~
+
+### Type transformation
+
+The `nonEmpty()` modifier does not change the result type. It simply adds
+a constraint that prevents parsers with only default values from matching
+when no input is provided:
+
+~~~~ typescript twoslash
+import { nonEmpty } from "@optique/core/modifiers";
+import type { InferValue } from "@optique/core/parser";
+import { option } from "@optique/core/primitives";
+
+const baseParser = option("-v", "--verbose");
+const nonEmptyParser = nonEmpty(baseParser);
+
+type BaseResult = InferValue<typeof baseParser>;
+//   ^?
+
+
+
+type NonEmptyResult = InferValue<typeof nonEmptyParser>;
+//   ^?
+
+
+
+// Both types are `boolean` - nonEmpty() does not change the type
+~~~~
+
+### Usage patterns
+
+The `nonEmpty()` modifier is ideal when:
+
+ -  You want to distinguish between “no input” and “input with defaults”
+ -  You're using `longestMatch()` to provide different behaviors based on
+    whether options were explicitly provided
+ -  You need a fallback branch (like help or default mode) when no options
+    are given
+
+~~~~ typescript twoslash
+import { longestMatch, object } from "@optique/core/constructs";
+import { nonEmpty, optional, withDefault } from "@optique/core/modifiers";
+import { parse } from "@optique/core/parser";
+import { constant, option } from "@optique/core/primitives";
+import { integer, string } from "@optique/core/valueparser";
+// ---cut-before---
+const serverConfig = nonEmpty(object({
+  mode: constant("server" as const),
+  host: withDefault(option("--host", string()), "localhost"),
+  port: withDefault(option("--port", integer()), 3000),
+}));
+
+const helpConfig = object({
+  mode: constant("help" as const),
+});
+
+const parser = longestMatch(serverConfig, helpConfig);
+
+// No options: help mode
+const helpResult = parse(parser, []);
+if (helpResult.success && helpResult.value.mode === "help") {
+  console.log("No options provided. Showing help.");
+}
+
+// With options: server mode with defaults applied
+const serverResult = parse(parser, ["--port", "8080"]);
+if (serverResult.success && serverResult.value.mode === "server") {
+  console.log(`Starting server on ${serverResult.value.host}:${serverResult.value.port}.`);
+}
+~~~~
+
+### Combining with other modifiers
+
+The `nonEmpty()` modifier works well with other modifiers. You can wrap
+complex parsers built with `object()`, `withDefault()`, and `optional()`:
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { multiple, nonEmpty, optional, withDefault } from "@optique/core/modifiers";
+import { parse } from "@optique/core/parser";
+import { argument, option } from "@optique/core/primitives";
+import { integer, string } from "@optique/core/valueparser";
+// ---cut-before---
+const configParser = nonEmpty(object({
+  // Accepts zero or more files, but nonEmpty ensures at least one token overall
+  files: multiple(argument(string({ metavar: "FILE" }))),
+  // Optional with default
+  timeout: withDefault(option("--timeout", integer()), 30),
+  // Pure optional
+  verbose: optional(option("-v", "--verbose")),
+}));
+
+// Fails: nonEmpty requires at least one consumed token
+const emptyResult = parse(configParser, []);
+console.log(emptyResult.success); // false
+
+// Succeeds: file argument is provided
+const validResult = parse(configParser, ["input.txt"]);
+console.log(validResult.success); // true
+~~~~

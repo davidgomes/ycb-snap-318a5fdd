@@ -1,0 +1,50 @@
+{
+  "name": "@optique/core",
+  "version": "0.10.0",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./annotations": "./src/annotations.ts",
+    "./completion": "./src/completion.ts",
+    "./context": "./src/context.ts",
+    "./constructs": "./src/constructs.ts",
+    "./dependency": "./src/dependency.ts",
+    "./doc": "./src/doc.ts",
+    "./facade": "./src/facade.ts",
+    "./message": "./src/message.ts",
+    "./modifiers": "./src/modifiers.ts",
+    "./nonempty": "./src/nonempty.ts",
+    "./parser": "./src/parser.ts",
+    "./primitives": "./src/primitives.ts",
+    "./program": "./src/program.ts",
+    "./usage": "./src/usage.ts",
+    "./valueparser": "./src/valueparser.ts"
+  },
+  "exclude": [
+    "dist/",
+    "tsdown.config.ts"
+  ],
+  "tasks": {
+    "build": "pnpm build",
+    "test": "deno test",
+    "test:node": {
+      "dependencies": [
+        "build"
+      ],
+      "command": "node --experimental-transform-types --test"
+    },
+    "test:bun": {
+      "dependencies": [
+        "build"
+      ],
+      "command": "bun test"
+    },
+    "test-all": {
+      "dependencies": [
+        "test",
+        "test:node",
+        "test:bun"
+      ]
+    }
+  }
+}
