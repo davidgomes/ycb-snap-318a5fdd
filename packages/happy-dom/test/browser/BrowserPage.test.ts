@@ -181,6 +181,27 @@ describe('BrowserPage', () => {
 			expect(frame3.window).toEqual({ closed: true });
 		});
 
+		it('Clears scheduled timers and requestAnimationFrame callbacks when closing.', async () => {
+			const browser = new Browser();
+			const page = browser.defaultContext.newPage();
+			const window = page.mainFrame.window;
+			let timeoutFired = false;
+			let animationFrameFired = false;
+
+			window.setTimeout(() => {
+				timeoutFired = true;
+			}, 20);
+			window.requestAnimationFrame(() => {
+				animationFrameFired = true;
+			});
+
+			await page.close();
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			expect(timeoutFired).toBe(false);
+			expect(animationFrameFired).toBe(false);
+		});
+
 		it('Clears modules when closing.', async () => {
 			const browser = new Browser({
 				settings: {

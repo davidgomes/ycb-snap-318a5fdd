@@ -46,6 +46,7 @@ export default class Request implements Request {
 	// Internal properties
 	public [PropertySymbol.aborted]: boolean = false;
 	public [PropertySymbol.error]: Error | null = null;
+	public [PropertySymbol.bodyStreamReader]: { abort: (error: Error) => void } | null = null;
 	public [PropertySymbol.contentLength]: number | null = null;
 	public [PropertySymbol.contentType]: string | null = null;
 	public [PropertySymbol.referrer]: '' | 'no-referrer' | 'client' | URL = 'client';
@@ -294,33 +295,7 @@ export default class Request implements Request {
 	 * @returns Array buffer.
 	 */
 	public async arrayBuffer(): Promise<ArrayBuffer> {
-		const window = this[PropertySymbol.window];
-
-		if (this[PropertySymbol.bodyUsed]) {
-			throw new window.DOMException(
-				`Body has already been used for "${this.url}".`,
-				DOMExceptionNameEnum.invalidStateError
-			);
-		}
-
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
-		this[PropertySymbol.bodyUsed] = true;
-
-		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
-			this.signal[PropertySymbol.abort]();
-		});
-		let buffer: Buffer;
-
-		try {
-			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-		} catch (error) {
-			asyncTaskManager.endTask(taskID);
-			throw error;
-		}
-
-		asyncTaskManager.endTask(taskID);
+		const buffer = await this.#consumeBodyAsBuffer();
 
 		return <ArrayBuffer>(
 			buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
@@ -345,35 +320,7 @@ export default class Request implements Request {
 	 * @returns Buffer.
 	 */
 	public async buffer(): Promise<Buffer> {
-		const window = this[PropertySymbol.window];
-
-		if (this[PropertySymbol.bodyUsed]) {
-			throw new window.DOMException(
-				`Body has already been used for "${this.url}".`,
-				DOMExceptionNameEnum.invalidStateError
-			);
-		}
-
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
-		this[PropertySymbol.bodyUsed] = true;
-
-		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
-			this.signal[PropertySymbol.abort]();
-		});
-		let buffer: Buffer;
-
-		try {
-			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-		} catch (error) {
-			asyncTaskManager.endTask(taskID);
-			throw error;
-		}
-
-		asyncTaskManager.endTask(taskID);
-
-		return buffer;
+		return this.#consumeBodyAsBuffer();
 	}
 
 	/**
@@ -382,34 +329,7 @@ export default class Request implements Request {
 	 * @returns Text.
 	 */
 	public async text(): Promise<string> {
-		const window = this[PropertySymbol.window];
-
-		if (this[PropertySymbol.bodyUsed]) {
-			throw new window.DOMException(
-				`Body has already been used for "${this.url}".`,
-				DOMExceptionNameEnum.invalidStateError
-			);
-		}
-
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
-		this[PropertySymbol.bodyUsed] = true;
-
-		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
-			this.signal[PropertySymbol.abort]();
-		});
-		let buffer: Buffer;
-
-		try {
-			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-		} catch (error) {
-			asyncTaskManager.endTask(taskID);
-			throw error;
-		}
-
-		asyncTaskManager.endTask(taskID);
-
+		const buffer = await this.#consumeBodyAsBuffer();
 		return new TextDecoder().decode(buffer);
 	}
 
@@ -430,7 +350,7 @@ export default class Request implements Request {
 	 */
 	public async formData(): Promise<FormData> {
 		const window = this[PropertySymbol.window];
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
 
 		const contentType = this[PropertySymbol.contentType];
 
@@ -444,10 +364,20 @@ export default class Request implements Request {
 
 			this[PropertySymbol.bodyUsed] = true;
 
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
-				this.signal[PropertySymbol.abort]();
-			});
+			if (!asyncTaskManager) {
+				this.#abortPendingBodyRead();
+				throw this[PropertySymbol.error];
+			}
+
+			let taskID: number;
+
+			try {
+				taskID = asyncTaskManager.startTask(() => this.#abortPendingBodyRead());
+			} catch {
+				this.#abortPendingBodyRead();
+				throw this[PropertySymbol.error];
+			}
+
 			let formData: FormData;
 
 			try {
@@ -487,5 +417,73 @@ export default class Request implements Request {
 	 */
 	public clone(): Request {
 		return new this[PropertySymbol.window].Request(this);
+	}
+
+	/**
+	 * Consumes the body as a Buffer.
+	 *
+	 * In-flight stream reads are aborted with an "AbortError" when the browser
+	 * frame is discarded.
+	 *
+	 * @returns Buffer.
+	 */
+	async #consumeBodyAsBuffer(): Promise<Buffer> {
+		const window = this[PropertySymbol.window];
+
+		if (this[PropertySymbol.bodyUsed]) {
+			throw new window.DOMException(
+				`Body has already been used for "${this.url}".`,
+				DOMExceptionNameEnum.invalidStateError
+			);
+		}
+
+		this[PropertySymbol.bodyUsed] = true;
+
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+
+		if (!asyncTaskManager) {
+			this.#abortPendingBodyRead();
+			throw this[PropertySymbol.error];
+		}
+
+		let taskID: number;
+
+		try {
+			taskID = asyncTaskManager.startTask(() => this.#abortPendingBodyRead());
+		} catch {
+			this.#abortPendingBodyRead();
+			throw this[PropertySymbol.error];
+		}
+
+		let buffer: Buffer;
+
+		try {
+			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
+		} catch (error) {
+			asyncTaskManager.endTask(taskID);
+			throw error;
+		}
+
+		asyncTaskManager.endTask(taskID);
+
+		return buffer;
+	}
+
+	/**
+	 * Aborts an in-flight body read.
+	 */
+	#abortPendingBodyRead(): void {
+		const window = this[PropertySymbol.window];
+		const error =
+			this[PropertySymbol.error] ||
+			new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+
+		this[PropertySymbol.aborted] = true;
+		this[PropertySymbol.error] = error;
+		this[PropertySymbol.bodyStreamReader]?.abort(error);
+		this.signal[PropertySymbol.abort]();
 	}
 }

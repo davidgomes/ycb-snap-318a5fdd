@@ -736,8 +736,12 @@ export default class Fetch {
 		if (this.response && this.response.body) {
 			if (!this.response.body.locked) {
 				this.response.body.cancel(error);
+			} else {
+				this.response[PropertySymbol.bodyStreamReader]?.abort(error);
 			}
 		}
+
+		this.request[PropertySymbol.bodyStreamReader]?.abort(error);
 	}
 
 	/**
@@ -1062,8 +1066,12 @@ export default class Fetch {
 		if (this.response && this.response.body) {
 			if (!this.response.body.locked) {
 				this.response.body.cancel(error);
+			} else {
+				this.response[PropertySymbol.bodyStreamReader]?.abort(error);
 			}
 		}
+
+		this.request[PropertySymbol.bodyStreamReader]?.abort(error);
 
 		if (this.reject) {
 			this.reject(reason !== undefined ? reason : error);

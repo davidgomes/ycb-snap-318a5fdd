@@ -1,4 +1,5 @@
 import Window from '../../src/window/Window.js';
+import Browser from '../../src/browser/Browser.js';
 import type Document from '../../src/nodes/document/Document.js';
 import Request from '../../src/fetch/Request.js';
 import URL from '../../src/url/URL.js';
@@ -20,6 +21,12 @@ import Path from 'path';
 import FS from 'fs';
 
 const TEST_URL = 'https://example.com/';
+
+function createHangingStream(): ReadableStream {
+	return new ReadableStream({
+		start() {}
+	});
+}
 
 describe('Request', () => {
 	let window: Window;
@@ -907,6 +914,91 @@ describe('Request', () => {
 			expect(clone.credentials).toBe('include');
 			expect(clone.referrer).toBe('https://example.com/path/');
 			expect(await clone.text()).toBe('Hello world');
+		});
+	});
+
+	describe('body consumption during shutdown', () => {
+		it('Rejects with AbortError when happyDOM.close() interrupts a body read.', async () => {
+			const request = new window.Request(TEST_URL, {
+				method: 'POST',
+				body: createHangingStream()
+			});
+			const textPromise = request.text();
+
+			await window.happyDOM.close();
+
+			const error = await textPromise.catch((caught) => caught);
+			expect(error).toBeInstanceOf(window.DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Rejects with AbortError when page.close() interrupts a body read.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const request = new page.mainFrame.window.Request(TEST_URL, {
+				method: 'POST',
+				body: createHangingStream()
+			});
+			const textPromise = request.text();
+
+			await page.close();
+
+			const error = await textPromise.catch((caught) => caught);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Rejects with AbortError when browser.close() interrupts a body read.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const request = new page.mainFrame.window.Request(TEST_URL, {
+				method: 'POST',
+				body: createHangingStream()
+			});
+			const textPromise = request.text();
+
+			await browser.close();
+
+			const error = await textPromise.catch((caught) => caught);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Rejects with AbortError when navigation interrupts a body read.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const oldWindow = page.mainFrame.window;
+			const request = new oldWindow.Request(TEST_URL, {
+				method: 'POST',
+				body: createHangingStream()
+			});
+			const textPromise = request.text();
+
+			await page.mainFrame.goto('about:blank');
+
+			const error = await textPromise.catch((caught) => caught);
+			expect(error).toBeInstanceOf(oldWindow.DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+
+			await page.close();
+		});
+
+		it('Rejects multipart formData() with AbortError when shutdown interrupts parsing.', async () => {
+			const request = new window.Request(TEST_URL, {
+				method: 'POST',
+				body: createHangingStream(),
+				headers: { 'Content-Type': 'multipart/form-data; boundary=----HappyDOM' }
+			});
+			const formDataPromise = request.formData();
+
+			await window.happyDOM.close();
+
+			const error = await formDataPromise.catch((caught) => caught);
+			expect(error).toBeInstanceOf(window.DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Leaves successful body reads unchanged.', async () => {
+			const request = new window.Request(TEST_URL, { method: 'POST', body: 'Hello World' });
+			expect(await request.text()).toBe('Hello World');
 		});
 	});
 });

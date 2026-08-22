@@ -30,6 +30,7 @@ export default class MultipartFormDataParser {
 			body: ReadableStream<Uint8Array> | null;
 			[PropertySymbol.error]: Error | null;
 			[PropertySymbol.aborted]: boolean;
+			[PropertySymbol.bodyStreamReader]?: { abort: (error: Error) => void } | null;
 		},
 		contentType: string
 	): Promise<{ formData: FormData; buffer: Buffer }> {
@@ -58,26 +59,89 @@ export default class MultipartFormDataParser {
 			);
 		}
 
+		const abortError = (): Error =>
+			requestOrResponse[PropertySymbol.error] instanceof window.DOMException
+				? <Error>requestOrResponse[PropertySymbol.error]
+				: new window.DOMException(
+						'Failed to read response body: The stream was aborted.',
+						DOMExceptionNameEnum.abortError
+					);
+
+		if (requestOrResponse[PropertySymbol.error]) {
+			throw requestOrResponse[PropertySymbol.error];
+		}
+
+		if (requestOrResponse[PropertySymbol.aborted]) {
+			throw abortError();
+		}
+
 		const bodyReader = body.getReader();
 		const reader = new MultipartReader(window, match[1] || match[2]);
 		const chunks: any[] = [];
 		let buffer: Buffer;
 		const bytes = 0;
 
-		let readResult = await bodyReader.read();
+		try {
+			await new Promise<void>((resolve, reject) => {
+				let settled = false;
+				const finish = (callback: (value?: any) => void, value?: any): void => {
+					if (settled) {
+						return;
+					}
+					settled = true;
+					requestOrResponse[PropertySymbol.bodyStreamReader] = null;
+					callback(value);
+				};
 
-		while (!readResult.done) {
-			if (requestOrResponse[PropertySymbol.error]) {
-				throw requestOrResponse[PropertySymbol.error];
-			}
-			if (requestOrResponse[PropertySymbol.aborted]) {
-				throw new window.DOMException(
-					'Failed to read response body: The stream was aborted.',
-					DOMExceptionNameEnum.abortError
-				);
-			}
-			reader.write(readResult.value);
-			readResult = await bodyReader.read();
+				requestOrResponse[PropertySymbol.bodyStreamReader] = {
+					abort: (error: Error): void => {
+						bodyReader.cancel(error).catch(() => {});
+						finish(reject, error);
+					}
+				};
+
+				if (requestOrResponse[PropertySymbol.error] || requestOrResponse[PropertySymbol.aborted]) {
+					requestOrResponse[PropertySymbol.bodyStreamReader].abort(abortError());
+					return;
+				}
+
+				(async () => {
+					try {
+						let readResult = await bodyReader.read();
+
+						while (!readResult.done) {
+							if (requestOrResponse[PropertySymbol.error]) {
+								throw requestOrResponse[PropertySymbol.error];
+							}
+							if (requestOrResponse[PropertySymbol.aborted]) {
+								throw abortError();
+							}
+							reader.write(readResult.value);
+							readResult = await bodyReader.read();
+						}
+
+						if (requestOrResponse[PropertySymbol.error]) {
+							throw requestOrResponse[PropertySymbol.error];
+						}
+						if (requestOrResponse[PropertySymbol.aborted]) {
+							throw abortError();
+						}
+
+						finish(resolve);
+					} catch (error) {
+						if (
+							requestOrResponse[PropertySymbol.aborted] ||
+							requestOrResponse[PropertySymbol.error]
+						) {
+							finish(reject, abortError());
+							return;
+						}
+						finish(reject, error);
+					}
+				})();
+			});
+		} finally {
+			requestOrResponse[PropertySymbol.bodyStreamReader] = null;
 		}
 
 		try {

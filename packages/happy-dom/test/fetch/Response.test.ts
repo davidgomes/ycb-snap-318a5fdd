@@ -12,9 +12,16 @@ import File from '../../src/file/File.js';
 import FormData from '../../src/form-data/FormData.js';
 import type Document from '../../src/nodes/document/Document.js';
 import Window from '../../src/window/Window.js';
+import Browser from '../../src/browser/Browser.js';
 import * as PropertySymbol from '../../src/PropertySymbol.js';
 import { ReadableStream } from 'stream/web';
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
+
+function createHangingStream(): ReadableStream {
+	return new ReadableStream({
+		start() {}
+	});
+}
 
 describe('Response', () => {
 	let window: Window;
@@ -707,6 +714,94 @@ describe('Response', () => {
 			expect(response.statusText).toBe('OK');
 			expect(response.headers.get('Content-Type')).toBe('test');
 			expect(await response.json()).toEqual(data);
+		});
+	});
+
+	describe('body consumption during shutdown', () => {
+		it('Rejects with AbortError when happyDOM.close() interrupts a body read.', async () => {
+			const response = new window.Response(createHangingStream());
+			const textPromise = response.text();
+
+			await window.happyDOM.close();
+
+			const error = await textPromise.catch((caught) => caught);
+			expect(error).toBeInstanceOf(window.DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Rejects with AbortError when page.close() interrupts a body read.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const response = new page.mainFrame.window.Response(createHangingStream());
+			const textPromise = response.text();
+
+			await page.close();
+
+			const error = await textPromise.catch((caught) => caught);
+			expect(error).toBeInstanceOf(page.mainFrame.window.DOMException || window.DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Rejects with AbortError when browser.close() interrupts a body read.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const response = new page.mainFrame.window.Response(createHangingStream());
+			const textPromise = response.text();
+
+			await browser.close();
+
+			const error = await textPromise.catch((caught) => caught);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Rejects with AbortError when navigation interrupts a body read.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const oldWindow = page.mainFrame.window;
+			const response = new oldWindow.Response(createHangingStream());
+			const textPromise = response.text();
+
+			await page.mainFrame.goto('about:blank');
+
+			const error = await textPromise.catch((caught) => caught);
+			expect(error).toBeInstanceOf(oldWindow.DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+
+			await page.close();
+		});
+
+		it('Rejects multipart formData() with AbortError when shutdown interrupts parsing.', async () => {
+			const response = new window.Response(createHangingStream(), {
+				headers: { 'Content-Type': 'multipart/form-data; boundary=----HappyDOM' }
+			});
+			const formDataPromise = response.formData();
+
+			await window.happyDOM.close();
+
+			const error = await formDataPromise.catch((caught) => caught);
+			expect(error).toBeInstanceOf(window.DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Leaves successful body reads unchanged.', async () => {
+			const response = new window.Response('Hello World');
+			expect(await response.text()).toBe('Hello World');
+		});
+
+		it('Leaves fully buffered Response bodies readable after shutdown.', async () => {
+			const response = new window.Response('Hello World');
+
+			await window.happyDOM.close();
+
+			expect(await response.text()).toBe('Hello World');
+		});
+
+		it('Leaves fully buffered Response arrayBuffer() readable after shutdown.', async () => {
+			const response = new window.Response('Hello World');
+
+			await window.happyDOM.close();
+
+			expect(Buffer.from(await response.arrayBuffer()).toString()).toBe('Hello World');
 		});
 	});
 });

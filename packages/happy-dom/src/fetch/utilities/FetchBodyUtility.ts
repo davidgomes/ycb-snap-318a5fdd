@@ -185,6 +185,7 @@ export default class FetchBodyUtility {
 			body: ReadableStream | null;
 			[PropertySymbol.aborted]: boolean;
 			[PropertySymbol.error]: Error | null;
+			[PropertySymbol.bodyStreamReader]?: { abort: (error: Error) => void } | null;
 		}
 	): Promise<Buffer> {
 		const body = requestOrResponse.body;
@@ -193,8 +194,20 @@ export default class FetchBodyUtility {
 			return Buffer.alloc(0);
 		}
 
+		const abortError = (): DOMException =>
+			requestOrResponse[PropertySymbol.error] instanceof DOMException
+				? <DOMException>requestOrResponse[PropertySymbol.error]
+				: new window.DOMException(
+						'Failed to read response body: The stream was aborted.',
+						DOMExceptionNameEnum.abortError
+					);
+
 		if (requestOrResponse[PropertySymbol.error]) {
 			throw requestOrResponse[PropertySymbol.error];
+		}
+
+		if (requestOrResponse[PropertySymbol.aborted]) {
+			throw abortError();
 		}
 
 		const reader = body.getReader();
@@ -202,22 +215,73 @@ export default class FetchBodyUtility {
 		let bytes = 0;
 
 		try {
-			let readResult = await reader.read();
-			while (!readResult.done) {
-				if (requestOrResponse[PropertySymbol.error]) {
-					throw requestOrResponse[PropertySymbol.error];
+			await new Promise<void>((resolve, reject) => {
+				let settled = false;
+				const finish = (callback: (value?: any) => void, value?: any): void => {
+					if (settled) {
+						return;
+					}
+					settled = true;
+					requestOrResponse[PropertySymbol.bodyStreamReader] = null;
+					callback(value);
+				};
+
+				requestOrResponse[PropertySymbol.bodyStreamReader] = {
+					abort: (error: Error): void => {
+						reader.cancel(error).catch(() => {});
+						finish(reject, error);
+					}
+				};
+
+				if (requestOrResponse[PropertySymbol.error] || requestOrResponse[PropertySymbol.aborted]) {
+					requestOrResponse[PropertySymbol.bodyStreamReader].abort(abortError());
+					return;
 				}
-				if (requestOrResponse[PropertySymbol.aborted]) {
-					throw new window.DOMException(
-						'Failed to read response body: The stream was aborted.',
-						DOMExceptionNameEnum.abortError
-					);
-				}
-				const chunk = readResult.value;
-				bytes += chunk.length;
-				chunks.push(chunk);
-				readResult = await reader.read();
-			}
+
+				(async () => {
+					try {
+						let readResult = await reader.read();
+						while (!readResult.done) {
+							if (requestOrResponse[PropertySymbol.error]) {
+								throw requestOrResponse[PropertySymbol.error];
+							}
+							if (requestOrResponse[PropertySymbol.aborted]) {
+								throw abortError();
+							}
+							const chunk = readResult.value;
+							bytes += chunk.length;
+							chunks.push(chunk);
+							readResult = await reader.read();
+						}
+						if (requestOrResponse[PropertySymbol.error]) {
+							throw requestOrResponse[PropertySymbol.error];
+						}
+						if (requestOrResponse[PropertySymbol.aborted]) {
+							throw abortError();
+						}
+						finish(resolve);
+					} catch (error) {
+						if (
+							requestOrResponse[PropertySymbol.aborted] ||
+							requestOrResponse[PropertySymbol.error]
+						) {
+							finish(reject, abortError());
+							return;
+						}
+						if (error instanceof DOMException) {
+							finish(reject, error);
+							return;
+						}
+						finish(
+							reject,
+							new window.DOMException(
+								`Failed to read response body. Error: ${(<Error>error).message}.`,
+								DOMExceptionNameEnum.encodingError
+							)
+						);
+					}
+				})();
+			});
 		} catch (error) {
 			if (error instanceof DOMException) {
 				throw error;
@@ -226,6 +290,8 @@ export default class FetchBodyUtility {
 				`Failed to read response body. Error: ${(<Error>error).message}.`,
 				DOMExceptionNameEnum.encodingError
 			);
+		} finally {
+			requestOrResponse[PropertySymbol.bodyStreamReader] = null;
 		}
 
 		try {

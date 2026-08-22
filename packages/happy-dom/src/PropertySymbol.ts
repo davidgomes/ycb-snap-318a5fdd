@@ -381,6 +381,7 @@ export const dispatching = Symbol('dispatching');
 export const modules = Symbol('modules');
 export const preloads = Symbol('preloads');
 export const body = Symbol('body');
+export const bodyStreamReader = Symbol('bodyStreamReader');
 export const redirect = Symbol('redirect');
 export const referrerPolicy = Symbol('referrerPolicy');
 export const signal = Symbol('signal');

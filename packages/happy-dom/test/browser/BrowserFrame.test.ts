@@ -417,6 +417,29 @@ Task #1
 			expect(page.mainFrame.window).not.toBe(oldWindow);
 		});
 
+		it('Clears scheduled timers and requestAnimationFrame callbacks on discarded page state.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const oldWindow = page.mainFrame.window;
+			let timeoutFired = false;
+			let animationFrameFired = false;
+
+			oldWindow.setTimeout(() => {
+				timeoutFired = true;
+			}, 20);
+			oldWindow.requestAnimationFrame(() => {
+				animationFrameFired = true;
+			});
+
+			await page.mainFrame.goto('about:blank');
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			expect(timeoutFired).toBe(false);
+			expect(animationFrameFired).toBe(false);
+
+			await page.close();
+		});
+
 		it('Aborts request if it times out.', async () => {
 			const browser = new Browser();
 			const page = browser.newPage();
