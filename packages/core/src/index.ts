@@ -11,7 +11,7 @@ export { Or } from './query/modifiers/or';
 export { createRemoved } from './query/modifiers/removed';
 export { $modifier } from './query/modifier';
 export { createQuery, IsExcluded } from './query/query';
-export type { PredicateModifier, PredicateValues } from './modifiers/predicate';
+export type { PredicateModifier, PredicateValues } from './query/modifiers/predicate';
 export type {
     EventType,
     InstancesFromParameters,

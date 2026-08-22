@@ -11,11 +11,11 @@ import { createModifier } from '../modifier';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
 import { reevaluatePredicateQuery } from '../utils/reevaluate-predicate';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
-import { isPredicateModifier, type PredicateModifier } from './predicate';
+import { isPredicateModifier, type AnyPredicateModifier } from './predicate';
 
-function splitTrackingInputs(inputs: (TraitOrRelation | PredicateModifier)[]) {
+function splitTrackingInputs(inputs: (TraitOrRelation | AnyPredicateModifier)[]) {
     const traits: Trait[] = [];
-    const predicates: PredicateModifier[] = [];
+    const predicates: AnyPredicateModifier[] = [];
 
     for (const input of inputs) {
         if (isPredicateModifier(input)) predicates.push(input);
@@ -33,7 +33,7 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return (...inputs: (TraitOrRelation | PredicateModifier)[]) => {
+    return (...inputs: (TraitOrRelation | AnyPredicateModifier)[]) => {
         const { traits, predicates } = splitTrackingInputs(inputs);
         const modifier = createModifier(`changed-${id}`, id, traits);
         if (predicates.length > 0) modifier.predicates = predicates;

@@ -1,13 +1,13 @@
 import type { Trait } from '../../trait/types';
-import type { Modifier, PredicateModifier } from '../types';
+import type { Modifier } from '../types';
 import { createModifier } from '../modifier';
-import { isPredicateModifier } from './predicate';
+import { isPredicateModifier, type AnyPredicateModifier } from './predicate';
 
 export const Not = <T extends Trait[] = Trait[]>(
-    ...items: (Trait | PredicateModifier)[]
+    ...items: (Trait | AnyPredicateModifier)[]
 ): Modifier<T, 'not'> => {
     const traits: Trait[] = [];
-    const predicates: PredicateModifier[] = [];
+    const predicates: AnyPredicateModifier[] = [];
 
     for (const item of items) {
         if (isPredicateModifier(item)) predicates.push(item);

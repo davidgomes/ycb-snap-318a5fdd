@@ -17,9 +17,15 @@ export type PredicateModifier<T extends Trait[] = Trait[]> = Modifier<T, `predic
     predicate: (values: PredicateValues<T>) => boolean;
 };
 
+/** Non-generic predicate modifier for composition with Not, Or, and tracking modifiers */
+export type AnyPredicateModifier = Modifier<Trait[], `predicate-${number}`> & {
+    [$predicate]: true;
+    predicate: (values: readonly unknown[]) => boolean;
+};
+
 let predicateId = 0;
 
-export function isPredicateModifier(param: unknown): param is PredicateModifier {
+export function isPredicateModifier(param: unknown): param is AnyPredicateModifier {
     return (
         typeof param === 'object' &&
         param !== null &&
@@ -30,7 +36,7 @@ export function isPredicateModifier(param: unknown): param is PredicateModifier 
 export function createPredicate<T extends Trait[]>(
     dependencies: [...T],
     predicate: (values: PredicateValues<T>) => boolean
-): PredicateModifier<T> {
+): AnyPredicateModifier {
     for (const dep of dependencies) {
         if (dep[$internal].type === 'tag') {
             throw new Error('Tags cannot be used as predicate dependencies');
@@ -41,9 +47,10 @@ export function createPredicate<T extends Trait[]>(
     }
 
     const id = predicateId++;
-    const modifier = createModifier(`predicate-${id}`, id, dependencies) as PredicateModifier<T>;
+    const modifier = createModifier(`predicate-${id}`, id, dependencies) as PredicateModifier<T> &
+        AnyPredicateModifier;
     modifier[$predicate] = true;
-    modifier.predicate = predicate as (values: PredicateValues<T>) => boolean;
+    modifier.predicate = predicate as AnyPredicateModifier['predicate'];
 
     return modifier;
 }

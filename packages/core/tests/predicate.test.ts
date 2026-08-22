@@ -50,7 +50,7 @@ describe('createPredicate', () => {
     });
 
     it('throws when relations are used as dependencies', () => {
-        expect(() => createPredicate([ChildOf], () => true)).toThrow(
+        expect(() => createPredicate([ChildOf as never], () => true)).toThrow(
             'Relations cannot be used as predicate dependencies'
         );
     });
