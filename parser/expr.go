@@ -17,6 +17,32 @@ type ArrayLit struct {
 	Elements []Expr
 	LBrack   Pos
 	RBrack   Pos
+	// Pattern is true when this array literal is used as a binding pattern.
+	Pattern bool
+}
+
+// RestPattern binds the remaining elements of an array.
+type RestPattern struct {
+	Expr Expr
+	Pos_ Pos
+}
+
+func (e *RestPattern) exprNode()      {}
+func (e *RestPattern) Pos() Pos       { return e.Pos_ }
+func (e *RestPattern) End() Pos       { return e.Expr.End() }
+func (e *RestPattern) String() string { return "..." + e.Expr.String() }
+
+// DefaultPattern binds the value only when the source value is missing.
+type DefaultPattern struct {
+	Expr    Expr
+	Default Expr
+}
+
+func (e *DefaultPattern) exprNode() {}
+func (e *DefaultPattern) Pos() Pos  { return e.Expr.Pos() }
+func (e *DefaultPattern) End() Pos  { return e.Default.End() }
+func (e *DefaultPattern) String() string {
+	return e.Expr.String() + " = " + e.Default.String()
 }
 
 func (e *ArrayLit) exprNode() {}
@@ -411,6 +437,10 @@ type MapElementLit struct {
 	KeyPos   Pos
 	ColonPos Pos
 	Value    Expr
+	// PatternValue is the name bound by a map pattern. It is kept separate
+	// from Value so ordinary map literals retain their existing AST shape.
+	PatternValue *Ident
+	Default      Expr
 }
 
 func (e *MapElementLit) exprNode() {}
@@ -434,6 +464,7 @@ type MapLit struct {
 	LBrace   Pos
 	Elements []*MapElementLit
 	RBrace   Pos
+	Pattern  bool
 }
 
 func (e *MapLit) exprNode() {}
