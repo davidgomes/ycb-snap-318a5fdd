@@ -20,9 +20,7 @@ describe('transactUpdate - requiredIf', () => {
   test('adds an existence condition for missing dependents', () => {
     const {
       Update: { ConditionExpression, ExpressionAttributeNames }
-    } = TestEntity.build(UpdateTransaction)
-      .item({ id: '1', kind: 'dog' })
-      .params()
+    } = TestEntity.build(UpdateTransaction).item({ id: '1', kind: 'dog' }).params()
 
     expect(ConditionExpression).toBe('attribute_exists(#c_1)')
     expect(ExpressionAttributeNames).toMatchObject({ '#c_1': '_b' })

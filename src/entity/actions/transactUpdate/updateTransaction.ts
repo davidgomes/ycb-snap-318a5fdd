@@ -1,11 +1,11 @@
 import { EntityParser } from '~/entity/actions/parse/index.js'
 import type { Condition } from '~/entity/actions/parseCondition/index.js'
 import { expressUpdate } from '~/entity/actions/update/expressUpdate/index.js'
+import type { UpdateItemInput } from '~/entity/actions/update/index.js'
 import {
   getRequiredIfUpdateCondition,
   mergeUpdateConditions
 } from '~/entity/actions/update/requiredIfCondition.js'
-import type { UpdateItemInput } from '~/entity/actions/update/index.js'
 import { parseUpdateExtension } from '~/entity/actions/update/updateItemParams/extension/index.js'
 import type { Entity } from '~/entity/index.js'
 import { DynamoDBToolboxError } from '~/errors/index.js'
