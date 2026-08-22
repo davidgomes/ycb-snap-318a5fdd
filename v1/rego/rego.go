@@ -2513,6 +2513,11 @@ func (r *Rego) partialResult(ctx context.Context, pCfg *PrepareConfig) (PartialR
 		return PartialResult{}, r.compiler.Errors
 	}
 
+	r.compiler.Modules[id] = module
+	for i, module := range pq.Support {
+		r.compiler.Modules[fmt.Sprintf("__partialsupport__%s__%d__", ectx.partialNamespace, i)] = module
+	}
+
 	result := PartialResult{
 		compiler:     r.compiler,
 		store:        r.store,
@@ -2657,6 +2662,8 @@ func (r *Rego) partial(ctx context.Context, ectx *EvalContext) (*PartialQueries,
 		Queries: queries,
 		Support: support,
 	}
+
+	reconstructPartialTemplateStrings(pq)
 
 	return pq, nil
 }
