@@ -655,10 +655,11 @@ describe("handleMultiAgentChatRequest", () => {
       yield { type: "done" as const };
     });
     
-    await handleMultiAgentChatRequest(
+    const response = await handleMultiAgentChatRequest(
       mockContext as Context,
       requestAbortControllers
     );
+    await readStreamResponses(response);
     
     // Abort controller should be cleaned up
     expect(requestAbortControllers.has("req-abort-test")).toBe(false);
