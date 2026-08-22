@@ -1,0 +1,18 @@
+changelog:
+  categories:
+    - title: 'Features'
+      labels:
+        - 'enhancement'
+    - title: 'Bugs'
+      labels:
+        - 'bug'
+    - title: 'Documentation'
+      labels:
+        - 'documentation'
+    - title: 'Maintenance'
+      labels:
+        - 'github'
+        - 'dependencies'
+    - title: Other Changes
+      labels:
+        - "*"

@@ -1,0 +1,45 @@
+# Intellij
+*.iml
+.idea
+
+# VSCode
+.vscode/*
+!/.vscode/settings.json
+
+# npm
+node_modules
+
+# build
+*.js
+*.js.map
+
+# obsidian
+data.json
+
+# test vault
+test-vault/.obsidian/*.json
+# keep activated community plugin list
+!test-vault/.obsidian/community-plugins.json
+# plugins
+!test-vault/.obsidian/plugins/hot-reload/*
+test-vault/.obsidian/plugins/obsidian-linter/*
+!test-vault/.obsidian/plugins/obsidian-linter/.hotreload
+!test-vault/.obsidian/plugins/obsidian-linter/data.json
+test-vault/.obsidian/plugins/table-editor-obsidian/*
+!test-vault/.obsidian/plugins/table-editor-obsidian/.gitkeep
+
+# occasional bug fix test
+main.zip
+
+# ignore generated files
+main.js
+styles.css
+
+yarn.lock
+
+.DS_Store
+
+!__mocks__/*.js
+!/.eslintrc.js
+!babel.config.js
+!postcss.config.js
