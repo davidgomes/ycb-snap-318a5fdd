@@ -22,6 +22,7 @@ import type {
 } from '~/singlestore-core/session.ts';
 import type { SubqueryWithSelection } from '~/singlestore-core/subquery.ts';
 import type { SingleStoreTable } from '~/singlestore-core/table.ts';
+import { assertWindowName, type WindowSpec } from '~/sql/functions/window.ts';
 import type { ColumnsSelection, Query } from '~/sql/sql.ts';
 import { SQL } from '~/sql/sql.ts';
 import { Subquery } from '~/subquery.ts';
@@ -774,6 +775,15 @@ export abstract class SingleStoreSelectQueryBuilderBase<
 			this.config.groupBy = columns as (SingleStoreColumn | SQL | SQL.Aliased)[];
 		}
 		return this as any;
+	}
+
+	/**
+	 * Adds a named `window` definition to the query.
+	 */
+	window(name: string, spec: WindowSpec = {}): this {
+		assertWindowName(name);
+		this.config.windows = [...(this.config.windows ?? []), { name, spec }];
+		return this;
 	}
 
 	/**

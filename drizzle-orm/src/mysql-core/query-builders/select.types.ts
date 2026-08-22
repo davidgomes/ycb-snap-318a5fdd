@@ -18,6 +18,7 @@ import type {
 	SelectResult,
 	SetOperator,
 } from '~/query-builders/select.types.ts';
+import type { NamedWindow } from '~/sql/functions/window.ts';
 import type { ColumnsSelection, Placeholder, SQL, View } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
 import type { Table, UpdateTableConfig } from '~/table.ts';
@@ -66,6 +67,7 @@ export interface MySqlSelectConfig {
 	joins?: MySqlSelectJoinConfig[];
 	orderBy?: (MySqlColumn | SQL | SQL.Aliased)[];
 	groupBy?: (MySqlColumn | SQL | SQL.Aliased)[];
+	windows?: NamedWindow[];
 	lockingClause?: {
 		strength: LockStrength;
 		config: LockConfig;

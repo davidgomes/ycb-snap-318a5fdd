@@ -20,6 +20,7 @@ import type {
 import { QueryPromise } from '~/query-promise.ts';
 import type { RunnableQuery } from '~/runnable-query.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
+import { assertWindowName, type WindowSpec } from '~/sql/functions/window.ts';
 import { SQL, View } from '~/sql/sql.ts';
 import type { ColumnsSelection, Placeholder, Query, SQLWrapper } from '~/sql/sql.ts';
 import { Subquery } from '~/subquery.ts';
@@ -847,6 +848,15 @@ export abstract class GelSelectQueryBuilderBase<
 			this.config.groupBy = columns as (GelColumn | SQL | SQL.Aliased)[];
 		}
 		return this as any;
+	}
+
+	/**
+	 * Adds a named `window` definition to the query.
+	 */
+	window(name: string, spec: WindowSpec = {}): this {
+		assertWindowName(name);
+		this.config.windows = [...(this.config.windows ?? []), { name, spec }];
+		return this;
 	}
 
 	/**

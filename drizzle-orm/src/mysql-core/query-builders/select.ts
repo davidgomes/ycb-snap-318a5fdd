@@ -17,6 +17,7 @@ import type {
 } from '~/query-builders/select.types.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
+import { assertWindowName, type WindowSpec } from '~/sql/functions/window.ts';
 import type { ColumnsSelection, Placeholder, Query } from '~/sql/sql.ts';
 import { SQL, View } from '~/sql/sql.ts';
 import { Subquery } from '~/subquery.ts';
@@ -901,6 +902,15 @@ export abstract class MySqlSelectQueryBuilderBase<
 			this.config.groupBy = columns as (MySqlColumn | SQL | SQL.Aliased)[];
 		}
 		return this as any;
+	}
+
+	/**
+	 * Adds a named `window` definition to the query.
+	 */
+	window(name: string, spec: WindowSpec = {}): this {
+		assertWindowName(name);
+		this.config.windows = [...(this.config.windows ?? []), { name, spec }];
+		return this;
 	}
 
 	/**
