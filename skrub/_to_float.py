@@ -185,7 +185,7 @@ class ToFloat(SingleColumnTransformer):
         """
         del y
         self.all_outputs_ = [sbd.name(column)]
-        if sbd.is_any_date(column) or sbd.is_categorical(column):
+        if sbd.is_any_date(column) or sbd.is_duration(column) or sbd.is_categorical(column):
             raise RejectColumn(
                 f"Refusing to cast column {sbd.name(column)!r} "
                 f"with dtype '{sbd.dtype(column)}' to numbers."
