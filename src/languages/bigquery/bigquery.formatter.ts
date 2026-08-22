@@ -222,7 +222,10 @@ function promotePipeClauses(tokens: Token[]): Token[] {
     if (afterPipe) {
       afterPipe = false;
       pipeClauseName = token.text.toUpperCase();
-      if (pipeClauseName === 'AGGREGATE' || pipeClauseName === 'EXTEND') {
+      if (
+        token.type === TokenType.IDENTIFIER &&
+        (pipeClauseName === 'AGGREGATE' || pipeClauseName === 'EXTEND')
+      ) {
         return { ...token, type: TokenType.RESERVED_CLAUSE, text: token.text.toUpperCase() };
       }
     }
