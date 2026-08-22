@@ -241,7 +241,12 @@ fn compare_natural(a: &[u8], b: &[u8], case_sensitive: bool) -> Ordering {
         }
     }
 
-    a_index.cmp(&a.len()).then_with(|| b_index.cmp(&b.len()))
+    match (a_index == a.len(), b_index == b.len()) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (false, false) => unreachable!("natural comparison loop only stops at the end of a string"),
+    }
 }
 
 fn digit_run_end(bytes: &[u8], start: usize) -> usize {
@@ -280,4 +285,27 @@ fn random_value(entry: &DirEntry, seed: u64) -> u64 {
         .fold(FNV_OFFSET ^ seed, |hash, byte| {
             (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compare_natural;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn natural_sort_orders_prefixes_consistently() {
+        assert_eq!(compare_natural(b"file2", b"file2x", false), Ordering::Less);
+        assert_eq!(
+            compare_natural(b"file2x", b"file2", false),
+            Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn natural_sort_treats_leading_zeroes_as_equal() {
+        assert_eq!(
+            compare_natural(b"file007", b"file7", false),
+            Ordering::Equal
+        );
+    }
 }
