@@ -39,6 +39,23 @@ const mockAgent = {
   },
 };
 
+async function readResponses(response: Response): Promise<any[]> {
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let streamData = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    streamData += decoder.decode(value);
+  }
+
+  return streamData
+    .split("\n")
+    .filter(line => line.trim())
+    .map(line => JSON.parse(line));
+}
+
 describe("handleMultiAgentChatRequest", () => {
   let mockContext: Partial<Context>;
   let requestAbortControllers: Map<string, AbortController>;
@@ -292,6 +309,184 @@ describe("handleMultiAgentChatRequest", () => {
     // Should have called the orchestrator
     expect(mockProvider.executeChat).toHaveBeenCalled();
   });
+
+  it("should recursively delegate and feed the result back to the delegating agent", async () => {
+    const delegator = { ...mockAgent, id: "delegator" };
+    const worker = { ...mockAgent, id: "worker" };
+    vi.mocked(globalRegistry.getAgent).mockImplementation((agentId) => {
+      return agentId === "delegator" ? delegator : agentId === "worker" ? worker : undefined;
+    });
+    vi.mocked(globalRegistry.getProviderForAgent).mockImplementation((agentId) => {
+      return agentId === "delegator" || agentId === "worker" ? mockProvider : undefined;
+    });
+    vi.mocked(mockContext.req!.json).mockResolvedValue({
+      message: "@delegator delegate this",
+      requestId: "req-delegate",
+      sessionId: "session-delegate",
+    });
+
+    vi.mocked(mockProvider.executeChat).mockImplementation(async function* (request) {
+      if (request.message === "@delegator delegate this") {
+        yield {
+          type: "tool_use" as const,
+          toolName: "delegate_task",
+          toolInput: { agent_id: "worker", instructions: "inspect the code" },
+          toolUseId: "tool-delegate-1",
+        };
+      } else if (request.message === "inspect the code") {
+        yield { type: "text" as const, content: "Worker findings" };
+        yield { type: "done" as const };
+      } else {
+        yield { type: "text" as const, content: "Delegator continued" };
+        yield { type: "done" as const };
+      }
+    });
+
+    const responses = await readResponses(
+      await handleMultiAgentChatRequest(mockContext as Context, requestAbortControllers),
+    );
+    const toolUse = responses.find(response =>
+      response.data?.message?.content?.[0]?.type === "tool_use",
+    );
+    const toolResult = responses.find(response =>
+      response.data?.message?.content?.[0]?.type === "tool_result",
+    );
+
+    expect(toolUse.data.message.content[0].id).toBe("tool-delegate-1");
+    expect(toolResult.data.message.content).toEqual([{
+      type: "tool_result",
+      is_error: false,
+      content: "Worker findings",
+      tool_use_id: "tool-delegate-1",
+    }]);
+    expect(mockProvider.executeChat).toHaveBeenCalledTimes(3);
+    expect(mockProvider.executeChat).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        message: JSON.stringify(toolResult.data.message.content[0]),
+        sessionId: "session-delegate",
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("should report unknown delegated agents and feed an error tool result back", async () => {
+    const delegator = { ...mockAgent, id: "delegator" };
+    vi.mocked(globalRegistry.getAgent).mockImplementation((agentId) => {
+      return agentId === "delegator" ? delegator : undefined;
+    });
+    vi.mocked(globalRegistry.getProviderForAgent).mockImplementation((agentId) => {
+      return agentId === "delegator" ? mockProvider : undefined;
+    });
+    vi.mocked(mockContext.req!.json).mockResolvedValue({
+      message: "@delegator delegate this",
+      requestId: "req-unknown-delegate",
+    });
+
+    vi.mocked(mockProvider.executeChat).mockImplementation(async function* (request) {
+      if (request.message.startsWith("@delegator")) {
+        yield {
+          type: "tool_use" as const,
+          toolName: "delegate_task",
+          toolInput: { agent_id: "missing-agent", instructions: "do work" },
+          toolUseId: "tool-unknown-1",
+        };
+      } else {
+        yield { type: "done" as const };
+      }
+    });
+
+    const responses = await readResponses(
+      await handleMultiAgentChatRequest(mockContext as Context, requestAbortControllers),
+    );
+    const errorResponse = responses.find(response => response.type === "error");
+    const toolResult = responses.find(response =>
+      response.data?.message?.content?.[0]?.type === "tool_result",
+    );
+
+    expect(errorResponse.error).toContain("missing-agent");
+    expect(toolResult.data.message.content[0]).toMatchObject({
+      type: "tool_result",
+      is_error: true,
+      tool_use_id: "tool-unknown-1",
+    });
+    expect(toolResult.data.message.content[0].content).toContain("missing-agent");
+    expect(mockProvider.executeChat).toHaveBeenCalledTimes(2);
+  });
+
+  it("should turn a delegated provider failure into an error tool result", async () => {
+    const delegator = { ...mockAgent, id: "delegator" };
+    const worker = { ...mockAgent, id: "worker" };
+    vi.mocked(globalRegistry.getAgent).mockImplementation((agentId) => {
+      return agentId === "delegator" ? delegator : agentId === "worker" ? worker : undefined;
+    });
+    vi.mocked(globalRegistry.getProviderForAgent).mockImplementation((agentId) => {
+      return agentId === "delegator" || agentId === "worker" ? mockProvider : undefined;
+    });
+    vi.mocked(mockContext.req!.json).mockResolvedValue({
+      message: "@delegator delegate this",
+      requestId: "req-failed-delegate",
+    });
+
+    vi.mocked(mockProvider.executeChat).mockImplementation(async function* (request) {
+      if (request.message.startsWith("@delegator")) {
+        yield {
+          type: "tool_use" as const,
+          toolName: "delegate_task",
+          toolInput: { agent_id: "worker", instructions: "fail this" },
+          toolUseId: "tool-failed-1",
+        };
+      } else if (request.message === "fail this") {
+        yield { type: "error" as const, error: "Worker unavailable" };
+      } else {
+        yield { type: "done" as const };
+      }
+    });
+
+    const responses = await readResponses(
+      await handleMultiAgentChatRequest(mockContext as Context, requestAbortControllers),
+    );
+    const toolResult = responses.find(response =>
+      response.data?.message?.content?.[0]?.type === "tool_result",
+    );
+
+    expect(responses.some(response => response.type === "error")).toBe(false);
+    expect(toolResult.data.message.content[0]).toMatchObject({
+      is_error: true,
+      content: "Worker unavailable",
+      tool_use_id: "tool-failed-1",
+    });
+  });
+
+  it("should stop circular delegation with a stream error", async () => {
+    const agent = { ...mockAgent, id: "agent-a" };
+    vi.mocked(globalRegistry.getAgent).mockImplementation((agentId) => {
+      return agentId === "agent-a" ? agent : undefined;
+    });
+    vi.mocked(globalRegistry.getProviderForAgent).mockImplementation((agentId) => {
+      return agentId === "agent-a" ? mockProvider : undefined;
+    });
+    vi.mocked(mockContext.req!.json).mockResolvedValue({
+      message: "@agent-a delegate this",
+      requestId: "req-circular",
+    });
+
+    vi.mocked(mockProvider.executeChat).mockImplementation(async function* () {
+      yield {
+        type: "tool_use" as const,
+        toolName: "delegate_task",
+        toolInput: { agent_id: "agent-a", instructions: "delegate back" },
+        toolUseId: "tool-circular-1",
+      };
+    });
+
+    const responses = await readResponses(
+      await handleMultiAgentChatRequest(mockContext as Context, requestAbortControllers),
+    );
+    const errorResponse = responses.find(response => response.type === "error");
+
+    expect(errorResponse.error.toLowerCase()).toContain("circular");
+    expect(mockProvider.executeChat).toHaveBeenCalledTimes(1);
+  });
   
   it("should handle provider errors gracefully", async () => {
     const chatRequest: ChatRequest = {
@@ -344,10 +539,11 @@ describe("handleMultiAgentChatRequest", () => {
       yield { type: "done" as const };
     });
     
-    await handleMultiAgentChatRequest(
+    const response = await handleMultiAgentChatRequest(
       mockContext as Context,
       requestAbortControllers
     );
+    await readResponses(response);
     
     // Abort controller should be cleaned up
     expect(requestAbortControllers.has("req-abort-test")).toBe(false);
