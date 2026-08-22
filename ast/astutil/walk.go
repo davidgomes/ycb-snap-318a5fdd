@@ -1,3 +1,4 @@
+//go:build !appengine
 // +build !appengine
 
 package astutil
@@ -196,6 +197,9 @@ func walkExpr(expr ast.Expr, f WalkFunc) error {
 	case *ast.ParenExpr:
 		return walkExpr(expr.SubExpr, f)
 	case *ast.FuncExpr:
+		if err := walkExprs(expr.Defaults, f); err != nil {
+			return err
+		}
 		return walkStmt(expr.Stmt, f)
 	case *ast.LetsExpr:
 		if err := walkExprs(expr.LHSS, f); err != nil {
