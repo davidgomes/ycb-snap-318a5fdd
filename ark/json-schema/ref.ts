@@ -1,6 +1,6 @@
 import type { JsonSchemaOrBoolean, Traversal } from "@ark/schema"
 import { printable, throwParseError } from "@ark/util"
-import { type, type JsonSchema, type Type } from "arktype"
+import { type, type Type } from "arktype"
 import {
 	writeJsonSchemaUnresolvedRefMessage,
 	writeJsonSchemaUnsupportedRefMessage
