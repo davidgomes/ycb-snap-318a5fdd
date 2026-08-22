@@ -317,13 +317,13 @@ func (s *DriftDetectionService) liveConfigs(ctx context.Context) (map[string]mod
 		if err != nil {
 			return nil, err
 		}
-		cfg := models.ContainerConfig{Image: inspect.Config.Image, Env: inspect.Config.Env, Labels: inspect.Config.Labels}
-		if inspect.HostConfig != nil {
-			cfg.RestartPolicy = string(inspect.HostConfig.RestartPolicy.Name)
-			cfg.NetworkMode = string(inspect.HostConfig.NetworkMode)
-			cfg.Volumes = inspect.HostConfig.Binds
-			cfg.MemoryLimit = inspect.HostConfig.Memory
-			cfg.CpuLimit = float64(inspect.HostConfig.NanoCPUs) / 1e9
+		cfg := models.ContainerConfig{Image: inspect.Container.Config.Image, Env: inspect.Container.Config.Env, Labels: inspect.Container.Config.Labels}
+		if inspect.Container.HostConfig != nil {
+			cfg.RestartPolicy = string(inspect.Container.HostConfig.RestartPolicy.Name)
+			cfg.NetworkMode = string(inspect.Container.HostConfig.NetworkMode)
+			cfg.Volumes = inspect.Container.HostConfig.Binds
+			cfg.MemoryLimit = inspect.Container.HostConfig.Memory
+			cfg.CpuLimit = float64(inspect.Container.HostConfig.NanoCPUs) / 1e9
 		}
 		out[name] = cfg
 	}
