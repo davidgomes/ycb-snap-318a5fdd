@@ -395,6 +395,7 @@ mod tests {
             .call(&mut store, &[crate::Val::I32(1)], &mut [])
             .unwrap_err();
         let dump = trap.coredump().expect("Wasm trap should have a coredump");
+        Module::validate(&engine, dump).unwrap();
         let mut custom_sections = Vec::new();
         for payload in Parser::new(0).parse_all(dump) {
             match payload.unwrap() {
