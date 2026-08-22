@@ -1,5 +1,5 @@
-import type { JsonSchemaOrBoolean } from "@ark/schema"
-import { throwParseError } from "@ark/util"
+import type { JsonSchemaOrBoolean, Traversal } from "@ark/schema"
+import { printable, throwParseError } from "@ark/util"
 import { type, type JsonSchema, type Type } from "arktype"
 import {
 	writeJsonSchemaUnresolvedRefMessage,
@@ -12,6 +12,7 @@ type RefParseContext = {
 	defs: Record<string, JsonSchema>
 	resolved: Map<string, Type>
 	placeholders: Map<string, Type>
+	resolving: Set<string>
 	parse: (schema: JsonSchemaOrBoolean) => Type
 }
 
@@ -37,6 +38,7 @@ export const withJsonSchemaRefContext = <t>(
 		defs: extractRootDefs(schema),
 		resolved: new Map(),
 		placeholders: new Map(),
+		resolving: new Set(),
 		parse
 	}
 	try {
@@ -52,25 +54,41 @@ export const fullyResolveJsonSchemaType = (t: Type): Type => {
 	while (current.internal.hasKind("alias")) {
 		if (seen.has(current.internal)) break
 		seen.add(current.internal)
-
-		const reference = current.internal.reference
-		const cached = ctx?.resolved.get(reference)
-		if (cached !== undefined) {
-			current = cached
-			continue
-		}
-
-		// Resolution is not ready yet (recursive parse in progress).
-		// Leave the alias in place so composition does not unwrap a stub.
-		break
+		const cached = ctx?.resolved.get(current.internal.reference)
+		if (cached === undefined) break
+		current = cached
 	}
 	return current
 }
 
-export const resolveJsonSchemaRef = (ref: unknown): Type => {
-	if (typeof ref !== "string" || !localDefRefPattern.test(ref)) {
-		throwParseError(writeJsonSchemaUnsupportedRefMessage())
+const deferredRef = (name: string): Type => {
+	const owner = ctx!
+	const existing = owner.placeholders.get(name)
+	if (existing !== undefined) return existing
+
+	const jsonSchemaRefValidator = (data: unknown, traversal: Traversal) => {
+		const resolved = owner.resolved.get(name)
+		if (resolved === undefined) {
+			return traversal.reject({
+				expected: `a value matching $ref "#/$defs/${name}"`,
+				actual: printable(data)
+			})
+		}
+		if (resolved.allows(data)) return true
+		return traversal.reject({
+			expected: resolved.description,
+			actual: printable(data)
+		})
 	}
+
+	const placeholder = type.unknown.narrow(jsonSchemaRefValidator)
+	owner.placeholders.set(name, placeholder)
+	return placeholder
+}
+
+export const resolveJsonSchemaRef = (ref: unknown): Type => {
+	if (typeof ref !== "string" || !localDefRefPattern.test(ref))
+		throwParseError(writeJsonSchemaUnsupportedRefMessage())
 
 	const name = ref.slice("#/$defs/".length)
 	if (ctx === undefined || !(name in ctx.defs))
@@ -79,20 +97,14 @@ export const resolveJsonSchemaRef = (ref: unknown): Type => {
 	const completed = ctx.resolved.get(name)
 	if (completed !== undefined) return fullyResolveJsonSchemaType(completed)
 
-	const existingPlaceholder = ctx.placeholders.get(name)
-	if (existingPlaceholder !== undefined) return existingPlaceholder
+	if (ctx.resolving.has(name)) return deferredRef(name)
 
-	const placeholder = type.schema({
-		reference: name,
-		resolve: () => {
-			const resolved = ctx?.resolved.get(name)
-			if (resolved === undefined) return placeholder.internal
-			return fullyResolveJsonSchemaType(resolved).internal
-		}
-	}) as Type
-
-	ctx.placeholders.set(name, placeholder)
-	const parsed = ctx.parse(ctx.defs[name])
-	ctx.resolved.set(name, parsed)
-	return fullyResolveJsonSchemaType(parsed)
+	ctx.resolving.add(name)
+	try {
+		const parsed = ctx.parse(ctx.defs[name])
+		ctx.resolved.set(name, parsed)
+		return fullyResolveJsonSchemaType(parsed)
+	} finally {
+		ctx.resolving.delete(name)
+	}
 }

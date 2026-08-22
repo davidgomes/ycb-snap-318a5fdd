@@ -4,7 +4,7 @@ import { jsonSchemaToType } from "@ark/json-schema"
 contextualize(() => {
 	it("applies then when if matches", () => {
 		const t = jsonSchemaToType({
-			if: { const: "foo" },
+			if: { type: "string" },
 			then: { type: "string", minLength: 3 }
 		})
 		attest(t.allows("foo")).equals(true)
@@ -136,7 +136,7 @@ contextualize(() => {
 
 	it("treats then/else object keywords without type as objects", () => {
 		const t = jsonSchemaToType({
-			if: { const: true },
+			if: { type: "object" },
 			then: {
 				properties: { name: { type: "string" } },
 				required: ["name"]

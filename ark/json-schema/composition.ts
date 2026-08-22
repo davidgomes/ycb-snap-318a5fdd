@@ -6,9 +6,7 @@ import { fullyResolveJsonSchemaType } from "./ref.ts"
 
 const parseAllOfJsonSchema = (jsonSchemas: readonly JsonSchema[]): Type =>
 	jsonSchemas
-		.map(jsonSchema =>
-			fullyResolveJsonSchemaType(jsonSchemaToType(jsonSchema))
-		)
+		.map(jsonSchema => fullyResolveJsonSchemaType(jsonSchemaToType(jsonSchema)))
 		.reduce((acc, validator) => acc.and(validator))
 
 export const parseAnyOfJsonSchema = (

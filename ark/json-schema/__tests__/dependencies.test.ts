@@ -11,9 +11,9 @@ contextualize(() => {
 		})
 		attest(t.allows({})).equals(true)
 		attest(t.allows({ billing_address: "1 Main" })).equals(true)
-		attest(
-			t.allows({ credit_card: "5555", billing_address: "1 Main" })
-		).equals(true)
+		attest(t.allows({ credit_card: "5555", billing_address: "1 Main" })).equals(
+			true
+		)
 		attest(t.allows({ credit_card: "5555" })).equals(false)
 	})
 

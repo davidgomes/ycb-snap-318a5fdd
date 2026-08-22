@@ -3,11 +3,7 @@ import { printable } from "@ark/util"
 import { type, type JsonSchema, type Type } from "arktype"
 import { jsonSchemaToType } from "./json.ts"
 
-const applyBranch = (
-	schema: Type,
-	data: unknown,
-	ctx: Traversal
-): boolean => {
+const applyBranch = (schema: Type, data: unknown, ctx: Traversal): boolean => {
 	if (schema.allows(data)) return true
 	return ctx.reject({
 		expected: schema.description,
@@ -39,8 +35,11 @@ export const parseConditionalJsonSchema = (
 		data: unknown,
 		ctx: Traversal
 	): boolean => {
-		if (ifSchema.allows(data))
-			return thenSchema === undefined ? true : applyBranch(thenSchema, data, ctx)
+		if (ifSchema.allows(data)) {
+			return thenSchema === undefined ? true : (
+					applyBranch(thenSchema, data, ctx)
+				)
+		}
 		return elseSchema === undefined ? true : applyBranch(elseSchema, data, ctx)
 	}
 

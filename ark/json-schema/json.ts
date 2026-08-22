@@ -1,6 +1,10 @@
-import { describeBranches, type JsonSchemaOrBoolean } from "@ark/schema"
+import {
+	describeBranches,
+	type JsonSchemaOrBoolean,
+	type Traversal
+} from "@ark/schema"
 import { printable, throwParseError } from "@ark/util"
-import { type, type JsonSchema } from "arktype"
+import { type, type JsonSchema, type Type } from "arktype"
 import { parseArrayJsonSchema } from "./array.ts"
 import { parseCommonJsonSchema } from "./common.ts"
 import { parseConditionalJsonSchema } from "./conditional.ts"
@@ -31,13 +35,87 @@ const implicitObjectKeywords = [
 	"dependentSchemas"
 ] as const
 
-const applyImplicitObjectType = (
-	jsonSchema: JsonSchema
-): JsonSchema => {
+const applyImplicitObjectType = (jsonSchema: JsonSchema): JsonSchema => {
 	if ("type" in jsonSchema) return jsonSchema
 	if (implicitObjectKeywords.some(key => key in jsonSchema))
 		return { ...jsonSchema, type: "object" }
 	return jsonSchema
+}
+
+const numberConstraintKeywords = [
+	"minimum",
+	"maximum",
+	"exclusiveMinimum",
+	"exclusiveMaximum",
+	"multipleOf"
+] as const
+
+const stringConstraintKeywords = ["minLength", "maxLength", "pattern"] as const
+
+const arrayConstraintKeywords = [
+	"items",
+	"prefixItems",
+	"additionalItems",
+	"contains",
+	"uniqueItems",
+	"minItems",
+	"maxItems"
+] as const
+
+const applyWhen = (matches: (data: unknown) => boolean, schema: Type): Type => {
+	const jsonSchemaTypelessKeywordValidator = (
+		data: unknown,
+		ctx: Traversal
+	) => {
+		if (!matches(data)) return true
+		if (schema.allows(data)) return true
+		return ctx.reject({
+			expected: schema.description,
+			actual: printable(data)
+		})
+	}
+	return type.unknown.narrow(jsonSchemaTypelessKeywordValidator)
+}
+
+const parseTypelessKeywords = (jsonSchema: JsonSchema): Type | undefined => {
+	if ("type" in jsonSchema) return undefined
+
+	const validators: Type[] = []
+	if (numberConstraintKeywords.some(key => key in jsonSchema)) {
+		validators.push(
+			applyWhen(
+				data => typeof data === "number",
+				parseNumberJsonSchema.assert({
+					...jsonSchema,
+					type: "number"
+				}) as Type
+			)
+		)
+	}
+	if (stringConstraintKeywords.some(key => key in jsonSchema)) {
+		validators.push(
+			applyWhen(
+				data => typeof data === "string",
+				parseStringJsonSchema.assert({
+					...jsonSchema,
+					type: "string"
+				}) as Type
+			)
+		)
+	}
+	if (arrayConstraintKeywords.some(key => key in jsonSchema)) {
+		validators.push(
+			applyWhen(
+				data => Array.isArray(data),
+				parseArrayJsonSchema.assert({
+					...jsonSchema,
+					type: "array"
+				}) as Type
+			)
+		)
+	}
+	if (validators.length === 0) return undefined
+	return andValidators(...validators)
 }
 
 const andValidators = (
@@ -81,7 +159,8 @@ export const innerParseJsonSchema = JsonSchemaScope.Schema.pipe(
 		const preTypeValidator = andValidators(
 			parseCommonJsonSchema(schema),
 			parseCompositionJsonSchema(schema),
-			parseConditionalJsonSchema(schema)
+			parseConditionalJsonSchema(schema),
+			parseTypelessKeywords(schema)
 		)
 
 		if ("type" in schema) {

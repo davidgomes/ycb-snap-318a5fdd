@@ -97,12 +97,12 @@ contextualize(() => {
 	})
 
 	it("rejects unsupported $ref formats", () => {
-		attest(() =>
-			jsonSchemaToType({ $ref: "#/definitions/Foo" })
-		).throws(writeJsonSchemaUnsupportedRefMessage())
-		attest(() => jsonSchemaToType({ $ref: "https://example.com/schema" })).throws(
+		attest(() => jsonSchemaToType({ $ref: "#/definitions/Foo" })).throws(
 			writeJsonSchemaUnsupportedRefMessage()
 		)
+		attest(() =>
+			jsonSchemaToType({ $ref: "https://example.com/schema" })
+		).throws(writeJsonSchemaUnsupportedRefMessage())
 	})
 
 	it("rejects missing $defs names", () => {
