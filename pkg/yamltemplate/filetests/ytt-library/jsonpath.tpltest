@@ -1,0 +1,32 @@
+#@ load("@ytt:jsonpath", "jsonpath")
+
+#@ doc = {"store": {"book": [{"price": 8.95, "title": "A"}, {"price": 12.99, "title": "B"}], "my-key": "hyphen"}}
+
+#@ def yaml_doc():
+items:
+- name: keep
+  count: 2
+- name: drop
+  count: 0
+#@ end
+
+titles: #@ jsonpath.query(doc, "$.store.book[*].title")
+cheap: #@ jsonpath.query_one(doc, "$.store.book[?(@.price < 10)].title")
+hyphen: #@ jsonpath.query_one(doc, "$.store.my-key")
+missing: #@ jsonpath.query_one(doc, "$.nope")
+empty: #@ jsonpath.query(doc, "$.missing")
+from_yaml: #@ jsonpath.query(yaml_doc(), "$.items[?(@.count)].name")
+last: #@ jsonpath.query_one(doc, "$.store.book[(@.length-1)].title")
+
++++
+
+titles:
+- A
+- B
+cheap: A
+hyphen: hyphen
+missing: null
+empty: []
+from_yaml:
+- keep
+last: B
