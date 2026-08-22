@@ -1,0 +1,3 @@
+# echo hello | abs examples/shell_stdin.abs
+out = `cat`
+echo("%s %s", out, "world!")

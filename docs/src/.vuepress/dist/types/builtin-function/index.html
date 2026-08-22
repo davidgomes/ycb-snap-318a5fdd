@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Builtin function | The ABS programming language</title>
+    <meta name="generator" content="VuePress 1.9.10">
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;500&amp;display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@300;400;500;700;900&amp;display=swap">
+    <meta name="description" content="Home of the ABS programming language: the joy of shell scripting.">
+    <meta name="theme-color" content="#ec5975">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    
+    <link rel="preload" href="/assets/css/0.styles.2f039b9c.css" as="style"><link rel="preload" href="/assets/js/app.2cf85281.js" as="script"><link rel="preload" href="/assets/js/2.9eadad48.js" as="script"><link rel="preload" href="/assets/js/1.f429aa72.js" as="script"><link rel="preload" href="/assets/js/49.9392738f.js" as="script"><link rel="prefetch" href="/assets/js/100.0e30a071.js"><link rel="prefetch" href="/assets/js/101.8f926f45.js"><link rel="prefetch" href="/assets/js/102.02ae503e.js"><link rel="prefetch" href="/assets/js/103.d7983ba2.js"><link rel="prefetch" href="/assets/js/104.68ac2db6.js"><link rel="prefetch" href="/assets/js/105.e0c6d089.js"><link rel="prefetch" href="/assets/js/106.b740d2c7.js"><link rel="prefetch" href="/assets/js/107.0cd7a9f3.js"><link rel="prefetch" href="/assets/js/108.56f07389.js"><link rel="prefetch" href="/assets/js/109.1a4a8a3d.js"><link rel="prefetch" href="/assets/js/110.0d510989.js"><link rel="prefetch" href="/assets/js/111.d2cf7a64.js"><link rel="prefetch" href="/assets/js/112.7106f736.js"><link rel="prefetch" href="/assets/js/113.b6532d52.js"><link rel="prefetch" href="/assets/js/114.d8fafaef.js"><link rel="prefetch" href="/assets/js/115.7b8114c9.js"><link rel="prefetch" href="/assets/js/116.7b22a1c0.js"><link rel="prefetch" href="/assets/js/117.1c7239e1.js"><link rel="prefetch" href="/assets/js/118.21336e7b.js"><link rel="prefetch" href="/assets/js/119.6c30a720.js"><link rel="prefetch" href="/assets/js/12.5188bbc0.js"><link rel="prefetch" href="/assets/js/120.2ce9c8ee.js"><link rel="prefetch" href="/assets/js/121.5392c751.js"><link rel="prefetch" href="/assets/js/13.f3bb482e.js"><link rel="prefetch" href="/assets/js/14.0c2f1421.js"><link rel="prefetch" href="/assets/js/15.54e281ae.js"><link rel="prefetch" href="/assets/js/16.995c7fa5.js"><link rel="prefetch" href="/assets/js/17.dc666d2b.js"><link rel="prefetch" href="/assets/js/18.017a8d2f.js"><link rel="prefetch" href="/assets/js/19.77087943.js"><link rel="prefetch" href="/assets/js/20.4f6c2fc7.js"><link rel="prefetch" href="/assets/js/21.34059c5b.js"><link rel="prefetch" href="/assets/js/22.350028a7.js"><link rel="prefetch" href="/assets/js/23.84f549df.js"><link rel="prefetch" href="/assets/js/24.70a676ea.js"><link rel="prefetch" href="/assets/js/25.b01f0e75.js"><link rel="prefetch" href="/assets/js/26.3cd1e824.js"><link rel="prefetch" href="/assets/js/27.af6a9cfa.js"><link rel="prefetch" href="/assets/js/28.7fd4eb8d.js"><link rel="prefetch" href="/assets/js/29.65950711.js"><link rel="prefetch" href="/assets/js/3.168aab83.js"><link rel="prefetch" href="/assets/js/30.764d7f1d.js"><link rel="prefetch" href="/assets/js/31.4570813d.js"><link rel="prefetch" href="/assets/js/32.f67037f3.js"><link rel="prefetch" href="/assets/js/33.580f334a.js"><link rel="prefetch" href="/assets/js/34.d5d75fa7.js"><link rel="prefetch" href="/assets/js/35.cef70e63.js"><link rel="prefetch" href="/assets/js/36.2455c40a.js"><link rel="prefetch" href="/assets/js/37.f2a6f6a9.js"><link rel="prefetch" href="/assets/js/38.ab858fd0.js"><link rel="prefetch" href="/assets/js/39.c21a1434.js"><link rel="prefetch" href="/assets/js/4.e548210f.js"><link rel="prefetch" href="/assets/js/40.1da28282.js"><link rel="prefetch" href="/assets/js/41.001298a7.js"><link rel="prefetch" href="/assets/js/42.8b4a5a05.js"><link rel="prefetch" href="/assets/js/43.1d0e8f90.js"><link rel="prefetch" href="/assets/js/44.909b68fc.js"><link rel="prefetch" href="/assets/js/45.86b70305.js"><link rel="prefetch" href="/assets/js/46.7149fd1e.js"><link rel="prefetch" href="/assets/js/47.2da70def.js"><link rel="prefetch" href="/assets/js/48.bb547171.js"><link rel="prefetch" href="/assets/js/5.19aea3eb.js"><link rel="prefetch" href="/assets/js/50.b025f422.js"><link rel="prefetch" href="/assets/js/51.1cdfc390.js"><link rel="prefetch" href="/assets/js/52.3ec5a709.js"><link rel="prefetch" href="/assets/js/53.5851a623.js"><link rel="prefetch" href="/assets/js/54.95d70719.js"><link rel="prefetch" href="/assets/js/55.58a5e4f2.js"><link rel="prefetch" href="/assets/js/56.c5a49b39.js"><link rel="prefetch" href="/assets/js/57.8dacfacb.js"><link rel="prefetch" href="/assets/js/58.7feaa12a.js"><link rel="prefetch" href="/assets/js/59.49be7fb4.js"><link rel="prefetch" href="/assets/js/6.12ea75df.js"><link rel="prefetch" href="/assets/js/60.c9f877c4.js"><link rel="prefetch" href="/assets/js/61.41402b1f.js"><link rel="prefetch" href="/assets/js/62.a56f6729.js"><link rel="prefetch" href="/assets/js/63.92134bdb.js"><link rel="prefetch" href="/assets/js/64.ddc094fc.js"><link rel="prefetch" href="/assets/js/65.4169aab1.js"><link rel="prefetch" href="/assets/js/66.74d79156.js"><link rel="prefetch" href="/assets/js/67.cc01577c.js"><link rel="prefetch" href="/assets/js/68.8333840b.js"><link rel="prefetch" href="/assets/js/69.fd436613.js"><link rel="prefetch" href="/assets/js/7.35a634be.js"><link rel="prefetch" href="/assets/js/70.95948ab0.js"><link rel="prefetch" href="/assets/js/71.f34de52d.js"><link rel="prefetch" href="/assets/js/72.43f0f21c.js"><link rel="prefetch" href="/assets/js/73.7a7c1b60.js"><link rel="prefetch" href="/assets/js/74.848b5521.js"><link rel="prefetch" href="/assets/js/75.bf46fded.js"><link rel="prefetch" href="/assets/js/76.47bbfc94.js"><link rel="prefetch" href="/assets/js/77.6d167624.js"><link rel="prefetch" href="/assets/js/78.5467f2d1.js"><link rel="prefetch" href="/assets/js/79.7f600e80.js"><link rel="prefetch" href="/assets/js/8.d2054964.js"><link rel="prefetch" href="/assets/js/80.ed0b30d3.js"><link rel="prefetch" href="/assets/js/81.91e990cd.js"><link rel="prefetch" href="/assets/js/82.23e74984.js"><link rel="prefetch" href="/assets/js/83.1cb8d61c.js"><link rel="prefetch" href="/assets/js/84.f8fb6903.js"><link rel="prefetch" href="/assets/js/85.ac3cc503.js"><link rel="prefetch" href="/assets/js/86.d470b39d.js"><link rel="prefetch" href="/assets/js/87.ecb58178.js"><link rel="prefetch" href="/assets/js/88.d403d387.js"><link rel="prefetch" href="/assets/js/89.690c9003.js"><link rel="prefetch" href="/assets/js/9.8205c5bb.js"><link rel="prefetch" href="/assets/js/90.fb7c7538.js"><link rel="prefetch" href="/assets/js/91.cbb07b7b.js"><link rel="prefetch" href="/assets/js/92.61406345.js"><link rel="prefetch" href="/assets/js/93.8d9bcb03.js"><link rel="prefetch" href="/assets/js/94.6da012e7.js"><link rel="prefetch" href="/assets/js/95.93e4d66b.js"><link rel="prefetch" href="/assets/js/96.b98fe530.js"><link rel="prefetch" href="/assets/js/97.406576ac.js"><link rel="prefetch" href="/assets/js/98.7886617d.js"><link rel="prefetch" href="/assets/js/99.5c9fd90f.js"><link rel="prefetch" href="/assets/js/vendors~docsearch.7c5a0803.js">
+    <link rel="stylesheet" href="/assets/css/0.styles.2f039b9c.css">
+  </head>
+  <body>
+    <div id="app" data-server-rendered="true"><div class="theme-container"><header class="navbar"><div class="sidebar-button"><svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" role="img" viewBox="0 0 448 512" class="icon"><path fill="currentColor" d="M436 124H12c-6.627 0-12-5.373-12-12V80c0-6.627 5.373-12 12-12h424c6.627 0 12 5.373 12 12v32c0 6.627-5.373 12-12 12zm0 160H12c-6.627 0-12-5.373-12-12v-32c0-6.627 5.373-12 12-12h424c6.627 0 12 5.373 12 12v32c0 6.627-5.373 12-12 12zm0 160H12c-6.627 0-12-5.373-12-12v-32c0-6.627 5.373-12 12-12h424c6.627 0 12 5.373 12 12v32c0 6.627-5.373 12-12 12z"></path></svg></div> <a href="/" class="home-link router-link-active"><img src="/abs-horizontal.png" alt="The ABS programming language" class="logo"> <span class="site-name can-hide">The ABS programming language</span></a> <div class="links"><!----> <nav class="nav-links can-hide"><div class="nav-item"><a href="/quickstart/" class="nav-link">
+  Quick start
+</a></div><div class="nav-item"><a href="/docs/" class="nav-link">
+  Docs
+</a></div><div class="nav-item"><a href="/playground/" class="nav-link">
+  Playground
+</a></div> <a href="https://github.com/abs-lang/abs" target="_blank" rel="noopener noreferrer" class="repo-link">
+    GitHub
+    <span><svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" x="0px" y="0px" viewBox="0 0 100 100" width="15" height="15" class="icon outbound"><path fill="currentColor" d="M18.8,85.1h56l0,0c2.2,0,4-1.8,4-4v-32h-8v28h-48v-48h28v-8h-32l0,0c-2.2,0-4,1.8-4,4v56C14.8,83.3,16.6,85.1,18.8,85.1z"></path> <polygon fill="currentColor" points="45.7,48.7 51.3,54.3 77.2,28.5 77.2,37.2 85.2,37.2 85.2,14.9 62.8,14.9 62.8,22.9 71.5,22.9"></polygon></svg> <span class="sr-only">(opens new window)</span></span></a></nav></div></header> <div class="sidebar-mask"></div> <aside class="sidebar"><nav class="nav-links"><div class="nav-item"><a href="/quickstart/" class="nav-link">
+  Quick start
+</a></div><div class="nav-item"><a href="/docs/" class="nav-link">
+  Docs
+</a></div><div class="nav-item"><a href="/playground/" class="nav-link">
+  Playground
+</a></div> <a href="https://github.com/abs-lang/abs" target="_blank" rel="noopener noreferrer" class="repo-link">
+    GitHub
+    <span><svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" x="0px" y="0px" viewBox="0 0 100 100" width="15" height="15" class="icon outbound"><path fill="currentColor" d="M18.8,85.1h56l0,0c2.2,0,4-1.8,4-4v-32h-8v28h-48v-48h28v-8h-32l0,0c-2.2,0-4,1.8-4,4v56C14.8,83.3,16.6,85.1,18.8,85.1z"></path> <polygon fill="currentColor" points="45.7,48.7 51.3,54.3 77.2,28.5 77.2,37.2 85.2,37.2 85.2,14.9 62.8,14.9 62.8,22.9 71.5,22.9"></polygon></svg> <span class="sr-only">(opens new window)</span></span></a></nav>  <ul class="sidebar-links"><li><a href="/docs/" class="sidebar-link">Getting Started</a></li><li><section class="sidebar-group depth-0"><p class="sidebar-heading"><span>Syntax</span> <!----></p> <ul class="sidebar-links sidebar-group-items"><li><a href="/syntax/assignments/" class="sidebar-link">Assignments</a></li><li><a href="/syntax/return/" class="sidebar-link">Returning values</a></li><li><a href="/syntax/if/" class="sidebar-link">If ... else</a></li><li><a href="/syntax/for/" class="sidebar-link">For loops</a></li><li><a href="/syntax/while/" class="sidebar-link">While</a></li><li><a href="/syntax/system-commands/" class="sidebar-link">System (shell) commands</a></li><li><a href="/syntax/operators/" class="sidebar-link">Operators</a></li><li><a href="/syntax/comments/" class="sidebar-link">Comments</a></li><li><a href="/syntax/defer/" class="sidebar-link">Defer</a></li></ul></section></li><li><section class="sidebar-group depth-0"><p class="sidebar-heading open"><span>Types and Functions</span> <!----></p> <ul class="sidebar-links sidebar-group-items"><li><a href="/types/string/" class="sidebar-link">String</a></li><li><a href="/types/number/" class="sidebar-link">Number</a></li><li><a href="/types/array/" class="sidebar-link">Array</a></li><li><a href="/types/hash/" class="sidebar-link">Hash</a></li><li><a href="/types/function/" class="sidebar-link">Function</a></li><li><a href="/types/builtin-function/" aria-current="page" class="active sidebar-link">Builtin function</a></li><li><a href="/types/decorator/" class="sidebar-link">Decorator</a></li></ul></section></li><li><section class="sidebar-group depth-0"><p class="sidebar-heading"><span>Standard Library</span> <!----></p> <ul class="sidebar-links sidebar-group-items"><li><a href="/stdlib/intro/" class="sidebar-link">Standard library</a></li><li><a href="/stdlib/runtime/" class="sidebar-link">@runtime</a></li><li><a href="/stdlib/cli/" class="sidebar-link">@cli</a></li><li><a href="/stdlib/util/" class="sidebar-link">@util</a></li></ul></section></li><li><section class="sidebar-group depth-0"><p class="sidebar-heading"><span>Miscellaneous</span> <!----></p> <ul class="sidebar-links sidebar-group-items"><li><a href="/misc/3pl/" class="sidebar-link">Installing 3rd party libraries</a></li><li><a href="/misc/error/" class="sidebar-link">Errors</a></li><li><a href="/misc/configuring-the-repl/" class="sidebar-link">Configuring the REPL</a></li><li><a href="/misc/runtime/" class="sidebar-link">Runtime</a></li><li><a href="/misc/technical-details/" class="sidebar-link">A few technical details...</a></li><li><a href="/misc/upgrade-from-abs-1-to-2/" class="sidebar-link">Upgrading from ABS 1 to 2</a></li><li><a href="/misc/credits/" class="sidebar-link">Credits</a></li></ul></section></li></ul> </aside> <main class="page"> <div class="theme-default-content content__default"><h1 id="builtin-function"><a href="#builtin-function" class="header-anchor">#</a> Builtin function</h1> <p>There are many builtin functions in ABS.
+Take <code>type</code>, for example:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>type<span class="token punctuation">(</span><span class="token number">1</span><span class="token punctuation">)</span> <span class="token comment"># NUMBER</span>
+type<span class="token punctuation">(</span><span class="token punctuation">[</span><span class="token punctuation">]</span><span class="token punctuation">)</span> <span class="token comment"># ARRAY</span>
+</code></pre></div><p>We'll reveal to you a secret now: all string, array, number &amp; hash functions
+are actually &quot;generic&quot;, but the syntax you see makes you think those are
+specific to the string, number, etc object.</p> <p>The trick is very simple; whenever the ABS' interpreter finds a method call
+such as <code>object.func(arg)</code> it will actually translate it to <code>func(object, arg)</code>.</p> <p>Don't believe us? Try with these examples:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>map<span class="token punctuation">(</span><span class="token punctuation">[</span><span class="token string">&quot;1&quot;</span><span class="token punctuation">]</span>, int<span class="token punctuation">)</span> <span class="token comment"># [1]</span>
+sort<span class="token punctuation">(</span><span class="token punctuation">[</span><span class="token number">3</span>, <span class="token number">2</span>, <span class="token number">1</span><span class="token punctuation">]</span><span class="token punctuation">)</span> <span class="token comment"># [1, 2, 3]</span>
+len<span class="token punctuation">(</span><span class="token string">&quot;abc&quot;</span><span class="token punctuation">)</span> <span class="token comment"># 3</span>
+</code></pre></div><p>At the same time, there are some builtin functions that doesn't really
+make sense to call with the method notation, so we've kept them in a
+&quot;special&quot; location in the documentation. <code>exit(99)</code>, for example, exits
+the program with the status code <code>99</code>, but it would definitely look
+strange to see something such as <code>99.exit()</code>.</p> <h2 id="generic-builtin-functions"><a href="#generic-builtin-functions" class="header-anchor">#</a> Generic builtin functions</h2> <h3 id="arg-n"><a href="#arg-n" class="header-anchor">#</a> arg(n)</h3> <p>Returns the <code>n</code>th argument to the current script:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>arg<span class="token punctuation">(</span><span class="token number">0</span><span class="token punctuation">)</span> <span class="token comment"># /usr/bin/abs</span>
+</code></pre></div><h3 id="args"><a href="#args" class="header-anchor">#</a> args()</h3> <p>Returns the list of arguments to the current script (including the current script itself)</p> <div class="language-bash extra-class"><pre class="language-bash"><code>$ abs <span class="token parameter variable">--flag1</span> <span class="token parameter variable">--flag2</span> arg1 arg2
+Hello user, welcome to the ABS programming language<span class="token operator">!</span>
+Type <span class="token string">'quit'</span> when you<span class="token string">'re done, '</span>help' <span class="token keyword">if</span> you get lost<span class="token operator">!</span>
+⧐   args<span class="token punctuation">(</span><span class="token punctuation">)</span>
+<span class="token punctuation">[</span><span class="token string">&quot;abs&quot;</span>, <span class="token string">&quot;--flag1&quot;</span>, <span class="token string">&quot;--flag2&quot;</span>, <span class="token string">&quot;arg1&quot;</span>, <span class="token string">&quot;arg2&quot;</span><span class="token punctuation">]</span>
+⧐   args<span class="token punctuation">(</span><span class="token punctuation">)</span>.len<span class="token punctuation">(</span><span class="token punctuation">)</span>
+<span class="token number">5</span>
+</code></pre></div><h3 id="cd-or-cd-path"><a href="#cd-or-cd-path" class="header-anchor">#</a> cd() or cd(path)</h3> <p>Sets the current working directory to <code>homeDir</code> or the given <code>path</code>
+in both Linux and Windows.</p> <p>Note that the path may have a <code>'~/'</code> prefix which will be replaced
+with <code>'homeDir/'</code>. Also, in Windows, any <code>'/'</code> path separator will be
+replaced with <code>'\'</code> and path names are not case-sensitive.</p> <p>Returns the <code>'/fully/expanded/path'</code> to the new current working directory and <code>path.ok</code>.
+If <code>path.ok</code> is <code>false</code>, that means there was an error changing directory:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>path <span class="token operator">=</span> cd<span class="token punctuation">(</span><span class="token punctuation">)</span>
+path.ok     <span class="token comment"># true</span>
+path        <span class="token comment"># /home/user or C:\Users\user</span>
+
+here <span class="token operator">=</span> pwd<span class="token punctuation">(</span><span class="token punctuation">)</span>
+path <span class="token operator">=</span> cd<span class="token punctuation">(</span><span class="token string">&quot;/path/to/nowhere&quot;</span><span class="token punctuation">)</span>
+path.ok         <span class="token comment"># false</span>
+path            <span class="token comment"># 'chdir /path/to/nowhere: no such file or directory'</span>
+here <span class="token operator">==</span> pwd<span class="token punctuation">(</span><span class="token punctuation">)</span>   <span class="token comment"># true</span>
+
+cd<span class="token punctuation">(</span><span class="token string">&quot;~/git/abs&quot;</span><span class="token punctuation">)</span> <span class="token comment"># /home/user/git/abs or C:\Users\user\git\abs</span>
+
+cd<span class="token punctuation">(</span><span class="token string">&quot;..&quot;</span><span class="token punctuation">)</span>        <span class="token comment"># /home/user/git or C:\Users\user\git</span>
+
+cd<span class="token punctuation">(</span><span class="token string">&quot;/usr/local/bin&quot;</span><span class="token punctuation">)</span> <span class="token comment"># /usr/local/bin</span>
+
+<span class="token function">dirs</span> <span class="token operator">=</span> cd<span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token operator">&amp;&amp;</span> <span class="token variable"><span class="token variable">`</span><span class="token function">ls</span> /<span class="token variable">`</span></span>.lines<span class="token punctuation">(</span><span class="token punctuation">)</span>
+len<span class="token punctuation">(</span>dirs<span class="token punctuation">)</span>   <span class="token comment"># number of directories in homeDir</span>
+</code></pre></div><h3 id="echo-var"><a href="#echo-var" class="header-anchor">#</a> echo(var)</h3> <p>Prints the given variable:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>echo<span class="token punctuation">(</span><span class="token string">&quot;hello world&quot;</span><span class="token punctuation">)</span>
+</code></pre></div><p>You can use use placeholders in your strings:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>echo<span class="token punctuation">(</span><span class="token string">&quot;hello %s&quot;</span>, <span class="token string">&quot;world&quot;</span><span class="token punctuation">)</span>
+</code></pre></div><p>To know more about how the placeholders work, please have a look at the documentation
+for <a href="/types/string/#fmt">string.fmt()</a></p> <h3 id="env-str"><a href="#env-str" class="header-anchor">#</a> env(str)</h3> <p>Returns the <code>str</code> environment variable:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>env<span class="token punctuation">(</span><span class="token string">&quot;PATH&quot;</span><span class="token punctuation">)</span> <span class="token comment"># &quot;/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin&quot;</span>
+</code></pre></div><h3 id="eval-str"><a href="#eval-str" class="header-anchor">#</a> eval(str)</h3> <p>Evaluates the <code>str</code> as ABS code:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>eval<span class="token punctuation">(</span><span class="token string">&quot;1 + 1&quot;</span><span class="token punctuation">)</span> <span class="token comment"># 2</span>
+eval<span class="token punctuation">(</span><span class="token string">'object = {&quot;x&quot;: 10}; object.x'</span><span class="token punctuation">)</span> <span class="token comment"># 10</span>
+</code></pre></div><h3 id="exit-code-message"><a href="#exit-code-message" class="header-anchor">#</a> exit(code [, message])</h3> <p>Exits the script with status <code>code</code>:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>exit<span class="token punctuation">(</span><span class="token number">99</span><span class="token punctuation">)</span>
+</code></pre></div><p>You can specify a message that's going to be outputted right
+before exiting:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>⧐  exit<span class="token punctuation">(</span><span class="token number">99</span>, <span class="token string">&quot;Got problems...&quot;</span><span class="token punctuation">)</span>
+Got problems<span class="token punctuation">..</span>.
+</code></pre></div><h3 id="flag-str"><a href="#flag-str" class="header-anchor">#</a> flag(str)</h3> <p>Returns the value of a command-line flag. Both the <code>--flag</code> and <code>-flag</code>
+form are accepted, and you can specify values with <code>--flag=x</code>
+as well as <code>--flag x</code>:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>$ abs <span class="token parameter variable">--test</span> <span class="token parameter variable">--test2</span> <span class="token number">2</span> <span class="token parameter variable">--test3</span><span class="token operator">=</span><span class="token number">3</span> <span class="token parameter variable">--test4</span> <span class="token parameter variable">-test5</span>
+Hello user, welcome to the ABS programming language<span class="token operator">!</span>
+Type <span class="token string">'quit'</span> when you<span class="token string">'re done, '</span>help' <span class="token keyword">if</span> you get lost<span class="token operator">!</span>
+⧐  flag<span class="token punctuation">(</span><span class="token string">&quot;test&quot;</span><span class="token punctuation">)</span>
+<span class="token boolean">true</span>
+⧐  flag<span class="token punctuation">(</span><span class="token string">&quot;test2&quot;</span><span class="token punctuation">)</span>
+<span class="token number">2</span>
+⧐  flag<span class="token punctuation">(</span><span class="token string">&quot;test3&quot;</span><span class="token punctuation">)</span>
+<span class="token number">3</span>
+⧐  flag<span class="token punctuation">(</span><span class="token string">&quot;test4&quot;</span><span class="token punctuation">)</span>
+<span class="token boolean">true</span>
+⧐  flag<span class="token punctuation">(</span><span class="token string">&quot;test5&quot;</span><span class="token punctuation">)</span>
+<span class="token boolean">true</span>
+⧐  flag<span class="token punctuation">(</span><span class="token string">&quot;test6&quot;</span><span class="token punctuation">)</span>
+⧐
+</code></pre></div><p>If a flag value is not set, it will default to <code>true</code>.
+The value of a flag that does not exist is <code>NULL</code>.</p> <p>In all other cases <code>flag(...)</code> returns the literal string
+value of the flag:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>$ abs <span class="token parameter variable">--number</span> <span class="token number">10</span>
+Hello user, welcome to the ABS programming language<span class="token operator">!</span>
+Type <span class="token string">'quit'</span> when you<span class="token string">'re done, '</span>help' <span class="token keyword">if</span> you get lost<span class="token operator">!</span>
+⧐  n <span class="token operator">=</span> flag<span class="token punctuation">(</span><span class="token string">&quot;number&quot;</span><span class="token punctuation">)</span>
+⧐  n
+<span class="token number">10</span>
+⧐  type<span class="token punctuation">(</span>n<span class="token punctuation">)</span>
+STRING
+</code></pre></div><p>ABS does not (currently) support passing multiple values
+for a flag, and will instead select the very first value
+it encounters:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>$ abs <span class="token parameter variable">-f</span> <span class="token number">1</span> <span class="token parameter variable">-f</span> <span class="token number">2</span>
+Hello user, welcome to the ABS programming language<span class="token operator">!</span>
+Type <span class="token string">'quit'</span> when you<span class="token string">'re done, '</span>help' <span class="token keyword">if</span> you get lost<span class="token operator">!</span>
+<span class="token operator">&gt;</span> flag<span class="token punctuation">(</span><span class="token string">&quot;f&quot;</span><span class="token punctuation">)</span>
+<span class="token number">1</span>
+</code></pre></div><p>In case you need to support passing a 'list' of arguments
+for a flag, we recommend using a comma-separated string,
+and doing something like:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>abs <span class="token parameter variable">-f</span> <span class="token number">1,2</span>
+Hello user, welcome to the ABS programming language<span class="token operator">!</span>
+Type <span class="token string">'quit'</span> when you<span class="token string">'re done, '</span>help' <span class="token keyword">if</span> you get lost<span class="token operator">!</span>
+<span class="token operator">&gt;</span> flag<span class="token punctuation">(</span><span class="token string">&quot;f&quot;</span><span class="token punctuation">)</span>.split<span class="token punctuation">(</span><span class="token string">&quot;,&quot;</span><span class="token punctuation">)</span>
+<span class="token punctuation">[</span><span class="token string">&quot;1&quot;</span>, <span class="token string">&quot;2&quot;</span><span class="token punctuation">]</span>
+</code></pre></div><h3 id="pwd"><a href="#pwd" class="header-anchor">#</a> pwd()</h3> <p>Returns the path to the current working directory -- equivalent
+to <code>env(&quot;PWD&quot;)</code>.</p> <p>If executed from a script this will initially be the directory
+containing the script.</p> <p>To change the working directory, see <code>cd()</code>.</p> <div class="language-bash extra-class"><pre class="language-bash"><code>pwd<span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token comment"># /go/src/github.com/abs-lang/abs</span>
+</code></pre></div><h3 id="rand-max"><a href="#rand-max" class="header-anchor">#</a> rand(max)</h3> <p>Returns a random integer number between 0 and <code>max</code>:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>rand<span class="token punctuation">(</span><span class="token number">10</span><span class="token punctuation">)</span> <span class="token comment"># 7</span>
+</code></pre></div><h3 id="require-path-to-file-abs"><a href="#require-path-to-file-abs" class="header-anchor">#</a> require(path_to_file.abs)</h3> <p>Evaluates the script at <code>path_to_file.abs</code>, and makes
+its return value available to the caller.</p> <p>For example, suppose we have a <code>module.abs</code> file:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>adder <span class="token operator">=</span> f<span class="token punctuation">(</span>a, b<span class="token punctuation">)</span> <span class="token punctuation">{</span> a + b <span class="token punctuation">}</span>
+multiplier <span class="token operator">=</span> f<span class="token punctuation">(</span>a, b<span class="token punctuation">)</span> <span class="token punctuation">{</span> a * b <span class="token punctuation">}</span>
+
+<span class="token builtin class-name">return</span> <span class="token punctuation">{</span><span class="token string">&quot;adder&quot;</span><span class="token builtin class-name">:</span> adder, <span class="token string">&quot;multiplier&quot;</span><span class="token builtin class-name">:</span> multiplier<span class="token punctuation">}</span>
+</code></pre></div><p>and a <code>main.abs</code> such as:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>mod <span class="token operator">=</span> require<span class="token punctuation">(</span><span class="token string">&quot;module.abs&quot;</span><span class="token punctuation">)</span>
+
+echo<span class="token punctuation">(</span>mod.adder<span class="token punctuation">(</span><span class="token number">1</span>, <span class="token number">2</span><span class="token punctuation">))</span> <span class="token comment"># 3</span>
+</code></pre></div><p>This is mostly useful to create external library
+functions, like NPM modules or PIP packages, that
+do not have access to the global environment. Any
+variable set outside of the module will not be
+available inside it, and vice-versa. The only
+variable available to the caller (the script requiring
+the module) is the module's return value.</p> <p>Note that <code>require</code> uses paths that are relative to
+the current script. Say that you have 2 files (<code>a.abs</code> and <code>b.abs</code>)
+in the <code>/tmp</code> folder, <code>a.abs</code> can <code>require(&quot;./b.abs&quot;)</code>
+without having to specify the full path (eg. <code>require(&quot;/tmp/b.abs&quot;)</code>).</p> <h3 id="sleep-ms"><a href="#sleep-ms" class="header-anchor">#</a> sleep(ms)</h3> <p>Halts the process for as many <code>ms</code> you specified:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>sleep<span class="token punctuation">(</span><span class="token number">1000</span><span class="token punctuation">)</span> <span class="token comment"># sleeps for 1 second</span>
+</code></pre></div><h3 id="source-path-to-file-abs"><a href="#source-path-to-file-abs" class="header-anchor">#</a> source(path_to_file.abs)</h3> <p>Evaluates the script at <code>path_to_file.abs</code> in the context of the
+ABS global environment. The results of any expressions in the file
+become available to other commands in the REPL command line or to other
+scripts in the current script execution chain.</p> <p>This is very similar to <code>require</code>, but allows the module to access
+and edit the global environment. Any variable set inside the module
+will also be available outside of it.</p> <p>This is most useful for creating library functions in a startup script,
+or variables that can be used by many other scripts. Often these library functions
+are loaded via the ABS Init File <code>~/.absrc</code> (see <a href="/introduction/how-to-run-abs-code">ABS Init File</a>).</p> <p>For example:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>$ <span class="token function">cat</span> ~/abs/lib/library.abs
+<span class="token comment"># Useful function library ~/abs/lib/library.abs</span>
+adder <span class="token operator">=</span> f<span class="token punctuation">(</span>n, i<span class="token punctuation">)</span> <span class="token punctuation">{</span> n + i <span class="token punctuation">}</span>
+
+$ <span class="token function">cat</span> ~/.absrc
+<span class="token comment"># ABS init file ~/.absrc</span>
+source<span class="token punctuation">(</span><span class="token string">&quot;~/abs/lib/library.abs&quot;</span><span class="token punctuation">)</span>
+
+$ abs
+Hello user, welcome to the ABS programming language<span class="token operator">!</span>
+Type <span class="token string">'quit'</span> when you are done, <span class="token string">'help'</span> <span class="token keyword">if</span> you get lost<span class="token operator">!</span>
+⧐ adder<span class="token punctuation">(</span><span class="token number">1</span>, <span class="token number">2</span><span class="token punctuation">)</span>
+<span class="token number">3</span>
+⧐
+</code></pre></div><p>In addition to source file inclusion in scripts, you can also use
+<code>source()</code> in the interactive REPL to load a script being
+debugged. When the loaded script completes, the REPL command line
+will have access to all variables and functions evaluated in the
+script.</p> <p>For example:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>⧐  source<span class="token punctuation">(</span><span class="token string">&quot;~/git/abs/tests/test-strings.abs&quot;</span><span class="token punctuation">)</span>
+<span class="token punctuation">..</span>.
+<span class="token operator">==</span><span class="token operator">==</span><span class="token operator">==</span><span class="token operator">==</span><span class="token operator">==</span><span class="token operator">==</span><span class="token operator">==</span><span class="token operator">==</span><span class="token operator">==</span><span class="token operator">==</span><span class="token operator">=</span>
+<span class="token operator">&gt;&gt;</span><span class="token operator">&gt;</span> Testing <span class="token function">split</span> and <span class="token function">join</span> strings with expanded LFs:
+s <span class="token operator">=</span> split<span class="token punctuation">(</span><span class="token string">&quot;a<span class="token entity" title="\n">\n</span>b<span class="token entity" title="\n">\n</span>c&quot;</span>, <span class="token string">&quot;<span class="token entity" title="\n">\n</span>&quot;</span><span class="token punctuation">)</span>
+echo<span class="token punctuation">(</span>s<span class="token punctuation">)</span>
+<span class="token punctuation">[</span>a, b, c<span class="token punctuation">]</span>
+<span class="token punctuation">..</span>.
+⧐  s
+<span class="token punctuation">[</span>a, b, c<span class="token punctuation">]</span>
+⧐
+</code></pre></div><p>Note well that nested source files must not create a circular
+inclusion condition. You can configure the intended source file
+inclusion depth using the <code>ABS_SOURCE_DEPTH</code> OS or ABS environment
+variables. The default is <code>ABS_SOURCE_DEPTH=10</code>. This will prevent
+a panic in the ABS interpreter if there is an unintended circular
+source inclusion.</p> <p>For example an ABS Init File may contain:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>ABS_SOURCE_DEPTH <span class="token operator">=</span> <span class="token number">15</span>
+source<span class="token punctuation">(</span><span class="token string">&quot;~/path/to/abs/lib&quot;</span><span class="token punctuation">)</span>
+</code></pre></div><p>This will limit the source inclusion depth to 15 levels for this
+<code>source()</code> statement and will also apply to future <code>source()</code>
+statements until changed.</p> <h3 id="stdin"><a href="#stdin" class="header-anchor">#</a> stdin()</h3> <p>Reads from the <code>stdin</code>:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>echo<span class="token punctuation">(</span><span class="token string">&quot;What do you like?&quot;</span><span class="token punctuation">)</span>
+echo<span class="token punctuation">(</span><span class="token string">&quot;Oh, you like %s!&quot;</span>, stdin<span class="token punctuation">(</span><span class="token punctuation">))</span> <span class="token comment"># This line will block until user enters some text</span>
+</code></pre></div><p>Worth to note that you can read
+the <code>stdin</code> indefinitely with:</p> <div class="language-bash extra-class"><pre class="language-bash"><code><span class="token comment"># Will read all input to the</span>
+<span class="token comment"># stdin and output it back</span>
+<span class="token keyword">for</span> <span class="token for-or-select variable">input</span> <span class="token keyword">in</span> stdin <span class="token punctuation">{</span>
+    echo<span class="token punctuation">(</span>input<span class="token punctuation">)</span>
+<span class="token punctuation">}</span>
+
+<span class="token comment"># Or from the REPL:</span>
+
+⧐  <span class="token keyword">for</span> <span class="token for-or-select variable">input</span> <span class="token keyword">in</span> stdin <span class="token punctuation">{</span> echo<span class="token punctuation">((</span>input.int<span class="token punctuation">(</span><span class="token punctuation">)</span> / <span class="token number">2</span><span class="token punctuation">)</span>.str<span class="token punctuation">(</span><span class="token punctuation">)</span> + <span class="token string">&quot;...try again:&quot;</span><span class="token punctuation">)</span>  <span class="token punctuation">}</span>
+<span class="token number">10</span>
+<span class="token number">5</span><span class="token punctuation">..</span>.try again:
+<span class="token number">5</span>
+<span class="token number">2.5</span><span class="token punctuation">..</span>.try again:
+
+<span class="token punctuation">..</span>.
+</code></pre></div><h3 id="type-var"><a href="#type-var" class="header-anchor">#</a> type(var)</h3> <p>Returns the type if the given variable:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>type<span class="token punctuation">(</span><span class="token string">&quot;&quot;</span><span class="token punctuation">)</span> <span class="token comment"># &quot;STRING&quot;</span>
+type<span class="token punctuation">(</span><span class="token punctuation">{</span><span class="token punctuation">}</span><span class="token punctuation">)</span> <span class="token comment"># &quot;HASH&quot;</span>
+</code></pre></div><h3 id="unix-ms"><a href="#unix-ms" class="header-anchor">#</a> unix_ms()</h3> <p>Returns the current unix epoch time, in milliseconds:</p> <div class="language-bash extra-class"><pre class="language-bash"><code>unix_ms<span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token comment"># 1594049453157</span>
+</code></pre></div></div> <footer class="page-edit"><!----> <!----></footer> <div class="page-nav"><p class="inner"><span class="prev">
+      ←
+      <a href="/types/function/" class="prev">
+        Function
+      </a></span> <span class="next"><a href="/types/decorator/">
+        Decorator
+      </a>
+      →
+    </span></p></div> </main></div><div class="global-ui"></div></div>
+    <script src="/assets/js/app.2cf85281.js" defer></script><script src="/assets/js/2.9eadad48.js" defer></script><script src="/assets/js/1.f429aa72.js" defer></script><script src="/assets/js/49.9392738f.js" defer></script>
+  </body>
+</html>
