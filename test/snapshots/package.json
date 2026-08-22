@@ -1,0 +1,14 @@
+{
+  "name": "@vitest/test-snapshots",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "vitest"
+  },
+  "dependencies": {
+    "vitest": "workspace:*"
+  },
+  "devDependencies": {
+    "jest-image-snapshot": "^6.5.1"
+  }
+}
