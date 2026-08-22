@@ -1,29 +1,14 @@
 use crate::{
-    coredump::FrameSnapshot,
-    DataSegmentEntity,
-    ElementSegment,
-    Engine,
-    Error,
-    Func,
-    FuncEntity,
-    FuncType,
-    Global,
-    Instance,
-    InstanceEntity,
-    Memory,
-    Table,
+    DataSegmentEntity, ElementSegment, Engine, Error, Func, FuncEntity, FuncType, Global, Instance,
+    InstanceEntity, Memory, Table,
     collections::arena::{Arena, ArenaKey},
     core::{CoreElementSegment, CoreGlobal, CoreMemory, CoreTable, Fuel},
+    coredump::FrameSnapshot,
     engine::DedupFuncType,
     memory::DataSegment,
     reftype::{ExternRef, ExternRefEntity},
     store::{
-        AsStoreId as _,
-        Handle,
-        RawHandle,
-        Stored,
-        error::InternalStoreError,
-        handle_arena_err,
+        AsStoreId as _, Handle, RawHandle, Stored, error::InternalStoreError, handle_arena_err,
         id::StoreId,
     },
 };
@@ -179,7 +164,10 @@ impl StoreInner {
 
     /// Returns suspended Wasm frame snapshots from innermost to outermost.
     pub(crate) fn coredump_frames(&self) -> impl DoubleEndedIterator<Item = &FrameSnapshot> {
-        self.coredump_frames.iter().rev().flat_map(|frames| frames.iter())
+        self.coredump_frames
+            .iter()
+            .rev()
+            .flat_map(|frames| frames.iter())
     }
 
     /// Unwraps the given [`Stored<T>`] reference and returns the `T`.

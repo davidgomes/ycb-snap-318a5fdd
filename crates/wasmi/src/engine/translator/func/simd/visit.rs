@@ -1,11 +1,8 @@
 use super::FuncTranslator;
 use crate::{
-    Error,
-    V128,
-    ValType,
+    Error, V128, ValType,
     core::{
-        FuelCostsProvider,
-        TypedRawVal,
+        FuelCostsProvider, TypedRawVal,
         simd::{self, ImmLaneIdx},
     },
     engine::translator::func::{Operand, op, simd::op as simd_op},

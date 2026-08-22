@@ -4,18 +4,14 @@ mod op;
 mod visit;
 
 use crate::{
-    Error,
-    V128,
-    ValType,
+    Error, V128, ValType,
     core::{FuelCostsProvider, Typed, TypedRawVal, simd::IntoLaneIdx},
     engine::translator::{
         func::{Operand, utils::Input},
         utils::{IntoShiftAmount, ToBits, Wrap},
     },
     ir::{
-        Offset16,
-        Op,
-        Slot,
+        Offset16, Op, Slot,
         index::{self, Memory},
     },
 };

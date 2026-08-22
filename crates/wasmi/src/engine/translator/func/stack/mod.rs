@@ -10,25 +10,15 @@ use self::{
 };
 pub use self::{
     control::{
-        AcquiredTarget,
-        BlockControlFrame,
-        ControlFrame,
-        ControlFrameBase,
-        ControlFrameKind,
-        ElseControlFrame,
-        ElseReachability,
-        IfControlFrame,
-        IfReachability,
-        LoopControlFrame,
+        AcquiredTarget, BlockControlFrame, ControlFrame, ControlFrameBase, ControlFrameKind,
+        ElseControlFrame, ElseReachability, IfControlFrame, IfReachability, LoopControlFrame,
     },
     operand::{ImmediateOperand, LocalOperand, Operand, TempOperand},
     operands::{PreservedAllLocalsIter, PreservedLocalsIter},
 };
 use super::{Reset, ReusableAllocations};
 use crate::{
-    Engine,
-    Error,
-    ValType,
+    Engine, Error, ValType,
     core::TypedRawVal,
     engine::{
         BlockType,

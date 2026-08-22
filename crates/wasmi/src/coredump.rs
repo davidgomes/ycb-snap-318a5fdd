@@ -1,17 +1,7 @@
 use crate::{
-    Global,
-    Instance,
-    Memory,
-    Mutability,
-    ValType,
+    Global, Instance, Memory, Mutability, ValType,
     core::ReadAs,
-    engine::{
-        CodeMap,
-        EngineFunc,
-        Inst,
-        Stack,
-        Cell,
-    },
+    engine::{Cell, CodeMap, EngineFunc, Inst, Stack},
     instance::InstanceEntity,
     store::{PrunedStore, StoreInner},
 };
@@ -27,11 +17,7 @@ pub(crate) struct FrameSnapshot {
 }
 
 /// Serializes the current store and Wasm stacks into a Wasm coredump.
-pub(crate) fn serialize(
-    store: &PrunedStore,
-    code: &CodeMap,
-    stack: &Stack,
-) -> Box<[u8]> {
+pub(crate) fn serialize(store: &PrunedStore, code: &CodeMap, stack: &Stack) -> Box<[u8]> {
     let inner = store.inner();
     let mut frames = stack.coredump_frames(code);
     frames.extend(inner.coredump_frames().map(|frame| FrameSnapshot {
@@ -70,7 +56,7 @@ fn serialize_inner(
     output.extend_from_slice(&[0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00]);
     write_core(&mut output, executable_name);
     write_modules(&mut output, &modules);
-    write_instances(&mut output, store, &instances, &modules, &memories, &globals);
+    write_instances(&mut output, &instances, &modules, &memories, &globals);
     write_stack(&mut output, &instances, frames);
     write_memories(&mut output, store, &memories);
     write_globals(&mut output, store, &globals);
@@ -97,7 +83,6 @@ fn write_modules(output: &mut Vec<u8>, modules: &[crate::module::ModuleHeader]) 
 
 fn write_instances(
     output: &mut Vec<u8>,
-    store: &StoreInner,
     instances: &[(Instance, &InstanceEntity)],
     modules: &[crate::module::ModuleHeader],
     memories: &[Memory],
@@ -116,7 +101,6 @@ fn write_instances(
         write_handles(&mut payload, instance.globals(), globals);
     }
     write_custom(output, "coreinstances", &payload);
-    let _ = store;
 }
 
 fn write_handles<T>(payload: &mut Vec<u8>, handles: &[T], all: &[T])
@@ -134,7 +118,11 @@ where
     }
 }
 
-fn write_stack(output: &mut Vec<u8>, instances: &[(Instance, &InstanceEntity)], frames: &[FrameSnapshot]) {
+fn write_stack(
+    output: &mut Vec<u8>,
+    instances: &[(Instance, &InstanceEntity)],
+    frames: &[FrameSnapshot],
+) {
     let mut payload = vec![0x00];
     write_name(&mut payload, "");
     write_u32(&mut payload, frames.len() as u32);
@@ -205,7 +193,11 @@ fn write_globals(output: &mut Vec<u8>, store: &StoreInner, globals: &[Global]) {
         let entity = store.resolve_global(global);
         let ty = entity.ty();
         write_valtype(&mut payload, ty.content());
-        payload.push(if matches!(ty.mutability(), Mutability::Var) { 1 } else { 0 });
+        payload.push(if matches!(ty.mutability(), Mutability::Var) {
+            1
+        } else {
+            0
+        });
         write_const_expr(&mut payload, ty.content(), entity.get_raw());
     }
     write_section(output, 6, &payload);
@@ -251,7 +243,11 @@ fn write_const_expr(payload: &mut Vec<u8>, ty: ValType, raw: &crate::core::RawVa
         }
         _ => {
             payload.push(0xD0);
-            payload.push(if matches!(ty, ValType::FuncRef) { 0x70 } else { 0x6F });
+            payload.push(if matches!(ty, ValType::FuncRef) {
+                0x70
+            } else {
+                0x6F
+            });
         }
     }
     payload.push(0x0B);
@@ -365,4 +361,64 @@ fn leb_size(mut value: u32) -> usize {
         size += 1;
     }
     size
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Config, Engine, Instance, Module, Store};
+    use wasmparser::{Parser, Payload};
+
+    #[test]
+    fn generated_coredump_is_valid_wasm() {
+        let mut config = Config::default();
+        config
+            .generate_coredump(true)
+            .coredump_executable_name("trapper");
+        let engine = Engine::new(&config);
+        let module = Module::new(
+            &engine,
+            r#"(module
+                (memory 1)
+                (global (mut i32) (i32.const 7))
+                (func (export "trap") (param i32) (local i64)
+                    (local.set 0 (i64.const 42))
+                    (unreachable))
+            )"#,
+        )
+        .unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+        let trap = instance
+            .get_func(&store, "trap")
+            .unwrap()
+            .call(&mut store, &[crate::Val::I32(1)], &mut [])
+            .unwrap_err();
+        let dump = trap.coredump().expect("Wasm trap should have a coredump");
+        let mut custom_sections = Vec::new();
+        for payload in Parser::new(0).parse_all(dump) {
+            match payload.unwrap() {
+                Payload::CustomSection(section) => custom_sections.push(section.name()),
+                _ => {}
+            }
+        }
+        assert_eq!(
+            custom_sections,
+            ["core", "coremodules", "coreinstances", "corestack"]
+        );
+    }
+
+    #[test]
+    fn coredump_is_disabled_by_default() {
+        let engine = Engine::default();
+        let module = Module::new(&engine, "(module (func (export \"trap\") unreachable))").unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+        let trap = instance
+            .get_func(&store, "trap")
+            .unwrap()
+            .call(&mut store, &[], &mut [])
+            .unwrap_err();
+        assert!(trap.coredump().is_none());
+    }
 }

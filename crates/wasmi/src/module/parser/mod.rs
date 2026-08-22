@@ -1,9 +1,5 @@
 use super::{
-    CustomSectionsBuilder,
-    ElementSegment,
-    FuncIdx,
-    ModuleBuilder,
-    ModuleHeader,
+    CustomSectionsBuilder, ElementSegment, FuncIdx, ModuleBuilder, ModuleHeader,
     builder::ModuleHeaderBuilder,
     export::ExternIdx,
     global::Global,
@@ -11,30 +7,15 @@ use super::{
     utils::FromWasmparser as _,
 };
 use crate::{
-    Engine,
-    Error,
-    FuncType,
-    MemoryType,
-    TableType,
+    Engine, Error, FuncType, MemoryType, TableType,
     engine::{EnforcedLimitsError, EngineFunc},
 };
 use alloc::boxed::Box;
 use core::ops::Range;
 use wasmparser::{
-    CustomSectionReader,
-    DataSectionReader,
-    ElementSectionReader,
-    Encoding,
-    ExportSectionReader,
-    FunctionBody,
-    FunctionSectionReader,
-    GlobalSectionReader,
-    ImportSectionReader,
-    MemorySectionReader,
-    Parser as WasmParser,
-    Payload,
-    TableSectionReader,
-    TypeSectionReader,
+    CustomSectionReader, DataSectionReader, ElementSectionReader, Encoding, ExportSectionReader,
+    FunctionBody, FunctionSectionReader, GlobalSectionReader, ImportSectionReader,
+    MemorySectionReader, Parser as WasmParser, Payload, TableSectionReader, TypeSectionReader,
     Validator,
 };
 

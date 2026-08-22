@@ -1,35 +1,16 @@
 pub use self::{
     handler::{
-        Cell,
-        CellError,
-        CellsReader,
-        CellsWriter,
-        ExecutionOutcome,
-        Inst,
-        LiftFromCells,
-        LiftFromCellsByValue,
-        LoadByVal,
-        LoadFromCellsByValue,
-        LowerToCells,
-        Stack,
-        StoreToCells,
-        op_code_to_handler,
-        resume_wasm_func_call,
+        Cell, CellError, CellsReader, CellsWriter, ExecutionOutcome, Inst, LiftFromCells,
+        LiftFromCellsByValue, LoadByVal, LoadFromCellsByValue, LowerToCells, Stack, StoreToCells,
+        op_code_to_handler, resume_wasm_func_call,
     },
     inout::{InOutParams, InOutResults},
 };
 use super::code_map::CodeMap;
 use crate::{
-    Error,
-    Func,
-    FuncEntity,
-    Store,
-    StoreContextMut,
+    Error, Func, FuncEntity, Store, StoreContextMut,
     engine::{
-        EngineInner,
-        ResumableCallBase,
-        ResumableCallHostTrap,
-        ResumableCallOutOfFuel,
+        EngineInner, ResumableCallBase, ResumableCallHostTrap, ResumableCallOutOfFuel,
         executor::handler::{init_host_func_call, init_wasm_func_call},
     },
     ir::SlotSpan,
@@ -222,12 +203,7 @@ impl EngineInner {
         Ok(ResumableCallBase::Finished(results))
     }
 
-    fn attach_coredump(
-        &self,
-        store: &PrunedStore,
-        stack: &Stack,
-        error: &mut Error,
-    ) {
+    fn attach_coredump(&self, store: &PrunedStore, stack: &Stack, error: &mut Error) {
         if self.config().get_generate_coredump() && error.is_wasm_trap() {
             error.attach_coredump(crate::coredump::serialize(store, &self.code_map, stack));
         }
