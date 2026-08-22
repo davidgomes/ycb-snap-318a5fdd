@@ -2471,6 +2471,124 @@ fn test_max_results() {
     te.assert_failure(&["thing", "--max-results=1", "-1", "--exec=cat"]);
 }
 
+#[test]
+fn test_sorting() {
+    let te = TestEnv::new(
+        &["z", "a"],
+        &[
+            "z/same.txt",
+            "a/same.txt",
+            "file20",
+            "file9",
+            "file10",
+            "file007",
+            "file7",
+        ],
+    );
+
+    let output = te.assert_success_and_get_output(
+        ".",
+        &["file|same", "--sort", "name", "--sort", "path"],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "file007
+file10
+file20
+file7
+file9
+a/same.txt
+z/same.txt
+"
+    );
+
+    let output = te.assert_success_and_get_output(
+        ".",
+        &[
+            "file|same",
+            "--sort",
+            "name",
+            "--sort-natural",
+            "--max-results=3",
+        ],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "file007
+file7
+file10
+"
+    );
+
+    let output = te.assert_success_and_get_output(
+        ".",
+        &["file|same", "--sort", "name", "--sort-natural", "--reverse"],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "z/same.txt
+a/same.txt
+file20
+file10
+file9
+file7
+file007
+"
+    );
+}
+
+#[test]
+fn test_sorting_groups_and_missing_values() {
+    let te = TestEnv::new(
+        &["bdir", "adir"],
+        &["zfile", "afile", "with.rs", "without"],
+    );
+
+    let output = te.assert_success_and_get_output(".", &["--sort", "name", "--dirs-first"]);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "adir/
+bdir/
+afile
+symlink
+with.rs
+without
+zfile
+"
+    );
+
+    let output = te.assert_success_and_get_output(
+        ".",
+        &["--sort", "extension", "--sort-missing-last"],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "adir/
+afile
+bdir/
+symlink
+without
+zfile
+with.rs
+"
+    );
+}
+
+#[test]
+fn test_sorting_random_seed_and_validation() {
+    let te = TestEnv::new(&[], &["one", "two", "three", "four", "five"]);
+    let args = &["--sort", "random", "--sort-seed", "42"];
+    let first = te.assert_success_and_get_output(".", args);
+    let second = te.assert_success_and_get_output(".", args);
+    assert_eq!(first.stdout, second.stdout);
+
+    te.assert_failure(&["--reverse"]);
+    te.assert_failure(&["--sort-seed", "42"]);
+    te.assert_failure(&["--sort", "name", "--exec", "echo"]);
+    te.assert_failure(&["--sort", "name", "--list-details"]);
+    te.assert_failure(&["--sort", "name", "--dirs-first", "--files-first"]);
+}
+
 /// Filenames with non-utf8 paths are passed to the executed program unchanged
 ///
 /// Note:
