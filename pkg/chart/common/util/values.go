@@ -34,6 +34,12 @@ func ToRenderValues(chrt chart.Charter, chrtVals map[string]any, options common.
 //
 // This takes both ReleaseOptions and Capabilities to merge into the render values.
 func ToRenderValuesWithSchemaValidation(chrt chart.Charter, chrtVals map[string]any, options common.ReleaseOptions, caps *common.Capabilities, skipSchemaValidation bool) (common.Values, error) {
+	return ToRenderValuesWithSchemaValidationAndMergeStrategies(chrt, chrtVals, options, caps, skipSchemaValidation, MergeStrategyOptions{})
+}
+
+// ToRenderValuesWithSchemaValidationAndMergeStrategies composes render values
+// with chart-scoped array merge strategies and command-line overrides.
+func ToRenderValuesWithSchemaValidationAndMergeStrategies(chrt chart.Charter, chrtVals map[string]any, options common.ReleaseOptions, caps *common.Capabilities, skipSchemaValidation bool, mergeOptions MergeStrategyOptions) (common.Values, error) {
 	if caps == nil {
 		caps = common.DefaultCapabilities
 	}
@@ -54,7 +60,7 @@ func ToRenderValuesWithSchemaValidation(chrt chart.Charter, chrtVals map[string]
 		},
 	}
 
-	vals, err := CoalesceValues(chrt, chrtVals)
+	vals, err := CoalesceValuesWithOptions(chrt, chrtVals, mergeOptions)
 	if err != nil {
 		return common.Values(top), err
 	}

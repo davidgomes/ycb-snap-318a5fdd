@@ -113,6 +113,10 @@ type Upgrade struct {
 	HideNotes bool
 	// SkipSchemaValidation determines if JSON schema validation is disabled.
 	SkipSchemaValidation bool
+	// MergeStrategies and MergeKeys override the corresponding chart
+	// annotations using path=value entries.
+	MergeStrategies []string
+	MergeKeys       []string
 	// Description is the description of this operation
 	Description string
 	Labels      map[string]string
@@ -291,7 +295,13 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 	if err != nil {
 		return nil, nil, false, err
 	}
-	valuesToRender, err := util.ToRenderValuesWithSchemaValidation(chart, vals, options, caps, u.SkipSchemaValidation)
+	mergeOptions := util.MergeStrategyOptions{
+		MergeStrategies: u.MergeStrategies,
+		MergeKeys:       u.MergeKeys,
+		Ignore:          u.ResetValues || u.ReuseValues,
+	}
+	valuesToRender, err := util.ToRenderValuesWithSchemaValidationAndMergeStrategies(
+		chart, vals, options, caps, u.SkipSchemaValidation, mergeOptions)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -618,7 +628,10 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 			return nil, fmt.Errorf("failed to rebuild old values: %w", err)
 		}
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		newVals = util.CoalesceTablesWithMergeStrategies(chart, newVals, oldVals, util.MergeStrategyOptions{
+			MergeStrategies: u.MergeStrategies,
+			MergeKeys:       u.MergeKeys,
+		})
 
 		chart.Values = oldVals
 
@@ -629,7 +642,10 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 	if u.ResetThenReuseValues {
 		u.cfg.Logger().Debug("merging values from old release to new values")
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		newVals = util.CoalesceTablesWithMergeStrategies(chart, newVals, current.Config, util.MergeStrategyOptions{
+			MergeStrategies: u.MergeStrategies,
+			MergeKeys:       u.MergeKeys,
+		})
 
 		return newVals, nil
 	}

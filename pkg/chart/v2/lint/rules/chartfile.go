@@ -26,6 +26,8 @@ import (
 	"github.com/asaskevich/govalidator"
 	"sigs.k8s.io/yaml"
 
+	"helm.sh/helm/v4/pkg/chart/common"
+	commonutil "helm.sh/helm/v4/pkg/chart/common/util"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/lint/support"
 	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
@@ -67,6 +69,7 @@ func Chartfile(linter *support.Linter) {
 	linter.RunLinterRule(support.ErrorSev, chartFileName, validateChartIconURL(chartFile))
 	linter.RunLinterRule(support.ErrorSev, chartFileName, validateChartType(chartFile))
 	linter.RunLinterRule(support.ErrorSev, chartFileName, validateChartDependencies(chartFile))
+	linter.RunLinterRule(support.WarningSev, chartFileName, validateChartMergeStrategies(chartFile, filepath.Dir(chartPath)))
 	linter.RunLinterRule(support.WarningSev, chartFileName, validateChartVersionStrictSemVerV2(chartFile))
 }
 
@@ -220,6 +223,14 @@ func validateChartType(cf *chart.Metadata) error {
 		return fmt.Errorf("chart type is not valid in apiVersion '%s'. It is valid in apiVersion '%s'", cf.APIVersion, chart.APIVersionV2)
 	}
 	return nil
+}
+
+func validateChartMergeStrategies(cf *chart.Metadata, chartDir string) error {
+	values, err := common.ReadValuesFile(filepath.Join(chartDir, "values.yaml"))
+	if err != nil {
+		return nil
+	}
+	return commonutil.ValidateMergeStrategies(cf.Annotations, values)
 }
 
 // loadChartFileForTypeCheck loads the Chart.yaml

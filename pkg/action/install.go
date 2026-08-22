@@ -114,7 +114,11 @@ type Install struct {
 	SkipSchemaValidation     bool
 	DisableOpenAPIValidation bool
 	IncludeCRDs              bool
-	Labels                   map[string]string
+	// MergeStrategies and MergeKeys override the corresponding chart
+	// annotations using path=value entries.
+	MergeStrategies []string
+	MergeKeys       []string
+	Labels          map[string]string
 	// KubeVersion allows specifying a custom kubernetes version to use and
 	// APIVersions allows a manual set of supported API Versions to be passed
 	// (for things like templating).
@@ -358,7 +362,13 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 		IsInstall: !isUpgrade,
 		IsUpgrade: isUpgrade,
 	}
-	valuesToRender, err := util.ToRenderValuesWithSchemaValidation(chrt, vals, options, caps, i.SkipSchemaValidation)
+	valuesToRender, err := util.ToRenderValuesWithSchemaValidationAndMergeStrategies(
+		chrt,
+		vals,
+		options,
+		caps,
+		i.SkipSchemaValidation,
+		util.MergeStrategyOptions{MergeStrategies: i.MergeStrategies, MergeKeys: i.MergeKeys})
 	if err != nil {
 		return nil, err
 	}
