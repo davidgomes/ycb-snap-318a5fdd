@@ -61,11 +61,12 @@ const parseTracks = (value: string | undefined): Track[] => {
 		return [];
 	}
 
-	return value
-		.trim()
-		.split(/\s+/)
-		.map(value => parseTrack(value))
-		.filter((track): track is Track => track !== undefined);
+	return (
+		value.trim().match(/minmax\([^)]*\)|\S+/gi) ??
+		[]
+			.map(value => parseTrack(value))
+			.filter((track): track is Track => track !== undefined)
+	);
 };
 
 const parsePlacement = (
