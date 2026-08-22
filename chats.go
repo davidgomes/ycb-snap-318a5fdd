@@ -252,6 +252,7 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 			}
 		}
 		// Record history. By default, use the first candidate for history.
+		outputContents = consolidateStreamedFunctionCallContents(outputContents)
 		finalIsValid := isValid && finishReason != FinishReasonUnspecified
 		c.recordHistory(ctx, inputContent, outputContents, finalIsValid)
 	}

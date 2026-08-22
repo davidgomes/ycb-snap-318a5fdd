@@ -4514,6 +4514,7 @@ func (m Models) generateContentStream(ctx context.Context, model string, content
 	if err != nil {
 		return yieldErrorAndEndIterator[GenerateContentResponse](err)
 	}
+	streamedCallStates := map[string]*streamedCallArgs{}
 	return iterateResponseStream(&rs, func(responseMap map[string]any) (*GenerateContentResponse, error) {
 		responseMap, err := fromConverter(responseMap, nil, parameterMap)
 		if err != nil {
@@ -4522,6 +4523,9 @@ func (m Models) generateContentStream(ctx context.Context, model string, content
 		var response = new(GenerateContentResponse)
 		err = InternalMapToStruct(responseMap, response)
 		if err != nil {
+			return nil, err
+		}
+		if err := applyStreamedFunctionCalls(response, streamedCallStates); err != nil {
 			return nil, err
 		}
 		return response, nil

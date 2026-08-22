@@ -44,8 +44,9 @@ type Live struct {
 // Generative AI API. It provides methods for sending client messages and
 // receiving server messages over the established connection.
 type Session struct {
-	conn      *websocket.Conn
-	apiClient *apiClient
+	conn               *websocket.Conn
+	apiClient          *apiClient
+	streamedCallStates map[string]*streamedCallArgs
 }
 
 // Preview. Connect establishes a WebSocket connection to the specified
@@ -123,8 +124,9 @@ func (r *Live) Connect(context context.Context, model string, config *LiveConnec
 		return nil, fmt.Errorf("Connect to %s failed: %w", u.String(), err)
 	}
 	s := &Session{
-		conn:      conn,
-		apiClient: r.apiClient,
+		conn:               conn,
+		apiClient:          r.apiClient,
+		streamedCallStates: map[string]*streamedCallArgs{},
 	}
 	modelFullName, err := tModelFullName(r.apiClient, model)
 	if err != nil {
@@ -319,6 +321,9 @@ func (s *Session) Receive() (*LiveServerMessage, error) {
 	var message = new(LiveServerMessage)
 	err = mapToStruct(responseMap, message)
 	if err != nil {
+		return nil, err
+	}
+	if err := applyStreamedLiveToolCalls(message, s.streamedCallStates); err != nil {
 		return nil, err
 	}
 	return message, err
