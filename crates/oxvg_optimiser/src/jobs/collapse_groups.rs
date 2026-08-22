@@ -114,13 +114,16 @@ fn is_structure_sensitive<'input, 'arena>(
                         let Ok(matches) = root.select(&text) else {
                             continue;
                         };
+                        let (Some(first), Some(last)) = (first_compound(&text), last_compound(&text))
+                        else {
+                            continue;
+                        };
+                        let group_is_anchor = root
+                            .select(first)
+                            .is_ok_and(|anchors| anchors.any(|anchor| anchor == *group));
                         for matched in matches {
-                            let mut current = Some(matched);
-                            while let Some(node) = current {
-                                if node == *group {
-                                    return true;
-                                }
-                                current = Element::parent_element(&node);
+                            if matched == *group || group_is_anchor {
+                                return true;
                             }
                         }
                     }
@@ -144,6 +147,19 @@ fn is_structure_sensitive<'input, 'arena>(
     stylesheets
         .iter()
         .any(|stylesheet| implicated(group, root, &stylesheet.borrow()))
+}
+
+fn first_compound(selector: &str) -> Option<&str> {
+    selector
+        .split(|c: char| c.is_whitespace() || matches!(c, '>' | '+' | '~'))
+        .find(|part| !part.is_empty())
+}
+
+fn last_compound(selector: &str) -> Option<&str> {
+    selector
+        .split(|c: char| c.is_whitespace() || matches!(c, '>' | '+' | '~'))
+        .rev()
+        .find(|part| !part.is_empty())
 }
 
 impl Default for CollapseGroups {
