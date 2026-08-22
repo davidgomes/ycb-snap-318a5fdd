@@ -11,7 +11,7 @@ import { getTrackingCursor, setTrackingMasks } from '../query/utils/tracking-cur
 import { getEntitiesWithRelationTo } from '../relation/relation';
 import type { Relation } from '../relation/types';
 import { isRelation, isRelationPair } from '../relation/utils/is-relation';
-import { addTrait, getTrait, hasTrait, registerTrait, removeTrait, setTrait } from '../trait/trait';
+import { addTrait, registerTrait, removeTrait, setTrait } from '../trait/trait';
 import { clearTraitInstance, getTraitInstance, hasTraitInstance } from '../trait/trait-instance';
 import type {
     ConfigurableTrait,

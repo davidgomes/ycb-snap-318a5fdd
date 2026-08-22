@@ -210,10 +210,15 @@ export function createDeferred(world: World): DeferredWorld {
         remove(entity, ...traits) {
             enqueue({ kind: 'remove', entity, traits });
         },
-        addExclusive(entity, pairOrRelation, target?, params?) {
+        addExclusive(
+            entity: Entity,
+            pairOrRelation: RelationPair | Relation,
+            target?: RelationTarget,
+            params?: Record<string, unknown>
+        ) {
             const pair = isRelationPair(pairOrRelation)
                 ? pairOrRelation
-                : pairOrRelation(target as RelationTarget, params);
+                : pairOrRelation(target!, params);
             enqueue({ kind: 'exclusive', entity, pair });
         },
         flush() {

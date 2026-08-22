@@ -307,15 +307,6 @@ const relationOnlyMethods = {
         }
         return this;
     },
-    updateEach(this: QueryResult<any>, callback: any, world: World) {
-        const deferredStart = world[$internal].deferred.commands.length;
-        // No traits to update, just iterate entities
-        for (let i = 0; i < this.length; i++) {
-            callback([], this[i], i);
-        }
-        flushRange(world, deferredStart);
-        return this;
-    },
     useStores(this: QueryResult<any>, callback: any) {
         // No stores, call with empty array
         callback([], this);
@@ -337,8 +328,13 @@ export function createRelationOnlyQueryResult<T extends QueryParameter[]>(
 ): QueryResult<T> {
     const results = Object.assign(entities, {
         readEach: relationOnlyMethods.readEach,
-        updateEach(callback: any) {
-            return relationOnlyMethods.updateEach.call(this, callback, world);
+        updateEach(callback: any): QueryResult<T> {
+            const deferredStart = world[$internal].deferred.commands.length;
+            for (let i = 0; i < entities.length; i++) {
+                callback([], entities[i], i);
+            }
+            flushRange(world, deferredStart);
+            return results;
         },
         useStores: relationOnlyMethods.useStores,
         select: relationOnlyMethods.select,
