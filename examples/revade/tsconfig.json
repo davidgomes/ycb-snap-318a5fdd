@@ -1,0 +1,5 @@
+{
+  "extends": "@config/typescript/react.json",
+  "include": ["src", ".triplex/provider.tsx"],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}
