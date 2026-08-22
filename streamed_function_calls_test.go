@@ -156,15 +156,14 @@ func TestMergeStreamedFunctionCallContents(t *testing.T) {
 	if !ok {
 		t.Fatal("expected function-call-only contents to merge")
 	}
-	if len(merged) != 1 || len(merged[0].Parts) != 3 {
-		t.Fatalf("merged contents = %#v, want one content with three calls", merged)
+	if len(merged) != 1 || len(merged[0].Parts) != 2 {
+		t.Fatalf("merged contents = %#v, want one content with two calls", merged)
 	}
 	gotIDs := []string{
 		merged[0].Parts[0].FunctionCall.ID,
 		merged[0].Parts[1].FunctionCall.ID,
-		merged[0].Parts[2].FunctionCall.ID,
 	}
-	if want := []string{"first", "second", "first"}; !reflect.DeepEqual(gotIDs, want) {
+	if want := []string{"first", "second"}; !reflect.DeepEqual(gotIDs, want) {
 		t.Fatalf("merged call order = %v, want %v", gotIDs, want)
 	}
 	if got, want := merged[0].Parts[0].FunctionCall.Args["value"], "final"; got != want {
