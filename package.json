@@ -1,0 +1,106 @@
+{
+  "name": "agentrooms",
+  "productName": "Agentrooms",
+  "version": "0.0.7",
+  "description": "Multi-Agent Programming Collaboration Tool",
+  "main": "electron/main.js",
+  "author": "Agentrooms Team",
+  "scripts": {
+    "electron": "electron .",
+    "electron:dev": "NODE_ENV=development electron .",
+    "build": "npm run build:frontend",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win",
+    "dist:win:setup": "./scripts/build-windows.sh",
+    "dist:linux": "electron-builder --linux",
+    "postinstall": "cd frontend && npm install && cd ../backend && npm install"
+  },
+  "build": {
+    "appId": "com.agentrooms.app",
+    "productName": "Agentrooms",
+    "electronVersion": "32.2.7",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist"
+    },
+    "dmg": {
+      "title": "Agentrooms ${version}",
+      "icon": "assets/icon.icns",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "Development"
+    }
+  },
+  "devDependencies": {
+    "electron": "^37.4.0",
+    "electron-builder": "^25.1.8"
+  }
+}

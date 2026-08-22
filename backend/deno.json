@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "lib": ["deno.ns", "deno.window"],
+    "strict": true
+  },
+  "exclude": [
+    "runtime/node.ts",
+    "cli/node.ts",
+    "tests/node/"
+  ],
+  "tasks": {
+    "generate-version": "deno run --allow-read --allow-write scripts/generate-version.ts",
+    "copy-frontend": "deno run --allow-read --allow-write scripts/copy-frontend.ts",
+    "dev": "deno task generate-version && deno run --allow-net --allow-run --allow-read --allow-env --watch cli/deno.ts --debug",
+    "build": "deno task generate-version && deno task copy-frontend && deno compile --allow-net --allow-run --allow-read --allow-env --include ./dist/static --output ../dist/claude-code-webui cli/deno.ts",
+    "format": "deno fmt cli/deno.ts runtime/deno.ts",
+    "format:check": "deno fmt --check cli/deno.ts runtime/deno.ts",
+    "lint": "deno lint cli/deno.ts runtime/deno.ts",
+    "check": "deno check cli/deno.ts runtime/deno.ts"
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1",
+    "commander": "npm:commander@^14.0.0",
+    "hono": "jsr:@hono/hono@^4",
+    "@anthropic-ai/claude-code": "npm:@anthropic-ai/claude-code@1.0.51"
+  }
+}

@@ -1,0 +1,34 @@
+# SAM ignore file - exclude files from deployment package
+
+# Source files (only include built dist/)
+*.ts
+!dist/
+cli/
+handlers/
+history/
+middleware/
+runtime/
+scripts/
+tests/
+
+# Development and build files
+node_modules/
+.env
+.env.*
+*.log
+*.test.*
+vitest.config.*
+eslint.config.*
+tsconfig.json
+deno.json
+deno.lock
+
+# Documentation and config
+README.md
+CHANGELOG.md
+.gitignore
+.prettierrc
+.github/
+
+# SAM build artifacts
+.aws-sam/

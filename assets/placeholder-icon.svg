@@ -1,0 +1,26 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background with Claude Desktop colors -->
+  <rect width="512" height="512" rx="96" fill="#1a1d1a"/>
+  
+  <!-- Agent circles in a cluster pattern -->
+  <circle cx="200" cy="200" r="48" fill="#4f93ff" opacity="0.9"/>
+  <circle cx="312" cy="200" r="48" fill="#00d084" opacity="0.9"/>
+  <circle cx="200" cy="312" r="48" fill="#a855f7" opacity="0.9"/>
+  <circle cx="312" cy="312" r="48" fill="#ff8c42" opacity="0.9"/>
+  
+  <!-- Central connection hub -->
+  <circle cx="256" cy="256" r="32" fill="#2a2421" stroke="#ff8c42" stroke-width="4"/>
+  
+  <!-- Connection lines -->
+  <line x1="228" y1="228" x2="284" y2="284" stroke="#ff8c42" stroke-width="3" opacity="0.6"/>
+  <line x1="284" y1="228" x2="228" y2="284" stroke="#ff8c42" stroke-width="3" opacity="0.6"/>
+  
+  <!-- Agent labels -->
+  <text x="200" y="270" text-anchor="middle" fill="white" font-family="system-ui" font-size="14" font-weight="600">A</text>
+  <text x="312" y="270" text-anchor="middle" fill="white" font-family="system-ui" font-size="14" font-weight="600">B</text>
+  <text x="200" y="382" text-anchor="middle" fill="white" font-family="system-ui" font-size="14" font-weight="600">W</text>
+  <text x="312" y="382" text-anchor="middle" fill="white" font-family="system-ui" font-size="14" font-weight="600">K</text>
+  
+  <!-- Title -->
+  <text x="256" y="440" text-anchor="middle" fill="#ff8c42" font-family="system-ui" font-size="24" font-weight="700">AgentHub</text>
+</svg>

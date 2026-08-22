@@ -1,0 +1,41 @@
+# SAM configuration file for Claude Code Web Agent
+
+version = 0.1
+
+[default]
+[default.global]
+[default.global.parameters]
+stack_name = "claude-web-agent"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+disable_rollback = true
+image_repositories = []
+
+[default.build]
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy]
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false
+stack_name = "claude-web-agent"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-uch5mx0ixmvk"
+s3_prefix = "claude-web-agent"
+region = "us-east-1"
+parameter_overrides = "Stage=\"prod\""
+
+[dev]
+[dev.deploy]
+[dev.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false
+stack_name = "claude-web-agent-dev"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-uch5mx0ixmvk"
+s3_prefix = "claude-web-agent-dev"
+region = "us-east-1"
+parameter_overrides = "Stage=\"dev\""

@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Claude Code Web Agent - Backend API
+
+Globals:
+  Function:
+    Timeout: 300
+    MemorySize: 512
+    Runtime: nodejs20.x
+    Environment:
+      Variables:
+        NODE_ENV: production
+
+Parameters:
+  Stage:
+    Type: String
+    Default: prod
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Deployment stage
+
+Resources:
+  # Lambda function for the API
+  ClaudeWebAgentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-api-${Stage}"
+      CodeUri: ./
+      Handler: dist/lambda.handler
+      Description: Claude Code Web Agent Backend API
+      Environment:
+        Variables:
+          STAGE: !Ref Stage
+      Events:
+        # Simplified API Gateway events - let Hono handle all routing
+        ApiProxy:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /{proxy+}
+            Method: ANY
+        ApiRoot:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /
+            Method: ANY
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: '*'
+
+  # API Gateway
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-api-${Stage}"
+      StageName: !Ref Stage
+      # CloudWatch logging removed - requires account-level IAM role setup
+      # Can be re-enabled after setting up API Gateway CloudWatch role in account settings
+      # Removed CORS from API Gateway - handled by Hono in Lambda function
+      # Having CORS in both places causes 500 errors on OPTIONS requests
+      # Remove binary media types that cause OPTIONS 500 errors
+      # BinaryMediaTypes:
+      #   - "*/*"
+
+  # Gateway Responses for CORS error handling
+  GatewayResponseDefault4XX:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+      ResponseType: DEFAULT_4XX
+      RestApiId: !Ref ApiGateway
+
+  GatewayResponseDefault5XX:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+      ResponseType: DEFAULT_5XX
+      RestApiId: !Ref ApiGateway
+
+  # CloudWatch Log Group
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ClaudeWebAgentFunction}"
+      RetentionInDays: 14
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/"
+    Export:
+      Name: !Sub "${AWS::StackName}-api-url"
+
+  FunctionName:
+    Description: Lambda function name
+    Value: !Ref ClaudeWebAgentFunction
+    Export:
+      Name: !Sub "${AWS::StackName}-function-name"
+
+  ApiGatewayId:
+    Description: API Gateway ID
+    Value: !Ref ApiGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-api-id"

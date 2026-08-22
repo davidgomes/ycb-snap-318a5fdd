@@ -1,0 +1,18 @@
+.claude/
+.env
+
+# Build artifacts
+dist/
+backend/dist/
+
+# Demo recordings and Playwright artifacts
+frontend/demo-recordings/
+frontend/test-results/
+frontend/playwright-report/
+frontend/playwright/.cache/
+
+node_modules/
+
+# sam build artifacts
+**/bin
+.aws-sam/
