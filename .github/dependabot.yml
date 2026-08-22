@@ -1,0 +1,39 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories:
+    - /
+    - /e2e
+    schedule:
+      interval: monthly
+    groups:
+      go.opentelemetry.io:
+        patterns:
+          - "go.opentelemetry.io/*"
+      dependencies:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "go.opentelemetry.io/*"
+    cooldown:
+      default-days: 7
+  - package-ecosystem: npm
+    directory: /e2e/api/compile/prisma
+    schedule:
+      interval: monthly
+    groups:
+      e2e/prisma:
+        patterns:
+          - "*"
+    cooldown:
+      default-days: 7
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      gha-dependencies:
+        patterns:
+          - "*"
+    cooldown:
+      default-days: 7
