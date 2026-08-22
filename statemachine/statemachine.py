@@ -17,6 +17,8 @@ from .callbacks import CallbacksRegistry
 from .callbacks import SpecListGrouper
 from .callbacks import SpecReference
 from .configuration import Configuration
+from .data import DataChangeInfo
+from .data import DataVar
 from .dispatcher import Listener
 from .dispatcher import Listeners
 from .engines.async_ import AsyncEngine
@@ -148,6 +150,9 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         self.history_values: Dict[
             str, List[State]
         ] = {}  # Mapping of compound states to last active state(s).
+        self.history_data: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._state_data: Dict[str, Dict[str, Any]] = {}
+        self._data_changes: List[DataChangeInfo] = []
         self.state_field = state_field
         self.start_configuration_values = (
             [start_value] if start_value is not None else list(self.start_configuration_values)
@@ -223,6 +228,55 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         if not isawaitable(result):
             return result
         return run_async_from_sync(result)
+
+    def _state_data_for(self, state):
+        result = {}
+        chain = list(state.ancestors())[::-1] + [state]
+        for item in chain:
+            result.update(self._state_data.get(item.id, {}))
+        return result
+
+    def _enter_state_data(self, state):
+        values = {}
+        for key, declaration in state.data.items():
+            if isinstance(declaration, DataVar):
+                values[key] = declaration.create()
+            elif callable(declaration):
+                values[key] = declaration()
+            else:
+                from copy import deepcopy
+
+                values[key] = deepcopy(declaration)
+        self._state_data[state.id] = values
+
+    def _exit_state_data(self, state):
+        self._state_data.pop(state.id, None)
+
+    def get_state_data(self, state):
+        return self._state_data.get(getattr(state, "id", state))
+
+    @property
+    def state_data_values(self):
+        return {key: value.copy() for key, value in self._state_data.items()}
+
+    def set_state_data(self, state, key, value):
+        state_id = getattr(state, "id", state)
+        if state_id not in self._state_data:
+            raise InvalidDefinition(f"State {state_id!r} is not active.")
+        declaration_state = next(
+            (s for s in self.states_map.values() if s.id == state_id), None
+        )
+        if declaration_state is None or key not in declaration_state.data:
+            raise InvalidDefinition(f"Undeclared data key {key!r}.")
+        declaration = declaration_state.data[key]
+        if isinstance(declaration, DataVar) and declaration.type is not None and not isinstance(value, declaration.type):
+            raise InvalidDefinition(f"Data value {value!r} does not match {declaration.type!r}.")
+        old = self._state_data[state_id].get(key)
+        self._state_data[state_id][key] = value
+        self._data_changes.append(DataChangeInfo(state_id, key, old, value))
+
+    def get_data_changes(self):
+        return list(self._data_changes)
 
     def __setattr__(self, name, value):
         # Fast path: internal/private attributes are never state IDs.

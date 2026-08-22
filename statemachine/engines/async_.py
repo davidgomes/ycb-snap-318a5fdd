@@ -181,6 +181,7 @@ class AsyncEngine(BaseEngine):
                 await self.sm._callbacks.async_call(
                     info.state.exit.key, *args, on_error=on_error, **kwargs
                 )
+                self.sm._exit_state_data(info.state)
 
             self._remove_state_from_configuration(info.state)
 
@@ -234,6 +235,10 @@ class AsyncEngine(BaseEngine):
 
             self._debug("%s Entering state: %s", self._log_id, target)
             self._add_state_to_configuration(target)
+            self.sm._enter_state_data(target)
+            for saved in self.sm.history_data.values():
+                if target.id in saved:
+                    self.sm._state_data[target.id] = saved[target.id].copy()
 
             on_entry_result = await self.sm._callbacks.async_call(
                 target.enter.key, *args, on_error=on_error, **kwargs
@@ -424,6 +429,7 @@ class AsyncEngine(BaseEngine):
                         break
 
                     self._macrostep_count += 1
+                        self.sm._data_changes.clear()
                     self._microstep_count = 0
                     self._debug(
                         "%s macrostep %d: event=%s",

@@ -9,6 +9,7 @@ from weakref import ref
 from .callbacks import CallbackGroup
 from .callbacks import CallbackPriority
 from .callbacks import CallbackSpecList
+from .data import DataVar
 from .event import _expand_event_id
 from .exceptions import InvalidDefinition
 from .i18n import _
@@ -215,6 +216,7 @@ class State:
         invoke: Any = None,
         donedata: Any = None,
         _callbacks: Any = None,
+        data: dict[str, Any] | None = None,
     ):
         self.name = name
         self.value = value
@@ -227,6 +229,11 @@ class State:
         self.is_active = False
         self._id: str = ""
         self._callbacks = _callbacks
+        if data is not None and (
+            not isinstance(data, dict) or any(not isinstance(k, str) for k in data)
+        ):
+            raise InvalidDefinition("'data' must be a mapping with string keys.")
+        self.data = dict(data or {})
         self.parent: "State | None" = None
         self.transitions = TransitionList()
         self._specs = CallbackSpecList()
