@@ -156,6 +156,7 @@ class Layer(LayerProtocol):
         self._parent: "GroupMixinProtocol | None" = parent
         self._record = record
         self._channels = channels
+        self._blend_ranges = BlendRanges.from_raw(record.blending_ranges)
 
     @property
     def name(self) -> str:
@@ -248,13 +249,14 @@ class Layer(LayerProtocol):
 
     @property
     def blend_ranges(self) -> BlendRanges:
-        return BlendRanges.from_raw(self._record.blending_ranges)
+        return self._blend_ranges
 
     @blend_ranges.setter
     def blend_ranges(self, value: BlendRanges) -> None:
         if self._psd is not None:
             self._psd._mark_updated()
         value.apply_to_raw(self._record.blending_ranges)
+        self._blend_ranges = value
 
     @opacity.setter
     def opacity(self, value: int) -> None:
