@@ -649,7 +649,14 @@ export class CrudService<T extends CrudEntity> {
     for (const order of Array.isArray(orderBy) ? orderBy : [orderBy]) {
       for (const field of Object.keys(order || {})) {
         const rawDirection = String(order[field]).toLowerCase();
-        const direction = rawDirection.startsWith('desc') ? 'desc' : 'asc';
+        let direction: 'asc' | 'desc';
+        if (rawDirection === '1' || rawDirection.startsWith('asc')) {
+          direction = 'asc';
+        } else if (rawDirection === '-1' || rawDirection.startsWith('desc')) {
+          direction = 'desc';
+        } else {
+          throw new BadRequestException('Invalid orderBy direction');
+        }
         entries.push({ field, direction });
       }
     }
