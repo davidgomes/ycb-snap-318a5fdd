@@ -190,6 +190,21 @@ type BuiltinNode struct {
 	Threshold *int   // Used by optimizer for count() early termination.
 }
 
+// TryNode represents a try/catch/finally expression.
+type TryNode struct {
+	base
+	Body           Node
+	Catch          Node
+	CatchName      string
+	CatchSubstring string
+	Finally        Node
+}
+
+// RetryNode retries the body of the enclosing try expression.
+type RetryNode struct {
+	base
+}
+
 // PredicateNode represents a predicate.
 // Example:
 //

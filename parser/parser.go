@@ -44,6 +44,7 @@ var predicates = map[string]struct {
 	"groupBy":       {[]arg{expr, predicate}},
 	"sortBy":        {[]arg{expr, predicate, expr | optional}},
 	"reduce":        {[]arg{expr, predicate, expr | optional}},
+	"try":           {[]arg{expr, expr}},
 }
 
 // Parser is a reusable parser. The zero value is ready for use.
@@ -471,6 +472,21 @@ func (p *Parser) parseSecondary() Node {
 				return nil
 			}
 			return node
+		case "retry":
+			if p.current.Is(Bracket, "(") {
+				node = p.parseCall(token, []Node{}, true)
+			} else {
+				node = p.createNode(&RetryNode{}, token.Location)
+			}
+		case "try":
+			if p.current.Is(Bracket, "{") {
+				return p.parseTryBlock(token)
+			}
+			if p.current.Is(Bracket, "(") {
+				node = p.parseCall(token, []Node{}, true)
+			} else {
+				node = p.createNode(&IdentifierNode{Value: token.Value}, token.Location)
+			}
 		default:
 			if p.current.Is(Bracket, "(") {
 				node = p.parseCall(token, []Node{}, true)
@@ -548,6 +564,54 @@ func (p *Parser) parseSecondary() Node {
 	}
 
 	return p.parsePostfixExpression(node)
+}
+
+func (p *Parser) parseTryBlock(token Token) Node {
+	p.expect(Bracket, "{")
+	body := p.parseSequenceExpression()
+	p.expect(Bracket, "}")
+
+	p.expect(Identifier, "catch")
+	name := ""
+	if p.current.Is(Identifier) && p.current.Value != "is" {
+		name = p.current.Value
+		p.next()
+	}
+
+	substring := ""
+	if p.current.Is(Identifier, "is") {
+		p.next()
+		if !p.current.Is(String) {
+			p.error("expected string literal after is")
+			return nil
+		}
+		substring = p.current.Value
+		p.next()
+		if name == "" {
+			p.error("catch filter requires an error name")
+			return nil
+		}
+	}
+
+	p.expect(Bracket, "{")
+	catch := p.parseSequenceExpression()
+	p.expect(Bracket, "}")
+
+	var finally Node
+	if p.current.Is(Identifier, "finally") {
+		p.next()
+		p.expect(Bracket, "{")
+		finally = p.parseSequenceExpression()
+		p.expect(Bracket, "}")
+	}
+
+	return p.createNode(&TryNode{
+		Body:           body,
+		Catch:          catch,
+		CatchName:      name,
+		CatchSubstring: substring,
+		Finally:        finally,
+	}, token.Location)
 }
 
 func (p *Parser) toIntegerNode(number int64) Node {

@@ -190,6 +190,25 @@ func (n *BuiltinNode) String() string {
 	return fmt.Sprintf("%s(%s)", n.Name, strings.Join(arguments, ", "))
 }
 
+func (n *TryNode) String() string {
+	result := fmt.Sprintf("try { %s } catch", n.Body.String())
+	if n.CatchName != "" {
+		result += " " + n.CatchName
+	}
+	if n.CatchSubstring != "" {
+		result += fmt.Sprintf(" is %q", n.CatchSubstring)
+	}
+	result += fmt.Sprintf(" { %s }", n.Catch.String())
+	if n.Finally != nil {
+		result += fmt.Sprintf(" finally { %s }", n.Finally.String())
+	}
+	return result
+}
+
+func (n *RetryNode) String() string {
+	return "retry"
+}
+
 func (n *PredicateNode) String() string {
 	return n.Node.String()
 }

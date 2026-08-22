@@ -49,7 +49,25 @@ type VM struct {
 	scopePool    []Scope // Pre-allocated pool of Scope values; grows as needed but never shrinks
 	scopePoolIdx int     // Current index into scopePool for allocation
 	currScope    *Scope  // Cached pointer to the current scope (optimization)
+	tryFrames    []tryFrame
 }
+
+type tryFrame struct {
+	spec    *runtime.TryBlock
+	stack   int
+	phase   tryPhase
+	err     error
+	result  any
+	retries int
+}
+
+type tryPhase byte
+
+const (
+	tryBody tryPhase = iota
+	tryCatch
+	tryFinally
+)
 
 func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 	defer func() {
@@ -81,6 +99,7 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 	}
 	vm.scopePoolIdx = 0 // Reset pool index for reuse
 	vm.currScope = nil
+	vm.tryFrames = vm.tryFrames[:0]
 	if len(vm.Variables) < program.variables {
 		vm.Variables = make([]any, program.variables)
 	}
@@ -92,566 +111,656 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 
 	var fnArgsBuf []any
 
-	for vm.ip < len(program.Bytecode) {
-		if debug && vm.debug {
-			<-vm.step
-		}
-
-		op := program.Bytecode[vm.ip]
-		arg := program.Arguments[vm.ip]
-		vm.ip += 1
-
-		switch op {
-
-		case OpInvalid:
-			panic("invalid opcode")
-
-		case OpPush:
-			vm.push(program.Constants[arg])
-
-		case OpInt:
-			vm.push(arg)
-
-		case OpPop:
-			vm.pop()
-
-		case OpStore:
-			vm.Variables[arg] = vm.pop()
-
-		case OpLoadVar:
-			vm.push(vm.Variables[arg])
-
-		case OpLoadConst:
-			vm.push(runtime.Fetch(env, program.Constants[arg]))
-
-		case OpLoadField:
-			vm.push(runtime.FetchField(env, program.Constants[arg].(*runtime.Field)))
-
-		case OpLoadFast:
-			vm.push(env.(map[string]any)[program.Constants[arg].(string)])
-
-		case OpLoadMethod:
-			vm.push(runtime.FetchMethod(env, program.Constants[arg].(*runtime.Method)))
-
-		case OpLoadFunc:
-			vm.push(program.functions[arg])
-
-		case OpFetch:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.Fetch(a, b))
-
-		case OpFetchField:
-			a := vm.pop()
-			vm.push(runtime.FetchField(a, program.Constants[arg].(*runtime.Field)))
-
-		case OpLoadEnv:
-			vm.push(env)
-
-		case OpMethod:
-			a := vm.pop()
-			vm.push(runtime.FetchMethod(a, program.Constants[arg].(*runtime.Method)))
-
-		case OpTrue:
-			vm.push(true)
-
-		case OpFalse:
-			vm.push(false)
-
-		case OpNil:
-			vm.push(nil)
-
-		case OpNegate:
-			v := runtime.Negate(vm.pop())
-			vm.push(v)
-
-		case OpNot:
-			v := vm.pop().(bool)
-			vm.push(!v)
-
-		case OpEqual:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.Equal(a, b))
-
-		case OpEqualInt:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(a.(int) == b.(int))
-
-		case OpEqualString:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(a.(string) == b.(string))
-
-		case OpJump:
-			if arg < 0 {
-				panic("negative jump offset is invalid")
-			}
-			vm.ip += arg
-
-		case OpJumpIfTrue:
-			if arg < 0 {
-				panic("negative jump offset is invalid")
-			}
-			if vm.current().(bool) {
-				vm.ip += arg
-			}
-
-		case OpJumpIfFalse:
-			if arg < 0 {
-				panic("negative jump offset is invalid")
-			}
-			if !vm.current().(bool) {
-				vm.ip += arg
-			}
-
-		case OpJumpIfNil:
-			if arg < 0 {
-				panic("negative jump offset is invalid")
-			}
-			if runtime.IsNil(vm.current()) {
-				vm.ip += arg
-			}
-
-		case OpJumpIfNotNil:
-			if arg < 0 {
-				panic("negative jump offset is invalid")
-			}
-			if !runtime.IsNil(vm.current()) {
-				vm.ip += arg
-			}
-
-		case OpJumpIfEnd:
-			if arg < 0 {
-				panic("negative jump offset is invalid")
-			}
-			if vm.currScope.Index >= vm.currScope.Len {
-				vm.ip += arg
-			}
-
-		case OpJumpBackward:
-			vm.ip -= arg
-
-		case OpIn:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.In(a, b))
-
-		case OpLess:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.Less(a, b))
-
-		case OpMore:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.More(a, b))
-
-		case OpLessOrEqual:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.LessOrEqual(a, b))
-
-		case OpMoreOrEqual:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.MoreOrEqual(a, b))
-
-		case OpAdd:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.Add(a, b))
-
-		case OpSubtract:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.Subtract(a, b))
-
-		case OpMultiply:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.Multiply(a, b))
-
-		case OpDivide:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.Divide(a, b))
-
-		case OpModulo:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.Modulo(a, b))
-
-		case OpExponent:
-			b := vm.pop()
-			a := vm.pop()
-			vm.push(runtime.Exponent(a, b))
-
-		case OpRange:
-			b := vm.pop()
-			a := vm.pop()
-			min := runtime.ToInt(a)
-			max := runtime.ToInt(b)
-			size := max - min + 1
-			if size <= 0 {
-				size = 0
-			}
-			vm.memGrow(uint(size))
-			vm.push(runtime.MakeRange(min, max))
-
-		case OpMatches:
-			b := vm.pop()
-			a := vm.pop()
-			if runtime.IsNil(a) || runtime.IsNil(b) {
-				vm.push(false)
-				break
-			}
-			var match bool
-			var err error
-			if s, ok := a.(string); ok {
-				match, err = regexp.MatchString(b.(string), s)
-			} else {
-				match, err = regexp.Match(b.(string), a.([]byte))
-			}
-			if err != nil {
-				panic(err)
-			}
-			vm.push(match)
-
-		case OpMatchesConst:
-			a := vm.pop()
-			if runtime.IsNil(a) {
-				vm.push(false)
-				break
-			}
-			r := program.Constants[arg].(*regexp.Regexp)
-			if s, ok := a.(string); ok {
-				vm.push(r.MatchString(s))
-			} else {
-				vm.push(r.Match(a.([]byte)))
-			}
-
-		case OpContains:
-			b := vm.pop()
-			a := vm.pop()
-			if runtime.IsNil(a) || runtime.IsNil(b) {
-				vm.push(false)
-				break
-			}
-			vm.push(strings.Contains(a.(string), b.(string)))
-
-		case OpStartsWith:
-			b := vm.pop()
-			a := vm.pop()
-			if runtime.IsNil(a) || runtime.IsNil(b) {
-				vm.push(false)
-				break
-			}
-			vm.push(strings.HasPrefix(a.(string), b.(string)))
-
-		case OpEndsWith:
-			b := vm.pop()
-			a := vm.pop()
-			if runtime.IsNil(a) || runtime.IsNil(b) {
-				vm.push(false)
-				break
-			}
-			vm.push(strings.HasSuffix(a.(string), b.(string)))
-
-		case OpSlice:
-			from := vm.pop()
-			to := vm.pop()
-			node := vm.pop()
-			vm.push(runtime.Slice(node, from, to))
-
-		case OpCall:
-			v := vm.pop()
-			if v == nil {
-				panic("invalid operation: cannot call nil")
-			}
-			fn := reflect.ValueOf(v)
-			if fn.Kind() != reflect.Func {
-				panic(fmt.Sprintf("invalid operation: cannot call non-function of type %T", v))
-			}
-			fnType := fn.Type()
-			size := arg
-			isVariadic := fnType.IsVariadic()
-			numIn := fnType.NumIn()
-			if isVariadic {
-				if size < numIn-1 {
-					panic(fmt.Sprintf("invalid number of arguments: expected at least %d, got %d", numIn-1, size))
+	for {
+		var recovered any
+		func() {
+			defer func() {
+				recovered = recover()
+			}()
+			for vm.ip < len(program.Bytecode) {
+				if debug && vm.debug {
+					<-vm.step
 				}
-			} else {
-				if size != numIn {
-					panic(fmt.Sprintf("invalid number of arguments: expected %d, got %d", numIn, size))
-				}
-			}
-			in := make([]reflect.Value, size)
-			for i := int(size) - 1; i >= 0; i-- {
-				param := vm.pop()
-				if param == nil {
-					var inType reflect.Type
-					if isVariadic && i >= numIn-1 {
-						inType = fnType.In(numIn - 1).Elem()
-					} else {
-						inType = fnType.In(i)
+
+				op := program.Bytecode[vm.ip]
+				arg := program.Arguments[vm.ip]
+				vm.ip += 1
+
+				switch op {
+
+				case OpInvalid:
+					panic("invalid opcode")
+
+				case OpPush:
+					vm.push(program.Constants[arg])
+
+				case OpInt:
+					vm.push(arg)
+
+				case OpPop:
+					vm.pop()
+
+				case OpStore:
+					vm.Variables[arg] = vm.pop()
+
+				case OpLoadVar:
+					vm.push(vm.Variables[arg])
+
+				case OpLoadConst:
+					vm.push(runtime.Fetch(env, program.Constants[arg]))
+
+				case OpLoadField:
+					vm.push(runtime.FetchField(env, program.Constants[arg].(*runtime.Field)))
+
+				case OpLoadFast:
+					vm.push(env.(map[string]any)[program.Constants[arg].(string)])
+
+				case OpLoadMethod:
+					vm.push(runtime.FetchMethod(env, program.Constants[arg].(*runtime.Method)))
+
+				case OpLoadFunc:
+					vm.push(program.functions[arg])
+
+				case OpFetch:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.Fetch(a, b))
+
+				case OpFetchField:
+					a := vm.pop()
+					vm.push(runtime.FetchField(a, program.Constants[arg].(*runtime.Field)))
+
+				case OpLoadEnv:
+					vm.push(env)
+
+				case OpMethod:
+					a := vm.pop()
+					vm.push(runtime.FetchMethod(a, program.Constants[arg].(*runtime.Method)))
+
+				case OpTrue:
+					vm.push(true)
+
+				case OpFalse:
+					vm.push(false)
+
+				case OpNil:
+					vm.push(nil)
+
+				case OpNegate:
+					v := runtime.Negate(vm.pop())
+					vm.push(v)
+
+				case OpNot:
+					v := vm.pop().(bool)
+					vm.push(!v)
+
+				case OpEqual:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.Equal(a, b))
+
+				case OpEqualInt:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(a.(int) == b.(int))
+
+				case OpEqualString:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(a.(string) == b.(string))
+
+				case OpJump:
+					if arg < 0 {
+						panic("negative jump offset is invalid")
 					}
-					in[i] = reflect.Zero(inType)
-				} else {
-					in[i] = reflect.ValueOf(param)
-				}
-			}
-			out := fn.Call(in)
-			if len(out) == 2 && out[1].Type() == errorType && !out[1].IsNil() {
-				panic(out[1].Interface().(error))
-			}
-			vm.push(out[0].Interface())
+					vm.ip += arg
 
-		case OpCall0:
-			out, err := program.functions[arg]()
-			if err != nil {
-				panic(err)
-			}
-			vm.push(out)
+				case OpJumpIfTrue:
+					if arg < 0 {
+						panic("negative jump offset is invalid")
+					}
+					if vm.current().(bool) {
+						vm.ip += arg
+					}
 
-		case OpCall1:
-			var args []any
-			args, fnArgsBuf = vm.getArgsForFunc(fnArgsBuf, program, 1)
-			out, err := program.functions[arg](args...)
-			if err != nil {
-				panic(err)
-			}
-			vm.push(out)
+				case OpJumpIfFalse:
+					if arg < 0 {
+						panic("negative jump offset is invalid")
+					}
+					if !vm.current().(bool) {
+						vm.ip += arg
+					}
 
-		case OpCall2:
-			var args []any
-			args, fnArgsBuf = vm.getArgsForFunc(fnArgsBuf, program, 2)
-			out, err := program.functions[arg](args...)
-			if err != nil {
-				panic(err)
-			}
-			vm.push(out)
+				case OpJumpIfNil:
+					if arg < 0 {
+						panic("negative jump offset is invalid")
+					}
+					if runtime.IsNil(vm.current()) {
+						vm.ip += arg
+					}
 
-		case OpCall3:
-			var args []any
-			args, fnArgsBuf = vm.getArgsForFunc(fnArgsBuf, program, 3)
-			out, err := program.functions[arg](args...)
-			if err != nil {
-				panic(err)
-			}
-			vm.push(out)
+				case OpJumpIfNotNil:
+					if arg < 0 {
+						panic("negative jump offset is invalid")
+					}
+					if !runtime.IsNil(vm.current()) {
+						vm.ip += arg
+					}
 
-		case OpCallN:
-			fn := vm.pop().(Function)
-			var args []any
-			args, fnArgsBuf = vm.getArgsForFunc(fnArgsBuf, program, arg)
-			out, err := fn(args...)
-			if err != nil {
-				panic(err)
-			}
-			vm.push(out)
+				case OpJumpIfEnd:
+					if arg < 0 {
+						panic("negative jump offset is invalid")
+					}
+					if vm.currScope.Index >= vm.currScope.Len {
+						vm.ip += arg
+					}
 
-		case OpCallFast:
-			fn := vm.pop().(func(...any) any)
-			var args []any
-			args, fnArgsBuf = vm.getArgsForFunc(fnArgsBuf, program, arg)
-			vm.push(fn(args...))
+				case OpJumpBackward:
+					vm.ip -= arg
 
-		case OpCallSafe:
-			fn := vm.pop().(SafeFunction)
-			var args []any
-			args, fnArgsBuf = vm.getArgsForFunc(fnArgsBuf, program, arg)
-			out, mem, err := fn(args...)
-			if err != nil {
-				panic(err)
-			}
-			vm.memGrow(mem)
-			vm.push(out)
+				case OpIn:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.In(a, b))
 
-		case OpCallTyped:
-			vm.push(vm.call(vm.pop(), arg))
+				case OpLess:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.Less(a, b))
 
-		case OpCallBuiltin1:
-			vm.push(builtin.Builtins[arg].Fast(vm.pop()))
+				case OpMore:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.More(a, b))
 
-		case OpArray:
-			size := vm.pop().(int)
-			vm.memGrow(uint(size))
-			array := make([]any, size)
-			for i := size - 1; i >= 0; i-- {
-				array[i] = vm.pop()
-			}
-			vm.push(array)
+				case OpLessOrEqual:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.LessOrEqual(a, b))
 
-		case OpMap:
-			size := vm.pop().(int)
-			vm.memGrow(uint(size))
-			m := make(map[string]any)
-			for i := size - 1; i >= 0; i-- {
-				value := vm.pop()
-				key := vm.pop()
-				m[key.(string)] = value
-			}
-			vm.push(m)
+				case OpMoreOrEqual:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.MoreOrEqual(a, b))
 
-		case OpLen:
-			vm.push(runtime.Len(vm.current()))
+				case OpAdd:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.Add(a, b))
 
-		case OpCast:
-			switch arg {
-			case 0:
-				vm.push(runtime.ToInt(vm.pop()))
-			case 1:
-				vm.push(runtime.ToInt64(vm.pop()))
-			case 2:
-				vm.push(runtime.ToFloat64(vm.pop()))
-			case 3:
-				vm.push(runtime.ToBool(vm.pop()))
-			}
+				case OpSubtract:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.Subtract(a, b))
 
-		case OpDeref:
-			a := vm.pop()
-			vm.push(deref.Interface(a))
+				case OpMultiply:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.Multiply(a, b))
 
-		case OpIncrementIndex:
-			vm.currScope.Index++
+				case OpDivide:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.Divide(a, b))
 
-		case OpDecrementIndex:
-			vm.currScope.Index--
+				case OpModulo:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.Modulo(a, b))
 
-		case OpIncrementCount:
-			vm.currScope.Count++
+				case OpExponent:
+					b := vm.pop()
+					a := vm.pop()
+					vm.push(runtime.Exponent(a, b))
 
-		case OpGetIndex:
-			vm.push(vm.currScope.Index)
+				case OpRange:
+					b := vm.pop()
+					a := vm.pop()
+					min := runtime.ToInt(a)
+					max := runtime.ToInt(b)
+					size := max - min + 1
+					if size <= 0 {
+						size = 0
+					}
+					vm.memGrow(uint(size))
+					vm.push(runtime.MakeRange(min, max))
 
-		case OpGetCount:
-			vm.push(vm.currScope.Count)
+				case OpMatches:
+					b := vm.pop()
+					a := vm.pop()
+					if runtime.IsNil(a) || runtime.IsNil(b) {
+						vm.push(false)
+						break
+					}
+					var match bool
+					var err error
+					if s, ok := a.(string); ok {
+						match, err = regexp.MatchString(b.(string), s)
+					} else {
+						match, err = regexp.Match(b.(string), a.([]byte))
+					}
+					if err != nil {
+						panic(err)
+					}
+					vm.push(match)
 
-		case OpGetLen:
-			vm.push(vm.currScope.Len)
+				case OpMatchesConst:
+					a := vm.pop()
+					if runtime.IsNil(a) {
+						vm.push(false)
+						break
+					}
+					r := program.Constants[arg].(*regexp.Regexp)
+					if s, ok := a.(string); ok {
+						vm.push(r.MatchString(s))
+					} else {
+						vm.push(r.Match(a.([]byte)))
+					}
 
-		case OpGetAcc:
-			vm.push(vm.currScope.Acc)
+				case OpContains:
+					b := vm.pop()
+					a := vm.pop()
+					if runtime.IsNil(a) || runtime.IsNil(b) {
+						vm.push(false)
+						break
+					}
+					vm.push(strings.Contains(a.(string), b.(string)))
 
-		case OpSetAcc:
-			vm.currScope.Acc = vm.pop()
+				case OpStartsWith:
+					b := vm.pop()
+					a := vm.pop()
+					if runtime.IsNil(a) || runtime.IsNil(b) {
+						vm.push(false)
+						break
+					}
+					vm.push(strings.HasPrefix(a.(string), b.(string)))
 
-		case OpSetIndex:
-			vm.currScope.Index = vm.pop().(int)
+				case OpEndsWith:
+					b := vm.pop()
+					a := vm.pop()
+					if runtime.IsNil(a) || runtime.IsNil(b) {
+						vm.push(false)
+						break
+					}
+					vm.push(strings.HasSuffix(a.(string), b.(string)))
 
-		case OpPointer:
-			vm.push(vm.currScope.Item())
+				case OpSlice:
+					from := vm.pop()
+					to := vm.pop()
+					node := vm.pop()
+					vm.push(runtime.Slice(node, from, to))
 
-		case OpThrow:
-			panic(vm.pop().(error))
+				case OpCall:
+					v := vm.pop()
+					if v == nil {
+						panic("invalid operation: cannot call nil")
+					}
+					fn := reflect.ValueOf(v)
+					if fn.Kind() != reflect.Func {
+						panic(fmt.Sprintf("invalid operation: cannot call non-function of type %T", v))
+					}
+					fnType := fn.Type()
+					size := arg
+					isVariadic := fnType.IsVariadic()
+					numIn := fnType.NumIn()
+					if isVariadic {
+						if size < numIn-1 {
+							panic(fmt.Sprintf("invalid number of arguments: expected at least %d, got %d", numIn-1, size))
+						}
+					} else {
+						if size != numIn {
+							panic(fmt.Sprintf("invalid number of arguments: expected %d, got %d", numIn, size))
+						}
+					}
+					in := make([]reflect.Value, size)
+					for i := int(size) - 1; i >= 0; i-- {
+						param := vm.pop()
+						if param == nil {
+							var inType reflect.Type
+							if isVariadic && i >= numIn-1 {
+								inType = fnType.In(numIn - 1).Elem()
+							} else {
+								inType = fnType.In(i)
+							}
+							in[i] = reflect.Zero(inType)
+						} else {
+							in[i] = reflect.ValueOf(param)
+						}
+					}
+					out := fn.Call(in)
+					if len(out) == 2 && out[1].Type() == errorType && !out[1].IsNil() {
+						panic(out[1].Interface().(error))
+					}
+					vm.push(out[0].Interface())
 
-		case OpCreate:
-			switch arg {
-			case 1:
-				vm.push(make(groupBy))
-			case 2:
-				scope := vm.currScope
-				var desc bool
-				order, ok := vm.pop().(string)
-				if !ok {
-					panic("sortBy order argument must be a string")
-				}
-				switch order {
-				case "asc":
-					desc = false
-				case "desc":
-					desc = true
+				case OpCall0:
+					out, err := program.functions[arg]()
+					if err != nil {
+						panic(err)
+					}
+					vm.push(out)
+
+				case OpCall1:
+					var args []any
+					args, fnArgsBuf = vm.getArgsForFunc(fnArgsBuf, program, 1)
+					out, err := program.functions[arg](args...)
+					if err != nil {
+						panic(err)
+					}
+					vm.push(out)
+
+				case OpCall2:
+					var args []any
+					args, fnArgsBuf = vm.getArgsForFunc(fnArgsBuf, program, 2)
+					out, err := program.functions[arg](args...)
+					if err != nil {
+						panic(err)
+					}
+					vm.push(out)
+
+				case OpCall3:
+					var args []any
+					args, fnArgsBuf = vm.getArgsForFunc(fnArgsBuf, program, 3)
+					out, err := program.functions[arg](args...)
+					if err != nil {
+						panic(err)
+					}
+					vm.push(out)
+
+				case OpCallN:
+					fn := vm.pop().(Function)
+					var args []any
+					args, fnArgsBuf = vm.getArgsForFunc(fnArgsBuf, program, arg)
+					out, err := fn(args...)
+					if err != nil {
+						panic(err)
+					}
+					vm.push(out)
+
+				case OpCallFast:
+					fn := vm.pop().(func(...any) any)
+					var args []any
+					args, fnArgsBuf = vm.getArgsForFunc(fnArgsBuf, program, arg)
+					vm.push(fn(args...))
+
+				case OpCallSafe:
+					fn := vm.pop().(SafeFunction)
+					var args []any
+					args, fnArgsBuf = vm.getArgsForFunc(fnArgsBuf, program, arg)
+					out, mem, err := fn(args...)
+					if err != nil {
+						panic(err)
+					}
+					vm.memGrow(mem)
+					vm.push(out)
+
+				case OpCallTyped:
+					vm.push(vm.call(vm.pop(), arg))
+
+				case OpCallBuiltin1:
+					vm.push(builtin.Builtins[arg].Fast(vm.pop()))
+
+				case OpArray:
+					size := vm.pop().(int)
+					vm.memGrow(uint(size))
+					array := make([]any, size)
+					for i := size - 1; i >= 0; i-- {
+						array[i] = vm.pop()
+					}
+					vm.push(array)
+
+				case OpMap:
+					size := vm.pop().(int)
+					vm.memGrow(uint(size))
+					m := make(map[string]any)
+					for i := size - 1; i >= 0; i-- {
+						value := vm.pop()
+						key := vm.pop()
+						m[key.(string)] = value
+					}
+					vm.push(m)
+
+				case OpLen:
+					vm.push(runtime.Len(vm.current()))
+
+				case OpCast:
+					switch arg {
+					case 0:
+						vm.push(runtime.ToInt(vm.pop()))
+					case 1:
+						vm.push(runtime.ToInt64(vm.pop()))
+					case 2:
+						vm.push(runtime.ToFloat64(vm.pop()))
+					case 3:
+						vm.push(runtime.ToBool(vm.pop()))
+					}
+
+				case OpDeref:
+					a := vm.pop()
+					vm.push(deref.Interface(a))
+
+				case OpIncrementIndex:
+					vm.currScope.Index++
+
+				case OpDecrementIndex:
+					vm.currScope.Index--
+
+				case OpIncrementCount:
+					vm.currScope.Count++
+
+				case OpGetIndex:
+					vm.push(vm.currScope.Index)
+
+				case OpGetCount:
+					vm.push(vm.currScope.Count)
+
+				case OpGetLen:
+					vm.push(vm.currScope.Len)
+
+				case OpGetAcc:
+					vm.push(vm.currScope.Acc)
+
+				case OpSetAcc:
+					vm.currScope.Acc = vm.pop()
+
+				case OpSetIndex:
+					vm.currScope.Index = vm.pop().(int)
+
+				case OpPointer:
+					vm.push(vm.currScope.Item())
+
+				case OpThrow:
+					panic(runtime.AsError(vm.pop()))
+
+				case OpThrowCustom:
+					panic(&runtime.CustomError{Message: fmt.Sprintf("%v", vm.pop())})
+
+				case OpCreate:
+					switch arg {
+					case 1:
+						vm.push(make(groupBy))
+					case 2:
+						scope := vm.currScope
+						var desc bool
+						order, ok := vm.pop().(string)
+						if !ok {
+							panic("sortBy order argument must be a string")
+						}
+						switch order {
+						case "asc":
+							desc = false
+						case "desc":
+							desc = true
+						default:
+							panic("unknown order, use asc or desc")
+						}
+						vm.push(&runtime.SortBy{
+							Desc:   desc,
+							Array:  make([]any, 0, scope.Len),
+							Values: make([]any, 0, scope.Len),
+						})
+					default:
+						panic(fmt.Sprintf("unknown OpCreate argument %v", arg))
+					}
+
+				case OpGroupBy:
+					scope := vm.currScope
+					key := vm.pop()
+					if key != nil && !reflect.TypeOf(key).Comparable() {
+						panic(fmt.Sprintf("cannot use %T as a key for groupBy: type is not comparable", key))
+					}
+					scope.Acc.(groupBy)[key] = append(scope.Acc.(groupBy)[key], scope.Item())
+
+				case OpSortBy:
+					scope := vm.currScope
+					value := vm.pop()
+					sortable := scope.Acc.(*runtime.SortBy)
+					sortable.Array = append(sortable.Array, scope.Item())
+					sortable.Values = append(sortable.Values, value)
+
+				case OpSort:
+					scope := vm.currScope
+					sortable := scope.Acc.(*runtime.SortBy)
+					sort.Sort(sortable)
+					vm.memGrow(uint(scope.Len))
+					vm.push(sortable.Array)
+
+				case OpProfileStart:
+					span := program.Constants[arg].(*Span)
+					span.start = time.Now()
+
+				case OpProfileEnd:
+					span := program.Constants[arg].(*Span)
+					span.Duration += time.Since(span.start).Nanoseconds()
+
+				case OpBegin:
+					a := vm.pop()
+					s := vm.allocScope()
+					switch v := a.(type) {
+					case []int:
+						s.Ints = v
+						s.Len = len(v)
+					case []float64:
+						s.Floats = v
+						s.Len = len(v)
+					case []string:
+						s.Strings = v
+						s.Len = len(v)
+					case []any:
+						s.Anys = v
+						s.Len = len(v)
+					default:
+						s.Array = reflect.ValueOf(a)
+						s.Len = s.Array.Len()
+					}
+					vm.Scopes = append(vm.Scopes, s)
+					vm.currScope = s
+
+				case OpAnd:
+					a := vm.pop()
+					b := vm.pop()
+					vm.push(a.(bool) && b.(bool))
+
+				case OpOr:
+					a := vm.pop()
+					b := vm.pop()
+					vm.push(a.(bool) || b.(bool))
+
+				case OpTry:
+					spec := program.Constants[arg].(*runtime.TryBlock)
+					vm.tryFrames = append(vm.tryFrames, tryFrame{
+						spec:  spec,
+						stack: len(vm.Stack),
+						phase: tryBody,
+					})
+
+				case OpTrySuccess, OpCatchSuccess:
+					frame := &vm.tryFrames[len(vm.tryFrames)-1]
+					frame.result = vm.pop()
+					vm.Stack = vm.Stack[:frame.stack]
+					if frame.spec.HasFinally {
+						frame.phase = tryFinally
+						vm.ip = frame.spec.FinallyStart
+					} else {
+						vm.tryFrames = vm.tryFrames[:len(vm.tryFrames)-1]
+						vm.push(frame.result)
+						vm.ip = frame.spec.End
+					}
+
+				case OpCatch:
+					frame := &vm.tryFrames[len(vm.tryFrames)-1]
+					if frame.spec.CatchSubstring != "" &&
+						!strings.Contains(frame.err.Error(), frame.spec.CatchSubstring) {
+						vm.Stack = vm.Stack[:frame.stack]
+						if frame.spec.HasFinally {
+							frame.phase = tryFinally
+							vm.ip = frame.spec.FinallyStart
+						} else {
+							err := frame.err
+							vm.tryFrames = vm.tryFrames[:len(vm.tryFrames)-1]
+							panic(err)
+						}
+						break
+					}
+					frame.phase = tryCatch
+					vm.Stack = vm.Stack[:frame.stack]
+					vm.push(frame.err)
+
+				case OpFinally:
+					// The marker makes the finally body a distinct recovery phase.
+
+				case OpFinallyEnd:
+					frame := &vm.tryFrames[len(vm.tryFrames)-1]
+					vm.pop() // discard the cleanup result
+					vm.Stack = vm.Stack[:frame.stack]
+					pending := frame.err
+					result := frame.result
+					end := frame.spec.End
+					vm.tryFrames = vm.tryFrames[:len(vm.tryFrames)-1]
+					if pending != nil {
+						panic(pending)
+					}
+					vm.push(result)
+					vm.ip = end
+
+				case OpRetry:
+					if len(vm.tryFrames) == 0 ||
+						vm.tryFrames[len(vm.tryFrames)-1].phase != tryCatch {
+						panic("retry is only valid inside a catch block")
+					}
+					frame := &vm.tryFrames[len(vm.tryFrames)-1]
+					frame.retries++
+					if frame.retries > 3 {
+						panic(runtime.RetryExhaustedError{})
+					}
+					frame.phase = tryBody
+					frame.err = nil
+					vm.Stack = vm.Stack[:frame.stack]
+					vm.ip = frame.spec.BodyStart
+
+				case OpEnd:
+					vm.Scopes = vm.Scopes[:len(vm.Scopes)-1]
+					if len(vm.Scopes) > 0 {
+						vm.currScope = vm.Scopes[len(vm.Scopes)-1]
+					} else {
+						vm.currScope = nil
+					}
+
 				default:
-					panic("unknown order, use asc or desc")
+					panic(fmt.Sprintf("unknown bytecode %#x", op))
 				}
-				vm.push(&runtime.SortBy{
-					Desc:   desc,
-					Array:  make([]any, 0, scope.Len),
-					Values: make([]any, 0, scope.Len),
-				})
-			default:
-				panic(fmt.Sprintf("unknown OpCreate argument %v", arg))
+
+				if debug && vm.debug {
+					vm.curr <- vm.ip
+				}
 			}
+		}()
 
-		case OpGroupBy:
-			scope := vm.currScope
-			key := vm.pop()
-			if key != nil && !reflect.TypeOf(key).Comparable() {
-				panic(fmt.Sprintf("cannot use %T as a key for groupBy: type is not comparable", key))
-			}
-			scope.Acc.(groupBy)[key] = append(scope.Acc.(groupBy)[key], scope.Item())
-
-		case OpSortBy:
-			scope := vm.currScope
-			value := vm.pop()
-			sortable := scope.Acc.(*runtime.SortBy)
-			sortable.Array = append(sortable.Array, scope.Item())
-			sortable.Values = append(sortable.Values, value)
-
-		case OpSort:
-			scope := vm.currScope
-			sortable := scope.Acc.(*runtime.SortBy)
-			sort.Sort(sortable)
-			vm.memGrow(uint(scope.Len))
-			vm.push(sortable.Array)
-
-		case OpProfileStart:
-			span := program.Constants[arg].(*Span)
-			span.start = time.Now()
-
-		case OpProfileEnd:
-			span := program.Constants[arg].(*Span)
-			span.Duration += time.Since(span.start).Nanoseconds()
-
-		case OpBegin:
-			a := vm.pop()
-			s := vm.allocScope()
-			switch v := a.(type) {
-			case []int:
-				s.Ints = v
-				s.Len = len(v)
-			case []float64:
-				s.Floats = v
-				s.Len = len(v)
-			case []string:
-				s.Strings = v
-				s.Len = len(v)
-			case []any:
-				s.Anys = v
-				s.Len = len(v)
-			default:
-				s.Array = reflect.ValueOf(a)
-				s.Len = s.Array.Len()
-			}
-			vm.Scopes = append(vm.Scopes, s)
-			vm.currScope = s
-
-		case OpAnd:
-			a := vm.pop()
-			b := vm.pop()
-			vm.push(a.(bool) && b.(bool))
-
-		case OpOr:
-			a := vm.pop()
-			b := vm.pop()
-			vm.push(a.(bool) || b.(bool))
-
-		case OpEnd:
-			vm.Scopes = vm.Scopes[:len(vm.Scopes)-1]
-			if len(vm.Scopes) > 0 {
-				vm.currScope = vm.Scopes[len(vm.Scopes)-1]
-			} else {
-				vm.currScope = nil
-			}
-
-		default:
-			panic(fmt.Sprintf("unknown bytecode %#x", op))
+		if recovered == nil {
+			break
 		}
-
-		if debug && vm.debug {
-			vm.curr <- vm.ip
+		if !vm.handlePanic(recovered) {
+			panic(recovered)
 		}
 	}
 
@@ -665,6 +774,34 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 	}
 
 	return nil, nil
+}
+
+func (vm *VM) handlePanic(value any) bool {
+	err := runtime.AsError(value)
+	for len(vm.tryFrames) > 0 {
+		last := len(vm.tryFrames) - 1
+		frame := &vm.tryFrames[last]
+		vm.Stack = vm.Stack[:frame.stack]
+
+		switch frame.phase {
+		case tryBody:
+			frame.err = err
+			frame.phase = tryCatch
+			vm.ip = frame.spec.CatchStart
+			return true
+		case tryCatch:
+			if frame.spec.HasFinally {
+				frame.err = err
+				frame.phase = tryFinally
+				vm.ip = frame.spec.FinallyStart
+				return true
+			}
+			vm.tryFrames = vm.tryFrames[:last]
+		case tryFinally:
+			vm.tryFrames = vm.tryFrames[:last]
+		}
+	}
+	return false
 }
 
 func (vm *VM) push(value any) {

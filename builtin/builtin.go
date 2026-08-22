@@ -1078,4 +1078,28 @@ var Builtins = []*Function{
 		},
 		Types: types(new(func(int) int)),
 	},
+	{
+		Name:  "throw",
+		Types: types(new(func(any) any)),
+		Validate: func(args []reflect.Type) (reflect.Type, error) {
+			if len(args) != 1 {
+				return anyType, fmt.Errorf("invalid number of arguments (expected 1, got %d)", len(args))
+			}
+			return anyType, nil
+		},
+	},
+	{
+		Name:  "errtype",
+		Fast:  runtime.ErrorType,
+		Types: types(new(func(any) string)),
+		Deref: func(i int, arg reflect.Type) bool {
+			return false
+		},
+		Validate: func(args []reflect.Type) (reflect.Type, error) {
+			if len(args) != 1 {
+				return anyType, fmt.Errorf("invalid number of arguments (expected 1, got %d)", len(args))
+			}
+			return reflect.TypeOf(""), nil
+		},
+	},
 }

@@ -77,6 +77,7 @@ const (
 	OpSetIndex
 	OpPointer
 	OpThrow
+	OpThrowCustom
 	OpCreate
 	OpGroupBy
 	OpSortBy
@@ -86,5 +87,12 @@ const (
 	OpBegin
 	OpAnd
 	OpOr
+	OpTry
+	OpTrySuccess
+	OpCatch
+	OpCatchSuccess
+	OpFinally
+	OpFinallyEnd
+	OpRetry
 	OpEnd // This opcode must be at the end of this list.
 )

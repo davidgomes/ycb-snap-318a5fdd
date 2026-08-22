@@ -46,6 +46,13 @@ func Walk(node *Node, v Visitor) {
 		for i := range n.Arguments {
 			Walk(&n.Arguments[i], v)
 		}
+	case *TryNode:
+		Walk(&n.Body, v)
+		Walk(&n.Catch, v)
+		if n.Finally != nil {
+			Walk(&n.Finally, v)
+		}
+	case *RetryNode:
 	case *PredicateNode:
 		Walk(&n.Node, v)
 	case *PointerNode:

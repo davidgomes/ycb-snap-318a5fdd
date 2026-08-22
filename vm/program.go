@@ -354,6 +354,9 @@ func (program *Program) DisassembleWriter(w io.Writer) {
 		case OpThrow:
 			code("OpThrow")
 
+		case OpThrowCustom:
+			code("OpThrowCustom")
+
 		case OpCreate:
 			argument("OpCreate")
 
@@ -380,6 +383,27 @@ func (program *Program) DisassembleWriter(w io.Writer) {
 
 		case OpOr:
 			code("OpOr")
+
+		case OpTry:
+			constant("OpTry")
+
+		case OpTrySuccess:
+			constant("OpTrySuccess")
+
+		case OpCatch:
+			constant("OpCatch")
+
+		case OpCatchSuccess:
+			constant("OpCatchSuccess")
+
+		case OpFinally:
+			constant("OpFinally")
+
+		case OpFinallyEnd:
+			constant("OpFinallyEnd")
+
+		case OpRetry:
+			code("OpRetry")
 
 		case OpEnd:
 			code("OpEnd")

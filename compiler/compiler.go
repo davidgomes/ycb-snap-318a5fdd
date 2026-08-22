@@ -272,6 +272,10 @@ func (c *compiler) compile(node ast.Node) {
 		c.CallNode(n)
 	case *ast.BuiltinNode:
 		c.BuiltinNode(n)
+	case *ast.TryNode:
+		c.TryNode(n)
+	case *ast.RetryNode:
+		c.emit(OpRetry)
 	case *ast.PredicateNode:
 		c.PredicateNode(n)
 	case *ast.PointerNode:
@@ -839,6 +843,15 @@ func (c *compiler) CallNode(node *ast.CallNode) {
 
 func (c *compiler) BuiltinNode(node *ast.BuiltinNode) {
 	switch node.Name {
+	case "try":
+		c.compileTry(node.Arguments[0], node.Arguments[1], "", "")
+		return
+
+	case "throw":
+		c.compile(node.Arguments[0])
+		c.emit(OpThrowCustom)
+		return
+
 	case "all":
 		c.compile(node.Arguments[0])
 		c.derefInNeeded(node.Arguments[0])
@@ -1178,6 +1191,44 @@ func (c *compiler) BuiltinNode(node *ast.BuiltinNode) {
 	}
 
 	panic(fmt.Sprintf("unknown builtin %v", node.Name))
+}
+
+func (c *compiler) TryNode(node *ast.TryNode) {
+	c.compileTry(node.Body, node.Catch, node.CatchName, node.CatchSubstring, node.Finally)
+}
+
+func (c *compiler) compileTry(body, catch ast.Node, catchName, catchSubstring string, finally ...ast.Node) {
+	spec := &runtime.TryBlock{CatchSubstring: catchSubstring}
+	specIndex := c.addConstant(spec)
+
+	c.emit(OpTry, specIndex)
+	spec.BodyStart = len(c.bytecode)
+	c.compile(body)
+	c.emit(OpTrySuccess, specIndex)
+
+	spec.CatchStart = len(c.bytecode)
+	c.emit(OpCatch, specIndex)
+	if catchName == "" {
+		c.emit(OpPop)
+	} else {
+		index := c.addVariable(catchName)
+		c.emit(OpStore, index)
+		c.beginScope(catchName, index)
+	}
+	c.compile(catch)
+	if catchName != "" {
+		c.endScope()
+	}
+	c.emit(OpCatchSuccess, specIndex)
+
+	if len(finally) > 0 && finally[0] != nil {
+		spec.HasFinally = true
+		spec.FinallyStart = len(c.bytecode)
+		c.emit(OpFinally, specIndex)
+		c.compile(finally[0])
+		c.emit(OpFinallyEnd, specIndex)
+	}
+	spec.End = len(c.bytecode)
 }
 
 func (c *compiler) emitCond(body func()) {

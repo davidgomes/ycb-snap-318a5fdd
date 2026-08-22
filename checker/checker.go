@@ -25,6 +25,7 @@ var (
 	timeType      = reflect.TypeOf(time.Time{})
 	durationType  = reflect.TypeOf(time.Duration(0))
 	byteSliceType = reflect.TypeOf([]byte(nil))
+	errorType     = reflect.TypeOf((*error)(nil)).Elem()
 
 	anyTypeSlice = []reflect.Type{anyType}
 )
@@ -213,6 +214,10 @@ func (v *Checker) visit(node ast.Node) Nature {
 		nt = v.callNode(n)
 	case *ast.BuiltinNode:
 		nt = v.builtinNode(n)
+	case *ast.TryNode:
+		nt = v.tryNode(n)
+	case *ast.RetryNode:
+		nt = Nature{}
 	case *ast.PredicateNode:
 		nt = v.predicateNode(n)
 	case *ast.PointerNode:
@@ -694,6 +699,23 @@ func (v *Checker) callNode(node *ast.CallNode) Nature {
 
 func (v *Checker) builtinNode(node *ast.BuiltinNode) Nature {
 	switch node.Name {
+	case "try":
+		if len(node.Arguments) != 2 {
+			return v.error(node, "invalid number of arguments (expected 2, got %d)", len(node.Arguments))
+		}
+		body := v.visit(node.Arguments[0])
+		fallback := v.visit(node.Arguments[1])
+		if body.Nil {
+			return fallback
+		}
+		if fallback.Nil || body.AssignableTo(fallback) {
+			return body
+		}
+		if fallback.AssignableTo(body) {
+			return fallback
+		}
+		return Nature{}
+
 	case "all", "none", "any", "one":
 		collection := v.visit(node.Arguments[0])
 		collection = collection.Deref(&v.config.NtCache)
@@ -943,6 +965,36 @@ func (v *Checker) builtinNode(node *ast.BuiltinNode) Nature {
 	}
 
 	return v.error(node, "unknown builtin %v", node.Name)
+}
+
+func (v *Checker) tryNode(node *ast.TryNode) Nature {
+	body := v.visit(node.Body)
+
+	if node.CatchName != "" {
+		v.varScopes = append(v.varScopes, varScope{
+			name:   node.CatchName,
+			nature: v.config.NtCache.FromType(errorType),
+		})
+	}
+	catch := v.visit(node.Catch)
+	if node.CatchName != "" {
+		v.varScopes = v.varScopes[:len(v.varScopes)-1]
+	}
+
+	if node.Finally != nil {
+		_ = v.visit(node.Finally)
+	}
+
+	if body.Nil {
+		return catch
+	}
+	if catch.Nil || body.AssignableTo(catch) {
+		return body
+	}
+	if catch.AssignableTo(body) {
+		return catch
+	}
+	return Nature{}
 }
 
 func (v *Checker) begin(collectionNature Nature, vars ...varScope) {
