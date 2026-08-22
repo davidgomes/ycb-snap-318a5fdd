@@ -64,7 +64,7 @@ const parseTracks = (value: string | undefined): Track[] => {
 	return value
 		.trim()
 		.split(/\s+/)
-		.map(parseTrack)
+		.map(value => parseTrack(value))
 		.filter((track): track is Track => track !== undefined);
 };
 
@@ -80,31 +80,22 @@ const parsePlacement = (
 		.split('/')
 		.map(part => Number(part.trim()));
 
-	if (
-		parts.length > 2 ||
-		!Number.isInteger(parts[0]) ||
-		parts[0]! < 1
-	) {
+	if (parts.length > 2 || !Number.isInteger(parts[0]) || parts[0]! < 1) {
 		return;
 	}
 
 	const start = parts[0]! - 1;
 	const end = parts[1] === undefined ? start + 1 : parts[1]! - 1;
 
-	return Number.isInteger(end) && end > start
-		? {start, end}
-		: undefined;
+	return Number.isInteger(end) && end > start ? {start, end} : undefined;
 };
 
 const isHidden = (node: DOMElement): boolean =>
 	node.style.display === 'none' ||
 	node.yogaNode?.getDisplay() === Yoga.DISPLAY_NONE;
 
-const isOccupied = (
-	cells: boolean[][],
-	row: number,
-	column: number,
-): boolean => cells[row]?.[column] ?? false;
+const isOccupied = (cells: boolean[][], row: number, column: number): boolean =>
+	cells[row]?.[column] ?? false;
 
 const fits = (
 	cells: boolean[][],
@@ -169,8 +160,7 @@ const findPlacement = (
 
 	for (let currentRow = firstRow; currentRow < lastRow; currentRow++) {
 		const columnStart = row === undefined ? firstColumn : 0;
-		const columnLimit =
-			column === undefined ? columnCount : column + 1;
+		const columnLimit = column === undefined ? columnCount : column + 1;
 
 		for (
 			let currentColumn = columnStart;
@@ -189,10 +179,8 @@ const findPlacement = (
 	};
 };
 
-const intrinsicSize = (
-	node: YogaNode,
-	axis: 'width' | 'height',
-): number => (axis === 'width' ? node.getComputedWidth() : node.getComputedHeight());
+const intrinsicSize = (node: YogaNode, axis: 'width' | 'height'): number =>
+	axis === 'width' ? node.getComputedWidth() : node.getComputedHeight();
 
 const getTrackSizes = (
 	tracks: Track[],
@@ -222,7 +210,10 @@ const getTrackSizes = (
 
 	const gapSize = gap * Math.max(0, tracks.length - 1);
 	let freeSpace = Number.isFinite(available)
-		? Math.max(0, available - gapSize - sizes.reduce((sum, size) => sum + size, 0))
+		? Math.max(
+				0,
+				available - gapSize - sizes.reduce((sum, size) => sum + size, 0),
+			)
 		: 0;
 
 	// A fixed maximum in minmax() can grow up to that maximum before flexible
@@ -255,7 +246,8 @@ const getTrackSizes = (
 
 	const totalSize = sizes.reduce((sum, size) => sum + size, 0);
 	const roundedSizes = sizes.map(size => Math.floor(size));
-	let remaining = Math.round(totalSize) - roundedSizes.reduce((sum, size) => sum + size, 0);
+	let remaining =
+		Math.round(totalSize) - roundedSizes.reduce((sum, size) => sum + size, 0);
 
 	const order = sizes
 		.map((size, index) => ({index, fraction: size - Math.floor(size)}))
@@ -276,9 +268,7 @@ const getTrackSizes = (
 const getGridChildren = (node: DOMElement): DOMElement[] =>
 	node.childNodes.filter(
 		(child): child is DOMElement =>
-			child.nodeName !== '#text' &&
-			Boolean(child.yogaNode) &&
-			!isHidden(child),
+			child.nodeName !== '#text' && Boolean(child.yogaNode) && !isHidden(child),
 	);
 
 const getContentOffset = (node: DOMElement, edge: number): number =>
@@ -311,19 +301,20 @@ const layoutGrid = (node: DOMElement): void => {
 	): void => {
 		const rowSpan = item.row ? item.row.end - item.row.start : 1;
 		const columnSpan = item.column ? item.column.end - item.column.start : 1;
-		const placement = item.row && item.column
-			? {
-					row: item.row.start,
-					column: item.column.start,
-				}
-			: findPlacement(
-					cells,
-					item.row?.start,
-					item.column?.start,
-					rowSpan,
-					columnSpan,
-					columns.length,
-				);
+		const placement =
+			item.row && item.column
+				? {
+						row: item.row.start,
+						column: item.column.start,
+					}
+				: findPlacement(
+						cells,
+						item.row?.start,
+						item.column?.start,
+						rowSpan,
+						columnSpan,
+						columns.length,
+					);
 
 		const result = placeChild(
 			item.child,
@@ -381,12 +372,11 @@ const layoutGrid = (node: DOMElement): void => {
 		contentWidth,
 		columnGap,
 	);
-	const columnOffsets = columnSizes.map((_, index) =>
-		getContentOffset(node, Yoga.EDGE_LEFT) +
-		columnSizes
-			.slice(0, index)
-			.reduce((sum, size) => sum + size, 0) +
-		columnGap * index,
+	const columnOffsets = columnSizes.map(
+		(_, index) =>
+			getContentOffset(node, Yoga.EDGE_LEFT) +
+			columnSizes.slice(0, index).reduce((sum, size) => sum + size, 0) +
+			columnGap * index,
 	);
 
 	// Measure children after their grid columns are known so wrapped text
@@ -410,7 +400,9 @@ const layoutGrid = (node: DOMElement): void => {
 		rows,
 		placements,
 		'height',
-		node.style.height === undefined ? Number.POSITIVE_INFINITY : Math.max(0, height - verticalPadding),
+		node.style.height === undefined
+			? Number.POSITIVE_INFINITY
+			: Math.max(0, height - verticalPadding),
 		rowGap,
 	);
 	const rowHeight =
@@ -422,12 +414,11 @@ const layoutGrid = (node: DOMElement): void => {
 		node.yogaNode.setHeight(rowHeight);
 	}
 
-	const rowOffsets = rowSizes.map((_, index) =>
-		getContentOffset(node, Yoga.EDGE_TOP) +
-		rowSizes
-			.slice(0, index)
-			.reduce((sum, size) => sum + size, 0) +
-		rowGap * index,
+	const rowOffsets = rowSizes.map(
+		(_, index) =>
+			getContentOffset(node, Yoga.EDGE_TOP) +
+			rowSizes.slice(0, index).reduce((sum, size) => sum + size, 0) +
+			rowGap * index,
 	);
 
 	for (const placement of placements) {
@@ -444,10 +435,7 @@ const layoutGrid = (node: DOMElement): void => {
 		const childNode = placement.node.yogaNode!;
 		childNode.setWidth(childWidth);
 		childNode.setHeight(childHeight);
-		childNode.setPosition(
-			Yoga.EDGE_LEFT,
-			columnOffsets[placement.column]!,
-		);
+		childNode.setPosition(Yoga.EDGE_LEFT, columnOffsets[placement.column]!);
 		childNode.setPosition(Yoga.EDGE_TOP, rowOffsets[placement.row]!);
 		childNode.calculateLayout(childWidth, childHeight, Yoga.DIRECTION_LTR);
 		placement.node.internal_grid = {
@@ -458,7 +446,11 @@ const layoutGrid = (node: DOMElement): void => {
 		};
 	}
 
-	node.yogaNode.calculateLayout(width, node.yogaNode.getComputedHeight(), Yoga.DIRECTION_LTR);
+	node.yogaNode.calculateLayout(
+		width,
+		node.yogaNode.getComputedHeight(),
+		Yoga.DIRECTION_LTR,
+	);
 	node.internal_grid = {
 		x: node.internal_grid?.x ?? node.yogaNode.getComputedLeft(),
 		y: node.internal_grid?.y ?? node.yogaNode.getComputedTop(),
