@@ -1,0 +1,42 @@
+[package]
+name = "oxvg_path"
+version = "0.0.5"
+edition = "2021"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "../../readme.md"
+keywords = ["svg", "svgo", "path"]
+description = "SVG path parsing, serialization, and minification"
+
+[lints]
+workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["parse", "format", "optimise"]
+format = ["ryu", "itertools"]
+jsonschema = ["schemars", "serde"]
+napi = ["dep:napi", "dep:napi-derive"]
+optimise = ["format", "bitflags"]
+parse = ["dep:oxvg_parse", "bitflags"]
+serde = ["dep:serde"]
+wasm = ["dep:wasm-bindgen", "dep:serde-wasm-bindgen", "dep:tsify"]
+
+[dependencies]
+oxvg_parse = { workspace = true, optional = true }
+bitflags = { workspace = true, optional = true }
+itertools = { workspace = true, optional = true }
+log = { workspace = true }
+napi = { workspace = true, optional = true }
+napi-derive = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde-wasm-bindgen = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+tsify = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+ryu = { version = "1.0.18", optional = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+pretty_assertions = { workspace = true }

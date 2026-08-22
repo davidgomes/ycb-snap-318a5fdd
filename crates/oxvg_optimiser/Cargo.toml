@@ -1,0 +1,87 @@
+[package]
+name = "oxvg_optimiser"
+version = "0.0.5"
+edition = "2021"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "../../readme.md"
+keywords = ["svg", "svgo", "optimisation"]
+description = "The OXVG optimiser is library for optimising SVG documents."
+
+[lints]
+workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["serde"]
+clap = ["dep:clap"]
+serde = ["dep:serde", "dep:serde_json", "dep:serde_with", "oxvg_path/serde"]
+napi = ["dep:napi", "dep:napi-derive", "oxvg_path/napi"]
+wasm = [
+  "serde",
+  "dep:wasm-bindgen",
+  "dep:serde-wasm-bindgen",
+  "dep:tsify",
+  "oxvg_path/wasm",
+]
+
+[dependencies]
+oxvg_ast = { workspace = true, features = [
+  "selectors",
+  "serialize",
+  "visitor",
+] }
+oxvg_collections = { workspace = true }
+oxvg_path = { workspace = true }
+oxvg_serialize = { workspace = true }
+
+anyhow = { workspace = true }
+bitflags = { workspace = true }
+clap = { workspace = true, optional = true }
+cssparser = { workspace = true }
+dashmap = { workspace = true }
+derive_more = { workspace = true }
+derive-where = { workspace = true }
+itertools = { workspace = true }
+serde = { workspace = true, optional = true, features = ["derive"] }
+serde_json = { workspace = true, optional = true }
+serde-wasm-bindgen = { workspace = true, optional = true }
+serde_with = { workspace = true, optional = true }
+lightningcss = { workspace = true }
+log = { workspace = true }
+napi = { workspace = true, optional = true }
+napi-derive = { workspace = true, optional = true }
+parcel_selectors = { version = "0.28" }
+phf = { workspace = true }
+regex = { workspace = true }
+tsify = { workspace = true, optional = true }
+typed-arena = { workspace = true }
+urlencoding = "2.1"
+wasm-bindgen = { workspace = true, optional = true }
+
+[dev-dependencies]
+oxvg_ast = { workspace = true, features = [
+  "selectors",
+  "serialize",
+  "visitor",
+  "roxmltree",
+] }
+
+ctor = { workspace = true }
+criterion = { workspace = true }
+env_logger = { workspace = true }
+insta = { workspace = true }
+roxmltree = { workspace = true }
+
+[[bench]]
+name = "parse"
+harness = false
+
+[[bench]]
+name = "default_jobs"
+harness = false
+
+[[bench]]
+name = "path"
+harness = false

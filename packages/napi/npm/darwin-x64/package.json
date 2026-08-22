@@ -1,0 +1,15 @@
+{
+	"name": "@oxvg/napi-darwin-x64",
+	"version": "0.0.4",
+	"os": ["darwin"],
+	"repository": {
+		"url": "git+https://github.com/noahbald/oxvg.git"
+	},
+	"cpu": ["x64"],
+	"main": "oxvg.darwin-x64.node",
+	"files": ["oxvg.darwin-x64.node"],
+	"license": "MIT",
+	"engines": {
+		"node": ">= 10"
+	}
+}

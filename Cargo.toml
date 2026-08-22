@@ -1,0 +1,107 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "packages/wasm", "packages/napi"]
+
+[workspace.lints.rust]
+missing_docs = { level = "warn" }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Willing to accept lossy conversions
+cast_lossless = "allow"
+# Willing to accept lossy conversions
+cast_possible_truncation = "allow"
+# dbg should only be used for debugging
+dbg_macro = "warn"
+# Not a priority for svgo parity
+float_cmp = "allow"
+# Too noisy and not really an issue
+must_use_candidate = "allow"
+
+[workspace.package]
+authors = ["Noah <noahwbaldwin@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/noahbald/oxvg"
+readme = "readme.md"
+
+[workspace.dependencies]
+oxvg = { path = "crates/oxvg" }
+oxvg_ast = { path = "crates/oxvg_ast", version = ">=0.0" }
+oxvg_collections = { path = "crates/oxvg_collections", version = ">=0.0" }
+oxvg_diagnostics = { path = "crates/oxvg_diagnostics", version = ">=0.0" }
+oxvg_lint = { path = "crates/oxvg_lint", version = ">=0.0" }
+oxvg_optimiser = { path = "crates/oxvg_optimiser", default-features = false, version = ">=0.0" }
+oxvg_path = { path = "crates/oxvg_path", version = ">=0.0" }
+oxvg_parse = { path = "crates/oxvg_parse", version = ">=0.0" }
+oxvg_serialize = { path = "crates/oxvg_serialize", version = ">=0.0" }
+
+anyhow = "1.0"
+bitflags = { version = "2.7.0" }
+bytecount = { version = "0.6" }
+cfg-if = { version = "1.0" }
+clap = { version = "4.5", features = ["derive"] }
+# NOTE: Out of date version used for compatibility with selectors
+# https://github.com/servo/stylo/blob/main/Cargo.toml#L35
+cssparser = "0.34.0"
+cssparser_lightningcss = { package = "cssparser", version = "0.33" }
+dashmap = "6.1"
+derive_more = "2.0"
+derive-where = "1.2"
+getrandom = { version = "0.3" }
+itertools = "0.14"
+lightningcss = { version = "1.0.0-alpha.70", default-features = false, features = [
+  "visitor",
+] }
+log = { version = "0.4" }
+lsp-types = "0.97"
+napi = { version = "3.4", default-features = false, features = ["napi7"] }
+napi-build = { version = "2.2", default-features = false }
+napi-derive = { version = "3.3" }
+paste = "1.0"
+phf = { version = "0.11", features = ["macros"] }
+precomputed-hash = "0.1"
+rayon = "1.11"
+rcdom = { package = "markup5ever_rcdom", version = "0.36.0" }
+regex = "1.11"
+roxmltree = "0.20"
+schemars = { version = "1.2.1" }
+selectors = "0.26"
+serde = "1.0"
+serde_json = "1.0"
+serde-wasm-bindgen = "0.6"
+serde_with = "3.15"
+smallvec = "1.13.2"
+string_cache = "0.9"
+tendril = "0.5"
+tokio = "1.48"
+tower-lsp-server = "0.22"
+tsify = { version = "0.5", default-features = false, features = ["js"] }
+typed-arena = "2.0"
+wasm-bindgen = "=0.2.100"
+xml5ever = "0.38"
+
+# Developer dependencies
+ctor = "0.2"
+criterion = { version = "0.8", features = ["html_reports"] }
+env_logger = "0.11"
+insta = "1.42"
+pretty_assertions = "1.4"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.test.package."*"]
+opt-level = 3
+
+[profile.bench]
+inherits = "release"
+
+[profile.profiling]
+inherits = "release"
+debug = true
+
+[profile.release]
+lto = true
+
+[profile.release.package.oxvg_napi]
+strip = "symbols"
