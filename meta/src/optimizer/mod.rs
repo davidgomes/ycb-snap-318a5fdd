@@ -464,13 +464,7 @@ mod tests {
             vec![OptimizedRule {
                 name: "rule".to_owned(),
                 ty: RuleType::Normal,
-                expr: box_tree!(Choice(
-                    Str(String::from("a")),
-                    Choice(
-                        Str(String::from("b")),
-                        Choice(Str(String::from("c")), Str(String::from("d")))
-                    )
-                )),
+                expr: Range(String::from("a"), String::from("d")),
             }]
         };
 

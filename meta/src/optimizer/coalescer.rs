@@ -256,7 +256,6 @@ mod tests {
         assert_eq!(
             coalesce_expr(expr),
             CharClass(vec![
-                ("A".to_owned(), "A".to_owned()),
                 ("E".to_owned(), "E".to_owned()),
                 ("a".to_owned(), "e".to_owned()),
             ])
