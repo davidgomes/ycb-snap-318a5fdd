@@ -95,6 +95,16 @@ describe('Statements - using declarations', () => {
       ),
       'using',
     );
+    assert.equal(
+      getResourceKind(
+        getForOfStatement(
+          getFunctionBody(
+            parseSource('async function f() { for await (await using resource of resources) {} }', next).body[0],
+          ).body[0],
+        ).left,
+      ),
+      'await using',
+    );
   });
 
   it('requires the appropriate declaration context and shape', () => {
@@ -103,6 +113,10 @@ describe('Statements - using declarations', () => {
     assert.throws(() => parseSource('{ using resource; }', next), /must have an initializer/);
     assert.throws(() => parseSource('{ using { resource } = acquire(); }', next), /cannot have destructuring/);
     assert.throws(() => parseSource('for (using resource in resources) {}', next), /not allowed in for-in/);
+    assert.throws(
+      () => parseSource('switch (value) { case 0: using resource = acquire(); }', next),
+      /Unexpected token/,
+    );
   });
 
   it('treats a line break after using as an identifier boundary', () => {

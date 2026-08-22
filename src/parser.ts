@@ -1089,11 +1089,25 @@ function parseSwitchStatement(
       parser.getToken() !== Token.RightBrace &&
       parser.getToken() !== Token.DefaultKeyword
     ) {
-      consequent.push(
-        parseStatementListItem(parser, context | Context.InSwitch, scope, privateScope, Origin.BlockStatement, {
+      const statement = parseStatementListItem(
+        parser,
+        context | Context.InSwitch,
+        scope,
+        privateScope,
+        Origin.BlockStatement,
+        {
           $: labels,
-        }) as ESTree.Statement,
+        },
       );
+
+      if (
+        statement.type === 'VariableDeclaration' &&
+        (statement.kind === 'using' || statement.kind === 'await using')
+      ) {
+        parser.report(Errors.UnexpectedToken, statement.kind);
+      }
+
+      consequent.push(statement as ESTree.Statement);
     }
 
     cases.push(
