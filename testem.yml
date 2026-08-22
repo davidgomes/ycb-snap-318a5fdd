@@ -1,0 +1,26 @@
+src_files:
+    - lib/**/*.js
+    - tests/*_tests.js
+    - tests/ui/*_tests.js
+    - tests/ci/*_tests.js
+    - tests/support/*.js
+ignore_src_files:
+    - tests/fixtures/**/*.js
+    - tests/space test/*.js
+launchers:
+    All:
+        command: mocha --timeout 3000 tests/*_tests.js tests/*/*_tests.js -R tap
+        protocol: tap
+    Server:
+        command: mocha server_tests.js -R tap
+        protocol: tap
+    UI:
+        command: mocha tests/ui/error_messages_panel_tests.js -R tap
+        protocol: tap
+    CI: 
+        command: mocha --timeout 3000 tests/ci/*_tests.js -R tap
+        protocol: tap
+launch_in_dev:
+    - All
+launch_in_ci:
+    - All
