@@ -1409,6 +1409,13 @@ class FieldUnpackerCodeBlockBuilder:
                 if prefix:
                     key = f"{prefix}{key}"
                 pairs.append((key, child_alias or child_name))
+                if child_alias and child_alias != key:
+                    pairs.append(
+                        (
+                            f"{prefix}{child_alias}" if prefix else child_alias,
+                            child_alias,
+                        )
+                    )
             self.add_line(
                 f"value = {{dst: d[src] for src, dst in {pairs!r} if src in d}} or None"
             )
