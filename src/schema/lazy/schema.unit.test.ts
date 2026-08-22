@@ -89,10 +89,10 @@ describe('lazy schema', () => {
   })
 
   test('finds paths and discriminator schemas through lazy references', () => {
-    const treeSchema: MapSchema_ = new MapSchema_({
+    const treeSchema: MapSchema_ = map({
       value: string({}),
       child: lazy(() => treeSchema).optional()
-    }, {}) as unknown as MapSchema_
+    }) as unknown as MapSchema_
     treeSchema.check()
 
     expect(treeSchema.build(Finder).search('child.value')).toHaveLength(1)
