@@ -246,7 +246,27 @@ export type Styles = {
 	/**
 	Set this property to `none` to hide the element.
 	*/
-	readonly display?: 'flex' | 'none';
+	readonly display?: 'flex' | 'grid' | 'none';
+
+	/**
+	Defines the columns in a grid container.
+	*/
+	readonly gridTemplateColumns?: string;
+
+	/**
+	Defines the rows in a grid container.
+	*/
+	readonly gridTemplateRows?: string;
+
+	/**
+	Places an element in a grid column using a 1-based track index or range.
+	*/
+	readonly gridColumn?: number | string;
+
+	/**
+	Places an element in a grid row using a 1-based track index or range.
+	*/
+	readonly gridRow?: number | string;
 
 	/**
 	Add a border with a specified style. If `borderStyle` is `undefined` (the default), no border will be added.
@@ -687,7 +707,7 @@ const applyDimensionStyles = (node: YogaNode, style: Styles): void => {
 const applyDisplayStyles = (node: YogaNode, style: Styles): void => {
 	if ('display' in style) {
 		node.setDisplay(
-			style.display === 'flex' ? Yoga.DISPLAY_FLEX : Yoga.DISPLAY_NONE,
+			style.display === 'none' ? Yoga.DISPLAY_NONE : Yoga.DISPLAY_FLEX,
 		);
 	}
 };

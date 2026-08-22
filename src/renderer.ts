@@ -35,8 +35,8 @@ const renderer = (node: DOMElement, isScreenReaderEnabled: boolean): Result => {
 		}
 
 		const output = new Output({
-			width: node.yogaNode.getComputedWidth(),
-			height: node.yogaNode.getComputedHeight(),
+			width: node.internal_grid?.width ?? node.yogaNode.getComputedWidth(),
+			height: node.internal_grid?.height ?? node.yogaNode.getComputedHeight(),
 		});
 
 		renderNodeToOutput(node, output, {

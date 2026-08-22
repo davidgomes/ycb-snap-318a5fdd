@@ -1,6 +1,7 @@
 import type {ReactNode} from 'react';
 import Yoga from 'yoga-layout';
 import {LegacyRoot} from 'react-reconciler/constants.js';
+import {applyGridLayouts} from './grid.js';
 import reconciler from './reconciler.js';
 import renderer from './renderer.js';
 import {createNode, type DOMElement} from './dom.js';
@@ -65,6 +66,7 @@ const renderToString = (
 			undefined,
 			Yoga.DIRECTION_LTR,
 		);
+		applyGridLayouts(rootNode);
 	};
 
 	rootNode.onImmediateRender = () => {
