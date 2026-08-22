@@ -465,7 +465,7 @@ class BanditManager:
         totals = self.metrics.data.setdefault("_totals", {})
         totals["cache_hits"] = info["cache_hits"]
         totals["cache_misses"] = info["cache_misses"]
-        # Also expose at the metrics root for JSON consumers.
+        # Top-level copies for JSON consumers that read metrics.cache_hits.
         self.metrics.data["cache_hits"] = info["cache_hits"]
         self.metrics.data["cache_misses"] = info["cache_misses"]
 

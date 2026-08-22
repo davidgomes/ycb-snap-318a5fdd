@@ -83,7 +83,9 @@ class Metrics:
         """Do final aggregation of metrics."""
         c = collections.Counter()
         for fname in self.data:
-            c.update(self.data[fname])
+            value = self.data[fname]
+            if isinstance(value, dict):
+                c.update(value)
         self.data["_totals"] = dict(c)
 
     @staticmethod

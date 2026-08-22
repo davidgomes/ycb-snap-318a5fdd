@@ -26,7 +26,12 @@ class IncrementalCLTests(testtools.TestCase):
             handle.write(UNSAFE_SOURCE)
 
     def _run(self, extra_args, expect_exit=0):
-        argv = ["bandit", "-f", "json"] + extra_args
+        argv = ["bandit"]
+        if "-f" not in extra_args and "--format" not in extra_args:
+            argv.extend(["-f", "json"])
+        if "-o" not in extra_args and "--output" not in extra_args:
+            argv.extend(["-o", os.path.join(self.tempdir, "cli-output.json")])
+        argv.extend(extra_args)
         with mock.patch("sys.argv", argv):
             try:
                 bandit.main()
@@ -104,6 +109,82 @@ class IncrementalCLTests(testtools.TestCase):
         with open(export_path, encoding="utf-8") as handle:
             payload = json.load(handle)
         self.assertIn("format_version", payload)
+
+    def test_verbose_reports_cached_and_scanned(self):
+        output = os.path.join(self.tempdir, "report.json")
+        argv = [
+            "bandit",
+            "-v",
+            "-f",
+            "json",
+            "--incremental",
+            "--cache-dir",
+            self.cache_dir,
+            "-o",
+            output,
+            self.target,
+        ]
+        with mock.patch("sys.argv", argv):
+            with mock.patch("bandit.cli.main.LOG.info") as log_info:
+                try:
+                    bandit.main()
+                except SystemExit:
+                    pass
+                messages = [
+                    str(call.args[0]) for call in log_info.call_args_list
+                ]
+        self.assertTrue(
+            any(
+                "Files cached:" in msg and "Files scanned:" in msg
+                for msg in messages
+            )
+        )
+        self.assertTrue(any("Invalidation reasons" in msg for msg in messages))
+
+    def test_list_cached_files_after_warm(self):
+        self._run(
+            [
+                "--warm-cache",
+                "--cache-dir",
+                self.cache_dir,
+                self.target,
+            ],
+            expect_exit=0,
+        )
+        with mock.patch("bandit.cli.main.print") as mocked_print:
+            self._run(
+                ["--list-cached-files", "--cache-dir", self.cache_dir],
+                expect_exit=0,
+            )
+            printed = [call.args[0] for call in mocked_print.call_args_list]
+        self.assertTrue(any("target.py" in str(path) for path in printed))
+
+    def test_no_incremental_overrides_config(self):
+        cfg = os.path.join(self.tempdir, "bandit.yaml")
+        with open(cfg, "w") as handle:
+            handle.write(
+                "incremental_analysis:\n"
+                "  enabled: true\n"
+                f"  cache_directory: {self.cache_dir}\n"
+                "include:\n"
+                "  - '*.py'\n"
+            )
+        output = os.path.join(self.tempdir, "report.json")
+        self._run(
+            [
+                "-c",
+                cfg,
+                "--no-incremental",
+                "-o",
+                output,
+                self.target,
+            ],
+            expect_exit=1,
+        )
+        with open(output, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.assertEqual(0, payload["cache_info"]["cache_hits"])
+        self.assertEqual(0, payload["cache_info"]["cache_misses"])
 
     def test_warm_cache_implies_incremental_empty_results(self):
         output = os.path.join(self.tempdir, "report.json")
