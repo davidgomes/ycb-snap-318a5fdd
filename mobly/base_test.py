@@ -1186,7 +1186,7 @@ class BaseTestClass:
       self._execution_context.device = None
       self._execution_context.device_id = None
       for test_name, test_method in tests:
-        self.exec_one_test(test_name, test_method)
+        self._exec_test(test_name, test_method)
       self._execution_context.phase = None
       return
     for group, participants in groups.items():
@@ -1212,7 +1212,7 @@ class BaseTestClass:
                   self._execution_context.device_id = device_id
                   self._execution_context.hook_name = test_name
                   try:
-                    return self.exec_one_test(test_name, test_method)
+                    return self._exec_test(test_name, test_method)
                   finally:
                     self._execution_context.phase = None
                 jobs.append(pool.submit(run_one))
@@ -1223,9 +1223,23 @@ class BaseTestClass:
           self._execution_context.device = participants[0][0]
           self._execution_context.device_id = participants[0][1]
           for test_name, test_method in tests:
-            self.exec_one_test(test_name, test_method)
+            self._exec_test(test_name, test_method)
       finally:
         self._run_group_hook('group_teardown', group, participants)
+
+  def _exec_test(self, test_name, test_method):
+    """Executes a test while preserving retry and repeat behavior."""
+    max_consecutive_error = getattr(test_method, ATTR_MAX_CONSEC_ERROR, 0)
+    repeat_count = getattr(test_method, ATTR_REPEAT_CNT, 0)
+    max_retry_count = getattr(test_method, ATTR_MAX_RETRY_CNT, 0)
+    if max_retry_count:
+      self._exec_one_test_with_retry(test_name, test_method, max_retry_count)
+    elif repeat_count:
+      self._exec_one_test_with_repeat(
+          test_name, test_method, repeat_count, max_consecutive_error
+      )
+    else:
+      self.exec_one_test(test_name, test_method)
 
   def run(self, test_names=None):
     """Runs tests within a test class.
