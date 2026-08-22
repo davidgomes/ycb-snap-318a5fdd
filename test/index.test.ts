@@ -506,6 +506,13 @@ describe("ofetch", () => {
   });
 
   it("default fetch options", async () => {
+    fetch.mockResolvedValue(
+      new Response("{}", {
+        headers: {
+          "content-type": "application/json",
+        },
+      })
+    );
     await $fetch("https://jsonplaceholder.typicode.com/todos/1", {});
     expect(fetch).toHaveBeenCalledOnce();
     const options = fetch.mock.calls[0][1];
@@ -513,6 +520,13 @@ describe("ofetch", () => {
       headers: expect.any(Headers),
     });
     fetch.mockReset();
+    fetch.mockResolvedValue(
+      new Response("{}", {
+        headers: {
+          "content-type": "application/json",
+        },
+      })
+    );
     await $fetch("https://jsonplaceholder.typicode.com/todos/1", {
       timeout: 10_000,
     });
