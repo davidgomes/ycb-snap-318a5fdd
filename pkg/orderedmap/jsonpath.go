@@ -924,6 +924,20 @@ func (p *parser) parseQuotedString() (string, error) {
 				b = append(b, '\t')
 			case 'r':
 				b = append(b, '\r')
+			case 'b':
+				b = append(b, '\b')
+			case 'f':
+				b = append(b, '\f')
+			case 'u':
+				if p.i+4 > len(p.path) {
+					return "", p.err(p.i, "invalid unicode escape")
+				}
+				r, err := strconv.ParseUint(p.path[p.i:p.i+4], 16, 16)
+				if err != nil {
+					return "", p.err(p.i, "invalid unicode escape")
+				}
+				p.i += 4
+				b = append(b, string(rune(r))...)
 			default:
 				b = append(b, esc)
 			}
@@ -1200,7 +1214,14 @@ func asMap(v interface{}) (mapView, bool) {
 	}
 	return mapView{
 		get: func(key string) (interface{}, bool) {
-			val := rv.MapIndex(reflect.ValueOf(key))
+			keyValue := reflect.ValueOf(key)
+			if !keyValue.Type().AssignableTo(rv.Type().Key()) {
+				if !keyValue.Type().ConvertibleTo(rv.Type().Key()) {
+					return nil, false
+				}
+				keyValue = keyValue.Convert(rv.Type().Key())
+			}
+			val := rv.MapIndex(keyValue)
 			if !val.IsValid() {
 				return nil, false
 			}
@@ -1221,7 +1242,7 @@ func asArray(v interface{}) ([]interface{}, bool) {
 		return nil, false
 	}
 	rv := reflect.ValueOf(v)
-	if !rv.IsValid() || rv.Kind() != reflect.Slice {
+	if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
 		return nil, false
 	}
 	if rv.Type().Elem().Kind() == reflect.Uint8 {
@@ -1256,7 +1277,7 @@ func lengthOf(v interface{}) (int, bool) {
 		return 0, false
 	}
 	switch rv.Kind() {
-	case reflect.Slice, reflect.Map, reflect.String:
+	case reflect.Array, reflect.Slice, reflect.Map, reflect.String:
 		return rv.Len(), true
 	}
 	return 0, false
@@ -1306,7 +1327,7 @@ func isTruthy(v interface{}) bool {
 	}
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
-	case reflect.Slice, reflect.Map, reflect.String:
+	case reflect.Array, reflect.Slice, reflect.Map, reflect.String:
 		return rv.Len() > 0
 	case reflect.Ptr, reflect.Interface:
 		return !rv.IsNil()
