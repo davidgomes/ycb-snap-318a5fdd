@@ -394,7 +394,8 @@ class Consumer:
 
     def __init__(self, channel, queues=None, no_ack=None, auto_declare=None,
                  callbacks=None, on_decode_error=None, on_message=None,
-                 accept=None, prefetch_count=None, tag_prefix=None):
+                 accept=None, prefetch_count=None, tag_prefix=None,
+                 on_cancel=None):
         self.channel = channel
         self.queues = maybe_list(queues or [])
         self.no_ack = self.no_ack if no_ack is None else no_ack
@@ -403,6 +404,9 @@ class Consumer:
         self.on_message = on_message
         self.tag_prefix = tag_prefix
         self._active_tags = {}
+        self.cancel_notify_callbacks = []
+        if on_cancel is not None:
+            self.cancel_notify_callbacks.append(on_cancel)
         if auto_declare is not None:
             self.auto_declare = auto_declare
         if on_decode_error is not None:
@@ -459,6 +463,11 @@ class Consumer:
             and the :class:`~kombu.Message` instance.
         """
         self.callbacks.append(callback)
+
+    def on_cancel_notify(self, callback):
+        """Register a callback invoked when a consumer is cancelled."""
+        self.cancel_notify_callbacks.append(callback)
+        return self
 
     def __enter__(self):
         self.consume()
@@ -546,6 +555,25 @@ class Consumer:
         if isinstance(queue, Queue):
             name = queue.name
         return name in self._active_tags
+
+    def consuming_from_sac(self, queue):
+        name = queue.name if isinstance(queue, Queue) else queue
+        return (
+            self.consuming_from(name)
+            and self.channel.is_single_active_consumer(name)
+        )
+
+    def is_active_on(self, queue):
+        name = queue.name if isinstance(queue, Queue) else queue
+        tag = self._active_tags.get(name)
+        return tag is not None and self.channel.get_active_consumer(name) == tag
+
+    @property
+    def active_consumer_tags(self):
+        return [
+            tag for queue, tag in self._active_tags.items()
+            if self.channel.get_active_consumer(queue) == tag
+        ]
 
     def purge(self):
         """Purge messages from all queues.
@@ -639,8 +667,16 @@ class Consumer:
         if tag is None:
             tag = self._add_tag(queue, consumer_tag)
             queue.consume(tag, self._receive_callback,
-                          no_ack=no_ack, nowait=nowait)
+                          no_ack=no_ack, nowait=nowait,
+                          on_cancel=self._on_cancel)
         return tag
+
+    def _on_cancel(self, consumer_tag):
+        for callback in list(self.cancel_notify_callbacks):
+            try:
+                callback(consumer_tag)
+            except Exception:
+                pass
 
     def _add_tag(self, queue, consumer_tag=None):
         tag = consumer_tag or '{}{}'.format(

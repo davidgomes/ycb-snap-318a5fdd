@@ -832,6 +832,51 @@ class Queue(MaybeChannelBound):
             expiring_queue = False
         return not expiring_queue and not self.auto_delete
 
+    @property
+    def is_single_active_consumer(self):
+        return bool(
+            (self.queue_arguments or {}).get(
+                'x-single-active-consumer',
+            )
+        )
+
+    @property
+    def consumer_priority(self):
+        try:
+            return int((self.consumer_arguments or {}).get('x-priority', 0))
+        except (TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def with_consumer_priority(cls, name, exchange, priority=0, **kwargs):
+        arguments = dict(kwargs.pop('consumer_arguments', {}) or {})
+        arguments['x-priority'] = priority
+        kwargs['consumer_arguments'] = arguments
+        return cls(name, exchange, **kwargs)
+
+    @classmethod
+    def with_single_active_consumer(
+            cls, name, exchange, durable=True, **kwargs):
+        arguments = dict(kwargs.pop('queue_arguments', {}) or {})
+        arguments['x-single-active-consumer'] = True
+        kwargs['queue_arguments'] = arguments
+        return cls(name, exchange, durable=durable, **kwargs)
+
+    @classmethod
+    def with_priority_and_sac(
+            cls, name, exchange, priority=0, durable=True, **kwargs):
+        queue_arguments = dict(kwargs.pop('queue_arguments', {}) or {})
+        queue_arguments['x-single-active-consumer'] = True
+        consumer_arguments = dict(
+            kwargs.pop('consumer_arguments', {}) or {},
+        )
+        consumer_arguments['x-priority'] = priority
+        kwargs.update(
+            queue_arguments=queue_arguments,
+            consumer_arguments=consumer_arguments,
+        )
+        return cls(name, exchange, durable=durable, **kwargs)
+
     @classmethod
     def from_dict(cls, queue, **options):
         binding_key = options.get('binding_key') or options.get('routing_key')

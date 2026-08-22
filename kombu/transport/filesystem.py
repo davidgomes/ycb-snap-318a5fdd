@@ -346,6 +346,7 @@ class Transport(virtual.Transport):
 
     def __init__(self, client, **kwargs):
         super().__init__(client, **kwargs)
+        self.global_state.clear_consumer_state()
         self.state = self.global_state
 
     def driver_version(self):
