@@ -46,6 +46,14 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		}
 	}
 
+	mergeParent, hasMergeHead, err := w.readMergeHead()
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	if hasMergeHead {
+		opts.Parents = append(opts.Parents, mergeParent)
+	}
+
 	if opts.Amend {
 		head, err := w.r.Head()
 		if err != nil {
@@ -88,7 +96,7 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		previousTree = parentCommit.TreeHash
 	}
 
-	if treeHash == previousTree && !opts.AllowEmptyCommits {
+	if treeHash == previousTree && !opts.AllowEmptyCommits && !hasMergeHead {
 		return plumbing.ZeroHash, ErrEmptyCommit
 	}
 
@@ -97,7 +105,17 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		return plumbing.ZeroHash, err
 	}
 
-	return commit, w.updateHEAD(commit)
+	if err := w.updateHEAD(commit); err != nil {
+		return plumbing.ZeroHash, err
+	}
+
+	if hasMergeHead {
+		if err := w.removeMergeHead(); err != nil {
+			return plumbing.ZeroHash, err
+		}
+	}
+
+	return commit, nil
 }
 
 // CherryPick cherry picks commits and merge them into the worktree based on the selected
