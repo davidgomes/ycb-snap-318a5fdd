@@ -85,7 +85,7 @@ const parsePlacement = (
 	}
 
 	const start = parts[0]! - 1;
-	const end = parts[1] === undefined ? start + 1 : parts[1]! - 1;
+	const end = parts[1] === undefined ? start + 1 : parts[1] - 1;
 
 	return Number.isInteger(end) && end > start ? {start, end} : undefined;
 };
@@ -120,15 +120,16 @@ const fits = (
 };
 
 const occupy = (cells: boolean[][], placement: Placement): void => {
-	for (let row = placement.row; row < placement.rowEnd; row++) {
-		cells[row] ??= [];
+	const {row, rowEnd, column, columnEnd} = placement;
+	for (let currentRow = row; currentRow < rowEnd; currentRow++) {
+		cells[currentRow] ??= [];
 
 		for (
-			let column = placement.column;
-			column < placement.columnEnd;
-			column++
+			let currentColumn = column;
+			currentColumn < columnEnd;
+			currentColumn++
 		) {
-			cells[row]![column] = true;
+			cells[currentRow]![currentColumn] = true;
 		}
 	}
 };
@@ -396,7 +397,7 @@ const layoutGrid = (node: DOMElement): void => {
 		);
 	}
 
-	let rowSizes = getTrackSizes(
+	const rowSizes = getTrackSizes(
 		rows,
 		placements,
 		'height',
@@ -435,8 +436,8 @@ const layoutGrid = (node: DOMElement): void => {
 		const childNode = placement.node.yogaNode!;
 		childNode.setWidth(childWidth);
 		childNode.setHeight(childHeight);
-		childNode.setPosition(Yoga.EDGE_LEFT, columnOffsets[placement.column]!);
-		childNode.setPosition(Yoga.EDGE_TOP, rowOffsets[placement.row]!);
+		childNode.setPosition(Yoga.EDGE_LEFT, columnOffsets[placement.column]);
+		childNode.setPosition(Yoga.EDGE_TOP, rowOffsets[placement.row]);
 		childNode.calculateLayout(childWidth, childHeight, Yoga.DIRECTION_LTR);
 		placement.node.internal_grid = {
 			x: columnOffsets[placement.column]!,
