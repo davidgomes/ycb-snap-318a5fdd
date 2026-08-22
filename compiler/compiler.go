@@ -848,9 +848,17 @@ func (c *compiler) BuiltinNode(node *ast.BuiltinNode) {
 		return
 
 	case "throw":
+		if len(node.Arguments) != 1 {
+			panic(fmt.Sprintf("invalid number of arguments for throw (expected 1, got %d)", len(node.Arguments)))
+		}
 		c.compile(node.Arguments[0])
 		c.emit(OpThrowCustom)
 		return
+
+	case "errtype":
+		if len(node.Arguments) != 1 {
+			panic(fmt.Sprintf("invalid number of arguments for errtype (expected 1, got %d)", len(node.Arguments)))
+		}
 
 	case "all":
 		c.compile(node.Arguments[0])
