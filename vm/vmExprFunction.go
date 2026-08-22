@@ -253,7 +253,14 @@ func (runInfo *runInfoStruct) makeCallArgs(rt reflect.Type, isRunVMFunction bool
 	if rt.IsVariadic() {
 		fixedIn--
 	}
-	if isRunVMFunction && len(defaults) > 0 && numExprs < fixedIn {
+	hasDefaults := false
+	for _, defaultExpr := range defaults {
+		if defaultExpr != nil {
+			hasDefaults = true
+			break
+		}
+	}
+	if isRunVMFunction && hasDefaults && numExprs < fixedIn {
 		for i := numExprs; i < fixedIn; i++ {
 			if i >= len(defaults) || defaults[i] == nil {
 				runInfo.err = newStringError(callExpr, fmt.Sprintf("function wants %v arguments but received %v", numIn, numExprs))

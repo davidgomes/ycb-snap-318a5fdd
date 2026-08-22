@@ -575,6 +575,7 @@ type Lexer struct {
 	varargParam      bool
 	paramDefaults    []ast.Expr
 	functionDefaults map[ast.Position][]ast.Expr
+	invalidDefault   bool
 }
 
 // Lex scans the token and literals.
@@ -589,14 +590,12 @@ func (l *Lexer) Lex(lval *yySymType) int {
 
 	if l.inParams {
 		if tok == IDENT {
-			if l.seenParamDefault {
-				l.e = &Error{Message: "invalid default argument declaration", Pos: pos}
-			}
 			l.lastParam = true
 			l.lastParamDefault = false
 			l.paramDefaults = append(l.paramDefaults, nil)
 		} else if tok == '=' && l.lastParam {
 			if l.varargParam {
+				l.invalidDefault = true
 				l.e = &Error{Message: "invalid default argument declaration", Pos: pos}
 				tok, lit, pos = l.skipDefault()
 			} else {
@@ -609,8 +608,16 @@ func (l *Lexer) Lex(lval *yySymType) int {
 				}
 			}
 			if tok == ',' {
+				if l.seenParamDefault && l.lastParam && !l.lastParamDefault && !l.varargParam {
+					l.invalidDefault = true
+					l.e = &Error{Message: "invalid default argument declaration", Pos: pos}
+				}
 				l.lastParam = false
 			} else if tok == ')' {
+				if l.seenParamDefault && l.lastParam && !l.lastParamDefault && !l.varargParam {
+					l.invalidDefault = true
+					l.e = &Error{Message: "invalid default argument declaration", Pos: pos}
+				}
 				l.inParams = false
 				l.functionDefaults[l.funcPosition] = l.paramDefaults
 				l.paramDefaults = nil
@@ -618,10 +625,18 @@ func (l *Lexer) Lex(lval *yySymType) int {
 		} else if tok == VARARG {
 			l.varargParam = true
 		} else if tok == ')' {
+			if l.seenParamDefault && l.lastParam && !l.lastParamDefault && !l.varargParam {
+				l.invalidDefault = true
+				l.e = &Error{Message: "invalid default argument declaration", Pos: pos}
+			}
 			l.inParams = false
 			l.functionDefaults[l.funcPosition] = l.paramDefaults
 			l.paramDefaults = nil
 		} else if tok == ',' {
+			if l.seenParamDefault && l.lastParam && !l.lastParamDefault && !l.varargParam {
+				l.invalidDefault = true
+				l.e = &Error{Message: "invalid default argument declaration", Pos: pos}
+			}
 			l.lastParam = false
 		}
 	}
@@ -702,12 +717,17 @@ func parseDefault(src string) (ast.Expr, *Error) {
 	if exprStmt, ok := stmt.(*ast.ExprStmt); ok {
 		return exprStmt.Expr, nil
 	}
+	if stmts, ok := stmt.(*ast.StmtsStmt); ok && len(stmts.Stmts) == 1 {
+		if exprStmt, ok := stmts.Stmts[0].(*ast.ExprStmt); ok {
+			return exprStmt.Expr, nil
+		}
+	}
 	return nil, &Error{Message: "invalid default argument declaration"}
 }
 
 // Error sets parse error.
 func (l *Lexer) Error(msg string) {
-	if l.e != nil {
+	if l.invalidDefault {
 		return
 	}
 	l.e = &Error{Message: msg, Pos: l.pos, Fatal: false}
