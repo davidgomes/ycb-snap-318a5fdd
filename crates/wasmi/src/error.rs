@@ -23,7 +23,13 @@ use wat::Error as WatError;
 #[derive(Debug)]
 pub struct Error {
     /// The underlying kind of the error and its specific information.
-    kind: Box<ErrorKind>,
+    inner: Box<ErrorInner>,
+}
+
+#[derive(Debug)]
+struct ErrorInner {
+    kind: ErrorKind,
+    coredump: Option<Box<[u8]>>,
 }
 
 #[test]
@@ -36,7 +42,10 @@ impl Error {
     /// Creates a new [`Error`] from the [`ErrorKind`].
     fn from_kind(kind: ErrorKind) -> Self {
         Self {
-            kind: Box::new(kind),
+            inner: Box::new(ErrorInner {
+                kind,
+                coredump: None,
+            }),
         }
     }
 
@@ -73,7 +82,12 @@ impl Error {
 
     /// Returns the [`ErrorKind`] of the [`Error`].
     pub fn kind(&self) -> &ErrorKind {
-        &self.kind
+        &self.inner.kind
+    }
+
+    /// Returns the Wasm coredump generated for this error, if any.
+    pub fn coredump(&self) -> Option<&[u8]> {
+        self.inner.coredump.as_deref()
     }
 
     /// Returns a reference to [`TrapCode`] if [`Error`] is a [`TrapCode`].
@@ -96,7 +110,7 @@ impl Error {
     where
         T: HostError,
     {
-        self.kind
+        self.inner.kind
             .as_host()
             .and_then(<dyn HostError + 'static>::downcast_ref)
     }
@@ -109,7 +123,7 @@ impl Error {
     where
         T: HostError,
     {
-        self.kind
+        self.inner.kind
             .as_host_mut()
             .and_then(<dyn HostError + 'static>::downcast_mut)
     }
@@ -122,7 +136,7 @@ impl Error {
     where
         T: HostError,
     {
-        self.kind
+        self.inner.kind
             .into_host()
             .and_then(|error| error.downcast().ok())
             .map(|boxed| *boxed)
@@ -140,13 +154,26 @@ impl Error {
                 | ErrorKind::Fuel(FuelError::OutOfFuel { .. })
         )
     }
+
+    /// Returns `true` if this error represents a Wasm trap.
+    pub(crate) fn is_wasm_trap(&self) -> bool {
+        matches!(
+            self.as_trap_code(),
+            Some(trap_code) if !matches!(trap_code, TrapCode::OutOfFuel)
+        )
+    }
+
+    /// Attaches a Wasm coredump to this error.
+    pub(crate) fn attach_coredump(&mut self, coredump: Box<[u8]>) {
+        self.inner.coredump = Some(coredump);
+    }
 }
 
 impl core::error::Error for Error {}
 
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(&self.kind, f)
+        Display::fmt(&self.inner.kind, f)
     }
 }
 

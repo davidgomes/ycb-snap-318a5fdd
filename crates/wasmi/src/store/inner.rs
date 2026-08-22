@@ -1,4 +1,5 @@
 use crate::{
+    coredump::FrameSnapshot,
     DataSegmentEntity,
     ElementSegment,
     Engine,
@@ -26,6 +27,7 @@ use crate::{
         id::StoreId,
     },
 };
+use alloc::vec::Vec;
 use core::fmt::Debug;
 
 type StoreArena<T> = Arena<RawHandle<T>, <T as Handle>::Entity>;
@@ -61,6 +63,8 @@ pub struct StoreInner {
     engine: Engine,
     /// The fuel of the [`StoreInner`].
     pub(super) fuel: Fuel,
+    /// Snapshots of Wasm frames suspended while calling host functions.
+    coredump_frames: Vec<Vec<FrameSnapshot>>,
 }
 
 impl StoreInner {
@@ -82,6 +86,7 @@ impl StoreInner {
             elems: Arena::new(),
             extern_objects: Arena::new(),
             fuel,
+            coredump_frames: Vec::new(),
         }
     }
 
@@ -139,6 +144,42 @@ impl StoreInner {
     /// Returns the number of memories allocated to the [`StoreInner`].
     pub fn len_memories(&self) -> usize {
         self.memories.len()
+    }
+
+    /// Returns all instances and their entities in allocation order.
+    pub(crate) fn coredump_instances(&self) -> impl Iterator<Item = (Instance, &InstanceEntity)> {
+        self.instances
+            .iter()
+            .map(|(key, entity)| (Instance::from_raw(self.id.wrap(key)), entity))
+    }
+
+    /// Returns all memories in allocation order.
+    pub(crate) fn coredump_memories(&self) -> impl Iterator<Item = Memory> {
+        self.memories
+            .iter()
+            .map(|(key, _)| Memory::from_raw(self.id.wrap(key)))
+    }
+
+    /// Returns all globals in allocation order.
+    pub(crate) fn coredump_globals(&self) -> impl Iterator<Item = Global> {
+        self.globals
+            .iter()
+            .map(|(key, _)| Global::from_raw(self.id.wrap(key)))
+    }
+
+    /// Adds a snapshot of the currently executing Wasm frames.
+    pub(crate) fn push_coredump_frames(&mut self, frames: Vec<FrameSnapshot>) {
+        self.coredump_frames.push(frames);
+    }
+
+    /// Removes the most recently added suspended Wasm frame snapshot.
+    pub(crate) fn pop_coredump_frames(&mut self) {
+        let _ = self.coredump_frames.pop();
+    }
+
+    /// Returns suspended Wasm frame snapshots from innermost to outermost.
+    pub(crate) fn coredump_frames(&self) -> impl DoubleEndedIterator<Item = &FrameSnapshot> {
+        self.coredump_frames.iter().rev().flat_map(|frames| frames.iter())
     }
 
     /// Unwraps the given [`Stored<T>`] reference and returns the `T`.

@@ -99,6 +99,7 @@ pub mod tests;
 #[macro_use]
 mod handle;
 
+mod coredump;
 mod engine;
 mod error;
 mod func;

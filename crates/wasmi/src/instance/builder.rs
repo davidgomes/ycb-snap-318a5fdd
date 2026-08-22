@@ -18,6 +18,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 /// A module instance entity builder.
 #[derive(Debug)]
 pub struct InstanceEntityBuilder {
+    module: crate::module::ModuleHeader,
     func_types: Arc<[DedupFuncType]>,
     tables: Vec<Table>,
     funcs: Vec<Func>,
@@ -58,6 +59,7 @@ impl InstanceEntityBuilder {
             }
         }
         Self {
+            module: module.header().clone(),
             func_types: module.func_types_cloned(),
             tables: vec_with_capacity_exact(len_tables),
             funcs: vec_with_capacity_exact(len_funcs),
@@ -186,6 +188,7 @@ impl InstanceEntityBuilder {
     pub fn finish(self) -> InstanceEntity {
         InstanceEntity {
             initialized: true,
+            module: Some(self.module),
             func_types: self.func_types,
             tables: self.tables.into(),
             funcs: self.funcs.into(),

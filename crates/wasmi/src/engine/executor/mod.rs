@@ -33,6 +33,7 @@ use crate::{
         executor::handler::{init_host_func_call, init_wasm_func_call},
     },
     ir::SlotSpan,
+    store::PrunedStore,
 };
 
 mod handler;
@@ -58,11 +59,23 @@ impl EngineInner {
         Results: LiftFromCells,
     {
         let mut stack = self.stacks.lock().reuse_or_new();
-        let value = EngineExecutor::new(&self.code_map, &mut stack)
-            .execute_root_func(ctx.store, func, params, results)
-            .map_err(ExecutionOutcome::into_non_resumable)?;
-        self.stacks.lock().recycle(stack);
-        Ok(value)
+        let outcome = EngineExecutor::new(&self.code_map, &mut stack)
+            .execute_root_func(ctx.store, func, params, results);
+        match outcome {
+            Ok(value) => {
+                self.stacks.lock().recycle(stack);
+                Ok(value)
+            }
+            Err(ExecutionOutcome::Error(mut error)) => {
+                self.attach_coredump(ctx.store.prune(), &stack, &mut error);
+                self.stacks.lock().recycle(stack);
+                Err(error)
+            }
+            Err(outcome) => {
+                self.stacks.lock().recycle(stack);
+                Err(outcome.into_non_resumable())
+            }
+        }
     }
 
     /// Executes the given [`Func`] resumably with the given `params` and returns the `results`.
@@ -112,6 +125,8 @@ impl EngineInner {
                 )));
             }
             Err(ExecutionOutcome::Error(error)) => {
+                let mut error = error;
+                self.attach_coredump(store.prune(), &stack, &mut error);
                 self.stacks.lock().recycle(stack);
                 return Err(error);
             }
@@ -155,6 +170,8 @@ impl EngineInner {
                 return Ok(ResumableCallBase::OutOfFuel(invocation));
             }
             Err(ExecutionOutcome::Error(error)) => {
+                let mut error = error;
+                self.attach_coredump(ctx.store.prune(), invocation.common.stack(), &mut error);
                 self.stacks.lock().recycle(invocation.common.take_stack());
                 return Err(error);
             }
@@ -195,12 +212,25 @@ impl EngineInner {
                 return Ok(ResumableCallBase::OutOfFuel(invocation));
             }
             Err(ExecutionOutcome::Error(error)) => {
+                let mut error = error;
+                self.attach_coredump(ctx.store.prune(), invocation.common.stack(), &mut error);
                 self.stacks.lock().recycle(invocation.common.take_stack());
                 return Err(error);
             }
         };
         self.stacks.lock().recycle(invocation.common.take_stack());
         Ok(ResumableCallBase::Finished(results))
+    }
+
+    fn attach_coredump(
+        &self,
+        store: &PrunedStore,
+        stack: &Stack,
+        error: &mut Error,
+    ) {
+        if self.config().get_generate_coredump() && error.is_wasm_trap() {
+            error.attach_coredump(crate::coredump::serialize(store, &self.code_map, stack));
+        }
     }
 }
 

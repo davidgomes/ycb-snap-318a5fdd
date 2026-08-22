@@ -18,6 +18,7 @@ use crate::{
     module::{FuncIdx, ModuleHeader},
 };
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::{
     fmt,
     mem::{self, MaybeUninit},
@@ -802,6 +803,8 @@ pub struct CompiledFuncEntity {
     /// This includes stack slots to store the function local constant values,
     /// function parameters, function locals and dynamically used stack slots.
     len_stack_slots: u16,
+    /// The types of the function parameters and local variables.
+    local_types: Box<[crate::ValType]>,
 }
 
 impl CompiledFuncEntity {
@@ -811,7 +814,7 @@ impl CompiledFuncEntity {
     ///
     /// - If `ops` is empty.
     /// - If `ops` contains more than `i32::MAX` encoded bytes.
-    pub fn new(len_stack_slots: u16, ops: &[u8]) -> Self {
+    pub fn new(len_stack_slots: u16, ops: &[u8], local_types: Vec<crate::ValType>) -> Self {
         let ops: Pin<Box<[u8]>> = Pin::new(ops.into());
         assert!(
             !ops.is_empty(),
@@ -829,6 +832,7 @@ impl CompiledFuncEntity {
         Self {
             ops,
             len_stack_slots,
+            local_types: local_types.into(),
         }
     }
 }
@@ -840,6 +844,8 @@ pub struct CompiledFuncRef<'a> {
     ops: Pin<&'a [u8]>,
     /// The number of stack slots used by the [`EngineFunc`] in total.
     len_stack_slots: u16,
+    /// The types of the function parameters and local variables.
+    local_types: &'a [crate::ValType],
 }
 
 impl<'a> From<&'a CompiledFuncEntity> for CompiledFuncRef<'a> {
@@ -848,6 +854,7 @@ impl<'a> From<&'a CompiledFuncEntity> for CompiledFuncRef<'a> {
         Self {
             ops: func.ops.as_ref(),
             len_stack_slots: func.len_stack_slots,
+            local_types: &func.local_types,
         }
     }
 }
@@ -863,5 +870,11 @@ impl<'a> CompiledFuncRef<'a> {
     #[inline]
     pub fn len_stack_slots(&self) -> u16 {
         self.len_stack_slots
+    }
+
+    /// Returns the types of the function parameters and local variables.
+    #[inline]
+    pub fn local_types(&self) -> &'a [crate::ValType] {
+        &self.local_types
     }
 }

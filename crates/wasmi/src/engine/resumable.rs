@@ -180,6 +180,11 @@ impl ResumableCallCommon {
         &mut self.stack
     }
 
+    /// Returns a shared reference to the underlying [`Stack`].
+    pub(super) fn stack(&self) -> &Stack {
+        &self.stack
+    }
+
     /// Prepares the `outputs` buffer for call resumption.
     ///
     /// # Errors

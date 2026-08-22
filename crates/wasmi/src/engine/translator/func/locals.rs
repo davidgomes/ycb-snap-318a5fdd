@@ -44,6 +44,13 @@ impl LocalsRegistry {
         self.len_locals
     }
 
+    /// Returns the types of all function parameters and local variables.
+    pub fn types(&self) -> Vec<ValType> {
+        (0..self.len())
+            .map(|index| self.ty(LocalIdx(index as u32)))
+            .collect()
+    }
+
     /// The maximum number of local variables per function.
     const LOCAL_VARIABLES_MAX: usize = 30_000;
 

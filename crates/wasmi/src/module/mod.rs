@@ -91,6 +91,11 @@ impl ModuleHeader {
         &self.inner.engine
     }
 
+    /// Returns `true` if both headers belong to the same parsed module.
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Returns the [`FuncType`] at the given index.
     pub fn get_func_type(&self, func_type_idx: FuncTypeIdx) -> &DedupFuncType {
         &self.inner.func_types[func_type_idx.into_u32() as usize]
@@ -258,8 +263,13 @@ impl Module {
         &self.inner.engine
     }
 
+    /// Returns a clone of the immutable module header.
+    pub(crate) fn header(&self) -> ModuleHeader {
+        self.inner.header.clone()
+    }
+
     /// Returns a shared reference to the [`ModuleHeaderInner`].
-    fn module_header(&self) -> &ModuleHeaderInner {
+    pub(crate) fn module_header(&self) -> &ModuleHeaderInner {
         &self.inner.header.inner
     }
 

@@ -1,4 +1,5 @@
 use crate::{
+    coredump::FrameSnapshot,
     Error,
     Func,
     TrapCode,
@@ -582,6 +583,40 @@ impl Stack {
         (ip, sp, instance)
     }
 
+    /// Captures the Wasm frames currently on this stack for coredump generation.
+    pub(crate) fn coredump_frames(&self, code: &CodeMap) -> Vec<FrameSnapshot> {
+        let mut instance = self.frames.instance;
+        let mut frames = Vec::with_capacity(self.frames.frames.len());
+        for frame in self.frames.frames.iter().rev() {
+            let Some(frame_instance) = instance else {
+                break;
+            };
+            let local_types = code
+                .get(None, frame.func)
+                .ok()
+                .map(|func| func.local_types().to_vec())
+                .unwrap_or_default();
+            let mut cells = Vec::new();
+            let mut offset = frame.start.into_inner();
+            for ty in &local_types {
+                let count = usize::from(crate::engine::required_cells_for_ty(*ty));
+                let Some(values) = self.values.cells.get(offset..offset + count) else {
+                    break;
+                };
+                cells.extend_from_slice(values);
+                offset += count;
+            }
+            frames.push(FrameSnapshot {
+                instance: frame_instance,
+                func: frame.func,
+                local_types,
+                cells,
+            });
+            instance = frame.instance;
+        }
+        frames
+    }
+
     /// Prepares `self` for a host function tail call.
     pub fn return_prepare_host_frame<'a>(
         &'a mut self,
@@ -612,13 +647,18 @@ impl Stack {
         &mut self,
         caller_ip: Option<Ip>,
         callee_ip: Ip,
+        callee_func: crate::engine::EngineFunc,
         callee_params: BoundedSlotSpan,
         callee_size: usize,
         callee_instance: Option<Inst>,
     ) -> Result<Sp, TrapCode> {
-        let start = self
-            .frames
-            .push(caller_ip, callee_ip, callee_params, callee_instance)?;
+        let start = self.frames.push(
+            caller_ip,
+            callee_ip,
+            callee_func,
+            callee_params,
+            callee_instance,
+        )?;
         self.values.push(start, callee_size, callee_params.len())
     }
 
@@ -647,11 +687,12 @@ impl Stack {
     pub fn replace_frame(
         &mut self,
         callee_ip: Ip,
+        callee_func: crate::engine::EngineFunc,
         callee_params: BoundedSlotSpan,
         callee_size: usize,
         callee_instance: Option<Inst>,
     ) -> Result<Sp, TrapCode> {
-        let start = self.frames.replace(callee_ip, callee_instance)?;
+        let start = self.frames.replace(callee_ip, callee_func, callee_instance)?;
         self.values.replace(start, callee_size, callee_params)
     }
 }
@@ -1049,6 +1090,7 @@ impl CallStack {
         &mut self,
         caller_ip: Option<Ip>,
         callee_ip: Ip,
+        callee_func: crate::engine::EngineFunc,
         callee_params: BoundedSlotSpan,
         instance: Option<Inst>,
     ) -> Result<SpOffset, TrapCode> {
@@ -1067,6 +1109,7 @@ impl CallStack {
         let start = self.top_start().add(params_offset)?;
         self.frames.push(Frame {
             ip: callee_ip,
+            func: callee_func,
             start,
             instance: prev_instance,
         });
@@ -1089,7 +1132,12 @@ impl CallStack {
 
     /// Adjusts `self` for a function tail call.
     #[inline(always)]
-    fn replace(&mut self, callee_ip: Ip, instance: Option<Inst>) -> Result<SpOffset, TrapCode> {
+    fn replace(
+        &mut self,
+        callee_ip: Ip,
+        callee_func: crate::engine::EngineFunc,
+        instance: Option<Inst>,
+    ) -> Result<SpOffset, TrapCode> {
         let Some(caller_frame) = self.frames.last_mut() else {
             unsafe { unreachable_unchecked!("missing caller frame on the call stack") }
         };
@@ -1101,6 +1149,7 @@ impl CallStack {
         *caller_frame = Frame {
             start,
             ip: callee_ip,
+            func: callee_func,
             instance: prev_instance,
         };
         Ok(start)
@@ -1117,6 +1166,8 @@ pub struct Frame {
     /// This needs to be kept in sync for example when calling another function
     /// or yielding back to the host in for resumable calls.
     pub ip: Ip,
+    /// The engine function represented by this frame.
+    func: crate::engine::EngineFunc,
     /// The start index on the value stack for this function frame.
     start: SpOffset,
     /// The [`Inst`] used if any.

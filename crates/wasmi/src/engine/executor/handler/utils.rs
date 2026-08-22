@@ -459,7 +459,7 @@ pub fn call_wasm(
     let (callee_ip, size) = compile_or_get_func!(state, func);
     let callee_sp = state
         .stack
-        .push_frame(Some(caller_ip), callee_ip, params, size, instance)
+        .push_frame(Some(caller_ip), callee_ip, func, params, size, instance)
         .into_control()?;
     Control::Continue((callee_ip, callee_sp))
 }
@@ -473,7 +473,7 @@ pub fn return_call_wasm(
     let (callee_ip, size) = compile_or_get_func!(state, func);
     let callee_sp = state
         .stack
-        .replace_frame(callee_ip, params, size, instance)
+        .replace_frame(callee_ip, func, params, size, instance)
         .into_control()?;
     Control::Continue((callee_ip, callee_sp))
 }
@@ -489,14 +489,25 @@ pub fn call_host(
 ) -> Control<Sp, Break> {
     debug_assert_eq!(params.len(), host_func.len_param_cells());
     let trampoline = *host_func.trampoline();
+    let save_frames = state.store.inner().engine().config().get_generate_coredump();
+    if save_frames {
+        if let Some(caller_ip) = caller_ip {
+            state.stack.sync_ip(caller_ip);
+        }
+        let frames = state.stack.coredump_frames(state.code);
+        state.store.inner_mut().push_coredump_frames(frames);
+    }
     let (sp, inout) = state
         .stack
         .prepare_host_frame(caller_ip, params, host_func.len_result_cells())
         .into_control()?;
-    match state
+    let outcome = state
         .store
-        .call_host_func(trampoline, instance, inout, call_hooks)
-    {
+        .call_host_func(trampoline, instance, inout, call_hooks);
+    if save_frames {
+        state.store.inner_mut().pop_coredump_frames();
+    }
+    match outcome {
         Ok(()) => {}
         Err(StoreError::External(error)) => {
             done!(state, DoneReason::host_error(error, func, params.span()))
@@ -519,14 +530,22 @@ pub fn return_call_host(
 ) -> Control<(Ip, Sp, Inst), Break> {
     debug_assert_eq!(params.len(), host_func.len_param_cells());
     let trampoline = *host_func.trampoline();
+    let save_frames = state.store.inner().engine().config().get_generate_coredump();
+    if save_frames {
+        let frames = state.stack.coredump_frames(state.code);
+        state.store.inner_mut().push_coredump_frames(frames);
+    }
     let (control, inout) = state
         .stack
         .return_prepare_host_frame(params, host_func.len_result_cells(), instance)
         .into_control()?;
-    match state
+    let outcome = state
         .store
-        .call_host_func(trampoline, Some(instance), inout, CallHooks::Call)
-    {
+        .call_host_func(trampoline, Some(instance), inout, CallHooks::Call);
+    if save_frames {
+        state.store.inner_mut().pop_coredump_frames();
+    }
+    match outcome {
         Ok(()) => {}
         Err(StoreError::External(error)) => {
             // Note: we won't allow resumption in case the execution would

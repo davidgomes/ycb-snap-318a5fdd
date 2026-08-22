@@ -33,6 +33,7 @@ mod tests;
 pub struct InstanceEntity {
     initialized: bool,
     func_types: Arc<[DedupFuncType]>,
+    module: Option<crate::module::ModuleHeader>,
     tables: Box<[Table]>,
     funcs: Box<[Func]>,
     memories: Box<[Memory]>,
@@ -48,6 +49,7 @@ impl InstanceEntity {
         Self {
             initialized: false,
             func_types: Arc::new([]),
+            module: None,
             tables: [].into(),
             funcs: [].into(),
             memories: [].into(),
@@ -106,6 +108,21 @@ impl InstanceEntity {
     /// Returns the value exported to the given `name` if any.
     pub fn get_export(&self, name: &str) -> Option<Extern> {
         self.exports.get(name).copied()
+    }
+
+    /// Returns the module header from which this instance was instantiated.
+    pub(crate) fn module(&self) -> Option<&crate::module::ModuleHeader> {
+        self.module.as_ref()
+    }
+
+    /// Returns the memories owned by this instance.
+    pub(crate) fn memories(&self) -> &[Memory] {
+        &self.memories
+    }
+
+    /// Returns the globals owned by this instance.
+    pub(crate) fn globals(&self) -> &[Global] {
+        &self.globals
     }
 
     /// Returns an iterator over the exports of the [`Instance`].

@@ -11,6 +11,7 @@ mod translator;
 mod utils;
 
 pub(crate) use self::{
+    code_map::CodeMap,
     block_type::BlockType,
     executor::{
         Cell,
@@ -31,11 +32,12 @@ pub(crate) use self::{
         LazyFuncTranslator,
         ValidatingFuncTranslator,
         WasmTranslator,
+        required_cells_for_ty,
         required_cells_for_tys,
     },
 };
 use self::{
-    code_map::{CodeMap, CompiledFuncEntity},
+    code_map::CompiledFuncEntity,
     func_types::FuncTypeRegistry,
     resumable::ResumableCallBase,
 };

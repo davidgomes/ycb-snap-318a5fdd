@@ -165,6 +165,7 @@ pub fn init_wasm_func_call<'a, T>(
     let callee_sp = stack.push_frame(
         None,
         callee_ip,
+        engine_func,
         callee_params,
         usize::from(frame_size),
         Some(instance),

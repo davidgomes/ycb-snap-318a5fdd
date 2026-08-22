@@ -1,5 +1,6 @@
 use super::{EnforcedLimits, StackConfig};
 use crate::core::FuelCostsProvider;
+use alloc::{boxed::Box, string::String};
 use wasmparser::WasmFeatures;
 
 /// Configuration for an [`Engine`].
@@ -15,6 +16,10 @@ pub struct Config {
     consume_fuel: bool,
     /// Is `true` if Wasmi shall ignore Wasm custom sections when parsing Wasm modules.
     ignore_custom_sections: bool,
+    /// Is `true` if Wasmi shall generate Wasm coredumps when Wasm traps occur.
+    generate_coredump: bool,
+    /// The executable name stored in generated Wasm coredumps.
+    coredump_executable_name: Box<str>,
     /// The configured fuel costs of all Wasmi bytecode instructions.
     fuel_costs: FuelCostsProvider,
     /// The mode of Wasm to Wasmi bytecode compilation.
@@ -47,6 +52,8 @@ impl Default for Config {
             features: Self::default_features(),
             consume_fuel: false,
             ignore_custom_sections: false,
+            generate_coredump: false,
+            coredump_executable_name: Box::default(),
             fuel_costs: FuelCostsProvider::default(),
             compilation_mode: CompilationMode::default(),
             limits: EnforcedLimits::default(),
@@ -354,6 +361,32 @@ impl Config {
     /// Returns `true` if the [`Config`] mandates to ignore Wasm custom sections when parsing Wasm modules.
     pub(crate) fn get_ignore_custom_sections(&self) -> bool {
         self.ignore_custom_sections
+    }
+
+    /// Configures whether Wasmi generates a Wasm coredump when Wasm traps occur.
+    ///
+    /// Coredump generation is disabled by default.
+    pub fn generate_coredump(&mut self, enable: bool) -> &mut Self {
+        self.generate_coredump = enable;
+        self
+    }
+
+    /// Sets the executable name stored in generated Wasm coredumps.
+    ///
+    /// The default executable name is the empty string.
+    pub fn coredump_executable_name(&mut self, name: impl Into<String>) -> &mut Self {
+        self.coredump_executable_name = name.into().into_boxed_str();
+        self
+    }
+
+    /// Returns `true` if coredump generation is enabled.
+    pub(crate) fn get_generate_coredump(&self) -> bool {
+        self.generate_coredump
+    }
+
+    /// Returns the executable name stored in generated Wasm coredumps.
+    pub(crate) fn get_coredump_executable_name(&self) -> &str {
+        &self.coredump_executable_name
     }
 
     /// Returns the configured [`FuelCostsProvider`].
