@@ -226,8 +226,8 @@ class ControllerManager:
           info_records.append(record)
     return info_records
 
-  def get_controller_objects(self):
-    """Returns all registered controller objects in registration order."""
+  def get_all_controller_objects(self):
+    """Returns registered controller objects in registration order."""
     objects = []
     for controller_objects in self._controller_objects.values():
       objects.extend(controller_objects)

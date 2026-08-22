@@ -53,12 +53,12 @@ class _ExpectErrorRecorder:
   @property
   def has_error(self):
     """If any error has been recorded since the last reset."""
-    return self.error_count > 0
+    return self._local.count > 0
 
   @property
   def error_count(self):
     """The number of errors that have been recorded since last reset."""
-    return getattr(self._local, 'count', 0)
+    return self._local.count
 
   def add_error(self, error):
     """Record an error from expect APIs.
@@ -69,7 +69,7 @@ class _ExpectErrorRecorder:
     Args:
       error: Exception or signals.ExceptionRecord, the error to add.
     """
-    self._local.count = self.error_count + 1
+    self._local.count += 1
     self._local.record.add_error(
         'expect@%s+%s' % (time.time(), self._local.count), error
     )

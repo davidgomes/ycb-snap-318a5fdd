@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import collections
-import concurrent.futures
 import contextlib
 import copy
 import functools
@@ -23,7 +22,7 @@ import os
 import re
 import sys
 import threading
-import time
+from concurrent import futures
 
 from mobly import controller_manager
 from mobly import expects
@@ -47,10 +46,6 @@ STAGE_NAME_SETUP_TEST = 'setup_test'
 STAGE_NAME_TEARDOWN_TEST = 'teardown_test'
 STAGE_NAME_TEARDOWN_CLASS = 'teardown_class'
 STAGE_NAME_CLEAN_UP = 'clean_up'
-STAGE_NAME_GLOBAL_SETUP = 'global_setup'
-STAGE_NAME_GROUP_SETUP = 'group_setup'
-STAGE_NAME_GROUP_TEARDOWN = 'group_teardown'
-STAGE_NAME_GLOBAL_TEARDOWN = 'global_teardown'
 
 # Attribute names
 ATTR_REPEAT_CNT = '_repeat_count'
@@ -218,112 +213,78 @@ class BaseTestClass:
     self.results = records.TestResult()
     self.summary_writer = configs.summary_writer
     self._generated_test_table = collections.OrderedDict()
-    self._execution_local = threading.local()
-    self._barrier_lock = threading.Lock()
-    self._barriers = {}
-    self._group = None
     self._controller_manager = controller_manager.ControllerManager(
         class_name=self.TAG, controller_configs=configs.controller_configs
     )
     self.controller_configs = self._controller_manager.controller_configs
-
-  @property
-  def current_test_info(self):
-    return getattr(self._execution_local, 'test_info', None)
-
-  @current_test_info.setter
-  def current_test_info(self, value):
-    self._execution_local.test_info = value
+    self._execution_context = threading.local()
+    self._sync_lock = threading.Lock()
+    self._barriers = {}
+    self._group_devices = []
 
   @property
   def current_device(self):
-    if getattr(self._execution_local, 'phase', None) not in (
-        STAGE_NAME_GROUP_SETUP,
-        STAGE_NAME_GROUP_TEARDOWN,
-        'test',
+    if getattr(self._execution_context, 'phase', None) not in (
+        'group_setup', 'group_teardown', 'test'
     ):
-      raise AttributeError('current_device is only available during groups/tests')
-    group = getattr(self._execution_local, 'group', None)
-    if group is None or not group['devices']:
-      raise AttributeError('current_device is unavailable')
-    return group['devices'][getattr(self._execution_local, 'participant', 0)]
+      raise AttributeError('current_device is only available during grouped execution')
+    if getattr(self._execution_context, 'no_devices', False):
+      raise RuntimeError('current_device is unavailable without participants')
+    return self._execution_context.device
 
   @property
   def current_device_id(self):
-    if getattr(self._execution_local, 'phase', None) not in (
-        STAGE_NAME_GROUP_SETUP,
-        STAGE_NAME_GROUP_TEARDOWN,
-        'test',
+    if getattr(self._execution_context, 'phase', None) not in (
+        'group_setup', 'group_teardown', 'test'
     ):
-      raise AttributeError(
-          'current_device_id is only available during groups/tests'
-      )
-    group = getattr(self._execution_local, 'group', None)
-    if group is None:
-      raise AttributeError('current_device_id is unavailable')
-    return group['ids'][getattr(self._execution_local, 'participant', 0)]
-
-  def _set_execution_context(self, phase, group=None, participant=0):
-    self._execution_local.phase = phase
-    self._execution_local.group = group
-    self._execution_local.participant = participant
-
-  def _clear_execution_context(self):
-    self._execution_local.phase = None
-    self._execution_local.group = None
-    self._execution_local.participant = 0
+      raise AttributeError('current_device_id is only available during grouped execution')
+    if getattr(self._execution_context, 'no_devices', False):
+      raise RuntimeError('current_device_id is unavailable without participants')
+    return self._execution_context.device_id
 
   def synchronized_step(self, name, timeout=None):
-    """Waits until all participants in the current group reach a step."""
-    self._synchronize(name, timeout)
-
-  @contextlib.contextmanager
-  def synchronized_context(self, name, timeout=None):
-    """Synchronizes on entering the context."""
-    self._synchronize(name, timeout)
-    yield
-
-  def _synchronize(self, name, timeout):
-    phase = getattr(self._execution_local, 'phase', None)
-    group = getattr(self._execution_local, 'group', None)
-    if phase not in (STAGE_NAME_GROUP_SETUP, STAGE_NAME_GROUP_TEARDOWN, 'test'):
-      raise signals.TestError(
-          'synchronized_step is only available during group or test execution.'
-      )
+    phase = getattr(self._execution_context, 'phase', None)
+    if phase not in ('group_setup', 'group_teardown', 'test'):
+      raise signals.TestError('synchronized_step is only available during grouped execution')
     if timeout is not None and timeout < 0:
       raise ValueError('timeout must not be negative')
     if timeout == 0:
       raise signals.TestError(f'synchronized_step {name} timed out')
-    if phase in (STAGE_NAME_GROUP_SETUP, STAGE_NAME_GROUP_TEARDOWN):
+    if phase != 'test' or not getattr(self._execution_context, 'explicit', False):
       return
-    if not group['explicit'] or len(group['devices']) <= 1:
-      return
-    key = (id(self), group['name'], self.current_test_info.name, name)
-    with self._barrier_lock:
+    key = (id(self), self._execution_context.group,
+           self._execution_context.hook_name, name)
+    with self._sync_lock:
       barrier = self._barriers.setdefault(
-          key, {
-              'condition': threading.Condition(self._barrier_lock),
-              'count': 0,
-              'failed': False,
-          }
+          key, threading.Barrier(len(self._group_devices))
       )
-      barrier['count'] += 1
-      generation = barrier['count']
-      if generation == len(group['devices']):
-        del self._barriers[key]
-        barrier['condition'].notify_all()
-        return
-      deadline = None if timeout is None else time.monotonic() + timeout
-      while key in self._barriers and barrier['count'] < len(group['devices']):
-        remaining = None if deadline is None else deadline - time.monotonic()
-        if remaining is not None and remaining <= 0:
-          barrier['failed'] = True
-          del self._barriers[key]
-          barrier['condition'].notify_all()
-          raise signals.TestError(f'synchronized_step {name} timed out')
-        barrier['condition'].wait(remaining)
-      if barrier['failed']:
-        raise signals.TestError(f'synchronized_step {name} failed')
+    try:
+      barrier.wait(timeout=timeout)
+    except Exception as e:
+      with self._sync_lock:
+        self._barriers.pop(key, None)
+      barrier.abort()
+      raise signals.TestError(f'synchronized_step {name} failed: {e}')
+    with self._sync_lock:
+      if barrier.n_waiting == 0:
+        self._barriers.pop(key, None)
+
+  @contextlib.contextmanager
+  def synchronized_context(self, name, timeout=None):
+    self.synchronized_step(name, timeout)
+    yield
+
+  def global_setup(self):
+    pass
+
+  def global_teardown(self):
+    pass
+
+  def group_setup(self, devices):
+    pass
+
+  def group_teardown(self, devices):
+    pass
 
   def unpack_userparams(
       self, req_param_names=None, opt_param_names=None, **kwargs
@@ -897,20 +858,22 @@ class BaseTestClass:
         test_name, self.log_path, tr_record
     )
     expects.recorder.reset_internal_states(tr_record)
+    phase = self._execution_context.phase
+    group = getattr(self._execution_context, 'group', None)
+    device = getattr(self._execution_context, 'device', None)
+    device_id = getattr(self._execution_context, 'device_id', None)
     logging.info('%s %s', TEST_CASE_TOKEN, test_name)
-    group = getattr(self._execution_local, 'group', None)
-    participant = getattr(self._execution_local, 'participant', 0)
-    self._set_execution_context('test_lifecycle', group, participant)
     # Did teardown_test throw an error.
     teardown_test_failed = False
     try:
       try:
         try:
+          self._execution_context.phase = 'test_lifecycle'
           self._setup_test(test_name)
         except signals.TestFailure as e:
           _, _, traceback = sys.exc_info()
           raise signals.TestError(e.details, e.extras).with_traceback(traceback)
-        self._set_execution_context('test', group, participant)
+        self._execution_context.phase = 'test'
         test_method()
       except (signals.TestPass, signals.TestAbortSignal, signals.TestSkip):
         raise
@@ -920,7 +883,7 @@ class BaseTestClass:
         )
         raise
       finally:
-        self._set_execution_context('test_lifecycle', group, participant)
+        self._execution_context.phase = 'test_lifecycle'
         before_count = expects.recorder.error_count
         try:
           self._teardown_test(test_name)
@@ -984,6 +947,10 @@ class BaseTestClass:
             tr_record.to_dict(), records.TestSummaryEntryType.RECORD
         )
         self.current_test_info = None
+        self._execution_context.phase = phase
+        self._execution_context.group = group
+        self._execution_context.device = device
+        self._execution_context.device_id = device_id
     return tr_record
 
   def _assert_function_names_in_stack(self, expected_func_names):
@@ -1174,127 +1141,124 @@ class BaseTestClass:
             test_record.to_dict(), records.TestSummaryEntryType.RECORD
         )
 
-  def global_setup(self):
-    """Runs once after setup_class and before grouped execution."""
-
-  def group_setup(self, devices):
-    """Runs once before the tests in a group."""
-
-  def group_teardown(self, devices):
-    """Runs once after the tests in a group."""
-
-  def global_teardown(self):
-    """Runs once after all grouped execution."""
-
-  def _config_entries(self):
+  def _controller_participants(self):
     entries = []
-    configs = self.controller_configs
-    if isinstance(configs, list):
-      return list(configs)
-    for value in configs.values():
+    for value in self.controller_configs.values():
       if isinstance(value, list):
         entries.extend(value)
-    return entries
-
-  def _execution_groups(self):
-    entries = self._config_entries()
-    if not entries:
-      return []
-    explicit = any(isinstance(entry, dict) and 'group' in entry
-                   for entry in entries)
+      else:
+        entries.append(value)
+    objects = self._controller_manager.get_all_controller_objects()
+    if len(objects) == len(entries):
+      devices = objects
+    else:
+      devices = entries
+    explicit = any(isinstance(e, dict) and 'group' in e for e in entries)
     groups = collections.OrderedDict()
-    objects = self._controller_manager.get_controller_objects()
-    use_objects = len(objects) == len(entries)
-    for index, entry in enumerate(entries):
-      group_name = (
-          entry.get('group', 'default') if isinstance(entry, dict)
-          else 'default'
-      )
-      participant_id = (
-          entry.get('id') if isinstance(entry, dict) else None
-      )
-      group = groups.setdefault(group_name, {
-          'name': group_name, 'explicit': explicit, 'devices': [], 'ids': []
-      })
-      group['devices'].append(objects[index] if use_objects else entry)
-      group['ids'].append(participant_id)
-    return list(groups.values())
+    for entry, device in zip(entries, devices):
+      group = entry.get('group', 'default') if isinstance(entry, dict) else 'default'
+      device_id = entry.get('id') if isinstance(entry, dict) else None
+      groups.setdefault(group, []).append((device, device_id))
+    return entries, explicit, groups
 
-  def _run_class_hook(self, name, *args):
+  def _run_group_hook(self, name, group, participants):
+    devices = [p[0] for p in participants]
+    self._execution_context.phase = name
+    self._execution_context.group = group
+    self._execution_context.device = devices[0]
+    self._execution_context.device_id = participants[0][1]
+    self._execution_context.hook_name = name
+    try:
+      return getattr(self, name)(devices)
+    finally:
+      self._execution_context.phase = None
+
+  def _run_global_hook(self, name):
     record = records.TestResultRecord(name, self.TAG)
     record.test_begin()
-    if name in (STAGE_NAME_GROUP_SETUP, STAGE_NAME_GROUP_TEARDOWN):
-      self._set_execution_context(name, self._group, 0)
-    else:
-      self._set_execution_context(name)
-    self.current_test_info = runtime_test_info.RuntimeTestInfo(
-        name, self.log_path, record
-    )
+    self.current_test_info = runtime_test_info.RuntimeTestInfo(name, self.log_path, record)
     expects.recorder.reset_internal_states(record)
     try:
-      with self._log_test_stage(name):
-        result = getattr(self, name)(*args)
+      getattr(self, name)()
       if expects.recorder.has_error:
         record.test_error()
+        self.results.add_class_error(record)
+        self.summary_writer.dump(
+            record.to_dict(), records.TestSummaryEntryType.RECORD
+        )
         return False
-      if result is False:
-        record.test_skip(signals.TestSkip(f'{name} returned False'))
-        return False
-      return result is not False
-    except signals.TestAbortSignal:
-      raise
     except Exception as e:
-      logging.exception('Error in %s#%s.', self.TAG, name)
       record.test_error(e)
+      self.results.add_class_error(record)
+      self.summary_writer.dump(record.to_dict(), records.TestSummaryEntryType.RECORD)
       return False
     finally:
-      if record.result is None and not expects.recorder.has_error:
-        record.test_pass()
-      record.update_record()
-      if record.result in (
-          records.TestResultEnums.TEST_RESULT_ERROR,
-          records.TestResultEnums.TEST_RESULT_FAIL,
-      ):
-        self.results.add_class_error(record)
-      self.summary_writer.dump(
-          record.to_dict(), records.TestSummaryEntryType.RECORD
-      )
       self.current_test_info = None
-      self._clear_execution_context()
+    return True
 
-  def _run_group_tests(self, group, tests):
-    def run_for_participant(participant):
-      self._set_execution_context('test', group, participant)
+  def _run_grouped_tests(self, tests):
+    entries, explicit, groups = self._controller_participants()
+    if not entries:
+      self._execution_context.phase = 'test'
+      self._execution_context.no_devices = True
+      self._execution_context.device = None
+      self._execution_context.device_id = None
+      for test_name, test_method in tests:
+        self._exec_test(test_name, test_method)
+      self._execution_context.phase = None
+      return
+    for group, participants in groups.items():
+      self._group_devices = [p[0] for p in participants]
       try:
-        for test_name, test_method in tests:
-          max_consecutive_error = getattr(
-              test_method, ATTR_MAX_CONSEC_ERROR, 0
-          )
-          repeat_count = getattr(test_method, ATTR_REPEAT_CNT, 0)
-          max_retry_count = getattr(test_method, ATTR_MAX_RETRY_CNT, 0)
-          if max_retry_count:
-            self._exec_one_test_with_retry(
-                test_name, test_method, max_retry_count
-            )
-          elif repeat_count:
-            self._exec_one_test_with_repeat(
-                test_name, test_method, repeat_count, max_consecutive_error
-            )
-          else:
-            self.exec_one_test(test_name, test_method)
+        setup_ok = self._run_group_hook('group_setup', group, participants)
+      except Exception:
+        logging.exception('group_setup failed for %s', group)
+        setup_ok = False
+      if setup_ok is False:
+        self._run_group_hook('group_teardown', group, participants)
+        continue
+      try:
+        if explicit:
+          with futures.ThreadPoolExecutor(max_workers=len(participants)) as pool:
+            for test_name, test_method in tests:
+              jobs = []
+              for device, device_id in participants:
+                def run_one(device=device, device_id=device_id):
+                  self._execution_context.phase = 'test'
+                  self._execution_context.explicit = True
+                  self._execution_context.group = group
+                  self._execution_context.device = device
+                  self._execution_context.device_id = device_id
+                  self._execution_context.hook_name = test_name
+                  try:
+                    return self._exec_test(test_name, test_method)
+                  finally:
+                    self._execution_context.phase = None
+                jobs.append(pool.submit(run_one))
+              for job in jobs:
+                job.result()
+        else:
+          self._execution_context.explicit = False
+          self._execution_context.device = participants[0][0]
+          self._execution_context.device_id = participants[0][1]
+          for test_name, test_method in tests:
+            self._exec_test(test_name, test_method)
       finally:
-        self._clear_execution_context()
+        self._run_group_hook('group_teardown', group, participants)
 
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=len(group['devices']) if group['explicit'] else 1
-    ) as executor:
-      participant_count = len(group['devices']) if group['explicit'] else 1
-      futures = [
-          executor.submit(run_for_participant, i)
-          for i in range(participant_count)
-      ]
-      for future in futures:
-        future.result()
+  def _exec_test(self, test_name, test_method):
+    """Executes a test while preserving retry and repeat behavior."""
+    max_consecutive_error = getattr(test_method, ATTR_MAX_CONSEC_ERROR, 0)
+    repeat_count = getattr(test_method, ATTR_REPEAT_CNT, 0)
+    max_retry_count = getattr(test_method, ATTR_MAX_RETRY_CNT, 0)
+    if max_retry_count:
+      self._exec_one_test_with_retry(test_name, test_method, max_retry_count)
+    elif repeat_count:
+      self._exec_one_test_with_repeat(
+          test_name, test_method, repeat_count, max_consecutive_error
+      )
+    else:
+      self.exec_one_test(test_name, test_method)
 
   def run(self, test_names=None):
     """Runs tests within a test class.
@@ -1339,35 +1303,9 @@ class BaseTestClass:
       setup_class_result = self._setup_class()
       if setup_class_result:
         return setup_class_result
-      if not self._run_class_hook(STAGE_NAME_GLOBAL_SETUP):
+      if not self._run_global_hook('global_setup'):
         return self.results
-      groups = self._execution_groups()
-      if groups:
-        for group in groups:
-          self._group = group
-          self._set_execution_context(
-              STAGE_NAME_GROUP_SETUP, group, 0
-          )
-          group_setup_ok = self._run_class_hook(
-              STAGE_NAME_GROUP_SETUP, group['devices']
-          )
-          self._clear_execution_context()
-          try:
-            if group_setup_ok:
-              self._run_group_tests(group, tests)
-          finally:
-            self._set_execution_context(
-                STAGE_NAME_GROUP_TEARDOWN, group, 0
-            )
-            self._run_class_hook(
-                STAGE_NAME_GROUP_TEARDOWN, group['devices']
-            )
-            self._clear_execution_context()
-      else:
-        # Without participants, current_device is intentionally unavailable.
-        self._set_execution_context('test')
-        for test_name, test_method in tests:
-          self.exec_one_test(test_name, test_method)
+      self._run_grouped_tests(tests)
       return self.results
     except signals.TestAbortClass as e:
       e.details = 'Test class aborted due to: %s' % e.details
@@ -1381,7 +1319,7 @@ class BaseTestClass:
       setattr(e, 'results', self.results)
       raise e
     finally:
-      self._run_class_hook(STAGE_NAME_GLOBAL_TEARDOWN)
+      self._run_global_hook('global_teardown')
       self._teardown_class()
       logging.info(
           'Summary for test class %s: %s', self.TAG, self.results.summary_str()
