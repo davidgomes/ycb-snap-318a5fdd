@@ -59,6 +59,7 @@ type Compiler struct {
 	loopIndex       int
 	trace           io.Writer
 	indent          int
+	destructTempSeq   int
 }
 
 // NewCompiler creates a Compiler.
@@ -308,6 +309,13 @@ func (c *Compiler) Compile(node parser.Node) error {
 			}
 		}
 	case *parser.AssignStmt:
+		if len(node.Patterns) > 0 {
+			err := c.compileDestructAssign(node)
+			if err != nil {
+				return err
+			}
+			break
+		}
 		err := c.compileAssign(node, node.LHS, node.RHS, node.Token)
 		if err != nil {
 			return err
@@ -389,11 +397,27 @@ func (c *Compiler) Compile(node parser.Node) error {
 	case *parser.FuncLit:
 		c.enterScope()
 
-		for _, p := range node.Type.Params.List {
-			s := c.symbolTable.Define(p.Name)
-
-			// function arguments is not assigned directly.
+		for i, param := range node.Type.Params.List {
+			if ip, ok := parser.IsSimpleIdentPattern(param); ok {
+				s := c.symbolTable.Define(ip.Name)
+				s.LocalAssigned = true
+				continue
+			}
+			s := c.symbolTable.Define(c.paramSlotName(i))
 			s.LocalAssigned = true
+		}
+
+		for i, param := range node.Type.Params.List {
+			if _, ok := parser.IsSimpleIdentPattern(param); ok {
+				continue
+			}
+			sym, _, ok := c.symbolTable.Resolve(c.paramSlotName(i), false)
+			if !ok {
+				return c.errorf(node, "invalid parameter slot %d", i)
+			}
+			if err := c.compilePatternBindings(node, param, sym, true); err != nil {
+				return err
+			}
 		}
 
 		if err := c.Compile(node.Body); err != nil {

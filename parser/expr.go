@@ -288,7 +288,7 @@ func (e *FuncLit) String() string {
 // FuncType represents a function type definition.
 type FuncType struct {
 	FuncPos Pos
-	Params  *IdentList
+	Params  *ParamList
 }
 
 func (e *FuncType) exprNode() {}

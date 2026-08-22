@@ -379,7 +379,7 @@ func TestParseCall(t *testing.T) {
 				callExpr(
 					funcLit(
 						funcType(
-							identList(
+							paramList(
 								p(1, 5), p(1, 10),
 								false,
 								ident("a", p(1, 6)),
@@ -722,7 +722,7 @@ func TestParseFunction(t *testing.T) {
 				exprs(
 					funcLit(
 						funcType(
-							identList(p(1, 9), p(1, 17), false,
+							paramList(p(1, 9), p(1, 17), false,
 								ident("b", p(1, 10)),
 								ident("c", p(1, 13)),
 								ident("d", p(1, 16))),
@@ -743,7 +743,7 @@ func TestParseVariadicFunction(t *testing.T) {
 				exprs(
 					funcLit(
 						funcType(
-							identList(
+							paramList(
 								p(1, 9), p(1, 17),
 								true,
 								ident("args", p(1, 13)),
@@ -769,7 +769,7 @@ func TestParseVariadicFunctionWithArgs(t *testing.T) {
 				exprs(
 					funcLit(
 						funcType(
-							identList(
+							paramList(
 								p(1, 9), p(1, 20),
 								true,
 								ident("x", p(1, 10)),
@@ -1827,8 +1827,22 @@ func incDecStmt(
 	return &IncDecStmt{Expr: expr, Token: tok, TokenPos: pos}
 }
 
-func funcType(params *IdentList, pos Pos) *FuncType {
+func funcType(params *ParamList, pos Pos) *FuncType {
 	return &FuncType{Params: params, FuncPos: pos}
+}
+
+func paramList(
+	opening, closing Pos,
+	varArgs bool,
+	list ...*Ident,
+) *ParamList {
+	patterns := make([]Pattern, len(list))
+	for i, id := range list {
+		patterns[i] = &IdentPattern{Name: id.Name, NamePos: id.NamePos}
+	}
+	return &ParamList{
+		VarArgs: varArgs, List: patterns, LParen: opening, RParen: closing,
+	}
 }
 
 func blockStmt(lbrace, rbrace Pos, list ...Stmt) *BlockStmt {
@@ -1837,16 +1851,6 @@ func blockStmt(lbrace, rbrace Pos, list ...Stmt) *BlockStmt {
 
 func ident(name string, pos Pos) *Ident {
 	return &Ident{Name: name, NamePos: pos}
-}
-
-func identList(
-	opening, closing Pos,
-	varArgs bool,
-	list ...*Ident,
-) *IdentList {
-	return &IdentList{
-		VarArgs: varArgs, List: list, LParen: opening, RParen: closing,
-	}
 }
 
 func binaryExpr(
@@ -2203,7 +2207,46 @@ func equalExpr(t *testing.T, expected, actual Expr) {
 func equalFuncType(t *testing.T, expected, actual *FuncType) {
 	require.Equal(t, expected.Params.LParen, actual.Params.LParen)
 	require.Equal(t, expected.Params.RParen, actual.Params.RParen)
-	equalIdents(t, expected.Params.List, actual.Params.List)
+	require.Equal(t, expected.Params.VarArgs, actual.Params.VarArgs)
+	equalPatterns(t, expected.Params.List, actual.Params.List)
+}
+
+func equalPatterns(t *testing.T, expected, actual []Pattern) {
+	require.Equal(t, len(expected), len(actual))
+	for i := 0; i < len(expected); i++ {
+		equalPattern(t, expected[i], actual[i])
+	}
+}
+
+func equalPattern(t *testing.T, expected, actual Pattern) {
+	switch e := expected.(type) {
+	case *IdentPattern:
+		a, ok := actual.(*IdentPattern)
+		require.True(t, ok)
+		require.Equal(t, e.Name, a.Name)
+		require.Equal(t, e.NamePos, a.NamePos)
+		equalExpr(t, e.Default, a.Default)
+	case *ArrayPattern:
+		a, ok := actual.(*ArrayPattern)
+		require.True(t, ok)
+		equalPatterns(t, e.Elements, a.Elements)
+		if e.Rest == nil {
+			require.Nil(t, a.Rest)
+		} else {
+			require.NotNil(t, a.Rest)
+			require.Equal(t, e.Rest.Name, a.Rest.Name)
+		}
+	case *MapPattern:
+		a, ok := actual.(*MapPattern)
+		require.True(t, ok)
+		require.Equal(t, len(e.Elements), len(a.Elements))
+		for i := range e.Elements {
+			require.Equal(t, e.Elements[i].Key, a.Elements[i].Key)
+			equalPattern(t, e.Elements[i].Nested, a.Elements[i].Nested)
+		}
+	default:
+		panic(fmt.Errorf("unknown pattern type: %T", expected))
+	}
 }
 
 func equalIdents(t *testing.T, expected, actual []*Ident) {
