@@ -550,6 +550,8 @@ class Queue(MaybeChannelBound):
     exclusive = False
     auto_delete = False
     no_ack = False
+    dead_letter_exchange = None
+    dead_letter_routing_key = None
 
     attrs = (
         ('name', None),
@@ -570,6 +572,8 @@ class Queue(MaybeChannelBound):
         ('max_length', int),
         ('max_length_bytes', int),
         ('max_priority', int)
+        ,('dead_letter_exchange', None),
+        ('dead_letter_routing_key', None)
     )
 
     def __init__(self, name='', exchange=None, routing_key='',
@@ -595,6 +599,36 @@ class Queue(MaybeChannelBound):
         if self.exclusive:
             self.auto_delete = True
         self.maybe_bind(channel)
+
+    @property
+    def has_dead_letter_exchange(self):
+        return bool(self.dead_letter_exchange or
+                    (self.queue_arguments or {}).get('x-dead-letter-exchange'))
+
+    @property
+    def effective_dead_letter_exchange(self):
+        return self.dead_letter_exchange or (self.queue_arguments or {}).get(
+            'x-dead-letter-exchange')
+
+    @property
+    def effective_dead_letter_routing_key(self):
+        return (self.dead_letter_routing_key or
+                (self.queue_arguments or {}).get('x-dead-letter-routing-key') or
+                self.routing_key)
+
+    @property
+    def effective_message_ttl(self):
+        value = self.message_ttl
+        if value is None:
+            value = (self.queue_arguments or {}).get('x-message-ttl')
+            return None if value is None else float(value) / 1000
+        return float(value)
+
+    @classmethod
+    def with_dead_letter(cls, name, dead_letter_exchange,
+                         dead_letter_routing_key=None, **kwargs):
+        return cls(name, dead_letter_exchange=dead_letter_exchange,
+                   dead_letter_routing_key=dead_letter_routing_key, **kwargs)
 
     def bind(self, channel):
         on_declared = self.on_declared
@@ -875,6 +909,9 @@ class Queue(MaybeChannelBound):
                      queue_arguments=q_arguments,
                      binding_arguments=b_arguments,
                      consumer_arguments=c_arguments,
+                     dead_letter_exchange=options.get('dead_letter_exchange'),
+                     dead_letter_routing_key=options.get(
+                         'dead_letter_routing_key'),
                      bindings=bindings)
 
     def as_dict(self, recurse=False):

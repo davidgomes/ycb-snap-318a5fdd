@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 __all__ = ('Message', 'StdChannel', 'Management', 'Transport')
 
 RABBITMQ_QUEUE_ARGUMENTS = {
+    'dead_letter_exchange': ('x-dead-letter-exchange', str),
+    'dead_letter_routing_key': ('x-dead-letter-routing-key', str),
     'expires': ('x-expires', maybe_s_to_ms),
     'message_ttl': ('x-message-ttl', maybe_s_to_ms),
     'max_length': ('x-max-length', int),
