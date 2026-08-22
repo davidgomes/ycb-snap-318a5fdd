@@ -1,0 +1,4 @@
+@echo off
+rem Use the document env var set by goreleaser to find the output path.
+echo {"spdxVersion":"SPDX-2.3","name":"fake"} > "%document%"
+echo Fake cataloged: %document%
