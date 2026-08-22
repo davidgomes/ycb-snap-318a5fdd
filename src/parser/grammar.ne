@@ -133,6 +133,9 @@ pipe_clause ->
   %PIPE_OPERATOR pipe_clause_name free_form_sql:* pipe_group_by_clause:? {%
   ([pipeToken, nameKw, children, optionalGroupBy]) => {
     const groupBy = optionalGroupBy || undefined;
+    if (nameKw.text === 'GROUP BY') {
+      throw new Error('GROUP BY must follow AGGREGATE in a pipe query');
+    }
     if (groupBy && nameKw.text !== 'AGGREGATE') {
       throw new Error('GROUP BY is only valid after AGGREGATE in a pipe query');
     }

@@ -207,10 +207,12 @@ function postProcess(tokens: Token[]): Token[] {
 // Keeping them as identifiers elsewhere preserves traditional BigQuery parsing.
 function promotePipeClauses(tokens: Token[]): Token[] {
   let afterPipe = false;
+  let pipeClauseName: string | undefined;
 
   return tokens.map(token => {
     if (token.type === TokenType.PIPE_OPERATOR) {
       afterPipe = true;
+      pipeClauseName = undefined;
       return token;
     }
     if (token.type === TokenType.BLOCK_COMMENT || token.type === TokenType.LINE_COMMENT) {
@@ -219,9 +221,17 @@ function promotePipeClauses(tokens: Token[]): Token[] {
 
     if (afterPipe) {
       afterPipe = false;
-      if (token.text.toUpperCase() === 'AGGREGATE' || token.text.toUpperCase() === 'EXTEND') {
+      pipeClauseName = token.text.toUpperCase();
+      if (pipeClauseName === 'AGGREGATE' || pipeClauseName === 'EXTEND') {
         return { ...token, type: TokenType.RESERVED_CLAUSE, text: token.text.toUpperCase() };
       }
+    }
+    if (
+      pipeClauseName === 'LIMIT' &&
+      token.type === TokenType.RESERVED_CLAUSE &&
+      token.text === 'OFFSET'
+    ) {
+      return { ...token, type: TokenType.RESERVED_KEYWORD };
     }
     return token;
   });

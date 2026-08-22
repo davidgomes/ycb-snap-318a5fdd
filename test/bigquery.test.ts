@@ -630,7 +630,7 @@ describe('BigQueryFormatter', () => {
     it('keeps one-line pipe clauses on the pipe line', () => {
       expect(
         format(
-          'FROM source |> SELECT * |> JOIN other ON source.id = other.id |> AS result |> LIMIT 10'
+          'FROM source |> SELECT * |> JOIN other ON source.id = other.id |> AS result |> LIMIT 10 OFFSET 20'
         )
       ).toBe(dedent`
           FROM
@@ -639,7 +639,7 @@ describe('BigQueryFormatter', () => {
             *
           |> JOIN other ON source.id = other.id
           |> AS result
-          |> LIMIT 10
+          |> LIMIT 10 OFFSET 20
         `);
     });
 
