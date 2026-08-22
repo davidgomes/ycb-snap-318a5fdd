@@ -559,25 +559,6 @@ describe('Request', () => {
 			});
 		});
 
-		it('Rejects multipart parsing when the window is closed.', async () => {
-			const request = new window.Request(TEST_URL, {
-				method: 'POST',
-				headers: { 'Content-Type': 'multipart/form-data; boundary=test' },
-				body: new ReadableStream({
-					start() {
-						window.setTimeout(() => {}, 1000);
-					}
-				})
-			});
-			request[PropertySymbol.contentType] = 'multipart/form-data; boundary=test';
-			const formDataPromise = expect(request.formData()).rejects.toMatchObject({
-				name: 'AbortError'
-			});
-
-			await window.happyDOM.close();
-
-			await formDataPromise;
-		});
 	});
 
 	describe('blob()', () => {
@@ -619,7 +600,6 @@ describe('Request', () => {
 				}, 50);
 			});
 		});
-
 	});
 
 	describe('buffer()', () => {
@@ -654,7 +634,6 @@ describe('Request', () => {
 				}, 50);
 			});
 		});
-
 	});
 
 	describe('text()', () => {
@@ -860,6 +839,26 @@ describe('Request', () => {
 					resolve(null);
 				}, 50);
 			});
+		});
+
+		it('Rejects multipart parsing when the window is closed.', async () => {
+			const request = new window.Request(TEST_URL, {
+				method: 'POST',
+				headers: { 'Content-Type': 'multipart/form-data; boundary=test' },
+				body: new ReadableStream({
+					start() {
+						window.setTimeout(() => {}, 1000);
+					}
+				})
+			});
+			request[PropertySymbol.contentType] = 'multipart/form-data; boundary=test';
+			const formDataPromise = expect(request.formData()).rejects.toMatchObject({
+				name: 'AbortError'
+			});
+
+			await window.happyDOM.close();
+
+			await formDataPromise;
 		});
 	});
 
