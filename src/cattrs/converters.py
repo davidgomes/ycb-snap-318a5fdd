@@ -96,6 +96,7 @@ from .gen import (
 from .gen.typeddicts import make_dict_structure_fn as make_typeddict_dict_struct_fn
 from .gen.typeddicts import make_dict_unstructure_fn as make_typeddict_dict_unstruct_fn
 from .literals import is_literal_containing_enums
+from .partial import PartialResult, partial_structure_impl
 from .typealiases import (
     get_type_alias_base,
     is_type_alias,
@@ -103,7 +104,13 @@ from .typealiases import (
 )
 from .types import SimpleStructureHook
 
-__all__ = ["BaseConverter", "Converter", "GenConverter", "UnstructureStrategy"]
+__all__ = [
+    "BaseConverter",
+    "Converter",
+    "GenConverter",
+    "PartialResult",
+    "UnstructureStrategy",
+]
 
 T = TypeVar("T")
 V = TypeVar("V")
@@ -589,6 +596,23 @@ class BaseConverter:
     def structure(self, obj: UnstructuredValue, cl: type[T]) -> T:
         """Convert unstructured Python data structures to structured data."""
         return self._structure_func.dispatch(cl)(obj, cl)
+
+    def partial_structure(
+        self,
+        obj: UnstructuredValue,
+        cl: type[T],
+        _previous: PartialResult | None = None,
+    ) -> PartialResult:
+        """Structure *obj* into *cl*, keeping successfully converted fields.
+
+        Returns a :class:`PartialResult`. Fields missing from the input are
+        treated as failed (defaults are still applied when constructing
+        :attr:`PartialResult.value`). Nested attrs classes, dataclasses and
+        TypedDicts are structured recursively; collection fields are atomic.
+
+        .. versionadded:: NEXT
+        """
+        return partial_structure_impl(self, obj, cl, previous=_previous)
 
     def get_structure_hook(self, type: Any, cache_result: bool = True) -> StructureHook:
         """Get the structure hook for the given type.
