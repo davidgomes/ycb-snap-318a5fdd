@@ -39,6 +39,7 @@ class _ExpectErrorRecorder:
 
   def __init__(self, record=None):
     self._local = threading.local()
+    self._default_record = record
     self.reset_internal_states(record=record)
 
   def reset_internal_states(self, record=None):
@@ -53,12 +54,12 @@ class _ExpectErrorRecorder:
   @property
   def has_error(self):
     """If any error has been recorded since the last reset."""
-    return self._local.count > 0
+    return getattr(self._local, 'count', 0) > 0
 
   @property
   def error_count(self):
     """The number of errors that have been recorded since last reset."""
-    return self._local.count
+    return getattr(self._local, 'count', 0)
 
   def add_error(self, error):
     """Record an error from expect APIs.
@@ -69,6 +70,9 @@ class _ExpectErrorRecorder:
     Args:
       error: Exception or signals.ExceptionRecord, the error to add.
     """
+    if not hasattr(self._local, 'count'):
+      self._local.record = self._default_record
+      self._local.count = 0
     self._local.count += 1
     self._local.record.add_error(
         'expect@%s+%s' % (time.time(), self._local.count), error
