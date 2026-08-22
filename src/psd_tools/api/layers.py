@@ -316,6 +316,8 @@ class Layer(LayerProtocol):
         """Blend If ranges for this layer. Writable and mutable."""
         if not hasattr(self, "_blend_ranges"):
             self._blend_ranges = BlendRanges.from_raw(self._record.blending_ranges)
+            if self._psd is not None:
+                self._blend_ranges._on_change = self._psd._mark_updated
         return self._blend_ranges
 
     @blend_ranges.setter
@@ -325,6 +327,7 @@ class Layer(LayerProtocol):
         value.apply_to_raw(self._record.blending_ranges)
         self._blend_ranges = value
         if self._psd is not None:
+            value._on_change = self._psd._mark_updated
             self._psd._mark_updated()
 
     @property

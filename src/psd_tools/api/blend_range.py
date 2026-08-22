@@ -133,6 +133,9 @@ class BlendRanges:
     composite: BlendRangeChannel = field(factory=BlendRangeChannel.default)
     channels: list[BlendRangeChannel] = field(factory=list)
     _raw: Any = field(default=None, init=False, repr=False, eq=False)
+    _on_change: Callable[[], None] | None = field(
+        default=None, init=False, repr=False, eq=False
+    )
 
     def __attrs_post_init__(self) -> None:
         self._bind_channels()
@@ -144,6 +147,8 @@ class BlendRanges:
     def _sync_raw(self) -> None:
         if self._raw is not None:
             self.apply_to_raw(self._raw)
+        if self._on_change is not None:
+            self._on_change()
 
     @property
     def channel_count(self) -> int:
