@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "downlevelIteration": true,
+    "noEmit": true,
+    "target": "ESNext",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "esModuleInterop": true
+  },
+  "include": ["."],
+  "exclude": ["../src", "../dist", "../example", "../node_modules"]
+}

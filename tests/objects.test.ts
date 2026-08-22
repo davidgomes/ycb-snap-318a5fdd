@@ -1,0 +1,128 @@
+import { isMatching, match, P } from '../src';
+import { Equal, Expect } from '../src/types/helpers';
+
+describe('Objects', () => {
+  describe('symbols', () => {
+    const symbolA = Symbol('symbol-a');
+    const symbolB = Symbol('symbol-b');
+    const symbolC = Symbol('symbol-c');
+    type Input = { [symbolA]: { [symbolB]: 'foo' | 'bar' } };
+
+    it('should work with symbols', () => {
+      const fn1 = (obj: Input) => {
+        if (isMatching({ [symbolA]: { [symbolB]: 'foo' } }, obj)) {
+          const value = obj[symbolA][symbolB];
+          type t = Expect<Equal<typeof value, 'foo'>>;
+        } else {
+          throw new Error('Expected obj to match the foo pattern!');
+        }
+      };
+
+      const fn2 = (obj: Input) => {
+        if (isMatching({ [symbolA]: { [symbolB]: 'bar' } }, obj)) {
+          const value = obj[symbolA][symbolB];
+          type t = Expect<Equal<typeof value, 'bar'>>;
+          throw new Error('Expected obj to not match the bar pattern!');
+        }
+      };
+
+      fn1({
+        [symbolA]: { [symbolB]: 'foo' },
+      });
+
+      fn2({
+        [symbolA]: { [symbolB]: 'foo' },
+      });
+    });
+
+    it('narrowing inference should work', () => {
+      const fn1 = (input: Input) => {
+        return match(input)
+          .with({ [symbolA]: P.select() }, (sel) => {
+            type t = Expect<Equal<typeof sel, { [symbolB]: 'foo' | 'bar' }>>;
+            return sel;
+          })
+          .exhaustive();
+      };
+
+      expect(fn1({ [symbolA]: { [symbolB]: 'bar' } })).toEqual({
+        [symbolB]: 'bar',
+      });
+
+      const fn2 = (input: Input | { [symbolC]: string }) => {
+        return match(input)
+          .with({ [symbolA]: P.any }, (sel) => {
+            type t = Expect<Equal<typeof sel, Input>>;
+            return sel;
+          })
+          .with({ [symbolC]: P.select() }, (x) => x)
+          .exhaustive();
+      };
+
+      expect(fn2({ [symbolC]: 'Hey' })).toEqual('Hey');
+    });
+
+    it('exhaustiveness checking should work', () => {
+      const fn1 = (input: Input | { [symbolC]: string }) => {
+        return match(input)
+          .with({ [symbolA]: P.any }, (sel) => {
+            type t = Expect<Equal<typeof sel, Input>>;
+            return sel;
+          })
+          .with({ [symbolC]: P.any }, () => '2')
+          .exhaustive();
+      };
+
+      const fn2 = (input: Input | { [symbolC]: string }) => {
+        return (
+          match(input)
+            .with({ [symbolA]: P.any }, (sel) => {
+              type t = Expect<Equal<typeof sel, Input>>;
+              return sel;
+            })
+            // @ts-expect-error
+            .exhaustive()
+        );
+      };
+    });
+  });
+});
+
+describe('Records ({})', () => {
+  it('Should match records', () => {
+    type Vector1 = { x: number };
+    type Vector2 = { x: number; y: number };
+    type Vector3 = {
+      x: number;
+      y: number;
+      z: number;
+    };
+    type Vector = Vector1 | Vector2 | Vector3;
+
+    const vector: Vector = { x: 1 };
+
+    expect(
+      match<Vector, string>(vector)
+        .with({ x: 1, y: 1, z: 1 }, (x) => {
+          type t = Expect<Equal<typeof x, { x: 1; y: 1; z: 1 }>>;
+          return 'vector3';
+        })
+        .with({ x: 2, y: 1 }, (x) => {
+          type t = Expect<
+            Equal<typeof x, { x: 2; y: 1 } | { z: number; x: 2; y: 1 }>
+          >;
+          return 'vector2';
+        })
+        .with({ x: 1 }, (x) => {
+          type t = Expect<
+            Equal<
+              typeof x,
+              { x: 1 } | { x: 1; y: number } | { x: 1; y: number; z: number }
+            >
+          >;
+          return 'vector1';
+        })
+        .otherwise(() => 'no match')
+    ).toEqual('vector1');
+  });
+});
