@@ -1179,7 +1179,7 @@ defineFunction({
         const align = alignText.replace(/\|/g, "");
         const cell = args[2] as AnyParseNode & Partial<MulticolumnCell>;
         cell.multicolumn = {span, align};
-        return cell;
+        return cell as any;
     },
 });
 
