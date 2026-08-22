@@ -558,7 +558,6 @@ describe('Request', () => {
 				}, 50);
 			});
 		});
-
 	});
 
 	describe('blob()', () => {
