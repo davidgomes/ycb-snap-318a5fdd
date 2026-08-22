@@ -2607,6 +2607,13 @@ func (r *Rego) partial(ctx context.Context, ectx *EvalContext) (*PartialQueries,
 		return nil, err
 	}
 
+	for _, query := range queries {
+		restoreTemplateStrings(query)
+	}
+	for _, module := range support {
+		restoreTemplateStrings(module)
+	}
+
 	// If the target rego-version is v0, and the rego.v1 import is available, then we attempt to apply it to support modules.
 	if r.regoVersion == ast.RegoV0 &&
 		(r.capabilities == nil ||

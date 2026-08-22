@@ -1597,6 +1597,26 @@ foo contains __local1__1 if { __local1__1 = input.v }`,
 	}
 }
 
+func TestPartialRestoresTemplateStrings(t *testing.T) {
+	r := New(
+		Query(`data.test.p`),
+		Module("test.rego", `package test
+		import rego.v1
+		p := $"{input.x}"`,
+		),
+	)
+
+	pq, err := r.Partial(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range pq.Queries {
+		if strings.Contains(query.String(), "internal.template_string") {
+			t.Fatalf("partial query contains internal template-string builtin: %s", query)
+		}
+	}
+}
+
 func TestPartialNamespace(t *testing.T) {
 
 	r := New(
