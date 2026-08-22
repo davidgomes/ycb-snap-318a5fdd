@@ -5,6 +5,7 @@ import (
 	"io"
 	"math"
 	"sort"
+	"sync/atomic"
 )
 
 const (
@@ -270,7 +271,7 @@ func (s *ShapeIndex) Decode(r io.Reader) (err error) {
 	s.cells = decoded.cells
 	s.pendingAdditionsPos = decoded.pendingAdditionsPos
 	s.pendingRemovals = nil
-	s.status = fresh
+	atomic.StoreInt32(&s.status, fresh)
 	s.mu.Unlock()
 	return nil
 }
