@@ -2516,7 +2516,7 @@ z/same.txt
         String::from_utf8_lossy(&output.stdout),
         "file007
 file7
-file10
+file9
 "
     );
 
@@ -2563,13 +2563,13 @@ zfile
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "adir/
+        "with.rs
+adir/
 afile
 bdir/
 symlink
 without
 zfile
-with.rs
 "
     );
 }
