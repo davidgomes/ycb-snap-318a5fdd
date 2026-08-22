@@ -8,10 +8,10 @@ import (
 
 func TestIdentListString(t *testing.T) {
 	identListVar := &parser.IdentList{
-		List: []*parser.Ident{
-			{Name: "a"},
-			{Name: "b"},
-			{Name: "c"},
+		Params: []parser.Pattern{
+			&parser.IdentPattern{Name: "a"},
+			&parser.IdentPattern{Name: "b"},
+			&parser.IdentPattern{Name: "c"},
 		},
 		VarArgs: true,
 	}
@@ -23,10 +23,10 @@ func TestIdentListString(t *testing.T) {
 	}
 
 	identList := &parser.IdentList{
-		List: []*parser.Ident{
-			{Name: "a"},
-			{Name: "b"},
-			{Name: "c"},
+		Params: []parser.Pattern{
+			&parser.IdentPattern{Name: "a"},
+			&parser.IdentPattern{Name: "b"},
+			&parser.IdentPattern{Name: "c"},
 		},
 		VarArgs: false,
 	}

@@ -38,6 +38,33 @@ type Scanner struct {
 	mode         ScanMode
 }
 
+// scannerState holds scanner position for backtracking.
+type scannerState struct {
+	ch         rune
+	offset     int
+	readOffset int
+	lineOffset int
+	insertSemi bool
+}
+
+func (s *Scanner) save() scannerState {
+	return scannerState{
+		ch:         s.ch,
+		offset:     s.offset,
+		readOffset: s.readOffset,
+		lineOffset: s.lineOffset,
+		insertSemi: s.insertSemi,
+	}
+}
+
+func (s *Scanner) restore(st scannerState) {
+	s.ch = st.ch
+	s.offset = st.offset
+	s.readOffset = st.readOffset
+	s.lineOffset = st.lineOffset
+	s.insertSemi = st.insertSemi
+}
+
 // NewScanner creates a Scanner.
 func NewScanner(
 	file *SourceFile,
