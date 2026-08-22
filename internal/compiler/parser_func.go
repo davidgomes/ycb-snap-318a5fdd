@@ -24,7 +24,23 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 	pos := tok.pos
 	// Parses the function name if present.
 	var ident *ast.Identifier
+	var receiver *ast.Parameter
 	tok = p.next()
+	if kind == parseFuncDecl && !isMacro && tok.typ == tokenLeftParenthesis {
+		var receivers []*ast.Parameter
+		var last *ast.Position
+		receivers, _, last, tok = p.parseFuncParameters(tok, false, true)
+		if len(receivers) != 1 {
+			panic(syntaxError(tok.pos, "method receiver must have exactly one parameter"))
+		}
+		receiver = receivers[0]
+		pos.End = last.End
+		if tok.typ != tokenIdentifier {
+			panic(syntaxError(tok.pos, "unexpected %s, expecting method name", tok))
+		}
+		ident = ast.NewIdentifier(tok.pos, string(tok.txt))
+		tok = p.next()
+	}
 	if tok.typ == tokenIdentifier {
 		if kind&parseFuncDecl == 0 {
 			panic(syntaxError(tok.pos, "unexpected %s, expecting (", tok))
@@ -66,6 +82,7 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 		return typ, tok
 	}
 	node := ast.NewFunc(pos, ident, typ, nil, false, ast.Format(tok.ctx))
+	node.Receiver = receiver
 	if !isMacro && tok.typ != tokenLeftBrace {
 		return node, tok
 	}
