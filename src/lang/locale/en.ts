@@ -298,6 +298,51 @@ export default {
       'default-install-failed': 'Failed to download {URL}. Disabling Auto-correct Common Misspellings.',
       'defaults-missing': 'Failed to find default common auto-correct file: {FILE}.',
     },
+    // auto-toc.ts
+    'auto-toc': {
+      'name': 'Auto TOC',
+      'description': 'Generates or updates a table of contents between `toc` markers.',
+      'list-style': {
+        'name': 'List Style',
+        'description': 'The kind of list to use for table of contents items.',
+      },
+      'bullet-marker': {
+        'name': 'Bullet Marker',
+        'description': 'The marker to use for bullet list items.',
+      },
+      'ordered-list-style': {
+        'name': 'Ordered List Style',
+        'description': 'The numbering style to use for ordered list items.',
+      },
+      'indent-size': {
+        'name': 'Indent Size',
+        'description': 'The number of spaces to use for each heading level.',
+      },
+      'min-level': {
+        'name': 'Minimum Heading Level',
+        'description': 'The smallest heading level to include.',
+      },
+      'max-level': {
+        'name': 'Maximum Heading Level',
+        'description': 'The largest heading level to include.',
+      },
+      'title': {
+        'name': 'Title',
+        'description': 'An optional line to place above the table of contents.',
+      },
+      'use-explicit-ids': {
+        'name': 'Use Explicit IDs',
+        'description': 'Uses a trailing `{#id}` on a heading as its anchor.',
+      },
+      'strip-formatting-in-toc': {
+        'name': 'Strip Formatting in TOC',
+        'description': 'Removes Markdown formatting from table of contents items.',
+      },
+      'exclude-headings': {
+        'name': 'Exclude Headings',
+        'description': 'A list of heading text to exclude. Use `/.../` for a case-insensitive regular expression.',
+      },
+    },
     // add-blank-line-after-yaml.ts
     'add-blank-line-after-yaml': {
       'name': 'Add Blank Line After YAML',
@@ -934,6 +979,10 @@ export default {
     'asterisk': 'asterisk',
     'underscore': 'underscore',
     'consistent': 'consistent',
+    'always-one': 'always-one',
+    'increment': 'increment',
+    'bullet': 'bullet',
+    'number': 'number',
     '-': '-', // leave as is
     '*': '*', // leave as is
     '+': '+', // leave as is
