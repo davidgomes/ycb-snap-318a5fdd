@@ -12,6 +12,7 @@ import {ignoreListOfTypes, IgnoreType} from './utils/ignore-types';
 import {LinterSettings} from './settings-data';
 import {App} from 'obsidian';
 import {YAMLParseError} from 'yaml';
+import {applyScopedIgnore} from './utils/scoped-ignore';
 
 export type Options = { [optionName: string]: any};
 
@@ -110,9 +111,9 @@ export class Rule {
   }
 
   public apply(text: string, options?: Options): string {
-    return ignoreListOfTypes(this.ignoreTypes, text, (textAfterIgnore: string) => {
+    return applyScopedIgnore(text, this.alias, (scopedText: string) => ignoreListOfTypes(this.ignoreTypes, scopedText, (textAfterIgnore: string) => {
       return this.applyAfterIgnore(textAfterIgnore, options);
-    });
+    }));
   }
 }
 
