@@ -3,6 +3,8 @@ import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import type { World } from '../../world';
 import type { QueryInstance } from '../types';
+import { isPredicate } from '../predicate';
+import { getStore } from '../../trait/trait';
 
 /**
  * Check if an entity matches a non-tracking query.
@@ -13,6 +15,15 @@ export function checkQuery(world: World, query: QueryInstance, entity: Entity): 
     const generations = query.generations;
     const ctx = world[$internal];
     const eid = getEntityId(entity);
+    for (const predicate of query.predicates) {
+        const values = predicate.traits.map((trait) => {
+            if (!(world[$internal].entityTraits.get(entity)?.has(trait))) return undefined;
+            return trait[$internal].get(eid, getStore(world, trait));
+        });
+        const current = isPredicate(predicate) && predicate.predicate(values);
+        query.predicateState.set(eid, current);
+        if (predicate.predicateMode !== 'current' || !current) return false;
+    }
 
     if (query.traitInstances.all.length === 0) return false;
 

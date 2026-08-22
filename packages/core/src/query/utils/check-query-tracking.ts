@@ -3,6 +3,8 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import { getStore } from '../../trait/trait';
+import { isPredicate } from '../predicate';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -29,6 +31,27 @@ export function checkQueryTracking(
     const traitInstancesAll = query.traitInstances.all;
     const entityMasks = world[$internal].entityMasks;
     const eid = getEntityId(entity);
+
+    if (query.predicates.length) {
+        let matches = true;
+        for (const predicate of query.predicates) {
+            const values = predicate.traits.map((trait) =>
+                world[$internal].entityTraits.get(entity)?.has(trait)
+                    ? trait[$internal].get(eid, getStore(world, trait))
+                    : undefined
+            );
+            const current = isPredicate(predicate) && predicate.predicate(values);
+            const previous = query.predicateState.get(eid) ?? false;
+            query.predicateState.set(eid, current);
+            if (
+                (predicate.predicateMode === 'added' && !(current && !previous)) ||
+                (predicate.predicateMode === 'removed' && !(!current && previous)) ||
+                (predicate.predicateMode === 'changed' && current === previous) ||
+                (predicate.predicateMode === 'current' && !current)
+            ) matches = false;
+        }
+        if (!matches) return false;
+    }
 
     const generationsLen = generations.length;
     const trackingGroupsLen = trackingGroups.length;

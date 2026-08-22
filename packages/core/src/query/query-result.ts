@@ -9,6 +9,7 @@ import type { Trait } from '../trait/types';
 import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
 import { isModifier } from './modifier';
+import { isPredicate } from './predicate';
 import { setChanged } from './modifiers/changed';
 import type {
     InstancesFromParameters,
@@ -265,6 +266,7 @@ export function createQueryResult<T extends QueryParameter[]>(
         }
 
         if (isModifier(param)) {
+            if (isPredicate(param)) continue;
             // Skip not modifier.
             if (param.type === 'not') continue;
 

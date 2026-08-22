@@ -11,6 +11,7 @@ import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
+import { isPredicate, wrapPredicate } from '../predicate';
 
 export function createChanged() {
     const id = createTrackingId();
@@ -23,6 +24,13 @@ export function createChanged() {
     return <T extends TraitOrRelation[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
+        if (inputs.length === 1 && isPredicate(inputs[0])) {
+            const predicate = inputs[0];
+            return wrapPredicate(predicate, predicate.predicate, 'changed') as Modifier<
+                ExtractTraits<T>,
+                `changed-${number}`
+            >;
+        }
         const traits = inputs.map((input) =>
             isRelation(input) ? input[$internal].trait : input
         ) as ExtractTraits<T>;
@@ -53,8 +61,8 @@ function markChanged(world: World, entity: Entity, trait: Trait) {
 
     // Update tracking queries with change event
     for (const query of data.trackingQueries) {
-        if (!query.hasChangedModifiers) continue;
-        if (!query.changedTraits.has(trait)) continue;
+        if (!query.hasChangedModifiers && !query.predicates.some((p) => p.traits.includes(trait))) continue;
+        if (!query.hasChangedModifiers && !query.predicates.some((p) => p.traits.includes(trait))) continue;
 
         const match =
             query.relationFilters && query.relationFilters.length > 0

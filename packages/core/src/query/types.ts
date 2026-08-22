@@ -93,6 +93,8 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    predicate?: (data: unknown[]) => boolean;
+    predicateMode?: 'current' | 'added' | 'removed' | 'changed';
 };
 
 /** Parameter types that can be passed to Or modifier */
@@ -165,6 +167,8 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     removeSubscriptions: Set<QuerySubscriber>;
     /** Relation pairs for target-specific queries */
     relationFilters?: RelationPair[];
+    predicates: Modifier[];
+    predicateState: Map<number, boolean>;
     run: (world: World, params: QueryParameter[]) => QueryResult<T>;
     add: (entity: Entity) => void;
     remove: (world: World, entity: Entity) => void;

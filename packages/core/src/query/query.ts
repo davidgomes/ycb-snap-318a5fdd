@@ -27,6 +27,7 @@ import { checkQuery } from './utils/check-query';
 import { checkQueryTracking } from './utils/check-query-tracking';
 import { checkQueryWithRelations } from './utils/check-query-with-relations';
 import { createQueryHash } from './utils/create-query-hash';
+import { isPredicate } from './predicate';
 
 export const IsExcluded: TagTrait = trait();
 
@@ -194,6 +195,8 @@ export function createQueryInstance<T extends QueryParameter[]>(
         addSubscriptions: new Set<QuerySubscriber>(),
         removeSubscriptions: new Set<QuerySubscriber>(),
         relationFilters: [],
+        predicates: [],
+        predicateState: new Map(),
 
         run: (world: World, params: QueryParameter[]) => runQuery(world, query, params),
         add: (entity: Entity) => addEntityToQuery(query, entity),
@@ -234,6 +237,17 @@ export function createQueryInstance<T extends QueryParameter[]>(
         }
 
         if (isModifier(parameter)) {
+            if (isPredicate(parameter)) {
+                query.predicates.push(parameter);
+                query.isTracking = true;
+                for (const dependency of parameter.traits) {
+                    if (!hasTraitInstance(ctx.traitInstances, dependency)) registerTrait(world, dependency);
+                    const instance = getTraitInstance(ctx.traitInstances, dependency)!;
+                    instance.trackingQueries.add(query);
+                    query.traitInstances.all.push(instance);
+                }
+                continue;
+            }
             const traits = parameter.traits;
 
             // Register traits
