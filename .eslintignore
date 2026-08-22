@@ -1,0 +1,6 @@
+/bin
+/lib
+/dist
+/coverage
+webpack.*.js
+/src/parser/grammar.ts

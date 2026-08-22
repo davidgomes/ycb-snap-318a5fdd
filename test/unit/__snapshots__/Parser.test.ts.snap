@@ -1,0 +1,807 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Parser parses BETWEEN expression 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "quoted": false,
+            "text": "age",
+            "type": "identifier",
+          },
+          {
+            "andKw": {
+              "raw": "AND",
+              "text": "AND",
+              "tokenType": "AND",
+              "type": "keyword",
+            },
+            "betweenKw": {
+              "raw": "BETWEEN",
+              "text": "BETWEEN",
+              "tokenType": "BETWEEN",
+              "type": "keyword",
+            },
+            "expr1": [
+              {
+                "text": "18",
+                "type": "literal",
+              },
+            ],
+            "expr2": [
+              {
+                "text": "63",
+                "type": "literal",
+              },
+            ],
+            "type": "between_predicate",
+          },
+        ],
+        "nameKw": {
+          "raw": "WHERE",
+          "text": "WHERE",
+          "tokenType": "RESERVED_CLAUSE",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": false,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses CASE expression 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "caseKw": {
+              "raw": "CASE",
+              "text": "CASE",
+              "tokenType": "CASE",
+              "type": "keyword",
+            },
+            "clauses": [
+              {
+                "condition": [
+                  {
+                    "text": "1",
+                    "type": "literal",
+                  },
+                  {
+                    "text": "+",
+                    "type": "operator",
+                  },
+                  {
+                    "text": "1",
+                    "type": "literal",
+                  },
+                ],
+                "result": [
+                  {
+                    "text": "10",
+                    "type": "literal",
+                  },
+                ],
+                "thenKw": {
+                  "raw": "THEN",
+                  "text": "THEN",
+                  "tokenType": "THEN",
+                  "type": "keyword",
+                },
+                "type": "case_when",
+                "whenKw": {
+                  "raw": "WHEN",
+                  "text": "WHEN",
+                  "tokenType": "WHEN",
+                  "type": "keyword",
+                },
+              },
+              {
+                "elseKw": {
+                  "raw": "ELSE",
+                  "text": "ELSE",
+                  "tokenType": "ELSE",
+                  "type": "keyword",
+                },
+                "result": [
+                  {
+                    "text": "20",
+                    "type": "literal",
+                  },
+                ],
+                "type": "case_else",
+              },
+            ],
+            "endKw": {
+              "raw": "END",
+              "text": "END",
+              "tokenType": "END",
+              "type": "keyword",
+            },
+            "expr": [
+              {
+                "quoted": false,
+                "text": "foo",
+                "type": "identifier",
+              },
+            ],
+            "type": "case_expression",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": true,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses LIMIT clause with count 1`] = `
+[
+  {
+    "children": [
+      {
+        "count": [
+          {
+            "text": "15",
+            "type": "literal",
+          },
+        ],
+        "limitKw": {
+          "raw": "LIMIT",
+          "text": "LIMIT",
+          "tokenType": "LIMIT",
+          "type": "keyword",
+        },
+        "type": "limit_clause",
+      },
+    ],
+    "hasSemicolon": true,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses LIMIT clause with longer expressions 1`] = `
+[
+  {
+    "children": [
+      {
+        "count": [
+          {
+            "text": "3",
+            "type": "literal",
+          },
+          {
+            "text": "*",
+            "type": "operator",
+          },
+          {
+            "text": "2",
+            "type": "literal",
+          },
+        ],
+        "limitKw": {
+          "raw": "LIMIT",
+          "text": "LIMIT",
+          "tokenType": "LIMIT",
+          "type": "keyword",
+        },
+        "offset": [
+          {
+            "text": "50",
+            "type": "literal",
+          },
+          {
+            "text": "+",
+            "type": "operator",
+          },
+          {
+            "text": "50",
+            "type": "literal",
+          },
+        ],
+        "type": "limit_clause",
+      },
+    ],
+    "hasSemicolon": true,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses LIMIT clause with offset and count 1`] = `
+[
+  {
+    "children": [
+      {
+        "count": [
+          {
+            "text": "15",
+            "type": "literal",
+          },
+        ],
+        "limitKw": {
+          "raw": "LIMIT",
+          "text": "LIMIT",
+          "tokenType": "LIMIT",
+          "type": "keyword",
+        },
+        "offset": [
+          {
+            "text": "100",
+            "type": "literal",
+          },
+        ],
+        "type": "limit_clause",
+      },
+    ],
+    "hasSemicolon": true,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses SELECT * 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "type": "all_columns_asterisk",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": false,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses SELECT ident.* 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "object": {
+              "quoted": false,
+              "text": "ident",
+              "type": "identifier",
+            },
+            "operator": ".",
+            "property": {
+              "type": "all_columns_asterisk",
+            },
+            "type": "property_access",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": false,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses array subscript 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "array": {
+              "quoted": false,
+              "text": "my_array",
+              "type": "identifier",
+            },
+            "parenthesis": {
+              "children": [
+                {
+                  "text": "5",
+                  "type": "literal",
+                },
+              ],
+              "closeParen": "]",
+              "openParen": "[",
+              "type": "parenthesis",
+            },
+            "type": "array_subscript",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": false,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses array subscript with comment 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "array": {
+              "quoted": false,
+              "text": "my_array",
+              "trailingComments": [
+                {
+                  "precedingWhitespace": " ",
+                  "text": "/*haha*/",
+                  "type": "block_comment",
+                },
+              ],
+              "type": "identifier",
+            },
+            "parenthesis": {
+              "children": [
+                {
+                  "text": "5",
+                  "type": "literal",
+                },
+              ],
+              "closeParen": "]",
+              "openParen": "[",
+              "type": "parenthesis",
+            },
+            "type": "array_subscript",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": false,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses curly braces 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "quoted": false,
+                "text": "foo",
+                "type": "identifier",
+              },
+              {
+                "text": ":",
+                "type": "operator",
+              },
+              {
+                "quoted": false,
+                "text": "bar",
+                "type": "identifier",
+              },
+            ],
+            "closeParen": "}",
+            "openParen": "{",
+            "type": "parenthesis",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": true,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses function call 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "nameKw": {
+              "raw": "sqrt",
+              "text": "SQRT",
+              "tokenType": "RESERVED_FUNCTION_NAME",
+              "type": "keyword",
+            },
+            "parenthesis": {
+              "children": [
+                {
+                  "text": "2",
+                  "type": "literal",
+                },
+              ],
+              "closeParen": ")",
+              "openParen": "(",
+              "type": "parenthesis",
+            },
+            "type": "function_call",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": false,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses function name with and without parameters 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "quoted": false,
+            "text": "CURRENT_TIME",
+            "type": "identifier",
+          },
+          {
+            "quoted": false,
+            "text": "a",
+            "type": "identifier",
+          },
+          {
+            "type": "comma",
+          },
+          {
+            "nameKw": {
+              "raw": "CURRENT_TIME",
+              "text": "CURRENT_TIME",
+              "tokenType": "RESERVED_FUNCTION_NAME",
+              "type": "keyword",
+            },
+            "parenthesis": {
+              "children": [],
+              "closeParen": ")",
+              "openParen": "(",
+              "type": "parenthesis",
+            },
+            "type": "function_call",
+          },
+          {
+            "quoted": false,
+            "text": "b",
+            "type": "identifier",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": true,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses list of statements 1`] = `
+[
+  {
+    "children": [
+      {
+        "quoted": false,
+        "text": "foo",
+        "type": "identifier",
+      },
+    ],
+    "hasSemicolon": true,
+    "type": "statement",
+  },
+  {
+    "children": [
+      {
+        "quoted": false,
+        "text": "bar",
+        "type": "identifier",
+      },
+    ],
+    "hasSemicolon": false,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses parenthesized expressions 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "quoted": false,
+                "text": "birth_year",
+                "type": "identifier",
+              },
+              {
+                "text": "-",
+                "type": "operator",
+              },
+              {
+                "children": [
+                  {
+                    "quoted": false,
+                    "text": "CURRENT_DATE",
+                    "type": "identifier",
+                  },
+                  {
+                    "text": "+",
+                    "type": "operator",
+                  },
+                  {
+                    "text": "1",
+                    "type": "literal",
+                  },
+                ],
+                "closeParen": ")",
+                "openParen": "(",
+                "type": "parenthesis",
+              },
+            ],
+            "closeParen": ")",
+            "openParen": "(",
+            "type": "parenthesis",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": false,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses qualified.identifier.sequence 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "object": {
+              "object": {
+                "quoted": false,
+                "text": "foo",
+                "type": "identifier",
+              },
+              "operator": ".",
+              "property": {
+                "quoted": false,
+                "text": "bar",
+                "type": "identifier",
+              },
+              "type": "property_access",
+            },
+            "operator": ".",
+            "property": {
+              "quoted": false,
+              "text": "baz",
+              "type": "identifier",
+            },
+            "type": "property_access",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": true,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses set operations 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "quoted": false,
+            "text": "foo",
+            "type": "identifier",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+      {
+        "children": [
+          {
+            "quoted": false,
+            "text": "bar",
+            "type": "identifier",
+          },
+        ],
+        "nameKw": {
+          "raw": "FROM",
+          "text": "FROM",
+          "tokenType": "RESERVED_CLAUSE",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+      {
+        "children": [],
+        "nameKw": {
+          "raw": "UNION ALL",
+          "text": "UNION ALL",
+          "tokenType": "RESERVED_SET_OPERATION",
+          "type": "keyword",
+        },
+        "type": "set_operation",
+      },
+      {
+        "children": [
+          {
+            "quoted": false,
+            "text": "foo",
+            "type": "identifier",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+      {
+        "children": [
+          {
+            "quoted": false,
+            "text": "baz",
+            "type": "identifier",
+          },
+        ],
+        "nameKw": {
+          "raw": "FROM",
+          "text": "FROM",
+          "tokenType": "RESERVED_CLAUSE",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": false,
+    "type": "statement",
+  },
+]
+`;
+
+exports[`Parser parses square brackets 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "text": "1",
+                "type": "literal",
+              },
+              {
+                "type": "comma",
+              },
+              {
+                "text": "2",
+                "type": "literal",
+              },
+              {
+                "type": "comma",
+              },
+              {
+                "text": "3",
+                "type": "literal",
+              },
+            ],
+            "closeParen": "]",
+            "openParen": "[",
+            "type": "parenthesis",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+    ],
+    "hasSemicolon": true,
+    "type": "statement",
+  },
+]
+`;

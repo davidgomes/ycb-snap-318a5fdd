@@ -1,0 +1,82 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Tokenizer tokenizes multiline SQL tokens 1`] = `
+[
+  {
+    "precedingWhitespace": undefined,
+    "raw": "SELECT",
+    "start": 0,
+    "text": "SELECT",
+    "type": "RESERVED_SELECT",
+  },
+  {
+    "precedingWhitespace": " ",
+    "raw": ""foo
+ bar"",
+    "start": 7,
+    "text": ""foo
+ bar"",
+    "type": "QUOTED_IDENTIFIER",
+  },
+  {
+    "precedingWhitespace": " ",
+    "raw": "/* 
+
+
+ */",
+    "start": 18,
+    "text": "/* 
+
+
+ */",
+    "type": "BLOCK_COMMENT",
+  },
+  {
+    "precedingWhitespace": undefined,
+    "raw": ";",
+    "start": 27,
+    "text": ";",
+    "type": "DELIMITER",
+  },
+]
+`;
+
+exports[`Tokenizer tokenizes single line SQL tokens 1`] = `
+[
+  {
+    "precedingWhitespace": undefined,
+    "raw": "SELECT",
+    "start": 0,
+    "text": "SELECT",
+    "type": "RESERVED_SELECT",
+  },
+  {
+    "precedingWhitespace": " ",
+    "raw": "*",
+    "start": 7,
+    "text": "*",
+    "type": "ASTERISK",
+  },
+  {
+    "precedingWhitespace": " ",
+    "raw": "FROM",
+    "start": 9,
+    "text": "FROM",
+    "type": "RESERVED_CLAUSE",
+  },
+  {
+    "precedingWhitespace": " ",
+    "raw": "foo",
+    "start": 14,
+    "text": "foo",
+    "type": "IDENTIFIER",
+  },
+  {
+    "precedingWhitespace": undefined,
+    "raw": ";",
+    "start": 17,
+    "text": ";",
+    "type": "DELIMITER",
+  },
+]
+`;

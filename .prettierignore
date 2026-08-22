@@ -1,0 +1,7 @@
+/coverage
+/dist
+/lib
+/node_modules
+yarn.lock
+LICENSE
+/src/parser/grammar.ts
