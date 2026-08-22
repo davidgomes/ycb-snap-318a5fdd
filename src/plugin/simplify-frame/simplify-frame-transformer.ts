@@ -1,6 +1,6 @@
 import { OperationNodeTransformer } from '../../operation-node/operation-node-transformer.js'
 import type { OverNode } from '../../operation-node/over-node.js'
-import type { WindowFrameBoundNode } from '../../operation-node/window-frame-bound-node.js'
+import type { FrameBoundNode } from '../../operation-node/frame-bound-node.js'
 import type { QueryId } from '../../util/query-id.js'
 
 /**
@@ -52,14 +52,14 @@ function isRedundantDefaultFrame(over: OverNode): boolean {
   return frame.end !== undefined && isUnboundedFollowingBound(frame.end)
 }
 
-function isDefaultStartBound(bound: WindowFrameBoundNode): boolean {
-  return bound.boundType === 'unbounded preceding' && bound.offset === undefined
+function isDefaultStartBound(bound: FrameBoundNode): boolean {
+  return bound.type === 'unbounded preceding' && bound.offset === undefined
 }
 
-function isCurrentRowBound(bound: WindowFrameBoundNode): boolean {
-  return bound.boundType === 'current row' && bound.offset === undefined
+function isCurrentRowBound(bound: FrameBoundNode): boolean {
+  return bound.type === 'current row' && bound.offset === undefined
 }
 
-function isUnboundedFollowingBound(bound: WindowFrameBoundNode): boolean {
-  return bound.boundType === 'unbounded following' && bound.offset === undefined
+function isUnboundedFollowingBound(bound: FrameBoundNode): boolean {
+  return bound.type === 'unbounded following' && bound.offset === undefined
 }

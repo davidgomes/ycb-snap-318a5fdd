@@ -9,8 +9,8 @@ export type WindowFrameBoundKind =
   | 'unbounded following'
 
 export interface WindowFrameBoundNode extends OperationNode {
-  readonly kind: 'WindowFrameBoundNode'
-  readonly boundType: WindowFrameBoundKind
+  readonly kind: 'FrameBoundNode'
+  readonly type: WindowFrameBoundKind
   readonly offset?: OperationNode
 }
 
@@ -28,13 +28,13 @@ type WindowFrameBoundNodeFactory = Readonly<{
 export const WindowFrameBoundNode: WindowFrameBoundNodeFactory =
   freeze<WindowFrameBoundNodeFactory>({
     is(node): node is WindowFrameBoundNode {
-      return node.kind === 'WindowFrameBoundNode'
+    return node.kind === 'FrameBoundNode'
     },
 
     create(boundType, offset) {
       return freeze({
-        kind: 'WindowFrameBoundNode',
-        boundType,
+        kind: 'FrameBoundNode',
+        type: boundType,
         offset,
       })
     },

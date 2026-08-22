@@ -11,7 +11,7 @@ export type WindowFrameExclusion =
   | 'no others'
 
 export interface WindowFrameNode extends OperationNode {
-  readonly kind: 'WindowFrameNode'
+  readonly kind: 'FrameNode'
   readonly mode: WindowFrameMode
   readonly start: WindowFrameBoundNode
   readonly end?: WindowFrameBoundNode
@@ -42,12 +42,12 @@ type WindowFrameNodeFactory = Readonly<{
 export const WindowFrameNode: WindowFrameNodeFactory =
   freeze<WindowFrameNodeFactory>({
     is(node): node is WindowFrameNode {
-      return node.kind === 'WindowFrameNode'
+    return node.kind === 'FrameNode'
     },
 
     create(mode, start, end, exclusion) {
       return freeze({
-        kind: 'WindowFrameNode',
+      kind: 'FrameNode',
         mode,
         start,
         end,
