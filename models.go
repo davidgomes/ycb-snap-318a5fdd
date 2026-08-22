@@ -4514,6 +4514,7 @@ func (m Models) generateContentStream(ctx context.Context, model string, content
 	if err != nil {
 		return yieldErrorAndEndIterator[GenerateContentResponse](err)
 	}
+	partialArgsStates := make(map[string]*partialArgsState)
 	return iterateResponseStream(&rs, func(responseMap map[string]any) (*GenerateContentResponse, error) {
 		responseMap, err := fromConverter(responseMap, nil, parameterMap)
 		if err != nil {
@@ -4523,6 +4524,16 @@ func (m Models) generateContentStream(ctx context.Context, model string, content
 		err = InternalMapToStruct(responseMap, response)
 		if err != nil {
 			return nil, err
+		}
+		if len(response.Candidates) > 0 && response.Candidates[0].Content != nil {
+			for _, part := range response.Candidates[0].Content.Parts {
+				if part.FunctionCall != nil {
+					part.FunctionCall, err = accumulateFunctionCall(partialArgsStates, part.FunctionCall)
+					if err != nil {
+						return nil, err
+					}
+				}
+			}
 		}
 		return response, nil
 	})

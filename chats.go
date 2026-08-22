@@ -226,6 +226,8 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 	// Return a new iterator that will yield the responses and record history with merged response.
 	return func(yield func(*GenerateContentResponse, error) bool) {
 		var outputContents []*Content
+		var streamedFunctionCalls []*FunctionCall
+		allFunctionCalls := true
 		isValid := true
 		finishReason := FinishReasonUnspecified
 		for chunk, err := range response {
@@ -242,6 +244,15 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 			if len(chunk.Candidates) > 0 {
 				if chunk.Candidates[0].Content != nil {
 					outputContents = append(outputContents, chunk.Candidates[0].Content)
+					for _, part := range chunk.Candidates[0].Content.Parts {
+						if part.FunctionCall == nil {
+							allFunctionCalls = false
+							continue
+						}
+						if part.FunctionCall.WillContinue == nil || !*part.FunctionCall.WillContinue {
+							streamedFunctionCalls = append(streamedFunctionCalls, part.FunctionCall)
+						}
+					}
 				}
 				if chunk.Candidates[0].FinishReason != FinishReasonUnspecified {
 					finishReason = chunk.Candidates[0].FinishReason
@@ -250,6 +261,13 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 			if !yield(chunk, nil) {
 				return
 			}
+		}
+		if allFunctionCalls && len(streamedFunctionCalls) > 0 {
+			parts := make([]*Part, 0, len(streamedFunctionCalls))
+			for _, call := range streamedFunctionCalls {
+				parts = append(parts, &Part{FunctionCall: call})
+			}
+			outputContents = []*Content{{Role: RoleModel, Parts: parts}}
 		}
 		// Record history. By default, use the first candidate for history.
 		finalIsValid := isValid && finishReason != FinishReasonUnspecified
