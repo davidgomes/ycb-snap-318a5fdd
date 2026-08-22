@@ -1,9 +1,9 @@
 import type {ReactNode} from 'react';
-import Yoga from 'yoga-layout';
 import {LegacyRoot} from 'react-reconciler/constants.js';
 import reconciler from './reconciler.js';
 import renderer from './renderer.js';
 import {createNode, type DOMElement} from './dom.js';
+import calculateLayout from './calculate-layout.js';
 
 export type RenderToStringOptions = {
 	/**
@@ -59,12 +59,7 @@ const renderToString = (
 	let capturedStaticOutput = '';
 
 	rootNode.onComputeLayout = () => {
-		rootNode.yogaNode!.setWidth(columns);
-		rootNode.yogaNode!.calculateLayout(
-			undefined,
-			undefined,
-			Yoga.DIRECTION_LTR,
-		);
+		calculateLayout(rootNode, columns);
 	};
 
 	rootNode.onImmediateRender = () => {

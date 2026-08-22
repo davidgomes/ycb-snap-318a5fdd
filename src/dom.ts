@@ -5,11 +5,17 @@ import wrapText from './wrap-text.js';
 import squashTextNodes from './squash-text-nodes.js';
 import {type OutputTransformer} from './render-node-to-output.js';
 
+export type GridItemLayout = {
+	left: number;
+	top: number;
+};
+
 type InkNode = {
 	parentNode: DOMElement | undefined;
 	yogaNode?: YogaNode;
 	internal_static?: boolean;
 	style: Styles;
+	gridItemLayout?: GridItemLayout;
 };
 
 type LayoutListener = () => void;

@@ -991,10 +991,48 @@ You can also set it as a percentage of the parent size.
 ##### display
 
 Type: `string`\
-Allowed values: `flex` `none`\
+Allowed values: `flex` `none` `grid`\
 Default: `flex`
 
 Set this property to `none` to hide the element.
+Set it to `grid` to position children on a grid defined by `gridTemplateColumns` and `gridTemplateRows`.
+
+##### gridTemplateColumns
+
+Type: `string`
+
+Column track sizes for `display="grid"`.
+A space-separated list of fixed numbers, `fr` units, `auto`, or `minmax(min, max)` where `min` is a fixed number and `max` is a fixed number or `fr` unit.
+
+```jsx
+<Box display="grid" gridTemplateColumns="1fr 1fr" width={10}>
+	<Text>A</Text>
+	<Text>B</Text>
+</Box>
+//=> 'A    B'
+```
+
+##### gridTemplateRows
+
+Type: `string`
+
+Row track sizes for `display="grid"`.
+Uses the same track syntax as `gridTemplateColumns`.
+When omitted, rows are created automatically as needed.
+
+##### gridColumn
+
+Type: `number` `string`
+
+1-based column placement for a grid item.
+A single index occupies one column; `"start / end"` spans from `start` to `end`.
+
+##### gridRow
+
+Type: `number` `string`
+
+1-based row placement for a grid item.
+A single index occupies one row; `"start / end"` spans from `start` to `end`.
 
 ##### overflowX
 

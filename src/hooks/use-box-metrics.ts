@@ -88,7 +88,15 @@ const useBoxMetrics = (ref: RefObject<DOMElement>): UseBoxMetricsResult => {
 	const {stdout} = useStdout();
 
 	const updateMetrics = useCallback(() => {
-		const layout = ref.current?.yogaNode?.getComputedLayout() ?? emptyMetrics;
+		const computed = ref.current?.yogaNode?.getComputedLayout() ?? emptyMetrics;
+		const gridItemLayout = ref.current?.gridItemLayout;
+		const layout = gridItemLayout
+			? {
+					...computed,
+					left: gridItemLayout.left,
+					top: gridItemLayout.top,
+				}
+			: computed;
 
 		setMetrics(previousMetrics => {
 			const hasChanged =
