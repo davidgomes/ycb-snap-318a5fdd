@@ -97,6 +97,7 @@ from IPython.utils.strdispatch import StrDispatch
 from IPython.utils.syspathcontext import prepended_to_syspath
 from IPython.utils.text import DollarFormatter, LSString, SList, format_screen
 from IPython.core.oinspect import OInfo
+from IPython.core.sessionbundle import session_bundle_recorder
 
 
 sphinxify: Optional[Callable]
@@ -2432,6 +2433,7 @@ class InteractiveShell(SingletonConfigurable):
             m.ExtensionMagics, m.HistoryMagics, m.LoggingMagics,
             m.NamespaceMagics, m.OSMagics, m.PackagingMagics,
             m.PylabMagics, m.ScriptMagics,
+            m.SessionBundleMagics,
         )
         self.register_magics(m.AsyncMagics)
 
@@ -2450,6 +2452,23 @@ class InteractiveShell(SingletonConfigurable):
         # should be split into a prompt manager and displayhook. We probably
         # even need a centralize colors management object.
         self.run_line_magic('colors', self.colors)
+
+    def start_session_bundle(self, path, *, overwrite=False, redact=None):
+        self._session_bundle_recorder = session_bundle_recorder(
+            self, path, overwrite=overwrite, redact=redact
+        )
+        return self._session_bundle_recorder.start()
+
+    def stop_session_bundle(self):
+        recorder = getattr(self, "_session_bundle_recorder", None)
+        if recorder is None:
+            raise RuntimeError("no session bundle recording is active")
+        return recorder.stop()
+
+    def session_bundle_status(self):
+        recorder = getattr(self, "_session_bundle_recorder", None)
+        return {"recording": recorder is not None,
+                "path": str(recorder.path) if recorder is not None else None}
 
     # Defined here so that it's included in the documentation
     @functools.wraps(magic.MagicsManager.register_function)
