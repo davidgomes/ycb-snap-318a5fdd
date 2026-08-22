@@ -7,6 +7,7 @@ import logging
 import operator
 
 from bandit.core import constants
+from bandit.core import taint
 from bandit.core import tester as b_tester
 from bandit.core import utils as b_utils
 
@@ -190,6 +191,7 @@ class BanditNodeVisitor:
         self.context = {}
         self.context["imports"] = self.imports
         self.context["import_aliases"] = self.import_aliases
+        self.context["taint"] = self.taint
 
         if self.debug:
             LOG.debug(ast.dump(node))
@@ -283,6 +285,7 @@ class BanditNodeVisitor:
         :return score: the aggregated score for the current file
         """
         f_ast = ast.parse(data)
+        self.taint = taint.TaintAnalyzer(f_ast)
         self.generic_visit(f_ast)
         # Run tests that do not require access to the AST,
         # but only to the whole file source:
