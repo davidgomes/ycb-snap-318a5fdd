@@ -1,6 +1,7 @@
 import type { UpdateCommandInput } from '@aws-sdk/lib-dynamodb'
 
 import { EntityParser } from '~/entity/actions/parse/index.js'
+import type { Condition } from '~/entity/actions/parseCondition/index.js'
 import { expressUpdate } from '~/entity/actions/update/expressUpdate/index.js'
 import type { Entity } from '~/entity/index.js'
 import { isEmpty } from '~/utils/isEmpty.js'
@@ -43,16 +44,18 @@ export const updateAttributesParams: UpdateAttributesParamsGetter = <
     ...update
   } = expressUpdate(entity, omit(item, ...Object.keys(key)))
 
+  const requiredIfCondition = mergeUpdateConditions(
+    getRequiredIfUpdateCondition(entity.schema, parsedItem),
+    options.condition
+  ) as Condition<ENTITY> | undefined
+
   const {
     ExpressionAttributeNames: optionsExpressionAttributeNames,
     ExpressionAttributeValues: optionsExpressionAttributeValues,
     ...awsOptions
   } = parseUpdateAttributesOptions(entity, {
     ...options,
-    condition: mergeUpdateConditions(
-      getRequiredIfUpdateCondition(entity.schema, parsedItem),
-      options.condition
-    )
+    condition: requiredIfCondition
   })
 
   const ExpressionAttributeNames = {

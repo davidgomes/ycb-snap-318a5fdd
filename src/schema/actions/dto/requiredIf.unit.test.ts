@@ -15,13 +15,13 @@ describe('dto - requiredIf', () => {
     const dto = schema.build(SchemaDTO)
     const restored = fromSchemaDTO(JSON.parse(JSON.stringify(dto)))
 
-    expect(restored.attributes.breed.props.requiredIf).toStrictEqual([
+    expect(restored.attributes.breed!.props.requiredIf).toStrictEqual([
       { attributeName: 'kind', triggerValues: ['dog', 'wolf'] }
     ])
-    expect(restored.attributes.age.props.requiredIf).toStrictEqual([
+    expect(restored.attributes.age!.props.requiredIf).toStrictEqual([
       { attributeName: 'kind', triggerValues: ['dog'] }
     ])
-    expect(restored.attributes.extra.props.requiredIf).toStrictEqual([
+    expect(restored.attributes.extra!.props.requiredIf).toStrictEqual([
       { attributeName: 'kind', triggerValues: ['cat'] }
     ])
   })
