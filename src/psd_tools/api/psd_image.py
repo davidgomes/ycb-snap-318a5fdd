@@ -239,6 +239,9 @@ class PSDImage(layers.GroupMixin, PSDProtocol):
             default 'macroman'.
         :param mode: file open mode, default 'wb'.
         """
+        for layer in self.descendants():
+            layer._sync_blend_ranges()
+
         if self.is_updated():
             # Update the preview image if the layer structure has been changed.
             # TODO: Set a `has_composite` flag in VersionInfo resource.
