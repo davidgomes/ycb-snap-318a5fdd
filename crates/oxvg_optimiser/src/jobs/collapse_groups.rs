@@ -130,10 +130,22 @@ impl<'input, 'arena> visitor::Visitor<'input>
         };
 
         for target in matches {
-            let mut element = Some(target);
+            let mut element = Some(target.clone());
             while let Some(current) = element {
                 self.elements.push(HashableElement::new(current.clone()));
                 element = current.parent_element();
+            }
+
+            if selector.contains('+') || selector.contains('~') {
+                let mut sibling = target.previous_element_sibling();
+                while let Some(current) = sibling {
+                    self.elements.push(HashableElement::new(current.clone()));
+                    sibling = if selector.contains('~') {
+                        current.previous_element_sibling()
+                    } else {
+                        None
+                    };
+                }
             }
         }
 
@@ -557,5 +569,50 @@ fn collapse_groups() -> anyhow::Result<()> {
         )
     )?);
 
+    Ok(())
+}
+
+#[test]
+fn preserves_only_groups_used_by_structural_selectors() -> anyhow::Result<()> {
+    use crate::test_config;
+
+    let output = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg>
+    <style>g.keep > path.marked { fill: red; }</style>
+    <g class="keep">
+        <path class="marked"/>
+    </g>
+    <g class="plain">
+        <path/>
+    </g>
+</svg>"#,
+        ),
+    )?;
+
+    assert!(output.contains(r#"<g class="keep">"#));
+    assert!(!output.contains(r#"<g class="plain">"#));
+    Ok(())
+}
+
+#[test]
+fn preserves_sibling_selector_anchors() -> anyhow::Result<()> {
+    use crate::test_config;
+
+    let output = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg>
+    <style>g.anchor + path.target { fill: red; }</style>
+    <g class="anchor">
+        <path/>
+    </g>
+    <path class="target"/>
+</svg>"#,
+        ),
+    )?;
+
+    assert!(output.contains(r#"<g class="anchor">"#));
     Ok(())
 }
