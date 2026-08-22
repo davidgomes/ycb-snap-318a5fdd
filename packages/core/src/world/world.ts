@@ -24,6 +24,7 @@ import type {
 import { universe } from '../universe/universe';
 import type { World, WorldInternal, WorldOptions } from './types';
 import { allocateWorldId, releaseWorldId } from './utils/world-index';
+import { rollbackWorld, snapshotWorld } from '../snapshot';
 
 export function createWorld(options: WorldOptions): World;
 export function createWorld(...traits: ConfigurableTrait[]): World;
@@ -180,6 +181,14 @@ export function createWorld(
             for (const sub of ctx.resetSubscriptions) {
                 sub(world);
             }
+        },
+
+        snapshot(registry: Parameters<typeof snapshotWorld>[1]) {
+            return snapshotWorld(world, registry);
+        },
+
+        rollback(registry: Parameters<typeof rollbackWorld>[1], checkpoint: Parameters<typeof rollbackWorld>[2]) {
+            rollbackWorld(world, registry, checkpoint);
         },
 
         query(...args: any[]) {

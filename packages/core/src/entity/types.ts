@@ -7,6 +7,7 @@ import type {
     TraitRecord,
     TraitValue,
 } from '../trait/types';
+import type { EntitySnapshot, TraitRegistry } from '../snapshot';
 
 export type Entity = number & {
     add: (...traits: ConfigurableTrait[]) => void;
@@ -25,4 +26,6 @@ export type Entity = number & {
     id: () => number;
     generation: () => number;
     isAlive: () => boolean;
+    snapshot: (registry: TraitRegistry) => EntitySnapshot;
+    rollback: (registry: TraitRegistry, snapshot: EntitySnapshot) => void;
 };

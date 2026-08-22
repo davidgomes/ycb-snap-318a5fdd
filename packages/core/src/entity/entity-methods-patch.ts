@@ -12,6 +12,8 @@ import { addTrait, getTrait, hasTrait, removeTrait, setTrait } from '../trait/tr
 import type { ConfigurableTrait, Trait } from '../trait/types';
 import { destroyEntity, getEntityWorld } from './entity';
 import type { Entity } from './types';
+import { rollbackEntity, snapshotEntity } from '../snapshot';
+import type { TraitRegistry, EntitySnapshot } from '../snapshot';
 import { isEntityAlive } from './utils/entity-index';
 import { getEntityGeneration, getEntityId } from './utils/pack-entity';
 
@@ -82,4 +84,14 @@ Number.prototype.isAlive = function (this: Entity) {
     const world = getEntityWorld(this);
     const entityIndex = world[$internal].entityIndex;
     return isEntityAlive(entityIndex, this);
+};
+
+// @ts-expect-error
+Number.prototype.snapshot = function (this: Entity, registry: TraitRegistry): EntitySnapshot {
+    return snapshotEntity(getEntityWorld(this), this, registry);
+};
+
+// @ts-expect-error
+Number.prototype.rollback = function (this: Entity, registry: TraitRegistry, snapshot: EntitySnapshot) {
+    return rollbackEntity(getEntityWorld(this), this, registry, snapshot);
 };
