@@ -323,6 +323,9 @@ func (s *Session) Receive() (*LiveServerMessage, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.streamedCallStates == nil {
+		s.streamedCallStates = map[string]*streamedCallArgs{}
+	}
 	if err := applyStreamedLiveToolCalls(message, s.streamedCallStates); err != nil {
 		return nil, err
 	}
