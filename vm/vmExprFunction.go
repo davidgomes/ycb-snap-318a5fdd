@@ -281,9 +281,6 @@ func (runInfo *runInfoStruct) makeCallArgs(rt reflect.Type, isRunVMFunction bool
 				args = append(args, reflect.ValueOf(reflect.Value{}))
 			}
 		}
-		if rt.IsVariadic() {
-			args = append(args, reflect.ValueOf([]interface{}{}))
-		}
 		return args, false
 	}
 	// checks to short circuit wrong number of arguments

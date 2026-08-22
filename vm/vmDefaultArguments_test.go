@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/mattn/anko/env"
@@ -23,6 +24,14 @@ func TestDefaultArguments(t *testing.T) {
 	}
 	if got != int64(4) {
 		t.Fatalf("got %v, want 4", got)
+	}
+
+	got, err = Execute(e, nil, `func f(a = 1, b = 2, c...) { return [a, b, c] }; f()`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []interface{}{int64(1), int64(2), []interface{}{}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
 	}
 }
 
