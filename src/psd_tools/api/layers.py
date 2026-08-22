@@ -99,6 +99,7 @@ from typing import (
 from typing_extensions import Self
 
 if TYPE_CHECKING:
+    from psd_tools.api.blend_range import BlendRanges
     from psd_tools.api.typesetting import TypeSetting
 
 import numpy as np
@@ -309,6 +310,23 @@ class Layer(LayerProtocol):
         if self.blend_mode != blend_mode:
             self._psd._mark_updated()
         self._record.blend_mode = blend_mode
+
+    @property
+    def blend_ranges(self) -> "BlendRanges":
+        """
+        Typed blend ranges (Blend-If sliders) for this layer.
+
+        :return: :py:class:`~psd_tools.api.blend_range.BlendRanges`
+        """
+        from psd_tools.api.blend_range import BlendRanges
+
+        return BlendRanges.from_raw(self._record.blending_ranges)
+
+    @blend_ranges.setter
+    def blend_ranges(self, value: "BlendRanges") -> None:
+        value.apply_to_raw(self._record.blending_ranges)
+        if self._psd is not None:
+            self._psd._mark_updated()
 
     @property
     def left(self) -> int:
