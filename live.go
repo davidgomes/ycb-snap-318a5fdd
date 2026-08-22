@@ -324,6 +324,9 @@ func (s *Session) Receive() (*LiveServerMessage, error) {
 		return nil, err
 	}
 	if message.ToolCall != nil {
+		if s.partialArgsStates == nil {
+			s.partialArgsStates = make(map[string]*partialArgsState)
+		}
 		for i, call := range message.ToolCall.FunctionCalls {
 			var err error
 			call, err = accumulateFunctionCall(s.partialArgsStates, call)

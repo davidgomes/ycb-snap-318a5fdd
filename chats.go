@@ -226,7 +226,10 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 	// Return a new iterator that will yield the responses and record history with merged response.
 	return func(yield func(*GenerateContentResponse, error) bool) {
 		var outputContents []*Content
-		var streamedFunctionCalls []*FunctionCall
+		streamedFunctionCallOrder := []string{}
+		streamedFunctionCalls := map[string]*FunctionCall{}
+		activeFunctionCallKeys := map[string]string{}
+		functionCallCounts := map[string]int{}
 		allFunctionCalls := true
 		isValid := true
 		finishReason := FinishReasonUnspecified
@@ -249,8 +252,20 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 							allFunctionCalls = false
 							continue
 						}
+						key, active := activeFunctionCallKeys[part.FunctionCall.ID]
+						if !active {
+							count := functionCallCounts[part.FunctionCall.ID]
+							key = fmt.Sprintf("%s#%d", part.FunctionCall.ID, count)
+							functionCallCounts[part.FunctionCall.ID] = count + 1
+							activeFunctionCallKeys[part.FunctionCall.ID] = key
+							streamedFunctionCallOrder = append(streamedFunctionCallOrder, key)
+						}
 						if part.FunctionCall.WillContinue == nil || !*part.FunctionCall.WillContinue {
-							streamedFunctionCalls = append(streamedFunctionCalls, part.FunctionCall)
+							completedCall := *part.FunctionCall
+							completedCall.PartialArgs = nil
+							completedCall.WillContinue = nil
+							streamedFunctionCalls[key] = &completedCall
+							delete(activeFunctionCallKeys, part.FunctionCall.ID)
 						}
 					}
 				}
@@ -264,8 +279,11 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 		}
 		if allFunctionCalls && len(streamedFunctionCalls) > 0 {
 			parts := make([]*Part, 0, len(streamedFunctionCalls))
-			for _, call := range streamedFunctionCalls {
-				parts = append(parts, &Part{FunctionCall: call})
+			for _, key := range streamedFunctionCallOrder {
+				call := streamedFunctionCalls[key]
+				if call != nil {
+					parts = append(parts, &Part{FunctionCall: call})
+				}
 			}
 			outputContents = []*Content{{Role: RoleModel, Parts: parts}}
 		}

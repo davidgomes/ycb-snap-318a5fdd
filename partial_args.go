@@ -296,6 +296,9 @@ func accumulateFunctionCall(states map[string]*partialArgsState, call *FunctionC
 		return nil, nil
 	}
 	state, ok := states[call.ID]
+	if !ok && call.Args == nil && len(call.PartialArgs) == 0 {
+		return call, nil
+	}
 	if !ok {
 		state = &partialArgsState{args: map[string]any{}, continuedPath: map[string]bool{}}
 		states[call.ID] = state
