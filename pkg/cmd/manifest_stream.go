@@ -25,90 +25,17 @@ import (
 	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 )
 
-// manifestStreamHook is a hook document to include in the unified stream.
 type manifestStreamHook struct {
 	Path     string
 	Manifest string
 }
 
-type manifestStreamDoc struct {
-	source  string
-	content string
-	isHook  bool
-	index   int
-}
-
-const sourceCommentPrefix = "# Source:"
-
-// unifiedManifestStream builds a single, stable YAML stream from a release
-// manifest and its hooks. Documents are ordered by full Source path
-// (lexicographic). Hooks from the same Source are emitted before non-hook
-// resources. Within those groups, original top-to-bottom order is kept.
-//
-// The returned string is empty when there are no documents. Otherwise it
-// ends with exactly one trailing newline and does not add extra blank lines.
 func unifiedManifestStream(manifest string, hooks []manifestStreamHook) string {
-	var docs []manifestStreamDoc
-	index := 0
-
-	for _, raw := range splitManifestDocuments(manifest) {
-		source, body := splitSourceComment(raw)
-		if body == "" && source == "" {
-			continue
-		}
-		docs = append(docs, manifestStreamDoc{
-			source:  source,
-			content: body,
-			index:   index,
-		})
-		index++
-	}
-
+	converted := make([]releaseutil.StreamHook, 0, len(hooks))
 	for _, h := range hooks {
-		for _, raw := range splitManifestDocuments(h.Manifest) {
-			_, body := splitSourceComment(raw)
-			if body == "" && h.Path == "" {
-				continue
-			}
-			docs = append(docs, manifestStreamDoc{
-				source:  h.Path,
-				content: body,
-				isHook:  true,
-				index:   index,
-			})
-			index++
-		}
+		converted = append(converted, releaseutil.StreamHook{Path: h.Path, Manifest: h.Manifest})
 	}
-
-	sort.SliceStable(docs, func(i, j int) bool {
-		if docs[i].source != docs[j].source {
-			return docs[i].source < docs[j].source
-		}
-		if docs[i].isHook != docs[j].isHook {
-			return docs[i].isHook
-		}
-		return docs[i].index < docs[j].index
-	})
-
-	if len(docs) == 0 {
-		return ""
-	}
-
-	var b strings.Builder
-	for _, d := range docs {
-		b.WriteString("---\n")
-		if d.source != "" {
-			b.WriteString(sourceCommentPrefix)
-			b.WriteByte(' ')
-			b.WriteString(d.source)
-			b.WriteByte('\n')
-		}
-		if d.content != "" {
-			b.WriteString(d.content)
-			b.WriteByte('\n')
-		}
-	}
-	return b.String()
+	return releaseutil.UnifiedStream(manifest, converted)
 }
 
 func unifiedManifestStreamFromV1(rel *releasev1.Release, hooks []*releasev1.Hook) string {
@@ -146,35 +73,43 @@ func hooksFromV1(hooks []*releasev1.Hook) []manifestStreamHook {
 	return out
 }
 
-func splitManifestDocuments(manifest string) []string {
-	if strings.TrimSpace(manifest) == "" {
-		return nil
+// filterHooksFromStream removes documents that match the given hooks so that
+// --skip-tests / --no-hooks can drop hook YAML already present in a stream.
+func filterHooksFromStream(stream string, hooks []*releasev1.Hook) string {
+	if stream == "" || len(hooks) == 0 {
+		return stream
 	}
-	split := releaseutil.SplitManifests(manifest)
+	skip := make(map[string]struct{}, len(hooks))
+	for _, h := range hooks {
+		if h == nil {
+			continue
+		}
+		skip[h.Path+"\n"+strings.TrimSpace(h.Manifest)] = struct{}{}
+	}
+
+	split := releaseutil.SplitManifests(stream)
 	keys := make([]string, 0, len(split))
 	for k := range split {
 		keys = append(keys, k)
 	}
 	sort.Sort(releaseutil.BySplitManifestsOrder(keys))
-	docs := make([]string, 0, len(keys))
-	for _, k := range keys {
-		docs = append(docs, split[k])
-	}
-	return docs
-}
 
-func splitSourceComment(content string) (string, string) {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return "", ""
+	var b strings.Builder
+	for _, k := range keys {
+		source, body := releaseutil.SplitSourceComment(split[k])
+		if _, drop := skip[source+"\n"+body]; drop {
+			continue
+		}
+		b.WriteString("---\n")
+		if source != "" {
+			b.WriteString("# Source: ")
+			b.WriteString(source)
+			b.WriteByte('\n')
+		}
+		if body != "" {
+			b.WriteString(body)
+			b.WriteByte('\n')
+		}
 	}
-	if !strings.HasPrefix(content, sourceCommentPrefix) {
-		return "", content
-	}
-	rest := strings.TrimPrefix(content, sourceCommentPrefix)
-	nl := strings.IndexByte(rest, '\n')
-	if nl < 0 {
-		return strings.TrimSpace(rest), ""
-	}
-	return strings.TrimSpace(rest[:nl]), strings.TrimSpace(rest[nl+1:])
+	return b.String()
 }

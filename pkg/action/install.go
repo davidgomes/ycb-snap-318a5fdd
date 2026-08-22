@@ -385,8 +385,10 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 	// Mark this release as in-progress
 	rel.SetStatus(rcommon.StatusPendingInstall, "Initial install underway")
 
+	applyManifest := hookFreeManifest(rel.Manifest)
+
 	var toBeAdopted kube.ResourceList
-	resources, err := i.cfg.KubeClient.Build(bytes.NewBufferString(rel.Manifest), !i.DisableOpenAPIValidation)
+	resources, err := i.cfg.KubeClient.Build(bytes.NewBufferString(applyManifest), !i.DisableOpenAPIValidation)
 	if err != nil {
 		return nil, fmt.Errorf("unable to build kubernetes objects from release manifest: %w", err)
 	}
@@ -419,6 +421,8 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 		rel.Info.Description = "Dry run complete"
 		return rel, nil
 	}
+
+	rel.Manifest = applyManifest
 
 	if i.CreateNamespace {
 		ns := &v1.Namespace{

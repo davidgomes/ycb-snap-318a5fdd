@@ -959,6 +959,15 @@ func TestRenderResources_PostRenderer_Success(t *testing.T) {
 # Source: yellow/templates/foodpie
 foodpie: world
 ---
+# Source: yellow/templates/hooks
+kind: ConfigMap
+metadata:
+  name: test-cm-postrendered
+  annotations:
+    "helm.sh/hook": post-install,pre-delete,post-upgrade
+data:
+  name: value
+---
 # Source: yellow/templates/with-partials
 yellow: Earth
 ---
@@ -1081,12 +1090,22 @@ color: blue
 hello: world
 color: blue
 ---
+# Source: hello/templates/hooks
+kind: ConfigMap
+color: blue
+metadata:
+  name: test-cm
+  annotations:
+    "helm.sh/hook": post-install,pre-delete,post-upgrade
+data:
+  name: value
+---
 # Source: hello/templates/with-partials
 hello: Earth
 color: blue
 `
 	assert.Contains(t, output, "color: blue")
-	assert.Equal(t, 3, strings.Count(output, "color: blue"))
+	assert.Equal(t, 4, strings.Count(output, "color: blue"))
 	assert.Equal(t, expected, output)
 }
 

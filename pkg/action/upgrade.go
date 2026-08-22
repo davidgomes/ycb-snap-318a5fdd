@@ -312,6 +312,9 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 
 	u.cfg.Logger().Debug("determined release apply method", slog.Bool("server_side_apply", serverSideApply), slog.String("previous_release_apply_method", lastRelease.ApplyMethod))
 
+	displayManifest := manifestDoc.String()
+	applyManifest := hookFreeManifest(displayManifest)
+
 	// Store an upgraded release.
 	upgradedRelease := &release.Release{
 		Name:      name,
@@ -325,7 +328,7 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 			Description:   "Preparing upgrade", // This should be overwritten later.
 		},
 		Version:     revision,
-		Manifest:    manifestDoc.String(),
+		Manifest:    displayManifest,
 		Hooks:       hooks,
 		Labels:      mergeCustomLabels(lastRelease.Labels, u.Labels),
 		ApplyMethod: string(determineReleaseSSApplyMethod(serverSideApply)),
@@ -334,7 +337,7 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 	if len(notesTxt) > 0 {
 		upgradedRelease.Info.Notes = notesTxt
 	}
-	err = validateManifest(u.cfg.KubeClient, manifestDoc.Bytes(), !u.DisableOpenAPIValidation)
+	err = validateManifest(u.cfg.KubeClient, []byte(applyManifest), !u.DisableOpenAPIValidation)
 	return currentRelease, upgradedRelease, serverSideApply, err
 }
 
@@ -350,7 +353,7 @@ func (u *Upgrade) performUpgrade(ctx context.Context, originalRelease, upgradedR
 		}
 		return upgradedRelease, fmt.Errorf("unable to build kubernetes objects from current release manifest: %w", err)
 	}
-	target, err := u.cfg.KubeClient.Build(bytes.NewBufferString(upgradedRelease.Manifest), !u.DisableOpenAPIValidation)
+	target, err := u.cfg.KubeClient.Build(bytes.NewBufferString(hookFreeManifest(upgradedRelease.Manifest)), !u.DisableOpenAPIValidation)
 	if err != nil {
 		return upgradedRelease, fmt.Errorf("unable to build kubernetes objects from new release manifest: %w", err)
 	}
@@ -401,6 +404,8 @@ func (u *Upgrade) performUpgrade(ctx context.Context, originalRelease, upgradedR
 		}
 		return upgradedRelease, nil
 	}
+
+	upgradedRelease.Manifest = hookFreeManifest(upgradedRelease.Manifest)
 
 	u.cfg.Logger().Debug("creating upgraded release", "name", upgradedRelease.Name)
 	if err := u.cfg.Releases.Create(upgradedRelease); err != nil {

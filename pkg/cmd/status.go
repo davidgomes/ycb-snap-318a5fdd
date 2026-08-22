@@ -231,7 +231,7 @@ func (s statusPrinter) WriteTable(out io.Writer) error {
 		// Install/upgrade dry-run output is a single MANIFEST section whose
 		// body is the unified hook+resource stream. The stream already ends
 		// with a trailing newline, so do not add another blank line.
-		_, _ = fmt.Fprintf(out, "MANIFEST:\n%s", unifiedManifestStreamFromV1(rel, rel.Hooks))
+		_, _ = fmt.Fprintf(out, "MANIFEST:\n%s", rel.Manifest)
 	} else if s.debug {
 		_, _ = fmt.Fprintln(out, "HOOKS:")
 		for _, h := range rel.Hooks {

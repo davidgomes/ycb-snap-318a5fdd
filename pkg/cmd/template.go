@@ -117,16 +117,15 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			// We ignore a potential error here because, when the --debug flag was specified,
 			// we always want to print the YAML, even if it is not valid. The error is still returned afterwards.
 			if rel != nil {
-				var hooks []*release.Hook
+				var hooksToFilter []*release.Hook
 				if !client.DisableHooks {
 					fileWritten := make(map[string]bool)
 					for _, m := range rel.Hooks {
 						if skipTests && isTestHook(m) {
+							hooksToFilter = append(hooksToFilter, m)
 							continue
 						}
-						if client.OutputDir == "" {
-							hooks = append(hooks, m)
-						} else {
+						if client.OutputDir != "" {
 							newDir := client.OutputDir
 							if client.UseReleaseName {
 								newDir = filepath.Join(client.OutputDir, client.ReleaseName)
@@ -143,14 +142,19 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 						}
 
 					}
+				} else {
+					hooksToFilter = rel.Hooks
 				}
 
 				var manifests bytes.Buffer
-				if client.OutputDir == "" {
-					manifests.WriteString(unifiedManifestStreamFromV1(rel, hooks))
-				} else {
-					fmt.Fprint(&manifests, rel.Manifest)
+				stream := rel.Manifest
+				if client.OutputDir == "" && len(hooksToFilter) > 0 {
+					stream = filterHooksFromStream(stream, hooksToFilter)
 				}
+				if !strings.HasSuffix(stream, "\n") && stream != "" {
+					stream += "\n"
+				}
+				manifests.WriteString(stream)
 
 				// if we have a list of files to render, then check that each of the
 				// provided files exists in the chart.

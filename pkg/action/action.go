@@ -27,6 +27,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"text/template"
@@ -39,6 +40,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/kustomize/kyaml/kio"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
+	"sigs.k8s.io/yaml"
 
 	"helm.sh/helm/v4/internal/logging"
 	"helm.sh/helm/v4/pkg/chart/common"
@@ -359,12 +361,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 		//
 		// We return the files as a big blob of data to help the user debug parser
 		// errors.
-		for name, content := range files {
-			if strings.TrimSpace(content) == "" {
-				continue
-			}
-			fmt.Fprintf(b, "---\n# Source: %s\n%s\n", name, content)
-		}
+		fmt.Fprint(b, releaseutil.UnifiedStreamFromFiles(files))
 		return hs, b, "", err
 	}
 
@@ -374,7 +371,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 	if includeCrds {
 		for _, crd := range ch.CRDObjects() {
 			if outputDir == "" {
-				fmt.Fprintf(b, "---\n# Source: %s\n%s\n", crd.Filename, string(crd.File.Data[:]))
+				files[crd.Filename] = string(crd.File.Data[:])
 			} else {
 				err = writeToFile(outputDir, crd.Filename, string(crd.File.Data[:]), fileWritten[crd.Filename])
 				if err != nil {
@@ -385,31 +382,97 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 		}
 	}
 
-	for _, m := range manifests {
-		if outputDir == "" {
-			if hideSecret && m.Head.Kind == "Secret" && m.Head.Version == "v1" {
-				fmt.Fprintf(b, "---\n# Source: %s\n# HIDDEN: The Secret output has been suppressed\n", m.Name)
-			} else {
-				fmt.Fprintf(b, "---\n# Source: %s\n%s\n", m.Name, m.Content)
-			}
-		} else {
-			newDir := outputDir
-			if useReleaseName {
-				newDir = filepath.Join(outputDir, releaseName)
-			}
-			// NOTE: We do not have to worry about the post-renderer because
-			// output dir is only used by `helm template`. In the next major
-			// release, we should move this logic to template only as it is not
-			// used by install or upgrade
-			err = writeToFile(newDir, m.Name, m.Content, fileWritten[m.Name])
-			if err != nil {
-				return hs, b, "", err
-			}
-			fileWritten[m.Name] = true
+	if outputDir == "" {
+		if hideSecret {
+			files = hideSecretsInFiles(files)
 		}
+		fmt.Fprint(b, releaseutil.UnifiedStreamFromFiles(files))
+		return hs, b, notes, nil
+	}
+
+	for _, m := range manifests {
+		newDir := outputDir
+		if useReleaseName {
+			newDir = filepath.Join(outputDir, releaseName)
+		}
+		// NOTE: We do not have to worry about the post-renderer because
+		// output dir is only used by `helm template`. In the next major
+		// release, we should move this logic to template only as it is not
+		// used by install or upgrade
+		err = writeToFile(newDir, m.Name, m.Content, fileWritten[m.Name])
+		if err != nil {
+			return hs, b, "", err
+		}
+		fileWritten[m.Name] = true
 	}
 
 	return hs, b, notes, nil
+}
+
+// hookFreeManifest strips hook documents from a unified stream and returns
+// a kind-sorted manifest suitable for apply and storage.
+func hookFreeManifest(unified string) string {
+	if strings.TrimSpace(unified) == "" {
+		return unified
+	}
+	split := releaseutil.SplitManifests(unified)
+	files := make(map[string]string)
+	keys := make([]string, 0, len(split))
+	for k := range split {
+		keys = append(keys, k)
+	}
+	sort.Sort(releaseutil.BySplitManifestsOrder(keys))
+	for _, k := range keys {
+		source, body := releaseutil.SplitSourceComment(split[k])
+		if source == "" {
+			source = k
+		}
+		if existing, ok := files[source]; ok {
+			files[source] = existing + "\n---\n" + body
+		} else {
+			files[source] = body
+		}
+	}
+	_, generic, err := releaseutil.SortManifests(files, nil, releaseutil.InstallOrder)
+	if err != nil {
+		return unified
+	}
+	var b bytes.Buffer
+	for _, m := range generic {
+		fmt.Fprintf(&b, "---\n# Source: %s\n%s\n", m.Name, m.Content)
+	}
+	return b.String()
+}
+
+func hideSecretsInFiles(files map[string]string) map[string]string {
+	hidden := make(map[string]string, len(files))
+	for name, content := range files {
+		split := releaseutil.SplitManifests(content)
+		keys := make([]string, 0, len(split))
+		for k := range split {
+			keys = append(keys, k)
+		}
+		sort.Sort(releaseutil.BySplitManifestsOrder(keys))
+		var b strings.Builder
+		for i, k := range keys {
+			doc := split[k]
+			var entry releaseutil.SimpleHead
+			if err := yaml.Unmarshal([]byte(doc), &entry); err == nil &&
+				entry.Kind == "Secret" && entry.Version == "v1" {
+				if i > 0 {
+					b.WriteString("\n---\n")
+				}
+				b.WriteString("# HIDDEN: The Secret output has been suppressed")
+				continue
+			}
+			if i > 0 {
+				b.WriteString("\n---\n")
+			}
+			b.WriteString(doc)
+		}
+		hidden[name] = b.String()
+	}
+	return hidden
 }
 
 // RESTClientGetter gets the rest client
