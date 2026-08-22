@@ -29,6 +29,24 @@ describe('Picker', () => {
     );
   });
 
+  test('exposes disabled state from the select', () => {
+    const { pickerSelector, pickerSelectorInstance } = setup();
+    const select = pickerSelectorInstance.select;
+    expect(pickerSelector.classList.contains('ql-disabled')).toBe(false);
+    expect(pickerSelector.getAttribute('aria-disabled')).toBe('false');
+    select.disabled = true;
+    pickerSelectorInstance.update();
+    expect(pickerSelector.classList.contains('ql-disabled')).toBe(true);
+    expect(pickerSelector.getAttribute('aria-disabled')).toBe('true');
+    expect(pickerSelector.classList.contains('ql-expanded')).toBe(false);
+    pickerSelectorInstance.togglePicker();
+    expect(pickerSelector.classList.contains('ql-expanded')).toBe(false);
+    select.disabled = false;
+    pickerSelectorInstance.update();
+    expect(pickerSelector.classList.contains('ql-disabled')).toBe(false);
+    expect(pickerSelector.getAttribute('aria-disabled')).toBe('false');
+  });
+
   test('escape charcters', () => {
     const { container } = setup();
     const select = document.createElement('select');

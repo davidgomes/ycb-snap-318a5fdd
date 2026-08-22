@@ -2,6 +2,12 @@ import DropdownIcon from '../assets/icons/dropdown.svg';
 
 let optionsCounter = 0;
 
+const pickerInstances = new WeakMap<HTMLSelectElement, Picker>();
+
+export function getPicker(select: HTMLSelectElement): Picker | undefined {
+  return pickerInstances.get(select);
+}
+
 function toggleAriaAttribute(element: HTMLElement, attribute: string) {
   element.setAttribute(
     attribute,
@@ -16,11 +22,13 @@ class Picker {
 
   constructor(select: HTMLSelectElement) {
     this.select = select;
+    pickerInstances.set(select, this);
     this.container = document.createElement('span');
     this.buildPicker();
     this.select.style.display = 'none';
     // @ts-expect-error Fix me later
     this.select.parentNode.insertBefore(this.container, this.select);
+    this.updateDisabled();
 
     this.label.addEventListener('mousedown', () => {
       this.togglePicker();
@@ -41,6 +49,7 @@ class Picker {
   }
 
   togglePicker() {
+    if (this.select.disabled) return;
     this.container.classList.toggle('ql-expanded');
     // Toggle aria-expanded and aria-hidden to make the picker accessible
     toggleAriaAttribute(this.label, 'aria-expanded');
@@ -145,6 +154,7 @@ class Picker {
   }
 
   selectItem(item: HTMLElement | null, trigger = false) {
+    if (trigger && this.select.disabled) return;
     const selected = this.container.querySelector('.ql-selected');
     if (item === selected) return;
     if (selected != null) {
@@ -192,6 +202,17 @@ class Picker {
       option != null &&
       option !== this.select.querySelector('option[selected]');
     this.label.classList.toggle('ql-active', isActive);
+    this.updateDisabled();
+  }
+
+  updateDisabled() {
+    const disabled = this.select.disabled;
+    this.container.classList.toggle('ql-disabled', disabled);
+    this.container.setAttribute('aria-disabled', String(disabled));
+    this.label.setAttribute('aria-disabled', String(disabled));
+    if (disabled) {
+      this.close();
+    }
   }
 }
 

@@ -337,6 +337,14 @@ class Quill {
     this.container.classList.toggle('ql-disabled', !enabled);
   }
 
+  destroy() {
+    const toolbar = this.getModule('toolbar') as
+      | { destroy?: () => void }
+      | undefined;
+    toolbar?.destroy?.();
+    instances.delete(this.container);
+  }
+
   focus(options: { preventScroll?: boolean } = {}) {
     this.selection.focus();
     if (!options.preventScroll) {

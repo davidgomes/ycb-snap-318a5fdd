@@ -5,7 +5,8 @@ import Theme from '../core/theme.js';
 import type { ThemeOptions } from '../core/theme.js';
 import ColorPicker from '../ui/color-picker.js';
 import IconPicker from '../ui/icon-picker.js';
-import Picker from '../ui/picker.js';
+import Picker, { getPicker } from '../ui/picker.js';
+import { getActiveToolbar } from '../modules/toolbar.js';
 import Tooltip from '../ui/tooltip.js';
 import type { Range } from '../core/selection.js';
 import type Clipboard from '../modules/clipboard.js';
@@ -142,6 +143,10 @@ class BaseTheme extends Theme {
     icons: Record<string, string | Record<string, string>>,
   ) {
     this.pickers = Array.from(selects).map((select) => {
+      const existing = getPicker(select);
+      if (existing) {
+        return existing;
+      }
       if (select.classList.contains('ql-align')) {
         if (select.querySelector('option') == null) {
           fillSelect(select, ALIGNS);
@@ -205,12 +210,23 @@ BaseTheme.DEFAULTS = merge({}, Theme.DEFAULTS, {
             );
             fileInput.classList.add('ql-image');
             fileInput.addEventListener('change', () => {
-              const range = this.quill.getSelection(true);
-              this.quill.uploader.upload(range, fileInput.files);
+              const toolbar = getActiveToolbar(this.container);
+              if (toolbar == null || !toolbar.quill.isEnabled()) {
+                fileInput.value = '';
+                return;
+              }
+              const range = toolbar.quill.getSelection(true);
+              toolbar.quill.uploader.upload(range, fileInput.files);
               fileInput.value = '';
             });
             this.container.appendChild(fileInput);
           }
+          const toolbar = getActiveToolbar(this.container);
+          if (toolbar == null || !toolbar.quill.isEnabled()) return;
+          fileInput.setAttribute(
+            'accept',
+            toolbar.quill.uploader.options.mimetypes.join(', '),
+          );
           fileInput.click();
         },
         video() {
