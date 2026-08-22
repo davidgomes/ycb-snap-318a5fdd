@@ -1,13 +1,14 @@
 import { Brand } from '../common';
 import { Trait } from '../trait/types';
-import { EventType, Modifier, OrModifier, QueryParameter } from './types';
+import { EventType, Modifier, OrModifier, Predicate, QueryParameter } from './types';
 
 export const $modifier = Symbol('modifier');
 
 export function createModifier<TTrait extends Trait[] = Trait[], TType extends string = string>(
     type: TType,
     id: number,
-    traits: TTrait
+    traits: TTrait,
+    predicate?: Predicate
 ): Modifier<TTrait, TType> {
     return {
         [$modifier]: true,
@@ -15,6 +16,7 @@ export function createModifier<TTrait extends Trait[] = Trait[], TType extends s
         id,
         traits,
         traitIds: traits.map((trait) => trait.id),
+        ...(predicate ? { predicate } : {}),
     } as const;
 }
 

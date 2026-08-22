@@ -265,6 +265,7 @@ export function createQueryResult<T extends QueryParameter[]>(
         }
 
         if (isModifier(param)) {
+            if (param.predicate) continue;
             // Skip not modifier.
             if (param.type === 'not') continue;
 

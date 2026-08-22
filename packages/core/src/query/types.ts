@@ -93,6 +93,13 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    predicate?: Predicate;
+};
+
+export type Predicate = {
+    dependencies: Trait[];
+    test: (data: unknown[]) => boolean;
+    mode?: 'normal' | 'not' | 'added' | 'removed' | 'changed';
 };
 
 /** Parameter types that can be passed to Or modifier */
@@ -160,6 +167,9 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     isTracking: boolean;
     hasChangedModifiers: boolean;
     changedTraits: Set<Trait>;
+    predicates: Predicate[];
+    predicateOrGroups: Predicate[][];
+    predicateStates: Map<Predicate, Map<number, boolean>>;
     toRemove: SparseSet;
     addSubscriptions: Set<QuerySubscriber>;
     removeSubscriptions: Set<QuerySubscriber>;

@@ -5,6 +5,7 @@ import { universe } from '../../universe/universe';
 import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
+import { withPredicateMode } from './predicate';
 
 export function createAdded() {
     const id = createTrackingId();
@@ -17,6 +18,11 @@ export function createAdded() {
     return <T extends TraitOrRelation[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `added-${number}`> => {
+        if (inputs.length === 1 && (inputs[0] as Modifier<[], 'predicate'>).predicate)
+            return withPredicateMode(inputs[0] as Modifier<[], 'predicate'>, 'added') as Modifier<
+                ExtractTraits<T>,
+                `added-${number}`
+            >;
         const traits = inputs.map((input) =>
             isRelation(input) ? input[$internal].trait : input
         ) as ExtractTraits<T>;

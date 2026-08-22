@@ -11,6 +11,7 @@ import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
+import { withPredicateMode } from './predicate';
 
 export function createChanged() {
     const id = createTrackingId();
@@ -23,6 +24,11 @@ export function createChanged() {
     return <T extends TraitOrRelation[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
+        if (inputs.length === 1 && (inputs[0] as Modifier<[], 'predicate'>).predicate)
+            return withPredicateMode(inputs[0] as Modifier<[], 'predicate'>, 'changed') as Modifier<
+                ExtractTraits<T>,
+                `changed-${number}`
+            >;
         const traits = inputs.map((input) =>
             isRelation(input) ? input[$internal].trait : input
         ) as ExtractTraits<T>;

@@ -42,7 +42,7 @@ export function runQuery<T extends QueryParameter[]>(
     const entities = query.entities.dense.slice() as Entity[];
 
     // Clear so it can accumulate again.
-    if (query.isTracking) {
+    if (query.isTracking && query.predicates.length === 0) {
         query.entities.clear();
         // PERF: Use indexed loop instead of for...of
         const len = entities.length;
@@ -190,6 +190,9 @@ export function createQueryInstance<T extends QueryParameter[]>(
         isTracking: false,
         hasChangedModifiers: false,
         changedTraits: new Set<Trait>(),
+        predicates: [],
+        predicateOrGroups: [],
+        predicateStates: new Map(),
         toRemove: new SparseSet(),
         addSubscriptions: new Set<QuerySubscriber>(),
         removeSubscriptions: new Set<QuerySubscriber>(),
@@ -234,6 +237,17 @@ export function createQueryInstance<T extends QueryParameter[]>(
         }
 
         if (isModifier(parameter)) {
+            if (parameter.predicate) {
+                const predicate = parameter.predicate;
+                for (const dependency of predicate.dependencies) {
+                    if (!hasTraitInstance(ctx.traitInstances, dependency)) registerTrait(world, dependency);
+                    const instance = getTraitInstance(ctx.traitInstances, dependency)!;
+                    query.traitInstances.all.push(instance);
+                }
+                query.predicates.push(predicate);
+                query.isTracking = predicate.mode !== 'normal';
+                continue;
+            }
             const traits = parameter.traits;
 
             // Register traits
@@ -247,6 +261,17 @@ export function createQueryInstance<T extends QueryParameter[]>(
                     ...traits.map((t) => getTraitInstance(ctx.traitInstances, t)!)
                 );
             } else if (parameter.type === 'or') {
+                const predicateModifiers = (parameter.modifiers || []).filter((m) => m.predicate);
+                if (predicateModifiers.length) {
+                    const group = predicateModifiers.map((m) => m.predicate!);
+                    query.predicateOrGroups.push(group);
+                    for (const predicate of group) {
+                        for (const dependency of predicate.dependencies) {
+                            if (!hasTraitInstance(ctx.traitInstances, dependency)) registerTrait(world, dependency);
+                            query.traitInstances.all.push(getTraitInstance(ctx.traitInstances, dependency)!);
+                        }
+                    }
+                }
                 // Handle regular traits in Or
                 query.traitInstances.or.push(
                     ...traits.map((t) => getTraitInstance(ctx.traitInstances, t)!)
@@ -344,7 +369,7 @@ export function createQueryInstance<T extends QueryParameter[]>(
     }
 
     // Populate query with initial matching entities
-    if (query.trackingGroups.length > 0) {
+    if (query.trackingGroups.length > 0 && query.predicates.length === 0) {
         // For tracking queries, check each entity against tracking groups
         for (const group of query.trackingGroups) {
             const { type, id, logic, bitmasks } = group;
