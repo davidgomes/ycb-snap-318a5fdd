@@ -55,6 +55,7 @@ type VM struct {
 type tryFrame struct {
 	spec    *runtime.TryBlock
 	stack   int
+	scopes  int
 	phase   tryPhase
 	err     error
 	result  any
@@ -669,9 +670,10 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 				case OpTry:
 					spec := program.Constants[arg].(*runtime.TryBlock)
 					vm.tryFrames = append(vm.tryFrames, tryFrame{
-						spec:  spec,
-						stack: len(vm.Stack),
-						phase: tryBody,
+						spec:   spec,
+						stack:  len(vm.Stack),
+						scopes: len(vm.Scopes),
+						phase:  tryBody,
 					})
 
 				case OpTrySuccess, OpCatchSuccess:
@@ -692,6 +694,12 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 					if frame.spec.CatchSubstring != "" &&
 						!strings.Contains(frame.err.Error(), frame.spec.CatchSubstring) {
 						vm.Stack = vm.Stack[:frame.stack]
+						vm.Scopes = vm.Scopes[:frame.scopes]
+						if len(vm.Scopes) > 0 {
+							vm.currScope = vm.Scopes[len(vm.Scopes)-1]
+						} else {
+							vm.currScope = nil
+						}
 						if frame.spec.HasFinally {
 							frame.phase = tryFinally
 							vm.ip = frame.spec.FinallyStart
@@ -704,6 +712,12 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 					}
 					frame.phase = tryCatch
 					vm.Stack = vm.Stack[:frame.stack]
+					vm.Scopes = vm.Scopes[:frame.scopes]
+					if len(vm.Scopes) > 0 {
+						vm.currScope = vm.Scopes[len(vm.Scopes)-1]
+					} else {
+						vm.currScope = nil
+					}
 					vm.push(frame.err)
 
 				case OpFinally:
@@ -782,6 +796,12 @@ func (vm *VM) handlePanic(value any) bool {
 		last := len(vm.tryFrames) - 1
 		frame := &vm.tryFrames[last]
 		vm.Stack = vm.Stack[:frame.stack]
+		vm.Scopes = vm.Scopes[:frame.scopes]
+		if len(vm.Scopes) > 0 {
+			vm.currScope = vm.Scopes[len(vm.Scopes)-1]
+		} else {
+			vm.currScope = nil
+		}
 
 		switch frame.phase {
 		case tryBody:

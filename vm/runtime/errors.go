@@ -48,6 +48,9 @@ func ErrorType(value any) string {
 	if _, ok := err.(*RetryExhaustedError); ok {
 		return "retry"
 	}
+	if _, ok := err.(*CustomError); ok {
+		return "custom"
+	}
 
 	message := strings.ToLower(err.Error())
 	switch {
@@ -64,9 +67,12 @@ func ErrorType(value any) string {
 		return "conversion"
 	case strings.Contains(message, "nil pointer"),
 		strings.Contains(message, "type nil"),
+		strings.Contains(message, "nil reference"),
+		strings.Contains(message, "cannot call nil"),
 		strings.Contains(message, "cannot get") && strings.Contains(message, "nil"),
 		strings.Contains(message, "cannot fetch") && strings.Contains(message, "nil"),
-		strings.Contains(message, "invalid memory address"):
+		strings.Contains(message, "invalid memory address"),
+		strings.Contains(message, "<nil>"):
 		return "nil"
 	case strings.Contains(message, "mismatched"),
 		strings.Contains(message, "interface conversion"),

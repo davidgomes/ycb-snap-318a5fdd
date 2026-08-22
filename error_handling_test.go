@@ -41,6 +41,18 @@ func TestErrorHandlingBlockForm(t *testing.T) {
 	}
 }
 
+func TestErrorHandlingNilClassification(t *testing.T) {
+	type env struct {
+		Value *struct {
+			Name string
+		}
+	}
+
+	got, err := expr.Eval(`try { Value.Name } catch err { errtype(err) }`, env{})
+	require.NoError(t, err)
+	require.Equal(t, "nil", got)
+}
+
 func TestErrorHandlingFinallyErrorOverridesResult(t *testing.T) {
 	_, err := expr.Eval(`try { 1 } catch { 2 } finally { 1 % 0 }`, nil)
 	require.Error(t, err)

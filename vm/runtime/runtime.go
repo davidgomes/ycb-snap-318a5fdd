@@ -23,6 +23,9 @@ func Fetch(from, i any) any {
 	if v.Kind() == reflect.Invalid {
 		panic(fmt.Sprintf("cannot fetch %v from %T", i, from))
 	}
+	if isNilReference(v) {
+		panic(fmt.Sprintf("nil reference: cannot fetch %v from %T", i, from))
+	}
 
 	// Methods can be defined on any type.
 	if v.NumMethod() > 0 {
@@ -109,6 +112,9 @@ type Field struct {
 func FetchField(from any, field *Field) any {
 	v := reflect.ValueOf(from)
 	if v.Kind() != reflect.Invalid {
+		if isNilReference(v) {
+			panic(fmt.Sprintf("nil reference: cannot get %v from %T", field.Path[0], from))
+		}
 		v = reflect.Indirect(v)
 
 		// We can use v.FieldByIndex here, but it will panic if the field
@@ -133,7 +139,7 @@ func fieldByIndex(v reflect.Value, field *Field) reflect.Value {
 		if i > 0 {
 			if v.Kind() == reflect.Ptr {
 				if v.IsNil() {
-					panic(fmt.Sprintf("cannot get %v from %v", field.Path[i], field.Path[i-1]))
+					panic(fmt.Sprintf("nil reference: cannot get %v from %v", field.Path[i], field.Path[i-1]))
 				}
 				v = v.Elem()
 			}
@@ -152,6 +158,9 @@ func FetchMethod(from any, method *Method) any {
 	v := reflect.ValueOf(from)
 	kind := v.Kind()
 	if kind != reflect.Invalid {
+		if isNilReference(v) {
+			panic(fmt.Sprintf("nil reference: cannot fetch %v from %T", method.Name, from))
+		}
 		// Methods can be defined on any type, no need to dereference.
 		method := v.Method(method.Index)
 		if method.IsValid() {
@@ -163,6 +172,9 @@ func FetchMethod(from any, method *Method) any {
 
 func Slice(array, from, to any) any {
 	v := reflect.ValueOf(array)
+	if isNilReference(v) {
+		panic(fmt.Sprintf("nil reference: cannot slice %v", from))
+	}
 
 	switch v.Kind() {
 	case reflect.Array, reflect.Slice, reflect.String:
@@ -433,6 +445,15 @@ func IsNil(v any) bool {
 	switch r.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.Interface, reflect.Slice:
 		return r.IsNil()
+	default:
+		return false
+	}
+}
+
+func isNilReference(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Ptr:
+		return v.IsNil()
 	default:
 		return false
 	}
