@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	taskerrors "github.com/go-task/task/v3/errors"
 	"github.com/go-task/task/v3/internal/fingerprint"
 	"github.com/go-task/task/v3/taskfile/ast"
 )
@@ -44,10 +45,16 @@ func WithGraphNoStatus(noStatus bool) ExecutorOption      { return graphNoStatus
 type GraphNode struct {
 	Name     string        `json:"name"`
 	Desc     string        `json:"desc"`
-	Location *ast.Location `json:"location"`
+	Location GraphLocation `json:"location"`
 	UpToDate *bool         `json:"up_to_date,omitempty"`
 	Deps     []string      `json:"deps"`
 	Method   string        `json:"method"`
+}
+
+type GraphLocation struct {
+	Taskfile string `json:"taskfile"`
+	Line     int    `json:"line"`
+	Column   int    `json:"column"`
 }
 type GraphEdge struct {
 	From string         `json:"from"`
@@ -86,7 +93,7 @@ func (e *Executor) Graph(calls ...*Call) error {
 			return err
 		}
 		if len(matches) == 0 {
-			return &taskNotFound{call.Task}
+			return &taskerrors.TaskNotFoundError{TaskName: call.Task}
 		}
 		for _, match := range matches {
 			c := &Call{Task: call.Task, Vars: ast.NewVars()}
@@ -127,10 +134,6 @@ func (e *Executor) Graph(calls ...*Call) error {
 	}
 }
 
-type taskNotFound struct{ name string }
-
-func (e *taskNotFound) Error() string { return fmt.Sprintf("task: Task %q does not exist", e.name) }
-
 func (g *graphBuilder) expand(name string, t *ast.Task) error {
 	if _, ok := g.tasks[name]; ok {
 		return nil
@@ -142,7 +145,7 @@ func (g *graphBuilder) expand(name string, t *ast.Task) error {
 			return err
 		}
 		if len(matches) == 0 {
-			return &taskNotFound{target}
+			return &taskerrors.TaskNotFoundError{TaskName: target}
 		}
 		for _, m := range matches {
 			c := &Call{Task: target, Vars: ast.NewVars()}
@@ -249,7 +252,11 @@ func (g *graphBuilder) output(roots []string) (GraphOutput, error) {
 			deps = append(deps, d)
 		}
 		sort.Strings(deps)
-		o.Nodes[n] = GraphNode{Name: n, Desc: t.task.Desc, Location: t.task.Location, UpToDate: status, Deps: deps, Method: method}
+		location := GraphLocation{}
+		if t.task.Location != nil {
+			location = GraphLocation{Taskfile: t.task.Location.Taskfile, Line: t.task.Location.Line, Column: t.task.Location.Column}
+		}
+		o.Nodes[n] = GraphNode{Name: n, Desc: t.task.Desc, Location: location, UpToDate: status, Deps: deps, Method: method}
 		o.Edges = append(o.Edges, t.edges...)
 	}
 	sort.Slice(o.Edges, func(i, j int) bool {
