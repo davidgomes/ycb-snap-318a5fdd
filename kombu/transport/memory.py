@@ -58,10 +58,14 @@ class Channel(virtual.Channel):
 
     def _put_fanout(self, exchange, message, routing_key=None, **kwargs):
         for queue in self._lookup(exchange, routing_key):
-            self._queue_for(queue).put(message)
+            self.put(queue, message, **kwargs)
 
     def _put(self, queue, message, **kwargs):
         self._queue_for(queue).put(message)
+
+    def expire_messages(self, queue):
+        """Scan ``queue`` and dead-letter expired messages."""
+        return self.drain_expired(queue)
 
     def _size(self, queue):
         return self._queue_for(queue).qsize()
