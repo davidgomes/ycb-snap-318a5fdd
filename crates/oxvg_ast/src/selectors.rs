@@ -298,7 +298,7 @@ impl<'input, 'arena> Selector {
             None,
             selector_caches,
             matching::QuirksMode::NoQuirks,
-            matching::NeedsSelectorFlags::No,
+            matching::NeedsSelectorFlags::All,
             matching::MatchingForInvalidation::No,
         );
         context.scope_element = scope.map(|e| selectors::Element::opaque(&SelectElement::new(e)));

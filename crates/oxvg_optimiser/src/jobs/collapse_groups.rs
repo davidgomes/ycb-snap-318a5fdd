@@ -70,6 +70,10 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
         if !is_element!(element, G) || !element.has_child_elements() {
             return Ok(());
         }
+        if element.selector_flags().is_some_and(|flags| !flags.is_empty()) {
+            log::debug!("collapse_groups: skipping: structure-sensitive selector");
+            return Ok(());
+        }
 
         move_attributes_to_child(element);
         flatten_when_all_attributes_moved(element);

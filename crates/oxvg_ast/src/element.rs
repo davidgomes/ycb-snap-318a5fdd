@@ -744,6 +744,18 @@ impl<'input, 'arena> Element<'input, 'arena> {
         selector_flags.set(Some(flags));
     }
 
+    #[cfg(feature = "selectors")]
+    /// Returns selector matching flags recorded for this element.
+    pub fn selector_flags(&self) -> Option<selectors::matching::ElementSelectorFlags> {
+        let NodeData::Element {
+            ref selector_flags, ..
+        } = self.node_data
+        else {
+            return None;
+        };
+        selector_flags.get()
+    }
+
     /// Returns the data points associated with the element
     pub fn data<'a>(&'a self) -> ElementData<'a, 'input> {
         if let NodeData::Element {
