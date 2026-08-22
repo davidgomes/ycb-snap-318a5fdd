@@ -1,0 +1,12 @@
+{
+    "export": {
+        "excludeServices": [],
+        "includePatterns": [],
+        "excludePatterns": [],
+        "removeImports": [],
+        "outputDir": "./eicrud_exports",
+        "inputDir": "./src",
+        "modulesDir": "./node_modules",
+        "userServiceDir": "user"
+    }
+}

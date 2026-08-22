@@ -1,0 +1,56 @@
+{
+  "name": "@eicrud/core",
+  "version": "0.0.1",
+  "description": "eicrud core package",
+  "author": "acrosett",  
+  "homepage": "https://eicrud.com/",
+  "license": "MIT",
+  "scripts": {
+    "compile": "npm run clean && tsc",
+    "publish:package": "npm i && npm run compile && npm publish",
+    "clean": "del-cli **.js **.d.ts **.js.map !node_modules"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eicrud/eicrud.git",
+    "directory": "core"
+  },
+  "peerDependencies": {
+    "@eicrud/shared": "0.0.1"
+  },
+  "dependencies": {
+    "@casl/ability": "^6.7.3",
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/reply-from": "^12.3.1",
+    "@mikro-orm/core": "^6.5.2",
+    "@mikro-orm/nestjs": "^6.1.1",
+    "@nestjs/cache-manager": "^3.0.1",
+    "@nestjs/common": "^11.1.6",
+    "@nestjs/core": "^11.1.6",
+    "@nestjs/jwt": "^11.0.0",
+    "@nestjs/platform-fastify": "^11.1.6",
+    "@nestjs/schedule": "^6.0.0",
+    "@panva/hkdf": "^1.2.1",
+    "async-mutex": "^0.5.0",
+    "axios": "^1.12.0",
+    "bcrypt": "^6.0.0",
+    "class-validator": "^0.14.2",
+    "lru-cache": "^11.1.0",
+    "mnemonist": "^0.40.3",
+    "reflect-metadata": "^0.2.2",
+    "wildcard": "^2.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "del-cli": "^6.0.0",
+    "typescript": "^5.9.2"
+  },
+  "keywords": [
+    "eicrud",
+    "core",
+    "authorization",
+    "nodejs",
+    "crud",
+    "framework"
+  ]
+}

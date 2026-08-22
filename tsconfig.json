@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "module": "Node16",
+    "moduleResolution": "node16",
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "es2022",
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "incremental": true,
+    "skipLibCheck": true,
+    "strictNullChecks": false,
+    "noImplicitAny": false,
+    "strictBindCallApply": false,
+    "forceConsistentCasingInFileNames": false,
+    "noFallthroughCasesInSwitch": false,
+    "isolatedModules": true,
+    "paths": {
+      "@eicrud/core": ["./core"],
+      "@eicrud/core/*": ["./core/*"],
+      "@eicrud/shared": ["./shared"],
+      "@eicrud/shared/*": ["./shared/*"],
+      "@eicrud/mongodb": ["./db_mongo"],
+      "@eicrud/mongodb/*": ["./db_mongo/*"],
+      "@eicrud/postgresql": ["./db_postgre"],
+      "@eicrud/postgresql/*": ["./db_postgre/*"],
+    }
+  },
+  "exclude": ["cli", "core", "shared", "db_mongo", "db_postgre"]
+}

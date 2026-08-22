@@ -1,0 +1,69 @@
+site_name: Eicrud - Documentation
+theme:
+  custom_dir: docs/overrides
+  logo: planet.svg
+  favicon: favicon.ico
+  name: material
+  palette:
+    scheme: slate
+    primary: custom
+    accent: custom
+  features:
+    - content.code.copy
+    - navigation.footer
+    - content.tabs.link
+
+plugins:
+  - search
+  - awesome-pages
+
+copyright: "contact@eicrud.com"
+
+extra:
+  homepage: https://eicrud.com
+  social:
+
+    - icon: fontawesome/solid/heart
+      link: https://github.com/acrosett
+      name: support this project
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/VaGPqE7bn9
+      name: discord server
+    - icon: fontawesome/brands/x-twitter
+      link: https://x.com/eicrud
+      name: x social network    
+    - icon: fontawesome/brands/github
+      link: https://github.com/eicrud/eicrud
+      name: source code        
+    - icon: fontawesome/solid/earth-europe
+      link: https://eicrud.com
+      name: homepage    
+
+repo_url: https://github.com/eicrud/eicrud
+
+site_url: https://docs.eicrud.com/
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - attr_list
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+      linenums: false
+      pygments_style: 'dracula'
+      noclasses: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - def_list
+  - toc:
+      toc_depth: 2
+      title: On this page
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+ 
