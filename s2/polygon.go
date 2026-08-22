@@ -1192,6 +1192,7 @@ func (p *Polygon) decodeCompressed(d *decoder) {
 	nloops := int(d.readUvarint())
 	if nloops > maxEncodedLoops {
 		d.err = fmt.Errorf("too many loops (%d; max is %d)", nloops, maxEncodedLoops)
+		return
 	}
 	p.loops = make([]*Loop, nloops)
 	for i := range p.loops {
