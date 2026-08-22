@@ -210,7 +210,9 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                             match self.mode {
                                 ReceiverMode::Buffering => {
                                     self.buffer.push(dir_entry);
-                                    if self.config.sorting.is_none() && self.buffer.len() > MAX_BUFFER_LENGTH {
+                                    if self.config.sorting.is_none()
+                                        && self.buffer.len() > MAX_BUFFER_LENGTH
+                                    {
                                         self.stream()?;
                                     }
                                 }

@@ -3,9 +3,9 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use lscolors::LsColors;
 use regex::bytes::RegexSet;
 
+use crate::cli::SortField;
 use crate::exec::CommandSet;
 use crate::filetypes::FileTypes;
-use crate::cli::SortField;
 #[cfg(unix)]
 use crate::filter::OwnerFilter;
 use crate::filter::{SizeFilter, TimeFilter};

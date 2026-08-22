@@ -573,19 +573,11 @@ pub struct Opts {
     pub files_first: bool,
 
     /// Use case-sensitive comparisons for text sort fields.
-    #[arg(
-        long,
-        requires("sort"),
-        help = "Use case-sensitive sort comparisons"
-    )]
+    #[arg(long, requires("sort"), help = "Use case-sensitive sort comparisons")]
     pub sort_case_sensitive: bool,
 
     /// Sort entries with missing optional values after entries with values.
-    #[arg(
-        long,
-        requires("sort"),
-        help = "Sort missing values last"
-    )]
+    #[arg(long, requires("sort"), help = "Sort missing values last")]
     pub sort_missing_last: bool,
 
     /// Use natural ordering for text sort fields.

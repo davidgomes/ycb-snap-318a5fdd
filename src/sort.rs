@@ -52,11 +52,9 @@ fn compare_entries(a: &DirEntry, b: &DirEntry, options: &SortOptions) -> Orderin
                 b.path().extension().map(path_bytes),
                 options,
             ),
-            SortField::Size => compare_optional(
-                regular_file_size(a),
-                regular_file_size(b),
-                options,
-            ),
+            SortField::Size => {
+                compare_optional(regular_file_size(a), regular_file_size(b), options)
+            }
             SortField::Modified => compare_optional(
                 a.metadata().and_then(|metadata| metadata.modified().ok()),
                 b.metadata().and_then(|metadata| metadata.modified().ok()),
@@ -75,8 +73,14 @@ fn compare_entries(a: &DirEntry, b: &DirEntry, options: &SortOptions) -> Orderin
             SortField::Depth => compare_optional(a.depth(), b.depth(), options),
             SortField::Type => entry_type(a).cmp(&entry_type(b)),
             SortField::NameLength => compare_optional(
-                a.path().file_name().map(path_bytes).map(|bytes| bytes.len()),
-                b.path().file_name().map(path_bytes).map(|bytes| bytes.len()),
+                a.path()
+                    .file_name()
+                    .map(path_bytes)
+                    .map(|bytes| bytes.len()),
+                b.path()
+                    .file_name()
+                    .map(path_bytes)
+                    .map(|bytes| bytes.len()),
                 options,
             ),
             SortField::PathLength => a
@@ -97,8 +101,12 @@ fn compare_entries(a: &DirEntry, b: &DirEntry, options: &SortOptions) -> Orderin
 }
 
 fn grouping_value(entry: &DirEntry, options: &SortOptions) -> u8 {
-    let is_dir = entry.file_type().is_some_and(|file_type| file_type.is_dir());
-    let is_file = entry.file_type().is_some_and(|file_type| file_type.is_file());
+    let is_dir = entry
+        .file_type()
+        .is_some_and(|file_type| file_type.is_dir());
+    let is_file = entry
+        .file_type()
+        .is_some_and(|file_type| file_type.is_file());
 
     if options.dirs_first {
         u8::from(!is_dir)
@@ -123,11 +131,7 @@ fn entry_type(entry: &DirEntry) -> u8 {
     }
 }
 
-fn compare_optional<T: Ord>(
-    a: Option<T>,
-    b: Option<T>,
-    options: &SortOptions,
-) -> Ordering {
+fn compare_optional<T: Ord>(a: Option<T>, b: Option<T>, options: &SortOptions) -> Ordering {
     match (a, b) {
         (None, None) => Ordering::Equal,
         (None, Some(_)) => {
@@ -231,9 +235,7 @@ fn compare_natural(a: &[u8], b: &[u8], case_sensitive: bool) -> Ordering {
         }
     }
 
-    a_index
-        .cmp(&a.len())
-        .then_with(|| b_index.cmp(&b.len()))
+    a_index.cmp(&a.len()).then_with(|| b_index.cmp(&b.len()))
 }
 
 fn digit_run_end(bytes: &[u8], start: usize) -> usize {
@@ -264,8 +266,12 @@ fn path_bytes(path: &std::path::Path) -> Cow<'_, [u8]> {
 }
 
 fn random_value(entry: &DirEntry, seed: u64) -> u64 {
-    entry.path().as_os_str().as_encoded_bytes().iter().fold(
-        FNV_OFFSET ^ seed,
-        |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME),
-    )
+    entry
+        .path()
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .fold(FNV_OFFSET ^ seed, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
+        })
 }
