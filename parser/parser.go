@@ -11,6 +11,13 @@ import (
 	"github.com/mattn/anko/ast"
 )
 
+func defaultsFor(yylex yyLexer, pos ast.Position) []ast.Expr {
+	if l, ok := yylex.(*Lexer); ok {
+		return l.functionDefaults[pos]
+	}
+	return nil
+}
+
 //line parser.go.y:45
 type yySymType struct {
 	yys int
@@ -1736,28 +1743,28 @@ yydefault:
 		yyDollar = yyS[yypt-7 : yypt+1]
 //line parser.go.y:485
 		{
-			yyVAL.expr = &ast.FuncExpr{Params: yyDollar[3].expr_idents, Stmt: yyDollar[6].compstmt}
+			yyVAL.expr = &ast.FuncExpr{Params: yyDollar[3].expr_idents, Defaults: defaultsFor(yylex, yyDollar[1].tok.Position()), Stmt: yyDollar[6].compstmt}
 			yyVAL.expr.SetPosition(yyDollar[1].tok.Position())
 		}
 	case 66:
 		yyDollar = yyS[yypt-8 : yypt+1]
 //line parser.go.y:490
 		{
-			yyVAL.expr = &ast.FuncExpr{Params: yyDollar[3].expr_idents, Stmt: yyDollar[7].compstmt, VarArg: true}
+			yyVAL.expr = &ast.FuncExpr{Params: yyDollar[3].expr_idents, Defaults: defaultsFor(yylex, yyDollar[1].tok.Position()), Stmt: yyDollar[7].compstmt, VarArg: true}
 			yyVAL.expr.SetPosition(yyDollar[1].tok.Position())
 		}
 	case 67:
 		yyDollar = yyS[yypt-8 : yypt+1]
 //line parser.go.y:495
 		{
-			yyVAL.expr = &ast.FuncExpr{Name: yyDollar[2].tok.Lit, Params: yyDollar[4].expr_idents, Stmt: yyDollar[7].compstmt}
+			yyVAL.expr = &ast.FuncExpr{Name: yyDollar[2].tok.Lit, Params: yyDollar[4].expr_idents, Defaults: defaultsFor(yylex, yyDollar[1].tok.Position()), Stmt: yyDollar[7].compstmt}
 			yyVAL.expr.SetPosition(yyDollar[1].tok.Position())
 		}
 	case 68:
 		yyDollar = yyS[yypt-9 : yypt+1]
 //line parser.go.y:500
 		{
-			yyVAL.expr = &ast.FuncExpr{Name: yyDollar[2].tok.Lit, Params: yyDollar[4].expr_idents, Stmt: yyDollar[8].compstmt, VarArg: true}
+			yyVAL.expr = &ast.FuncExpr{Name: yyDollar[2].tok.Lit, Params: yyDollar[4].expr_idents, Defaults: defaultsFor(yylex, yyDollar[1].tok.Position()), Stmt: yyDollar[8].compstmt, VarArg: true}
 			yyVAL.expr.SetPosition(yyDollar[1].tok.Position())
 		}
 	case 69:
