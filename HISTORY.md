@@ -13,6 +13,9 @@ Our backwards-compatibility policy can be found [here](https://github.com/python
 
 ## NEXT (UNRELEASED)
 
+- Add {meth}`BaseConverter.partial_structure` (and a matching top-level
+  function) which returns a {class}`PartialResult` for attrs classes,
+  dataclasses and TypedDicts, including ``refine()`` for filling in failed fields.
 - Add the {mod}`tomllib <cattrs.preconf.tomllib>` preconf converter.
   See [here](https://catt.rs/en/latest/preconf.html#tomllib) for details.
   ([#716](https://github.com/python-attrs/cattrs/pull/716))
