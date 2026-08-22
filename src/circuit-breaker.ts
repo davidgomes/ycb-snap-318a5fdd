@@ -74,7 +74,10 @@ export function resolveRequestOrigin(
     ) {
       return new URL(request.url).origin;
     }
-    return new URL(request).origin;
+    if (typeof request === "string") {
+      return new URL(request).origin;
+    }
+    return undefined;
   } catch {
     return undefined;
   }
