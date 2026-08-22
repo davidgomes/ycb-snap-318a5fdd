@@ -73,8 +73,8 @@ type SchemaValidValue<
       | (SCHEMA extends AnySchema ? AnySchemaValidValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends LazySchema
           ? ResolvedLazySchema<SCHEMA> extends ItemSchema
-            ? ItemSchemaValidValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
-            : SchemaValidValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+            ? ItemSchemaValidValue<ResolvedLazySchema<SCHEMA>, {}>
+            : SchemaValidValue<ResolvedLazySchema<SCHEMA>>
           : never)
       | (SCHEMA extends PrimitiveSchema ? PrimitiveSchemaValidValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends SetSchema ? SetSchemaValidValue<SCHEMA, OPTIONS> : never)
