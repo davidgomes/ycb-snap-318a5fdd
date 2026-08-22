@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/muesli/termenv/ansi"
 	"github.com/rivo/uniseg"
 )
 
@@ -22,9 +23,10 @@ const (
 
 // Style is a string that various rendering styles can be applied to.
 type Style struct {
-	profile Profile
-	string
-	styles []string
+	profile        Profile
+	string         string
+	styles         []string
+	preserveResets bool
 }
 
 // String returns a new Style.
@@ -118,6 +120,37 @@ func (t Style) Reverse() Style {
 func (t Style) CrossOut() Style {
 	t.styles = append(t.styles, CrossOutSeq)
 	return t
+}
+
+// PreserveResets enables re-applying this style after SGR reset sequences
+// during truncation.
+func (t Style) PreserveResets() Style {
+	t.preserveResets = true
+	return t
+}
+
+// Truncate truncates the styled string to the given visible width.
+func (t Style) Truncate(width int, opts TruncateOptions) string {
+	if t.profile == Ascii {
+		return truncatePlainNoTail(t.string, width)
+	}
+
+	opts.PreserveResets = opts.PreserveResets || t.preserveResets
+	enclosing := strings.Join(t.styles, ";")
+
+	if HasANSI(t.string) {
+		return ansi.TruncateANSIWithEnclosing(t.string, width, opts, enclosing)
+	}
+
+	truncated := truncatePlain(t.string, width, opts.Tail)
+	if len(t.styles) == 0 {
+		return truncated
+	}
+
+	return Style{
+		profile: t.profile,
+		styles:  t.styles,
+	}.Styled(truncated)
 }
 
 // Width returns the width required to print all runes in Style.

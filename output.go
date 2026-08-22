@@ -3,6 +3,7 @@ package termenv
 import (
 	"io"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -23,8 +24,9 @@ type OutputOption = func(*Output)
 // Output is a terminal output.
 type Output struct {
 	Profile
-	w       io.Writer
-	environ Environ
+	w              io.Writer
+	environ        Environ
+	preserveResets bool
 
 	assumeTTY bool
 	unsafe    bool
@@ -131,6 +133,36 @@ func WithUnsafe() OutputOption {
 	return func(o *Output) {
 		o.unsafe = true
 	}
+}
+
+// WithPreserveResets returns a new OutputOption that enables preserve-resets
+// during truncation by default.
+func WithPreserveResets(v bool) OutputOption {
+	return func(o *Output) {
+		o.preserveResets = v
+	}
+}
+
+// String returns a new Style using the output's profile and defaults.
+func (o Output) String(s ...string) Style {
+	return Style{
+		profile:        o.Profile,
+		string:         strings.Join(s, " "),
+		preserveResets: o.preserveResets,
+	}
+}
+
+// Truncate truncates s to the given visible width.
+func (o Output) Truncate(s string, width int, opts TruncateOptions) string {
+	if o.Profile == Ascii {
+		return truncatePlain(StripANSI(s), width, opts.Tail)
+	}
+
+	if o.preserveResets || opts.PreserveResets {
+		opts.PreserveResets = true
+	}
+
+	return TruncateANSI(s, width, opts)
 }
 
 // ForegroundColor returns the terminal's default foreground color.
