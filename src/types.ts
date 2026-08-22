@@ -68,6 +68,15 @@ export interface FetchOptions<R extends ResponseType = ResponseType, T = any>
 
   /** Default is [408, 409, 425, 429, 500, 502, 503, 504] */
   retryStatusCodes?: number[];
+
+  circuitBreaker?: boolean | CircuitBreakerOptions;
+}
+
+export interface CircuitBreakerOptions {
+  threshold?: number;
+  cooldown?: number;
+  halfOpenMaxRequests?: number;
+  failureStatusCodes?: number[];
 }
 
 export interface ResolvedFetchOptions<
@@ -159,7 +168,7 @@ export interface IFetchError<T = any> extends Error {
 
 export type Fetch = typeof globalThis.fetch;
 
-export type FetchRequest = RequestInfo;
+export type FetchRequest = RequestInfo | URL;
 
 export interface SearchParameters {
   [key: string]: any;
