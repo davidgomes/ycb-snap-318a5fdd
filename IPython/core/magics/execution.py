@@ -17,6 +17,7 @@ import os
 import pstats
 import re
 import shlex
+import json
 import sys
 import time
 import timeit
@@ -197,6 +198,39 @@ class ExecutionMagics(Magics):
         super(ExecutionMagics, self).__init__(shell)
         # Default execution function used to actually run user code.
         self.default_runner = None
+
+    @line_magic
+    def session_bundle(self, line=""):
+        """Start, inspect, or stop recording an IPython session bundle."""
+        args = shlex.split(line)
+        if not args:
+            raise UsageError("usage: %session_bundle start|status|stop")
+        command = args.pop(0)
+        if command == "status":
+            if args:
+                raise UsageError("status takes no arguments")
+            print(json.dumps(self.shell.session_bundle_status()))
+        elif command == "stop":
+            if args:
+                raise UsageError("stop takes no arguments")
+            self.shell.stop_session_bundle()
+        elif command == "start":
+            if not args:
+                raise UsageError("start requires a path")
+            path = args.pop(0)
+            overwrite = False
+            redact = []
+            while args:
+                option = args.pop(0)
+                if option == "--overwrite":
+                    overwrite = True
+                elif option == "--redact" and args:
+                    redact.append(args.pop(0))
+                else:
+                    raise UsageError(f"unknown or incomplete option: {option}")
+            self.shell.start_session_bundle(path, overwrite=overwrite, redact=redact)
+        else:
+            raise UsageError(f"unknown session bundle command: {command}")
 
     @skip_doctest
     @no_var_expand

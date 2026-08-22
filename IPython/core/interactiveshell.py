@@ -772,6 +772,22 @@ class InteractiveShell(SingletonConfigurable):
 
         # Dict to track post-execution functions that have been registered
         self._post_execute = {}
+        self._session_bundle_recorder = None
+
+    def start_session_bundle(self, path, *, overwrite=False, redact=None):
+        from IPython.core.sessionbundle import _Recorder
+        recorder = _Recorder(self, path, overwrite, redact)
+        return recorder.start()
+
+    def stop_session_bundle(self):
+        if self._session_bundle_recorder is None:
+            raise RuntimeError("no session bundle recording is active")
+        return self._session_bundle_recorder.stop()
+
+    def session_bundle_status(self):
+        recorder = self._session_bundle_recorder
+        return {"recording": recorder is not None,
+                "path": str(recorder.path) if recorder is not None else None}
 
     def init_environment(self):
         """Any changes we need to make to the user's environment."""
