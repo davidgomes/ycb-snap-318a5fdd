@@ -14,6 +14,7 @@
 
 import contextlib
 import logging
+import threading
 import time
 
 from mobly import asserts
@@ -37,6 +38,7 @@ class _ExpectErrorRecorder:
   """
 
   def __init__(self, record=None):
+    self._local = threading.local()
     self.reset_internal_states(record=record)
 
   def reset_internal_states(self, record=None):
@@ -45,19 +47,18 @@ class _ExpectErrorRecorder:
     Args:
       record: records.TestResultRecord, the test record for a test.
     """
-    self._record = None
-    self._count = 0
-    self._record = record
+    self._local.record = record
+    self._local.count = 0
 
   @property
   def has_error(self):
     """If any error has been recorded since the last reset."""
-    return self._count > 0
+    return self._local.count > 0
 
   @property
   def error_count(self):
     """The number of errors that have been recorded since last reset."""
-    return self._count
+    return self._local.count
 
   def add_error(self, error):
     """Record an error from expect APIs.
@@ -68,8 +69,10 @@ class _ExpectErrorRecorder:
     Args:
       error: Exception or signals.ExceptionRecord, the error to add.
     """
-    self._count += 1
-    self._record.add_error('expect@%s+%s' % (time.time(), self._count), error)
+    self._local.count += 1
+    self._local.record.add_error(
+        'expect@%s+%s' % (time.time(), self._local.count), error
+    )
 
 
 def expect_true(condition, msg, extras=None):
