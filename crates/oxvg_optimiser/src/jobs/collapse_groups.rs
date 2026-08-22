@@ -1,10 +1,16 @@
 use std::mem;
 
-use lightningcss::{properties::PropertyId, vendor_prefix::VendorPrefix};
+use lightningcss::{
+    printer::PrinterOptions,
+    properties::PropertyId,
+    selector::Selector,
+    traits::ToCss,
+    vendor_prefix::VendorPrefix,
+    visitor::{self, Visit, VisitTypes},
+};
 use oxvg_ast::{
-    element::Element,
+    element::{Element, HashableElement},
     get_attribute, has_attribute, is_element,
-    style,
     visitor::{Context, PrepareOutcome, Visitor},
 };
 use oxvg_collections::{
@@ -50,6 +56,13 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
         context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
         context.query_has_stylesheet(document);
+        let mut collector = StructureSensitiveElements {
+            root: document.clone(),
+            elements: &mut context.structure_sensitive_elements,
+        };
+        for stylesheet in &context.query_has_stylesheet_result {
+            stylesheet.borrow_mut().visit(&mut collector).ok();
+        }
         Ok(if self.0 {
             PrepareOutcome::none
         } else {
@@ -60,7 +73,7 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
     fn exit_element(
         &self,
         element: &Element<'input, 'arena>,
-        context: &mut Context<'input, 'arena, '_>,
+        _context: &mut Context<'input, 'arena, '_>,
     ) -> Result<(), Self::Error> {
         let Some(parent) = Element::parent_element(element) else {
             return Ok(());
@@ -72,7 +85,12 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
         if !is_element!(element, G) || !element.has_child_elements() {
             return Ok(());
         }
-        if is_structure_sensitive(element, &context.root, &context.query_has_stylesheet_result) {
+        if context
+            .structure_sensitive_elements
+            .iter()
+            .any(|protected| protected == &HashableElement::new(element.clone()))
+        {
+            log::debug!("collapse_groups: preserving structure-sensitive group");
             return Ok(());
         }
 
@@ -82,68 +100,95 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
     }
 }
 
-fn is_structure_sensitive<'input, 'arena>(
-    group: &Element<'input, 'arena>,
-    root: &Element<'input, 'arena>,
-    stylesheets: &[std::cell::RefCell<lightningcss::rules::CssRuleList<'input>>],
-) -> bool {
-    use lightningcss::{printer::PrinterOptions, traits::ToCss};
-    fn iter_rules<'a>(
-        rules: &'a lightningcss::rules::CssRuleList<'a>,
-    ) -> impl Iterator<Item = &'a lightningcss::rules::CssRule<'a>> {
-        rules.0.iter()
+struct StructureSensitiveElements<'a, 'input, 'arena> {
+    root: Element<'input, 'arena>,
+    elements: &'a mut Vec<HashableElement<'input, 'arena>>,
+}
+
+impl<'input, 'arena> visitor::Visitor<'input>
+    for StructureSensitiveElements<'_, 'input, 'arena>
+{
+    type Error = lightningcss::error::PrinterError;
+
+    fn visit_types(&self) -> VisitTypes {
+        lightningcss::visit_types!(RULES | SELECTORS)
     }
 
-    fn implicated<'input, 'arena>(
-        group: &Element<'input, 'arena>,
-        root: &Element<'input, 'arena>,
-        rules: &lightningcss::rules::CssRuleList<'input>,
-    ) -> bool {
-        for rule in iter_rules(rules) {
-            match rule {
-                lightningcss::rules::CssRule::Style(rule) => {
-                    for selector in &rule.selectors.0 {
-                        let Ok(text) = selector.to_css_string(PrinterOptions::default()) else {
-                            continue;
-                        };
-                        if !(text.contains('>') || text.contains('+') || text.contains('~')
-                            || text.contains(' '))
-                        {
-                            continue;
-                        }
-                        let Ok(matches) = root.select(&text) else {
-                            continue;
-                        };
-                        for matched in matches {
-                            let mut current = Some(matched);
-                            while let Some(node) = current {
-                                if node == *group {
-                                    return true;
-                                }
-                                current = Element::parent_element(&node);
-                            }
-                        }
-                    }
+    fn visit_selector(&mut self, selector: &mut Selector<'input>) -> Result<(), Self::Error> {
+        let Ok(selector) = selector.to_css_string(PrinterOptions {
+            minify: true,
+            ..PrinterOptions::default()
+        }) else {
+            return Ok(());
+        };
+        if !selector.has_combinator() && !is_structure_sensitive_selector(&selector) {
+            return Ok(());
+        }
+        let Ok(matches) = self.root.select(&selector) else {
+            return Ok(());
+        };
+        let Some(anchor) = first_compound(&selector) else {
+            return Ok(());
+        };
+        let Ok(anchors) = self.root.select(anchor) else {
+            return Ok(());
+        };
+        let anchors: Vec<_> = anchors.collect();
+
+        for target in matches {
+            self.elements.push(HashableElement::new(target.clone()));
+            let mut ancestor = target.parent_element();
+            while let Some(current) = ancestor {
+                if anchors.iter().any(|anchor| anchor == &current) {
+                    self.elements.push(HashableElement::new(current));
+                    break;
                 }
-                lightningcss::rules::CssRule::Media(rule) => {
-                    if implicated(group, root, &rule.rules) {
-                        return true;
+                ancestor = current.parent_element();
+            }
+            if selector.contains('+') || selector.contains('~') {
+                let mut sibling = target.previous_element_sibling();
+                while let Some(current) = sibling {
+                    if anchors.iter().any(|anchor| anchor == &current) {
+                        self.elements.push(HashableElement::new(current.clone()));
+                        break;
                     }
+                    sibling = if selector.contains('~') {
+                        current.previous_element_sibling()
+                    } else {
+                        None
+                    };
                 }
-                lightningcss::rules::CssRule::Container(rule) => {
-                    if implicated(group, root, &rule.rules) {
-                        return true;
-                    }
-                }
-                _ => {}
             }
         }
-        false
-    }
 
-    stylesheets
-        .iter()
-        .any(|stylesheet| implicated(group, root, &stylesheet.borrow()))
+        Ok(())
+    }
+}
+
+fn is_structure_sensitive_selector(selector: &str) -> bool {
+    [
+        ":first-child",
+        ":last-child",
+        ":only-child",
+        ":nth-child",
+        ":nth-last-child",
+        ":first-of-type",
+        ":last-of-type",
+        ":only-of-type",
+        ":nth-of-type",
+        ":nth-last-of-type",
+        ":empty",
+        ":has(",
+        ":root",
+    ]
+    .iter()
+    .any(|pseudo| selector.contains(pseudo))
+}
+
+fn first_compound(selector: &str) -> Option<&str> {
+    selector
+        .split(|c: char| c.is_whitespace() || matches!(c, '>' | '+' | '~'))
+        .find(|part| !part.is_empty())
 }
 
 impl Default for CollapseGroups {
@@ -562,5 +607,50 @@ fn collapse_groups() -> anyhow::Result<()> {
         )
     )?);
 
+    Ok(())
+}
+
+#[test]
+fn preserves_only_groups_used_by_structural_selectors() -> anyhow::Result<()> {
+    use crate::test_config;
+
+    let output = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg>
+    <style>g.keep > path.marked { fill: red; }</style>
+    <g class="keep">
+        <path class="marked"/>
+    </g>
+    <g class="plain">
+        <path/>
+    </g>
+</svg>"#,
+        ),
+    )?;
+
+    assert!(output.contains(r#"<g class="keep">"#));
+    assert!(!output.contains(r#"<g class="plain">"#));
+    Ok(())
+}
+
+#[test]
+fn preserves_sibling_selector_anchors() -> anyhow::Result<()> {
+    use crate::test_config;
+
+    let output = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg>
+    <style>g.anchor + path.target { fill: red; }</style>
+    <g class="anchor">
+        <path/>
+    </g>
+    <path class="target"/>
+</svg>"#,
+        ),
+    )?;
+
+    assert!(output.contains(r#"<g class="anchor">"#));
     Ok(())
 }
