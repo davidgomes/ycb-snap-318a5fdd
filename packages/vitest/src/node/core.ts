@@ -11,6 +11,7 @@ import type { VitestFetchFunction } from './environments/fetchModule'
 import type { ProcessPool } from './pool'
 import type { TestModule } from './reporters/reported-tasks'
 import type { TestSpecification } from './test-specification'
+import { recordFileDurations, resolveDurationHistory } from './sequencers/duration-history'
 import type { ResolvedConfig, TestProjectConfiguration, UserConfig, VitestRunMode } from './types/config'
 import type { CoverageProvider, ResolvedCoverageOptions } from './types/coverage'
 import type { Reporter } from './types/reporter'
@@ -945,6 +946,17 @@ export class Vitest {
           const errors = this.state.getUnhandledErrors()
           this._checkUnhandledErrors(errors)
           await this._testRun.end(specs, errors, coverage)
+          if (this.config.sequence.recordFileDurations) {
+            const durations = Object.fromEntries(specs.map(spec => [
+              relative(this.config.root, spec.moduleId).replaceAll('\\', '/'),
+              spec.testModule?.duration ?? 0,
+            ]))
+            await recordFileDurations(
+              resolveDurationHistory(this.config.root, this.config.sequence.durationHistoryPath),
+              durations,
+              this.config.sequence.durationHistoryMaxRuns,
+            )
+          }
           await this.reportCoverage(coverage, allTestsRun)
         }
       })()

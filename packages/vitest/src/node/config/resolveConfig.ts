@@ -758,6 +758,36 @@ export function resolveConfig(
   }
 
   resolved.sequence ??= {} as any
+  const sequence = resolved.sequence
+  if (sequence.balanceShardsByTime && sequence.shardStrategy === undefined) sequence.shardStrategy = 'time'
+  sequence.shardStrategy ??= 'hash'
+  sequence.balanceShardsByTime ??= false
+  if (sequence.shardStrategy !== 'time') sequence.balanceShardsByTime = false
+  sequence.recordFileDurations ??= false
+  sequence.durationBasedSorting ??= false
+  sequence.durationHistoryTTL ??= 0
+  sequence.durationHistoryPath ??= 'duration-history.json'
+  sequence.durationHistoryMaxRuns ??= 1
+  sequence.durationSmoothing ??= 'latest'
+  sequence.shardAffinityRules ??= []
+  sequence.rebalanceThreshold ??= 0
+  sequence.isolateSlowThreshold ??= 0
+  sequence.durationFallbackStrategy ??= 'hash'
+  if (!['hash', 'time', 'round-robin', 'affinity'].includes(sequence.shardStrategy)
+    || typeof sequence.balanceShardsByTime !== 'boolean'
+    || typeof sequence.recordFileDurations !== 'boolean'
+    || typeof sequence.durationBasedSorting !== 'boolean'
+    || !Number.isFinite(sequence.durationHistoryTTL) || sequence.durationHistoryTTL < 0
+    || typeof sequence.durationHistoryPath !== 'string' || !sequence.durationHistoryPath.trim()
+    || sequence.durationHistoryPath !== sequence.durationHistoryPath.trim()
+    || !Number.isInteger(sequence.durationHistoryMaxRuns) || sequence.durationHistoryMaxRuns < 1
+    || !['latest', 'average', 'p95', 'median'].includes(sequence.durationSmoothing)
+    || !Array.isArray(sequence.shardAffinityRules)
+    || !Number.isFinite(sequence.rebalanceThreshold) || sequence.rebalanceThreshold < 0 || sequence.rebalanceThreshold > 1
+    || !Number.isFinite(sequence.isolateSlowThreshold) || sequence.isolateSlowThreshold < 0
+    || !['hash', 'equal-split'].includes(sequence.durationFallbackStrategy)) {
+    throw new Error('Invalid sequence sharding configuration')
+  }
   if (
     resolved.sequence.shuffle
     && typeof resolved.sequence.shuffle === 'object'

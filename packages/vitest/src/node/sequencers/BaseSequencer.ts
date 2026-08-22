@@ -4,6 +4,7 @@ import type { TestSequencer } from './types'
 import { slash } from '@vitest/utils/helpers'
 import { relative, resolve } from 'pathe'
 import { hash } from '../hash'
+import { shardByDuration } from './shard-analytics'
 
 export class BaseSequencer implements TestSequencer {
   protected ctx: Vitest
@@ -16,6 +17,9 @@ export class BaseSequencer implements TestSequencer {
   public async shard(files: TestSpecification[]): Promise<TestSpecification[]> {
     const { config } = this.ctx
     const { index, count } = config.shard!
+    if (config.sequence.shardStrategy !== 'hash') {
+      return shardByDuration(this.ctx, files)
+    }
     const [shardStart, shardEnd] = this.calculateShardRange(files.length, index, count)
     return [...files]
       .map((spec) => {
@@ -34,7 +38,7 @@ export class BaseSequencer implements TestSequencer {
   // async so it can be extended by other sequelizers
   public async sort(files: TestSpecification[]): Promise<TestSpecification[]> {
     const cache = this.ctx.cache
-    return [...files].sort((a, b) => {
+    const sorted = [...files].sort((a, b) => {
       // "sequence.groupOrder" is higher priority
       const groupOrderDiff = a.project.config.sequence.groupOrder - b.project.config.sequence.groupOrder
       if (groupOrderDiff !== 0) {
@@ -84,6 +88,18 @@ export class BaseSequencer implements TestSequencer {
       // run longer first
       return bState.duration - aState.duration
     })
+    if (this.ctx.config.sequence.durationBasedSorting) {
+      const history = await import('./duration-history').then(m => m.readDurationHistory(
+        m.resolveDurationHistory(this.ctx.config.root, this.ctx.config.sequence.durationHistoryPath),
+        this.ctx.config.sequence.durationHistoryTTL,
+      ))
+      return sorted.sort((a, b) => {
+        const pathA = relative(this.ctx.config.root, a.moduleId).replaceAll('\\', '/')
+        const pathB = relative(this.ctx.config.root, b.moduleId).replaceAll('\\', '/')
+        return (history?.[pathB]?.[0]?.duration ?? 0) - (history?.[pathA]?.[0]?.duration ?? 0)
+      })
+    }
+    return sorted
   }
 
   // Calculate distributed shard range [start, end] distributed equally

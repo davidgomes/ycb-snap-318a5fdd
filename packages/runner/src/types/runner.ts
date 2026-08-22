@@ -32,6 +32,18 @@ export interface VitestRunnerConfig {
     seed: number
     hooks: SequenceHooks
     setupFiles: SequenceSetupFiles
+    shardStrategy: 'hash' | 'time' | 'round-robin' | 'affinity'
+    balanceShardsByTime: boolean
+    recordFileDurations: boolean
+    durationBasedSorting: boolean
+    durationHistoryTTL: number
+    durationHistoryPath: string
+    durationHistoryMaxRuns: number
+    durationSmoothing: 'latest' | 'average' | 'p95' | 'median'
+    shardAffinityRules: Array<{ pattern: string, shardIndex: number }>
+    rebalanceThreshold: number
+    isolateSlowThreshold: number
+    durationFallbackStrategy: 'hash' | 'equal-split'
   }
   chaiConfig: {
     truncateThreshold?: number
