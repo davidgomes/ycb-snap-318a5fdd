@@ -1,6 +1,13 @@
 import { Logic, LogicBuilder, LogicPropSelectors, Selector, SelectorDefinition, SelectorDefinitions } from '../types'
-import { createSelector, createSelectorCreator, defaultMemoize, ParametricSelector } from 'reselect'
+import { createSelector, ParametricSelector } from 'reselect'
 import { getStoreState } from '../kea/context'
+import {
+  evaluateAtomicSelector,
+  ensureAtomicNode,
+  isAtomicSelectorsEnabled,
+  registerSelectorFn,
+  resolveInputNames,
+} from './atomicSelectors'
 
 /**
   Logic builder:
@@ -68,7 +75,20 @@ export function selectors<L extends Logic = Logic>(
         const msg = `[KEA] Logic "${logic.pathString}", selector "${key}" has incorrect input: [${argTypes}].`
         throw new Error(msg)
       }
-      builtSelectors[key] = createSelector(args, func, { memoizeOptions })
+      if (isAtomicSelectorsEnabled()) {
+        const inputNames = resolveInputNames(logic, args)
+        ensureAtomicNode(logic, key, {
+          inputFns: args,
+          inputNames,
+          compute: func,
+          memoizeOptions,
+          isDerived: true,
+        })
+        builtSelectors[key] = ((state = getStoreState(), props = logic.props) =>
+          evaluateAtomicSelector(logic, key, state, props)) as Selector
+      } else {
+        builtSelectors[key] = createSelector(args, func, { memoizeOptions })
+      }
 
       addSelectorAndValue(logic, key, (state = getStoreState(), props = logic.props) =>
         builtSelectors[key](state, props),
@@ -88,6 +108,7 @@ export function selectors<L extends Logic = Logic>(
 
 export function addSelectorAndValue<L extends Logic = Logic>(logic: L, key: string, selector: Selector): void {
   logic.selectors[key] = selector
+  registerSelectorFn(logic, key, selector)
   if (!logic.values.hasOwnProperty(key)) {
     Object.defineProperty(logic.values, key, {
       get: function () {

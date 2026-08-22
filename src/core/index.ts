@@ -8,6 +8,7 @@ import { reducers } from './reducers'
 import { selectors } from './selectors'
 import { events } from './events'
 import { runPlugins } from '../kea/plugins'
+import { flushAtomicSelectors, isAtomicSelectorsEnabled } from './atomicSelectors'
 
 export { actions } from './actions'
 export { connect } from './connect'
@@ -42,6 +43,7 @@ export const corePlugin: KeaPlugin = {
     sharedListeners: undefined,
     values: {},
     events: {},
+    selectorHealth: undefined,
   }),
 
   events: {
@@ -68,6 +70,9 @@ export const corePlugin: KeaPlugin = {
               innerListener(action, previousState)
             }
           }
+        }
+        if (isAtomicSelectorsEnabled()) {
+          flushAtomicSelectors()
         }
         return response
       })
