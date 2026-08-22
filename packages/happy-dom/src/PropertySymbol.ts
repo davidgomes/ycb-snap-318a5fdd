@@ -1,5 +1,6 @@
 export const abort = Symbol('abort');
 export const activeElement = Symbol('activeElement');
+export const abortHandler = Symbol('abortHandler');
 export const asyncTaskManager = Symbol('asyncTaskManager');
 export const bodyBuffer = Symbol('bodyBuffer');
 export const buffer = Symbol('buffer');

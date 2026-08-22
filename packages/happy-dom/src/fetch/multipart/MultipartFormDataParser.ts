@@ -30,6 +30,7 @@ export default class MultipartFormDataParser {
 			body: ReadableStream<Uint8Array> | null;
 			[PropertySymbol.error]: Error | null;
 			[PropertySymbol.aborted]: boolean;
+			[PropertySymbol.abortHandler]?: (() => void) | null;
 		},
 		contentType: string
 	): Promise<{ formData: FormData; buffer: Buffer }> {
@@ -59,41 +60,74 @@ export default class MultipartFormDataParser {
 		}
 
 		const bodyReader = body.getReader();
+		const previousAbortHandler = requestOrResponse[PropertySymbol.abortHandler];
+		let rejectAbort: ((error: Error) => void) | null = null;
+		const abortPromise = new Promise<never>((_, reject) => {
+			rejectAbort = reject;
+		});
+		const abortHandler = (): void => {
+			if (previousAbortHandler) {
+				previousAbortHandler();
+			}
+			rejectAbort!(
+				new window.DOMException(
+					'Failed to read response body: The stream was aborted.',
+					DOMExceptionNameEnum.abortError
+				)
+			);
+			void bodyReader.cancel().catch(() => {});
+		};
+		requestOrResponse[PropertySymbol.abortHandler] = abortHandler;
 		const reader = new MultipartReader(window, match[1] || match[2]);
 		const chunks: any[] = [];
 		let buffer: Buffer;
 		const bytes = 0;
 
-		let readResult = await bodyReader.read();
+		try {
+			let readResult = await Promise.race([bodyReader.read(), abortPromise]);
 
-		while (!readResult.done) {
-			if (requestOrResponse[PropertySymbol.error]) {
-				throw requestOrResponse[PropertySymbol.error];
+			while (!readResult.done) {
+				if (requestOrResponse[PropertySymbol.error]) {
+					throw requestOrResponse[PropertySymbol.error];
+				}
+				if (requestOrResponse[PropertySymbol.aborted]) {
+					throw new window.DOMException(
+						'Failed to read response body: The stream was aborted.',
+						DOMExceptionNameEnum.abortError
+					);
+				}
+				reader.write(readResult.value);
+				readResult = await Promise.race([bodyReader.read(), abortPromise]);
 			}
+
 			if (requestOrResponse[PropertySymbol.aborted]) {
 				throw new window.DOMException(
 					'Failed to read response body: The stream was aborted.',
 					DOMExceptionNameEnum.abortError
 				);
 			}
-			reader.write(readResult.value);
-			readResult = await bodyReader.read();
-		}
 
-		try {
-			buffer =
-				typeof chunks[0] === 'string' ? Buffer.from(chunks.join('')) : Buffer.concat(chunks, bytes);
-		} catch (error) {
-			throw new window.DOMException(
-				`Could not create Buffer from response body. Error: ${(<Error>error).message}.`,
-				DOMExceptionNameEnum.invalidStateError
-			);
-		}
+			try {
+				buffer =
+					typeof chunks[0] === 'string'
+						? Buffer.from(chunks.join(''))
+						: Buffer.concat(chunks, bytes);
+			} catch (error) {
+				throw new window.DOMException(
+					`Could not create Buffer from response body. Error: ${(<Error>error).message}.`,
+					DOMExceptionNameEnum.invalidStateError
+				);
+			}
 
-		return {
-			formData: reader.end(),
-			buffer
-		};
+			return {
+				formData: reader.end(),
+				buffer
+			};
+		} finally {
+			if (requestOrResponse[PropertySymbol.abortHandler] === abortHandler) {
+				requestOrResponse[PropertySymbol.abortHandler] = previousAbortHandler || null;
+			}
+		}
 	}
 
 	/**

@@ -185,6 +185,7 @@ export default class FetchBodyUtility {
 			body: ReadableStream | null;
 			[PropertySymbol.aborted]: boolean;
 			[PropertySymbol.error]: Error | null;
+			[PropertySymbol.abortHandler]?: (() => void) | null;
 		}
 	): Promise<Buffer> {
 		const body = requestOrResponse.body;
@@ -198,14 +199,44 @@ export default class FetchBodyUtility {
 		}
 
 		const reader = body.getReader();
+		const previousAbortHandler = requestOrResponse[PropertySymbol.abortHandler];
+		let rejectAbort: ((error: Error) => void) | null = null;
+		const abortPromise = new Promise<never>((_, reject) => {
+			rejectAbort = reject;
+		});
+		const abortHandler = (): void => {
+			if (previousAbortHandler) {
+				previousAbortHandler();
+			}
+			rejectAbort!(
+				new window.DOMException(
+					'Failed to read response body: The stream was aborted.',
+					DOMExceptionNameEnum.abortError
+				)
+			);
+			void reader.cancel().catch(() => {});
+		};
+		requestOrResponse[PropertySymbol.abortHandler] = abortHandler;
 		const chunks = [];
 		let bytes = 0;
 
 		try {
-			let readResult = await reader.read();
-			while (!readResult.done) {
-				if (requestOrResponse[PropertySymbol.error]) {
-					throw requestOrResponse[PropertySymbol.error];
+			try {
+				let readResult = await Promise.race([reader.read(), abortPromise]);
+				while (!readResult.done) {
+					if (requestOrResponse[PropertySymbol.error]) {
+						throw requestOrResponse[PropertySymbol.error];
+					}
+					if (requestOrResponse[PropertySymbol.aborted]) {
+						throw new window.DOMException(
+							'Failed to read response body: The stream was aborted.',
+							DOMExceptionNameEnum.abortError
+						);
+					}
+					const chunk = readResult.value;
+					bytes += chunk.length;
+					chunks.push(chunk);
+					readResult = await Promise.race([reader.read(), abortPromise]);
 				}
 				if (requestOrResponse[PropertySymbol.aborted]) {
 					throw new window.DOMException(
@@ -213,33 +244,57 @@ export default class FetchBodyUtility {
 						DOMExceptionNameEnum.abortError
 					);
 				}
-				const chunk = readResult.value;
-				bytes += chunk.length;
-				chunks.push(chunk);
-				readResult = await reader.read();
-			}
-		} catch (error) {
-			if (error instanceof DOMException) {
-				throw error;
-			}
-			throw new window.DOMException(
-				`Failed to read response body. Error: ${(<Error>error).message}.`,
-				DOMExceptionNameEnum.encodingError
-			);
-		}
-
-		try {
-			if (typeof chunks[0] === 'string') {
-				return Buffer.from(chunks.join(''));
+			} catch (error) {
+				if (error instanceof DOMException) {
+					throw error;
+				}
+				throw new window.DOMException(
+					`Failed to read response body. Error: ${(<Error>error).message}.`,
+					DOMExceptionNameEnum.encodingError
+				);
 			}
 
-			return Buffer.concat(chunks, bytes);
-		} catch (error) {
-			throw new window.DOMException(
-				`Could not create Buffer from response body. Error: ${(<Error>error).message}.`,
-				DOMExceptionNameEnum.invalidStateError
-			);
+			try {
+				if (typeof chunks[0] === 'string') {
+					return Buffer.from(chunks.join(''));
+				}
+
+				return Buffer.concat(chunks, bytes);
+			} catch (error) {
+				throw new window.DOMException(
+					`Could not create Buffer from response body. Error: ${(<Error>error).message}.`,
+					DOMExceptionNameEnum.invalidStateError
+				);
+			}
+		} finally {
+			if (requestOrResponse[PropertySymbol.abortHandler] === abortHandler) {
+				requestOrResponse[PropertySymbol.abortHandler] = previousAbortHandler || null;
+			}
 		}
+	}
+
+	/**
+	 * Creates a promise that rejects when the body is aborted.
+	 *
+	 * @param window Window.
+	 * @param requestOrResponse Request or response.
+	 * @returns Abort promise.
+	 */
+	public static createAbortPromise(
+		window: BrowserWindow,
+		requestOrResponse: {
+			[PropertySymbol.abortHandler]?: (() => void) | null;
+		}
+	): Promise<never> {
+		return new Promise((_, reject) => {
+			requestOrResponse[PropertySymbol.abortHandler] = () =>
+				reject(
+					new window.DOMException(
+						'Failed to read response body: The stream was aborted.',
+						DOMExceptionNameEnum.abortError
+					)
+				);
+		});
 	}
 	/**
 	 * Wraps a given value in a browser ReadableStream.

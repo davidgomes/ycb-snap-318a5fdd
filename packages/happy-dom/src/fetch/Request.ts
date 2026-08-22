@@ -46,6 +46,7 @@ export default class Request implements Request {
 	// Internal properties
 	public [PropertySymbol.aborted]: boolean = false;
 	public [PropertySymbol.error]: Error | null = null;
+	public [PropertySymbol.abortHandler]: (() => void) | null = null;
 	public [PropertySymbol.contentLength]: number | null = null;
 	public [PropertySymbol.contentType]: string | null = null;
 	public [PropertySymbol.referrer]: '' | 'no-referrer' | 'client' | URL = 'client';
@@ -309,6 +310,7 @@ export default class Request implements Request {
 
 		const taskID = asyncTaskManager.startTask(() => {
 			this[PropertySymbol.aborted] = true;
+			this[PropertySymbol.abortHandler]?.();
 			this.signal[PropertySymbol.abort]();
 		});
 		let buffer: Buffer;
@@ -360,6 +362,7 @@ export default class Request implements Request {
 
 		const taskID = asyncTaskManager.startTask(() => {
 			this[PropertySymbol.aborted] = true;
+			this[PropertySymbol.abortHandler]?.();
 			this.signal[PropertySymbol.abort]();
 		});
 		let buffer: Buffer;
@@ -397,6 +400,7 @@ export default class Request implements Request {
 
 		const taskID = asyncTaskManager.startTask(() => {
 			this[PropertySymbol.aborted] = true;
+			this[PropertySymbol.abortHandler]?.();
 			this.signal[PropertySymbol.abort]();
 		});
 		let buffer: Buffer;
@@ -444,21 +448,26 @@ export default class Request implements Request {
 
 			this[PropertySymbol.bodyUsed] = true;
 
+			const abortPromise = FetchBodyUtility.createAbortPromise(window, this);
 			const taskID = asyncTaskManager.startTask(() => {
 				this[PropertySymbol.aborted] = true;
+				this[PropertySymbol.abortHandler]?.();
 				this.signal[PropertySymbol.abort]();
 			});
 			let formData: FormData;
 
 			try {
-				const result = await MultipartFormDataParser.streamToFormData(window, this, contentType);
+				const result = await Promise.race([
+					MultipartFormDataParser.streamToFormData(window, this, contentType),
+					abortPromise
+				]);
 				formData = result.formData;
 			} catch (error) {
-				asyncTaskManager.endTask(taskID);
 				throw error;
+			} finally {
+				this[PropertySymbol.abortHandler] = null;
+				asyncTaskManager.endTask(taskID);
 			}
-
-			asyncTaskManager.endTask(taskID);
 
 			return formData;
 		}
