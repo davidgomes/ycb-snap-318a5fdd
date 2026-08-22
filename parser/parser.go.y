@@ -659,7 +659,9 @@ func_params :
 	}
 	| func_params ',' opt_newlines IDENT
 	{
-		if len($1.Defaults) > 0 && $1.Defaults[len($1.Defaults)-1] != nil {
+		if len($1.Names) == 0 {
+			yylex.Error("syntax error: unexpected ','")
+		} else if len($1.Defaults) > 0 && $1.Defaults[len($1.Defaults)-1] != nil {
 			yylex.Error("invalid default argument declaration")
 		}
 		$1.Names = append($1.Names, $4.Lit)
