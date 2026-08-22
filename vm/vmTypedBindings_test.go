@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -105,6 +106,30 @@ func TestTypedBindings(t *testing.T) {
 				t.Fatalf("Execute returned %#v (%T), want %#v (%T)", value, value, test.want, test.want)
 			}
 		})
+	}
+}
+
+type typedStringer struct{}
+
+func (typedStringer) String() string {
+	return "typed"
+}
+
+func TestTypedBindingInterface(t *testing.T) {
+	e := env.NewEnv()
+	if err := e.DefineType("stringer", reflect.TypeOf((*fmt.Stringer)(nil)).Elem()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Define("value", typedStringer{}); err != nil {
+		t.Fatal(err)
+	}
+
+	value, err := Execute(e, &Options{TypedBindings: true}, `var x: stringer = value; x`)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if got, want := value.(typedStringer), (typedStringer{}); got != want {
+		t.Fatalf("Execute returned %#v, want %#v", got, want)
 	}
 }
 
