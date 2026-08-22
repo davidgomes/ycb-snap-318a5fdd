@@ -4,6 +4,7 @@ All notable changes to the library will be documented in this file.
 
 ## vX.X.X (Month DD, YYYY)
 
+- Add `Recur` placeholder plus `recursive` and `recursiveAsync` methods for first-class recursive schema composition
 - Add `guard` transformation action to narrow types using type predicates (pull request #1204)
 - Add `parseBoolean` transformation action to parse boolean values from strings and other types (pull request #1251)
 - Add `isrc` validation action to validate ISRC codes (pull request #1373)
