@@ -1844,8 +1844,12 @@ func identList(
 	varArgs bool,
 	list ...*Ident,
 ) *IdentList {
+	params := make([]Pattern, len(list))
+	for i, id := range list {
+		params[i] = &IdentPattern{Name: id.Name, NamePos: id.NamePos}
+	}
 	return &IdentList{
-		VarArgs: varArgs, List: list, LParen: opening, RParen: closing,
+		VarArgs: varArgs, Params: params, LParen: opening, RParen: closing,
 	}
 }
 
@@ -2203,7 +2207,26 @@ func equalExpr(t *testing.T, expected, actual Expr) {
 func equalFuncType(t *testing.T, expected, actual *FuncType) {
 	require.Equal(t, expected.Params.LParen, actual.Params.LParen)
 	require.Equal(t, expected.Params.RParen, actual.Params.RParen)
-	equalIdents(t, expected.Params.List, actual.Params.List)
+	equalPatterns(t, expected.Params.Params, actual.Params.Params)
+}
+
+func equalPatterns(t *testing.T, expected, actual []Pattern) {
+	require.Equal(t, len(expected), len(actual))
+	for i := 0; i < len(expected); i++ {
+		equalPattern(t, expected[i], actual[i])
+	}
+}
+
+func equalPattern(t *testing.T, expected, actual Pattern) {
+	switch e := expected.(type) {
+	case *IdentPattern:
+		a, ok := actual.(*IdentPattern)
+		require.True(t, ok)
+		require.Equal(t, e.Name, a.Name)
+		require.Equal(t, e.NamePos, a.NamePos)
+	default:
+		require.Equal(t, expected.String(), actual.String())
+	}
 }
 
 func equalIdents(t *testing.T, expected, actual []*Ident) {

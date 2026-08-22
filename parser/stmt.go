@@ -15,6 +15,7 @@ type Stmt interface {
 // AssignStmt represents an assignment statement.
 type AssignStmt struct {
 	LHS      []Expr
+	Pattern  Pattern
 	RHS      []Expr
 	Token    token.Token
 	TokenPos Pos
@@ -24,6 +25,9 @@ func (s *AssignStmt) stmtNode() {}
 
 // Pos returns the position of first character belonging to the node.
 func (s *AssignStmt) Pos() Pos {
+	if s.Pattern != nil {
+		return s.Pattern.Pos()
+	}
 	return s.LHS[0].Pos()
 }
 
@@ -33,14 +37,21 @@ func (s *AssignStmt) End() Pos {
 }
 
 func (s *AssignStmt) String() string {
-	var lhs, rhs []string
-	for _, e := range s.LHS {
-		lhs = append(lhs, e.String())
+	var lhs string
+	if s.Pattern != nil {
+		lhs = s.Pattern.String()
+	} else {
+		var lhsParts []string
+		for _, e := range s.LHS {
+			lhsParts = append(lhsParts, e.String())
+		}
+		lhs = strings.Join(lhsParts, ", ")
 	}
+	var rhs []string
 	for _, e := range s.RHS {
 		rhs = append(rhs, e.String())
 	}
-	return strings.Join(lhs, ", ") + " " + s.Token.String() +
+	return lhs + " " + s.Token.String() +
 		" " + strings.Join(rhs, ", ")
 }
 
