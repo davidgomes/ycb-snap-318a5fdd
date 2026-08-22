@@ -1507,6 +1507,7 @@ class BaseTestClass:
       # Write controller info and summary to summary file.
       self._record_controller_info()
       self._controller_manager.unregister_controllers()
+      self._registered_controller_objects = []
       if expects.recorder.has_error:
         record.test_error()
         record.update_record()
