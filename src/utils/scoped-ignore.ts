@@ -70,6 +70,9 @@ function getProtectedLines(text: string): Set<number> {
   addPositions(MDAstTypes.Math);
   addPositions(MDAstTypes.InlineMath);
   const yaml = text.match(yamlRegex);
-  if (yaml) for (let line = 0; line <= text.substring(0, yaml.index + yaml[0].length).split('\n').length - 1; line++) result.add(line);
+  if (yaml) {
+    const endLine = text.substring(0, yaml.index + yaml[0].length).split('\n').length - 1;
+    for (let line = 0; line <= endLine; line++) result.add(line);
+  }
   return result;
 }
