@@ -1,0 +1,19 @@
+name: Init
+description: Sets up the environment for build, lint, and test jobs
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/pyproject.toml"
+
+    - name: Install dependencies
+      shell: sh
+      run: uv sync --dev
