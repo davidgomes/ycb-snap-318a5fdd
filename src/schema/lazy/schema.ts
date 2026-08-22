@@ -8,6 +8,8 @@ type Resolution =
   | { status: 'resolved'; schema: unknown }
   | { status: 'rejected'; error: unknown }
 
+const checkingSchemas = new WeakSet<LazySchema>()
+
 export class LazySchema<
   RESOLVED_SCHEMA extends Schema = Schema,
   PROPS extends SchemaProps = SchemaProps
@@ -16,7 +18,6 @@ export class LazySchema<
   props: PROPS
 
   private resolution: Resolution = { status: 'pending' }
-  private checking = false
 
   constructor(
     protected readonly thunk: () => RESOLVED_SCHEMA,
@@ -50,12 +51,12 @@ export class LazySchema<
   }
 
   check(path?: string): void {
-    if (this.checked || this.checking) {
+    if (this.checked || checkingSchemas.has(this)) {
       return
     }
 
     checkSchemaProps(this.props, path)
-    this.checking = true
+    checkingSchemas.add(this)
 
     try {
       const resolvedSchema = this.resolve()
@@ -73,7 +74,7 @@ export class LazySchema<
       resolvedSchema.check(path)
       Object.freeze(this.props)
     } finally {
-      this.checking = false
+      checkingSchemas.delete(this)
     }
   }
 }
