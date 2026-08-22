@@ -450,8 +450,11 @@ func mergeStreamedFunctionCallContents(contents []*Content) ([]*Content, bool) {
 	var calls []*FunctionCall
 	active := make(map[string]int)
 	for _, content := range contents {
-		if content == nil || len(content.Parts) == 0 {
-			return contents, false
+		if content == nil {
+			continue
+		}
+		if len(content.Parts) == 0 {
+			continue
 		}
 		for _, part := range content.Parts {
 			if part == nil || part.FunctionCall == nil {
