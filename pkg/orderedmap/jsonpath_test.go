@@ -250,6 +250,7 @@ func TestQueryScriptIndex(t *testing.T) {
 func TestQueryIncompatibleTypesEmpty(t *testing.T) {
 	assertEmpty(t, omap("a", 1), "$[0]")
 	assertEmpty(t, []interface{}{1, 2}, "$.a")
+	assertEmpty(t, omap("a", true), "$[?(@.a)]")
 	assertEmpty(t, 5, "$.a")
 	assertEmpty(t, 5, "$[0]")
 	assertEmpty(t, 5, "$.length()")

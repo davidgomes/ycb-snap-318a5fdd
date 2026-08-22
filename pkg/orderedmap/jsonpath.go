@@ -199,10 +199,6 @@ func (s filterSeg) apply(nodes []interface{}) []interface{} {
 					out = append(out, elem)
 				}
 			}
-			continue
-		}
-		if s.expr.eval(n) {
-			out = append(out, n)
 		}
 	}
 	return out
