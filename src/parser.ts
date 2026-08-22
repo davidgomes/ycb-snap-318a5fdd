@@ -27,8 +27,8 @@ import {
 } from './common';
 import { Errors, ParseError } from './errors';
 import type * as ESTree from './estree';
-import { isIdentifierPart } from './lexer/charClassifier';
 import { nextToken, skipHashBang } from './lexer';
+import { isIdentifierPart } from './lexer/charClassifier';
 import { nextJSXToken, rescanJSXIdentifier, scanJSXAttributeValue } from './lexer/jsx';
 import { scanTemplateTail } from './lexer/template';
 import { type Options } from './options';
@@ -1685,7 +1685,8 @@ function nextTokenIsUsingOnSameLine(parser: Parser): boolean {
       index += 2;
       while (index < parser.end) {
         const commentChar = source.charCodeAt(index);
-        if (commentChar === 0x0a || commentChar === 0x0d || commentChar === 0x2028 || commentChar === 0x2029) return false;
+        if (commentChar === 0x0a || commentChar === 0x0d || commentChar === 0x2028 || commentChar === 0x2029)
+          return false;
         if (commentChar === 0x2a && source.charCodeAt(index + 1) === 0x2f) {
           index += 2;
           break;
@@ -2210,9 +2211,7 @@ function parseForStatement(
             );
             if ((parser.getToken() & Token.IsInOrOf) === Token.IsInOrOf) {
               parser.report(
-                parser.getToken() === Token.InKeyword
-                  ? Errors.UsingDeclarationInForIn
-                  : Errors.ForInOfLoopInitializer,
+                parser.getToken() === Token.InKeyword ? Errors.UsingDeclarationInForIn : Errors.ForInOfLoopInitializer,
               );
             }
           } else if (parser.getToken() !== Token.InKeyword) {

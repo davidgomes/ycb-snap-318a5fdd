@@ -17,6 +17,9 @@ function getForOfStatement(statement: ESTree.Statement): ESTree.ForOfStatement {
 
 function getResourceKind(initializer: ESTree.ForInitializer): 'using' | 'await using' {
   if (initializer.type !== 'VariableDeclaration') throw new Error('Expected a resource declaration');
+  if (initializer.kind !== 'using' && initializer.kind !== 'await using') {
+    throw new Error('Expected a using declaration');
+  }
   return initializer.kind;
 }
 
