@@ -94,10 +94,25 @@ func TestMergeAndReversePatch(t *testing.T) {
 	if err := ApplyPatch(ours, reverse); err != nil {
 		t.Fatal(err)
 	}
-	// Text replacement patches retain their target value when reversed because
-	// XML patch-ops has no standard old-value slot.
 	if ours.Root().SelectElement("item").Text() != "ours" {
 		t.Fatal("reverse patch changed the wrong node")
+	}
+
+	addBase := newDocumentFromString(t, `<root><item id="1"/></root>`)
+	addTarget := newDocumentFromString(t, `<root><item id="1"/><item id="2"/></root>`)
+	addOps, err := Diff(addBase, addTarget, DefaultDiffOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reverseAdd, err := ReversePatch(GeneratePatch(addOps))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPatch(addTarget, reverseAdd); err != nil {
+		t.Fatal(err)
+	}
+	if !ElementsDeepEqual(addTarget.Root(), addBase.Root()) {
+		t.Fatalf("reverse add patch differs: %s", mustWrite(addTarget))
 	}
 }
 

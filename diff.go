@@ -916,7 +916,7 @@ func ReversePatch(patch *Document) (*Document, error) {
 			if op.SelectAttrValue("type", "") == "attribute" {
 				appendPatchRemove(out, joinAttrPath(sel, op.SelectAttrValue("name", "")), nil)
 			} else {
-				appendPatchRemove(out, sel, nil)
+				appendReverseAddRemoval(out, op, sel)
 			}
 		case "remove":
 			if strings.HasSuffix(sel, "/text()") {
@@ -938,6 +938,24 @@ func ReversePatch(patch *Document) (*Document, error) {
 		}
 	}
 	return reversed, nil
+}
+
+func appendReverseAddRemoval(root, add *Element, parentPath string) {
+	removed := false
+	for i := len(add.Child) - 1; i >= 0; i-- {
+		switch child := add.Child[i].(type) {
+		case *Element:
+			appendPatchRemove(root,
+				strings.TrimSuffix(parentPath, "/")+"/"+child.FullTag()+"[-1]", nil)
+			removed = true
+		case *CharData:
+			appendPatchRemove(root, strings.TrimSuffix(parentPath, "/")+"/text()", nil)
+			removed = true
+		}
+	}
+	if !removed {
+		appendPatchRemove(root, parentPath, nil)
+	}
 }
 
 func opTextValue(op *Element) string { return patchText(op) }
