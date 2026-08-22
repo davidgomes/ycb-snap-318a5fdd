@@ -10,6 +10,7 @@ import patchConsole from 'patch-console';
 import {LegacyRoot, ConcurrentRoot} from 'react-reconciler/constants.js';
 import {type FiberRoot} from 'react-reconciler';
 import Yoga from 'yoga-layout';
+import {applyGridLayouts} from './grid.js';
 import wrapAnsi from 'wrap-ansi';
 import {getWindowSize} from './utils.js';
 import reconciler from './reconciler.js';
@@ -510,6 +511,7 @@ export default class Ink {
 			undefined,
 			Yoga.DIRECTION_LTR,
 		);
+		applyGridLayouts(this.rootNode);
 	};
 
 	onRender: () => void = () => {
