@@ -1,0 +1,49 @@
+# arkregex
+
+## 0.0.5
+
+### represent \d as `${number}` instead of `${bigint}`
+
+Though this slightly widens the scope of literal strings allowed by \d, it will now behave consistently and can collapse when multiple `${number}`s appear in sequence, since `${number}` allows 0-prefixed strings like `"00"` that are rejected by `${bigint}`.
+
+```ts
+// was: Regex<`${bigint}${bigint}`>
+// now: Regex<`${number}`>
+regex("^\\d{2}$")
+```
+
+## 0.0.4
+
+### consecutive `${bigint}`s are no longer collapsed
+
+```ts
+// was: Regex<`${bigint}`>
+// now: Regex<`${bigint}${bigint}`>
+regex("^\\d{2}$")
+```
+
+Though the new representation will be longer for some expressions, it is required to correctly allow a zero-prefix like `"01"` in this case.
+
+## 0.0.3
+
+### fix quantifier behavior for non-natural numbers
+
+```ts
+// the following expressions now result in:
+// TypeScript: Quantifier {bad-quantifier} must use natural numbers
+
+// leading zeroes
+regex("^a{002}$")
+// negative quantifier
+regex("^a{-1}$")
+// non-integer quantifier
+regex("^a{1.5}$")
+// with whitespace
+regex("^a{ 1}$"))
+```
+
+🙌(thanks @codpro2005)
+
+## 0.0.1
+
+initial release 🎉

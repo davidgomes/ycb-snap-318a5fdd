@@ -1,0 +1,16 @@
+dist
+out
+*.vsix
+node_modules
+temp
+tmp
+*.temp.*
+*.log
+*.tsbuildinfo
+.DS_Store
+.next
+.source
+.cache-loader
+.attest
+tsconfig.build.json
+coverage

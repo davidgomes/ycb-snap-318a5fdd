@@ -1,0 +1,56 @@
+{
+	"editor.defaultFormatter": "esbenp.prettier-vscode",
+	"prettier.prettierPath": "./node_modules/prettier",
+	"biome.enabled": false,
+	"editor.codeActionsOnSave": [
+		"editor.formatOnSave",
+		"source.fixAll.eslint",
+		"source.sortImports"
+	],
+	"eslint.codeActionsOnSave.rules": [
+		"object-shorthand",
+		"@typescript-eslint/consistent-type-imports",
+		"import/no-duplicates",
+		"@typescript-eslint/no-import-type-side-effects",
+		"curly"
+	],
+	"typescript.preferences.preferTypeOnlyAutoImports": true,
+	"typescript.preferences.autoImportFileExcludePatterns": [
+		"out",
+		// too many overlapping names, easy to import in schema/arktype where we don't want it
+		// should just import as * as ts when we need it in attest
+		"typescript"
+	],
+	"typescript.preferences.autoImportSpecifierExcludeRegexes": [
+		// has a "type" export
+		"^(node:)?os$"
+	],
+	"typescript.tsserver.experimental.enableProjectDiagnostics": true,
+	"typescript.tsdk": "./node_modules/typescript/lib",
+	// IF YOU UPDATE THE MOCHA CONFIG HERE, PLEASE ALSO UPDATE package.json/mocha AND ark/repo/mocha.jsonc
+	"mochaExplorer.nodeArgv": ["--conditions", "ark-ts", "--import", "tsx"],
+	// ignore attest since it requires type information
+	"mochaExplorer.ignore": ["ark/attest/**/*"],
+	"mochaExplorer.require": "ark/repo/mocha.globalSetup.ts",
+	"mochaExplorer.timeout": 0,
+	"mochaExplorer.env": {
+		"ATTEST_skipTypes": "true"
+	},
+	"testExplorer.useNativeTesting": true,
+	"search.exclude": {
+		"**/out": true,
+		"**/.next": true,
+		"**/.source": true,
+		"**/components/dts": true,
+		"**/apiData.ts": true
+	},
+	"editor.quickSuggestions": {
+		"strings": "on"
+	},
+	"github.copilot.enable": {
+		"*": false,
+		"plaintext": false,
+		"markdown": false,
+		"scminput": false
+	}
+}

@@ -1,0 +1,60 @@
+{
+	"name": "@ark/attest",
+	"version": "0.56.0",
+	"license": "MIT",
+	"author": {
+		"name": "David Blass",
+		"email": "david@arktype.io",
+		"url": "https://arktype.io"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/arktypeio/arktype.git",
+		"directory": "ark/attest"
+	},
+	"type": "module",
+	"main": "./out/index.js",
+	"types": "./out/index.d.ts",
+	"exports": {
+		".": {
+			"ark-ts": "./index.ts",
+			"default": "./out/index.js"
+		},
+		"./internal/*.ts": {
+			"ark-ts": "./*.ts",
+			"default": "./out/*.js"
+		},
+		"./internal/*.js": {
+			"ark-ts": "./*.ts",
+			"default": "./out/*.js"
+		}
+	},
+	"files": [
+		"out"
+	],
+	"bin": {
+		"attest": "out/cli/cli.js"
+	},
+	"scripts": {
+		"build": "ts ../repo/build.ts",
+		"test": "ts ../repo/testPackage.ts"
+	},
+	"dependencies": {
+		"@ark/fs": "workspace:*",
+		"@ark/util": "workspace:*",
+		"@prettier/sync": "0.6.1",
+		"@typescript/analyze-trace": "0.10.1",
+		"@typescript/vfs": "1.6.1",
+		"arktype": "workspace:*",
+		"prettier": "3.6.2"
+	},
+	"devDependencies": {
+		"typescript": "catalog:"
+	},
+	"peerDependencies": {
+		"typescript": "*"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}
