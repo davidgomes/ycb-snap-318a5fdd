@@ -114,6 +114,7 @@ function parseArray(
     style: StyleStr,
 ): ParseNode<"array"> {
     parser.gullet.beginGroup();
+    parser.gullet.macros.set("\\@array@multicolumn", "1");
     if (!singleRow) {
         // \cr is equivalent to \\ without the optional size argument (see below)
         // TODO: provide helpful error when \cr is used outside array environment
@@ -178,6 +179,23 @@ function parseArray(
             mode: parser.mode,
             body: cellBody,
         };
+        if (cellBody.length === 1 && cellBody[0].type === "multicolumn") {
+            const multicolumn = cellBody[0];
+            const remaining = maxNumCols
+                ? maxNumCols - row.length + 1
+                : Infinity;
+            if (multicolumn.span > remaining) {
+                throw new ParseError("\\multicolumn exceeds the number of columns",
+                    parser.nextToken);
+            }
+            cell = {
+                type: "ordgroup",
+                mode: parser.mode,
+                body: multicolumn.body,
+                colSpan: multicolumn.span,
+                colAlign: multicolumn.align,
+            } as AnyParseNode;
+        }
         if (style) {
             cell = {
                 type: "styling",
@@ -280,6 +298,8 @@ type Outrow = {
     depth: number;
     pos: number;
 };
+type ArrayCell = AnyParseNode & {colSpan?: number; colAlign?: string};
+const cellSpan = (cell: AnyParseNode) => (cell as ArrayCell).colSpan || 1;
 
 const htmlBuilder: HtmlBuilder<"array"> = function(group, options) {
     let r;
@@ -337,8 +357,9 @@ const htmlBuilder: HtmlBuilder<"array"> = function(group, options) {
         let height = arstrutHeight; // \@array adds an \@arstrut
         let depth = arstrutDepth;   // to each tow (via the template)
 
-        if (nc < inrow.length) {
-            nc = inrow.length;
+        const rowColumns = inrow.reduce((count, cell) => count + cellSpan(cell), 0);
+        if (nc < rowColumns) {
+            nc = rowColumns;
         }
 
         const outrow: Outrow = (new Array(inrow.length) as any);
@@ -385,6 +406,17 @@ const htmlBuilder: HtmlBuilder<"array"> = function(group, options) {
 
     const offset = totalHeight / 2 + options.fontMetrics().axisHeight;
     const colDescriptions = group.cols || [];
+    const getCell = (row: AnyParseNode[], column: number) => {
+        let start = 0;
+        for (const cell of row) {
+                const span = cellSpan(cell);
+            if (column >= start && column < start + span) {
+                return {cell: cell as ArrayCell, start};
+            }
+            start += span;
+        }
+        return null;
+    };
     const cols: HtmlDomNode[] = [];
     let colSep;
     let colDescrNum;
@@ -479,14 +511,21 @@ const htmlBuilder: HtmlBuilder<"array"> = function(group, options) {
         }> = [];
         for (r = 0; r < nr; ++r) {
             const row = body[r];
-            const elem = row[c];
-            if (!elem) {
+            const cellInfo = getCell(row, c);
+            if (!cellInfo || cellInfo.start !== c) {
+                continue;
+            }
+            const elem = body[r].indexOf(cellInfo.cell) >= 0
+                ? body[r].indexOf(cellInfo.cell) : -1;
+            const builtElem = elem >= 0 ? body[r][elem] : undefined;
+            const rendered = builtElem ? html.buildGroup(builtElem, options) : null;
+            if (!rendered) {
                 continue;
             }
             const shift = row.pos - offset;
-            elem.depth = row.depth;
-            elem.height = row.height;
-            colElems.push({type: "elem", elem: elem, shift: shift});
+            rendered.depth = row.depth;
+            rendered.height = row.height;
+            colElems.push({type: "elem", elem: rendered, shift: shift});
         }
 
         const colVList = makeVList({
@@ -494,9 +533,18 @@ const htmlBuilder: HtmlBuilder<"array"> = function(group, options) {
             children: colElems,
         }, options);
         const colSpan = makeSpan(
-            ["col-align-" + (colDescr?.align || "c")],
+            ["col-align-" + (body.map(row => getCell(row, c))
+                .find(info => info?.start === c)?.cell.colAlign ||
+                colDescr?.align || "c")],
             [colVList],
         );
+        const spanCount = body.reduce((max, row) => {
+            const info = getCell(row, c);
+            return info?.start === c ? Math.max(max, cellSpan(info.cell)) : max;
+        }, 1);
+        if (spanCount > 1) {
+            colSpan.classes.push("col-span-" + spanCount);
+        }
         cols.push(colSpan);
 
         if (c < nc - 1 || group.hskipBeforeAndAfter) {
@@ -558,8 +606,13 @@ const mathmlBuilder: MathMLBuilder<"array"> = function(group, options) {
         const rw = group.body[i];
         const row = [];
         for (let j = 0; j < rw.length; j++) {
-            row.push(new MathNode("mtd",
-                [mml.buildGroup(rw[j], options)]));
+            const cell = new MathNode("mtd", [mml.buildGroup(rw[j], options)]);
+            if (cellSpan(rw[j]) > 1) {
+                cell.setAttribute("columnspan", String(cellSpan(rw[j])));
+                cell.setAttribute("columnalign",
+                    (rw[j] as ArrayCell).colAlign || "center");
+            }
+            row.push(cell);
         }
         if (group.tags && group.tags[i]) {
             row.unshift(glue);
@@ -1112,6 +1165,42 @@ defineEnvironment({
 
 defineMacro("\\nonumber", "\\gdef\\@eqnsw{0}");
 defineMacro("\\notag", "\\nonumber");
+
+defineFunction({
+    type: "multicolumn",
+    names: ["\\multicolumn"],
+    props: {
+        numArgs: 3,
+        argTypes: ["text", "text", "original"],
+        allowedInMath: true,
+    },
+    handler({parser}, args) {
+        if (parser.gullet.macros.get("\\@array@multicolumn") !== "1") {
+            throw new ParseError("\\multicolumn valid only within array environments");
+        }
+        const text = (arg: AnyParseNode) => {
+            if (arg.type !== "ordgroup") {
+                throw new ParseError("Invalid \\multicolumn argument", arg);
+            }
+            return arg.body.map(node => assertNodeType(node, "textord").text).join("");
+        };
+        const spanText = text(args[0]);
+        if (!/^[1-9]\d*$/.test(spanText)) {
+            throw new ParseError("Invalid \\multicolumn column count", args[0]);
+        }
+        const alignment = text(args[1]);
+        if (!/^\|*[lcr]\|*$/.test(alignment)) {
+            throw new ParseError("Invalid \\multicolumn alignment", args[1]);
+        }
+        return {
+            type: "multicolumn",
+            mode: parser.mode,
+            span: Number(spanText),
+            align: alignment.replace(/\|/g, ""),
+            body: args[2].type === "ordgroup" ? args[2].body : [args[2]],
+        };
+    },
+});
 
 // Catch \hline outside array environment
 defineFunction({
