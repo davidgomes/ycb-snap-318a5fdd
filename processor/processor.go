@@ -639,6 +639,13 @@ func Process() {
 
 	SortBy = strings.ToLower(SortBy)
 
+	if BoundedMemory {
+		spillDir, err := filepath.Abs(BoundedMemoryDir)
+		if err == nil {
+			PathDenyList = append(PathDenyList, filepath.Clean(spillDir))
+		}
+	}
+
 	printDebugF("NumCPU: %d", runtime.NumCPU())
 	printDebugF("SortBy: %s", SortBy)
 	printDebugF("PathDenyList: %v", PathDenyList)
