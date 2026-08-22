@@ -211,6 +211,15 @@ export default class AsyncTaskManager {
 	}
 
 	/**
+	 * Returns whether the manager has been destroyed.
+	 *
+	 * @returns Destroyed.
+	 */
+	public isDestroyed(): boolean {
+		return this.destroyed;
+	}
+
+	/**
 	 * Returns a new task ID.
 	 *
 	 * @returns Task ID.

@@ -303,7 +303,13 @@ export default class Request implements Request {
 			);
 		}
 
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+		if (!asyncTaskManager || asyncTaskManager.isDestroyed()) {
+			throw new window.DOMException(
+				'Failed to read request body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
 
 		this[PropertySymbol.bodyUsed] = true;
 
@@ -354,7 +360,13 @@ export default class Request implements Request {
 			);
 		}
 
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+		if (!asyncTaskManager || asyncTaskManager.isDestroyed()) {
+			throw new window.DOMException(
+				'Failed to read request body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
 
 		this[PropertySymbol.bodyUsed] = true;
 
@@ -391,7 +403,13 @@ export default class Request implements Request {
 			);
 		}
 
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+		if (!asyncTaskManager || asyncTaskManager.isDestroyed()) {
+			throw new window.DOMException(
+				'Failed to read request body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
 
 		this[PropertySymbol.bodyUsed] = true;
 
@@ -430,7 +448,13 @@ export default class Request implements Request {
 	 */
 	public async formData(): Promise<FormData> {
 		const window = this[PropertySymbol.window];
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+		if (!asyncTaskManager || asyncTaskManager.isDestroyed()) {
+			throw new window.DOMException(
+				'Failed to read request body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
 
 		const contentType = this[PropertySymbol.contentType];
 

@@ -108,13 +108,14 @@ export default class Response implements Response {
 		}
 
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
+		const asyncTaskManager = browserFrame?.[PropertySymbol.asyncTaskManager];
 
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return new ArrayBuffer(0);
+		if (!asyncTaskManager || asyncTaskManager.isDestroyed()) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
 		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
 
 		(<boolean>this.bodyUsed) = true;
 
@@ -170,13 +171,14 @@ export default class Response implements Response {
 		}
 
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
+		const asyncTaskManager = browserFrame?.[PropertySymbol.asyncTaskManager];
 
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return Buffer.alloc(0);
+		if (!asyncTaskManager || asyncTaskManager.isDestroyed()) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
 		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
 
 		(<boolean>this.bodyUsed) = true;
 
@@ -216,13 +218,14 @@ export default class Response implements Response {
 		}
 
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
+		const asyncTaskManager = browserFrame?.[PropertySymbol.asyncTaskManager];
 
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return '';
+		if (!asyncTaskManager || asyncTaskManager.isDestroyed()) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
 		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
 
 		(<boolean>this.bodyUsed) = true;
 
@@ -264,13 +267,14 @@ export default class Response implements Response {
 	public async formData(): Promise<FormData> {
 		const window = this[PropertySymbol.window];
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
+		const asyncTaskManager = browserFrame?.[PropertySymbol.asyncTaskManager];
 
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return new window.FormData();
+		if (!asyncTaskManager || asyncTaskManager.isDestroyed()) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
 		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
 		const contentType = this.headers.get('Content-Type');
 
 		if (contentType && this.body && /multipart/i.test(contentType)) {
