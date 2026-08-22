@@ -144,7 +144,7 @@ function untransformError(v: any, superJson: SuperJSON): Error {
     ? new AggregateError(v.errors, v.message, { cause: v.cause })
     : new Error(v.message, { cause: v.cause });
   e.name = v.name;
-  if ('stack' in v) e.stack = v.stack;
+  e.stack = v.stack;
   if ('stackFrames' in v) e.stackFrames = v.stackFrames;
   superJson.allowedErrorProps.forEach(prop => {
     if (prop in v) e[prop] = v[prop];
@@ -449,7 +449,7 @@ export const transformValue = (
   return undefined;
 };
 
-const simpleRulesByAnnotation: Record<string, (typeof simpleRules)[0]> = {};
+const simpleRulesByAnnotation: Record<string, any> = {};
 [...errorRules, ...simpleRules].forEach(rule => {
   simpleRulesByAnnotation[rule.annotation] = rule;
 });
