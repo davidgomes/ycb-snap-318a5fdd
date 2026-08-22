@@ -55,6 +55,10 @@ ruleTest({
             1. [Included too](#included-too)
 
         <!-- /TOC -->
+
+        ## Included {#custom-id}
+        ### Skip me
+        #### Included too
       `,
       options: {
         listStyle: 'number',
