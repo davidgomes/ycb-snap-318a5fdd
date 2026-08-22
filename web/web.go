@@ -303,6 +303,7 @@ type Options struct {
 	EnableTypeAndUnitLabels    bool
 	AppendMetadata             bool
 	AppName                    string
+	ReloadStatus               func() api_v1.ReloadStatus
 
 	AcceptRemoteWriteProtoMsgs remoteapi.MessageTypes
 
@@ -427,6 +428,7 @@ func New(logger *slog.Logger, o *Options) *Handler {
 		},
 		o.Parser,
 	)
+	h.apiV1.SetReloadStatusFunc(o.ReloadStatus)
 
 	if r := o.FeatureRegistry; r != nil {
 		// Set dynamic API features (based on configuration).

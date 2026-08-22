@@ -20,6 +20,7 @@ import (
 	"github.com/pb33f/libopenapi/datamodel/high/base"
 	v3 "github.com/pb33f/libopenapi/datamodel/high/v3"
 	"github.com/pb33f/libopenapi/orderedmap"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 // Schema definitions and components builder.
@@ -96,6 +97,8 @@ func (b *OpenAPIBuilder) buildComponents() *v3.Components {
 	// Status schemas.
 	schemas.Set("StatusConfigData", b.statusConfigDataSchema())
 	schemas.Set("StatusConfigOutputBody", b.refResponseBodySchema("StatusConfigData", "Response body for status config endpoint."))
+	schemas.Set("ReloadStatus", b.reloadStatusSchema())
+	schemas.Set("StatusReloadOutputBody", b.refResponseBodySchema("ReloadStatus", "Response body for status reload endpoint."))
 	schemas.Set("RuntimeInfo", b.runtimeInfoSchema())
 	schemas.Set("StatusRuntimeInfoOutputBody", b.refResponseBodySchema("RuntimeInfo", "Response body for status runtime info endpoint."))
 	schemas.Set("PrometheusVersion", b.prometheusVersionSchema())
@@ -1034,6 +1037,57 @@ func (*OpenAPIBuilder) statusConfigDataSchema() *base.SchemaProxy {
 		AdditionalProperties: &base.DynamicValue[*base.SchemaProxy, bool]{N: 1, B: false},
 		Required:             []string{"yaml"},
 		Properties:           props,
+	})
+}
+
+func (*OpenAPIBuilder) reloadStatusSchema() *base.SchemaProxy {
+	props := orderedmap.New[string, *base.SchemaProxy]()
+	props.Set("last_reload_id", stringSchemaWithDescription("RFC3339 identifier for the most recent reload attempt."))
+	props.Set("last_reload_successful", base.CreateSchemaProxy(&base.Schema{
+		Type:        []string{"boolean"},
+		Description: "Whether the most recent reload attempt was successful.",
+	}))
+	props.Set("error_category", base.CreateSchemaProxy(&base.Schema{
+		Type: []string{"string"},
+		Enum: []*yaml.Node{
+			createYAMLNode("none"),
+			createYAMLNode("load_error"),
+			createYAMLNode("apply_error"),
+			createYAMLNode("rollback_error"),
+		},
+		Description: "Category of the most recent reload error.",
+	}))
+	props.Set("error_message", stringSchemaWithDescription("Human-readable error message from the most recent reload attempt."))
+	props.Set("applied_reloaders", base.CreateSchemaProxy(&base.Schema{
+		Type:        []string{"array"},
+		Items:       &base.DynamicValue[*base.SchemaProxy, bool]{A: stringSchema()},
+		Description: "Reloaders that successfully applied the candidate configuration.",
+	}))
+	props.Set("rollback_attempted", base.CreateSchemaProxy(&base.Schema{
+		Type:        []string{"boolean"},
+		Description: "Whether rollback to the last known-good configuration was attempted.",
+	}))
+	props.Set("rollback_successful", base.CreateSchemaProxy(&base.Schema{
+		Type:        []string{"boolean"},
+		Description: "Whether the attempted rollback completed successfully.",
+	}))
+	props.Set("failed_reloader", stringSchemaWithDescription("Name of the reloader that failed, if any."))
+	props.Set("reloader_timings_ms", base.CreateSchemaProxy(&base.Schema{
+		Type:                 []string{"object"},
+		AdditionalProperties: &base.DynamicValue[*base.SchemaProxy, bool]{A: integerSchema()},
+		Description:          "Time spent applying each reloader in milliseconds.",
+	}))
+
+	return base.CreateSchemaProxy(&base.Schema{
+		Type:                 []string{"object"},
+		Description:          "Configuration reload outcome.",
+		AdditionalProperties: &base.DynamicValue[*base.SchemaProxy, bool]{N: 1, B: false},
+		Required: []string{
+			"last_reload_id", "last_reload_successful", "error_category", "error_message",
+			"applied_reloaders", "rollback_attempted", "rollback_successful",
+			"failed_reloader", "reloader_timings_ms",
+		},
+		Properties: props,
 	})
 }
 

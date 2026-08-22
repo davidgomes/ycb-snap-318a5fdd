@@ -185,6 +185,19 @@ type RuntimeInfo struct {
 	StorageRetention    string    `json:"storageRetention"`
 }
 
+// ReloadStatus contains the outcome of the most recent configuration reload.
+type ReloadStatus struct {
+	LastReloadID         string           `json:"last_reload_id"`
+	LastReloadSuccessful bool             `json:"last_reload_successful"`
+	ErrorCategory        string           `json:"error_category"`
+	ErrorMessage         string           `json:"error_message"`
+	AppliedReloaders     []string         `json:"applied_reloaders"`
+	RollbackAttempted    bool             `json:"rollback_attempted"`
+	RollbackSuccessful   bool             `json:"rollback_successful"`
+	FailedReloader       string           `json:"failed_reloader"`
+	ReloaderTimingsMS    map[string]int64 `json:"reloader_timings_ms"`
+}
+
 // Response contains a response to a HTTP API request.
 type Response struct {
 	Status    status   `json:"status"`
@@ -260,7 +273,8 @@ type API struct {
 	featureRegistry features.Collector
 	openAPIBuilder  *OpenAPIBuilder
 
-	parser parser.Parser
+	parser       parser.Parser
+	reloadStatus func() ReloadStatus
 }
 
 // NewAPI returns an initialized API type.
@@ -336,6 +350,7 @@ func NewAPI(
 		featureRegistry:     featureRegistry,
 		openAPIBuilder:      NewOpenAPIBuilder(openAPIOptions, logger),
 		parser:              promqlParser,
+		reloadStatus:        func() ReloadStatus { return emptyReloadStatus() },
 
 		remoteReadHandler: remote.NewReadHandler(logger, registerer, q, configFunc, remoteReadSampleLimit, remoteReadConcurrencyLimit, remoteReadMaxBytesInFrame),
 	}
@@ -367,6 +382,15 @@ func NewAPI(
 	}
 
 	return a
+}
+
+// SetReloadStatusFunc sets the function used to retrieve configuration reload status.
+func (api *API) SetReloadStatusFunc(f func() ReloadStatus) {
+	if f == nil {
+		api.reloadStatus = func() ReloadStatus { return emptyReloadStatus() }
+		return
+	}
+	api.reloadStatus = f
 }
 
 // InstallCodec adds codec to this API's available codecs.
@@ -454,6 +478,7 @@ func (api *API) Register(r *route.Router) {
 	r.Get("/metadata", wrap(api.metricMetadata))
 
 	r.Get("/status/config", wrap(api.serveConfig))
+	r.Get("/status/reload", wrap(api.serveReloadStatus))
 	r.Get("/status/runtimeinfo", wrap(api.serveRuntimeInfo))
 	r.Get("/status/buildinfo", wrap(api.serveBuildInfo))
 	r.Get("/status/flags", wrap(api.serveFlags))
@@ -1811,6 +1836,25 @@ func (api *API) serveConfig(*http.Request) apiFuncResult {
 
 func (api *API) serveFlags(*http.Request) apiFuncResult {
 	return apiFuncResult{api.flagsMap, nil, nil, nil}
+}
+
+func emptyReloadStatus() ReloadStatus {
+	return ReloadStatus{
+		ErrorCategory:     "none",
+		AppliedReloaders:  []string{},
+		ReloaderTimingsMS: map[string]int64{},
+	}
+}
+
+func (api *API) serveReloadStatus(*http.Request) apiFuncResult {
+	status := api.reloadStatus()
+	if status.AppliedReloaders == nil {
+		status.AppliedReloaders = []string{}
+	}
+	if status.ReloaderTimingsMS == nil {
+		status.ReloaderTimingsMS = map[string]int64{}
+	}
+	return apiFuncResult{status, nil, nil, nil}
 }
 
 // featuresData wraps feature flags data to provide custom JSON marshaling without HTML escaping.

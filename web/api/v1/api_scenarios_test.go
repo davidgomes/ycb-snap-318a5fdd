@@ -112,6 +112,16 @@ func TestAPIEmpty(t *testing.T) {
 			RequireJSONPathExists("$.data.yaml")
 	})
 
+	t.Run("GET /api/v1/status/reload returns initial status", func(t *testing.T) {
+		testhelpers.GET(t, api, "/api/v1/status/reload").
+			RequireSuccess().
+			ValidateOpenAPI().
+			RequireEquals("$.data.last_reload_id", "").
+			RequireEquals("$.data.last_reload_successful", false).
+			RequireEquals("$.data.error_category", "none").
+			RequireJSONArray("$.data.applied_reloaders")
+	})
+
 	t.Run("GET /api/v1/status/flags returns success", func(t *testing.T) {
 		testhelpers.GET(t, api, "/api/v1/status/flags").
 			RequireSuccess().
