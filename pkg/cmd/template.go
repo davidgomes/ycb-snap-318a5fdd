@@ -118,7 +118,7 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			// we always want to print the YAML, even if it is not valid. The error is still returned afterwards.
 			if rel != nil {
 				var manifests bytes.Buffer
-				fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
+				fmt.Fprintln(&manifests, unifiedManifestStream(rel.Manifest, rel.Hooks))
 				if !client.DisableHooks {
 					fileWritten := make(map[string]bool)
 					for _, m := range rel.Hooks {
@@ -223,6 +223,26 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("validate", "dry-run")
 
 	return cmd
+}
+
+func unifiedManifestStream(manifest string, hooks []*release.Hook) string {
+	var resources []releaseutil.Manifest
+	source := regexp.MustCompile(`(?m)^# Source: ([^\n]+)\n`)
+	for i, document := range releaseutil.SplitManifests(manifest) {
+		match := source.FindStringSubmatch(document)
+		if len(match) == 0 {
+			continue
+		}
+		resources = append(resources, releaseutil.Manifest{
+			Name: match[1], Content: strings.TrimSpace(document), Order: i,
+		})
+	}
+	ordered := releaseutil.SortManifestsBySource(hooks, resources)
+	var result strings.Builder
+	for _, resource := range ordered {
+		fmt.Fprintf(&result, "---\n# Source: %s\n%s\n", resource.Name, resource.Content)
+	}
+	return strings.TrimSuffix(result.String(), "\n")
 }
 
 func isTestHook(h *release.Hook) bool {

@@ -35,6 +35,28 @@ type Manifest struct {
 	Name    string
 	Content string
 	Head    *SimpleHead
+	Hook    bool
+	Order   int
+}
+
+// SortManifestsBySource returns manifests in stable source-path order,
+// preserving document order within each source file and placing hooks first.
+func SortManifestsBySource(hooks []*release.Hook, manifests []Manifest) []Manifest {
+	result := make([]Manifest, 0, len(hooks)+len(manifests))
+	for _, h := range hooks {
+		result = append(result, Manifest{Name: h.Path, Content: h.Manifest, Hook: true, Order: h.Order})
+	}
+	result = append(result, manifests...)
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Name != result[j].Name {
+			return result[i].Name < result[j].Name
+		}
+		if result[i].Hook != result[j].Hook {
+			return result[i].Hook
+		}
+		return result[i].Order < result[j].Order
+	})
+	return result
 }
 
 // manifestFile represents a file that contains a manifest.
@@ -47,6 +69,7 @@ type manifestFile struct {
 type result struct {
 	hooks   []*release.Hook
 	generic []Manifest
+	order   int
 }
 
 // TODO: Refactor this out. It's here because naming conventions were not followed through.
@@ -146,6 +169,8 @@ func (file *manifestFile) sort(result *result) error {
 
 	for _, entryKey := range sortedEntryKeys {
 		m := file.entries[entryKey]
+		order := result.order
+		result.order++
 
 		var entry SimpleHead
 		if err := yaml.Unmarshal([]byte(m), &entry); err != nil {
@@ -157,6 +182,7 @@ func (file *manifestFile) sort(result *result) error {
 				Name:    file.path,
 				Content: m,
 				Head:    &entry,
+				Order:   order,
 			})
 			continue
 		}
@@ -167,6 +193,7 @@ func (file *manifestFile) sort(result *result) error {
 				Name:    file.path,
 				Content: m,
 				Head:    &entry,
+				Order:   order,
 			})
 			continue
 		}
@@ -178,6 +205,7 @@ func (file *manifestFile) sort(result *result) error {
 			Kind:              entry.Kind,
 			Path:              file.path,
 			Manifest:          m,
+			Order:             order,
 			Events:            []release.HookEvent{},
 			Weight:            hw,
 			DeletePolicies:    []release.HookDeletePolicy{},
