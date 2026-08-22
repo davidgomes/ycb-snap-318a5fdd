@@ -1,4 +1,5 @@
 import { ActionInstance } from '../actions/types';
+import type { Aspect } from '../aspect/types';
 import type { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
@@ -43,6 +44,10 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    aspectAddSubscriptions: Map<Aspect, Set<(entity: Entity) => void>>;
+    aspectRemoveSubscriptions: Map<Aspect, Set<(entity: Entity) => void>>;
+    aspectChangeSubscriptions: Map<Aspect, Set<(entity: Entity) => void>>;
+    traitAspects: Map<Trait, Set<Aspect>>;
 };
 
 export type World = {

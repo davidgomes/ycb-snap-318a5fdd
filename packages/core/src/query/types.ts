@@ -1,3 +1,4 @@
+import type { Aspect, AspectRecord } from '../aspect/types';
 import type { Entity } from '../entity/types';
 import type { RelationPair } from '../relation/types';
 import { AoSFactory } from '../storage';
@@ -15,7 +16,7 @@ import { $modifier } from './modifier';
 import { $parameters, $queryRef } from './symbols';
 
 export type QueryModifier = (...components: Trait[]) => Modifier;
-export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier>;
+export type QueryParameter = Trait | RelationPair | Aspect | ReturnType<QueryModifier>;
 export type QuerySubscriber = (entity: Entity) => void;
 export type QueryUnsubscriber = () => void;
 
@@ -56,17 +57,21 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
     ...infer Rest,
 ]
     ? [
-          ...(First extends Trait
-              ? IsTag<First> extends false
-                  ? ExtractSchema<First> extends AoSFactory
-                      ? [ReturnType<ExtractSchema<First>>]
-                      : [TraitRecord<First>]
-                  : []
-              : First extends Modifier
-                ? IsNotModifier<First> extends true
-                    ? []
-                    : InstancesFromParameters<UnwrapModifierData<First>>
-                : []),
+          ...(First extends Aspect
+              ? [AspectRecord<First>]
+              : First extends Trait
+                ? IsTag<First> extends false
+                    ? ExtractSchema<First> extends AoSFactory
+                        ? [ReturnType<ExtractSchema<First>>]
+                        : [TraitRecord<First>]
+                    : []
+                : First extends Modifier
+                  ? IsNotModifier<First> extends true
+                      ? []
+                      : First extends { aspect: Aspect }
+                        ? [AspectRecord<First['aspect']>]
+                        : InstancesFromParameters<UnwrapModifierData<First>>
+                  : []),
           ...(Rest extends QueryParameter[] ? InstancesFromParameters<Rest> : []),
       ]
     : [];
@@ -93,6 +98,8 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /** When set, Changed uses OR logic and Removed uses composite transition logic */
+    aspect?: Aspect;
 };
 
 /** Parameter types that can be passed to Or modifier */
@@ -132,6 +139,8 @@ export type TrackingGroup = {
     bitmasks: (number | undefined)[];
     /** Per-entity tracker state indexed by [generationId][entityId] */
     trackers: (number[] | undefined)[];
+    /** Composite aspect for Added/Removed/Changed semantics */
+    aspect?: Aspect;
 };
 
 export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
@@ -165,6 +174,10 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     removeSubscriptions: Set<QuerySubscriber>;
     /** Relation pairs for target-specific queries */
     relationFilters?: RelationPair[];
+    /** Aspects used as query parameters for merged readEach/updateEach */
+    aspects: Aspect[];
+    /** Aspects used in Not() with missing-at-least-one semantics */
+    aspectNot: Aspect[];
     run: (world: World, params: QueryParameter[]) => QueryResult<T>;
     add: (entity: Entity) => void;
     remove: (world: World, entity: Entity) => void;

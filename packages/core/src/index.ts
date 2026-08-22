@@ -1,3 +1,11 @@
+export { createAspect, isAspect } from './aspect/aspect';
+export type {
+    Aspect,
+    AspectInput,
+    AspectRecord,
+    AspectTuple,
+    ConfigurableAspect,
+} from './aspect/types';
 export { createActions } from './actions/create-actions';
 export type { Actions, ActionsInitializer, ActionRecord } from './actions/types';
 export { $internal } from './common';

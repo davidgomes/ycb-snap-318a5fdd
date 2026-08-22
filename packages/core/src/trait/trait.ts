@@ -1,4 +1,9 @@
 import { $internal } from '../common';
+import {
+    hasAspect,
+    notifyAspectConstituentAdded,
+    notifyAspectConstituentRemoved,
+} from '../aspect/aspect';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { setChanged, setPairChanged } from '../query/modifiers/changed';
@@ -170,6 +175,8 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
 
         // Call add subscriptions after values are set
         for (const sub of data.addSubscriptions) sub(entity);
+
+        notifyAspectConstituentAdded(world, entity, trait);
     }
 }
 
@@ -234,6 +241,16 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
         }
 
         if (!hasTrait(world, entity, trait)) continue;
+
+        const ctx = world[$internal];
+        const subscribedAspects = ctx.traitAspects.get(trait);
+        if (subscribedAspects) {
+            for (const aspect of subscribedAspects) {
+                if (hasAspect(world, entity, aspect)) {
+                    notifyAspectConstituentRemoved(world, entity, aspect);
+                }
+            }
+        }
 
         const traitCtx = trait[$internal];
 
