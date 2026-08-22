@@ -32,10 +32,12 @@ This formatter outputs the issues as plain text.
     New field `CWE` added to output
 
 """
+
 import datetime
 import logging
 import sys
 
+from bandit.core import cache as b_cache
 from bandit.core import constants
 from bandit.core import docs_utils
 from bandit.core import test_properties
@@ -56,6 +58,9 @@ def get_verbose_details(manager):
     )
     bits.append(f"Files excluded ({len(manager.excluded_files)}):")
     bits.extend([f"\t{fname}" for fname in manager.excluded_files])
+    cache_info = getattr(manager, "cache_info", None)
+    if cache_info:
+        bits.append(b_cache.format_verbose_cache_summary(cache_info))
     return "\n".join([bit for bit in bits])
 
 

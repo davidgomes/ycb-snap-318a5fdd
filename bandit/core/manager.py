@@ -15,6 +15,7 @@ import traceback
 
 from rich import progress
 
+from bandit.core import cache as b_cache
 from bandit.core import constants as b_constants
 from bandit.core import extension_loader
 from bandit.core import issue
@@ -41,6 +42,10 @@ class BanditManager:
         quiet=False,
         profile=None,
         ignore_nosec=False,
+        incremental=False,
+        cache_manager=None,
+        force_rescan=False,
+        cache_key_options=None,
     ):
         """Get logger, config, AST handler, and result store ready
 
@@ -71,6 +76,12 @@ class BanditManager:
         self.metrics = metrics.Metrics()
         self.b_ts = b_test_set.BanditTestSet(config, profile)
         self.scores = []
+        self.incremental = incremental
+        self.cache_manager = cache_manager
+        self.force_rescan = force_rescan
+        self.cache_key_options = cache_key_options or {}
+        self.cache_stats = b_cache.CacheStats()
+        self.cache_info = b_cache.default_cache_info()
 
     def get_skipped(self):
         ret = []
@@ -285,6 +296,8 @@ class BanditManager:
                         "<stdin>" if x == "-" else x for x in new_files_list
                     ]
                     self._parse_file("<stdin>", fdata, new_files_list)
+                elif self._try_apply_cache(fname):
+                    continue
                 else:
                     with open(fname, "rb") as fdata:
                         self._parse_file(fname, fdata, new_files_list)
@@ -297,6 +310,10 @@ class BanditManager:
 
         # do final aggregation of metrics
         self.metrics.aggregate()
+        self._finalize_cache_metrics()
+
+        if self.cache_manager is not None and self.incremental:
+            self.cache_manager.save()
 
     def _parse_file(self, fname, fdata, new_files_list):
         try:
@@ -322,6 +339,7 @@ class BanditManager:
             score = self._execute_ast_visitor(fname, fdata, data, nosec_lines)
             self.scores.append(score)
             self.metrics.count_issues([score])
+            self._store_cache_entry(fname, data, score)
         except KeyboardInterrupt:
             sys.exit(2)
         except SyntaxError:
@@ -365,6 +383,91 @@ class BanditManager:
         score = res.process(data)
         self.results.extend(res.tester.results)
         return score
+
+    def _try_apply_cache(self, fname):
+        """Apply a cached result for *fname* if incremental cache hits.
+
+        Returns True when cached results were applied.
+        """
+        if not self.incremental or self.cache_manager is None:
+            return False
+        if fname == "-" or self.force_rescan:
+            self.cache_stats.record_miss(fname, "not_cached")
+            return False
+        try:
+            file_hash = b_cache.hash_file(fname)
+        except OSError:
+            self.cache_stats.record_miss(fname, "file_changed")
+            return False
+        entry, reason = self.cache_manager.lookup(
+            fname, file_hash=file_hash, force_rescan=self.force_rescan
+        )
+        if entry is None:
+            self.cache_stats.record_miss(fname, reason or "not_cached")
+            return False
+        self._apply_cached_entry(fname, entry)
+        self.cache_stats.record_hit(fname)
+        return True
+
+    def _apply_cached_entry(self, fname, entry):
+        """Restore results, scores, and metrics from a cache entry."""
+        for item in entry.get("results") or []:
+            try:
+                restored = b_cache.deserialize_issue(item)
+            except Exception:
+                LOG.debug("Failed to restore cached issue for %s", fname)
+                continue
+            if not restored.fname:
+                restored.fname = fname
+            self.results.append(restored)
+        score = entry.get("score") or {
+            "SEVERITY": [0] * len(b_constants.RANKING),
+            "CONFIDENCE": [0] * len(b_constants.RANKING),
+        }
+        self.scores.append(score)
+        metrics_data = entry.get("metrics")
+        if metrics_data:
+            self.metrics.data[fname] = dict(metrics_data)
+        else:
+            self.metrics.begin(fname)
+
+    def _store_cache_entry(self, fname, data, score):
+        """Write the current file's results into the incremental cache."""
+        if not self.incremental or self.cache_manager is None:
+            return
+        if fname == "-" or fname == "<stdin>":
+            return
+        try:
+            file_hash = b_cache.hash_bytes(data)
+        except Exception:
+            return
+        file_results = [
+            b_cache.serialize_issue(item)
+            for item in self.results
+            if getattr(item, "fname", None) == fname
+        ]
+        metrics_data = dict(self.metrics.data.get(fname) or {})
+        dependencies = b_cache.collect_dependencies(fname, data)
+        self.cache_manager.store(
+            fname,
+            file_hash,
+            file_results,
+            metrics=metrics_data,
+            score=score,
+            dependencies=dependencies,
+            original_path=fname,
+        )
+
+    def _finalize_cache_metrics(self):
+        """Attach cache counters to metrics and cache_info."""
+        info = self.cache_stats.as_cache_info(total_files=len(self.files_list))
+        self.cache_info = info
+        totals = self.metrics.data.setdefault("_totals", {})
+        totals["cache_hits"] = info["cache_hits"]
+        totals["cache_misses"] = info["cache_misses"]
+        # Also expose at the metrics root for JSON consumers.
+        self.metrics.data["cache_hits"] = info["cache_hits"]
+        self.metrics.data["cache_misses"] = info["cache_misses"]
 
 
 def _get_files_from_dir(

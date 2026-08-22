@@ -73,6 +73,7 @@ This formatter outputs the issues in JSON.
     New field `CWE` added to output
 
 """
+
 # Necessary so we can import the standard library json module while continuing
 # to name this file json.py. (Python 2 only)
 import datetime
@@ -135,6 +136,17 @@ def report(manager, fileobj, sev_level, conf_level, lines=-1):
         )
 
     machine_output["metrics"] = manager.metrics.data
+    machine_output["cache_info"] = getattr(manager, "cache_info", None) or {
+        "total_files": 0,
+        "cache_hits": 0,
+        "cache_misses": 0,
+        "invalidation_counts": {
+            "file_changed": 0,
+            "config_changed": 0,
+            "expired": 0,
+            "not_cached": 0,
+        },
+    }
 
     # timezone agnostic format
     TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"

@@ -3,14 +3,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 """Bandit is a tool designed to find common security issues in Python code."""
+
 import argparse
 import fnmatch
+import json
 import logging
 import os
 import sys
 import textwrap
 
 import bandit
+from bandit.core import cache as b_cache
 from bandit.core import config as b_config
 from bandit.core import constants
 from bandit.core import manager as b_manager
@@ -120,6 +123,86 @@ def _get_profile(config, profile_name, config_path):
         profile["include"] = set(config.get_option("tests") or [])
         profile["exclude"] = set(config.get_option("skips") or [])
     return profile
+
+
+def _incremental_config(b_conf):
+    inc = b_conf.get_option("incremental_analysis") or {}
+    if not isinstance(inc, dict):
+        return {}
+    return inc
+
+
+def _resolve_incremental_enabled(args, b_conf):
+    """Incremental caching is disabled by default.
+
+    --warm-cache implies incremental. --no-incremental wins over config.
+    """
+    if args.warm_cache:
+        return True
+    if args.incremental is False:
+        return False
+    if args.incremental is True:
+        return True
+    inc = _incremental_config(b_conf)
+    return b_cache.as_bool(inc.get("enabled"), False)
+
+
+def _build_cache(args, b_conf, config_key="", create=False):
+    inc = _incremental_config(b_conf)
+    cache_dir = args.cache_dir or inc.get("cache_directory")
+    expiry_days = inc.get("cache_expiry_days")
+    return b_cache.IncrementalCache(
+        cache_dir=cache_dir,
+        expiry_days=expiry_days,
+        size_limit=args.cache_size_limit,
+        config_key=config_key,
+        create=create,
+    )
+
+
+def _has_cache_management(args):
+    return any(
+        (
+            args.clear_cache,
+            args.import_cache,
+            args.prune_cache is not None,
+            args.list_cached_files,
+            args.cache_summary,
+            args.cache_stats,
+            args.export_cache,
+        )
+    )
+
+
+def _run_cache_management(args, b_conf, phase="all"):
+    """Run cache management commands.
+
+    phase='before' runs mutating commands (clear/import/prune).
+    phase='after' runs reporting commands (list/summary/stats/export).
+    phase='all' runs both.
+    """
+    cache = _build_cache(args, b_conf, create=False)
+    if phase in ("all", "before"):
+        if args.clear_cache:
+            cache.clear()
+        if args.import_cache:
+            cache.import_from(args.import_cache)
+        if args.prune_cache is not None:
+            cache.prune(args.prune_cache)
+    if phase in ("all", "after"):
+        # Re-load so after-scan saves are visible.
+        cache.load()
+        if args.list_cached_files:
+            for path in cache.list_files():
+                print(path)
+        if args.cache_summary:
+            print(f"Cached files: {len(cache.list_files())}")
+        if args.cache_stats:
+            stats = cache.stats()
+            print(json.dumps(stats, indent=2, sort_keys=True))
+            print(f"cache_file_size_bytes: {stats['cache_file_size_bytes']}")
+        if args.export_cache:
+            cache.export_to(args.export_cache)
 
 
 def _log_info(args, profile):
@@ -378,6 +461,99 @@ def main():
         version=f"%(prog)s {bandit.__version__}\n"
         f"  python version = {python_ver}",
     )
+    inc_group = parser.add_mutually_exclusive_group()
+    inc_group.add_argument(
+        "--incremental",
+        dest="incremental",
+        action="store_true",
+        default=None,
+        help="enable incremental analysis caching (disabled by default)",
+    )
+    inc_group.add_argument(
+        "--no-incremental",
+        dest="incremental",
+        action="store_false",
+        help="disable incremental analysis caching",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        dest="cache_dir",
+        action="store",
+        default=None,
+        help="directory used to store the incremental analysis cache",
+    )
+    parser.add_argument(
+        "--cache-size-limit",
+        dest="cache_size_limit",
+        action="store",
+        default=None,
+        help="maximum cache size in bytes (K/KB/M/MB/G/GB suffixes allowed)",
+    )
+    parser.add_argument(
+        "--clear-cache",
+        dest="clear_cache",
+        action="store_true",
+        help="clear the incremental analysis cache "
+        "(no-op if the cache directory is missing)",
+    )
+    parser.add_argument(
+        "--force-rescan",
+        dest="force_rescan",
+        action="store_true",
+        help="bypass cache lookup but still store results "
+        "(requires --incremental to be effective)",
+    )
+    parser.add_argument(
+        "--cache-summary",
+        dest="cache_summary",
+        action="store_true",
+        help="print a summary of cached files",
+    )
+    parser.add_argument(
+        "--warm-cache",
+        dest="warm_cache",
+        action="store_true",
+        help="pre-populate the cache without reporting issues "
+        "(implies --incremental)",
+    )
+    parser.add_argument(
+        "--export-cache",
+        dest="export_cache",
+        action="store",
+        default=None,
+        metavar="FILE",
+        help="export the incremental cache to a JSON file",
+    )
+    parser.add_argument(
+        "--import-cache",
+        dest="import_cache",
+        action="store",
+        default=None,
+        metavar="FILE",
+        help="import and merge a previously exported cache file",
+    )
+    parser.add_argument(
+        "--list-cached-files",
+        dest="list_cached_files",
+        action="store_true",
+        help="list cached file paths (one per line)",
+    )
+    parser.add_argument(
+        "--prune-cache",
+        dest="prune_cache",
+        action="store",
+        default=None,
+        type=float,
+        metavar="DAYS",
+        help="remove cache entries older than DAYS (0 removes all)",
+    )
+    parser.add_argument(
+        "--cache-stats",
+        dest="cache_stats",
+        action="store_true",
+        help="print cache statistics including cache_file_size_bytes",
+    )
+    parser.set_defaults(incremental=None)
 
     parser.set_defaults(debug=False)
     parser.set_defaults(verbose=False)
@@ -393,8 +569,7 @@ def main():
             blacklist_info.append(f"{b['id']}\t{b['name']}")
 
     plugin_list = "\n\t".join(sorted(set(plugin_info + blacklist_info)))
-    dedent_text = textwrap.dedent(
-        """
+    dedent_text = textwrap.dedent("""
     CUSTOM FORMATTING
     -----------------
 
@@ -421,8 +596,7 @@ def main():
 
     The following tests were discovered and loaded:
     -----------------------------------------------
-    """
-    )
+    """)
     parser.epilog = dedent_text + f"\t{plugin_list}"
 
     # setup work - parse arguments, and initialize BanditManager
@@ -604,8 +778,16 @@ def main():
         sys.exit(2)
 
     if not args.targets:
+        if _has_cache_management(args):
+            _run_cache_management(args, b_conf, phase="all")
+            sys.exit(0)
         parser.print_usage()
         sys.exit(2)
+
+    incremental = _resolve_incremental_enabled(args, b_conf)
+    force_rescan = bool(args.force_rescan) and incremental
+    if _has_cache_management(args):
+        _run_cache_management(args, b_conf, phase="before")
 
     # if the log format string was set in the options, reinitialize
     if b_conf.get_option("log_format"):
@@ -627,6 +809,21 @@ def main():
         LOG.error(e)
         sys.exit(2)
 
+    cache_key_options = {
+        "tests": args.tests,
+        "skips": args.skips,
+        "severity": args.severity,
+        "confidence": args.confidence,
+        "profile_name": args.profile,
+        "profile": profile,
+    }
+    config_key = b_cache.build_config_key(cache_key_options)
+    cache_manager = None
+    if incremental:
+        cache_manager = _build_cache(
+            args, b_conf, config_key=config_key, create=True
+        )
+
     b_mgr = b_manager.BanditManager(
         b_conf,
         args.agg_type,
@@ -635,6 +832,10 @@ def main():
         verbose=args.verbose,
         quiet=args.quiet,
         ignore_nosec=args.ignore_nosec,
+        incremental=incremental,
+        cache_manager=cache_manager,
+        force_rescan=force_rescan,
+        cache_key_options=cache_key_options,
     )
 
     if args.baseline is not None:
@@ -676,6 +877,13 @@ def main():
     LOG.debug(b_mgr.b_ma)
     LOG.debug(b_mgr.metrics)
 
+    if args.verbose:
+        LOG.info(b_cache.format_verbose_cache_summary(b_mgr.cache_info))
+
+    if args.warm_cache:
+        # Pre-populate cache without reporting issues.
+        b_mgr.results = []
+
     # trigger output of results by Bandit Manager
     sev_level = constants.RANKING[args.severity - 1]
     conf_level = constants.RANKING[args.confidence - 1]
@@ -687,6 +895,12 @@ def main():
         args.output_format,
         args.msg_template,
     )
+
+    if _has_cache_management(args):
+        _run_cache_management(args, b_conf, phase="after")
+
+    if args.warm_cache:
+        sys.exit(0)
 
     if (
         b_mgr.results_count(sev_filter=sev_level, conf_filter=conf_level) > 0
