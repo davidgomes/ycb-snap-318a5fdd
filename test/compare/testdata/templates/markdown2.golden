@@ -1,0 +1,21 @@
+
+<a href="%22">
+
+<script>var v = "a";</script>
+
+<style>div { background: url(data:image/png;base64,EjSJ) }</style>
+
+<![CDATA[ \.5 ]]>
+
+    *** spaces code block ***
+	*** tab code block ***
+
+\{{ 1 }\}
+
+\<a b="""></a>
+
+\àa
+
+<c d="#d">\#e</c>
+
+\#a <!-- #a -->  \#a \<b\>\#b\</b\>  \#a

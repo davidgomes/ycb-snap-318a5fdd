@@ -1,0 +1,34 @@
+{# errorcheck #}
+
+<c {% macro a %}{% end %}>     // ERROR `syntax error: macro declaration not allowed in tag`
+<c b="{% macro a %}{% end %}"> // ERROR `syntax error: macro declaration not allowed in quoted attribute`
+<c b={% macro a %}{% end %}>   // ERROR `syntax error: macro declaration not allowed in unquoted attribute`
+<style>
+  div {
+    background-image: url("{% macro a %}{% end %}") // ERROR `syntax error: macro declaration not allowed in CSS string`
+    }
+</style>
+<script>
+  var c = "{% macro a %}{% end %}"; // ERROR `syntax error: macro declaration not allowed in JavaScript string`
+</script>
+<script type="application/ld+json">
+  { "c" : "{% macro a %}{% end %}" } // ERROR `syntax error: macro declaration not allowed in JSON string`
+</script>
+
+{% macro A []string %} // ERROR `syntax error: unexpected [, expecting string, html, css, js, json, markdown or %}`
+
+{% macro A int %} // ERROR `syntax error: unexpected int, expecting string, html, css, js, json, markdown or %}`
+
+{% var foo string %} {% macro A foo %} // ERROR `syntax error: unexpected foo, expecting string, html, css, js, json, markdown or %}`
+
+{% var css string %} {% macro A css %}{% end %} // ERROR `css is not a type`
+
+{% type string []int %} {% macro A string %}{% end %} // ERROR `invalid macro result type string`
+
+{% macro A( int %} // ERROR `syntax error: unexpected %}, expecting comma or )`
+
+{% macro A( string %} // ERROR `syntax error: unexpected %}, expecting comma or )`
+
+{% macro A string, %} // ERROR `syntax error: unexpected comma, expecting %}`
+
+{% type html = string %} {% macro A html %}{% end %} // ERROR `invalid macro result type html`
