@@ -17,6 +17,7 @@ import type {
   SchemaRequiredProp,
   Validator
 } from '../types/index.js'
+import { withRequiredIfProp, type RequiredIfPropsOverwrite } from '../utils/requiredIfBuilder.js'
 import type { ResolveBinarySchema, ResolvedBinarySchema } from './resolve.js'
 import { BinarySchema } from './schema.js'
 import type { BinarySchemaProps } from './types.js'
@@ -60,6 +61,18 @@ export class BinarySchema_<
   optional(): BinarySchema_<Overwrite<PROPS, { required: Never }>> {
     return this.required('never')
   }
+
+  /**
+   * Require attribute when a sibling attribute matches one of the provided values.
+   * Chainable with OR semantics across trigger values and repeated calls.
+   */
+  requiredIf<ATTR extends string, const VALUES extends readonly unknown[]>(
+    attribute: ATTR,
+    ...values: VALUES
+  ): BinarySchema_<RequiredIfPropsOverwrite<PROPS>> {
+    return new BinarySchema_(withRequiredIfProp(this.props, attribute, values))
+  }
+
 
   /**
    * Hide attribute after fetch commands and formatting

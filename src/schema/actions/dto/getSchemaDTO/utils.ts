@@ -3,6 +3,18 @@ import { isFunction } from '~/utils/validation/isFunction.js'
 
 import type { ISchemaDTO } from '../types.js'
 
+export const getRequiredIfDTO = (
+  schema: Schema
+): Pick<ISchemaDTO, 'requiredIf'> => {
+  const { requiredIf } = schema.props
+
+  if (requiredIf === undefined) {
+    return {}
+  }
+
+  return { requiredIf } as Pick<ISchemaDTO, 'requiredIf'>
+}
+
 export const getDefaultsDTO = (
   schema: Schema
 ): Pick<ISchemaDTO, 'keyDefault' | 'putDefault' | 'updateDefault'> => {

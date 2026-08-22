@@ -2,6 +2,7 @@ import type { UpdateCommandInput } from '@aws-sdk/lib-dynamodb'
 
 import { EntityParser } from '~/entity/actions/parse/index.js'
 import { expressUpdate } from '~/entity/actions/update/expressUpdate/index.js'
+import { expressRequiredIfConditions } from '~/entity/actions/update/requiredIfConditions/index.js'
 import type { Entity } from '~/entity/index.js'
 import { isEmpty } from '~/utils/isEmpty.js'
 import { omit } from '~/utils/omit.js'
@@ -40,13 +41,20 @@ export const updateAttributesParams: UpdateAttributesParamsGetter = <
   } = expressUpdate(entity, omit(item, ...Object.keys(key)))
 
   const {
+    ConditionExpression: requiredIfConditionExpression,
+    ExpressionAttributeNames: requiredIfExpressionAttributeNames = {}
+  } = expressRequiredIfConditions(entity.schema, parsedItem as Record<string, unknown>)
+
+  const {
     ExpressionAttributeNames: optionsExpressionAttributeNames,
     ExpressionAttributeValues: optionsExpressionAttributeValues,
+    ConditionExpression: optionsConditionExpression,
     ...awsOptions
   } = parseUpdateAttributesOptions(entity, options)
 
   const ExpressionAttributeNames = {
     ...optionsExpressionAttributeNames,
+    ...requiredIfExpressionAttributeNames,
     ...updateExpressionAttributeNames
   }
 
@@ -54,6 +62,13 @@ export const updateAttributesParams: UpdateAttributesParamsGetter = <
     ...optionsExpressionAttributeValues,
     ...updateExpressionAttributeValues
   }
+
+  const conditionExpressions = [optionsConditionExpression, requiredIfConditionExpression].filter(
+    (conditionExpression): conditionExpression is string => conditionExpression !== undefined
+  )
+
+  const ConditionExpression =
+    conditionExpressions.length > 0 ? conditionExpressions.join(' AND ') : undefined
 
   return {
     TableName: options.tableName ?? entity.table.getName(),
@@ -64,6 +79,7 @@ export const updateAttributesParams: UpdateAttributesParamsGetter = <
     Key: key,
     ...update,
     ...awsOptions,
+    ...(ConditionExpression !== undefined ? { ConditionExpression } : {}),
     ...(!isEmpty(ExpressionAttributeNames) ? { ExpressionAttributeNames } : {}),
     ...(!isEmpty(ExpressionAttributeValues) ? { ExpressionAttributeValues } : {})
   }

@@ -4,6 +4,7 @@ import type { OmitKeys } from '~/types/omitKeys.js'
 
 import type { FormattedValueJSONSchema } from './schema.js'
 import { getFormattedValueJSONSchema } from './schema.js'
+import { getContainerRequiredIfJSONSchema } from './requiredIf.js'
 import type { RequiredProperties } from './shared.js'
 
 export type FormattedMapJSONSchema<
@@ -32,6 +33,8 @@ export const getFormattedMapJSONSchema = <SCHEMA extends MapSchema>(
     .filter(([, { props }]) => props.required !== 'never')
     .map(([attributeName]) => attributeName)
 
+  const requiredIfConditions = getContainerRequiredIfJSONSchema(schema)
+
   return {
     type: 'object',
     properties: Object.fromEntries(
@@ -40,6 +43,7 @@ export const getFormattedMapJSONSchema = <SCHEMA extends MapSchema>(
         getFormattedValueJSONSchema(attribute)
       ])
     ),
-    ...(requiredProperties.length > 0 ? { required: requiredProperties } : {})
+    ...(requiredProperties.length > 0 ? { required: requiredProperties } : {}),
+    ...(requiredIfConditions.length > 0 ? { allOf: requiredIfConditions } : {})
   } as FormattedMapJSONSchema<SCHEMA>
 }

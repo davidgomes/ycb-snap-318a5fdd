@@ -1,6 +1,7 @@
 import { DynamoDBToolboxError } from '~/errors/index.js'
 
 import type { SchemaProps, SchemaRequiredProp } from '../types/index.js'
+import { checkRequiredIfProps } from '../utils/checkRequiredIf.js'
 import { checkSchemaProps } from '../utils/checkSchemaProps.js'
 import type { MapAttributes } from './types.js'
 
@@ -83,6 +84,8 @@ export class MapSchema<
       }
 
       requiredAttributeNames[attributeRequired].add(attributeName)
+
+      checkRequiredIfProps(this.attributes, attributeName, attribute, path)
     }
 
     for (const [attributeName, attribute] of Object.entries(this.attributes)) {

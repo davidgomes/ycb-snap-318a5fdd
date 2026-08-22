@@ -20,8 +20,14 @@ export type Always = 'always'
  */
 export type SchemaRequiredProp = Never | AtLeastOnce | Always
 
+export interface RequiredIfCondition {
+  attribute: string
+  values: readonly unknown[]
+}
+
 export interface SchemaProps {
   required?: SchemaRequiredProp
+  requiredIf?: RequiredIfCondition | RequiredIfCondition[]
   hidden?: boolean
   key?: boolean
   savedAs?: string

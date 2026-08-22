@@ -17,6 +17,7 @@ import type {
   SchemaRequiredProp,
   Validator
 } from '../types/index.js'
+import { withRequiredIfProp, type RequiredIfPropsOverwrite } from '../utils/requiredIfBuilder.js'
 import type { ResolveNumberSchema, ResolvedNumberSchema } from './resolve.js'
 import { NumberSchema } from './schema.js'
 import type { NumberSchemaProps } from './types.js'
@@ -60,6 +61,18 @@ export class NumberSchema_<
   optional(): NumberSchema_<Overwrite<PROPS, { required: Never }>> {
     return this.required('never')
   }
+
+  /**
+   * Require attribute when a sibling attribute matches one of the provided values.
+   * Chainable with OR semantics across trigger values and repeated calls.
+   */
+  requiredIf<ATTR extends string, const VALUES extends readonly unknown[]>(
+    attribute: ATTR,
+    ...values: VALUES
+  ): NumberSchema_<RequiredIfPropsOverwrite<PROPS>> {
+    return new NumberSchema_(withRequiredIfProp(this.props, attribute, values))
+  }
+
 
   /**
    * Hide attribute after fetch commands and formatting

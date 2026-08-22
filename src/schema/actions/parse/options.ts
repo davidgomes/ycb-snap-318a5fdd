@@ -11,6 +11,7 @@ export interface ParseValueOptions {
 
 export interface ParseAttrValueOptions extends ParseValueOptions {
   valuePath?: ArrayPath
+  parentInput?: Record<string, unknown>
 }
 
 export interface InferWriteValueOptions<

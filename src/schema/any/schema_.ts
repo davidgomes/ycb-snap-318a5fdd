@@ -16,6 +16,7 @@ import type {
   SchemaRequiredProp,
   Validator
 } from '../types/index.js'
+import { withRequiredIfProp, type RequiredIfPropsOverwrite } from '../utils/requiredIfBuilder.js'
 import type { ResolveAnySchema } from './resolve.js'
 import { AnySchema } from './schema.js'
 import type { AnySchemaProps } from './types.js'
@@ -57,6 +58,18 @@ export class AnySchema_<PROPS extends AnySchemaProps = AnySchemaProps> extends A
   optional(): AnySchema_<Overwrite<PROPS, { required: Never }>> {
     return this.required('never')
   }
+
+  /**
+   * Require attribute when a sibling attribute matches one of the provided values.
+   * Chainable with OR semantics across trigger values and repeated calls.
+   */
+  requiredIf<ATTR extends string, const VALUES extends readonly unknown[]>(
+    attribute: ATTR,
+    ...values: VALUES
+  ): AnySchema_<RequiredIfPropsOverwrite<PROPS>> {
+    return new AnySchema_(withRequiredIfProp(this.props, attribute, values))
+  }
+
 
   /**
    * Hide attribute after fetch commands and formatting

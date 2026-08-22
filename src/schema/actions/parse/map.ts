@@ -29,7 +29,8 @@ export function* mapSchemaParser<OPTIONS extends ParseAttrValueOptions = {}>(
         parsers[attrName] = schemaParser(attr, inputValue[attrName], {
           ...restOptions,
           valuePath: [...(valuePath ?? []), attrName],
-          defined: false
+          defined: false,
+          parentInput: inputValue
         })
 
         additionalAttributeNames.delete(attrName)

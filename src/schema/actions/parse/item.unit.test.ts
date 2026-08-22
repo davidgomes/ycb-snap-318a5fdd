@@ -37,12 +37,14 @@ describe('itemParser', () => {
     expect(schemaParser).toHaveBeenCalledWith(sch.attributes.foo, 'foo', {
       ...options,
       valuePath: ['foo'],
-      defined: false
+      defined: false,
+      parentInput: { foo: 'foo', bar: 'bar' }
     })
     expect(schemaParser).toHaveBeenCalledWith(sch.attributes.bar, 'bar', {
       ...options,
       valuePath: ['bar'],
-      defined: false
+      defined: false,
+      parentInput: { foo: 'foo', bar: 'bar' }
     })
 
     const { value: linkedValue } = parser.next()

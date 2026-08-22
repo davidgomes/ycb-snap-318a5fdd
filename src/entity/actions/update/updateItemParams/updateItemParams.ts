@@ -6,6 +6,7 @@ import { isEmpty } from '~/utils/isEmpty.js'
 import { omit } from '~/utils/omit.js'
 
 import { expressUpdate } from '../expressUpdate/index.js'
+import { expressRequiredIfConditions } from '../requiredIfConditions/index.js'
 import type { UpdateItemOptions } from '../options.js'
 import type { UpdateItemInput } from '../types.js'
 import { parseUpdateExtension } from './extension/index.js'
@@ -37,13 +38,20 @@ export const updateItemParams: UpdateItemParamsGetter = <
   } = expressUpdate(entity, omit(item, ...Object.keys(key)))
 
   const {
+    ConditionExpression: requiredIfConditionExpression,
+    ExpressionAttributeNames: requiredIfExpressionAttributeNames = {}
+  } = expressRequiredIfConditions(entity.schema, parsedItem as Record<string, unknown>)
+
+  const {
     ExpressionAttributeNames: optionsExpressionAttributeNames,
     ExpressionAttributeValues: optionsExpressionAttributeValues,
+    ConditionExpression: optionsConditionExpression,
     ...awsOptions
   } = parseUpdateItemOptions(entity, options)
 
   const ExpressionAttributeNames = {
     ...optionsExpressionAttributeNames,
+    ...requiredIfExpressionAttributeNames,
     ...updateExpressionAttributeNames
   }
 
@@ -51,6 +59,13 @@ export const updateItemParams: UpdateItemParamsGetter = <
     ...optionsExpressionAttributeValues,
     ...updateExpressionAttributeValues
   }
+
+  const conditionExpressions = [optionsConditionExpression, requiredIfConditionExpression].filter(
+    (conditionExpression): conditionExpression is string => conditionExpression !== undefined
+  )
+
+  const ConditionExpression =
+    conditionExpressions.length > 0 ? conditionExpressions.join(' AND ') : undefined
 
   return {
     TableName: options.tableName ?? entity.table.getName(),
@@ -61,6 +76,7 @@ export const updateItemParams: UpdateItemParamsGetter = <
     Key: key,
     ...update,
     ...awsOptions,
+    ...(ConditionExpression !== undefined ? { ConditionExpression } : {}),
     ...(!isEmpty(ExpressionAttributeNames) ? { ExpressionAttributeNames } : {}),
     ...(!isEmpty(ExpressionAttributeValues) ? { ExpressionAttributeValues } : {})
   }

@@ -18,6 +18,7 @@ import type {
   SchemaRequiredProp,
   Validator
 } from '../types/index.js'
+import { withRequiredIfProp, type RequiredIfPropsOverwrite } from '../utils/requiredIfBuilder.js'
 import type { ResolvedNullSchema } from './resolve.js'
 import { NullSchema } from './schema.js'
 import type { NullSchemaProps } from './types.js'
@@ -61,6 +62,18 @@ export class NullSchema_<
   optional(): NullSchema_<Overwrite<PROPS, { required: Never }>> {
     return this.required('never')
   }
+
+  /**
+   * Require attribute when a sibling attribute matches one of the provided values.
+   * Chainable with OR semantics across trigger values and repeated calls.
+   */
+  requiredIf<ATTR extends string, const VALUES extends readonly unknown[]>(
+    attribute: ATTR,
+    ...values: VALUES
+  ): NullSchema_<RequiredIfPropsOverwrite<PROPS>> {
+    return new NullSchema_(withRequiredIfProp(this.props, attribute, values))
+  }
+
 
   /**
    * Hide attribute after fetch commands and formatting

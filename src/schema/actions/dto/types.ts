@@ -35,6 +35,7 @@ interface SchemaLinksDTO {
 
 interface SchemaPropsDTO extends SchemaDefaultsDTO, SchemaLinksDTO {
   required?: SchemaRequiredProp
+  requiredIf?: { attribute: string; values: unknown[] } | { attribute: string; values: unknown[] }[]
   hidden?: boolean
   key?: boolean
   savedAs?: string

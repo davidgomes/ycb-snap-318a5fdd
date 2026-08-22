@@ -31,7 +31,8 @@ export function* itemParser<SCHEMA extends ItemSchema, OPTIONS extends ParseValu
         parsers[attrName] = schemaParser(attr, inputValue[attrName], {
           ...options,
           valuePath: [attrName],
-          defined: false
+          defined: false,
+          parentInput: inputValue
         })
 
         additionalAttributeNames.delete(attrName)

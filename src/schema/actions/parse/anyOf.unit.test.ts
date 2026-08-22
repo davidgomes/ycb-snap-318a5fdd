@@ -60,12 +60,14 @@ describe('anyOfSchemaParser', () => {
     expect(schemaParser).toHaveBeenCalledWith(dogSchema.attributes.kind, 'dog', {
       defined: false,
       fill: true,
-      valuePath: ['kind']
+      valuePath: ['kind'],
+      parentInput: dog
     })
     expect(schemaParser).toHaveBeenCalledWith(dogSchema.attributes.bark, 'waf!', {
       defined: false,
       fill: true,
-      valuePath: ['bark']
+      valuePath: ['bark'],
+      parentInput: dog
     })
   })
 })

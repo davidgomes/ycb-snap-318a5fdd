@@ -9,6 +9,7 @@ import { schemaZodParser } from './schema.js'
 import type { ZodParserOptions } from './types.js'
 import type { WithAttributeNameEncoding } from './utils.js'
 import { withAttributeNameEncoding } from './utils.js'
+import { withRequiredIf } from '../requiredIf.js'
 
 export type ItemZodParser<
   SCHEMA extends ItemSchema,
@@ -45,12 +46,15 @@ export const itemZodParser = <SCHEMA extends ItemSchema, OPTIONS extends ZodPars
   return withAttributeNameEncoding(
     schema,
     options,
-    z.object(
-      Object.fromEntries(
-        displayedAttrEntries.map(([attributeName, attribute]) => [
-          attributeName,
-          schemaZodParser(attribute, { ...options, defined: false })
-        ])
+    withRequiredIf(
+      schema,
+      z.object(
+        Object.fromEntries(
+          displayedAttrEntries.map(([attributeName, attribute]) => [
+            attributeName,
+            schemaZodParser(attribute, { ...options, defined: false })
+          ])
+        )
       )
     )
   ) as ItemZodParser<SCHEMA, OPTIONS>

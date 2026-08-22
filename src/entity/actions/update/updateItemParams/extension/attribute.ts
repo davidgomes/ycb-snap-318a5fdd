@@ -6,6 +6,7 @@ import type {
   Schema,
   SchemaUnextendedValue
 } from '~/schema/index.js'
+import { isRequiredIfTriggered } from '~/schema/utils/requiredIf.js'
 
 import { isGetting, isRemoval } from '../../symbols/index.js'
 import type { UpdateItemInputExtension } from '../../types.js'
@@ -21,7 +22,7 @@ export const parseUpdateExtension: ExtensionParser<UpdateItemInputExtension> = (
   input: unknown,
   options: ExtensionParserOptions = {}
 ) => {
-  const { transform = true, valuePath } = options
+  const { transform = true, valuePath, parentInput } = options
 
   if (isRemoval(input)) {
     return {
@@ -31,7 +32,10 @@ export const parseUpdateExtension: ExtensionParser<UpdateItemInputExtension> = (
         const { required } = props
         const path = valuePath !== undefined ? formatArrayPath(valuePath) : undefined
 
-        if (required !== 'never') {
+        if (
+          required !== 'never' ||
+          isRequiredIfTriggered(props.requiredIf, parentInput)
+        ) {
           throw new DynamoDBToolboxError('parsing.attributeRequired', {
             message: `Attribute ${
               path !== undefined ? `'${path}' ` : ''

@@ -6,6 +6,7 @@ import type { Overwrite } from '~/types/overwrite.js'
 
 import type { WithValidate } from '../utils.js'
 import { withValidate } from '../utils.js'
+import { withRequiredIf } from '../requiredIf.js'
 import type { SchemaZodFormatter } from './schema.js'
 import { schemaZodFormatter } from './schema.js'
 import type { ZodFormatterOptions } from './types.js'
@@ -56,14 +57,17 @@ export const mapZodFormatter = (
     withOptional(
       schema,
       options,
-      withValidate(
+      withRequiredIf(
         schema,
-        z.object(
-          Object.fromEntries(
-            displayedAttrEntries.map(([attributeName, attribute]) => [
-              attributeName,
-              schemaZodFormatter(attribute, { ...options, defined: false })
-            ])
+        withValidate(
+          schema,
+          z.object(
+            Object.fromEntries(
+              displayedAttrEntries.map(([attributeName, attribute]) => [
+                attributeName,
+                schemaZodFormatter(attribute, { ...options, defined: false })
+              ])
+            )
           )
         )
       )

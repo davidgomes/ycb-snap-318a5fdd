@@ -3,6 +3,8 @@ import { formatArrayPath } from '~/schema/actions/utils/formatArrayPath.js'
 import type { ExtensionParser, Schema, SchemaUnextendedValue, WriteMode } from '~/schema/index.js'
 import { isString } from '~/utils/validation/isString.js'
 
+import { isRequiredIfTriggered } from '~/schema/utils/requiredIf.js'
+
 import type { ParseAttrValueOptions } from './options.js'
 
 export const defaultParseExtension: ExtensionParser<never> = (_, input) => ({
@@ -10,13 +12,27 @@ export const defaultParseExtension: ExtensionParser<never> = (_, input) => ({
   unextendedInput: input as SchemaUnextendedValue<never> | undefined
 })
 
-export const isRequired = (schema: Schema, mode: WriteMode): boolean => {
+export const isRequired = (
+  schema: Schema,
+  mode: WriteMode,
+  options: Pick<ParseAttrValueOptions, 'parentInput'> = {}
+): boolean => {
+  const { required = 'atLeastOnce' } = schema.props
+
+  if (required === 'always') {
+    return true
+  }
+
+  if (isRequiredIfTriggered(schema.props.requiredIf, options.parentInput)) {
+    return mode === 'put'
+  }
+
   switch (mode) {
     case 'put':
-      return schema.props?.required !== 'never'
+      return required !== 'never'
     case 'key':
     case 'update':
-      return schema.props?.required === 'always'
+      return false
   }
 }
 

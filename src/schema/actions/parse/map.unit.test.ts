@@ -32,12 +32,14 @@ describe('mapSchemaParser', () => {
     expect(schemaParser).toHaveBeenCalledWith(mapSchema.attributes.foo, 'foo', {
       ...options,
       valuePath: ['root', 'foo'],
-      defined: false
+      defined: false,
+      parentInput: { foo: 'foo', bar: 'bar' }
     })
     expect(schemaParser).toHaveBeenCalledWith(mapSchema.attributes.bar, 'bar', {
       ...options,
       valuePath: ['root', 'bar'],
-      defined: false
+      defined: false,
+      parentInput: { foo: 'foo', bar: 'bar' }
     })
 
     const { value: linkedValue } = parser.next()

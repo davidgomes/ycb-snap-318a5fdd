@@ -16,6 +16,7 @@ import type {
   SchemaRequiredProp,
   Validator
 } from '../types/index.js'
+import { withRequiredIfProp, type RequiredIfPropsOverwrite } from '../utils/requiredIfBuilder.js'
 import type { Light } from '../utils/light.js'
 import { light } from '../utils/light.js'
 import { ListSchema } from './schema.js'
@@ -72,6 +73,18 @@ export class ListSchema_<
   optional(): ListSchema_<ELEMENTS, Overwrite<PROPS, { required: Never }>> {
     return this.required('never')
   }
+
+  /**
+   * Require attribute when a sibling attribute matches one of the provided values.
+   * Chainable with OR semantics across trigger values and repeated calls.
+   */
+  requiredIf<ATTR extends string, const VALUES extends readonly unknown[]>(
+    attribute: ATTR,
+    ...values: VALUES
+  ): ListSchema_<ELEMENTS, RequiredIfPropsOverwrite<PROPS>> {
+    return new ListSchema_(this.elements, withRequiredIfProp(this.props, attribute, values))
+  }
+
 
   /**
    * Hide attribute after fetch commands and formatting

@@ -6,6 +6,7 @@ import type { SelectKeys } from '~/types/selectKeys.js'
 
 import type { WithValidate } from '../utils.js'
 import { withValidate } from '../utils.js'
+import { withRequiredIf } from '../requiredIf.js'
 import type { SchemaZodParser } from './schema.js'
 import { schemaZodParser } from './schema.js'
 import type { ZodParserOptions } from './types.js'
@@ -61,14 +62,17 @@ export const mapZodParser = (schema: MapSchema, options: ZodParserOptions = {}):
       withOptional(
         schema,
         options,
-        withValidate(
+        withRequiredIf(
           schema,
-          z.object(
-            Object.fromEntries(
-              displayedAttrEntries.map(([attributeName, attribute]) => [
-                attributeName,
-                schemaZodParser(attribute, { ...options, defined: false })
-              ])
+          withValidate(
+            schema,
+            z.object(
+              Object.fromEntries(
+                displayedAttrEntries.map(([attributeName, attribute]) => [
+                  attributeName,
+                  schemaZodParser(attribute, { ...options, defined: false })
+                ])
+              )
             )
           )
         )

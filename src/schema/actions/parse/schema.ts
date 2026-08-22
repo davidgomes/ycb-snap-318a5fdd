@@ -34,7 +34,8 @@ export function* schemaParser<OPTIONS extends ParseAttrValueOptions = {}>(
      * @debt type "Maybe there's a way not to have to cast here"
      */
     parseExtension = defaultParseExtension as unknown as NonNullable<OPTIONS['parseExtension']>,
-    valuePath
+    valuePath,
+    parentInput
   } = options
 
   let filledValue = inputValue
@@ -63,7 +64,8 @@ export function* schemaParser<OPTIONS extends ParseAttrValueOptions = {}>(
 
   const { isExtension, extensionParser, unextendedInput } = parseExtension(schema, filledValue, {
     transform,
-    valuePath
+    valuePath,
+    parentInput
   })
 
   if (isExtension) {
@@ -83,7 +85,7 @@ export function* schemaParser<OPTIONS extends ParseAttrValueOptions = {}>(
     const path = valuePath !== undefined ? formatArrayPath(valuePath) : undefined
 
     // We don't need to fill
-    if (isRequired(schema, mode) || defined) {
+    if (isRequired(schema, mode, { parentInput }) || defined) {
       throw new DynamoDBToolboxError('parsing.attributeRequired', {
         message: `Attribute${path !== undefined ? ` '${path}'` : ''} is required.`,
         path
