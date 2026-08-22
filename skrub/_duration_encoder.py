@@ -100,10 +100,16 @@ class DurationEncoder(SingleColumnTransformer):
     def _resolve_resolution(self, x):
         if not np.isfinite(x).any():
             return "minute"
-        for name, unit in zip(_RESOLUTIONS, (86400, 3600, 60, 1, 1e-6)):
-            if np.any(np.mod(x, unit) != 0):
-                return name
-        return "microsecond"
+        x = x[np.isfinite(x)]
+        if np.any(np.abs(x - np.round(x)) > 1e-9):
+            return "microsecond"
+        if np.any(np.mod(x, 60) != 0):
+            return "second"
+        if np.any(np.mod(x, 3600) != 0):
+            return "minute"
+        if np.any(np.mod(x, 86400) != 0):
+            return "hour"
+        return "day"
 
     def _check_params(self):
         if self.components != "auto" and not isinstance(self.components, (list, tuple)):
