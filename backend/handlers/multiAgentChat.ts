@@ -228,6 +228,9 @@ async function* executeSingleAgent(
           yield { type: "error", error: result.error };
           return;
         }
+        if (result.streamError) {
+          yield { type: "error", error: result.streamError };
+        }
 
         const toolResult = JSON.stringify({
           type: "tool_result",
@@ -282,6 +285,7 @@ type DelegationResult = {
   content: string;
   isError: boolean;
   circular?: boolean;
+  streamError?: string;
   error?: string;
 };
 
@@ -316,6 +320,7 @@ async function delegateTask(
     return {
       content: error,
       isError: true,
+      streamError: error,
     };
   }
 
