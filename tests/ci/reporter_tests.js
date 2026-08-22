@@ -1307,7 +1307,7 @@ describe('test reporters', function() {
       assert.match(output, /##teamcity\[buildStatisticValue key='bailedTests' value='1'\]/);
       assert.match(output, /##teamcity\[buildStatisticValue key='testsBeforeBail' value='5'\]/);
       assert.match(output, /##teamcity\[buildStatisticValue key='suppressedAfterBail' value='2'\]/);
-      assert.match(output, /##teamcity\[buildProblem description='Bail out! it fails'\]/);
+      assert.match(output, /##teamcity\[buildProblem description='it fails'\]/);
     });
 
   });
