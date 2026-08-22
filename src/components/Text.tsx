@@ -62,6 +62,9 @@ export type Props = {
 	*/
 	readonly wrap?: Styles['textWrap'];
 
+	readonly gridColumn?: Styles['gridColumn'];
+	readonly gridRow?: Styles['gridRow'];
+
 	readonly children?: ReactNode;
 };
 
@@ -78,6 +81,8 @@ export default function Text({
 	strikethrough = false,
 	inverse = false,
 	wrap = 'wrap',
+	gridColumn,
+	gridRow,
 	children,
 	'aria-label': ariaLabel,
 	'aria-hidden': ariaHidden = false,
@@ -136,7 +141,14 @@ export default function Text({
 
 	return (
 		<ink-text
-			style={{flexGrow: 0, flexShrink: 1, flexDirection: 'row', textWrap: wrap}}
+			style={{
+				flexGrow: 0,
+				flexShrink: 1,
+				flexDirection: 'row',
+				textWrap: wrap,
+				gridColumn,
+				gridRow,
+			}}
 			internal_transform={transform}
 		>
 			{isScreenReaderEnabled && ariaLabel ? ariaLabel : children}

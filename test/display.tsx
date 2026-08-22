@@ -28,6 +28,18 @@ test('display none', t => {
 	t.is(output, 'Doggo');
 });
 
+test('display grid', t => {
+	const output = renderToString(
+		<Box display="grid" width={10} gridTemplateColumns="4 1fr">
+			<Text>A</Text>
+			<Text>B</Text>
+			<Text>C</Text>
+		</Box>,
+	);
+
+	t.is(output, 'A   B\nC');
+});
+
 // Concurrent mode tests
 test('display flex - concurrent', async t => {
 	const output = await renderToStringAsync(

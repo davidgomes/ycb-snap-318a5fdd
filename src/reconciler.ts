@@ -260,7 +260,9 @@ export default createReconciler<
 		node.yogaNode?.setDisplay(Yoga.DISPLAY_NONE);
 	},
 	unhideInstance(node) {
-		node.yogaNode?.setDisplay(Yoga.DISPLAY_FLEX);
+		const display =
+			node.style.display === 'none' ? Yoga.DISPLAY_NONE : Yoga.DISPLAY_FLEX;
+		node.yogaNode?.setDisplay(display);
 	},
 	appendInitialChild: appendChildNode,
 	appendChild: appendChildNode,
