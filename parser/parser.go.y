@@ -23,6 +23,7 @@ import (
 %type<exprs> exprs
 %type<expr> expr
 %type<expr_idents> expr_idents
+%type<func_params> func_params
 %type<type_data> type_data
 %type<type_data_struct> type_data_struct
 %type<slice_count> slice_count
@@ -61,6 +62,7 @@ import (
 	exprs                  []ast.Expr
 	expr                   ast.Expr
 	expr_idents            []string
+	func_params            *ast.FuncParams
 	type_data              *ast.TypeStruct
 	type_data_struct       *ast.TypeStruct
 	slice_count            int
@@ -481,24 +483,24 @@ expr :
 		$$ = &ast.NilCoalescingOpExpr{LHS: $1, RHS: $3}
 		$$.SetPosition($1.Position())
 	}
-	| FUNC '(' expr_idents ')' '{' compstmt '}'
+	| FUNC '(' func_params ')' '{' compstmt '}'
 	{
-		$$ = &ast.FuncExpr{Params: $3, Stmt: $6}
+		$$ = &ast.FuncExpr{Params: $3.Names, Defaults: $3.Defaults, Stmt: $6}
 		$$.SetPosition($1.Position())
 	}
-	| FUNC '(' expr_idents VARARG ')' '{' compstmt '}'
+	| FUNC '(' func_params VARARG ')' '{' compstmt '}'
 	{
-		$$ = &ast.FuncExpr{Params: $3, Stmt: $7, VarArg: true}
+		$$ = &ast.FuncExpr{Params: $3.Names, Defaults: $3.Defaults, Stmt: $7, VarArg: true}
 		$$.SetPosition($1.Position())
 	}
-	| FUNC IDENT '(' expr_idents ')' '{' compstmt '}'
+	| FUNC IDENT '(' func_params ')' '{' compstmt '}'
 	{
-		$$ = &ast.FuncExpr{Name: $2.Lit, Params: $4, Stmt: $7}
+		$$ = &ast.FuncExpr{Name: $2.Lit, Params: $4.Names, Defaults: $4.Defaults, Stmt: $7}
 		$$.SetPosition($1.Position())
 	}
-	| FUNC IDENT '(' expr_idents VARARG ')' '{' compstmt '}'
+	| FUNC IDENT '(' func_params VARARG ')' '{' compstmt '}'
 	{
-		$$ = &ast.FuncExpr{Name: $2.Lit, Params: $4, Stmt: $8, VarArg: true}
+		$$ = &ast.FuncExpr{Name: $2.Lit, Params: $4.Names, Defaults: $4.Defaults, Stmt: $8, VarArg: true}
 		$$.SetPosition($1.Position())
 	}
 	| '[' ']'
@@ -641,6 +643,34 @@ expr_idents :
 			yylex.Error("syntax error: unexpected ','")
 		}
 		$$ = append($1, $4.Lit)
+	}
+
+func_params :
+	{
+		$$ = &ast.FuncParams{}
+	}
+	| IDENT
+	{
+		$$ = &ast.FuncParams{Names: []string{$1.Lit}, Defaults: []ast.Expr{nil}}
+	}
+	| IDENT '=' expr
+	{
+		$$ = &ast.FuncParams{Names: []string{$1.Lit}, Defaults: []ast.Expr{$3}}
+	}
+	| func_params ',' opt_newlines IDENT
+	{
+		if len($1.Defaults) > 0 && $1.Defaults[len($1.Defaults)-1] != nil {
+			yylex.Error("invalid default argument declaration")
+		}
+		$1.Names = append($1.Names, $4.Lit)
+		$1.Defaults = append($1.Defaults, nil)
+		$$ = $1
+	}
+	| func_params ',' opt_newlines IDENT '=' expr
+	{
+		$1.Names = append($1.Names, $4.Lit)
+		$1.Defaults = append($1.Defaults, $6)
+		$$ = $1
 	}
 
 type_data :

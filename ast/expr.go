@@ -132,10 +132,17 @@ type SliceExpr struct {
 // FuncExpr provide function expression.
 type FuncExpr struct {
 	ExprImpl
-	Name   string
-	Stmt   Stmt
-	Params []string
-	VarArg bool
+	Name     string
+	Stmt     Stmt
+	Params   []string
+	Defaults []Expr
+	VarArg   bool
+}
+
+// FuncParams holds function parameter names and their optional defaults.
+type FuncParams struct {
+	Names    []string
+	Defaults []Expr
 }
 
 // LetsExpr provide multiple expression of let.
