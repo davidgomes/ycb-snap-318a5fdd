@@ -53,7 +53,7 @@ export declare namespace JsonSchema {
 		examples?: readonly t[]
 	}
 
-	type Composition = Union | OneOf | Intersection | Not
+	type Composition = Union | OneOf | Intersection | Not | Conditional
 
 	type NonBooleanBranch =
 		| Constrainable
@@ -98,6 +98,12 @@ export declare namespace JsonSchema {
 		anyOf: readonly JsonSchema[]
 	}
 
+	export interface Conditional extends Meta {
+		if: JsonSchemaOrBoolean
+		then?: JsonSchemaOrBoolean
+		else?: JsonSchemaOrBoolean
+	}
+
 	export interface Const extends Meta {
 		const: unknown
 	}
@@ -137,6 +143,9 @@ export declare namespace JsonSchema {
 		maxProperties?: number
 		minProperties?: number
 		propertyNames?: String
+		dependencies?: Record<string, string[] | JsonSchemaOrBoolean>
+		dependentRequired?: Record<string, string[]>
+		dependentSchemas?: Record<string, JsonSchemaOrBoolean>
 	}
 
 	export interface Array extends Meta<JsonArray> {

@@ -4,6 +4,7 @@ import {
 	rootSchema,
 	type Index,
 	type Intersection,
+	type JsonSchemaOrBoolean,
 	type Predicate,
 	type Traversal
 } from "@ark/schema"
@@ -115,11 +116,13 @@ const parseRequiredAndOptionalKeys = (
 			optionalKeys.push(...Object.keys(jsonSchema.properties))
 		}
 	} else if ("required" in jsonSchema) {
-		ctx.reject({
-			expected: "a valid object JSON Schema",
-			actual:
-				"an object JSON Schema with 'required' array but no 'properties' object"
-		})
+		return {
+			optionalKeys: [],
+			requiredKeys: jsonSchema.required.map(key => ({
+				key,
+				value: type.unknown.internal
+			}))
+		}
 	}
 
 	return {
@@ -181,6 +184,82 @@ const parseAdditionalProperties = (jsonSchema: JsonSchema.Object) => {
 		return !ctx.hasError()
 	}
 	return jsonSchemaObjectAdditionalPropertiesValidator
+}
+
+const isJsonObject = (data: unknown): data is Record<string, unknown> =>
+	typeof data === "object" && data !== null && !Array.isArray(data)
+
+const parseDependentConstraints = (
+	jsonSchema: JsonSchema.Object
+): Predicate.Schema[] => {
+	const requiredByTrigger: Record<string, string[]> = {
+		...jsonSchema.dependentRequired
+	}
+	const schemaByTrigger: Record<string, JsonSchemaOrBoolean> = {
+		...jsonSchema.dependentSchemas
+	}
+
+	if (jsonSchema.dependencies) {
+		for (const [trigger, dependency] of Object.entries(
+			jsonSchema.dependencies
+		)) {
+			if (Array.isArray(dependency)) {
+				requiredByTrigger[trigger] = [
+					...(requiredByTrigger[trigger] ?? []),
+					...dependency
+				]
+			} else schemaByTrigger[trigger] = dependency
+		}
+	}
+
+	const predicates: Predicate.Schema[] = []
+
+	if (Object.keys(requiredByTrigger).length > 0) {
+		const jsonSchemaDependentRequiredValidator = (
+			data: object,
+			ctx: Traversal
+		) => {
+			if (!isJsonObject(data)) return true
+			for (const [trigger, keys] of Object.entries(requiredByTrigger)) {
+				if (!Object.hasOwn(data, trigger)) continue
+				for (const key of keys) {
+					if (!Object.hasOwn(data, key)) {
+						ctx.reject({
+							expected: `required property ${key} when ${trigger} is present`,
+							actual: printable(data)
+						})
+					}
+				}
+			}
+			return !ctx.hasError()
+		}
+		predicates.push(jsonSchemaDependentRequiredValidator)
+	}
+
+	if (Object.keys(schemaByTrigger).length > 0) {
+		const parsedSchemaByTrigger = Object.entries(schemaByTrigger).map(
+			([trigger, schema]) => [trigger, jsonSchemaToType(schema)] as const
+		)
+		const jsonSchemaDependentSchemasValidator = (
+			data: object,
+			ctx: Traversal
+		) => {
+			if (!isJsonObject(data)) return true
+			for (const [trigger, schema] of parsedSchemaByTrigger) {
+				if (!Object.hasOwn(data, trigger)) continue
+				if (!schema.allows(data)) {
+					ctx.reject({
+						expected: schema.description,
+						actual: printable(data)
+					})
+				}
+			}
+			return !ctx.hasError()
+		}
+		predicates.push(jsonSchemaDependentSchemasValidator)
+	}
+
+	return predicates
 }
 
 export const parseObjectJsonSchema: Type<
@@ -263,6 +342,8 @@ export const parseObjectJsonSchema: Type<
 		arktypeObjectSchema.undeclared ??=
 			additionalProperties ? "ignore" : "reject"
 	} else potentialPredicates.push(additionalProperties)
+
+	potentialPredicates.push(...parseDependentConstraints(jsonSchema))
 
 	const predicates = potentialPredicates.filter(
 		potentialPredicate => potentialPredicate !== undefined

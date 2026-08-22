@@ -91,3 +91,17 @@ export const writeJsonSchemaObjectNonConformingPatternAndPropertyNamesMessage =
 		propertyNamesExpression
 	> =>
 		`Pattern property ${patternPropertySignatureExpression} doesn't conform to propertyNames schema of ${propertyNamesExpression}`
+
+/* $ref Schema Parsing Errors */
+export type writeJsonSchemaUnsupportedRefMessage =
+	"Only local $ref values of the form #/$defs/<name> are supported"
+export const writeJsonSchemaUnsupportedRefMessage =
+	(): writeJsonSchemaUnsupportedRefMessage =>
+		"Only local $ref values of the form #/$defs/<name> are supported"
+
+export type writeJsonSchemaUnresolvedRefMessage<ref extends string> =
+	`Unable to resolve $ref "${ref}" from root $defs`
+export const writeJsonSchemaUnresolvedRefMessage = <ref extends string>(
+	ref: ref
+): writeJsonSchemaUnresolvedRefMessage<ref> =>
+	`Unable to resolve $ref "${ref}" from root $defs`

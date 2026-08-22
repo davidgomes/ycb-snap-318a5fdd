@@ -33,6 +33,7 @@ type JsonSchemaScope = Scope<{
 	CompositionKeywords: JsonSchema.Composition
 	TypeWithNoKeywords: TypeWithNoKeywords
 	TypeWithKeywords: TypeWithKeywords
+	RefSchema: { $ref: string }
 	Json: Json
 	Schema: JsonSchemaOrBoolean
 	ArraySchema: ArraySchema
@@ -50,7 +51,10 @@ const $: JsonSchemaScope = scope({
 		"allOf?": "Schema[]",
 		"anyOf?": "Schema[]",
 		"oneOf?": "Schema[]",
-		"not?": "Schema"
+		"not?": "Schema",
+		"if?": "Schema",
+		"then?": "Schema",
+		"else?": "Schema"
 	},
 	TypeWithNoKeywords: { type: "'boolean'|'null'" },
 	TypeWithKeywords: "ArraySchema|NumberSchema|ObjectSchema|StringSchema",
@@ -58,9 +62,12 @@ const $: JsonSchemaScope = scope({
 	// whatever we're parsing is valid JSON since it will be 99% of the time.
 	// This decision may be changed later, e.g. when a built-in JSON type exists in AT.
 	Json: "unknown",
+	RefSchema: {
+		$ref: "string"
+	},
 	"#BaseSchema":
 		// NB: `true` means "accept an valid JSON"; `false` means "reject everything".
-		"boolean|TypeWithNoKeywords|TypeWithKeywords|AnyKeywords|CompositionKeywords",
+		"boolean|TypeWithNoKeywords|TypeWithKeywords|AnyKeywords|CompositionKeywords|RefSchema",
 	Schema: "BaseSchema|BaseSchema[]",
 	ArraySchema: {
 		"additionalItems?": "Schema",
@@ -95,6 +102,9 @@ const $: JsonSchemaScope = scope({
 		"properties?": { "[string]": "Schema" },
 		"propertyNames?": "Schema",
 		"required?": "string[]",
+		"dependencies?": { "[string]": "string[]|Schema" },
+		"dependentRequired?": { "[string]": "string[]" },
+		"dependentSchemas?": { "[string]": "Schema" },
 		type: "'object'"
 	},
 	StringSchema: {

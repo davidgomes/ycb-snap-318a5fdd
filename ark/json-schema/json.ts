@@ -3,6 +3,7 @@ import { printable, throwParseError } from "@ark/util"
 import { type, type JsonSchema } from "arktype"
 import { parseArrayJsonSchema } from "./array.ts"
 import { parseCommonJsonSchema } from "./common.ts"
+import { parseConditionalJsonSchema } from "./conditional.ts"
 import {
 	parseAnyOfJsonSchema,
 	parseCompositionJsonSchema
@@ -13,8 +14,40 @@ import {
 } from "./errors.ts"
 import { parseNumberJsonSchema } from "./number.ts"
 import { parseObjectJsonSchema } from "./object.ts"
+import { resolveJsonSchemaRef, withJsonSchemaRefContext } from "./ref.ts"
 import { JsonSchemaScope } from "./scope.ts"
 import { parseStringJsonSchema } from "./string.ts"
+
+const implicitObjectKeywords = [
+	"properties",
+	"required",
+	"patternProperties",
+	"additionalProperties",
+	"maxProperties",
+	"minProperties",
+	"propertyNames",
+	"dependencies",
+	"dependentRequired",
+	"dependentSchemas"
+] as const
+
+const applyImplicitObjectType = (
+	jsonSchema: JsonSchema
+): JsonSchema => {
+	if ("type" in jsonSchema) return jsonSchema
+	if (implicitObjectKeywords.some(key => key in jsonSchema))
+		return { ...jsonSchema, type: "object" }
+	return jsonSchema
+}
+
+const andValidators = (
+	...validators: Array<type.Any | undefined>
+): type.Any | undefined =>
+	validators.reduce<type.Any | undefined>((acc, validator) => {
+		if (acc === undefined) return validator
+		if (validator === undefined) return acc
+		return acc.and(validator)
+	}, undefined)
 
 const jsonSchemaTypeMatcher = type.match
 	.in<Extract<JsonSchema, { type?: unknown }>>()
@@ -41,27 +74,24 @@ export const innerParseJsonSchema = JsonSchemaScope.Schema.pipe(
 
 		if (Array.isArray(jsonSchema)) return parseAnyOfJsonSchema(jsonSchema)
 
-		const constAndOrEnumValidator = parseCommonJsonSchema(
-			jsonSchema as JsonSchema
-		)
-		const compositionValidator = parseCompositionJsonSchema(
-			jsonSchema as JsonSchema
+		if ("$ref" in jsonSchema) return resolveJsonSchemaRef(jsonSchema.$ref)
+
+		const schema = applyImplicitObjectType(jsonSchema as JsonSchema)
+
+		const preTypeValidator = andValidators(
+			parseCommonJsonSchema(schema),
+			parseCompositionJsonSchema(schema),
+			parseConditionalJsonSchema(schema)
 		)
 
-		const preTypeValidator =
-			constAndOrEnumValidator ?
-				compositionValidator ? compositionValidator.and(constAndOrEnumValidator)
-				:	constAndOrEnumValidator
-			:	compositionValidator
-
-		if ("type" in jsonSchema) {
-			const typeValidator = jsonSchemaTypeMatcher(jsonSchema as never) as
+		if ("type" in schema) {
+			const typeValidator = jsonSchemaTypeMatcher(schema as never) as
 				| type.Any
 				| undefined
 
 			if (typeValidator === undefined) {
 				throwParseError(
-					writeJsonSchemaUnsupportedTypeMessage(printable(jsonSchema.type))
+					writeJsonSchemaUnsupportedTypeMessage(printable(schema.type))
 				)
 			}
 
@@ -76,12 +106,14 @@ export const innerParseJsonSchema = JsonSchemaScope.Schema.pipe(
 				"'allOf'",
 				"'anyOf'",
 				"'oneOf'",
-				"'not'"
+				"'not'",
+				"'$ref'",
+				"'if'"
 			]
 			throwParseError(
 				writeJsonSchemaInsufficientKeysMessage(
 					describeBranches(atLeastOneOf, { finalDelimiter: " and " }),
-					printable(jsonSchema)
+					printable(schema)
 				)
 			)
 		}
@@ -89,6 +121,15 @@ export const innerParseJsonSchema = JsonSchemaScope.Schema.pipe(
 	}
 )
 
+export const parseJsonSchema = (
+	jsonSchema: JsonSchemaOrBoolean
+): type<unknown> =>
+	withJsonSchemaRefContext(
+		jsonSchema,
+		schema => innerParseJsonSchema.assert(schema) as never,
+		() => innerParseJsonSchema.assert(jsonSchema) as never
+	)
+
 export const jsonSchemaToType = (
 	jsonSchema: JsonSchemaOrBoolean
-): type<unknown> => innerParseJsonSchema.assert(jsonSchema) as never
+): type<unknown> => parseJsonSchema(jsonSchema)

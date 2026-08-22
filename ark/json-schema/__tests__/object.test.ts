@@ -54,11 +54,12 @@ contextualize(() => {
 		})
 		attest(tRequired.expression).snap("{ foo: string, bar?: number }")
 
-		attest(() =>
-			jsonSchemaToType({ type: "object", required: ["foo"] })
-		).throws(
-			"TraversalError: must be a valid object JSON Schema (was an object JSON Schema with 'required' array but no 'properties' object)"
-		)
+		const tRequiredOnly = jsonSchemaToType({
+			type: "object",
+			required: ["foo"]
+		})
+		attest(tRequiredOnly.allows({ foo: 1 })).equals(true)
+		attest(tRequiredOnly.allows({})).equals(false)
 		attest(() =>
 			jsonSchemaToType({
 				type: "object",

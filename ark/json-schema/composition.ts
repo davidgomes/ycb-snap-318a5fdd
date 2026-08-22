@@ -2,18 +2,25 @@ import type { Traversal } from "@ark/schema"
 import { printable } from "@ark/util"
 import { type, type JsonSchema, type Type } from "arktype"
 import { jsonSchemaToType } from "./json.ts"
+import { fullyResolveJsonSchemaType } from "./ref.ts"
 
 const parseAllOfJsonSchema = (jsonSchemas: readonly JsonSchema[]): Type =>
 	jsonSchemas
-		.map(jsonSchema => jsonSchemaToType(jsonSchema))
+		.map(jsonSchema =>
+			fullyResolveJsonSchemaType(jsonSchemaToType(jsonSchema))
+		)
 		.reduce((acc, validator) => acc.and(validator))
 
 export const parseAnyOfJsonSchema = (
 	jsonSchemas: readonly JsonSchema[]
-): Type =>
-	jsonSchemas
-		.map(jsonSchema => jsonSchemaToType(jsonSchema))
-		.reduce((acc, validator) => acc.or(validator))
+): Type => {
+	const branches = jsonSchemas.map(jsonSchema =>
+		fullyResolveJsonSchemaType(jsonSchemaToType(jsonSchema))
+	)
+	// Compose via type.or so alias nodes from $ref are not method-chained
+	// (which would short-circuit or wrap the resolved type twice).
+	return branches.reduce((acc, validator) => type.or(acc, validator) as Type)
+}
 
 const parseNotJsonSchema = (jsonSchema: JsonSchema): Type => {
 	const inner = jsonSchemaToType(jsonSchema)

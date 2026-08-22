@@ -56,6 +56,5 @@ const stringSchema: StringSchema = {
 
 ## Limitations
 
-- No `dependencies` support
-- No `if`/`else`/`then` support
+- `$ref` supports only local `#/$defs/<name>` references
 - `multipleOf` only supports integers
