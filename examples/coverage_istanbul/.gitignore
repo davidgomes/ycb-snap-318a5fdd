@@ -1,0 +1,4 @@
+coverage
+coverage*.json
+instrumented
+node_modules

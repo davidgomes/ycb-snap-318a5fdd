@@ -1,0 +1,22 @@
+{
+    "launchers": {
+        "Node": {
+            "exe": "node",
+            "args": ["tests.js"],
+            "protocol": "tap",
+            "cwd": "tests/fixtures/tape/"
+        },
+        "NodePlain": {
+            "exe": "node",
+            "args": ["tests.js"],
+            "cwd": "tests/fixtures/tape/"
+        }
+    },
+    "src_files": [
+        "public/*.js"
+    ],
+    "cwd": "tests/fixtures/tape/",
+    "before_tests": "node before-tests.js",
+    "test_page": "public/tests.html",
+    "launch_in_dev": ["Node", "Headless Firefox", "NodePlain"]
+}
