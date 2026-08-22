@@ -1,0 +1,21 @@
+include MANIFEST.in
+
+include CODEOWNERS
+include LICENSE
+include README.md
+include CONTRIBUTING.md
+include .readthedocs.yaml
+
+include Makefile
+
+include tox.ini
+
+include gql/py.typed
+
+recursive-include tests *.py *.graphql *.cnf *.yaml *.pem *.crt
+recursive-include docs *.txt *.rst conf.py Makefile make.bat
+recursive-include docs/code_examples *.py
+
+prune docs/_build
+
+global-exclude *.py[co] __pycache__

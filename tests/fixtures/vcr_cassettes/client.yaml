@@ -1,0 +1,88 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - text/html
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Host:
+      - swapi.graphene-python.org
+      User-Agent:
+      - python-requests/2.24.0
+    method: GET
+    uri: http://127.0.0.1:8000/graphql
+  response:
+    body:
+      string: "<!--\nThe request to this GraphQL server provided the header \"Accept:\
+        \ text/html\"\nand as a result has been presented GraphiQL - an in-browser\
+        \ IDE for\nexploring GraphQL.\nIf you wish to receive JSON, provide the header\
+        \ \"Accept: application/json\" or\nadd \"&raw\" to the end of the URL within\
+        \ a browser.\n-->\n<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    html, body\
+        \ {\n      height: 100%;\n      margin: 0;\n      overflow: hidden;\n    \
+        \  width: 100%;\n    }\n  </style>\n  <link href=\"//cdn.jsdelivr.net/npm/graphiql@0.11.10/graphiql.css\"\
+        \ rel=\"stylesheet\" />\n  <script src=\"//cdn.jsdelivr.net/npm/whatwg-fetch@2.0.3/fetch.min.js\"\
+        ></script>\n  <script src=\"//cdn.jsdelivr.net/npm/react@16.2.0/umd/react.production.min.js\"\
+        ></script>\n  <script src=\"//cdn.jsdelivr.net/npm/react-dom@16.2.0/umd/react-dom.production.min.js\"\
+        ></script>\n  <script src=\"//cdn.jsdelivr.net/npm/graphiql@0.11.10/graphiql.min.js\"\
+        ></script>\n</head>\n<body>\n  <script>\n    // Parse the cookie value for\
+        \ a CSRF token\n    var csrftoken;\n    var cookies = ('; ' + document.cookie).split(';\
+        \ csrftoken=');\n    if (cookies.length == 2)\n      csrftoken = cookies.pop().split(';').shift();\n\
+        \n    // Collect the URL parameters\n    var parameters = {};\n    window.location.search.substr(1).split('&').forEach(function\
+        \ (entry) {\n      var eq = entry.indexOf('=');\n      if (eq >= 0) {\n  \
+        \      parameters[decodeURIComponent(entry.slice(0, eq))] =\n          decodeURIComponent(entry.slice(eq\
+        \ + 1));\n      }\n    });\n    // Produce a Location query string from a\
+        \ parameter object.\n    function locationQuery(params) {\n      return '?'\
+        \ + Object.keys(params).map(function (key) {\n        return encodeURIComponent(key)\
+        \ + '=' +\n          encodeURIComponent(params[key]);\n      }).join('&');\n\
+        \    }\n    // Derive a fetch URL from the current URL, sans the GraphQL parameters.\n\
+        \    var graphqlParamNames = {\n      query: true,\n      variables: true,\n\
+        \      operationName: true\n    };\n    var otherParams = {};\n    for (var\
+        \ k in parameters) {\n      if (parameters.hasOwnProperty(k) && graphqlParamNames[k]\
+        \ !== true) {\n        otherParams[k] = parameters[k];\n      }\n    }\n \
+        \   var fetchURL = locationQuery(otherParams);\n    // Defines a GraphQL fetcher\
+        \ using the fetch API.\n    function graphQLFetcher(graphQLParams) {\n   \
+        \   var headers = {\n        'Accept': 'application/json',\n        'Content-Type':\
+        \ 'application/json'\n      };\n      if (csrftoken) {\n        headers['X-CSRFToken']\
+        \ = csrftoken;\n      }\n      return fetch(fetchURL, {\n        method: 'post',\n\
+        \        headers: headers,\n        body: JSON.stringify(graphQLParams),\n\
+        \        credentials: 'include',\n      }).then(function (response) {\n  \
+        \      return response.text();\n      }).then(function (responseBody) {\n\
+        \        try {\n          return JSON.parse(responseBody);\n        } catch\
+        \ (error) {\n          return responseBody;\n        }\n      });\n    }\n\
+        \    // When the query and variables string is edited, update the URL bar\
+        \ so\n    // that it can be easily shared.\n    function onEditQuery(newQuery)\
+        \ {\n      parameters.query = newQuery;\n      updateURL();\n    }\n    function\
+        \ onEditVariables(newVariables) {\n      parameters.variables = newVariables;\n\
+        \      updateURL();\n    }\n    function onEditOperationName(newOperationName)\
+        \ {\n      parameters.operationName = newOperationName;\n      updateURL();\n\
+        \    }\n    function updateURL() {\n      history.replaceState(null, null,\
+        \ locationQuery(parameters));\n    }\n    // Render <GraphiQL /> into the\
+        \ body.\n    ReactDOM.render(\n      React.createElement(GraphiQL, {\n   \
+        \     fetcher: graphQLFetcher,\n        onEditQuery: onEditQuery,\n      \
+        \  onEditVariables: onEditVariables,\n        onEditOperationName: onEditOperationName,\n\
+        \        query: '',\n        response: '',\n        \n        variables: 'null',\n\
+        \        \n        \n      }),\n      document.body\n    );\n  </script>\n\
+        </body>\n</html>\n"
+    headers:
+      Content-Length:
+      - '3808'
+      Content-Type:
+      - text/html; charset=utf-8
+      Date:
+      - Fri, 06 Nov 2020 11:30:20 GMT
+      Server:
+      - WSGIServer/0.1 Python/2.7.18
+      Set-Cookie:
+      - csrftoken=kAyQyUjNOGXZfkKUtWtvUROaFfDe2GBiV7yIRsqs3r2j9aYchRDXTNo3lHp72h5k;
+        expires=Fri, 05-Nov-2021 11:30:20 GMT; Max-Age=31449600; Path=/
+      Vary:
+      - Cookie
+      X-Frame-Options:
+      - SAMEORIGIN
+    status:
+      code: 200
+      message: OK
+version: 1
