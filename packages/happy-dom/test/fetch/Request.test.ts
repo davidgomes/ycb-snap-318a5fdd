@@ -610,11 +610,14 @@ describe('Request', () => {
 					}
 				})
 			});
-			const formDataPromise = request.formData();
+			request[PropertySymbol.contentType] = 'multipart/form-data; boundary=test';
+			const formDataPromise = expect(request.formData()).rejects.toMatchObject({
+				name: 'AbortError'
+			});
 
 			await window.happyDOM.close();
 
-			await expect(formDataPromise).rejects.toMatchObject({ name: 'AbortError' });
+			await formDataPromise;
 		});
 	});
 

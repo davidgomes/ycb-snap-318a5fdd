@@ -122,11 +122,13 @@ describe('Response', () => {
 					}
 				})
 			);
-			const bodyPromise = response.text();
+			const bodyPromise = expect(response.text()).rejects.toMatchObject({
+				name: 'AbortError'
+			});
 
 			await window.happyDOM.close();
 
-			await expect(bodyPromise).rejects.toMatchObject({ name: 'AbortError' });
+			await bodyPromise;
 		});
 
 		it('Reads a buffered body after the window is closed.', async () => {
@@ -364,11 +366,13 @@ describe('Response', () => {
 					headers: { 'Content-Type': 'multipart/form-data; boundary=test' }
 				}
 			);
-			const formDataPromise = response.formData();
+			const formDataPromise = expect(response.formData()).rejects.toMatchObject({
+				name: 'AbortError'
+			});
 
 			await window.happyDOM.close();
 
-			await expect(formDataPromise).rejects.toMatchObject({ name: 'AbortError' });
+			await formDataPromise;
 		});
 
 		it('Returns FormData for URLSearchParams object (application/x-www-form-urlencoded)', async () => {
