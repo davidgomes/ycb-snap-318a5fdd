@@ -11,7 +11,7 @@ from inspect import signature as inspect_signature
 from pathlib import Path
 from typing import Any, Optional, Tuple, TypeVar, overload
 
-from attrs import Attribute, resolve_types
+from attrs import NOTHING, Attribute, resolve_types
 from attrs import has as attrs_has
 from typing_extensions import Self
 
@@ -27,9 +27,11 @@ from ._compat import (
     Sequence,
     Set,
     TypeAlias,
+    adapted_fields,
     fields,
     get_final_base,
     get_newtype_base,
+    get_notrequired_base,
     get_origin,
     has,
     has_with_generic,
@@ -79,10 +81,14 @@ from .dispatch import (
 )
 from .enums import enum_structure_factory, enum_unstructure_factory
 from .errors import (
+    AttributeValidationNote,
+    ClassValidationError,
+    ForbiddenExtraKeysError,
     IterableValidationError,
     IterableValidationNote,
     StructureHandlerNotFoundError,
 )
+from .partial import PartialResult
 from .fns import Predicate, identity, raise_error
 from .gen import (
     AttributeOverride,
@@ -103,7 +109,13 @@ from .typealiases import (
 )
 from .types import SimpleStructureHook
 
-__all__ = ["BaseConverter", "Converter", "GenConverter", "UnstructureStrategy"]
+__all__ = [
+    "BaseConverter",
+    "Converter",
+    "GenConverter",
+    "PartialResult",
+    "UnstructureStrategy",
+]
 
 T = TypeVar("T")
 V = TypeVar("V")
@@ -589,6 +601,374 @@ class BaseConverter:
     def structure(self, obj: UnstructuredValue, cl: type[T]) -> T:
         """Convert unstructured Python data structures to structured data."""
         return self._structure_func.dispatch(cl)(obj, cl)
+
+    def partial_structure(self, obj: UnstructuredValue, cl: type[T]) -> PartialResult:
+        """Structure *obj* into *cl*, keeping successful fields on failure.
+
+        Returns a :class:`PartialResult`. Fields missing from the input are
+        treated as failed (not structured). Failed fields with defaults are
+        still applied as fallbacks when producing :attr:`PartialResult.value`.
+        Required fields without defaults make ``value`` ``None``.
+
+        Nested attrs classes, dataclasses and TypedDicts are structured
+        recursively. Collection fields (lists, dicts, …) are structured
+        atomically: any element failure fails the whole field.
+
+        ``init=False`` fields are excluded from
+        :attr:`PartialResult.structured_fields` and
+        :attr:`PartialResult.failed_fields`.
+
+        .. versionadded:: NEXT
+        """
+        return self._partial_structure_from(obj, cl, previous=None)
+
+    def _partial_structure_from(
+        self,
+        obj: UnstructuredValue,
+        cl: type[T],
+        previous: PartialResult | None,
+    ) -> PartialResult:
+        origin = get_origin(cl) or cl
+        if is_typeddict(cl) or is_typeddict(origin):
+            return self._partial_structure_typeddict(obj, cl, previous)
+        if has(cl) or has(origin):
+            return self._partial_structure_class(obj, cl, previous)
+        try:
+            value = self.structure(obj, cl)
+        except Exception as exc:
+            return PartialResult(
+                None,
+                False,
+                frozenset(),
+                frozenset(),
+                exc,
+                {},
+                self,
+                cl,
+            )
+        return PartialResult(value, True, frozenset(), frozenset(), None, {}, self, cl)
+
+    def _is_partialable_type(self, type_: Any) -> bool:
+        if type_ is None:
+            return False
+        if is_optional(type_):
+            union_params = type_.__args__
+            other = (
+                union_params[0] if union_params[1] is NoneType else union_params[1]
+            )
+            return self._is_partialable_type(other)
+        origin = get_origin(type_) or type_
+        return is_typeddict(type_) or is_typeddict(origin) or has(type_) or has(origin)
+
+    def _unwrap_optional(self, type_: Any) -> Any:
+        if not is_optional(type_):
+            return type_
+        union_params = type_.__args__
+        return union_params[0] if union_params[1] is NoneType else union_params[1]
+
+    def _partial_try_field(
+        self,
+        name: str,
+        type_: Any,
+        raw: Any,
+        previous: PartialResult | None,
+        note_cl: type,
+        note_kind: str,
+    ) -> tuple[Any | None, Exception | None, bool, PartialResult | None]:
+        """Try to structure a single field.
+
+        Returns ``(value, error, complete, nested_partial)``.
+        ``complete`` is False when a nested object was only partially structured.
+        """
+        prev_nested = None if previous is None else previous._nested.get(name)
+        target = self._unwrap_optional(type_)
+
+        if (
+            prev_nested is not None
+            and isinstance(raw, AbcMapping)
+            and self._is_partialable_type(target)
+        ):
+            nested = prev_nested.refine(raw)
+            if nested.is_complete:
+                return nested.value, None, True, None
+            if nested.value is not None:
+                return nested.value, nested.errors, False, nested
+            err = nested.errors or KeyError(name)
+            return None, err, False, nested
+
+        if raw is None and is_optional(type_):
+            return None, None, True, None
+
+        if self._is_partialable_type(target) and isinstance(raw, AbcMapping):
+            nested = self.partial_structure(raw, target)
+            if nested.is_complete:
+                return nested.value, None, True, None
+            if nested.value is not None:
+                return nested.value, nested.errors, False, nested
+            err = nested.errors or KeyError(name)
+            return None, err, False, nested
+
+        try:
+            return self._structure_func.dispatch(type_)(raw, type_), None, True, None
+        except Exception as exc:
+            if self.detailed_validation:
+                msg = AttributeValidationNote(
+                    f"Structuring {note_kind} {note_cl.__qualname__} @ attribute {name}",
+                    name,
+                    type_,
+                )
+                exc.__notes__ = [*getattr(exc, "__notes__", []), msg]
+            return None, exc, False, None
+
+    def _wrap_partial_errors(
+        self, cl: type, errors: list[Exception]
+    ) -> Exception | None:
+        if not errors:
+            return None
+        if self.detailed_validation:
+            return ClassValidationError(
+                f"While structuring {cl.__name__!r}", errors, cl
+            )
+        return errors[0]
+
+    def _missing_field_error(
+        self, name: str, type_: Any, cl: type, note_kind: str
+    ) -> Exception:
+        exc: Exception = KeyError(name)
+        if self.detailed_validation:
+            msg = AttributeValidationNote(
+                f"Structuring {note_kind} {cl.__qualname__} @ attribute {name}",
+                name,
+                type_,
+            )
+            exc.__notes__ = [*getattr(exc, "__notes__", []), msg]
+        return exc
+
+    def _partial_structure_class(
+        self,
+        obj: UnstructuredValue,
+        cl: type[T],
+        previous: PartialResult | None,
+    ) -> PartialResult:
+        origin = get_origin(cl) or cl
+        attribs = adapted_fields(origin)
+        use_alias = getattr(self, "use_alias", False)
+        forbid_extra = getattr(self, "forbid_extra_keys", False)
+
+        structured: set[str] = set()
+        failed: set[str] = set()
+        error_map: dict[str, Exception] = {}
+        nested_map: dict[str, PartialResult] = {}
+        extra_errors: list[Exception] = []
+        conv_obj: dict[str, Any] = {}
+        can_construct = True
+        allowed_keys: set[str] = set()
+
+        mapping = obj if isinstance(obj, AbcMapping) else None
+        if mapping is None and previous is None:
+            for a in attribs:
+                if not a.init:
+                    continue
+                failed.add(a.name)
+                error_map[a.name] = self._missing_field_error(
+                    a.name, a.type, cl, "class"
+                )
+                if a.default is NOTHING:
+                    can_construct = False
+            errors = self._wrap_partial_errors(cl, list(error_map.values()))
+            return PartialResult(
+                None,
+                False,
+                frozenset(),
+                frozenset(failed),
+                errors,
+                error_map,
+                self,
+                cl,
+            )
+
+        for a in attribs:
+            if not a.init:
+                continue
+            kn = a.name if not use_alias else a.alias
+            allowed_keys.add(kn)
+            ctor_key = getattr(a, "alias", a.name)
+
+            if previous is not None and a.name in previous.structured_fields:
+                structured.add(a.name)
+                if a.name in previous._values:
+                    conv_obj[ctor_key] = previous._values[a.name]
+                elif previous.value is not None:
+                    conv_obj[ctor_key] = getattr(previous.value, a.name)
+                continue
+
+            raw_present = mapping is not None and kn in mapping
+            if not raw_present:
+                failed.add(a.name)
+                error_map[a.name] = self._missing_field_error(
+                    a.name, a.type, cl, "class"
+                )
+                if a.default is NOTHING:
+                    can_construct = False
+                continue
+
+            raw = mapping[kn]
+            value, err, complete, nested = self._partial_try_field(
+                a.name, a.type, raw, previous, cl, "class"
+            )
+            if nested is not None:
+                nested_map[a.name] = nested
+            if complete and err is None:
+                structured.add(a.name)
+                conv_obj[ctor_key] = value
+            else:
+                failed.add(a.name)
+                if err is not None:
+                    error_map[a.name] = err
+                if value is not None:
+                    conv_obj[ctor_key] = value
+                elif a.default is NOTHING:
+                    can_construct = False
+
+        if forbid_extra and mapping is not None:
+            extra = set(mapping.keys()) - allowed_keys
+            if extra:
+                extra_errors.append(ForbiddenExtraKeysError("", cl, extra))
+
+        inst = None
+        if can_construct:
+            try:
+                inst = cl(**conv_obj)
+            except Exception as exc:
+                extra_errors.append(exc)
+                inst = None
+
+        collected = [*error_map.values(), *extra_errors]
+        errors = self._wrap_partial_errors(cl, collected)
+        is_complete = not failed and not extra_errors
+        stored = dict(conv_obj)
+        # Map constructor keys back to field names for refine.
+        alias_to_name = {getattr(a, "alias", a.name): a.name for a in attribs if a.init}
+        stored_by_name = {alias_to_name.get(k, k): v for k, v in stored.items()}
+        return PartialResult(
+            inst,
+            is_complete,
+            frozenset(structured),
+            frozenset(failed),
+            errors,
+            error_map,
+            self,
+            cl,
+            nested_map,
+            stored_by_name,
+        )
+
+    def _partial_structure_typeddict(
+        self,
+        obj: UnstructuredValue,
+        cl: type[T],
+        previous: PartialResult | None,
+    ) -> PartialResult:
+        from .gen.typeddicts import _adapted_fields, _required_keys
+
+        origin = get_origin(cl) or cl
+        attribs = _adapted_fields(origin)
+        req_keys = _required_keys(origin)
+        forbid_extra = getattr(self, "forbid_extra_keys", False)
+
+        structured: set[str] = set()
+        failed: set[str] = set()
+        error_map: dict[str, Exception] = {}
+        nested_map: dict[str, PartialResult] = {}
+        extra_errors: list[Exception] = []
+        res: dict[str, Any] = {}
+        can_construct = True
+        allowed_keys: set[str] = set()
+
+        mapping = obj if isinstance(obj, AbcMapping) else None
+        if mapping is None and previous is None:
+            for a in attribs:
+                failed.add(a.name)
+                error_map[a.name] = self._missing_field_error(
+                    a.name, a.type, cl, "typeddict"
+                )
+                if a.name in req_keys:
+                    can_construct = False
+            errors = self._wrap_partial_errors(cl, list(error_map.values()))
+            return PartialResult(
+                None if not can_construct else {},
+                False,
+                frozenset(),
+                frozenset(failed),
+                errors,
+                error_map,
+                self,
+                cl,
+            )
+
+        for a in attribs:
+            an = a.name
+            t = a.type
+            nrb = get_notrequired_base(t)
+            if nrb is not NOTHING:
+                t = nrb
+            allowed_keys.add(an)
+            required = an in req_keys
+
+            if previous is not None and an in previous.structured_fields:
+                structured.add(an)
+                if an in previous._values:
+                    res[an] = previous._values[an]
+                elif previous.value is not None and an in previous.value:
+                    res[an] = previous.value[an]
+                continue
+
+            raw_present = mapping is not None and an in mapping
+            if not raw_present:
+                failed.add(an)
+                error_map[an] = self._missing_field_error(an, t, cl, "typeddict")
+                if required:
+                    can_construct = False
+                continue
+
+            raw = mapping[an]
+            value, err, complete, nested = self._partial_try_field(
+                an, t, raw, previous, cl, "typeddict"
+            )
+            if nested is not None:
+                nested_map[an] = nested
+            if complete and err is None:
+                structured.add(an)
+                res[an] = value
+            else:
+                failed.add(an)
+                if err is not None:
+                    error_map[an] = err
+                if value is not None:
+                    res[an] = value
+                elif required:
+                    can_construct = False
+
+        if forbid_extra and mapping is not None:
+            extra = set(mapping.keys()) - allowed_keys
+            if extra:
+                extra_errors.append(ForbiddenExtraKeysError("", cl, extra))
+
+        collected = [*error_map.values(), *extra_errors]
+        errors = self._wrap_partial_errors(cl, collected)
+        is_complete = not failed and not extra_errors
+        return PartialResult(
+            res if can_construct else None,
+            is_complete,
+            frozenset(structured),
+            frozenset(failed),
+            errors,
+            error_map,
+            self,
+            cl,
+            nested_map,
+            dict(res),
+        )
 
     def get_structure_hook(self, type: Any, cache_result: bool = True) -> StructureHook:
         """Get the structure hook for the given type.
