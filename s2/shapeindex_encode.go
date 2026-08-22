@@ -112,6 +112,7 @@ func (s *ShapeIndex) Encode(w io.Writer) error {
 			e.err = fmt.Errorf("missing cell map entry for cell ID %v", id)
 			return e.err
 		}
+		e.writeUint64(uint64(id))
 		encodeIndexCell(e, cell, s.shapes)
 		if e.err != nil {
 			return e.err
