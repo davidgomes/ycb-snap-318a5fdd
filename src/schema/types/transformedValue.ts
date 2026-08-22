@@ -92,8 +92,8 @@ type SchemaTransformedValue<
       | (SCHEMA extends AnySchema ? AnySchemaTransformedValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends LazySchema
           ? ResolvedLazySchema<SCHEMA> extends ItemSchema
-            ? ItemSchemaTransformedValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
-            : SchemaTransformedValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+            ? ItemSchemaTransformedValue<ResolvedLazySchema<SCHEMA>>
+            : SchemaTransformedValue<ResolvedLazySchema<SCHEMA>>
           : never)
       | (SCHEMA extends PrimitiveSchema ? PrimitiveSchemaTransformedValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends SetSchema ? SetSchemaTransformedValue<SCHEMA, OPTIONS> : never)

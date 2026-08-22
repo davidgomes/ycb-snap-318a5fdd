@@ -107,9 +107,7 @@ const isSchema = (candidate: unknown): candidate is Schema => {
     case 'item':
     case 'lazy':
       return true
-    default: {
-      const _exhaustive: never = candidate.type
-      return _exhaustive
-    }
+    default:
+      return false
   }
 }

@@ -18,7 +18,7 @@ export type TransformerDTO =
 // TODO: Infer from actual list of defaulters
 type DefaulterDTO = { defaulterId: 'value'; value: unknown } | { defaulterId: 'custom' }
 
-interface SchemaDefaultsDTO {
+export interface SchemaDefaultsDTO {
   keyDefault?: DefaulterDTO
   putDefault?: DefaulterDTO
   updateDefault?: DefaulterDTO

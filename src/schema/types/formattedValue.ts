@@ -86,8 +86,8 @@ type SchemaFormattedValue<
       | (SCHEMA extends AnySchema ? AnySchemaFormattedValue<SCHEMA> : never)
       | (SCHEMA extends LazySchema
           ? ResolvedLazySchema<SCHEMA> extends ItemSchema
-            ? ItemSchemaFormattedValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
-            : SchemaFormattedValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+            ? ItemSchemaFormattedValue<ResolvedLazySchema<SCHEMA>>
+            : SchemaFormattedValue<ResolvedLazySchema<SCHEMA>>
           : never)
       | (SCHEMA extends NullSchema
           ? If<MustBeDefined<SCHEMA>, never, undefined> | ResolvedNullSchema
