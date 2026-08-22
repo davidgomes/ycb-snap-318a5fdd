@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import copy
 import functools
 import logging
 import sys
@@ -40,8 +41,12 @@ from .types import (
     CancellationChain,
     FormatItemTypes,
     FormattedLiveTaskInfo,
+    FormattedSnapshotDiff,
     FormattedStackItem,
     FormattedTerminatedTaskInfo,
+    Snapshot,
+    SnapshotSummary,
+    SnapshotTask,
     TerminatedTaskInfo,
 )
 from .utils import (
@@ -110,6 +115,9 @@ class Monitor:
     _canceller_chain: Dict[str, str]
     _canceller_stacks: Dict[str, List[traceback.FrameSummary] | None]
     _cancellation_chain_queue: janus.Queue[CancellationChain]
+    _snapshots: Dict[int, Snapshot]
+    _next_snapshot_id: int
+    _max_snapshots: int
 
     def __init__(
         self,
@@ -122,6 +130,7 @@ class Monitor:
         console_enabled: bool = True,
         hook_task_factory: bool = False,
         max_termination_history: int = 1000,
+        max_snapshots: int = 10,
         locals: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._monitored_loop = loop or asyncio.get_running_loop()
@@ -157,6 +166,9 @@ class Monitor:
         self._canceller_stacks = {}
         self._terminated_history = []
         self._max_termination_history = max_termination_history
+        self._snapshots = {}
+        self._next_snapshot_id = 1
+        self._max_snapshots = max(1, max_snapshots)
 
         self._ui_started = threading.Event()
         self._ui_thread = threading.Thread(target=self._ui_main, args=(), daemon=True)
@@ -232,6 +244,288 @@ class Monitor:
             self._monitored_loop.set_task_factory(self._original_task_factory)
             self._ui_thread.join()
             self._closed = True
+
+    @staticmethod
+    def _copy_stack(
+        stack: Optional[List[traceback.FrameSummary]],
+    ) -> Optional[List[traceback.FrameSummary]]:
+        return None if stack is None else list(stack)
+
+    @staticmethod
+    def _snapshot_task_repr(task: "asyncio.Task[Any]") -> str:
+        return _format_task(task)
+
+    def _get_snapshot(self, snapshot_id: str | int) -> Snapshot:
+        try:
+            snapshot_id_ = int(snapshot_id)
+        except (TypeError, ValueError):
+            raise KeyError(snapshot_id) from None
+        return self._snapshots[snapshot_id_]
+
+    def _snapshot_task_item(
+        self,
+        task: "asyncio.Task[Any]",
+        captured_at: float,
+    ) -> SnapshotTask:
+        task_id = str(id(task))
+        if isinstance(task, TracedTask):
+            coro_repr = _format_coroutine(task._orig_coro).partition(" ")[0]
+            since = _format_timedelta(
+                timedelta(seconds=captured_at - task._started_at)
+            )
+        else:
+            coro_repr = _format_coroutine(task.get_coro()).partition(" ")[0]
+            since = "-"
+        creation_stack = self._created_tracebacks.get(task)
+        if not creation_stack:
+            created_location = "-"
+        else:
+            creation_stack = _filter_stack(creation_stack)
+            if not creation_stack:
+                created_location = "-"
+            else:
+                fn = _format_filename(creation_stack[-1].filename)
+                created_location = f"{fn}:{creation_stack[-1].lineno}"
+        return SnapshotTask(
+            task_id=task_id,
+            state=task._state,
+            name=task.get_name(),
+            coro=coro_repr,
+            created_location=created_location,
+            since=since,
+            task_repr=self._snapshot_task_repr(task),
+            creation_stack=self._copy_stack(creation_stack),
+            task_stack=_extract_stack_from_task(task),
+            creation_chain=(),
+        )
+
+    async def capture_snapshot(self, name: Optional[str] = None) -> int:
+        """
+        Capture the current running and terminated task state.
+
+        Snapshot contents are copies of the task metadata and stack frames at
+        capture time, so later task changes do not alter an existing snapshot.
+        """
+        captured_at = time.perf_counter()
+        all_tasks = asyncio.all_tasks(loop=self._monitored_loop)
+        tasks = {
+            str(id(task)): self._snapshot_task_item(task, captured_at)
+            for task in sorted(
+                all_tasks,
+                key=id,
+            )
+        }
+        for task in all_tasks:
+            task_item = tasks[str(id(task))]
+            chain: List[SnapshotTask] = []
+            current_task: Optional[asyncio.Task[Any]] = task
+            while current_task is not None:
+                current_item = tasks.get(str(id(current_task)))
+                if current_item is None:
+                    break
+                chain.append(current_item)
+                task_ref = self._created_traceback_chains.get(current_task)
+                current_task = task_ref() if task_ref is not None else None
+            task_item.creation_chain = tuple(chain)
+
+        snapshot_id = self._next_snapshot_id
+        self._next_snapshot_id += 1
+        snapshot = Snapshot(
+            id=snapshot_id,
+            name=name,
+            captured_at=captured_at,
+            tasks=tasks,
+            terminated_tasks=copy.deepcopy(self._terminated_tasks),
+        )
+        self._snapshots[snapshot_id] = snapshot
+        while len(self._snapshots) > self._max_snapshots:
+            unnamed = (
+                candidate
+                for candidate in self._snapshots.values()
+                if candidate.name is None
+            )
+            oldest = next(unnamed, None)
+            if oldest is None:
+                break
+            del self._snapshots[oldest.id]
+        return snapshot_id
+
+    def list_snapshots(self) -> Sequence[SnapshotSummary]:
+        return [
+            SnapshotSummary(
+                id=snapshot.id,
+                name=snapshot.name,
+                running_count=len(snapshot.tasks),
+                terminated_count=len(snapshot.terminated_tasks),
+            )
+            for snapshot in self._snapshots.values()
+        ]
+
+    def get_snapshot(self, snapshot_id: str | int) -> Snapshot:
+        return self._get_snapshot(snapshot_id)
+
+    def delete_snapshot(self, snapshot_id: str | int) -> None:
+        snapshot = self._get_snapshot(snapshot_id)
+        del self._snapshots[snapshot.id]
+
+    def format_snapshot_task_list(
+        self,
+        snapshot_id: str | int,
+    ) -> Sequence[FormattedLiveTaskInfo]:
+        snapshot = self._get_snapshot(snapshot_id)
+        return [
+            FormattedLiveTaskInfo(
+                task_id=task.task_id,
+                state=task.state,
+                name=task.name,
+                coro=task.coro,
+                created_location=task.created_location,
+                since=task.since,
+            )
+            for task in snapshot.tasks.values()
+        ]
+
+    def format_snapshot_terminated_task_list(
+        self,
+        snapshot_id: str | int,
+    ) -> Sequence[FormattedTerminatedTaskInfo]:
+        snapshot = self._get_snapshot(snapshot_id)
+        tasks = sorted(
+            snapshot.terminated_tasks.values(),
+            key=lambda info: info.terminated_at,
+            reverse=True,
+        )
+        return [
+            FormattedTerminatedTaskInfo(
+                task_id=str(item.id),
+                name=item.name,
+                coro=item.coro,
+                started_since=_format_timedelta(
+                    timedelta(seconds=snapshot.captured_at - item.started_at)
+                ),
+                terminated_since=_format_timedelta(
+                    timedelta(seconds=snapshot.captured_at - item.terminated_at)
+                ),
+            )
+            for item in tasks
+        ]
+
+    def format_snapshot_task_stack(
+        self,
+        snapshot_id: str | int,
+        task_id: str | int,
+    ) -> Sequence[FormattedStackItem]:
+        snapshot = self._get_snapshot(snapshot_id)
+        try:
+            task_id_ = str(int(task_id))
+        except (TypeError, ValueError):
+            raise KeyError(task_id) from None
+        task = snapshot.tasks[task_id_]
+        depth = 0
+        formatted_stack_list = []
+        prev_task: Optional[SnapshotTask] = None
+        for chain_task in reversed(task.creation_chain):
+            if depth == 0:
+                formatted_stack_list.append(
+                    FormattedStackItem(
+                        FormatItemTypes.HEADER,
+                        (
+                            "Stack of the root task or coroutine scheduled "
+                            "in the event loop (most recent call last)"
+                        ),
+                    )
+                )
+            else:
+                assert prev_task is not None
+                formatted_stack_list.append(
+                    FormattedStackItem(
+                        FormatItemTypes.HEADER,
+                        (
+                            "Stack of %s when creating the next task "
+                            "(most recent call last)" % prev_task.task_repr
+                        ),
+                    )
+                )
+            stack = chain_task.creation_stack
+            if stack is None:
+                formatted_stack_list.append(
+                    FormattedStackItem(
+                        FormatItemTypes.CONTENT,
+                        (
+                            "No stack available (maybe it is a native code, "
+                            "a synchronous callback function, "
+                            "or the event loop itself)"
+                        ),
+                    )
+                )
+            else:
+                stack = _filter_stack(stack) if stack else stack
+                formatted_stack_list.append(
+                    FormattedStackItem(
+                        FormatItemTypes.CONTENT,
+                        textwrap.dedent("".join(traceback.format_list(stack))),
+                    )
+                )
+            prev_task = chain_task
+            depth += 1
+        formatted_stack_list.append(
+            FormattedStackItem(
+                FormatItemTypes.HEADER,
+                "Stack of %s (most recent call last)" % task.task_repr,
+            )
+        )
+        if not task.task_stack:
+            formatted_stack_list.append(
+                FormattedStackItem(
+                    FormatItemTypes.CONTENT,
+                    "No stack available for %s" % task.task_repr,
+                )
+            )
+        else:
+            formatted_stack_list.append(
+                FormattedStackItem(
+                    FormatItemTypes.CONTENT,
+                    textwrap.dedent(
+                        "".join(traceback.format_list(task.task_stack))
+                    ),
+                )
+            )
+        return formatted_stack_list
+
+    def format_snapshot_diff(
+        self,
+        snapshot_id_1: str | int,
+        snapshot_id_2: str | int,
+    ) -> FormattedSnapshotDiff:
+        snapshot_1 = self._get_snapshot(snapshot_id_1)
+        snapshot_2 = self._get_snapshot(snapshot_id_2)
+        ids_1 = set(snapshot_1.tasks)
+        ids_2 = set(snapshot_2.tasks)
+
+        def format_task(task: SnapshotTask) -> FormattedLiveTaskInfo:
+            return FormattedLiveTaskInfo(
+                task_id=task.task_id,
+                state=task.state,
+                name=task.name,
+                coro=task.coro,
+                created_location=task.created_location,
+                since=task.since,
+            )
+
+        return FormattedSnapshotDiff(
+            added=[
+                format_task(snapshot_2.tasks[task_id])
+                for task_id in sorted(ids_2 - ids_1, key=int)
+            ],
+            removed=[
+                format_task(snapshot_1.tasks[task_id])
+                for task_id in sorted(ids_1 - ids_2, key=int)
+            ],
+            common=[
+                format_task(snapshot_2.tasks[task_id])
+                for task_id in sorted(ids_1 & ids_2, key=int)
+            ],
+        )
 
     def format_running_task_list(
         self, filter_: str, persistent: bool
@@ -636,6 +930,7 @@ def start_monitor(
     console_enabled: bool = True,
     hook_task_factory: bool = False,
     max_termination_history: Optional[int] = None,
+    max_snapshots: Optional[int] = None,
     locals: Optional[Dict[str, Any]] = None,
 ) -> Monitor:
     """
@@ -664,6 +959,11 @@ def start_monitor(
             max_termination_history
             if max_termination_history is not None
             else get_default_args(monitor_cls.__init__)["max_termination_history"]
+        ),
+        max_snapshots=(
+            max_snapshots
+            if max_snapshots is not None
+            else get_default_args(monitor_cls.__init__)["max_snapshots"]
         ),
         locals=locals,
     )

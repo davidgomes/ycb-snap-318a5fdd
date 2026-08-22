@@ -1,0 +1,56 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="flex items-center gap-x-3">
+  <input id="snapshot-name" type="text" placeholder="Snapshot name"
+    class="rounded-md border-0 py-1 px-3 text-sm text-gray-900 ring-1 ring-inset ring-gray-300">
+  <button type="button" onclick="saveSnapshot()"
+    class="rounded bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500">
+    Save snapshot
+  </button>
+</div>
+<div class="mt-8 flow-root">
+  <table class="min-w-full divide-y divide-gray-300">
+    <thead>
+      <tr>
+        <th class="py-2.5 px-1 text-left text-sm font-semibold text-gray-900">ID</th>
+        <th class="py-2.5 px-1 text-left text-sm font-semibold text-gray-900">Name</th>
+        <th class="py-2.5 px-1 text-left text-sm font-semibold text-gray-900">Running</th>
+        <th class="py-2.5 px-1 text-left text-sm font-semibold text-gray-900">Terminated</th>
+        <th class="py-2.5 px-1 text-left text-sm font-semibold text-gray-900">Action</th>
+      </tr>
+    </thead>
+    <tbody id="snapshot-list" class="divide-y divide-gray-200"></tbody>
+  </table>
+</div>
+<script type="text/javascript">
+async function loadSnapshots() {
+  const response = await fetch("/api/snapshot");
+  const data = await response.json();
+  const list = document.getElementById("snapshot-list");
+  list.innerHTML = data.snapshots.map((snapshot) => `
+    <tr>
+      <td class="px-1 py-2 text-sm font-medium text-gray-900">${snapshot.id}</td>
+      <td class="px-1 py-2 text-sm text-gray-500">${snapshot.name || ""}</td>
+      <td class="px-1 py-2 text-sm text-gray-500">${snapshot.running_count}</td>
+      <td class="px-1 py-2 text-sm text-gray-500">${snapshot.terminated_count}</td>
+      <td class="px-1 py-2 text-sm">
+        <button class="rounded bg-rose-600 px-2 py-1 text-xs font-semibold text-white"
+          onclick="deleteSnapshot(${snapshot.id})">Delete</button>
+      </td>
+    </tr>`).join("");
+}
+async function saveSnapshot() {
+  const name = document.getElementById("snapshot-name").value;
+  const body = new URLSearchParams();
+  if (name) body.set("name", name);
+  await fetch("/api/snapshot", {method: "POST", body});
+  document.getElementById("snapshot-name").value = "";
+  await loadSnapshots();
+}
+async function deleteSnapshot(id) {
+  await fetch(`/api/snapshot?snapshot_id=${id}`, {method: "DELETE"});
+  await loadSnapshots();
+}
+loadSnapshots();
+</script>
+{% endblock %}

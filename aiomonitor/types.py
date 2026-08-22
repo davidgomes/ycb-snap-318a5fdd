@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import traceback
 from dataclasses import dataclass
-from typing import List, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional, Sequence
 
 if sys.version_info >= (3, 11):
     from enum import StrEnum
@@ -38,6 +38,44 @@ class FormatItemTypes(StrEnum):
 class FormattedStackItem(NamedTuple):
     type: FormatItemTypes
     content: str
+
+
+@dataclass
+class SnapshotTask:
+    task_id: str
+    state: str
+    name: str
+    coro: str
+    created_location: str
+    since: str
+    task_repr: str
+    creation_stack: Optional[List[traceback.FrameSummary]]
+    task_stack: List[traceback.FrameSummary]
+    creation_chain: Sequence["SnapshotTask"]
+
+
+@dataclass
+class Snapshot:
+    id: int
+    name: Optional[str]
+    captured_at: float
+    tasks: Dict[str, SnapshotTask]
+    terminated_tasks: Dict[str, "TerminatedTaskInfo"]
+
+
+@dataclass
+class SnapshotSummary:
+    id: int
+    name: Optional[str]
+    running_count: int
+    terminated_count: int
+
+
+@dataclass
+class FormattedSnapshotDiff:
+    added: List[FormattedLiveTaskInfo]
+    removed: List[FormattedLiveTaskInfo]
+    common: List[FormattedLiveTaskInfo]
 
 
 @dataclass

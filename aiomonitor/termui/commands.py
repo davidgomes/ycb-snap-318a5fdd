@@ -26,6 +26,7 @@ from ..exceptions import MissingTask
 from .completion import (
     ClickCompleter,
     complete_signal_names,
+    complete_snapshot_id,
     complete_task_id,
     complete_trace_id,
 )
@@ -480,6 +481,185 @@ def do_ps_terminated(
     stdout.write(table.table)
     stdout.write("\n")
     stdout.flush()
+
+
+@monitor_cli.group(name="snapshot", aliases=["snap"])
+def snapshot_cli() -> None:
+    """Capture and compare task state snapshots"""
+
+
+@snapshot_cli.command(name="save")
+@click.option("--name", default=None, help="Optional snapshot name")
+@custom_help_option
+def do_snapshot_save(ctx: click.Context, name: str | None) -> None:
+    """Save a snapshot of the current task state"""
+    self: Monitor = ctx.obj
+
+    @auto_async_command_done
+    async def _save(ctx: click.Context) -> None:
+        snapshot_id = await self.capture_snapshot(name)
+        if name is None:
+            print_ok(f"Snapshot {snapshot_id} saved")
+        else:
+            print_ok(f"Snapshot {snapshot_id} ({name}) saved")
+
+    task = self._ui_loop.create_task(_save(ctx))
+    self._termui_tasks.add(task)
+
+
+def _snapshot_task_table(
+    tasks: Sequence[object],
+    headers: Tuple[str, ...],
+    attributes: Tuple[str, ...],
+) -> str:
+    table_data: List[Tuple[str, ...]] = [headers]
+    for task in tasks:
+        table_data.append(tuple(str(getattr(task, attr)) for attr in attributes))
+    table = AsciiTable(table_data)
+    table.inner_row_border = False
+    table.inner_column_border = False
+    return table.table
+
+
+@snapshot_cli.command(name="list", aliases=["ls"])
+@custom_help_option
+@auto_command_done
+def do_snapshot_list(ctx: click.Context) -> None:
+    """List saved snapshots"""
+    self: Monitor = ctx.obj
+    stdout = _get_current_stdout()
+    snapshots = self.list_snapshots()
+    stdout.write(
+        _snapshot_task_table(
+            snapshots,
+            ("ID", "Name", "Running", "Terminated"),
+            ("id", "name", "running_count", "terminated_count"),
+        )
+    )
+    stdout.write("\n")
+    stdout.flush()
+
+
+@snapshot_cli.command(name="show")
+@click.argument("snapshot_id", shell_complete=complete_snapshot_id)
+@custom_help_option
+@auto_command_done
+def do_snapshot_show(ctx: click.Context, snapshot_id: str) -> None:
+    """Show the tasks captured by a snapshot"""
+    self: Monitor = ctx.obj
+    stdout = _get_current_stdout()
+    try:
+        snapshot = self.get_snapshot(snapshot_id)
+        running = self.format_snapshot_task_list(snapshot_id)
+        terminated = self.format_snapshot_terminated_task_list(snapshot_id)
+    except KeyError:
+        print_fail(f"No snapshot {snapshot_id}")
+        return
+    stdout.write(
+        f"Snapshot {snapshot.id}"
+        f"{f' ({snapshot.name})' if snapshot.name is not None else ''}\n"
+    )
+    stdout.write(
+        _snapshot_task_table(
+            running,
+            ("Task ID", "State", "Name", "Coroutine", "Created Location", "Since"),
+            ("task_id", "state", "name", "coro", "created_location", "since"),
+        )
+    )
+    stdout.write("\n")
+    stdout.write(
+        _snapshot_task_table(
+            terminated,
+            ("Trace ID", "Name", "Coro", "Since Started", "Since Terminated"),
+            ("task_id", "name", "coro", "started_since", "terminated_since"),
+        )
+    )
+    stdout.write("\n")
+    stdout.flush()
+
+
+@snapshot_cli.command(name="where")
+@click.argument("snapshot_id", shell_complete=complete_snapshot_id)
+@click.argument("task_id", shell_complete=complete_task_id)
+@custom_help_option
+@auto_command_done
+def do_snapshot_where(
+    ctx: click.Context,
+    snapshot_id: str,
+    task_id: str,
+) -> None:
+    """Show the stack captured for a task"""
+    self: Monitor = ctx.obj
+    stdout = _get_current_stdout()
+    try:
+        formatted_stack_list = self.format_snapshot_task_stack(
+            snapshot_id,
+            task_id,
+        )
+    except KeyError:
+        print_fail(f"No task {task_id} in snapshot {snapshot_id}")
+        return
+    for item_type, item_text in formatted_stack_list:
+        if item_type == "header":
+            stdout.write("\n")
+            print_formatted_text(
+                FormattedText([
+                    ("ansiwhite", item_text),
+                ])
+            )
+        else:
+            stdout.write(textwrap.indent(item_text.strip("\n"), "  "))
+            stdout.write("\n")
+
+
+@snapshot_cli.command(name="diff")
+@click.argument("snapshot_id_1", shell_complete=complete_snapshot_id)
+@click.argument("snapshot_id_2", shell_complete=complete_snapshot_id)
+@custom_help_option
+@auto_command_done
+def do_snapshot_diff(
+    ctx: click.Context,
+    snapshot_id_1: str,
+    snapshot_id_2: str,
+) -> None:
+    """Compare tasks in two snapshots"""
+    self: Monitor = ctx.obj
+    stdout = _get_current_stdout()
+    try:
+        diff = self.format_snapshot_diff(snapshot_id_1, snapshot_id_2)
+    except KeyError:
+        print_fail(f"No snapshot {snapshot_id_1} or {snapshot_id_2}")
+        return
+    for title, tasks in (
+        ("Added", diff.added),
+        ("Removed", diff.removed),
+        ("Common", diff.common),
+    ):
+        stdout.write(f"{title}:\n")
+        stdout.write(
+            _snapshot_task_table(
+                tasks,
+                ("Task ID", "State", "Name", "Coroutine", "Created Location", "Since"),
+                ("task_id", "state", "name", "coro", "created_location", "since"),
+            )
+        )
+        stdout.write("\n")
+    stdout.flush()
+
+
+@snapshot_cli.command(name="delete")
+@click.argument("snapshot_id", shell_complete=complete_snapshot_id)
+@custom_help_option
+@auto_command_done
+def do_snapshot_delete(ctx: click.Context, snapshot_id: str) -> None:
+    """Delete a saved snapshot"""
+    self: Monitor = ctx.obj
+    try:
+        self.delete_snapshot(snapshot_id)
+    except KeyError:
+        print_fail(f"No snapshot {snapshot_id}")
+        return
+    print_ok(f"Deleted snapshot {snapshot_id}")
 
 
 @monitor_cli.command(name="where", aliases=["w"])

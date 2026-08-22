@@ -82,6 +82,22 @@ def complete_trace_id(
     ][:10]
 
 
+def complete_snapshot_id(
+    ctx: click.Context,
+    param: click.Parameter,
+    incomplete: str,
+) -> Iterable[str]:
+    try:
+        self: Monitor = current_monitor.get()
+    except LookupError:
+        return []
+    return [
+        snapshot_id
+        for snapshot_id in map(str, sorted(self._snapshots.keys()))
+        if snapshot_id.startswith(incomplete)
+    ][:10]
+
+
 def complete_signal_names(
     ctx: click.Context,
     param: click.Parameter,

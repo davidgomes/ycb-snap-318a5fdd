@@ -38,6 +38,8 @@ async def check_params(
         ) from None
     try:
         yield params
+    except web.HTTPException:
+        raise
     except Exception as e:
         raise web.HTTPInternalServerError(
             content_type="application/json",
