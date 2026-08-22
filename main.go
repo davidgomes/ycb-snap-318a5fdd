@@ -442,6 +442,30 @@ func main() {
 		"",
 		"have multiple format output overriding --format [e.g. tabular:stdout,csv:file.csv,json:file.json]",
 	)
+	flags.BoolVar(
+		&processor.BoundedMemory,
+		"bounded-memory",
+		false,
+		"enable bounded-memory mode for --format-multi",
+	)
+	flags.StringVar(
+		&processor.BoundedMemoryDir,
+		"bounded-memory-dir",
+		"",
+		"directory for bounded-memory spill files (required when --bounded-memory is enabled)",
+	)
+	flags.IntVar(
+		&processor.BoundedMemoryMaxInMemoryFiles,
+		"bounded-memory-max-in-memory-files",
+		0,
+		"maximum file records kept in memory for --format-multi (required when --bounded-memory is enabled, must be > 0)",
+	)
+	flags.BoolVar(
+		&processor.BoundedMemoryStats,
+		"bounded-memory-stats",
+		false,
+		"emit bounded-memory statistics to stderr",
+	)
 	flags.StringVar(
 		&processor.SQLProject,
 		"sql-project",

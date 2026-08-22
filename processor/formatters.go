@@ -828,71 +828,29 @@ func fileSummarize(input chan *FileJob) string {
 // both to files and to stdout. Not the most efficient way to do it in terms of memory
 // but seeing as the files are just summaries by this point it shouldn't be too bad
 func fileSummarizeMulti(input chan *FileJob) string {
+	if BoundedMemory {
+		collector := newBoundedMemoryCollector()
+		collector.collect(input)
+		emitBoundedMemoryStats(collector.spills, collector.peak)
+		return formatMultiOutput(collector.replay)
+	}
+
 	// collect all the results
 	var results []*FileJob
 	for res := range input {
 		results = append(results, res)
 	}
 
-	var str strings.Builder
-
-	// for each output pump the results into
-	for s := range strings.SplitSeq(FormatMulti, ",") {
-		t := strings.Split(s, ":")
-		if len(t) == 2 {
-			i := make(chan *FileJob, len(results))
-
-			for _, r := range results {
-				i <- r
-			}
-			close(i)
-
-			var val string
-
-			switch strings.ToLower(t[0]) {
-			case "tabular":
-				val = fileSummarizeShort(i)
-			case "wide":
-				val = fileSummarizeLong(i)
-			case "json":
-				val = toJSON(i)
-			case "json2":
-				val = toJSON2(i)
-			case "cloc-yaml":
-				val = toClocYAML(i)
-			case "cloc-yml":
-				val = toClocYAML(i)
-			case "csv":
-				val = toCSV(i)
-			case "csv-stream":
-				// special case where we want to ignore writing to stdout to disk as it's already done
-				_ = toCSVStream(i)
-				continue
-			case "html":
-				val = toHtml(i)
-			case "html-table":
-				val = toHtmlTable(i)
-			case "sql":
-				val = toSql(i)
-			case "sql-insert":
-				val = toSqlInsert(i)
-			case "openmetrics":
-				val = toOpenMetrics(i)
-			}
-
-			if t[1] == "stdout" {
-				str.WriteString(val)
-				str.WriteString("\n")
-			} else {
-				err := os.WriteFile(t[1], []byte(val), 0600)
-				if err != nil {
-					fmt.Printf("%s unable to be written to for format %s: %s", t[1], t[0], err)
-				}
-			}
+	replay := func() chan *FileJob {
+		i := make(chan *FileJob, len(results))
+		for _, r := range results {
+			i <- r
 		}
+		close(i)
+		return i
 	}
 
-	return str.String()
+	return formatMultiOutput(replay)
 }
 
 func fileSummarizeLong(input chan *FileJob) string {

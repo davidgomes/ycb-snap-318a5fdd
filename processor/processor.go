@@ -581,6 +581,7 @@ func Process() {
 
 	ProcessConstants()
 	processFlags()
+	setupBoundedMemory()
 
 	// Clean up any invalid arguments before setting everything up
 	if len(DirFilePaths) == 0 {
