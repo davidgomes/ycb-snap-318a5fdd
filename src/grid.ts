@@ -195,16 +195,29 @@ const getTrackSizes = (
 		const start = axis === 'width' ? placement.column : placement.row;
 		const end = axis === 'width' ? placement.columnEnd : placement.rowEnd;
 
-		if (end - start !== 1 || !placement.node.yogaNode) {
+		if (!placement.node.yogaNode) {
 			continue;
 		}
 
-		const track = tracks[start];
-		if (track?.auto) {
-			sizes[start] = Math.max(
-				sizes[start] ?? 0,
-				intrinsicSize(placement.node.yogaNode, axis),
-			);
+		const intrinsic = intrinsicSize(placement.node.yogaNode, axis);
+		const span = end - start;
+		if (span === 1 && tracks[start]?.auto) {
+			sizes[start] = Math.max(sizes[start] ?? 0, intrinsic);
+		}
+
+		if (span > 1) {
+			const currentSize =
+				sizes.slice(start, end).reduce((sum, size) => sum + size, 0) +
+				gap * (span - 1);
+			const autoTracks = tracks
+				.slice(start, end)
+				.map((track, index) => (track.auto ? start + index : -1))
+				.filter(index => index >= 0);
+			const extraSize = Math.max(0, intrinsic - currentSize);
+
+			for (const index of autoTracks) {
+				sizes[index]! += extraSize / autoTracks.length;
+			}
 		}
 	}
 
@@ -214,7 +227,7 @@ const getTrackSizes = (
 				0,
 				available - gapSize - sizes.reduce((sum, size) => sum + size, 0),
 			)
-		: 0;
+		: Number.POSITIVE_INFINITY;
 
 	// A fixed maximum in minmax() can grow up to that maximum before flexible
 	// maxima receive the remaining space.
@@ -236,7 +249,7 @@ const getTrackSizes = (
 		0,
 	);
 
-	if (totalFraction > 0 && freeSpace > 0) {
+	if (totalFraction > 0 && Number.isFinite(freeSpace) && freeSpace > 0) {
 		for (const [index, track] of tracks.entries()) {
 			if (track.fraction) {
 				sizes[index]! += (freeSpace * track.fraction) / totalFraction;
