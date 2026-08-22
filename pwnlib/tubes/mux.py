@@ -56,14 +56,14 @@ class TubeMultiplexer(object):
     Examples:
 
         >>> t1, t2 = _connected_tubes()
-        >>> m1, m2 = t1.mux(), t2.mux()
+        >>> m1, m2 = TubeMultiplexer(t1), TubeMultiplexer(t2)
         >>> m1.high_water_mark, m1.low_water_mark
         (1048576, 262144)
         >>> isinstance(m1.channels, dict)
         True
         >>> a = m1.open_channel(1, timeout=2)
         >>> b = m2.accept_channel(timeout=2)
-        >>> isinstance(a, MuxChannel) and isinstance(a, tube)
+        >>> isinstance(a, MuxChannel)
         True
         >>> a.channel_id, b.channel_id
         (1, 1)
@@ -130,15 +130,6 @@ class TubeMultiplexer(object):
                 return cid
         raise ValueError('no free channel IDs')
 
-    def _validate_channel_id(self, channel_id):
-        if not _is_int(channel_id):
-            raise TypeError('channel_id must be an integer')
-        if not (_MIN_CHANNEL_ID <= channel_id <= _MAX_CHANNEL_ID):
-            raise ValueError('channel_id must be in [1, 65535]')
-        existing = self._channels.get(channel_id)
-        if existing is not None and not existing._fully_closed:
-            raise ValueError('channel_id %d is already in use' % channel_id)
-
     def open_channel(self, channel_id=None, timeout=None):
         """open_channel(channel_id=None, timeout=None) -> MuxChannel
 
@@ -162,7 +153,7 @@ class TubeMultiplexer(object):
         Examples:
 
             >>> t1, t2 = _connected_tubes()
-            >>> m1, m2 = t1.mux(), t2.mux()
+            >>> m1, m2 = TubeMultiplexer(t1), TubeMultiplexer(t2)
             >>> TubeMultiplexer('not a tube')
             Traceback (most recent call last):
                 ...
@@ -198,6 +189,12 @@ class TubeMultiplexer(object):
             EOFError
             >>> m2.close()
         """
+        if channel_id is not None:
+            if not _is_int(channel_id):
+                raise TypeError('channel_id must be an integer')
+            if not (_MIN_CHANNEL_ID <= channel_id <= _MAX_CHANNEL_ID):
+                raise ValueError('channel_id must be in [1, 65535]')
+
         if self._closed:
             raise EOFError
 
@@ -209,7 +206,9 @@ class TubeMultiplexer(object):
                     raise ValueError('maximum number of channels (%d) reached' % self._max_channels)
                 channel_id = self._allocate_id()
             else:
-                self._validate_channel_id(channel_id)
+                existing = self._channels.get(channel_id)
+                if existing is not None and not existing._fully_closed:
+                    raise ValueError('channel_id %d is already in use' % channel_id)
                 if self._capacity_used() >= self._max_channels:
                     raise ValueError('maximum number of channels (%d) reached' % self._max_channels)
             ch = MuxChannel(self, channel_id)
@@ -252,7 +251,7 @@ class TubeMultiplexer(object):
         Examples:
 
             >>> t1, t2 = _connected_tubes()
-            >>> m1, m2 = t1.mux(), t2.mux()
+            >>> m1, m2 = TubeMultiplexer(t1), TubeMultiplexer(t2)
             >>> m1.accept_channel(timeout=0.05) is None
             True
             >>> ch = m2.open_channel(timeout=2)
@@ -302,7 +301,7 @@ class TubeMultiplexer(object):
         Examples:
 
             >>> t1, t2 = _connected_tubes()
-            >>> m1, m2 = t1.mux(), t2.mux()
+            >>> m1, m2 = TubeMultiplexer(t1), TubeMultiplexer(t2)
             >>> err = []
             >>> def waiter():
             ...     try:
@@ -329,6 +328,16 @@ class TubeMultiplexer(object):
         for ch in channels:
             ch._force_eof()
 
+        # Shutdown first so a blocked reader (and an idle peer) see EOF
+        # even if they are sitting in recv().
+        try:
+            self._underlying.shutdown('send')
+        except Exception:
+            pass
+        try:
+            self._underlying.shutdown('recv')
+        except Exception:
+            pass
         try:
             self._underlying.close()
         except Exception:
@@ -349,12 +358,29 @@ class TubeMultiplexer(object):
                 raise EOFError
             self._underlying.send(frame)
 
+    def _underlying_recv_alive(self):
+        if self._closed:
+            return False
+        try:
+            return bool(self._underlying.connected('recv'))
+        except Exception:
+            return False
+
     def _read_exact(self, n):
         if n == 0:
             return b''
-        data = self._underlying.recvn(n, timeout=Timeout.forever)
-        if not data or len(data) != n:
-            raise EOFError
+        data = b''
+        # Poll so underlying.close() is noticed even when this thread is
+        # mid-recv on the same socket (close() alone may not unblock it).
+        while len(data) < n:
+            if not self._underlying_recv_alive():
+                raise EOFError
+            try:
+                chunk = self._underlying.recv(n - len(data), timeout=0.05)
+            except EOFError:
+                raise
+            if chunk:
+                data += chunk
         return data
 
     def _read_frame(self):
@@ -368,6 +394,8 @@ class TubeMultiplexer(object):
                 typ, channel_id, payload = self._read_frame()
                 self._handle_frame(typ, channel_id, payload)
         except (EOFError, OSError, socket.error):
+            pass
+        except Exception:
             pass
         finally:
             self.close()
@@ -453,7 +481,7 @@ class MuxChannel(tube):
     Examples:
 
         >>> t1, t2 = _connected_tubes()
-        >>> m1, m2 = t1.mux(), t2.mux()
+        >>> m1, m2 = TubeMultiplexer(t1), TubeMultiplexer(t2)
         >>> a = m1.open_channel(1, timeout=2)
         >>> b = m2.accept_channel(timeout=2)
         >>> a.stats == {'bytes_sent': 0, 'bytes_received': 0,
@@ -542,8 +570,7 @@ class MuxChannel(tube):
     def stats(self):
         """dict: ``bytes_sent``, ``bytes_received``, ``frames_sent``,
         ``frames_received``."""
-        with self._stats_lock:
-            return dict(self._stats)
+        return self._stats
 
     def _unread(self):
         return len(self.buffer) + len(self._incoming)
