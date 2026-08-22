@@ -503,6 +503,40 @@ __Test bold__
 ``````
 </details>
 
+## Link Style
+
+Alias: `link-style`
+
+Converts between Obsidian wiki links and markdown links.
+
+### Options
+
+| Name | Description | List Items | Default Value |
+| ---- | ----------- | ---------- | ------------- |
+| `Link Style` | The style to use for links. | `no-change`: Leave links unchanged<br/><br/>`markdown`: Use markdown links<br/><br/>`wiki`: Use Obsidian wiki links | `no-change` |
+| `Image Style` | The style to use for images. | `no-change`: Leave images unchanged<br/><br/>`markdown`: Use markdown images<br/><br/>`wiki`: Use Obsidian wiki embeds | `no-change` |
+
+
+
+### Examples
+
+<details><summary>Wiki links and embeds are converted to markdown when both styles are set to `markdown`</summary>
+
+Before:
+
+`````` markdown
+[[note]]
+![[image.png]]
+``````
+
+After:
+
+`````` markdown
+[note](note)
+![image.png](image.png)
+``````
+</details>
+
 ## No Bare URLs
 
 Alias: `no-bare-urls`
