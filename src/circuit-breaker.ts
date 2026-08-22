@@ -66,7 +66,12 @@ export function resolveRequestOrigin(
     if (request instanceof URL) {
       return request.origin;
     }
-    if (request instanceof Request) {
+    if (
+      typeof request === "object" &&
+      request !== null &&
+      "url" in request &&
+      typeof request.url === "string"
+    ) {
       return new URL(request.url).origin;
     }
     return new URL(request).origin;
@@ -119,6 +124,16 @@ export function acquireCircuitBreaker(
     origin,
     isHalfOpen: circuit.status === "half-open",
   };
+}
+
+export function releaseCircuitBreaker(
+  registry: CircuitBreakerRegistry,
+  lease: CircuitBreakerLease
+): void {
+  const circuit = registry.get(lease.origin);
+  if (lease.isHalfOpen && circuit?.status === "half-open") {
+    circuit.halfOpenRequests--;
+  }
 }
 
 export function completeCircuitBreaker(

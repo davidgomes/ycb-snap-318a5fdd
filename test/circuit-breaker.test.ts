@@ -225,6 +225,42 @@ describe("circuit breaker", () => {
     expect(fetch).toHaveBeenCalledTimes(3);
   });
 
+  it("tracks the effective origin when a retry rewrites the request", async () => {
+    let requestCount = 0;
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(response(500, "retry"))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(response());
+    const client = createFetch({ fetch });
+
+    await expect(
+      client(`${origin}/health`, {
+        circuitBreaker: { threshold: 1 },
+        retry: 1,
+        onRequest(context) {
+          requestCount++;
+          if (requestCount > 1) {
+            context.request = `${otherOrigin}/health`;
+          }
+        },
+      })
+    ).rejects.toThrow("offline");
+    await expect(
+      client(`${otherOrigin}/health`, {
+        circuitBreaker: { threshold: 1 },
+        retry: false,
+      })
+    ).rejects.toThrow("Circuit breaker is open");
+    await expect(
+      client(`${origin}/health`, {
+        circuitBreaker: { threshold: 1 },
+        retry: false,
+      })
+    ).resolves.toBe("ok");
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
   it("does not count rejected non-listed statuses as success", async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

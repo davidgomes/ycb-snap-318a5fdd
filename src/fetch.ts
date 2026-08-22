@@ -6,6 +6,7 @@ import {
   completeCircuitBreaker,
   createCircuitBreakerRegistry,
   isCircuitBreakerFailureStatus,
+  releaseCircuitBreaker,
   resolveCircuitBreakerConfig,
   resolveRequestOrigin,
 } from "./circuit-breaker.ts";
@@ -194,6 +195,21 @@ function createFetchWithCircuitBreakerState(
               ),
             };
           }
+        }
+      } else if (logicalRequest.circuitBreaker) {
+        const origin = resolveRequestOrigin(context.request);
+        if (origin && origin !== logicalRequest.circuitBreaker.lease.origin) {
+          const { config, lease } = logicalRequest.circuitBreaker;
+          const nextLease = acquireCircuitBreaker(
+            circuitBreakerRegistry,
+            origin,
+            config
+          );
+          releaseCircuitBreaker(circuitBreakerRegistry, lease);
+          logicalRequest.circuitBreaker = {
+            config,
+            lease: nextLease,
+          };
         }
       }
 
