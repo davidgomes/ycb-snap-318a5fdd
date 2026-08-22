@@ -977,7 +977,7 @@ func decodeShape(d *decoder) Shape {
 			d.err = fmt.Errorf("unsupported polyline encoding version %d", version)
 			return shape
 		}
-		numVertices := readShapeIndexCount(d, "polyline vertices", maxEncodedShapeIndexShapeVertices)
+		numVertices := readShapeIndexFixedCount(d, "polyline vertices", maxEncodedShapeIndexShapeVertices)
 		if d.err != nil {
 			return shape
 		}
@@ -1085,6 +1085,15 @@ func decodeLaxPolygon(d *decoder) Shape {
 
 func readShapeIndexCount(d *decoder, what string, max uint64) int {
 	count := d.readUvarint()
+	return validateShapeIndexCount(d, count, what, max)
+}
+
+func readShapeIndexFixedCount(d *decoder, what string, max uint64) int {
+	count := uint64(d.readUint32())
+	return validateShapeIndexCount(d, count, what, max)
+}
+
+func validateShapeIndexCount(d *decoder, count uint64, what string, max uint64) int {
 	if d.err != nil {
 		return 0
 	}
