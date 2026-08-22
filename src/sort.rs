@@ -100,12 +100,14 @@ fn compare_entries(a: &DirEntry, b: &DirEntry, options: &SortOptions) -> Orderin
 }
 
 fn grouping_value(entry: &DirEntry, options: &SortOptions) -> u8 {
-    let is_dir = entry
-        .file_type()
-        .is_some_and(|file_type| file_type.is_dir());
-    let is_file = entry
-        .file_type()
-        .is_some_and(|file_type| file_type.is_file());
+    let is_dir = !entry.is_symlink()
+        && entry
+            .file_type()
+            .is_some_and(|file_type| file_type.is_dir());
+    let is_file = !entry.is_symlink()
+        && entry
+            .file_type()
+            .is_some_and(|file_type| file_type.is_file());
 
     if options.dirs_first {
         u8::from(!is_dir)
@@ -115,9 +117,10 @@ fn grouping_value(entry: &DirEntry, options: &SortOptions) -> u8 {
 }
 
 fn regular_file_size(entry: &DirEntry) -> Option<u64> {
-    if entry
-        .file_type()
-        .is_some_and(|file_type| file_type.is_file())
+    if !entry.is_symlink()
+        && entry
+            .file_type()
+            .is_some_and(|file_type| file_type.is_file())
     {
         entry.metadata().map(std::fs::Metadata::len)
     } else {
@@ -127,8 +130,8 @@ fn regular_file_size(entry: &DirEntry) -> Option<u64> {
 
 fn entry_type(entry: &DirEntry) -> u8 {
     match entry.file_type() {
+        _ if entry.is_symlink() => 1,
         Some(file_type) if file_type.is_dir() => 0,
-        Some(file_type) if file_type.is_symlink() => 1,
         Some(file_type) if file_type.is_file() => 2,
         _ => 3,
     }
