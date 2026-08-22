@@ -576,6 +576,7 @@ type CompiledFunction struct {
 	VarArgs       bool
 	SourceMap     map[int]parser.Pos
 	Free          []*ObjectPtr
+	compiled      *Compiled
 }
 
 // TypeName returns the name of the type.
@@ -624,6 +625,17 @@ func (o *CompiledFunction) SourcePos(ip int) parser.Pos {
 // CanCall returns whether the Object can be Called.
 func (o *CompiledFunction) CanCall() bool {
 	return true
+}
+
+// Call executes the function in the compiled instance which exposed it.
+func (o *CompiledFunction) Call(args ...Object) (Object, error) {
+	if o.compiled == nil {
+		return nil, fmt.Errorf("compiled function has no runtime")
+	}
+	o.compiled.lock.Lock()
+	defer o.compiled.lock.Unlock()
+	v := NewVM(o.compiled.bytecode, o.compiled.globals, o.compiled.maxAllocs)
+	return v.Call(o, args...)
 }
 
 // Error represents an error value.

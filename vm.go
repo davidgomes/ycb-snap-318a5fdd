@@ -32,6 +32,44 @@ type VM struct {
 	maxAllocs   int64
 	allocs      int64
 	err         error
+	returnValue Object
+	callMode    bool
+}
+
+func (v *VM) Call(fn *CompiledFunction, args ...Object) (Object, error) {
+	if fn.VarArgs {
+		realArgs := fn.NumParameters - 1
+		if len(args) >= realArgs {
+			vars := append([]Object{}, args[realArgs:]...)
+			args = append(append([]Object{}, args[:realArgs]...), &Array{Value: vars})
+		}
+	}
+	if len(args) != fn.NumParameters {
+		if fn.VarArgs {
+			return nil, fmt.Errorf("wrong number of arguments: want>=%d, got=%d", fn.NumParameters-1, len(args))
+		}
+		return nil, fmt.Errorf("wrong number of arguments: want=%d, got=%d", fn.NumParameters, len(args))
+	}
+	v.callMode = true
+	v.frames[0].fn = v.curFrame.fn
+	v.frames[1].fn = fn
+	v.frames[1].freeVars = fn.Free
+	v.frames[1].basePointer = 1
+	for i, arg := range args {
+		v.stack[1+i] = arg
+	}
+	v.curFrame = &v.frames[1]
+	v.curInsts = fn.Instructions
+	v.framesIndex = 2
+	v.ip = -1
+	v.sp = 1 + fn.NumLocals
+	v.allocs = v.maxAllocs + 1
+	v.run()
+	if v.err != nil {
+		pos := v.fileSet.Position(fn.SourcePos(v.ip - 1))
+		return nil, fmt.Errorf("Runtime Error: %w\n\tat %s", v.err, pos)
+	}
+	return v.returnValue, nil
 }
 
 // NewVM creates a VM.
@@ -676,6 +714,11 @@ func (v *VM) run() {
 				retVal = UndefinedValue
 			}
 			//v.sp--
+			if v.callMode && v.framesIndex == 2 {
+				v.returnValue = retVal
+				atomic.StoreInt64(&v.aborting, 1)
+				continue
+			}
 			v.framesIndex--
 			v.curFrame = &v.frames[v.framesIndex-1]
 			v.curInsts = v.curFrame.fn.Instructions

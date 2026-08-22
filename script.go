@@ -208,7 +208,13 @@ func (c *Compiled) Run() error {
 	defer c.lock.Unlock()
 
 	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
-	return v.Run()
+	err := v.Run()
+	if err == nil {
+		for i, g := range c.globals {
+			c.globals[i] = cloneObject(g, c)
+		}
+	}
+	return err
 }
 
 // RunContext is like Run but includes a context.
@@ -268,7 +274,7 @@ func (c *Compiled) Clone() *Compiled {
 	// copy global objects
 	for idx, g := range c.globals {
 		if g != nil {
-			clone.globals[idx] = g.Copy()
+			clone.globals[idx] = cloneObject(g, clone)
 		}
 	}
 	return clone
@@ -302,6 +308,7 @@ func (c *Compiled) Get(name string) *Variable {
 		if value == nil {
 			value = UndefinedValue
 		}
+		value = bindCompiled(value, c)
 	}
 	return &Variable{
 		name:  name,
@@ -342,6 +349,57 @@ func (c *Compiled) Set(name string, value interface{}) error {
 	if !ok {
 		return fmt.Errorf("'%s' is not defined", name)
 	}
-	c.globals[idx] = obj
+	c.globals[idx] = cloneObject(obj, c)
 	return nil
+}
+
+func bindCompiled(obj Object, c *Compiled) Object {
+	switch o := obj.(type) {
+	case *CompiledFunction:
+		o.compiled = c
+	}
+	return obj
+}
+
+func cloneObject(obj Object, c *Compiled) Object {
+	if obj == nil {
+		return nil
+	}
+	switch o := obj.(type) {
+	case *CompiledFunction:
+		f := o.Copy().(*CompiledFunction)
+		f.compiled = c
+		f.Free = make([]*ObjectPtr, len(o.Free))
+		for i, p := range o.Free {
+			v := cloneObject(*p.Value, c)
+			f.Free[i] = &ObjectPtr{Value: &v}
+		}
+		return f
+	case *Array:
+		a := &Array{Value: make([]Object, len(o.Value))}
+		for i, v := range o.Value {
+			a.Value[i] = cloneObject(v, c)
+		}
+		return a
+	case *ImmutableArray:
+		a := &ImmutableArray{Value: make([]Object, len(o.Value))}
+		for i, v := range o.Value {
+			a.Value[i] = cloneObject(v, c)
+		}
+		return a
+	case *Map:
+		m := &Map{Value: make(map[string]Object, len(o.Value))}
+		for k, v := range o.Value {
+			m.Value[k] = cloneObject(v, c)
+		}
+		return m
+	case *ImmutableMap:
+		m := &ImmutableMap{Value: make(map[string]Object, len(o.Value))}
+		for k, v := range o.Value {
+			m.Value[k] = cloneObject(v, c)
+		}
+		return m
+	default:
+		return obj.Copy()
+	}
 }
