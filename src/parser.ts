@@ -255,6 +255,8 @@ function parseStatementListItem(
     // LetOrConst BindingList[?In, ?Yield]
     case Token.ConstKeyword:
       return parseLexicalDeclaration(parser, context, scope, privateScope, BindingKind.Const, Origin.None);
+    case Token.UsingKeyword:
+      return parseUsingDeclaration(parser, context, scope, privateScope, Origin.None, false);
     case Token.LetKeyword:
       return parseLetIdentOrVarDeclarationStatement(parser, context, scope, privateScope, origin);
     // ExportDeclaration
@@ -278,6 +280,38 @@ function parseStatementListItem(
     default:
       return parseStatement(parser, context, scope, privateScope, origin, labels, 1);
   }
+}
+
+function parseUsingDeclaration(
+  parser: Parser,
+  context: Context,
+  scope: Scope | undefined,
+  privateScope: PrivateScope | undefined,
+  origin: Origin,
+  awaitUsing: boolean,
+): ESTree.VariableDeclaration {
+  const start = parser.tokenStart;
+  if (context & Context.InGlobal) {
+    if (awaitUsing || (context & Context.Module) === 0) {
+      if (awaitUsing && (context & (Context.InAwaitContext | Context.Module)) === 0)
+        parser.report(Errors.UnexpectedToken, 'await using only allowed inside async');
+      if (!awaitUsing) parser.report(Errors.UnexpectedToken, 'using not allowed in the global scope');
+    }
+  }
+  nextToken(parser, context);
+  const declarations = parseVariableDeclarationList(
+    parser,
+    context,
+    scope,
+    privateScope,
+    BindingKind.Using,
+    origin,
+  );
+  matchOrInsertSemicolon(parser, context | Context.AllowRegExp);
+  return parser.finishNode<ESTree.VariableDeclaration>(
+    { type: 'VariableDeclaration', kind: awaitUsing ? 'await using' : 'using', declarations },
+    start,
+  );
 }
 
 /**
@@ -1818,10 +1852,13 @@ function parseVariableDeclaration(
     }
     // Normal const declarations, and const declarations in for(;;) heads, must be initialized.
   } else if (
-    (kind & BindingKind.Const || (token & Token.IsPatternStart) > 0) &&
+    (kind & (BindingKind.Const | BindingKind.Using) || (token & Token.IsPatternStart) > 0) &&
     (parser.getToken() & Token.IsInOrOf) !== Token.IsInOrOf
   ) {
-    parser.report(Errors.DeclarationMissingInitializer, kind & BindingKind.Const ? 'const' : 'destructuring');
+    parser.report(
+      Errors.DeclarationMissingInitializer,
+      kind & BindingKind.Using ? 'using' : kind & BindingKind.Const ? 'const' : 'destructuring',
+    );
   }
 
   return parser.finishNode<ESTree.VariableDeclarator>(
@@ -1870,7 +1907,8 @@ function parseForStatement(
   let isVarDecl =
     parser.getToken() === Token.VarKeyword ||
     parser.getToken() === Token.LetKeyword ||
-    parser.getToken() === Token.ConstKeyword;
+    parser.getToken() === Token.ConstKeyword ||
+    parser.getToken() === Token.UsingKeyword;
   let right;
 
   const { tokenStart } = parser;
@@ -1911,6 +1949,9 @@ function parseForStatement(
         // `for of` only allows LeftHandSideExpressions which do not start with `let`, and no other production matches
         if (parser.getToken() === Token.OfKeyword) parser.report(Errors.ForOfLet);
       }
+    } else if (token === Token.UsingKeyword) {
+      init = parseUsingDeclaration(parser, context, scope, privateScope, Origin.ForStatement, false);
+      isVarDecl = true;
     } else {
       nextToken(parser, context);
 

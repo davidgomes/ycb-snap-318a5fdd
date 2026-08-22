@@ -252,7 +252,7 @@ const errorMessages: {
   [Errors.InvalidIncDecNew]: 'Invalid use of `new` keyword on an increment/decrement expression',
   [Errors.InvalidAssignmentTarget]: '`=>` is an invalid assignment target',
   [Errors.InvalidRestTrailing]: 'Rest element may not have a trailing comma',
-  [Errors.DeclarationMissingInitializer]: 'Missing initializer in %0 declaration',
+  [Errors.DeclarationMissingInitializer]: 'Missing initializer in %0 declaration; must have an initializer',
   [Errors.ForInOfLoopInitializer]: "'for-%0' loop head declarations can not have an initializer",
   [Errors.ForInOfLoopMultiBindings]: 'Invalid left-hand side in for-%0 loop: Must have a single binding',
   [Errors.InvalidShorthandPropInit]: 'Invalid shorthand property initializer',

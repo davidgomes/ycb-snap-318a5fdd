@@ -62,6 +62,7 @@ export const enum BindingKind {
   Variable = 1 << 2,
   Let = 1 << 3,
   Const = 1 << 4,
+  Using = 1 << 5,
   Class = 1 << 5,
   FunctionLexical = 1 << 6,
   FunctionStatement = 1 << 7,
@@ -74,7 +75,7 @@ export const enum BindingKind {
   AsyncGeneratorFunctionLexical = Async | Generator | FunctionLexical,
   CatchIdentifierOrPattern = CatchIdentifier | CatchPattern,
   LexicalOrFunction = Variable | FunctionLexical,
-  LexicalBinding = Let | Const | FunctionLexical | FunctionStatement | Class,
+  LexicalBinding = Let | Const | Using | FunctionLexical | FunctionStatement | Class,
 }
 
 /**
