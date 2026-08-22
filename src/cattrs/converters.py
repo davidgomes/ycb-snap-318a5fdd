@@ -96,6 +96,7 @@ from .gen import (
 from .gen.typeddicts import make_dict_structure_fn as make_typeddict_dict_struct_fn
 from .gen.typeddicts import make_dict_unstructure_fn as make_typeddict_dict_unstruct_fn
 from .literals import is_literal_containing_enums
+from .partial import PartialResult, partial_structure as _partial_structure
 from .typealiases import (
     get_type_alias_base,
     is_type_alias,
@@ -103,7 +104,13 @@ from .typealiases import (
 )
 from .types import SimpleStructureHook
 
-__all__ = ["BaseConverter", "Converter", "GenConverter", "UnstructureStrategy"]
+__all__ = [
+    "BaseConverter",
+    "Converter",
+    "GenConverter",
+    "PartialResult",
+    "UnstructureStrategy",
+]
 
 T = TypeVar("T")
 V = TypeVar("V")
@@ -589,6 +596,12 @@ class BaseConverter:
     def structure(self, obj: UnstructuredValue, cl: type[T]) -> T:
         """Convert unstructured Python data structures to structured data."""
         return self._structure_func.dispatch(cl)(obj, cl)
+
+    def partial_structure(
+        self, data: Mapping[str, Any], cl: type[T]
+    ) -> PartialResult:
+        """Partially structure a mapping into an attrs, dataclass, or TypedDict."""
+        return _partial_structure(self, data, cl)
 
     def get_structure_hook(self, type: Any, cache_result: bool = True) -> StructureHook:
         """Get the structure hook for the given type.
