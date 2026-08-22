@@ -1561,6 +1561,15 @@ This command takes the same options as the ``sqlite-utils insert`` command - so 
 
 By default all of the SQL queries will be executed in a single transaction. To commit every 20 records, use ``--batch-size 20``.
 
+Safe imports
+------------
+
+Use ``--safe-mode`` with ``insert``, ``upsert`` or ``bulk`` to roll back an
+operation that fails or violates a registered invariant. Invariants can be
+managed using ``enable-safe-import``, ``disable-safe-import``,
+``add-import-invariant``, ``remove-import-invariant``,
+``list-import-invariants`` and ``validate-import-invariants``.
+
 .. _cli_insert_files:
 
 Inserting data from files

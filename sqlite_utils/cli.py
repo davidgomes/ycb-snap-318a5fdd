@@ -1013,6 +1013,8 @@ def insert_upsert_implementation(
     _register_db_for_cleanup(db)
     _load_extensions(db, load_extension)
     _maybe_register_functions(db, functions)
+    if safe_mode:
+        db.enable_safe_import()
     if (delimiter or quotechar or sniff or no_headers) and not tsv:
         csv = True
     if (nl + csv + tsv) >= 2:
