@@ -48,6 +48,26 @@ class Channel(virtual.Channel):
     def _get(self, queue, timeout=None):
         return self._queue_for(queue).get(block=False)
 
+    def expire_messages(self, queue):
+        q = self._queue_for(queue)
+        expired = 0
+        survivors = []
+        while True:
+            try:
+                message = q.get(block=False)
+            except Exception:
+                break
+            if self.message_ttl_remaining(message) is not None and \
+                    self.message_ttl_remaining(message) < 0:
+                self.dead_letter(self.Message(message, channel=self), queue,
+                                 'expired')
+                expired += 1
+            else:
+                survivors.append(message)
+        for message in survivors:
+            q.put(message)
+        return expired
+
     def _queue_for(self, queue):
         if queue not in self.queues:
             self.queues[queue] = Queue()
@@ -58,10 +78,25 @@ class Channel(virtual.Channel):
 
     def _put_fanout(self, exchange, message, routing_key=None, **kwargs):
         for queue in self._lookup(exchange, routing_key):
-            self._queue_for(queue).put(message)
+            self.put(queue, message)
 
     def _put(self, queue, message, **kwargs):
         self._queue_for(queue).put(message)
+
+    def put(self, queue, message):
+        props = self.get_queue_properties(queue)
+        if 'x-expires-at' not in message['properties'] and \
+                props.get('message_ttl') is not None:
+            import copy
+            message = copy.deepcopy(message)
+            message['properties']['x-expires-at'] = __import__(
+                'time').time() + float(props['message_ttl']) / 1000
+        q = self._queue_for(queue)
+        while props.get('max_length') is not None and \
+                q.qsize() >= int(props['max_length']):
+            old = q.get(block=False)
+            self.dead_letter(self.Message(old, channel=self), queue, 'maxlen')
+        q.put(message)
 
     def _size(self, queue):
         return self._queue_for(queue).qsize()
