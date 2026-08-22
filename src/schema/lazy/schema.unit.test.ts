@@ -7,9 +7,7 @@ import { JSONSchemer } from '~/schema/actions/jsonSchemer/index.js'
 import { Parser } from '~/schema/actions/parse/index.js'
 import { ZodSchemer } from '~/schema/actions/zodSchemer/index.js'
 import {
-  ListSchema,
   MapSchema_,
-  StringSchema,
   item,
   lazy,
   list,
@@ -19,13 +17,10 @@ import {
 
 const createTreeSchema = (): MapSchema_ => {
   let treeSchema: MapSchema_
-  treeSchema = new MapSchema_({
-    value: new StringSchema({}),
-    children: new ListSchema(
-      lazy(() => treeSchema),
-      { required: 'never' }
-    )
-  }, {})
+  treeSchema = map({
+    value: string({}),
+    children: list(lazy(() => treeSchema)).optional()
+  }) as unknown as MapSchema_
   return treeSchema
 }
 
@@ -95,9 +90,9 @@ describe('lazy schema', () => {
 
   test('finds paths and discriminator schemas through lazy references', () => {
     const treeSchema: MapSchema_ = new MapSchema_({
-      value: new StringSchema({}),
+      value: string({}),
       child: lazy(() => treeSchema).optional()
-    }, {})
+    }, {}) as unknown as MapSchema_
     treeSchema.check()
 
     expect(treeSchema.build(Finder).search('child.value')).toHaveLength(1)
