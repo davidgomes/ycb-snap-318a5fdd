@@ -25,6 +25,10 @@ from tomlkit.api import time
 from tomlkit.api import unregister_encoder
 from tomlkit.api import value
 from tomlkit.api import ws
+from tomlkit.convert import to_dotted_keys
+from tomlkit.convert import to_inline_table
+from tomlkit.convert import to_standard_table
+from tomlkit.convert import to_super_table
 
 
 __version__ = "0.14.0"
@@ -56,4 +60,8 @@ __all__ = [
     "unregister_encoder",
     "value",
     "ws",
+    "to_dotted_keys",
+    "to_inline_table",
+    "to_standard_table",
+    "to_super_table",
 ]

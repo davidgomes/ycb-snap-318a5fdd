@@ -7,6 +7,14 @@ class TOMLKitError(Exception):
     pass
 
 
+class ConversionError(TOMLKitError):
+    """Raised when a structural table conversion cannot be performed."""
+
+    def __init__(self, key_path: str, message: str) -> None:
+        self.key_path = key_path
+        super().__init__(message)
+
+
 class ParseError(ValueError, TOMLKitError):
     """
     This error occurs when the parser encounters a syntax error
