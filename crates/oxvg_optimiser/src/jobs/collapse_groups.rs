@@ -127,18 +127,31 @@ impl<'input, 'arena> visitor::Visitor<'input>
         let Ok(matches) = self.root.select(&selector) else {
             return Ok(());
         };
+        let Some(anchor) = first_compound(&selector) else {
+            return Ok(());
+        };
+        let Ok(anchors) = self.root.select(anchor) else {
+            return Ok(());
+        };
+        let anchors: Vec<_> = anchors.collect();
 
         for target in matches {
-            let mut element = Some(target.clone());
-            while let Some(current) = element {
-                self.elements.push(HashableElement::new(current.clone()));
-                element = current.parent_element();
+            self.elements.push(HashableElement::new(target.clone()));
+            let mut ancestor = target.parent_element();
+            while let Some(current) = ancestor {
+                if anchors.iter().any(|anchor| anchor == &current) {
+                    self.elements.push(HashableElement::new(current));
+                    break;
+                }
+                ancestor = current.parent_element();
             }
-
             if selector.contains('+') || selector.contains('~') {
                 let mut sibling = target.previous_element_sibling();
                 while let Some(current) = sibling {
-                    self.elements.push(HashableElement::new(current.clone()));
+                    if anchors.iter().any(|anchor| anchor == &current) {
+                        self.elements.push(HashableElement::new(current.clone()));
+                        break;
+                    }
                     sibling = if selector.contains('~') {
                         current.previous_element_sibling()
                     } else {
@@ -170,6 +183,12 @@ fn is_structure_sensitive_selector(selector: &str) -> bool {
     ]
     .iter()
     .any(|pseudo| selector.contains(pseudo))
+}
+
+fn first_compound(selector: &str) -> Option<&str> {
+    selector
+        .split(|c: char| c.is_whitespace() || matches!(c, '>' | '+' | '~'))
+        .find(|part| !part.is_empty())
 }
 
 impl Default for CollapseGroups {
