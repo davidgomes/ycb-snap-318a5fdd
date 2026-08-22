@@ -217,6 +217,16 @@ impl OptimizedExpr {
                     let mapped = Box::new(map_internal(*expr, f));
                     OptimizedExpr::Push(mapped)
                 }
+                #[cfg(feature = "grammar-extras")]
+                OptimizedExpr::RepOnce(expr) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::RepOnce(mapped)
+                }
+                #[cfg(feature = "grammar-extras")]
+                OptimizedExpr::NodeTag(expr, tag) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::NodeTag(mapped, tag)
+                }
                 OptimizedExpr::RestoreOnErr(expr) => {
                     let mapped = Box::new(map_internal(*expr, f));
                     OptimizedExpr::RestoreOnErr(mapped)
@@ -267,6 +277,16 @@ impl OptimizedExpr {
                 OptimizedExpr::Push(expr) => {
                     let mapped = Box::new(map_internal(*expr, f));
                     OptimizedExpr::Push(mapped)
+                }
+                #[cfg(feature = "grammar-extras")]
+                OptimizedExpr::RepOnce(expr) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::RepOnce(mapped)
+                }
+                #[cfg(feature = "grammar-extras")]
+                OptimizedExpr::NodeTag(expr, tag) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::NodeTag(mapped, tag)
                 }
                 OptimizedExpr::RestoreOnErr(expr) => {
                     let mapped = Box::new(map_internal(*expr, f));
@@ -415,6 +435,10 @@ impl OptimizedExprTopDownIterator {
             | OptimizedExpr::Opt(expr)
             | OptimizedExpr::Push(expr)
             | OptimizedExpr::RestoreOnErr(expr) => {
+                self.next = Some(*expr);
+            }
+            #[cfg(feature = "grammar-extras")]
+            OptimizedExpr::RepOnce(expr) | OptimizedExpr::NodeTag(expr, _) => {
                 self.next = Some(*expr);
             }
             _ => {
