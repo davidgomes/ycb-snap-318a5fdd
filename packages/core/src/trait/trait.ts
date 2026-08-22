@@ -1,7 +1,7 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
-import { setChanged, setPairChanged } from '../query/modifiers/changed';
+import { setChanged, setPairChanged, setPairTracking } from '../query/modifiers/changed';
 import { checkQueryTrackingWithRelations } from '../query/utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
 import { getOrderedTraitRelation, isOrderedTrait, setupOrderedTraitSync } from '../relation/ordered';
@@ -177,6 +177,7 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
  * Add a relation pair to an entity.
  */
 /* @inline */ function addRelationPair(world: World, entity: Entity, pair: RelationPair) {
+    entity = getEntityId(entity) as Entity;
     const pairCtx = pair[$internal];
     const relation = pairCtx.relation;
     const target = pairCtx.target;
@@ -221,6 +222,7 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
 
     // Fire add subscription for this pair
     instance = instance ?? getTraitInstance(world[$internal].traitInstances, relationTrait)!;
+    setPairTracking(world, entity, relation, target, 'add');
     for (const sub of instance.addSubscriptions) sub(entity, target);
 }
 
@@ -260,6 +262,7 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
 }
 
 /* @inline */ function removeRelationPair(world: World, entity: Entity, pair: RelationPair) {
+    entity = getEntityId(entity) as Entity;
     const pairCtx = pair[$internal];
     const relation = pairCtx.relation;
     const target = pairCtx.target;
@@ -289,6 +292,7 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
         const { removedIndex, wasLastTarget } = removeRelationTarget(world, relation, entity, target);
         if (removedIndex === -1) return;
 
+        setPairTracking(world, entity, relation, target, 'remove');
         if (wasLastTarget) removeTraitFromEntity(world, entity, relationTrait);
     }
 }
@@ -313,6 +317,7 @@ export function cleanupRelationTarget(
     const { removedIndex, wasLastTarget } = removeRelationTarget(world, relation, entity, target);
     if (removedIndex === -1) return;
 
+    setPairTracking(world, entity, relation, target, 'remove');
     if (wasLastTarget) removeTraitFromEntity(world, entity, relationTrait);
 }
 
@@ -397,7 +402,7 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
     if (typeof target !== 'number') return;
 
     setRelationData(world, entity, relation, target, value);
-    if (triggerChanged) setPairChanged(world, entity, relation[$internal].trait, target);
+    if (triggerChanged) setPairChanged(world, entity, relation, target);
 }
 
 /**

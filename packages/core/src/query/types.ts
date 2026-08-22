@@ -93,10 +93,12 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    relationPairs?: RelationPair[];
+    relationPairIndices?: number[];
 };
 
 /** Parameter types that can be passed to Or modifier */
-export type OrParameter = Trait | Modifier;
+export type OrParameter = Trait | RelationPair | Modifier;
 
 /** Or modifier that can contain both traits and nested modifiers */
 export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
@@ -132,6 +134,9 @@ export type TrackingGroup = {
     bitmasks: (number | undefined)[];
     /** Per-entity tracker state indexed by [generationId][entityId] */
     trackers: (number[] | undefined)[];
+    /** Pair-level tracking constraints and their event state. */
+    relationPairs?: RelationPair[];
+    pairTrackers?: Map<number, Map<string, EventType>>;
 };
 
 export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
@@ -174,7 +179,8 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
         entity: Entity,
         eventType: 'add' | 'remove' | 'change',
         generationId: number,
-        bitflag: number
+        bitflag: number,
+        relation?: RelationPair
     ) => boolean;
     resetTrackingBitmasks: (eid: number) => void;
 };

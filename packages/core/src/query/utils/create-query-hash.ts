@@ -34,6 +34,12 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
                 const traitId = traitIds[i];
                 sortedIDs[cursor++] = modifierId * 100000 + traitId;
             }
+            for (const pair of param.relationPairs ?? []) {
+                const pairCtx = pair[$internal];
+                const relationId = pairCtx.relation[$internal].trait.id;
+                const targetId = typeof pairCtx.target === 'number' ? pairCtx.target : -1;
+                sortedIDs[cursor++] = modifierId * 100000000 + relationId * 100000 + targetId + 1;
+            }
         } else {
             const traitId = (param as Trait).id;
             sortedIDs[cursor++] = traitId;

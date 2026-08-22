@@ -2,6 +2,7 @@ import type { Entity } from '../../entity/types';
 import { hasRelationPair } from '../../relation/relation';
 import type { World } from '../../world';
 import type { EventType, QueryInstance } from '../types';
+import type { RelationPair } from '../../relation/types';
 import { checkQueryTracking } from './check-query-tracking';
 
 /**
@@ -14,10 +15,11 @@ export function checkQueryTrackingWithRelations(
     entity: Entity,
     eventType: EventType,
     eventGenerationId: number,
-    eventBitflag: number
+    eventBitflag: number,
+    eventPair?: RelationPair
 ): boolean {
     // First check trait bitmasks and tracking state (fast)
-    if (!checkQueryTracking(world, query, entity, eventType, eventGenerationId, eventBitflag)) {
+    if (!checkQueryTracking(world, query, entity, eventType, eventGenerationId, eventBitflag, eventPair)) {
         return false;
     }
 

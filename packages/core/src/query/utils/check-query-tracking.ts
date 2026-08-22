@@ -3,6 +3,7 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import type { RelationPair } from '../../relation/types';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -20,7 +21,8 @@ export function checkQueryTracking(
     entity: Entity,
     eventType: EventType,
     eventGenerationId: number,
-    eventBitflag: number
+    eventBitflag: number,
+    eventPair?: RelationPair
 ): boolean {
     // Cache all property accesses upfront
     const staticBitmasks = query.staticBitmasks;
@@ -71,6 +73,33 @@ export function checkQueryTracking(
         const groupLogic = group.logic;
         const groupBitmasks = group.bitmasks;
         const groupBitmask = groupBitmasks[eventGenerationId];
+        let pairMatched = false;
+
+        if (eventPair && group.relationPairs) {
+            const eventRelation = eventPair[$internal].relation;
+            const eventTarget = eventPair[$internal].target;
+            for (const pair of group.relationPairs) {
+                const pairCtx = pair[$internal];
+                if (
+                    pairCtx.relation !== eventRelation ||
+                    (pairCtx.target !== '*' && pairCtx.target !== eventTarget)
+                ) {
+                    continue;
+                }
+                const key = `${eventRelation[$internal].trait.id}:${eventTarget}`;
+                const trackers = group.pairTrackers!;
+                let entityTrackers = trackers.get(eid);
+                if (!entityTrackers) {
+                    entityTrackers = new Map();
+                    trackers.set(eid, entityTrackers);
+                }
+                const previous = entityTrackers.get(key);
+                if (previous && previous !== eventType) entityTrackers.delete(key);
+                else entityTrackers.set(key, eventType);
+                pairMatched = entityTrackers.get(key) === groupType;
+                break;
+            }
+        }
 
         // Check if this event affects this group's traits
         if (groupBitmask && (groupBitmask & eventBitflag)) {
@@ -106,6 +135,7 @@ export function checkQueryTracking(
         // 3. Verify tracking group satisfaction (merged into same loop)
         if (groupLogic === 'or') {
             hasOrGroup = true;
+            if (pairMatched) anyOrMatched = true;
             if (!anyOrMatched) {
                 // Check if any trait in OR group has been tracked
                 const groupTrackers = group.trackers;
@@ -132,6 +162,22 @@ export function checkQueryTracking(
                 const tracker = trackerArr ? (trackerArr[eid] | 0) : 0;
                 if ((tracker & mask) !== mask) {
                     return false;
+                }
+            }
+            if (group.relationPairs) {
+                const pairState = group.pairTrackers?.get(eid);
+                for (const pair of group.relationPairs) {
+                    const pairCtx = pair[$internal];
+                    const matched = pairCtx.target === '*'
+                        ? [...(pairState?.entries() ?? [])].some(
+                              ([key, state]) =>
+                                  key.startsWith(`${pairCtx.relation[$internal].trait.id}:`) &&
+                                  state === groupType
+                          )
+                        : pairState?.get(
+                              `${pairCtx.relation[$internal].trait.id}:${pairCtx.target}`
+                          ) === groupType;
+                    if (!matched) return false;
                 }
             }
         }

@@ -1,5 +1,5 @@
 import { $internal } from '../../common';
-import { isRelation } from '../../relation/utils/is-relation';
+import { isRelation, isRelationPair } from '../../relation/utils/is-relation';
 import type { ExtractTraits, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import { createModifier } from '../modifier';
@@ -12,14 +12,28 @@ export function createAdded() {
     for (const world of universe.worlds) {
         if (!world) continue;
         setTrackingMasks(world, id);
+        world[$internal].resetSubscriptions.add((resetWorld) => setTrackingMasks(resetWorld, id));
     }
 
     return <T extends TraitOrRelation[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `added-${number}`> => {
+        const pairs = inputs.filter(isRelationPair);
         const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
+            isRelation(input)
+                ? input[$internal].trait
+                : isRelationPair(input)
+                  ? input[$internal].relation[$internal].trait
+                  : input
         ) as ExtractTraits<T>;
-        return createModifier(`added-${id}`, id, traits);
+        const modifier = createModifier(`added-${id}`, id, traits);
+        if (pairs.length) {
+            modifier.relationPairs = pairs;
+            modifier.relationPairIndices = inputs.reduce<number[]>(
+                (indices, input, index) => (isRelationPair(input) ? indices.concat(index) : indices),
+                []
+            );
+        }
+        return modifier;
     };
 }

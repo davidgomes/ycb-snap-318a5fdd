@@ -2,7 +2,7 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { hasRelationPair } from '../relation/relation';
-import type { Relation } from '../relation/types';
+import type { Relation, RelationPair } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
 import { registerTrait, trait } from '../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../trait/trait-instance';
@@ -139,13 +139,17 @@ function processTrackingModifier(
             id,
             bitmasks: [],
             trackers: [],
+            relationPairs: modifier.relationPairs,
+            pairTrackers: modifier.relationPairs ? new Map() : undefined,
         };
         groupsMap.set(key, group);
         query.trackingGroups.push(group);
     }
 
     // Register traits and build bitmasks
-    for (const trait of modifier.traits) {
+    const pairIndices = new Set(modifier.relationPairIndices ?? []);
+    for (let traitIndex = 0; traitIndex < modifier.traits.length; traitIndex++) {
+        const trait = modifier.traits[traitIndex];
         if (!hasTraitInstance(ctx.traitInstances, trait)) registerTrait(world, trait);
         const instance = getTraitInstance(ctx.traitInstances, trait)!;
         query.traits.push(trait);
@@ -154,8 +158,10 @@ function processTrackingModifier(
         query.traitInstances.all.push(instance);
 
         // Build bitmasks by generation
-        const genId = instance.generationId;
-        group.bitmasks[genId] = (group.bitmasks[genId] || 0) | instance.bitflag;
+        if (!pairIndices.has(traitIndex)) {
+            const genId = instance.generationId;
+            group.bitmasks[genId] = (group.bitmasks[genId] || 0) | instance.bitflag;
+        }
 
         // Track changed traits for change detection in query-result
         if (trackingType === 'change') {
@@ -204,8 +210,9 @@ export function createQueryInstance<T extends QueryParameter[]>(
             entity: Entity,
             eventType: EventType,
             generationId: number,
-            bitflag: number
-        ) => checkQueryTracking(world, query, entity, eventType, generationId, bitflag),
+            bitflag: number,
+            relation?: RelationPair
+        ) => checkQueryTracking(world, query, entity, eventType, generationId, bitflag, relation),
         resetTrackingBitmasks: (eid: number) => resetQueryTrackingBitmasks(query, eid),
     };
 
@@ -358,7 +365,7 @@ export function createQueryInstance<T extends QueryParameter[]>(
                 if (query.entities.has(entity)) continue;
 
                 const eid = getEntityId(entity);
-                let matches = logic === 'and'; // AND starts true, OR starts false
+                let matches = logic === 'and' && !group.relationPairs?.length; // Pair tracking starts empty
 
                 // Check each generation that has bitmasks
                 for (let genId = 0; genId < bitmasks.length; genId++) {

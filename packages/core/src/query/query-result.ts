@@ -2,9 +2,9 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { isRelationPair } from '../relation/utils/is-relation';
-import type { Relation } from '../relation/types';
+import type { Relation, RelationPair } from '../relation/types';
 import { Store } from '../storage';
-import { getStore } from '../trait/trait';
+import { getStore, getTrait } from '../trait/trait';
 import type { Trait } from '../trait/types';
 import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
@@ -27,8 +27,9 @@ export function createQueryResult<T extends QueryParameter[]>(
 ): QueryResult<T> {
     const traits: Trait[] = [];
     const stores: Store<any>[] = [];
+    const pairParams: (RelationPair | undefined)[] = [];
 
-    getQueryStores(params, traits, stores, world);
+    getQueryStores(params, traits, stores, pairParams, world);
 
     const results = Object.assign(entities, {
         readEach(
@@ -41,7 +42,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                 const eid = getEntityId(entity);
 
                 // Create snapshots without atomic tracking
-                createSnapshots(eid, traits, stores, state);
+                createSnapshots(eid, traits, stores, pairParams, state, world);
 
                 callback(state, entity, i);
             }
@@ -68,7 +69,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const entity = entities[i];
                     const eid = getEntityId(entity);
 
-                    createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
+                    createSnapshotsWithAtomic(eid, traits, stores, pairParams, state, atomicSnapshots, world);
                     callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
@@ -119,7 +120,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const entity = entities[i];
                     const eid = getEntityId(entity);
 
-                    createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
+                    createSnapshotsWithAtomic(eid, traits, stores, pairParams, state, atomicSnapshots, world);
                     callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
@@ -155,7 +156,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                 for (let i = 0; i < entities.length; i++) {
                     const entity = entities[i];
                     const eid = getEntityId(entity);
-                    createSnapshots(eid, traits, stores, state);
+                    createSnapshots(eid, traits, stores, pairParams, state, world);
                     callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
@@ -181,7 +182,8 @@ export function createQueryResult<T extends QueryParameter[]>(
         select<U extends QueryParameter[]>(...params: U): QueryResult<U> {
             traits.length = 0;
             stores.length = 0;
-            getQueryStores(params, traits, stores, world);
+            pairParams.length = 0;
+            getQueryStores(params, traits, stores, pairParams, world);
             return results as unknown as QueryResult<U>;
         },
 
@@ -217,13 +219,14 @@ export function createQueryResult<T extends QueryParameter[]>(
     entityId: number,
     traits: Trait[],
     stores: Store<any>[],
-    state: any[]
+    pairParams: any[],
+    state: any[],
+    world: World
 ) {
     for (let i = 0; i < traits.length; i++) {
         const trait = traits[i];
         const ctx = trait[$internal];
-        const value = ctx.get(entityId, stores[i]);
-        state[i] = value;
+        state[i] = pairParams[i] ? getTrait(world, entityId as Entity, pairParams[i]) : ctx.get(entityId, stores[i]);
     }
 }
 
@@ -231,13 +234,17 @@ export function createQueryResult<T extends QueryParameter[]>(
     entityId: number,
     traits: Trait[],
     stores: Store<any>[],
+    pairParams: any[],
     state: any[],
-    atomicSnapshots: any[]
+    atomicSnapshots: any[],
+    world: World
 ) {
     for (let j = 0; j < traits.length; j++) {
         const trait = traits[j];
         const ctx = trait[$internal];
-        const value = ctx.get(entityId, stores[j]);
+        const value = pairParams[j]
+            ? getTrait(world, entityId as Entity, pairParams[j])
+            : ctx.get(entityId, stores[j]);
         state[j] = value;
         atomicSnapshots[j] = ctx.type === 'aos' ? { ...value } : null;
     }
@@ -247,6 +254,7 @@ export function createQueryResult<T extends QueryParameter[]>(
     params: T,
     traits: Trait[],
     stores: Store<any>[],
+    pairParams: any[],
     world: World
 ) {
     for (let i = 0; i < params.length; i++) {
@@ -260,6 +268,7 @@ export function createQueryResult<T extends QueryParameter[]>(
             if (baseTrait[$internal].type !== 'tag') {
                 traits.push(baseTrait);
                 stores.push(getStore(world, baseTrait));
+                pairParams.push(param);
             }
             continue;
         }
@@ -269,16 +278,27 @@ export function createQueryResult<T extends QueryParameter[]>(
             if (param.type === 'not') continue;
 
             const modifierTraits = param.traits;
+            const start = traits.length;
             for (const trait of modifierTraits) {
                 if (trait[$internal].type === 'tag') continue; // Skip tags
                 traits.push(trait);
                 stores.push(getStore(world, trait));
+                pairParams.push(undefined);
+            }
+            const indices = param.relationPairIndices ?? [];
+            for (let i = 0; i < modifierTraits.length; i++) {
+                if (indices.includes(i) && modifierTraits[i][$internal].type !== 'tag') {
+                    const pairIndex = indices.indexOf(i);
+                    pairParams[start + i - indices.slice(0, i).filter((index) => modifierTraits[index][$internal].type === 'tag').length] =
+                        param.relationPairs?.[pairIndex];
+                }
             }
         } else {
             const trait = param as Trait;
             if (trait[$internal].type === 'tag') continue; // Skip tags
             traits.push(trait);
             stores.push(getStore(world, trait));
+            pairParams.push(undefined);
         }
     }
 }
