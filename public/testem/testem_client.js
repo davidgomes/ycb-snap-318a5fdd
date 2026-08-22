@@ -141,7 +141,15 @@ var Testem = {
     var match = window.location.pathname.match(/^\/(-?[0-9]+)/);
     return match ? match[1] : null;
   },
+  handleAbortTests: function() {
+    this.aborted = true;
+    this.emit('abort-tests');
+    this.emit('after-tests-complete');
+  },
   emitMessage: function() {
+    if (this.aborted) {
+      return;
+    }
     if (this._noConnectionRequired) {
       return;
     }
@@ -171,6 +179,10 @@ var Testem = {
         var handler = handlers[j];
         handler.apply(this, argsWithoutFirst);
       }
+    }
+
+    if (this.aborted) {
+      return;
     }
 
     this.emitMessage.apply(this, arguments);
@@ -263,6 +275,9 @@ var Testem = {
           break;
         case 'stop-run':
           self.emit('after-tests-complete');
+          break;
+        case 'abort-tests':
+          self.handleAbortTests();
           break;
         default:
           if (type && type.indexOf('testem:') === 0) {

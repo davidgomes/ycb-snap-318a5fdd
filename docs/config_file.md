@@ -66,6 +66,7 @@ Chrome, Chrome Canary, Chromium, Firefox, IE, Opera, PhantomJS, Safari, Safari T
     test_page:               [String]  string (or array of string) paths to the pages to use to run tests
     growl:                   [Boolean] enables growl / native notifications (false)
     bail_on_uncaught_error:  [Boolean] whether process should exit with error status when there are top level uncaught errors (via `window.onerror`) (true)
+    bail_on_test_failure:    [Boolean or Number] abort the run after the first non-skipped, non-todo failure (`true`) or after N such failures (a positive integer). Invalid values log a warning and fall back to `false`. (false)
 
 ### Config-level options:
 

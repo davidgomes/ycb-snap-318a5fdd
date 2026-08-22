@@ -420,6 +420,43 @@ describe('ci mode app', function() {
     });
   });
 
+  describe('abort and reset bail state', function() {
+    it('abortRunners is idempotent and broadcasts then aborts runners', function() {
+      var app = new App(new Config('ci'));
+      var abort = sinon.stub().returns(Bluebird.resolve());
+      app.runners = [{ abort: abort }, { abort: abort }];
+      app.server = {
+        broadcastAbort: sinon.spy(),
+        resetAbort: sinon.spy()
+      };
+
+      return app.abortRunners().then(function() {
+        return app.abortRunners();
+      }).then(function() {
+        expect(app.server.broadcastAbort).to.have.been.calledOnce();
+        expect(abort).to.have.been.calledTwice();
+      });
+    });
+
+    it('resetBailState resets reporter, abort tracking, and server abort', function() {
+      var app = new App(new Config('ci'));
+      app.reporter = {
+        resetBailState: sinon.spy()
+      };
+      app.aborted = true;
+      app.runners = [{ aborted: true }];
+      app.server = {
+        resetAbort: sinon.spy()
+      };
+
+      app.resetBailState();
+      expect(app.reporter.resetBailState).to.have.been.calledOnce();
+      expect(app.aborted).to.equal(false);
+      expect(app.runners[0].aborted).to.equal(false);
+      expect(app.server.resetAbort).to.have.been.calledOnce();
+    });
+  });
+
   describe('getExitCode', function() {
 
     it('returns 0 if all passed', function() {
@@ -459,6 +496,29 @@ describe('ci mode app', function() {
         }
       };
       assert.equal(app.getExitCode(), null);
+    });
+
+    it('returns a bail-specific error using bailReason and testsRanBeforeBail', function() {
+      var app = new App(new Config('ci'));
+      app.reporter = {
+        hasPassed: function() {
+          return false;
+        },
+        hasTests: function() {
+          return true;
+        },
+        hasBailed: function() {
+          return true;
+        },
+        bailReason: 'the failing test',
+        getBailReport: function() {
+          return { testsRanBeforeBail: 4 };
+        }
+      };
+      var err = app.getExitCode();
+      assert.match(err, /the failing test/);
+      assert.match(err, /4/);
+      assert.notMatch(err, /Not all tests passed/);
     });
 
     it('returns 1 if no tests and fail_on_zero_tests config is on', function() {

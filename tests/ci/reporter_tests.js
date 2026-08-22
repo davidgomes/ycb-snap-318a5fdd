@@ -156,6 +156,30 @@ describe('test reporters', function() {
           ]);
         });
       });
+
+      context('when bailed', function() {
+        it('writes Bail out! and bail summary lines', function() {
+          var reporter = new TapReporter(false, stream, config);
+          reporter.report('phantomjs', {
+            name: 'it fails',
+            passed: false,
+            runDuration: 1,
+          });
+          reporter.onBail({
+            bailReason: 'it fails',
+            testsRanBeforeBail: 1,
+            suppressedAfterBail: 2,
+            failedCount: 1
+          });
+          reporter.suppressedAfterBail = 2;
+          reporter.finish();
+          var output = stream.read().toString();
+          assert.match(output, /Bail out! it fails \(1\)/);
+          assert.match(output, /# bailed/);
+          assert.match(output, /# ran before bail 1/);
+          assert.match(output, /# suppressed 2/);
+        });
+      });
     });
 
     context('with quiet logs', function() {
@@ -707,6 +731,31 @@ describe('test reporters', function() {
       });
     });
 
+    context('when bailed', function() {
+      it('writes Bail out! and bail summary lines', function() {
+        var stream = new PassThrough();
+        var reporter = new DotReporter(false, stream);
+        reporter.report('phantomjs', {
+          name: 'it fails',
+          passed: false,
+          error: { message: 'nope' }
+        });
+        reporter.onBail({
+          bailReason: 'it fails',
+          testsRanBeforeBail: 1,
+          suppressedAfterBail: 3,
+          failedCount: 1
+        });
+        reporter.suppressedAfterBail = 3;
+        reporter.finish();
+        var output = stream.read().toString();
+        assert.match(output, /Bail out! it fails \(1\)/);
+        assert.match(output, /# bailed/);
+        assert.match(output, /# ran before bail 1/);
+        assert.match(output, /# suppressed 3/);
+      });
+    });
+
     context('with errors', function() {
       it('writes out summary with failure info', function() {
         var stream = new PassThrough();
@@ -886,6 +935,32 @@ describe('test reporters', function() {
       });
       assert(!displayed);
       process.stdout.write = write;
+    });
+
+    it('includes bail metadata when bailed', function() {
+      var reporter = new XUnitReporter(false, stream, config);
+      reporter.report('phantomjs', {
+        name: 'it fails',
+        passed: false,
+        error: { message: 'nope' }
+      });
+      reporter.onBail({
+        bailReason: 'it fails',
+        testsRanBeforeBail: 1,
+        suppressedAfterBail: 4,
+        failedCount: 1
+      });
+      reporter.suppressedAfterBail = 4;
+      reporter.finish();
+      var output = stream.read().toString();
+      assert.match(output, /errors="1"/);
+      assert.match(output, /<error message="Bail out! it fails"/);
+      assert.match(output, /name="bailReason" value="it fails"/);
+      assert.match(output, /name="testsBeforeBail" value="1"/);
+      assert.match(output, /name="suppressedAfterBail" value="4"/);
+      assert.match(output, /system-out/);
+      assert.match(output, /# bailed/);
+      assertXmlIsValid(output);
     });
 
     it('outputs errors', function() {
@@ -1210,6 +1285,29 @@ describe('test reporters', function() {
       var output = stream.read().toString();
 
       assert.match(output, /##teamcity\[testFailed name='firefox - it negates' message='' details='' type='comparisonFailure' expected='NOT foo' actual='foo']/);
+    });
+
+    it('emits bail teamcity messages', function() {
+      var reporter = new TeamcityReporter(false, stream);
+      reporter.report('phantomjs', {
+        name: 'it fails',
+        passed: false,
+        error: { message: 'nope' }
+      });
+      reporter.onBail({
+        bailReason: 'it fails',
+        testsRanBeforeBail: 5,
+        suppressedAfterBail: 2,
+        failedCount: 1
+      });
+      reporter.suppressedAfterBail = 2;
+      reporter.finish();
+      var output = stream.read().toString();
+      assert.match(output, /##teamcity\[message text='Bail out! it fails' status='ERROR'\]/);
+      assert.match(output, /##teamcity\[buildStatisticValue key='bailedTests' value='1'\]/);
+      assert.match(output, /##teamcity\[buildStatisticValue key='testsBeforeBail' value='5'\]/);
+      assert.match(output, /##teamcity\[buildStatisticValue key='suppressedAfterBail' value='2'\]/);
+      assert.match(output, /##teamcity\[buildProblem description='Bail out! it fails'\]/);
     });
 
   });

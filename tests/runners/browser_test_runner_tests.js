@@ -528,4 +528,33 @@ describe('browser test runner', function() {
       runner.finish();
     });
   });
+
+  describe('abort', function() {
+    it('is idempotent, returns a Promise, and emits abort-tests', function() {
+      let reporter = new FakeReporter();
+      let config = new Config('ci', { reporter: reporter });
+      let launcher = new Launcher('ci', { protocol: 'browser' }, config);
+      let runner = new BrowserTestRunner(launcher, reporter, null, null, config);
+      let socket = new FakeSocket();
+      runner.tryAttach('Chrome', launcher.id, socket);
+      let emit = sinon.spy(socket, 'emit');
+
+      let first = runner.abort();
+      expect(first.then).to.be.a('function');
+      runner.abort();
+      expect(emit).to.have.been.calledWith('abort-tests');
+      expect(emit.withArgs('abort-tests').callCount).to.equal(1);
+    });
+
+    it('suppresses subsequent results and errors', function() {
+      let reporter = new FakeReporter();
+      let config = new Config('ci', { reporter: reporter });
+      let launcher = new Launcher('ci', { protocol: 'browser' }, config);
+      let runner = new BrowserTestRunner(launcher, reporter, null, null, config);
+      runner.abort();
+      runner.onTestResult({ failed: 1, name: 'late fail', items: [] });
+      runner.onProcessError(new Error('late'));
+      expect(reporter.results).to.have.length(0);
+    });
+  });
 });

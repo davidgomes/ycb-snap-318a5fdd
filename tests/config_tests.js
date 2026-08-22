@@ -31,6 +31,10 @@ describe('Config', function() {
     expect(config.progOptions).to.equal(progOptions);
   });
 
+  it('defaults bail_on_test_failure to false', function() {
+    expect(config.get('bail_on_test_failure')).to.equal(false);
+  });
+
   it('gives progOptions properties when got', function() {
     expect(config.get('file')).to.equal(progOptions.file);
   });

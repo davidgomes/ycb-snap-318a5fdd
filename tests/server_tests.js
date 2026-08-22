@@ -7,6 +7,7 @@ const request = require('request');
 const cheerio = require('cheerio');
 const fs = require('fs');
 const expect = require('chai').expect;
+const sinon = require('sinon');
 const http = require('http');
 const https = require('https');
 const ws = require('ws');
@@ -585,6 +586,26 @@ describe('Server', function() {
         done();
       });
     });
+  });
+});
+
+describe('Server broadcastAbort', function() {
+  it('is idempotent and tolerates uninitialized io', function() {
+    let server = new Server(new Config('ci', { port: 0 }));
+    server.broadcastAbort();
+    expect(server.abortBroadcasted).to.equal(true);
+
+    server.io = { emit: sinon.spy() };
+    server.broadcastAbort();
+    expect(server.io.emit).to.not.have.been.called();
+
+    server.resetAbort();
+    expect(server.abortBroadcasted).to.equal(false);
+    server.broadcastAbort();
+    expect(server.io.emit).to.have.been.calledOnce();
+    expect(server.io.emit).to.have.been.calledWith('abort-tests');
+    server.broadcastAbort();
+    expect(server.io.emit).to.have.been.calledOnce();
   });
 });
 

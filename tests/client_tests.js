@@ -107,4 +107,33 @@ describe('Testem Client', function() {
     });
     Testem.runAfterTests();
   });
+
+  it('handleAbortTests sets aborted and emits abort-tests and after-tests-complete', function() {
+    let previousHandlers = Testem.evtHandlers;
+    Testem.evtHandlers = {};
+    Testem.aborted = false;
+    let emit = sinon.spy(Testem, 'emit');
+
+    Testem.handleAbortTests();
+
+    expect(Testem.aborted).to.be.true();
+    expect(emit).to.have.been.calledWith('abort-tests');
+    expect(emit).to.have.been.calledWith('after-tests-complete');
+
+    emit.restore();
+    Testem.aborted = false;
+    Testem.evtHandlers = previousHandlers;
+  });
+
+  it('blocks emitMessage after abort', function() {
+    Testem.aborted = true;
+    Testem._isIframeReady = true;
+    let send = sinon.stub(Testem, 'emitMessageToIframe');
+
+    Testem.emitMessage('test-result', { name: 'late' });
+
+    expect(send).to.not.have.been.called();
+    send.restore();
+    Testem.aborted = false;
+  });
 });

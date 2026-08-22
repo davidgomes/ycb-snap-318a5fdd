@@ -21,5 +21,11 @@ FakeReporter.prototype.finish = function() {};
 FakeReporter.prototype.onStart = function() {};
 FakeReporter.prototype.onEnd = function() {};
 FakeReporter.prototype.reportMetadata = function() {};
+FakeReporter.prototype.reset = function() {
+  this.results = [];
+  this.total = 0;
+  this.pass = 0;
+  this.skipped = 0;
+};
 
 module.exports = FakeReporter;

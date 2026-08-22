@@ -379,4 +379,100 @@ describe('Reporter', function() {
       expect(reporter.hasTests()).to.be.true();
     });
   });
+
+  describe('bail_on_test_failure', function() {
+    const log = require('npmlog');
+
+    function appWithBail(value) {
+      return {
+        config: {
+          get: function(key) {
+            if (key === 'reporter') {
+              return new FakeReporter();
+            }
+            if (key === 'bail_on_test_failure') {
+              return value;
+            }
+          }
+        }
+      };
+    }
+
+    it('treats true as a threshold of one', function() {
+      let reporter = new Reporter(appWithBail(true), stream);
+      reporter.report('chrome', { name: 'first fail', passed: false });
+      expect(reporter.hasBailed()).to.be.true();
+      expect(reporter.bailReason).to.equal('first fail');
+    });
+
+    it('bails on the Nth non-skipped non-todo failure', function() {
+      let reporter = new Reporter(appWithBail(2), stream);
+      reporter.report('chrome', { name: 'pass', passed: true });
+      reporter.report('chrome', { name: 'skip', skipped: true });
+      reporter.report('chrome', { name: 'todo', passed: false, todo: true });
+      reporter.report('chrome', { name: 'fail 1', passed: false });
+      expect(reporter.hasBailed()).to.be.false();
+      reporter.report('firefox', { name: 'fail 2', passed: false });
+      expect(reporter.hasBailed()).to.be.true();
+      expect(reporter.bailReason).to.equal('fail 2');
+    });
+
+    it('emits test-failure with launcher name and result', function() {
+      let reporter = new Reporter(appWithBail(true), stream);
+      let spy = sandbox.spy();
+      reporter.on('test-failure', spy);
+      let result = { name: 'boom', passed: false };
+      reporter.report('safari', result);
+      expect(spy).to.have.been.calledOnce();
+      expect(spy.firstCall.args[0]).to.equal('safari');
+      expect(spy.firstCall.args[1]).to.equal(result);
+    });
+
+    it('gates subsequent results from sub-reporters', function() {
+      let reporter = new Reporter(appWithBail(true), stream);
+      reporter.report('chrome', { name: 'fail', passed: false });
+      reporter.report('chrome', { name: 'late pass', passed: true });
+      expect(reporter.reporters[0].total).to.equal(1);
+      expect(reporter.reporters[0].results.length).to.equal(1);
+    });
+
+    it('getBailReport exposes launcher, counts, and failed test names', function() {
+      let reporter = new Reporter(appWithBail(2), stream);
+      expect(reporter.getBailReport().bailLauncher).to.equal(null);
+      reporter.report('chrome', { name: 'fail 1', passed: false });
+      reporter.report('firefox', { name: 'fail 2', passed: false });
+      let report = reporter.getBailReport();
+      expect(report.testsRanBeforeBail).to.equal(2);
+      expect(report.bailLauncher).to.equal('firefox');
+      expect(report.failuresByLauncher).to.deep.equal({ chrome: 1, firefox: 1 });
+      expect(Object.getPrototypeOf(report.failuresByLauncher)).to.equal(Object.prototype);
+      expect(report.failedTests).to.deep.equal(['fail 1', 'fail 2']);
+    });
+
+    it('resetBailState clears bail and sub-reporter results', function() {
+      let reporter = new Reporter(appWithBail(true), stream);
+      reporter.report('chrome', { name: 'fail', passed: false });
+      reporter.report('chrome', { name: 'suppressed', passed: false });
+      reporter.resetBailState();
+      expect(reporter.hasBailed()).to.be.false();
+      expect(reporter.bailReason).to.equal(null);
+      expect(reporter.getBailReport().bailLauncher).to.equal(null);
+      expect(reporter.getBailReport().failedTests).to.deep.equal([]);
+      expect(reporter.getBailReport().failuresByLauncher).to.deep.equal({});
+      expect(reporter.reporters[0].total).to.equal(0);
+      reporter.report('chrome', { name: 'after reset', passed: true });
+      expect(reporter.reporters[0].total).to.equal(1);
+      expect(reporter.reporters[0].results[0].result.name).to.equal('after reset');
+    });
+
+    [0, -1, 1.5, 'yes'].forEach(function(invalid) {
+      it('warns and defaults invalid value ' + JSON.stringify(invalid) + ' to false', function() {
+        let warn = sandbox.stub(log, 'warn');
+        let reporter = new Reporter(appWithBail(invalid), stream);
+        expect(warn).to.have.been.calledWith('bail_on_test_failure', sinon.match.string);
+        reporter.report('chrome', { name: 'fail', passed: false });
+        expect(reporter.hasBailed()).to.be.false();
+      });
+    });
+  });
 });

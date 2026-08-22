@@ -14,7 +14,7 @@ Testem's QUnit adapter. Works by using QUnit's hooks:
 
 */
 
-/* globals QUnit, emit */
+/* globals QUnit, emit, Testem */
 /* exported qunitAdapter */
 'use strict';
 
@@ -30,6 +30,34 @@ function qunitAdapter() {
   };
   var currentTest;
   var id = 1;
+  var signaledAllResults = false;
+
+  function isAborted() {
+    return typeof Testem !== 'undefined' && Testem.aborted;
+  }
+
+  function emitAllResultsOnce() {
+    if (signaledAllResults) {
+      return;
+    }
+    signaledAllResults = true;
+    emit('all-test-results');
+  }
+
+  function clearQUnitQueue() {
+    if (typeof QUnit !== 'undefined' && QUnit.config && QUnit.config.queue) {
+      QUnit.config.queue.length = 0;
+    }
+  }
+
+  function handleAbort() {
+    if (!isAborted()) {
+      return false;
+    }
+    clearQUnitQueue();
+    emitAllResultsOnce();
+    return true;
+  }
 
   function lineNumber(e) {
     return e.line || e.lineNumber;
@@ -52,6 +80,9 @@ function qunitAdapter() {
   }
 
   QUnit.log(function(params, e) {
+    if (handleAbort()) {
+      return;
+    }
     if (e) {
       currentTest.items.push({
         passed: params.result,
@@ -81,6 +112,9 @@ function qunitAdapter() {
 
   });
   QUnit.testStart(function(params) {
+    if (handleAbort()) {
+      return;
+    }
     currentTest = {
       id: id++,
       name: (params.module ? params.module + ': ' : '') + params.name,
@@ -89,6 +123,9 @@ function qunitAdapter() {
     emit('tests-start', currentTest);
   });
   QUnit.testDone(function(params) {
+    if (handleAbort()) {
+      return;
+    }
     currentTest.failed = params.failed;
     currentTest.passed = params.passed;
     currentTest.skipped = params.skipped;
@@ -109,11 +146,18 @@ function qunitAdapter() {
 
     results.tests.push(currentTest);
 
+    if (handleAbort()) {
+      return;
+    }
+
     emit('test-result', currentTest);
   });
   QUnit.done(function(params) {
+    if (handleAbort()) {
+      return;
+    }
     results.runDuration = params.runtime;
-    emit('all-test-results');
+    emitAllResultsOnce();
   });
 
 }
