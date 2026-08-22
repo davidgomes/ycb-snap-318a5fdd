@@ -10,6 +10,7 @@ import {
   DataTypeNode,
   ClauseNode,
   PipeClauseNode,
+  OperatorNode,
 } from './ast.js';
 import { Token, TokenType } from '../lexer/token.js';
 
@@ -38,7 +39,7 @@ const toDataTypeNode = (token: Token): DataTypeNode => ({
   raw: token.raw,
 });
 
-const toOperatorNode = (token: Token) => ({
+const toOperatorNode = (token: Token): OperatorNode => ({
   type: NodeType.operator,
   text: token.text,
 });

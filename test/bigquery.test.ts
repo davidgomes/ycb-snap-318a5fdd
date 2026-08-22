@@ -626,8 +626,11 @@ describe('BigQueryFormatter', () => {
     });
 
     it('keeps one-line pipe clauses on the pipe line', () => {
-      expect(format('FROM source |> SELECT * |> JOIN other ON source.id = other.id |> AS result |> LIMIT 10'))
-        .toBe(dedent`
+      expect(
+        format(
+          'FROM source |> SELECT * |> JOIN other ON source.id = other.id |> AS result |> LIMIT 10'
+        )
+      ).toBe(dedent`
           FROM
             source
           |> SELECT
@@ -639,9 +642,14 @@ describe('BigQueryFormatter', () => {
     });
 
     it('applies keywordCase to pipe keywords', () => {
-      expect(format('from source |> aggregate count(*) as total group by category |> extend total + 1 as next', {
-        keywordCase: 'lower',
-      })).toBe(dedent`
+      expect(
+        format(
+          'from source |> aggregate count(*) as total group by category |> extend total + 1 as next',
+          {
+            keywordCase: 'lower',
+          }
+        )
+      ).toBe(dedent`
         from
           source
         |> aggregate
