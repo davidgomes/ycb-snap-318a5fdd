@@ -332,7 +332,6 @@ export default class LinkStyle extends RuleBuilder<LinkStyleOptions> {
       }),
     ];
   }
-
   get optionBuilders(): OptionBuilderBase<LinkStyleOptions>[] {
     return [
       new DropdownOptionBuilder<LinkStyleOptions, LinkStyleValue>({
