@@ -26,6 +26,13 @@ type EnvContextLike = {
     mode: Mode;
 };
 
+type MulticolumnCell = {
+    multicolumn: {
+        span: number;
+        align: string;
+    };
+};
+
 // Data stored in the ParseNode associated with the environment.
 export type AlignSpec = {type: "separator", separator: string} | {
     type: "align";
@@ -114,7 +121,7 @@ function parseArray(
     style: StyleStr,
 ): ParseNode<"array"> {
     parser.gullet.beginGroup();
-    parser.gullet.macros.set("\\@array@multicolumn", "1");
+    parser.gullet.macros.set("\\@arrayenv", "1");
     if (!singleRow) {
         // \cr is equivalent to \\ without the optional size argument (see below)
         // TODO: provide helpful error when \cr is used outside array environment
@@ -170,6 +177,10 @@ function parseArray(
     hLinesBeforeRow.push(getHLines(parser));
 
     while (true) {  // eslint-disable-line no-constant-condition
+        if (maxNumCols) {
+            parser.gullet.macros.set("\\@arrayremaining",
+                String(maxNumCols - row.length));
+        }
         // Parse each cell in its own group (namespace)
         const cellBody = parser.parseExpression(false, singleRow ? "\\end" : "\\\\");
         parser.gullet.endGroup();
@@ -179,22 +190,10 @@ function parseArray(
             mode: parser.mode,
             body: cellBody,
         };
-        if (cellBody.length === 1 && cellBody[0].type === "multicolumn") {
-            const multicolumn = cellBody[0];
-            const remaining = maxNumCols
-                ? maxNumCols - row.length + 1
-                : Infinity;
-            if (multicolumn.span > remaining) {
-                throw new ParseError("\\multicolumn exceeds the number of columns",
-                    parser.nextToken);
-            }
-            cell = {
-                type: "ordgroup",
-                mode: parser.mode,
-                body: multicolumn.body,
-                colSpan: multicolumn.span,
-                colAlign: multicolumn.align,
-            } as AnyParseNode;
+        if ((cell as AnyParseNode & Partial<MulticolumnCell>).multicolumn) {
+            // The marker is attached by the \multicolumn function below.
+            // Keep the cell as one item in the parse tree; the builders use
+            // the span when laying out the row.
         }
         if (style) {
             cell = {
@@ -298,8 +297,6 @@ type Outrow = {
     depth: number;
     pos: number;
 };
-type ArrayCell = AnyParseNode & {colSpan?: number; colAlign?: string};
-const cellSpan = (cell: AnyParseNode) => (cell as ArrayCell).colSpan || 1;
 
 const htmlBuilder: HtmlBuilder<"array"> = function(group, options) {
     let r;
@@ -357,9 +354,8 @@ const htmlBuilder: HtmlBuilder<"array"> = function(group, options) {
         let height = arstrutHeight; // \@array adds an \@arstrut
         let depth = arstrutDepth;   // to each tow (via the template)
 
-        const rowColumns = inrow.reduce((count, cell) => count + cellSpan(cell), 0);
-        if (nc < rowColumns) {
-            nc = rowColumns;
+        if (nc < inrow.length) {
+            nc = inrow.length;
         }
 
         const outrow: Outrow = (new Array(inrow.length) as any);
@@ -406,17 +402,6 @@ const htmlBuilder: HtmlBuilder<"array"> = function(group, options) {
 
     const offset = totalHeight / 2 + options.fontMetrics().axisHeight;
     const colDescriptions = group.cols || [];
-    const getCell = (row: AnyParseNode[], column: number) => {
-        let start = 0;
-        for (const cell of row) {
-                const span = cellSpan(cell);
-            if (column >= start && column < start + span) {
-                return {cell: cell as ArrayCell, start};
-            }
-            start += span;
-        }
-        return null;
-    };
     const cols: HtmlDomNode[] = [];
     let colSep;
     let colDescrNum;
@@ -511,21 +496,19 @@ const htmlBuilder: HtmlBuilder<"array"> = function(group, options) {
         }> = [];
         for (r = 0; r < nr; ++r) {
             const row = body[r];
-            const cellInfo = getCell(row, c);
-            if (!cellInfo || cellInfo.start !== c) {
+            const elem = row[c];
+            const multicolumn = elem &&
+                (elem as AnyParseNode & Partial<MulticolumnCell>).multicolumn;
+            if (multicolumn && c > 0) {
                 continue;
             }
-            const elem = body[r].indexOf(cellInfo.cell) >= 0
-                ? body[r].indexOf(cellInfo.cell) : -1;
-            const builtElem = elem >= 0 ? body[r][elem] : undefined;
-            const rendered = builtElem ? html.buildGroup(builtElem, options) : null;
-            if (!rendered) {
+            if (!elem) {
                 continue;
             }
             const shift = row.pos - offset;
-            rendered.depth = row.depth;
-            rendered.height = row.height;
-            colElems.push({type: "elem", elem: rendered, shift: shift});
+            elem.depth = row.depth;
+            elem.height = row.height;
+            colElems.push({type: "elem", elem: elem, shift: shift});
         }
 
         const colVList = makeVList({
@@ -533,18 +516,9 @@ const htmlBuilder: HtmlBuilder<"array"> = function(group, options) {
             children: colElems,
         }, options);
         const colSpan = makeSpan(
-            ["col-align-" + (body.map(row => getCell(row, c))
-                .find(info => info?.start === c)?.cell.colAlign ||
-                colDescr?.align || "c")],
+            ["col-align-" + (colDescr?.align || "c")],
             [colVList],
         );
-        const spanCount = body.reduce((max, row) => {
-            const info = getCell(row, c);
-            return info?.start === c ? Math.max(max, cellSpan(info.cell)) : max;
-        }, 1);
-        if (spanCount > 1) {
-            colSpan.classes.push("col-span-" + spanCount);
-        }
         cols.push(colSpan);
 
         if (c < nc - 1 || group.hskipBeforeAndAfter) {
@@ -606,13 +580,15 @@ const mathmlBuilder: MathMLBuilder<"array"> = function(group, options) {
         const rw = group.body[i];
         const row = [];
         for (let j = 0; j < rw.length; j++) {
-            const cell = new MathNode("mtd", [mml.buildGroup(rw[j], options)]);
-            if (cellSpan(rw[j]) > 1) {
-                cell.setAttribute("columnspan", String(cellSpan(rw[j])));
-                cell.setAttribute("columnalign",
-                    (rw[j] as ArrayCell).colAlign || "center");
+            const cell = rw[j];
+            const multicolumn = (cell as AnyParseNode & Partial<MulticolumnCell>)
+                .multicolumn;
+            const mtd = new MathNode("mtd", [mml.buildGroup(cell, options)]);
+            if (multicolumn) {
+                mtd.setAttribute("columnspan", String(multicolumn.span));
+                mtd.setAttribute("columnalign", alignMap[multicolumn.align].trim());
             }
-            row.push(cell);
+            row.push(mtd);
         }
         if (group.tags && group.tags[i]) {
             row.unshift(glue);
@@ -1167,38 +1143,43 @@ defineMacro("\\nonumber", "\\gdef\\@eqnsw{0}");
 defineMacro("\\notag", "\\nonumber");
 
 defineFunction({
-    type: "multicolumn",
+    type: "text",
     names: ["\\multicolumn"],
     props: {
         numArgs: 3,
-        argTypes: ["text", "text", "original"],
         allowedInMath: true,
     },
-    handler({parser}, args) {
-        if (parser.gullet.macros.get("\\@array@multicolumn") !== "1") {
+    handler(context, args) {
+        if (context.parser.gullet.macros.get("\\@arrayenv") !== "1") {
             throw new ParseError("\\multicolumn valid only within array environments");
         }
-        const text = (arg: AnyParseNode) => {
-            if (arg.type !== "ordgroup") {
-                throw new ParseError("Invalid \\multicolumn argument", arg);
-            }
-            return arg.body.map(node => assertNodeType(node, "textord").text).join("");
-        };
-        const spanText = text(args[0]);
-        if (!/^[1-9]\d*$/.test(spanText)) {
-            throw new ParseError("Invalid \\multicolumn column count", args[0]);
+        const number = args[0];
+        const alignment = args[1];
+        const nText = number.type === "ordgroup" &&
+            number.body.length === 1 && number.body[0].type === "textord"
+            ? number.body[0].text : "";
+        const alignText = alignment.type === "ordgroup"
+            ? alignment.body.map(node => {
+                if (node.type !== "textord" && node.type !== "atom") {
+                    return "";
+                }
+                return node.text;
+            }).join("") : "";
+        const span = Number(nText);
+        if (!/^[1-9]\d*$/.test(nText)) {
+            throw new ParseError("Invalid \\multicolumn span", context.token);
         }
-        const alignment = text(args[1]);
-        if (!/^\|*[lcr]\|*$/.test(alignment)) {
-            throw new ParseError("Invalid \\multicolumn alignment", args[1]);
+        if (!/^\|*[lcr]\|*$/.test(alignText)) {
+            throw new ParseError("Invalid \\multicolumn alignment", context.token);
         }
-        return {
-            type: "multicolumn",
-            mode: parser.mode,
-            span: Number(spanText),
-            align: alignment.replace(/\|/g, ""),
-            body: args[2].type === "ordgroup" ? args[2].body : [args[2]],
-        };
+        const remaining = context.parser.gullet.macros.get("\\@arrayremaining");
+        if (remaining != null && span > Number(remaining)) {
+            throw new ParseError("Invalid \\multicolumn span", context.token);
+        }
+        const align = alignText.replace(/\|/g, "");
+        const cell = args[2] as AnyParseNode & Partial<MulticolumnCell>;
+        cell.multicolumn = {span, align};
+        return cell;
     },
 });
 

@@ -25,13 +25,6 @@ export type AnyParseNode = ParseNodeTypes[keyof ParseNodeTypes];
 
 // Map from `NodeType` to the corresponding `ParseNode`.
 type ParseNodeTypes = {
-    "multicolumn": {
-        type: "multicolumn";
-        mode: Mode;
-        span: number;
-        align: string;
-        body: AnyParseNode[];
-    };
     "array": {
         type: "array";
         mode: Mode;
@@ -42,8 +35,6 @@ type ParseNodeTypes = {
         cols?: AlignSpec[];
         arraystretch: number;
         body: AnyParseNode[][];
-        colSpan?: number;
-        colAlign?: string;
         // List of rows in the (2D) array.
         rowGaps: (Measurement | null | undefined)[];
         hLinesBeforeRow: Array<boolean[]>;
