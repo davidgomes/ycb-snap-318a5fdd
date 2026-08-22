@@ -1,3 +1,10 @@
+export type {
+  CircuitBreakerConfig,
+  CircuitBreakerOption,
+  CircuitStore,
+} from "./circuit.ts";
+import type { CircuitBreakerOption, CircuitStore } from "./circuit.ts";
+
 // --------------------------
 // $fetch API
 // --------------------------
@@ -68,6 +75,14 @@ export interface FetchOptions<R extends ResponseType = ResponseType, T = any>
 
   /** Default is [408, 409, 425, 429, 500, 502, 503, 504] */
   retryStatusCodes?: number[];
+
+  /**
+   * Opt-in per-origin circuit breaker.
+   *
+   * `true` enables defaults (`threshold=5`, `cooldown=30000`).
+   * A falsey value disables circuit tracking.
+   */
+  circuitBreaker?: CircuitBreakerOption;
 }
 
 export interface ResolvedFetchOptions<
@@ -80,6 +95,8 @@ export interface ResolvedFetchOptions<
 export interface CreateFetchOptions {
   defaults?: FetchOptions;
   fetch?: Fetch;
+  /** Shared per-origin circuit state. Clients from `.create()` inherit this store. */
+  circuitStore?: CircuitStore;
 }
 
 export type GlobalOptions = Pick<
@@ -159,7 +176,7 @@ export interface IFetchError<T = any> extends Error {
 
 export type Fetch = typeof globalThis.fetch;
 
-export type FetchRequest = RequestInfo;
+export type FetchRequest = RequestInfo | URL;
 
 export interface SearchParameters {
   [key: string]: any;

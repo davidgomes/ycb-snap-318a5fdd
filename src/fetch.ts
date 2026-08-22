@@ -8,6 +8,18 @@ import {
   resolveFetchOptions,
   callHooks,
 } from "./utils.ts";
+import {
+  admitCircuitRequest,
+  createCircuitStore,
+  recordCircuitFailure,
+  recordCircuitSuccess,
+  releaseCircuitProbe,
+  resolveCircuitBreaker,
+  resolveRequestOrigin,
+  type CircuitAdmission,
+  type CircuitStore,
+  type ResolvedCircuitBreaker,
+} from "./circuit.ts";
 import type {
   CreateFetchOptions,
   FetchResponse,
@@ -17,6 +29,8 @@ import type {
   FetchRequest,
   FetchOptions,
 } from "./types.ts";
+
+const circuitRetryCalls = new WeakSet<object>();
 
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
 const retryStatusCodes = new Set([
@@ -33,8 +47,17 @@ const retryStatusCodes = new Set([
 // https://developer.mozilla.org/en-US/docs/Web/API/Response/body
 const nullBodyResponses = new Set([101, 204, 205, 304]);
 
+function isCircuitStatusFailure(
+  status: number | undefined,
+  circuit: ResolvedCircuitBreaker
+): boolean {
+  return typeof status === "number" && circuit.failureStatusCodes.has(status);
+}
+
 export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
   const { fetch = globalThis.fetch } = globalOptions;
+  const circuitStore: CircuitStore =
+    globalOptions.circuitStore ?? createCircuitStore();
 
   async function onError(context: FetchContext): Promise<FetchResponse<any>> {
     // Is Abort
@@ -69,10 +92,12 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         }
         // Timeout
-        return $fetchRaw(context.request, {
+        const retryOptions: FetchOptions = {
           ...context.options,
           retry: retries - 1,
-        });
+        };
+        circuitRetryCalls.add(retryOptions);
+        return $fetchRaw(context.request, retryOptions);
       }
     }
 
@@ -90,6 +115,7 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
     T = any,
     R extends ResponseType = "json",
   >(_request: FetchRequest, _options: FetchOptions<R> = {}) {
+    const isCircuitRetry = circuitRetryCalls.has(_options);
     const context: FetchContext = {
       request: _request,
       options: resolveFetchOptions<R, T>(
@@ -177,83 +203,156 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
         : AbortSignal.timeout(context.options.timeout);
     }
 
+    const circuit = resolveCircuitBreaker(context.options.circuitBreaker);
+    let circuitAdmission: CircuitAdmission | undefined;
+
+    if (circuit && !isCircuitRetry) {
+      const origin = resolveRequestOrigin(context.request);
+      if (origin) {
+        circuitAdmission = admitCircuitRequest(circuitStore, origin, circuit);
+        if (!circuitAdmission.allowed) {
+          context.error = new Error("Circuit breaker is open");
+          throw createFetchError(context);
+        }
+      }
+    }
+
+    const settleCircuit = (
+      outcome: "success" | "failure" | "neutral"
+    ): void => {
+      if (!circuit || !circuitAdmission || isCircuitRetry) {
+        return;
+      }
+      if (outcome === "success") {
+        recordCircuitSuccess(circuitStore, circuitAdmission.origin);
+      } else if (outcome === "failure") {
+        recordCircuitFailure(circuitStore, circuitAdmission.origin, circuit);
+      }
+    };
+
     try {
-      context.response = await fetch(
-        context.request,
-        context.options as RequestInit
-      );
-    } catch (error) {
-      context.error = error as Error;
-      if (context.options.onRequestError) {
-        await callHooks(
-          context as FetchContext & { error: Error },
-          context.options.onRequestError
+      try {
+        context.response = await fetch(
+          context.request,
+          context.options as RequestInit
         );
+      } catch (error) {
+        context.error = error as Error;
+        if (context.options.onRequestError) {
+          await callHooks(
+            context as FetchContext & { error: Error },
+            context.options.onRequestError
+          );
+        }
+        const retried = await onError(context);
+        if (circuit && isCircuitStatusFailure(retried.status, circuit)) {
+          settleCircuit("failure");
+        } else {
+          settleCircuit("success");
+        }
+        return retried;
+      } finally {
+        if (abortTimeout) {
+          clearTimeout(abortTimeout);
+        }
       }
-      return await onError(context);
-    } finally {
-      if (abortTimeout) {
-        clearTimeout(abortTimeout);
-      }
-    }
 
-    const hasBody =
-      (context.response.body ||
-        // https://github.com/unjs/ofetch/issues/324
-        // https://github.com/unjs/ofetch/issues/294
-        // https://github.com/JakeChampion/fetch/issues/1454
-        (context.response as any)._bodyInit) &&
-      !nullBodyResponses.has(context.response.status) &&
-      context.options.method !== "HEAD";
-    if (hasBody) {
-      const responseType =
-        (context.options.parseResponse
-          ? "json"
-          : context.options.responseType) ||
-        detectResponseType(context.response.headers.get("content-type") || "");
+      const hasBody =
+        (context.response.body ||
+          // https://github.com/unjs/ofetch/issues/324
+          // https://github.com/unjs/ofetch/issues/294
+          // https://github.com/JakeChampion/fetch/issues/1454
+          (context.response as any)._bodyInit) &&
+        !nullBodyResponses.has(context.response.status) &&
+        context.options.method !== "HEAD";
+      if (hasBody) {
+        const responseType =
+          (context.options.parseResponse
+            ? "json"
+            : context.options.responseType) ||
+          detectResponseType(
+            context.response.headers.get("content-type") || ""
+          );
 
-      switch (responseType) {
-        case "json": {
-          const data = await context.response.text();
-          if (data) {
-            const parseFunction = context.options.parseResponse || JSON.parse;
-            context.response._data = parseFunction(data);
+        switch (responseType) {
+          case "json": {
+            const data = await context.response.text();
+            if (data) {
+              const parseFunction = context.options.parseResponse || JSON.parse;
+              context.response._data = parseFunction(data);
+            }
+            break;
           }
-          break;
-        }
-        case "stream": {
-          context.response._data =
-            context.response.body || (context.response as any)._bodyInit; // (see refs above)
-          break;
-        }
-        default: {
-          context.response._data = await context.response[responseType]();
+          case "stream": {
+            context.response._data =
+              context.response.body || (context.response as any)._bodyInit; // (see refs above)
+            break;
+          }
+          default: {
+            context.response._data = await context.response[responseType]();
+          }
         }
       }
-    }
 
-    if (context.options.onResponse) {
-      await callHooks(
-        context as FetchContext & { response: FetchResponse<any> },
-        context.options.onResponse
-      );
-    }
-
-    if (
-      !context.options.ignoreResponseError &&
-      context.response.status >= 400 &&
-      context.response.status < 600
-    ) {
-      if (context.options.onResponseError) {
+      if (context.options.onResponse) {
         await callHooks(
           context as FetchContext & { response: FetchResponse<any> },
-          context.options.onResponseError
+          context.options.onResponse
         );
       }
-      return await onError(context);
-    }
 
-    return context.response;
+      if (
+        !context.options.ignoreResponseError &&
+        context.response.status >= 400 &&
+        context.response.status < 600
+      ) {
+        if (context.options.onResponseError) {
+          await callHooks(
+            context as FetchContext & { response: FetchResponse<any> },
+            context.options.onResponseError
+          );
+        }
+        const retried = await onError(context);
+        if (circuit && isCircuitStatusFailure(retried.status, circuit)) {
+          settleCircuit("failure");
+        } else {
+          settleCircuit("success");
+        }
+        return retried;
+      }
+
+      if (circuit && isCircuitStatusFailure(context.response.status, circuit)) {
+        settleCircuit("failure");
+      } else {
+        settleCircuit("success");
+      }
+
+      return context.response;
+    } catch (error) {
+      const fetchError = error as {
+        response?: { status?: number };
+        status?: number;
+        name?: string;
+      };
+      if (
+        fetchError?.name === "FetchError" &&
+        fetchError.response &&
+        circuit &&
+        !isCircuitStatusFailure(
+          fetchError.status ?? fetchError.response.status,
+          circuit
+        )
+      ) {
+        settleCircuit("neutral");
+      } else {
+        settleCircuit("failure");
+      }
+      throw error;
+    } finally {
+      if (circuitAdmission?.isProbe) {
+        releaseCircuitProbe(circuitStore, circuitAdmission.origin);
+      }
+    }
   };
 
   const $fetch = async function $fetch(request, options) {
@@ -269,6 +368,7 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
     createFetch({
       ...globalOptions,
       ...customGlobalOptions,
+      circuitStore: customGlobalOptions.circuitStore ?? circuitStore,
       defaults: {
         ...globalOptions.defaults,
         ...customGlobalOptions.defaults,
