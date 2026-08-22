@@ -208,7 +208,7 @@ fn natural_cmp(a: &str, b: &str, case_sensitive: bool) -> Ordering {
                     ordering => return ordering,
                 }
             }
-            (Some(_), Some(_)) => {
+            (Some(a_char), Some(b_char)) => {
                 let a_run = take_non_digits(&mut a);
                 let b_run = take_non_digits(&mut b);
                 let a_run = if case_sensitive {
@@ -269,11 +269,9 @@ fn entry_extension(entry: &DirEntry) -> Option<Cow<'_, str>> {
 }
 
 fn regular_file_size(entry: &DirEntry) -> Option<u64> {
-    if is_regular_file(entry) {
-        entry.metadata().map(std::fs::Metadata::len)
-    } else {
-        None
-    }
+    is_regular_file(entry)
+        .then(|| entry.metadata()?.len())
+        .flatten()
 }
 
 fn entry_time(

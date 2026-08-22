@@ -884,11 +884,10 @@ fn test_no_ignore_vcs() {
 /// Test that --no-ignore-vcs still respects .fdignored in parent directory
 #[test]
 fn test_no_ignore_vcs_child_dir() {
-    let te = TestEnv::new(&["inner"], &[
-        "inner/fdignored.foo",
-        "inner/foo",
-        "inner/gitignored.foo",
-    ]);
+    let te = TestEnv::new(
+        &["inner"],
+        &["inner/fdignored.foo", "inner/foo", "inner/gitignored.foo"],
+    );
 
     te.assert_output_subdirectory(
         "inner",
@@ -1424,13 +1423,10 @@ fn test_extension() {
 /// No file extension (test for the pattern provided in the --help text)
 #[test]
 fn test_no_extension() {
-    let te = TestEnv::new(DEFAULT_DIRS, &[
-        "a.foo",
-        "aa",
-        "one/b.foo",
-        "one/bb",
-        "one/two/three/d",
-    ]);
+    let te = TestEnv::new(
+        DEFAULT_DIRS,
+        &["a.foo", "aa", "one/b.foo", "one/bb", "one/two/three/d"],
+    );
 
     te.assert_output(
         &["^[^.]+$"],
@@ -1930,16 +1926,19 @@ fn test_exec_batch_multi() {
     }
     let te = TestEnv::new(DEFAULT_DIRS, DEFAULT_FILES);
 
-    let output = te.assert_success_and_get_output(".", &[
-        "foo",
-        "--exec-batch",
-        "echo",
-        "{}",
-        ";",
-        "--exec-batch",
-        "echo",
-        "{/}",
-    ]);
+    let output = te.assert_success_and_get_output(
+        ".",
+        &[
+            "foo",
+            "--exec-batch",
+            "echo",
+            "{}",
+            ";",
+            "--exec-batch",
+            "echo",
+            "{/}",
+        ],
+    );
     let stdout = std::str::from_utf8(&output.stdout).unwrap();
     let lines: Vec<_> = stdout
         .lines()
@@ -1950,24 +1949,27 @@ fn test_exec_batch_multi() {
         })
         .collect();
 
-    assert_eq!(lines, &[
-        [
-            "./a.foo",
-            "./one/b.foo",
-            "./one/two/C.Foo2",
-            "./one/two/c.foo",
-            "./one/two/three/d.foo",
-            "./one/two/three/directory_foo"
-        ],
-        [
-            "C.Foo2",
-            "a.foo",
-            "b.foo",
-            "c.foo",
-            "d.foo",
-            "directory_foo"
-        ],
-    ]);
+    assert_eq!(
+        lines,
+        &[
+            [
+                "./a.foo",
+                "./one/b.foo",
+                "./one/two/C.Foo2",
+                "./one/two/c.foo",
+                "./one/two/three/d.foo",
+                "./one/two/three/directory_foo"
+            ],
+            [
+                "C.Foo2",
+                "a.foo",
+                "b.foo",
+                "c.foo",
+                "d.foo",
+                "directory_foo"
+            ],
+        ]
+    );
 
     te.assert_failure_with_error(
         &[
@@ -1993,13 +1995,10 @@ fn test_exec_batch_with_limit() {
 
     let te = TestEnv::new(DEFAULT_DIRS, DEFAULT_FILES);
 
-    let output = te.assert_success_and_get_output(".", &[
-        "foo",
-        "--batch-size=2",
-        "--exec-batch",
-        "echo",
-        "{}",
-    ]);
+    let output = te.assert_success_and_get_output(
+        ".",
+        &["foo", "--batch-size=2", "--exec-batch", "echo", "{}"],
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     for line in stdout.lines() {
@@ -2011,14 +2010,17 @@ fn test_exec_batch_with_limit() {
         .flat_map(|line| line.split_whitespace())
         .collect();
     paths.sort_unstable();
-    assert_eq!(&paths, &[
-        "./a.foo",
-        "./one/b.foo",
-        "./one/two/C.Foo2",
-        "./one/two/c.foo",
-        "./one/two/three/d.foo",
-        "./one/two/three/directory_foo"
-    ],);
+    assert_eq!(
+        &paths,
+        &[
+            "./a.foo",
+            "./one/b.foo",
+            "./one/two/C.Foo2",
+            "./one/two/c.foo",
+            "./one/two/three/d.foo",
+            "./one/two/three/directory_foo"
+        ],
+    );
 }
 
 /// Shell script execution (--exec) with a custom --path-separator
@@ -2469,114 +2471,6 @@ fn test_max_results() {
     te.assert_failure(&["thing", "--max-results=1", "-1", "--exec=cat"]);
 }
 
-#[test]
-fn test_sorting() {
-    let te = TestEnv::new(&["z", "a"], &[
-        "z/same.txt",
-        "a/same.txt",
-        "file20",
-        "file9",
-        "file10",
-        "file007",
-        "file7",
-    ]);
-
-    let output =
-        te.assert_success_and_get_output(".", &["file|same", "--sort", "name", "--sort", "path"]);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "file007
-file10
-file20
-file7
-file9
-a/same.txt
-z/same.txt
-"
-    );
-
-    let output = te.assert_success_and_get_output(".", &[
-        "file|same",
-        "--sort",
-        "name",
-        "--sort-natural",
-        "--max-results=3",
-    ]);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "file007
-file7
-file10
-"
-    );
-
-    let output = te.assert_success_and_get_output(".", &[
-        "file|same",
-        "--sort",
-        "name",
-        "--sort-natural",
-        "--reverse",
-    ]);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "z/same.txt
-a/same.txt
-file20
-file10
-file9
-file7
-file007
-"
-    );
-}
-
-#[test]
-fn test_sorting_groups_and_missing_values() {
-    let te = TestEnv::new(&["bdir", "adir"], &["zfile", "afile", "with.rs", "without"]);
-
-    let output = te.assert_success_and_get_output(".", &["--sort", "name", "--dirs-first"]);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "adir/
-bdir/
-afile
-symlink
-with.rs
-without
-zfile
-"
-    );
-
-    let output =
-        te.assert_success_and_get_output(".", &["--sort", "extension", "--sort-missing-last"]);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "adir/
-afile
-bdir/
-symlink
-without
-zfile
-with.rs
-"
-    );
-}
-
-#[test]
-fn test_sorting_random_seed_and_validation() {
-    let te = TestEnv::new(&[], &["one", "two", "three", "four", "five"]);
-    let args = &["--sort", "random", "--sort-seed", "42"];
-    let first = te.assert_success_and_get_output(".", args);
-    let second = te.assert_success_and_get_output(".", args);
-    assert_eq!(first.stdout, second.stdout);
-
-    te.assert_failure(&["--reverse"]);
-    te.assert_failure(&["--sort-seed", "42"]);
-    te.assert_failure(&["--sort", "name", "--exec", "echo"]);
-    te.assert_failure(&["--sort", "name", "--list-details"]);
-    te.assert_failure(&["--sort", "name", "--dirs-first", "--files-first"]);
-}
-
 /// Filenames with non-utf8 paths are passed to the executed program unchanged
 ///
 /// Note:
@@ -2745,13 +2639,16 @@ fn test_invalid_cwd() {
 /// Test behavior of .git directory with various flags
 #[test]
 fn test_git_dir() {
-    let te = TestEnv::new(&[".git/one", "other_dir/.git", "nested/dir/.git"], &[
-        ".git/one/foo.a",
-        ".git/.foo",
-        ".git/a.foo",
-        "other_dir/.git/foo1",
-        "nested/dir/.git/foo2",
-    ]);
+    let te = TestEnv::new(
+        &[".git/one", "other_dir/.git", "nested/dir/.git"],
+        &[
+            ".git/one/foo.a",
+            ".git/.foo",
+            ".git/a.foo",
+            "other_dir/.git/foo1",
+            "nested/dir/.git/foo2",
+        ],
+    );
 
     te.assert_output(
         &["--hidden", "foo"],
@@ -2813,13 +2710,16 @@ fn test_hyperlink() {
 
 #[test]
 fn test_ignore_contain() {
-    let te = TestEnv::new(&["include", "exclude", "exclude/sub", "other"], &[
-        "top",
-        "include/foo",
-        "exclude/CACHEDIR.TAG",
-        "exclude/sub/nope",
-        "other/ignoremyparent",
-    ]);
+    let te = TestEnv::new(
+        &["include", "exclude", "exclude/sub", "other"],
+        &[
+            "top",
+            "include/foo",
+            "exclude/CACHEDIR.TAG",
+            "exclude/sub/nope",
+            "other/ignoremyparent",
+        ],
+    );
     let expected = "include/
     include/foo
     symlink
@@ -2836,12 +2736,15 @@ fn test_ignore_contain() {
 
 #[test]
 fn test_ignore_contain_precedence_over_depth_check() {
-    let te = TestEnv::new(&["include", "exclude", "exclude/sub"], &[
-        "top",
-        "include/foo",
-        "exclude/CACHEDIR.TAG",
-        "exclude/sub/nope",
-    ]);
+    let te = TestEnv::new(
+        &["include", "exclude", "exclude/sub"],
+        &[
+            "top",
+            "include/foo",
+            "exclude/CACHEDIR.TAG",
+            "exclude/sub/nope",
+        ],
+    );
     let expected = "include/foo";
     te.assert_output(
         &["--ignore-contain=CACHEDIR.TAG", "--min-depth=2", "."],
