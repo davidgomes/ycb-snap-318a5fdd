@@ -96,7 +96,7 @@ func sequenceEnd(s string, start int) (int, TokenType) {
 
 func hyperlinkType(payload string) TokenType {
 	if strings.HasPrefix(payload, "8;") {
-		if strings.HasPrefix(payload, "8;;") {
+		if payload == "8;;" {
 			return TokenHyperlinkClose
 		}
 		return TokenHyperlinkOpen
