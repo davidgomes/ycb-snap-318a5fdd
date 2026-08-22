@@ -1,38 +1,20 @@
 import { DynamoDBToolboxError } from '~/errors/index.js'
 import { SchemaDTO } from '~/schema/actions/dto/index.js'
-import { Finder } from '~/schema/actions/finder/index.js'
-import { Formatter } from '~/schema/actions/format/index.js'
 import { fromSchemaDTO } from '~/schema/actions/fromDTO/index.js'
+import { Formatter } from '~/schema/actions/format/index.js'
+import { Finder } from '~/schema/actions/finder/index.js'
 import { JSONSchemer } from '~/schema/actions/jsonSchemer/index.js'
 import { Parser } from '~/schema/actions/parse/index.js'
 import { ZodSchemer } from '~/schema/actions/zodSchemer/index.js'
-import {
-  ListSchema,
-  MapSchema_,
-  StringSchema,
-  item,
-  lazy,
-  list,
-  map,
-  string
-} from '~/schema/index.js'
-
-const createTreeSchema = (): MapSchema_ => {
-  let treeSchema: MapSchema_
-  treeSchema = new MapSchema_({
-    value: new StringSchema({}),
-    children: new ListSchema(
-      lazy(() => treeSchema),
-      { required: 'never' }
-    )
-  })
-  return treeSchema
-}
+import { item, lazy, list, map, string } from '~/schema/index.js'
 
 describe('lazy schema', () => {
   test('resolves once and checks recursive schemas', () => {
     const thunk = vi.fn()
-    const treeSchema = createTreeSchema()
+    const treeSchema = map({
+      value: string(),
+      children: list(lazy(() => treeSchema)).optional()
+    })
     thunk.mockReturnValue(treeSchema)
     const schema = lazy(thunk)
 
@@ -43,7 +25,10 @@ describe('lazy schema', () => {
   })
 
   test('parses and formats recursive values', () => {
-    const treeSchema = createTreeSchema()
+    const treeSchema = map({
+      value: string(),
+      children: list(lazy(() => treeSchema)).optional()
+    })
     treeSchema.check()
     const value = { value: 'root', children: [{ value: 'leaf', children: [] }] }
 
@@ -62,7 +47,10 @@ describe('lazy schema', () => {
   })
 
   test('serializes and deserializes recursive DTOs', () => {
-    const treeSchema = createTreeSchema()
+    const treeSchema = map({
+      value: string(),
+      children: list(lazy(() => treeSchema)).optional()
+    })
     const itemSchema = item({ tree: treeSchema })
     const dto = itemSchema.build(SchemaDTO)
     const serialized = JSON.parse(JSON.stringify(dto))
@@ -74,11 +62,14 @@ describe('lazy schema', () => {
 
     const reconstructed = fromSchemaDTO(serialized)
     const value = { tree: { value: 'root', children: [{ value: 'leaf' }] } }
-    expect(new Parser(reconstructed).parse(value, { fill: false })).toStrictEqual(value)
+    expect(reconstructed.build(Parser).parse(value, { fill: false })).toStrictEqual(value)
   })
 
   test('exports recursive JSON Schema and Zod schemas', () => {
-    const treeSchema = createTreeSchema()
+    const treeSchema = map({
+      value: string(),
+      children: list(lazy(() => treeSchema)).optional()
+    })
     treeSchema.check()
 
     const jsonSchema = treeSchema.build(JSONSchemer).formattedValueSchema() as {
@@ -94,8 +85,8 @@ describe('lazy schema', () => {
   })
 
   test('finds paths and discriminator schemas through lazy references', () => {
-    const treeSchema: MapSchema_ = new MapSchema_({
-      value: new StringSchema({}),
+    const treeSchema = map({
+      value: string(),
       child: lazy(() => treeSchema).optional()
     })
     treeSchema.check()
