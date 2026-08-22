@@ -16,6 +16,7 @@ import type { RunnableQuery } from '~/runnable-query.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { SQL, View } from '~/sql/sql.ts';
 import type { ColumnsSelection, Placeholder, Query, SQLWrapper } from '~/sql/sql.ts';
+import { type WindowSpec, validateWindowName } from '~/sql/functions/window.ts';
 import type { SQLiteColumn } from '~/sqlite-core/columns/index.ts';
 import type { SQLiteDialect } from '~/sqlite-core/dialect.ts';
 import type { SQLiteSession } from '~/sqlite-core/session.ts';
@@ -701,6 +702,17 @@ export abstract class SQLiteSelectQueryBuilderBase<
 		} else {
 			this.config.groupBy = columns as (SQLiteColumn | SQL | SQL.Aliased)[];
 		}
+		return this as any;
+	}
+
+	window(name: string, spec: WindowSpec): SQLiteSelectWithout<this, TDynamic, 'window'> {
+		validateWindowName(name);
+
+		if (!this.config.windows) {
+			this.config.windows = [];
+		}
+
+		this.config.windows.push({ name, spec });
 		return this as any;
 	}
 

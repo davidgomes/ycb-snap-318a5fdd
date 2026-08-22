@@ -19,6 +19,7 @@ import {
 } from '~/relations.ts';
 import type { Name, Placeholder } from '~/sql/index.ts';
 import { and, eq } from '~/sql/index.ts';
+import { buildWindowClauseSql } from '~/sql/functions/window.ts';
 import { Param, type QueryWithTypings, SQL, sql, type SQLChunk } from '~/sql/sql.ts';
 import { SQLiteColumn } from '~/sqlite-core/columns/index.ts';
 import type {
@@ -315,6 +316,7 @@ export abstract class SQLiteDialect {
 			offset,
 			distinct,
 			setOperators,
+			windows,
 		}: SQLiteSelectConfig,
 	): SQL {
 		const fieldsList = fieldsFlat ?? orderSelectedFields<SQLiteColumn>(fields);
@@ -374,12 +376,14 @@ export abstract class SQLiteDialect {
 
 		const orderBySql = this.buildOrderBy(orderBy);
 
+		const windowSql = buildWindowClauseSql(windows);
+
 		const limitSql = this.buildLimit(limit);
 
 		const offsetSql = offset ? sql` offset ${offset}` : undefined;
 
 		const finalQuery =
-			sql`${withSql}select${distinctSql} ${selection} from ${tableSql}${joinsSql}${whereSql}${groupBySql}${havingSql}${orderBySql}${limitSql}${offsetSql}`;
+			sql`${withSql}select${distinctSql} ${selection} from ${tableSql}${joinsSql}${whereSql}${groupBySql}${havingSql}${windowSql}${orderBySql}${limitSql}${offsetSql}`;
 
 		if (setOperators.length > 0) {
 			return this.buildSetOperations(finalQuery, setOperators);

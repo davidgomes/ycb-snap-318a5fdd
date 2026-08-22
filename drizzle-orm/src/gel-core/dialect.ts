@@ -26,6 +26,7 @@ import {
 	type TablesRelationalConfig,
 } from '~/relations.ts';
 import { and, eq, View } from '~/sql/index.ts';
+import { buildWindowClauseSql } from '~/sql/functions/window.ts';
 import {
 	type DriverValueEncoder,
 	type Name,
@@ -349,6 +350,7 @@ export class GelDialect {
 			lockingClause,
 			distinct,
 			setOperators,
+			windows,
 		}: GelSelectConfig,
 	): SQL {
 		const fieldsList = fieldsFlat ?? orderSelectedFields<GelColumn>(fields);
@@ -401,6 +403,8 @@ export class GelDialect {
 			orderBySql = sql` order by ${sql.join(orderBy, sql`, `)}`;
 		}
 
+		const windowSql = buildWindowClauseSql(windows);
+
 		let groupBySql;
 		if (groupBy && groupBy.length > 0) {
 			groupBySql = sql` group by ${sql.join(groupBy, sql`, `)}`;
@@ -433,7 +437,7 @@ export class GelDialect {
 			lockingClauseSql.append(clauseSql);
 		}
 		const finalQuery =
-			sql`${withSql}select${distinctSql} ${selection} from ${tableSql}${joinsSql}${whereSql}${groupBySql}${havingSql}${orderBySql}${limitSql}${offsetSql}${lockingClauseSql}`;
+			sql`${withSql}select${distinctSql} ${selection} from ${tableSql}${joinsSql}${whereSql}${groupBySql}${havingSql}${windowSql}${orderBySql}${limitSql}${offsetSql}${lockingClauseSql}`;
 
 		if (setOperators.length > 0) {
 			return this.buildSetOperations(finalQuery, setOperators);

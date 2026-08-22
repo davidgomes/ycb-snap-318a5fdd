@@ -24,6 +24,7 @@ import type { SubqueryWithSelection } from '~/singlestore-core/subquery.ts';
 import type { SingleStoreTable } from '~/singlestore-core/table.ts';
 import type { ColumnsSelection, Query } from '~/sql/sql.ts';
 import { SQL } from '~/sql/sql.ts';
+import { type WindowSpec, validateWindowName } from '~/sql/functions/window.ts';
 import { Subquery } from '~/subquery.ts';
 import { Table } from '~/table.ts';
 import {
@@ -773,6 +774,17 @@ export abstract class SingleStoreSelectQueryBuilderBase<
 		} else {
 			this.config.groupBy = columns as (SingleStoreColumn | SQL | SQL.Aliased)[];
 		}
+		return this as any;
+	}
+
+	window(name: string, spec: WindowSpec): SingleStoreSelectWithout<this, TDynamic, 'window'> {
+		validateWindowName(name);
+
+		if (!this.config.windows) {
+			this.config.windows = [];
+		}
+
+		this.config.windows.push({ name, spec });
 		return this as any;
 	}
 

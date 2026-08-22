@@ -19,6 +19,7 @@ import type {
 	SetOperator,
 } from '~/query-builders/select.types.ts';
 import type { ColumnsSelection, Placeholder, SQL, View } from '~/sql/sql.ts';
+import type { WindowDefinition } from '~/sql/functions/window.ts';
 import type { Subquery } from '~/subquery.ts';
 import type { Table, UpdateTableConfig } from '~/table.ts';
 import type { Assume, ValidateShape } from '~/utils.ts';
@@ -71,6 +72,7 @@ export interface MySqlSelectConfig {
 		config: LockConfig;
 	};
 	distinct?: boolean;
+	windows?: WindowDefinition[];
 	setOperators: {
 		rightSelect: TypedQueryBuilder<any, any>;
 		type: SetOperator;

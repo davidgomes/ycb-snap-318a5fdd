@@ -19,6 +19,7 @@ import type {
 import type { SingleStoreColumn } from '~/singlestore-core/columns/index.ts';
 import type { SingleStoreTable, SingleStoreTableWithColumns } from '~/singlestore-core/table.ts';
 import type { ColumnsSelection, Placeholder, SQL, View } from '~/sql/sql.ts';
+import type { WindowDefinition } from '~/sql/functions/window.ts';
 import type { Subquery } from '~/subquery.ts';
 import type { Table, UpdateTableConfig } from '~/table.ts';
 import type { Assume, ValidateShape } from '~/utils.ts';
@@ -66,6 +67,7 @@ export interface SingleStoreSelectConfig {
 		config: LockConfig;
 	};
 	distinct?: boolean;
+	windows?: WindowDefinition[];
 	setOperators: {
 		rightSelect: TypedQueryBuilder<any, any>;
 		type: SetOperator;

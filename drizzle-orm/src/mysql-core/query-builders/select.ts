@@ -19,6 +19,7 @@ import { QueryPromise } from '~/query-promise.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import type { ColumnsSelection, Placeholder, Query } from '~/sql/sql.ts';
 import { SQL, View } from '~/sql/sql.ts';
+import { type WindowSpec, validateWindowName } from '~/sql/functions/window.ts';
 import { Subquery } from '~/subquery.ts';
 import { Table } from '~/table.ts';
 import type { ValueOrArray } from '~/utils.ts';
@@ -900,6 +901,17 @@ export abstract class MySqlSelectQueryBuilderBase<
 		} else {
 			this.config.groupBy = columns as (MySqlColumn | SQL | SQL.Aliased)[];
 		}
+		return this as any;
+	}
+
+	window(name: string, spec: WindowSpec): MySqlSelectWithout<this, TDynamic, 'window'> {
+		validateWindowName(name);
+
+		if (!this.config.windows) {
+			this.config.windows = [];
+		}
+
+		this.config.windows.push({ name, spec });
 		return this as any;
 	}
 

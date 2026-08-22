@@ -21,6 +21,7 @@ import type {
 	SetOperator,
 } from '~/query-builders/select.types.ts';
 import type { ColumnsSelection, Placeholder, SQL, SQLWrapper, View } from '~/sql/sql.ts';
+import type { WindowDefinition } from '~/sql/functions/window.ts';
 import type { Subquery } from '~/subquery.ts';
 import type { Table, UpdateTableConfig } from '~/table.ts';
 import type { Assume, DrizzleTypeError, Equal, ValidateShape, ValueOrArray } from '~/utils.ts';
@@ -69,6 +70,7 @@ export interface PgSelectConfig {
 	distinct?: boolean | {
 		on: (PgColumn | SQLWrapper)[];
 	};
+	windows?: WindowDefinition[];
 	setOperators: {
 		rightSelect: TypedQueryBuilder<any, any>;
 		type: SetOperator;
