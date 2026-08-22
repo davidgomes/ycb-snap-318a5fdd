@@ -257,6 +257,12 @@ def get_openapi_operation_metadata(
     operation["operationId"] = operation_id
     if route.deprecated:
         operation["deprecated"] = route.deprecated
+    if getattr(route, "sunset", None) is not None:
+        operation["x-sunset"] = route.sunset.isoformat()
+    if getattr(route, "deprecation_date", None) is not None:
+        operation["x-deprecation-date"] = route.deprecation_date.isoformat()
+    if getattr(route, "successor_url", None) is not None:
+        operation["x-successor-url"] = route.successor_url
     return operation
 
 

@@ -21,6 +21,7 @@ from contextlib import (
     AsyncExitStack,
     asynccontextmanager,
 )
+from datetime import datetime
 from enum import Enum, IntEnum
 from typing import (
     Annotated,
@@ -38,6 +39,7 @@ from fastapi._compat import (
     lenient_issubclass,
 )
 from fastapi.datastructures import Default, DefaultPlaceholder
+from fastapi.deprecation import apply_deprecation_headers, first_not_none
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import (
     _should_embed_body_fields,
@@ -819,6 +821,9 @@ class APIRoute(routing.Route):
         response_description: str = "Successful Response",
         responses: dict[int | str, dict[str, Any]] | None = None,
         deprecated: bool | None = None,
+        sunset: datetime | None = None,
+        deprecation_date: datetime | None = None,
+        successor_url: str | None = None,
         name: str | None = None,
         methods: set[str] | list[str] | None = None,
         operation_id: str | None = None,
@@ -865,6 +870,9 @@ class APIRoute(routing.Route):
         self.summary = summary
         self.response_description = response_description
         self.deprecated = deprecated
+        self.sunset = sunset
+        self.deprecation_date = deprecation_date
+        self.successor_url = successor_url
         self.operation_id = operation_id
         self.response_model_include = response_model_include
         self.response_model_exclude = response_model_exclude
@@ -972,7 +980,7 @@ class APIRoute(routing.Route):
         self.app = request_response(self.get_route_handler())
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
-        return get_request_handler(
+        handler = get_request_handler(
             dependant=self.dependant,
             body_field=self.body_field,
             status_code=self.status_code,
@@ -990,6 +998,19 @@ class APIRoute(routing.Route):
             stream_item_field=self.stream_item_field,
             is_json_stream=self.is_json_stream,
         )
+
+        async def deprecation_handler(request: Request) -> Response:
+            response = await handler(request)
+            apply_deprecation_headers(
+                response,
+                deprecated=self.deprecated,
+                sunset=self.sunset,
+                deprecation_date=self.deprecation_date,
+                successor_url=self.successor_url,
+            )
+            return response
+
+        return deprecation_handler
 
     def matches(self, scope: Scope) -> tuple[Match, Scope]:
         match, child_scope = super().matches(scope)
@@ -1210,6 +1231,36 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = None,
+        sunset: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional sunset date for this *path operation*.
+
+                When set, responses include an RFC 8594 `Sunset` header.
+                """
+            ),
+        ] = None,
+        deprecation_date: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional date when this *path operation* was deprecated.
+
+                When set, responses include an RFC 8898 `Deprecation` header with
+                that date instead of `true`.
+                """
+            ),
+        ] = None,
+        successor_url: Annotated[
+            str | None,
+            Doc(
+                """
+                Optional successor URL advertised with an RFC 8288 `Link` header
+                using `rel="successor-version"`.
+                """
+            ),
+        ] = None,
         include_in_schema: Annotated[
             bool,
             Doc(
@@ -1301,6 +1352,9 @@ class APIRouter(routing.Router):
         self.tags: list[str | Enum] = tags or []
         self.dependencies = list(dependencies or [])
         self.deprecated = deprecated
+        self.sunset = sunset
+        self.deprecation_date = deprecation_date
+        self.successor_url = successor_url
         self.include_in_schema = include_in_schema
         self.responses = responses or {}
         self.callbacks = callbacks or []
@@ -1343,6 +1397,9 @@ class APIRouter(routing.Router):
         response_description: str = "Successful Response",
         responses: dict[int | str, dict[str, Any]] | None = None,
         deprecated: bool | None = None,
+        sunset: datetime | None = None,
+        deprecation_date: datetime | None = None,
+        successor_url: str | None = None,
         methods: set[str] | list[str] | None = None,
         operation_id: str | None = None,
         response_model_include: IncEx | None = None,
@@ -1390,7 +1447,10 @@ class APIRouter(routing.Router):
             description=description,
             response_description=response_description,
             responses=combined_responses,
-            deprecated=deprecated or self.deprecated,
+            deprecated=first_not_none(deprecated, self.deprecated),
+            sunset=first_not_none(sunset, self.sunset),
+            deprecation_date=first_not_none(deprecation_date, self.deprecation_date),
+            successor_url=first_not_none(successor_url, self.successor_url),
             methods=methods,
             operation_id=operation_id,
             response_model_include=response_model_include,
@@ -1410,6 +1470,10 @@ class APIRouter(routing.Router):
                 strict_content_type, self.strict_content_type
             ),
         )
+        route._explicit_deprecated = deprecated
+        route._explicit_sunset = sunset
+        route._explicit_deprecation_date = deprecation_date
+        route._explicit_successor_url = successor_url
         self.routes.append(route)
 
     def api_route(
@@ -1425,6 +1489,9 @@ class APIRouter(routing.Router):
         response_description: str = "Successful Response",
         responses: dict[int | str, dict[str, Any]] | None = None,
         deprecated: bool | None = None,
+        sunset: datetime | None = None,
+        deprecation_date: datetime | None = None,
+        successor_url: str | None = None,
         methods: list[str] | None = None,
         operation_id: str | None = None,
         response_model_include: IncEx | None = None,
@@ -1455,6 +1522,9 @@ class APIRouter(routing.Router):
                 response_description=response_description,
                 responses=responses,
                 deprecated=deprecated,
+                sunset=sunset,
+                deprecation_date=deprecation_date,
+                successor_url=successor_url,
                 methods=methods,
                 operation_id=operation_id,
                 response_model_include=response_model_include,
@@ -1656,6 +1726,36 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = None,
+        sunset: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional sunset date for this *path operation*.
+
+                When set, responses include an RFC 8594 `Sunset` header.
+                """
+            ),
+        ] = None,
+        deprecation_date: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional date when this *path operation* was deprecated.
+
+                When set, responses include an RFC 8898 `Deprecation` header with
+                that date instead of `true`.
+                """
+            ),
+        ] = None,
+        successor_url: Annotated[
+            str | None,
+            Doc(
+                """
+                Optional successor URL advertised with an RFC 8288 `Link` header
+                using `rel="successor-version"`.
+                """
+            ),
+        ] = None,
         include_in_schema: Annotated[
             bool,
             Doc(
@@ -1766,7 +1866,34 @@ class APIRouter(routing.Router):
                     description=route.description,
                     response_description=route.response_description,
                     responses=combined_responses,
-                    deprecated=route.deprecated or deprecated or self.deprecated,
+                    deprecated=first_not_none(
+                        getattr(route, "_explicit_deprecated", getattr(route, "deprecated", None)),
+                        deprecated,
+                        router.deprecated,
+                    ),
+                    sunset=first_not_none(
+                        getattr(route, "_explicit_sunset", getattr(route, "sunset", None)),
+                        sunset,
+                        getattr(router, "sunset", None),
+                    ),
+                    deprecation_date=first_not_none(
+                        getattr(
+                            route,
+                            "_explicit_deprecation_date",
+                            getattr(route, "deprecation_date", None),
+                        ),
+                        deprecation_date,
+                        getattr(router, "deprecation_date", None),
+                    ),
+                    successor_url=first_not_none(
+                        getattr(
+                            route,
+                            "_explicit_successor_url",
+                            getattr(route, "successor_url", None),
+                        ),
+                        successor_url,
+                        getattr(router, "successor_url", None),
+                    ),
                     methods=route.methods,
                     operation_id=route.operation_id,
                     response_model_include=route.response_model_include,
@@ -1967,6 +2094,36 @@ class APIRouter(routing.Router):
                 Mark this *path operation* as deprecated.
 
                 It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+                """
+            ),
+        ] = None,
+        sunset: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional sunset date for this *path operation*.
+
+                When set, responses include an RFC 8594 `Sunset` header.
+                """
+            ),
+        ] = None,
+        deprecation_date: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional date when this *path operation* was deprecated.
+
+                When set, responses include an RFC 8898 `Deprecation` header with
+                that date instead of `true`.
+                """
+            ),
+        ] = None,
+        successor_url: Annotated[
+            str | None,
+            Doc(
+                """
+                Optional successor URL advertised with an RFC 8288 `Link` header
+                using `rel="successor-version"`.
                 """
             ),
         ] = None,
@@ -2185,6 +2342,9 @@ class APIRouter(routing.Router):
             response_description=response_description,
             responses=responses,
             deprecated=deprecated,
+            sunset=sunset,
+            deprecation_date=deprecation_date,
+            successor_url=successor_url,
             methods=["GET"],
             operation_id=operation_id,
             response_model_include=response_model_include,
@@ -2344,6 +2504,36 @@ class APIRouter(routing.Router):
                 Mark this *path operation* as deprecated.
 
                 It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+                """
+            ),
+        ] = None,
+        sunset: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional sunset date for this *path operation*.
+
+                When set, responses include an RFC 8594 `Sunset` header.
+                """
+            ),
+        ] = None,
+        deprecation_date: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional date when this *path operation* was deprecated.
+
+                When set, responses include an RFC 8898 `Deprecation` header with
+                that date instead of `true`.
+                """
+            ),
+        ] = None,
+        successor_url: Annotated[
+            str | None,
+            Doc(
+                """
+                Optional successor URL advertised with an RFC 8288 `Link` header
+                using `rel="successor-version"`.
                 """
             ),
         ] = None,
@@ -2567,6 +2757,9 @@ class APIRouter(routing.Router):
             response_description=response_description,
             responses=responses,
             deprecated=deprecated,
+            sunset=sunset,
+            deprecation_date=deprecation_date,
+            successor_url=successor_url,
             methods=["PUT"],
             operation_id=operation_id,
             response_model_include=response_model_include,
@@ -2726,6 +2919,36 @@ class APIRouter(routing.Router):
                 Mark this *path operation* as deprecated.
 
                 It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+                """
+            ),
+        ] = None,
+        sunset: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional sunset date for this *path operation*.
+
+                When set, responses include an RFC 8594 `Sunset` header.
+                """
+            ),
+        ] = None,
+        deprecation_date: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional date when this *path operation* was deprecated.
+
+                When set, responses include an RFC 8898 `Deprecation` header with
+                that date instead of `true`.
+                """
+            ),
+        ] = None,
+        successor_url: Annotated[
+            str | None,
+            Doc(
+                """
+                Optional successor URL advertised with an RFC 8288 `Link` header
+                using `rel="successor-version"`.
                 """
             ),
         ] = None,
@@ -2949,6 +3172,9 @@ class APIRouter(routing.Router):
             response_description=response_description,
             responses=responses,
             deprecated=deprecated,
+            sunset=sunset,
+            deprecation_date=deprecation_date,
+            successor_url=successor_url,
             methods=["POST"],
             operation_id=operation_id,
             response_model_include=response_model_include,
@@ -3108,6 +3334,36 @@ class APIRouter(routing.Router):
                 Mark this *path operation* as deprecated.
 
                 It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+                """
+            ),
+        ] = None,
+        sunset: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional sunset date for this *path operation*.
+
+                When set, responses include an RFC 8594 `Sunset` header.
+                """
+            ),
+        ] = None,
+        deprecation_date: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional date when this *path operation* was deprecated.
+
+                When set, responses include an RFC 8898 `Deprecation` header with
+                that date instead of `true`.
+                """
+            ),
+        ] = None,
+        successor_url: Annotated[
+            str | None,
+            Doc(
+                """
+                Optional successor URL advertised with an RFC 8288 `Link` header
+                using `rel="successor-version"`.
                 """
             ),
         ] = None,
@@ -3326,6 +3582,9 @@ class APIRouter(routing.Router):
             response_description=response_description,
             responses=responses,
             deprecated=deprecated,
+            sunset=sunset,
+            deprecation_date=deprecation_date,
+            successor_url=successor_url,
             methods=["DELETE"],
             operation_id=operation_id,
             response_model_include=response_model_include,
@@ -3485,6 +3744,36 @@ class APIRouter(routing.Router):
                 Mark this *path operation* as deprecated.
 
                 It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+                """
+            ),
+        ] = None,
+        sunset: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional sunset date for this *path operation*.
+
+                When set, responses include an RFC 8594 `Sunset` header.
+                """
+            ),
+        ] = None,
+        deprecation_date: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional date when this *path operation* was deprecated.
+
+                When set, responses include an RFC 8898 `Deprecation` header with
+                that date instead of `true`.
+                """
+            ),
+        ] = None,
+        successor_url: Annotated[
+            str | None,
+            Doc(
+                """
+                Optional successor URL advertised with an RFC 8288 `Link` header
+                using `rel="successor-version"`.
                 """
             ),
         ] = None,
@@ -3703,6 +3992,9 @@ class APIRouter(routing.Router):
             response_description=response_description,
             responses=responses,
             deprecated=deprecated,
+            sunset=sunset,
+            deprecation_date=deprecation_date,
+            successor_url=successor_url,
             methods=["OPTIONS"],
             operation_id=operation_id,
             response_model_include=response_model_include,
@@ -3862,6 +4154,36 @@ class APIRouter(routing.Router):
                 Mark this *path operation* as deprecated.
 
                 It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+                """
+            ),
+        ] = None,
+        sunset: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional sunset date for this *path operation*.
+
+                When set, responses include an RFC 8594 `Sunset` header.
+                """
+            ),
+        ] = None,
+        deprecation_date: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional date when this *path operation* was deprecated.
+
+                When set, responses include an RFC 8898 `Deprecation` header with
+                that date instead of `true`.
+                """
+            ),
+        ] = None,
+        successor_url: Annotated[
+            str | None,
+            Doc(
+                """
+                Optional successor URL advertised with an RFC 8288 `Link` header
+                using `rel="successor-version"`.
                 """
             ),
         ] = None,
@@ -4085,6 +4407,9 @@ class APIRouter(routing.Router):
             response_description=response_description,
             responses=responses,
             deprecated=deprecated,
+            sunset=sunset,
+            deprecation_date=deprecation_date,
+            successor_url=successor_url,
             methods=["HEAD"],
             operation_id=operation_id,
             response_model_include=response_model_include,
@@ -4244,6 +4569,36 @@ class APIRouter(routing.Router):
                 Mark this *path operation* as deprecated.
 
                 It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+                """
+            ),
+        ] = None,
+        sunset: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional sunset date for this *path operation*.
+
+                When set, responses include an RFC 8594 `Sunset` header.
+                """
+            ),
+        ] = None,
+        deprecation_date: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional date when this *path operation* was deprecated.
+
+                When set, responses include an RFC 8898 `Deprecation` header with
+                that date instead of `true`.
+                """
+            ),
+        ] = None,
+        successor_url: Annotated[
+            str | None,
+            Doc(
+                """
+                Optional successor URL advertised with an RFC 8288 `Link` header
+                using `rel="successor-version"`.
                 """
             ),
         ] = None,
@@ -4467,6 +4822,9 @@ class APIRouter(routing.Router):
             response_description=response_description,
             responses=responses,
             deprecated=deprecated,
+            sunset=sunset,
+            deprecation_date=deprecation_date,
+            successor_url=successor_url,
             methods=["PATCH"],
             operation_id=operation_id,
             response_model_include=response_model_include,
@@ -4626,6 +4984,36 @@ class APIRouter(routing.Router):
                 Mark this *path operation* as deprecated.
 
                 It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+                """
+            ),
+        ] = None,
+        sunset: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional sunset date for this *path operation*.
+
+                When set, responses include an RFC 8594 `Sunset` header.
+                """
+            ),
+        ] = None,
+        deprecation_date: Annotated[
+            datetime | None,
+            Doc(
+                """
+                Optional date when this *path operation* was deprecated.
+
+                When set, responses include an RFC 8898 `Deprecation` header with
+                that date instead of `true`.
+                """
+            ),
+        ] = None,
+        successor_url: Annotated[
+            str | None,
+            Doc(
+                """
+                Optional successor URL advertised with an RFC 8288 `Link` header
+                using `rel="successor-version"`.
                 """
             ),
         ] = None,
@@ -4849,6 +5237,9 @@ class APIRouter(routing.Router):
             response_description=response_description,
             responses=responses,
             deprecated=deprecated,
+            sunset=sunset,
+            deprecation_date=deprecation_date,
+            successor_url=successor_url,
             methods=["TRACE"],
             operation_id=operation_id,
             response_model_include=response_model_include,
