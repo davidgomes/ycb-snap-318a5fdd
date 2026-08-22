@@ -12,7 +12,8 @@ import (
 
 // Options provides options to run VM with
 type Options struct {
-	Debug bool // run in Debug mode
+	Debug         bool // run in Debug mode
+	TypedBindings bool // enforce typed variable declarations
 }
 
 type (
@@ -72,6 +73,31 @@ var (
 // Error returns the VM error message.
 func (e *Error) Error() string {
 	return e.Message
+}
+
+func checkTypedValue(name string, value reflect.Value, target reflect.Type) error {
+	source := "<nil>"
+	if value.IsValid() {
+		source = value.Type().String()
+		if value.Kind() == reflect.Interface && !value.IsNil() {
+			source = value.Elem().Type().String()
+		}
+	}
+	if name == "_" {
+		return nil
+	}
+	if !value.IsValid() || ((value.Kind() == reflect.Interface || value.Kind() == reflect.Ptr ||
+		value.Kind() == reflect.Slice || value.Kind() == reflect.Map || value.Kind() == reflect.Chan) && value.IsNil()) {
+		switch target.Kind() {
+		case reflect.Interface, reflect.Ptr, reflect.Slice, reflect.Map, reflect.Chan:
+			return nil
+		}
+		return fmt.Errorf("type error: variable %s has source type %s, declared target type %s", name, source, target.String())
+	}
+	if !value.Type().AssignableTo(target) {
+		return fmt.Errorf("type error: variable %s has source type %s, declared target type %s", name, source, target.String())
+	}
+	return nil
 }
 
 // newError makes VM error from error

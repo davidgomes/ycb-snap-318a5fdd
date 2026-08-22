@@ -111,8 +111,9 @@ type SwitchCaseStmt struct {
 // VarStmt provide statement to let variables in current scope.
 type VarStmt struct {
 	StmtImpl
-	Names []string
-	Exprs []Expr
+	Names    []string
+	Exprs    []Expr
+	TypeData *TypeStruct
 }
 
 // LetsStmt provide multiple statement of let.

@@ -21,6 +21,7 @@ type (
 		parent         *Env
 		values         map[string]reflect.Value
 		types          map[string]reflect.Type
+		constraints    map[string]reflect.Type
 		externalLookup ExternalLookup
 	}
 )
@@ -170,6 +171,12 @@ func (e *Env) Copy() *Env {
 		copy.types = make(map[string]reflect.Type, len(e.types))
 		for name, t := range e.types {
 			copy.types[name] = t
+		}
+	}
+	if e.constraints != nil {
+		copy.constraints = make(map[string]reflect.Type, len(e.constraints))
+		for name, t := range e.constraints {
+			copy.constraints[name] = t
 		}
 	}
 	e.rwMutex.RUnlock()

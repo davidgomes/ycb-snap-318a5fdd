@@ -28,6 +28,30 @@ func (e *Env) DefineValue(symbol string, value reflect.Value) error {
 	return nil
 }
 
+// DefineConstraint associates a type constraint with a binding in this scope.
+func (e *Env) DefineConstraint(symbol string, aType reflect.Type) {
+	e.rwMutex.Lock()
+	if e.constraints == nil {
+		e.constraints = make(map[string]reflect.Type)
+	}
+	e.constraints[symbol] = aType
+	e.rwMutex.Unlock()
+}
+
+// Constraint returns the constraint for the first matching binding.
+func (e *Env) Constraint(symbol string) (reflect.Type, bool) {
+	e.rwMutex.RLock()
+	t, ok := e.constraints[symbol]
+	e.rwMutex.RUnlock()
+	if ok {
+		return t, true
+	}
+	if e.parent != nil {
+		return e.parent.Constraint(symbol)
+	}
+	return nil, false
+}
+
 // DefineGlobal defines/sets interface value to symbol in global scope.
 func (e *Env) DefineGlobal(symbol string, value interface{}) error {
 	for e.parent != nil {
@@ -121,6 +145,7 @@ func (e *Env) GetValueSymbols() []string {
 func (e *Env) Delete(symbol string) {
 	e.rwMutex.Lock()
 	delete(e.values, symbol)
+	delete(e.constraints, symbol)
 	e.rwMutex.Unlock()
 }
 

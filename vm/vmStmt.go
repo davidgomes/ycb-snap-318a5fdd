@@ -97,6 +97,20 @@ func (runInfo *runInfoStruct) runSingleStmt() {
 
 	// VarStmt
 	case *ast.VarStmt:
+		var declaredType reflect.Type
+		if stmt.TypeData != nil {
+			declaredType = makeType(runInfo, stmt.TypeData)
+			if runInfo.err != nil || declaredType == nil {
+				return
+			}
+			if runInfo.options.TypedBindings {
+				for _, name := range stmt.Names {
+					if name != "_" {
+						runInfo.env.DefineConstraint(name, declaredType)
+					}
+				}
+			}
+		}
 		// get right side expression values
 		rvs := make([]reflect.Value, len(stmt.Exprs))
 		var i int
@@ -121,6 +135,11 @@ func (runInfo *runInfoStruct) runSingleStmt() {
 			if (value.Kind() == reflect.Slice || value.Kind() == reflect.Array) && value.Len() > 0 {
 				// value is slice/array, add each value to left side names
 				for i := 0; i < value.Len() && i < len(stmt.Names); i++ {
+					if runInfo.options.TypedBindings && stmt.TypeData != nil {
+						if runInfo.err = checkTypedValue(stmt.Names[i], value.Index(i), declaredType); runInfo.err != nil {
+							return
+						}
+					}
 					runInfo.env.DefineValue(stmt.Names[i], value.Index(i))
 				}
 				// return last value of slice/array
@@ -131,11 +150,25 @@ func (runInfo *runInfoStruct) runSingleStmt() {
 
 		// define all names with right side values
 		for i = 0; i < len(rvs) && i < len(stmt.Names); i++ {
+			if runInfo.options.TypedBindings && stmt.TypeData != nil {
+				if runInfo.err = checkTypedValue(stmt.Names[i], rvs[i], declaredType); runInfo.err != nil {
+					return
+				}
+			}
 			runInfo.env.DefineValue(stmt.Names[i], rvs[i])
+		}
+		if len(rvs) == 0 && stmt.TypeData != nil {
+			for _, name := range stmt.Names {
+				runInfo.env.DefineValue(name, reflect.Zero(declaredType))
+			}
 		}
 
 		// return last right side value
-		runInfo.rv = rvs[len(rvs)-1]
+		if len(rvs) == 0 && stmt.TypeData != nil {
+			runInfo.rv = reflect.Zero(declaredType)
+		} else if len(rvs) > 0 {
+			runInfo.rv = rvs[len(rvs)-1]
+		}
 
 	// LetsStmt
 	case *ast.LetsStmt:

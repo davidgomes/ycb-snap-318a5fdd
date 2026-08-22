@@ -12,6 +12,14 @@ func (runInfo *runInfoStruct) invokeLetExpr() {
 
 	// IdentExpr
 	case *ast.IdentExpr:
+		if runInfo.options.TypedBindings {
+			if target, ok := runInfo.env.Constraint(expr.Lit); ok {
+				if err := checkTypedValue(expr.Lit, runInfo.rv, target); err != nil {
+					runInfo.err = newError(expr, err)
+					return
+				}
+			}
+		}
 		if runInfo.env.SetValue(expr.Lit, runInfo.rv) != nil {
 			runInfo.err = nil
 			runInfo.env.DefineValue(expr.Lit, runInfo.rv)
