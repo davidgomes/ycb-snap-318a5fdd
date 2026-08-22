@@ -274,15 +274,8 @@ func Diff(base, target *Document, opts DiffOptions) ([]DiffOperation, error) {
 }
 
 func normalizeDiffOptions(opts DiffOptions) DiffOptions {
-	// A zero DiffOptions is useful as a shorthand for defaults, while retaining
-	// the meaningful false value of IgnoreOrder.
 	if opts.IdentityMode < IdentityPosition || opts.IdentityMode > IdentityContentHash {
 		opts.IdentityMode = IdentityPosition
-	}
-	if opts.IdentityMode == IdentityPosition && opts.KeyAttributes == nil &&
-		opts.IgnoreAttrs == nil && !opts.IgnoreWhitespace && !opts.IgnoreOrder {
-		// Explicit zero options are treated as defaults by the public API.
-		opts.IgnoreWhitespace = true
 	}
 	return opts
 }
@@ -437,6 +430,16 @@ func keyFor(e *Element, opts DiffOptions) (string, bool) {
 		attrName, ok = opts.KeyAttributes[e.FullTag()]
 	}
 	if !ok {
+		attrName, ok = opts.KeyAttributes["*"]
+	}
+	if !ok && len(opts.KeyAttributes) == 1 {
+		// A single configured key is also useful when the element name changes:
+		// the key identifies the node, not its tag.
+		for _, configured := range opts.KeyAttributes {
+			attrName, ok = configured, true
+		}
+	}
+	if !ok {
 		return "", false
 	}
 	attr := e.SelectAttr(attrName)
@@ -475,18 +478,18 @@ func diffKeyChildren(base, target *Element, bchildren, tchildren []*Element,
 		}
 		used[match] = true
 		b := bchildren[match]
-		if !opts.IgnoreOrder && match != ti && keyed {
-			*ops = append(*ops, DiffOperation{
-				Type: OpMove, OldPath: elementPath(b), NewPath: elementPath(t),
-				Path: elementPath(b), OldValue: b.Copy(), NewValue: t.Copy(),
-			})
-		}
 		if !sameElementName(b, t) {
 			*ops = append(*ops, DiffOperation{
 				Type: OpReplace, Path: elementPath(b), OldValue: b.Copy(), NewValue: t.Copy(),
 			})
 		} else {
 			diffElement(b, t, opts, ops)
+		}
+		if !opts.IgnoreOrder && match != ti && keyed {
+			*ops = append(*ops, DiffOperation{
+				Type: OpMove, OldPath: elementPath(b), NewPath: elementPath(t),
+				Path: elementPath(b), OldValue: b.Copy(), NewValue: t.Copy(),
+			})
 		}
 	}
 	for i := len(bchildren) - 1; i >= 0; i-- {
