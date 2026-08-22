@@ -54,7 +54,8 @@ export default class LinkStyle extends RuleBuilder<LinkStyleOptions> {
           options.linkStyle === 'markdown',
           options.imageStyle === 'markdown',
       );
-    } else if (options.linkStyle === 'wiki' || options.imageStyle === 'wiki') {
+    }
+    if (options.linkStyle === 'wiki' || options.imageStyle === 'wiki') {
       text = this.convertMarkdownToWiki(
           text,
           options.linkStyle === 'wiki',
@@ -280,7 +281,7 @@ export default class LinkStyle extends RuleBuilder<LinkStyleOptions> {
   private unescapeMarkdownDestination(target: string): string {
     let result = '';
     for (let index = 0; index < target.length; index++) {
-      if (target[index] === '\\' && index + 1 < target.length && (/\s|[!"#$%&'()*+,\-\.\/:;<=>?@[\\\]^_`{|}~]/).test(target[index + 1])) {
+      if (target[index] === '\\' && index + 1 < target.length && (/\s|[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/).test(target[index + 1])) {
         result += target[++index];
       } else {
         result += target[index];
@@ -319,7 +320,17 @@ export default class LinkStyle extends RuleBuilder<LinkStyleOptions> {
   }
 
   get exampleBuilders(): ExampleBuilder<LinkStyleOptions>[] {
-    return [];
+    return [
+      new ExampleBuilder<LinkStyleOptions>({
+        description: 'Wiki links and embeds are converted to markdown when both styles are set to `markdown`',
+        before: '[[note]]\n![[image.png]]',
+        after: '[note](note)\n![image.png](image.png)',
+        options: {
+          linkStyle: 'markdown',
+          imageStyle: 'markdown',
+        },
+      }),
+    ];
   }
 
   get optionBuilders(): OptionBuilderBase<LinkStyleOptions>[] {
