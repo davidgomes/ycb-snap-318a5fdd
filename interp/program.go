@@ -160,6 +160,11 @@ func (interp *Interpreter) Execute(p *Program) (res reflect.Value, err error) {
 	interp.resizeFrame()
 	interp.frame.mutex.Unlock()
 
+	// Populate //go:embed variables before any interpreted statement runs.
+	if err = interp.applyEmbeds([]*node{p.root}); err != nil {
+		return res, err
+	}
+
 	// Execute node closures.
 	interp.run(p.root, nil)
 

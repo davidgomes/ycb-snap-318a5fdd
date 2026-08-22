@@ -366,7 +366,8 @@ func wrapInMain(src string) string {
 }
 
 func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err error) {
-	mode := parser.DeclarationErrors
+	// Always parse comments so //go:embed directives and build tags are visible.
+	mode := parser.DeclarationErrors | parser.ParseComments
 
 	// Allow incremental parsing of declarations or statements, by inserting
 	// them in a pseudo file package or function. Those statements or
@@ -384,8 +385,6 @@ func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err
 			inFunc = true
 			src = wrapInMain(src)
 		}
-		// Parse comments in REPL mode, to allow tag setting.
-		mode |= parser.ParseComments
 	}
 
 	if ok, err := interp.buildOk(&interp.context, name, src); !ok || err != nil {
@@ -926,6 +925,9 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 			n := addChild(&root, anc, pos, kind, act)
 			n.nleft = len(a.Names)
 			n.nright = len(a.Values)
+			if anc.node != nil && anc.node.kind == varDecl {
+				n.embed = embedPatternsFromSpec(a, anc.ast)
+			}
 			st.push(n, nod)
 
 		default:

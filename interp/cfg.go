@@ -2492,6 +2492,9 @@ func genGlobalVars(roots []*node, sc *scope) (*node, error) {
 	if err != nil {
 		return nil, err
 	}
+	if varNode == nil || varNode.start == nil {
+		return nil, nil
+	}
 	setExec(varNode.start)
 	return varNode, nil
 }
@@ -2514,9 +2517,18 @@ func genGlobalVarDecl(nodes []*node, sc *scope) (*node, error) {
 	}
 
 	inited := map[*node]bool{}
+	for _, n := range nodes {
+		if len(n.embed) > 0 {
+			// Embed content is applied before global var init and must not be reset.
+			inited[n] = true
+		}
+	}
 	revisit := []*node{}
 	for {
 		for _, n := range nodes {
+			if inited[n] && len(n.embed) > 0 {
+				continue
+			}
 			canInit := true
 			for _, d := range deps[n] {
 				if !inited[d] {
@@ -2528,6 +2540,10 @@ func genGlobalVarDecl(nodes []*node, sc *scope) (*node, error) {
 				continue
 			}
 
+			if len(n.embed) > 0 {
+				inited[n] = true
+				continue
+			}
 			varNode.child = append(varNode.child, n)
 			inited[n] = true
 		}

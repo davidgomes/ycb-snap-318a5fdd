@@ -53,6 +53,7 @@ type node struct {
 	ident      string         // set if node is a var or func
 	redeclared bool           // set if node is a redeclared variable (CFG)
 	meta       interface{}    // meta stores meta information between gta runs, like errors
+	embed      []string       // //go:embed patterns attached to a package-level var spec
 }
 
 func (n *node) shouldBreak() bool {
@@ -369,6 +370,8 @@ func New(options Options) *Interpreter {
 	if options.SourcecodeFilesystem != nil {
 		i.opt.filesystem = options.SourcecodeFilesystem
 	}
+
+	registerEmbedPackage(&i)
 
 	i.opt.context.GOPATH = options.GoPath
 	if len(options.BuildTags) > 0 {

@@ -146,6 +146,11 @@ func (interp *Interpreter) importSrc(rPath, importPath string, skipTest bool) (s
 	interp.frame.mutex.Unlock()
 	interp.mutex.Unlock()
 
+	// Populate //go:embed variables before any interpreted statement runs.
+	if err = interp.applyEmbeds(rootNodes); err != nil {
+		return "", err
+	}
+
 	// Once all package sources have been parsed, execute entry points then init functions.
 	for _, n := range rootNodes {
 		if err = genRun(n); err != nil {
