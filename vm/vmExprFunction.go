@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sync"
 
 	"github.com/mattn/anko/ast"
 )
+
+var vmFunctionDefaults sync.Map
 
 // funcExpr creates a function that reflect Call can use.
 // When called, it will run runVMFunction, to run the function statements
@@ -39,6 +42,13 @@ func (runInfo *runInfoStruct) funcExpr() {
 		// add Params to newEnv, except last Params
 		for i := 0; i < len(funcExpr.Params)-1; i++ {
 			runInfo.rv = in[i+1].Interface().(reflect.Value)
+			if !runInfo.rv.IsValid() {
+				runInfo.expr = funcExpr.Defaults[i]
+				runInfo.invokeExpr()
+				if runInfo.err != nil {
+					break
+				}
+			}
 			runInfo.env.DefineValue(funcExpr.Params[i], runInfo.rv)
 		}
 		// add last Params to newEnv
@@ -50,6 +60,10 @@ func (runInfo *runInfoStruct) funcExpr() {
 			} else {
 				// function is not variadic, add last Params to newEnv
 				runInfo.rv = in[len(funcExpr.Params)].Interface().(reflect.Value)
+				if !runInfo.rv.IsValid() {
+					runInfo.expr = funcExpr.Defaults[len(funcExpr.Params)-1]
+					runInfo.invokeExpr()
+				}
 				runInfo.env.DefineValue(funcExpr.Params[len(funcExpr.Params)-1], runInfo.rv)
 			}
 		}
@@ -71,6 +85,7 @@ func (runInfo *runInfoStruct) funcExpr() {
 
 	// make the reflect.Value function that calls runVMFunction
 	runInfo.rv = reflect.MakeFunc(funcType, runVMFunction)
+	vmFunctionDefaults.Store(runInfo.rv, funcExpr.Defaults)
 
 	// if function name is not empty, define it in the env
 	if funcExpr.Name != "" {
@@ -135,8 +150,14 @@ func (runInfo *runInfoStruct) callExpr() {
 	fType := f.Type()
 	// check if this is a runVMFunction type
 	isRunVMFunction := checkIfRunVMFunction(fType)
+	var defaults []ast.Expr
+	if isRunVMFunction {
+		if value, ok := vmFunctionDefaults.Load(f); ok {
+			defaults = value.([]ast.Expr)
+		}
+	}
 	// create/convert the args to the function
-	args, useCallSlice = runInfo.makeCallArgs(fType, isRunVMFunction, callExpr)
+	args, useCallSlice = runInfo.makeCallArgs(fType, isRunVMFunction, callExpr, defaults)
 	if runInfo.err != nil {
 		return
 	}
@@ -209,7 +230,7 @@ func checkIfRunVMFunction(rt reflect.Type) bool {
 
 // makeCallArgs creates the arguments reflect.Value slice for the four different kinds of functions.
 // Also returns true if CallSlice should be used on the arguments, or false if Call should be used.
-func (runInfo *runInfoStruct) makeCallArgs(rt reflect.Type, isRunVMFunction bool, callExpr *ast.CallExpr) ([]reflect.Value, bool) {
+func (runInfo *runInfoStruct) makeCallArgs(rt reflect.Type, isRunVMFunction bool, callExpr *ast.CallExpr, defaults []ast.Expr) ([]reflect.Value, bool) {
 	// number of arguments
 	numInReal := rt.NumIn()
 	numIn := numInReal
@@ -228,6 +249,36 @@ func (runInfo *runInfoStruct) makeCallArgs(rt reflect.Type, isRunVMFunction bool
 
 	// number of expressions
 	numExprs := len(callExpr.SubExprs)
+	fixedIn := numIn
+	if rt.IsVariadic() {
+		fixedIn--
+	}
+	if isRunVMFunction && len(defaults) > 0 && numExprs < fixedIn {
+		for i := numExprs; i < fixedIn; i++ {
+			if i >= len(defaults) || defaults[i] == nil {
+				runInfo.err = newStringError(callExpr, fmt.Sprintf("function wants %v arguments but received %v", numIn, numExprs))
+				runInfo.rv = nilValue
+				return nil, false
+			}
+		}
+		args := []reflect.Value{reflect.ValueOf(runInfo.ctx)}
+		for i := 0; i < fixedIn; i++ {
+			if i < numExprs {
+				runInfo.expr = callExpr.SubExprs[i]
+				runInfo.invokeExpr()
+				if runInfo.err != nil {
+					return nil, false
+				}
+				args = append(args, reflect.ValueOf(runInfo.rv))
+			} else {
+				args = append(args, reflect.ValueOf(reflect.Value{}))
+			}
+		}
+		if rt.IsVariadic() {
+			args = append(args, reflect.ValueOf([]interface{}{}))
+		}
+		return args, false
+	}
 	// checks to short circuit wrong number of arguments
 	if (!rt.IsVariadic() && !callExpr.VarArg && numIn != numExprs) ||
 		(rt.IsVariadic() && callExpr.VarArg && (numIn < numExprs || numIn > numExprs+1)) ||

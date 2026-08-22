@@ -5,6 +5,13 @@ import (
 	"github.com/mattn/anko/ast"
 )
 
+func defaultsFor(yylex yyLexer, pos ast.Position) []ast.Expr {
+	if l, ok := yylex.(*Lexer); ok {
+		return l.functionDefaults[pos]
+	}
+	return nil
+}
+
 %}
 
 %type<compstmt> compstmt
@@ -483,22 +490,22 @@ expr :
 	}
 	| FUNC '(' expr_idents ')' '{' compstmt '}'
 	{
-		$$ = &ast.FuncExpr{Params: $3, Stmt: $6}
+		$$ = &ast.FuncExpr{Params: $3, Defaults: defaultsFor(yylex, $1.Position()), Stmt: $6}
 		$$.SetPosition($1.Position())
 	}
 	| FUNC '(' expr_idents VARARG ')' '{' compstmt '}'
 	{
-		$$ = &ast.FuncExpr{Params: $3, Stmt: $7, VarArg: true}
+		$$ = &ast.FuncExpr{Params: $3, Defaults: defaultsFor(yylex, $1.Position()), Stmt: $7, VarArg: true}
 		$$.SetPosition($1.Position())
 	}
 	| FUNC IDENT '(' expr_idents ')' '{' compstmt '}'
 	{
-		$$ = &ast.FuncExpr{Name: $2.Lit, Params: $4, Stmt: $7}
+		$$ = &ast.FuncExpr{Name: $2.Lit, Params: $4, Defaults: defaultsFor(yylex, $1.Position()), Stmt: $7}
 		$$.SetPosition($1.Position())
 	}
 	| FUNC IDENT '(' expr_idents VARARG ')' '{' compstmt '}'
 	{
-		$$ = &ast.FuncExpr{Name: $2.Lit, Params: $4, Stmt: $8, VarArg: true}
+		$$ = &ast.FuncExpr{Name: $2.Lit, Params: $4, Defaults: defaultsFor(yylex, $1.Position()), Stmt: $8, VarArg: true}
 		$$.SetPosition($1.Position())
 	}
 	| '[' ']'
