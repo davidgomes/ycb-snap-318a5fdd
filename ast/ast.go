@@ -569,11 +569,13 @@ func (al *ArrayLiteral) String() string {
 // array[1] 	-> left[index]
 // string[1] 	-> left[index]
 type IndexExpression struct {
-	Token   token.Token // The [ token
-	Left    Expression  // the argument on which the index is access eg array of array[1]
-	Index   Expression  // the left-most index eg. 1 in array[1] or array[1:10]
-	IsRange bool        // whether the expression is a range (1:10)
-	End     Expression  // the end of the range, if the expression is a range
+	Token         token.Token // The [ token
+	Left          Expression  // the argument on which the index is access eg array of array[1]
+	Index         Expression  // the left-most index eg. 1 in array[1] or array[1:10]
+	IsRange       bool        // whether the expression is a range (1:10)
+	StartOmitted  bool        // whether the start index was omitted ([:end] or [::step])
+	End           Expression  // the end of the range, if the expression is a range
+	Step          Expression  // the step of the range, if the expression is a stepped range
 }
 
 func (ie *IndexExpression) expressionNode()      {}
@@ -588,7 +590,7 @@ func (ie *IndexExpression) String() string {
 	if ie.IsRange {
 		start := ""
 
-		if ie.Index != nil {
+		if !ie.StartOmitted && ie.Index != nil {
 			start = ie.Index.String()
 		}
 
@@ -598,6 +600,10 @@ func (ie *IndexExpression) String() string {
 			end = ie.End.String()
 		}
 		out.WriteString(start + ":" + end)
+
+		if ie.Step != nil {
+			out.WriteString(":" + ie.Step.String())
+		}
 	} else {
 		out.WriteString(ie.Index.String())
 	}

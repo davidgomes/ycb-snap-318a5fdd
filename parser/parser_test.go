@@ -1594,6 +1594,35 @@ func TestParsingIndexRangeWithoutEndExpressions(t *testing.T) {
 	}
 }
 
+func TestParsingIndexSteppedRangeExpressions(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"myArray[99 : 101 : 2]", "(myArray[99:101:2])"},
+		{"myArray[::2]", "(myArray[::2])"},
+		{"myArray[4::-1]", "(myArray[4::(-1)])"},
+		{"myArray[:101:2]", "(myArray[:101:2])"},
+		{"myArray[99::2]", "(myArray[99::2])"},
+	}
+
+	for _, tt := range tests {
+		l := lexer.New(tt.input)
+		p := New(l)
+		program := p.ParseProgram()
+		checkParserErrors(t, p)
+
+		stmt, ok := program.Statements[0].(*ast.ExpressionStatement)
+		if !ok {
+			t.Fatalf("program.Statements[0] is not ast.ExpressionStatement. got=%T", program.Statements[0])
+		}
+
+		if stmt.Expression.String() != tt.expected {
+			t.Errorf("wrong stringification for %q. got=%q, want=%q", tt.input, stmt.Expression.String(), tt.expected)
+		}
+	}
+}
+
 func TestParsingProperty(t *testing.T) {
 	input := "var.prop"
 

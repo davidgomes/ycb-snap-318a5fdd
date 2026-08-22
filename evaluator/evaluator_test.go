@@ -1806,3 +1806,109 @@ func TestHashFunctions(t *testing.T) {
 		testStringObject(t, evaluated, tt.expected)
 	}
 }
+
+func TestSteppedSliceExpressions(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected interface{}
+	}{
+		{"[0, 1, 2, 3, 4][::2]", []float64{0, 2, 4}},
+		{"[0, 1, 2, 3, 4][1::2]", []float64{1, 3}},
+		{"[0, 1, 2, 3, 4][4::-1]", []float64{4, 3, 2, 1, 0}},
+		{"[0, 1, 2, 3, 4][::-1]", []float64{4, 3, 2, 1, 0}},
+		{`"abcdef"[::2]`, "ace"},
+		{`"abcdef"[1::2]`, "bdf"},
+		{`"abcdef"[::-1]`, "fedcba"},
+		{`"⺐bc"[0]`, "⺐"},
+		{`"⺐bc"[1:3]`, "bc"},
+		{`[0,1,2][::0]`, "slice step cannot be 0"},
+		{`"abc"[::0]`, "slice step cannot be 0"},
+		{`[0,1,2]["a":1:2]`, `index operator not supported: a on ARRAY`},
+		{`"abc"[0:2:"x"]`, `index ranges can only be numerical: got "x" (type STRING)`},
+	}
+
+	for _, tt := range tests {
+		evaluated := testEval(tt.input)
+		switch result := evaluated.(type) {
+		case *object.String:
+			testStringObject(t, evaluated, tt.expected.(string))
+		case *object.Array:
+			expected := tt.expected.([]float64)
+			if len(result.Elements) != len(expected) {
+				t.Fatalf("wrong number of elements. got=%d, want=%d", len(result.Elements), len(expected))
+			}
+			for i, exp := range expected {
+				testNumberObject(t, result.Elements[i], exp)
+			}
+		case *object.Error:
+			logErrorWithPosition(t, result.Message, tt.expected)
+		default:
+			t.Errorf("object is not the right result. got=%s ('%+v' expected)", result.Inspect(), tt.expected)
+		}
+	}
+}
+
+func TestRangeIndexAssignment(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected interface{}
+	}{
+		{`
+		a = [0, 1, 2, 3, 4]
+		a[1:4] = [10, 20, 30]
+		str(a)
+		`, `[0, 10, 20, 30, 4]`},
+		{`
+		a = [0, 1, 2, 3, 4]
+		a[::2] = 9
+		str(a)
+		`, `[9, 1, 9, 3, 9]`},
+		{`
+		s = "abcd"
+		s[1:3] = "XY"
+		s
+		`, "aXYd"},
+		{`
+		s = "abcd"
+		s[::2] = "x"
+		s
+		`, "xbxd"},
+		{`
+		s = "abcd"
+		s[0] = "z"
+		s
+		`, "zbcd"},
+		{`
+		a = [1, 2, 3]
+		a[0:2] = [1]
+		a
+		`, "range assignment size mismatch: target=2 value=1"},
+		{`
+		s = "abcd"
+		s[2:2] = "x"
+		s
+		`, "range assignment size mismatch: target=0 value=1"},
+		{`
+		s = "abcd"
+		s[0:2] = 1
+		s
+		`, "range assignment expects STRING value, got NUMBER"},
+		{`
+		s = "abcd"
+		s[0] = "ab"
+		s
+		`, "index assignment expects single-character STRING value, got 2 characters"},
+	}
+
+	for _, tt := range tests {
+		evaluated := testEval(tt.input)
+		switch result := evaluated.(type) {
+		case *object.String:
+			testStringObject(t, evaluated, tt.expected.(string))
+		case *object.Error:
+			logErrorWithPosition(t, result.Message, tt.expected)
+		default:
+			testStringObject(t, evaluated, tt.expected.(string))
+		}
+	}
+}
