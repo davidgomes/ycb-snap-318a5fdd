@@ -66,6 +66,9 @@ fn coalesce_choice(lhs: OptimizedExpr, rhs: OptimizedExpr) -> OptimizedExpr {
     append_choice_alternatives(rhs, &mut alternatives);
 
     let mut coalesced = Vec::with_capacity(alternatives.len());
+    let all_qualifying = alternatives
+        .iter()
+        .all(|alternative| ranges_for(alternative).is_some());
     let mut index = 0;
     while index < alternatives.len() {
         if ranges_for(&alternatives[index]).is_none() {
@@ -84,7 +87,7 @@ fn coalesce_choice(lhs: OptimizedExpr, rhs: OptimizedExpr) -> OptimizedExpr {
             index += 1;
         }
 
-        if index - start >= 3 {
+        if (all_qualifying && index - start >= 2) || index - start >= 3 {
             if let Some(expr) = coalesced_expr(ranges, index - start) {
                 coalesced.push(expr);
                 continue;
@@ -122,7 +125,7 @@ fn build_choice(mut alternatives: Vec<OptimizedExpr>) -> OptimizedExpr {
 }
 
 fn coalesce_alternatives(alternatives: &[OptimizedExpr]) -> Option<Vec<(String, String)>> {
-    if alternatives.len() < 3 {
+    if alternatives.len() < 2 {
         return None;
     }
 
@@ -279,6 +282,14 @@ mod tests {
                 Str("a".to_owned()),
             ])),
             Str("a".to_owned())
+        );
+    }
+
+    #[test]
+    fn coalesces_two_qualifying_alternatives_when_all_qualify() {
+        assert_eq!(
+            coalesce_expr(choice([Str("a".to_owned()), Str("b".to_owned())])),
+            Range("a".to_owned(), "b".to_owned())
         );
     }
 
