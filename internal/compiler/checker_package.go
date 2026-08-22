@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/open2b/scriggo/ast"
+	"github.com/open2b/scriggo/internal/compiler/types"
 	"github.com/open2b/scriggo/native"
 )
 
@@ -593,6 +594,12 @@ func checkPackage(compilation *compilation, pkg *ast.Package, path string, impor
 			if f.Body == nil {
 				return tc.errorf(f.Ident.Pos(), "missing function body")
 			}
+			if f.Receiver != nil {
+				if err := tc.checkMethodDeclaration(f); err != nil {
+					return err
+				}
+				continue
+			}
 			if f.Ident.Name == "init" || f.Ident.Name == "main" {
 				if len(f.Type.Parameters) > 0 || len(f.Type.Result) > 0 {
 					return tc.errorf(f.Ident, "func %s must have no arguments and no return values", f.Ident.Name)
@@ -668,4 +675,61 @@ func checkPackage(compilation *compilation, pkg *ast.Package, path string, impor
 	}
 
 	return nil
+}
+
+// checkMethodDeclaration type-checks a method declaration, attaches the
+// method to its receiver type, and rewrites the function type so the
+// receiver is the first parameter.
+func (tc *typechecker) checkMethodDeclaration(f *ast.Func) error {
+	if f.Receiver.Type == nil {
+		return tc.errorf(f.Receiver.Ident, "method has no receiver")
+	}
+	recvTI := tc.checkType(f.Receiver.Type)
+	base, _, msg := types.ReceiverBaseType(recvTI.Type)
+	if msg != "" {
+		pos := f.Receiver.Type
+		return tc.errorf(pos, "%s", msg)
+	}
+	if isBlankIdentifier(f.Ident) {
+		// A blank method name is legal but cannot be called.
+		tc.checkDuplicateParamsWithReceiver(f.Type, f.Receiver)
+		_ = tc.checkType(f.Type)
+		return nil
+	}
+	tc.checkDuplicateParamsWithReceiver(f.Type, f.Receiver)
+	fnType := tc.checkType(f.Type).Type
+	if err := tc.types.AddMethod(base, f.Ident.Name, recvTI.Type, fnType); err != "" {
+		return tc.errorf(f.Ident, "%s", err)
+	}
+
+	// Prepend the receiver so the method is emitted as a regular function
+	// whose first parameter is the receiver.
+	f.Type.Parameters = append([]*ast.Parameter{f.Receiver}, f.Type.Parameters...)
+	in := make([]reflect.Type, 0, fnType.NumIn()+1)
+	in = append(in, recvTI.Type)
+	for i := 0; i < fnType.NumIn(); i++ {
+		in = append(in, fnType.In(i))
+	}
+	out := make([]reflect.Type, fnType.NumOut())
+	for i := range out {
+		out[i] = fnType.Out(i)
+	}
+	f.Type.Reflect = tc.types.FuncOf(in, out, f.Type.IsVariadic)
+	return nil
+}
+
+func methodKey(recv reflect.Type, name string) string {
+	return recv.String() + "." + name
+}
+
+func dropReceiver(types *types.Types, mt reflect.Type) reflect.Type {
+	in := make([]reflect.Type, mt.NumIn()-1)
+	for i := range in {
+		in[i] = mt.In(i + 1)
+	}
+	out := make([]reflect.Type, mt.NumOut())
+	for i := range out {
+		out[i] = mt.Out(i)
+	}
+	return types.FuncOf(in, out, mt.IsVariadic())
 }

@@ -2473,8 +2473,6 @@ func (tc *typechecker) checkMethodExpression(t *typeInfo, expr *ast.Selector) *t
 		panic(tc.errorf(expr, "%v undefined (type %s has no method %s)", expr, t, expr.Ident))
 	}
 
-	ti := &typeInfo{Properties: propertyIsNative | propertyHasValue}
-
 	if t.Type.Kind() == reflect.Interface {
 		if !isExported(name) {
 			panic(tc.errorf(expr, "%s undefined (cannot refer to unexported field or method %s)", expr, name))
@@ -2493,14 +2491,30 @@ func (tc *typechecker) checkMethodExpression(t *typeInfo, expr *ast.Selector) *t
 			return args[0].MethodByName(method.Name).Call(args[1:])
 		}
 		methExpr := reflect.MakeFunc(reflect.FuncOf(in, out, mt.IsVariadic()), f)
-		ti.Type = removeEnvArg(methExpr.Type(), false)
-		ti.value = methExpr
-	} else {
-		ti.Type = removeEnvArg(method.Type, true)
-		ti.value = method.Func
+		return &typeInfo{
+			Properties: propertyIsNative | propertyHasValue,
+			Type:       removeEnvArg(methExpr.Type(), false),
+			value:      methExpr,
+		}
 	}
 
-	return ti
+	if !method.Func.IsValid() {
+		deref := types.MethodMustDeref(t.Type, name)
+		keyType := t.Type
+		if deref {
+			keyType = t.Type.Elem()
+		}
+		return &typeInfo{
+			Type:  method.Type,
+			value: &scriggoMethodRef{key: methodKey(keyType, name), name: name, deref: deref},
+		}
+	}
+
+	return &typeInfo{
+		Properties: propertyIsNative | propertyHasValue,
+		Type:       removeEnvArg(method.Type, true),
+		value:      method.Func,
+	}
 }
 
 // checkMethodValue checks a method value. If the type has the method, it
@@ -2543,6 +2557,19 @@ func (tc *typechecker) checkMethodValue(t *typeInfo, expr *ast.Selector) (*typeI
 			value:      name,
 			MethodType: methodValueInterface,
 			Properties: propertyIsNative | propertyHasValue,
+		}, true
+	}
+
+	if !method.Func.IsValid() {
+		deref := types.MethodMustDeref(typ, name)
+		keyType := typ
+		if deref {
+			keyType = typ.Elem()
+		}
+		return &typeInfo{
+			Type:       dropReceiver(tc.types, method.Type),
+			value:      &scriggoMethodRef{key: methodKey(keyType, name), name: name, deref: deref},
+			MethodType: methodValueConcrete,
 		}, true
 	}
 

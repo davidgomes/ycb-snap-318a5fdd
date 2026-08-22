@@ -56,6 +56,13 @@ const (
 	methodCallInterface                    // Method call on interface receiver.
 )
 
+// scriggoMethodRef refers to a method declared in Scriggo code.
+type scriggoMethodRef struct {
+	key   string // "T.M" or "*T.M" identifying the implementation.
+	name  string // method name.
+	deref bool   // dereference a pointer receiver before calling a value method.
+}
+
 // Nil reports whether it is the predeclared nil.
 func (ti *typeInfo) Nil() bool {
 	return ti.InUniverse() && ti.Untyped() && !ti.Addressable() && ti.Type == nil

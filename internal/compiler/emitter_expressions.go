@@ -732,13 +732,40 @@ func (em *emitter) emitSelector(v *ast.Selector, reg int8, dstType reflect.Type)
 		return
 	}
 
+	// Scriggo method expression used as a function value.
+	if ref, ok := ti.value.(*scriggoMethodRef); ok && ti.MethodType == noMethod {
+		if reg == 0 {
+			return
+		}
+		fn, ok := em.fnStore.availableScriggoFn(em.pkg, ref.key)
+		if !ok {
+			panic(internalError("unknown Scriggo method %s", ref.key))
+		}
+		if ref.deref {
+			fn = em.valueMethodOnPointerWrapper(fn, ti.Type)
+		}
+		if canEmitDirectly(ti.Type.Kind(), dstType.Kind()) {
+			em.fb.emitLoadFunc(false, em.fnStore.scriggoFnIndex(fn), reg)
+			return
+		}
+		tmp := em.fb.newRegister(reflect.Func)
+		em.fb.emitLoadFunc(false, em.fnStore.scriggoFnIndex(fn), tmp)
+		em.changeRegister(false, tmp, reg, ti.Type, dstType)
+		return
+	}
+
 	// Method value on concrete and interface values.
 	if ti.MethodType == methodValueConcrete || ti.MethodType == methodValueInterface {
 		expr := v.Expr
 		typ := em.typ(expr)
 		rcvr := em.emitExpr(expr, typ)
-		// MethodValue reads receiver from general.
+		// MethodValue reads receiver from general. Scriggo types must be
+		// wrapped so the VM can recover their method set.
 		if kindToType(typ.Kind()) != generalRegister {
+			oldRcvr := rcvr
+			rcvr = em.fb.newRegister(reflect.Interface)
+			em.fb.emitTypify(false, typ, oldRcvr, rcvr)
+		} else if _, ok := typ.(runtime.ScriggoType); ok {
 			oldRcvr := rcvr
 			rcvr = em.fb.newRegister(reflect.Interface)
 			em.fb.emitTypify(false, typ, oldRcvr, rcvr)

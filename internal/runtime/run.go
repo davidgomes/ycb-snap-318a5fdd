@@ -167,7 +167,9 @@ func (vm *VM) run() (Addr, bool) {
 			t := vm.fn.Types[uint8(b)]
 			var ok bool
 			if v.IsValid() {
-				if w, isScriggoType := t.(ScriggoType); isScriggoType {
+				if sv, isVal := v.Interface().(ScriggoValue); isVal && t.Kind() == reflect.Interface {
+					ok = sv.ScriggoReflectType().Implements(t)
+				} else if w, isScriggoType := t.(ScriggoType); isScriggoType {
 					v, ok = w.Unwrap(v)
 				} else {
 					if t.Kind() == reflect.Interface {
@@ -1092,6 +1094,20 @@ func (vm *VM) run() (Addr, bool) {
 				panic(errNilPointer)
 			}
 			method := vm.stringk(b, true)
+			if sv, ok := asScriggoValue(receiver); ok {
+				if fn := sv.MethodFunc(method); fn != nil {
+					recv := sv.Underlying()
+					if recv.Kind() == reflect.Ptr && fn.Type.NumIn() > 0 && fn.Type.In(0).Kind() != reflect.Ptr {
+						if recv.IsNil() {
+							panic(errNilPointer)
+						}
+						recv = recv.Elem()
+					}
+					bound := bindScriggoMethod(fn, recv, vm.env)
+					vm.setGeneral(c, reflect.ValueOf(&callable{value: bound}))
+					break
+				}
+			}
 			vm.setGeneral(c, reflect.ValueOf(&callable{value: receiver.MethodByName(method)}))
 
 		// Move

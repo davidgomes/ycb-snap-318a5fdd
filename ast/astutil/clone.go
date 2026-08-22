@@ -142,7 +142,11 @@ func CloneNode(node ast.Node) ast.Node {
 			ident = ast.NewIdentifier(ClonePosition(n.Ident.Position), n.Ident.Name)
 		}
 		typ := CloneExpression(n.Type).(*ast.FuncType)
-		return ast.NewFunc(ClonePosition(n.Position), ident, typ, CloneNode(n.Body).(*ast.Block), n.DistFree, n.Format)
+		fn := ast.NewFunc(ClonePosition(n.Position), ident, typ, CloneNode(n.Body).(*ast.Block), n.DistFree, n.Format)
+		if n.Receiver != nil {
+			fn.Receiver = cloneParameter(n.Receiver)
+		}
+		return fn
 
 	case *ast.Go:
 		return ast.NewGo(ClonePosition(n.Position), CloneExpression(n.Call))
@@ -400,7 +404,11 @@ func CloneExpression(expr ast.Expression) ast.Expression {
 			ident = ast.NewIdentifier(ClonePosition(e.Ident.Position), e.Ident.Name)
 		}
 		typ := CloneExpression(e.Type).(*ast.FuncType)
-		expr2 = ast.NewFunc(ClonePosition(e.Position), ident, typ, CloneNode(e.Body).(*ast.Block), false, e.Format)
+		fn := ast.NewFunc(ClonePosition(e.Position), ident, typ, CloneNode(e.Body).(*ast.Block), false, e.Format)
+		if e.Receiver != nil {
+			fn.Receiver = cloneParameter(e.Receiver)
+		}
+		expr2 = fn
 
 	case *ast.FuncType:
 		var parameters []*ast.Parameter
@@ -469,6 +477,17 @@ func CloneExpression(expr ast.Expression) ast.Expression {
 	expr2.SetParenthesis(expr.Parenthesis())
 
 	return expr2
+}
+
+func cloneParameter(p *ast.Parameter) *ast.Parameter {
+	if p == nil {
+		return nil
+	}
+	var ident *ast.Identifier
+	if p.Ident != nil {
+		ident = ast.NewIdentifier(ClonePosition(p.Ident.Position), p.Ident.Name)
+	}
+	return ast.NewParameter(ident, CloneExpression(p.Type))
 }
 
 // ClonePosition returns a copy of position pos.

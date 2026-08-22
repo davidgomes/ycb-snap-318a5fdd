@@ -38,6 +38,65 @@ type TypeOfFunc func(reflect.Value) reflect.Type
 
 // A ScriggoType represents a type compiled by Scriggo from a type definition
 // or a composite type literal with at least one element with a Scriggo type.
+// A ScriggoValue is a proxy wrapping a Scriggo-defined value.
+type ScriggoValue interface {
+	ScriggoReflectType() reflect.Type
+	Underlying() reflect.Value
+	MethodFunc(name string) *Function
+}
+
+// CallFunction calls a compiled Scriggo function with the given arguments.
+func CallFunction(fn *Function, args []reflect.Value) []reflect.Value {
+	c := &callable{fn: fn}
+	return c.Value(nil).Call(args)
+}
+
+func bindScriggoMethod(fn *Function, recv reflect.Value, env *env) reflect.Value {
+	full := (&callable{fn: fn}).Value(env)
+	mt := fn.Type
+	in := make([]reflect.Type, mt.NumIn()-1)
+	for i := range in {
+		in[i] = mt.In(i + 1)
+	}
+	out := make([]reflect.Type, mt.NumOut())
+	for i := range out {
+		out[i] = mt.Out(i)
+	}
+	valueType := reflect.FuncOf(goTypes(in), goTypes(out), mt.IsVariadic())
+	return reflect.MakeFunc(valueType, func(args []reflect.Value) []reflect.Value {
+		all := make([]reflect.Value, 0, len(args)+1)
+		all = append(all, recv)
+		all = append(all, args...)
+		return full.Call(all)
+	})
+}
+
+func asScriggoValue(v reflect.Value) (ScriggoValue, bool) {
+	if !v.IsValid() {
+		return nil, false
+	}
+	for v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return nil, false
+		}
+		v = v.Elem()
+	}
+	sv, ok := v.Interface().(ScriggoValue)
+	return sv, ok
+}
+
+func goTypes(ts []reflect.Type) []reflect.Type {
+	out := make([]reflect.Type, len(ts))
+	for i, t := range ts {
+		if st, ok := t.(ScriggoType); ok {
+			out[i] = st.GoType()
+		} else {
+			out[i] = t
+		}
+	}
+	return out
+}
+
 type ScriggoType interface {
 	reflect.Type
 
@@ -913,7 +972,11 @@ func (c *callable) Value(env *env) reflect.Value {
 	// It is a Scriggo function.
 	fn := c.fn
 	vars := c.vars
-	c.value = reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
+	fnType := fn.Type
+	if st, ok := fnType.(ScriggoType); ok {
+		fnType = st.GoType()
+	}
+	c.value = reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
 		nvm := create(env)
 		if fn.Macro {
 			nvm.renderer = newRenderer(&strings.Builder{})
@@ -923,6 +986,9 @@ func (c *callable) Value(env *env) reflect.Value {
 		var r = [4]int8{1, 1, 1, 1}
 		for i := 0; i < nOut; i++ {
 			typ := fn.Type.Out(i)
+			if st, ok := typ.(ScriggoType); ok {
+				typ = st.GoType()
+			}
 			results[i] = reflect.New(typ).Elem()
 			t := kindToType[typ.Kind()]
 			r[t]++

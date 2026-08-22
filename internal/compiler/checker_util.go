@@ -282,7 +282,14 @@ func deferGoBuiltin(name string) *typeInfo {
 // checkDuplicateParams checks if a function type contains duplicate
 // parameter names.
 func (tc *typechecker) checkDuplicateParams(fn *ast.FuncType) {
+	tc.checkDuplicateParamsWithReceiver(fn, nil)
+}
+
+func (tc *typechecker) checkDuplicateParamsWithReceiver(fn *ast.FuncType, recv *ast.Parameter) {
 	names := map[string]struct{}{}
+	if recv != nil && recv.Ident != nil && !isBlankIdentifier(recv.Ident) {
+		names[recv.Ident.Name] = struct{}{}
+	}
 	for _, params := range [2][]*ast.Parameter{fn.Parameters, fn.Result} {
 		for _, param := range params {
 			if param.Ident == nil {

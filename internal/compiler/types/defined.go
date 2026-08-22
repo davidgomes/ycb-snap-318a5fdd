@@ -27,6 +27,10 @@ type definedType struct {
 	// represents are identical (every defined type, in Go, is different from
 	// every other type).
 	sign *byte
+
+	// methods is the method set of this defined type. It is a pointer so that
+	// methods added after DefinedOf remain visible on every copy of the type.
+	methods *methodSet
 }
 
 // DefinedOf returns the defined type with the given name and underlying type.
@@ -36,7 +40,7 @@ func (types *Types) DefinedOf(name string, underlyingType reflect.Type) reflect.
 	if name == "" {
 		panic(internalError("name cannot be empty"))
 	}
-	return definedType{Type: underlyingType, name: name, sign: new(byte)}
+	return definedType{Type: underlyingType, name: name, sign: new(byte), methods: &methodSet{}}
 }
 
 func (x definedType) Name() string {
@@ -55,9 +59,21 @@ func (x definedType) Implements(y reflect.Type) bool {
 	return Implements(x, y)
 }
 
-func (x definedType) MethodByName(string) (reflect.Method, bool) {
-	// TODO.
-	return reflect.Method{}, false
+func (x definedType) NumMethod() int {
+	return len(x.methods.valueMethods(true))
+}
+
+func (x definedType) Method(i int) reflect.Method {
+	ms := x.methods.valueMethods(true)
+	return toReflectMethod(ms[i], ms[i].typ, i)
+}
+
+func (x definedType) MethodByName(name string) (reflect.Method, bool) {
+	m, ok := x.methods.byName(name)
+	if !ok || m.ptrRecv {
+		return reflect.Method{}, false
+	}
+	return toReflectMethod(m, m.typ, 0), true
 }
 
 func (x definedType) String() string {

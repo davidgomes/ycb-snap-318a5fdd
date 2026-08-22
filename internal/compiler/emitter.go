@@ -83,6 +83,9 @@ type emitter struct {
 	// alreadyInitializedTemplatePkgs keeps track of the template packages for
 	// which the initialization code has already been emitted.
 	alreadyInitializedTemplatePkgs map[string]bool
+
+	// ptrMethodWrappers caches (*T).ValueMethod wrappers.
+	ptrMethodWrappers map[*runtime.Function]*runtime.Function
 }
 
 // newEmitter returns a new emitter with the given type infos, format types,
@@ -96,6 +99,7 @@ func newEmitter(typeInfos map[ast.Node]*typeInfo, formatTypes map[ast.Format]ref
 		alreadyEmittedFuncs:            map[*ast.Func]*runtime.Function{},
 		alreadyInitializedVars:         map[*ast.Identifier]int16{},
 		alreadyInitializedTemplatePkgs: map[string]bool{},
+		ptrMethodWrappers:              map[*runtime.Function]*runtime.Function{},
 	}
 	em.fnStore = newFunctionStore(em)
 	em.varStore = newVarStore(em, indirectVars)
@@ -174,6 +178,19 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 					} else {
 						fn = newFunction("main", fun.Ident.Name, fun.Type.Reflect, path, fun.Pos())
 					}
+				}
+				if fun.Receiver != nil {
+					recvType := em.typ(fun.Receiver.Type)
+					key := methodKey(recvType, fun.Ident.Name)
+					em.fnStore.makeAvailableScriggoFn(em.pkg, key, fn)
+					if base, ok := types.DefinedBase(recvType); ok {
+						types.SetMethodImpl(base, fun.Ident.Name, fn)
+					} else if recvType.Kind() == reflect.Ptr {
+						if base, ok := types.DefinedBase(recvType.Elem()); ok {
+							types.SetMethodImpl(base, fun.Ident.Name, fn)
+						}
+					}
+					continue
 				}
 				if fun.Ident.Name == "init" {
 					inits = append(inits, fn)
@@ -256,7 +273,10 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 				// Function has already been emitted, nothing to do.
 				continue
 			}
-			if n.Ident.Name == "init" {
+			if n.Receiver != nil {
+				recvType := em.typ(n.Receiver.Type)
+				fn, _ = em.fnStore.availableScriggoFn(em.pkg, methodKey(recvType, n.Ident.Name))
+			} else if n.Ident.Name == "init" {
 				fn = inits[initToBuild]
 				initToBuild++
 			} else {
@@ -267,7 +287,7 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 			// If this is the main function, functions that initialize variables
 			// must be called before executing every other statement of the main
 			// function.
-			if n.Ident.Name == "main" {
+			if n.Receiver == nil && n.Ident.Name == "main" {
 				// First: initialize the package variables.
 				if initVarsFn != nil {
 					iv, _ := em.fnStore.availableScriggoFn(em.pkg, "$initvars")
@@ -564,6 +584,11 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
 func (em *emitter) emitCallNode(call *ast.Call, goStmt bool, deferStmt bool, toFormat ast.Format) ([]int8, []reflect.Type) {
 
 	funTi := em.ti(call.Func)
+
+	// Scriggo-defined method call or method expression call.
+	if ref, ok := funTi.value.(*scriggoMethodRef); ok {
+		return em.emitScriggoMethodCall(call, ref, funTi, goStmt, deferStmt, toFormat)
+	}
 
 	// Method call on a interface value.
 	if funTi.MethodType == methodCallInterface {
@@ -1181,4 +1206,92 @@ func (em *emitter) emitComplexOperation(exprType reflect.Type, expr1 ast.Express
 	em.fb.emitCallNative(index, 0, stackShift, expr1.Pos())
 	em.changeRegister(false, ret, reg, exprType, dstType)
 	em.fb.exitScope()
+}
+
+func (em *emitter) emitScriggoMethodCall(call *ast.Call, ref *scriggoMethodRef, funTi *typeInfo, goStmt, deferStmt bool, toFormat ast.Format) ([]int8, []reflect.Type) {
+	fn, ok := em.fnStore.availableScriggoFn(em.pkg, ref.key)
+	if !ok {
+		panic(internalError("unknown Scriggo method %s", ref.key))
+	}
+	args := call.Args
+	if funTi.MethodType == methodCallConcrete {
+		rcv := call.Func.(*ast.Selector).Expr
+		if ref.deref {
+			rcvType := em.typ(rcv)
+			unOp := ast.NewUnaryOperator(rcv.Pos(), ast.OperatorPointer, rcv)
+			em.typeInfos[unOp] = &typeInfo{Type: rcvType.Elem()}
+			rcv = unOp
+		}
+		args = append([]ast.Expression{rcv}, args...)
+	} else if ref.deref && len(args) > 0 {
+		rcv := args[0]
+		rcvType := em.typ(rcv)
+		unOp := ast.NewUnaryOperator(rcv.Pos(), ast.OperatorPointer, rcv)
+		em.typeInfos[unOp] = &typeInfo{Type: rcvType.Elem()}
+		args[0] = unOp
+	}
+	stackShift := em.fb.currentStackShift()
+	regs, types := em.prepareCallParameters(fn.Type, args, callOptions{callHasDots: call.IsVariadic})
+	index := em.fnStore.scriggoFnIndex(fn)
+	if goStmt {
+		em.fb.emitGo()
+	}
+	if deferStmt {
+		shiftArgs := stackDifference(em.fb.currentStackShift(), stackShift)
+		reg := em.fb.newRegister(reflect.Func)
+		em.fb.emitLoadFunc(false, index, reg)
+		em.fb.emitDefer(reg, runtime.NoVariadicArgs, stackShift, shiftArgs, fn.Type)
+		return regs, types
+	}
+	em.fb.emitCallFunc(index, stackShift, call.Pos())
+	return regs, types
+}
+
+func (em *emitter) valueMethodOnPointerWrapper(orig *runtime.Function, ptrFnType reflect.Type) *runtime.Function {
+	if w, ok := em.ptrMethodWrappers[orig]; ok {
+		return w
+	}
+	w := newFunction(orig.Pkg, "(*"+orig.Name+")", ptrFnType, orig.File, nil)
+	prev := em.fb
+	em.fb = newBuilder(w, orig.File)
+	em.fb.enterScope()
+
+	outRegs := make([]int8, ptrFnType.NumOut())
+	for i := 0; i < ptrFnType.NumOut(); i++ {
+		outRegs[i] = em.fb.newRegister(ptrFnType.Out(i).Kind())
+	}
+	recvReg := em.fb.newRegister(ptrFnType.In(0).Kind())
+	inRegs := make([]int8, ptrFnType.NumIn()-1)
+	for i := 1; i < ptrFnType.NumIn(); i++ {
+		inRegs[i-1] = em.fb.newRegister(ptrFnType.In(i).Kind())
+	}
+
+	elemType := orig.Type.In(0)
+	deref := em.fb.newRegister(elemType.Kind())
+	em.changeRegister(false, -recvReg, deref, elemType, elemType)
+
+	stackShift := em.fb.currentStackShift()
+	callOuts := make([]int8, orig.Type.NumOut())
+	for i := 0; i < orig.Type.NumOut(); i++ {
+		callOuts[i] = em.fb.newRegister(orig.Type.Out(i).Kind())
+	}
+	callRecv := em.fb.newRegister(elemType.Kind())
+	em.changeRegister(false, deref, callRecv, elemType, elemType)
+	for i := range inRegs {
+		t := orig.Type.In(i + 1)
+		r := em.fb.newRegister(t.Kind())
+		em.changeRegister(false, inRegs[i], r, t, t)
+	}
+	index := em.fnStore.scriggoFnIndex(orig)
+	em.fb.emitCallFunc(index, stackShift, nil)
+	for i := range outRegs {
+		t := orig.Type.Out(i)
+		em.changeRegister(false, callOuts[i], outRegs[i], t, t)
+	}
+	em.fb.emitReturn()
+	em.fb.end()
+	em.fb.exitScope()
+	em.fb = prev
+	em.ptrMethodWrappers[orig] = w
+	return w
 }
