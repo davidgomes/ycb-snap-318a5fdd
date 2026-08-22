@@ -782,14 +782,14 @@ class BaseTestClass:
 
   def synchronized_step(self, name, timeout=None):
     """Synchronizes explicit-mode participants at a named test step."""
-    if timeout is not None and timeout < 0:
-      raise ValueError('timeout must not be negative')
     phase = getattr(self._execution_local, 'phase', None)
     if phase not in _SYNC_ALLOWED_PHASES:
       raise signals.TestError(
           'synchronized_step is only available in group_setup, '
           'group_teardown, and test methods.'
       )
+    if timeout is not None and timeout < 0:
+      raise ValueError('timeout must not be negative')
     if phase in (STAGE_NAME_GROUP_SETUP, STAGE_NAME_GROUP_TEARDOWN):
       if timeout == 0:
         raise signals.TestError(
