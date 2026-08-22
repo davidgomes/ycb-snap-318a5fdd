@@ -136,6 +136,22 @@ def report(manager, fileobj, sev_level, conf_level, lines=-1):
 
     machine_output["metrics"] = manager.metrics.data
 
+    if manager.incremental_cache:
+        cache = manager.incremental_cache
+        machine_output["cache_info"] = {
+            "total_files": cache.stats.total_files,
+            "cache_hits": cache.stats.cache_hits,
+            "cache_misses": cache.stats.cache_misses,
+            "invalidation_counts": dict(cache.stats.invalidation_counts),
+        }
+        if "cache_hits" not in machine_output["metrics"].get("_totals", {}):
+            machine_output["metrics"]["_totals"]["cache_hits"] = (
+                cache.stats.cache_hits
+            )
+            machine_output["metrics"]["_totals"]["cache_misses"] = (
+                cache.stats.cache_misses
+            )
+
     # timezone agnostic format
     TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 

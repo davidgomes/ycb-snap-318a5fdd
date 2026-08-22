@@ -219,7 +219,7 @@ class Issue:
         return out
 
     def from_dict(self, data, with_code=True):
-        self.code = data["code"]
+        self.code = data.get("code", "")
         self.fname = data["filename"]
         self.severity = data["issue_severity"]
         self.cwe = cwe_from_dict(data["issue_cwe"])

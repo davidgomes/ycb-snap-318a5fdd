@@ -41,6 +41,8 @@ class BanditManager:
         quiet=False,
         profile=None,
         ignore_nosec=False,
+        incremental_cache=None,
+        warm_cache=False,
     ):
         """Get logger, config, AST handler, and result store ready
 
@@ -71,6 +73,8 @@ class BanditManager:
         self.metrics = metrics.Metrics()
         self.b_ts = b_test_set.BanditTestSet(config, profile)
         self.scores = []
+        self.incremental_cache = incremental_cache
+        self.warm_cache = warm_cache
 
     def get_skipped(self):
         ret = []
@@ -278,6 +282,9 @@ class BanditManager:
             LOG.debug("working on file : %s", fname)
 
             try:
+                if self._restore_from_cache(fname):
+                    continue
+
                 if fname == "-":
                     open_fd = os.fdopen(sys.stdin.fileno(), "rb", 0)
                     fdata = io.BytesIO(open_fd.read())
@@ -297,6 +304,58 @@ class BanditManager:
 
         # do final aggregation of metrics
         self.metrics.aggregate()
+
+        if self.incremental_cache:
+            self.incremental_cache.finalize()
+            self._apply_cache_metrics()
+
+        if self.warm_cache:
+            self.results = []
+            self.scores = []
+
+    def _apply_cache_metrics(self):
+        cache = self.incremental_cache
+        if not cache:
+            return
+        self.metrics.data["_totals"]["cache_hits"] = cache.stats.cache_hits
+        self.metrics.data["_totals"]["cache_misses"] = cache.stats.cache_misses
+
+    def _restore_from_cache(self, fname):
+        """Restore results from incremental cache if available."""
+        cache = self.incremental_cache
+        if not cache or not cache.enabled or fname == "-":
+            return False
+
+        entry = cache.lookup(fname)
+        if entry is None:
+            return False
+
+        from bandit.core import incremental_cache as inc_cache
+
+        issues = inc_cache.deserialize_issues(entry.get("results", []))
+        self.results.extend(issues)
+        if entry.get("score"):
+            self.scores.append(entry["score"])
+        if entry.get("metrics"):
+            self.metrics.data[fname] = entry["metrics"]
+        else:
+            self.metrics.begin(fname)
+        return True
+
+    def _store_in_cache(self, fname, file_results, score):
+        cache = self.incremental_cache
+        if not cache or not cache.enabled or fname in ("-", "<stdin>"):
+            return
+
+        from bandit.core import incremental_cache as inc_cache
+
+        metrics_data = self.metrics.data.get(fname, {})
+        cache.store(
+            fname,
+            inc_cache.serialize_issues(file_results),
+            metrics_data,
+            score,
+        )
 
     def _parse_file(self, fname, fdata, new_files_list):
         try:
@@ -322,6 +381,10 @@ class BanditManager:
             score = self._execute_ast_visitor(fname, fdata, data, nosec_lines)
             self.scores.append(score)
             self.metrics.count_issues([score])
+            file_results = [
+                r for r in self.results if r.fname == fname
+            ]
+            self._store_in_cache(fname, file_results, score)
         except KeyboardInterrupt:
             sys.exit(2)
         except SyntaxError:
