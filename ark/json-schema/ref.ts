@@ -9,7 +9,7 @@ import {
 const localDefRefPattern = /^#\/\$defs\/([^/]+)$/
 
 type RefParseContext = {
-	defs: Record<string, JsonSchema>
+	defs: Record<string, JsonSchemaOrBoolean>
 	resolved: Map<string, Type>
 	placeholders: Map<string, Type>
 	resolving: Set<string>
@@ -20,7 +20,7 @@ let ctx: RefParseContext | undefined
 
 const extractRootDefs = (
 	schema: JsonSchemaOrBoolean
-): Record<string, JsonSchema> => {
+): Record<string, JsonSchemaOrBoolean> => {
 	if (typeof schema !== "object" || schema === null || Array.isArray(schema))
 		return {}
 	if (!("$defs" in schema) || schema.$defs === undefined) return {}

@@ -97,10 +97,12 @@ contextualize(() => {
 	})
 
 	it("rejects unsupported $ref formats", () => {
+		// @ts-expect-error invalid ref format is checked at runtime
 		attest(() => jsonSchemaToType({ $ref: "#/definitions/Foo" })).throws(
 			writeJsonSchemaUnsupportedRefMessage()
 		)
 		attest(() =>
+			// @ts-expect-error invalid ref format is checked at runtime
 			jsonSchemaToType({ $ref: "https://example.com/schema" })
 		).throws(writeJsonSchemaUnsupportedRefMessage())
 	})

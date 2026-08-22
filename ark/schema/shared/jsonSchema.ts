@@ -26,7 +26,7 @@ export declare namespace JsonSchema {
 	 **/
 	export interface Meta<t = unknown> extends UniversalMeta<t> {
 		$schema?: string
-		$defs?: Record<string, JsonSchema>
+		$defs?: Record<string, JsonSchemaOrBoolean>
 	}
 
 	export type Format = autocomplete<
@@ -53,13 +53,23 @@ export declare namespace JsonSchema {
 		examples?: readonly t[]
 	}
 
-	type Composition = Union | OneOf | Intersection | Not | Conditional
+	type Composition =
+		| Union
+		| OneOf
+		| Intersection
+		| Not
+		| Conditional
+		| ThenElse
 
 	type NonBooleanBranch =
 		| Constrainable
 		| Const
 		| Composition
 		| Enum
+		| ImplicitString
+		| ImplicitNumeric
+		| ImplicitObject
+		| ImplicitArray
 		| String
 		| Numeric
 		| Object
@@ -104,6 +114,11 @@ export declare namespace JsonSchema {
 		else?: JsonSchemaOrBoolean
 	}
 
+	export interface ThenElse extends Meta {
+		then?: JsonSchemaOrBoolean
+		else?: JsonSchemaOrBoolean
+	}
+
 	export interface Const extends Meta {
 		const: unknown
 	}
@@ -114,6 +129,14 @@ export declare namespace JsonSchema {
 
 	export interface String extends Meta<string> {
 		type: "string"
+		minLength?: number
+		maxLength?: number
+		pattern?: string
+		format?: string
+	}
+
+	export interface ImplicitString extends Meta<string> {
+		type?: never
 		minLength?: number
 		maxLength?: number
 		pattern?: string
@@ -132,13 +155,22 @@ export declare namespace JsonSchema {
 		exclusiveMaximum?: number
 	}
 
+	export interface ImplicitNumeric extends Meta<number> {
+		type?: never
+		multipleOf?: number
+		minimum?: number
+		exclusiveMinimum?: number
+		maximum?: number
+		exclusiveMaximum?: number
+	}
+
 	// NB: Technically 'properties' is required when 'required' is present,
 	// which is reflected at runtime but it's not worth the performance cost to validate this statically.
 	export interface Object extends Meta<JsonObject> {
 		type: "object"
-		properties?: Record<string, JsonSchema>
+		properties?: Record<string, JsonSchemaOrBoolean>
 		required?: string[]
-		patternProperties?: Record<string, JsonSchema>
+		patternProperties?: Record<string, JsonSchemaOrBoolean>
 		additionalProperties?: JsonSchemaOrBoolean
 		maxProperties?: number
 		minProperties?: number
@@ -148,8 +180,33 @@ export declare namespace JsonSchema {
 		dependentSchemas?: Record<string, JsonSchemaOrBoolean>
 	}
 
+	export interface ImplicitObject extends Meta<JsonObject> {
+		type?: never
+		properties?: Record<string, JsonSchemaOrBoolean>
+		required?: string[]
+		patternProperties?: Record<string, JsonSchemaOrBoolean>
+		additionalProperties?: JsonSchemaOrBoolean
+		maxProperties?: number
+		minProperties?: number
+		propertyNames?: String | ImplicitString
+		dependencies?: Record<string, string[] | JsonSchemaOrBoolean>
+		dependentRequired?: Record<string, string[]>
+		dependentSchemas?: Record<string, JsonSchemaOrBoolean>
+	}
+
 	export interface Array extends Meta<JsonArray> {
 		type: "array"
+		additionalItems?: JsonSchemaOrBoolean
+		contains?: JsonSchemaOrBoolean
+		uniqueItems?: boolean
+		minItems?: number
+		maxItems?: number
+		items?: JsonSchemaOrBoolean
+		prefixItems?: readonly Branch[]
+	}
+
+	export interface ImplicitArray extends Meta<JsonArray> {
+		type?: never
 		additionalItems?: JsonSchemaOrBoolean
 		contains?: JsonSchemaOrBoolean
 		uniqueItems?: boolean

@@ -189,6 +189,9 @@ const parseAdditionalProperties = (jsonSchema: JsonSchema.Object) => {
 const isJsonObject = (data: unknown): data is Record<string, unknown> =>
 	typeof data === "object" && data !== null && !Array.isArray(data)
 
+const hasOwn = (data: object, key: string): boolean =>
+	Object.prototype.hasOwnProperty.call(data, key)
+
 const parseDependentConstraints = (
 	jsonSchema: JsonSchema.Object
 ): Predicate.Schema[] => {
@@ -221,9 +224,9 @@ const parseDependentConstraints = (
 		) => {
 			if (!isJsonObject(data)) return true
 			for (const [trigger, keys] of Object.entries(requiredByTrigger)) {
-				if (!Object.hasOwn(data, trigger)) continue
+				if (!hasOwn(data, trigger)) continue
 				for (const key of keys) {
-					if (!Object.hasOwn(data, key)) {
+					if (!hasOwn(data, key)) {
 						ctx.reject({
 							expected: `required property ${key} when ${trigger} is present`,
 							actual: printable(data)
@@ -246,7 +249,7 @@ const parseDependentConstraints = (
 		) => {
 			if (!isJsonObject(data)) return true
 			for (const [trigger, schema] of parsedSchemaByTrigger) {
-				if (!Object.hasOwn(data, trigger)) continue
+				if (!hasOwn(data, trigger)) continue
 				if (!schema.allows(data)) {
 					ctx.reject({
 						expected: schema.description,
