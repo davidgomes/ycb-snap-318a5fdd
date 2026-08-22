@@ -1,8 +1,15 @@
 use std::mem;
 
-use lightningcss::{properties::PropertyId, vendor_prefix::VendorPrefix};
+use lightningcss::{
+    printer::PrinterOptions,
+    properties::PropertyId,
+    selector::Selector,
+    traits::ToCss,
+    vendor_prefix::VendorPrefix,
+    visitor::{self, VisitTypes},
+};
 use oxvg_ast::{
-    element::Element,
+    element::{Element, HashableElement},
     get_attribute, has_attribute, is_element,
     visitor::{Context, PrepareOutcome, Visitor},
 };
@@ -45,9 +52,17 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
 
     fn prepare(
         &self,
-        _document: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        document: &Element<'input, 'arena>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
+        context.query_has_stylesheet(document);
+        let mut collector = StructureSensitiveElements {
+            root: document.clone(),
+            elements: &mut context.structure_sensitive_elements,
+        };
+        for stylesheet in &context.query_has_stylesheet_result {
+            stylesheet.borrow_mut().visit(&mut collector).ok();
+        }
         Ok(if self.0 {
             PrepareOutcome::none
         } else {
@@ -70,9 +85,58 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
         if !is_element!(element, G) || !element.has_child_elements() {
             return Ok(());
         }
+        if context
+            .structure_sensitive_elements
+            .iter()
+            .any(|protected| protected == &HashableElement::new(element.clone()))
+        {
+            log::debug!("collapse_groups: preserving structure-sensitive group");
+            return Ok(());
+        }
 
         move_attributes_to_child(element);
         flatten_when_all_attributes_moved(element);
+        Ok(())
+    }
+}
+
+struct StructureSensitiveElements<'a, 'input, 'arena> {
+    root: Element<'input, 'arena>,
+    elements: &'a mut Vec<HashableElement<'input, 'arena>>,
+}
+
+impl<'input, 'arena> visitor::Visitor<'input>
+    for StructureSensitiveElements<'_, 'input, 'arena>
+{
+    type Error = lightningcss::error::PrinterError;
+
+    fn visit_types(&self) -> VisitTypes {
+        lightningcss::visit_types!(RULES | SELECTORS)
+    }
+
+    fn visit_selector(&mut self, selector: &mut Selector<'input>) -> Result<(), Self::Error> {
+        if !selector.has_combinator() {
+            return Ok(());
+        }
+
+        let Ok(selector) = selector.to_css_string(PrinterOptions {
+            minify: true,
+            ..PrinterOptions::default()
+        }) else {
+            return Ok(());
+        };
+        let Ok(matches) = self.root.select(&selector) else {
+            return Ok(());
+        };
+
+        for target in matches {
+            let mut element = Some(target);
+            while let Some(current) = element {
+                self.elements.push(HashableElement::new(current.clone()));
+                element = current.parent_element();
+            }
+        }
+
         Ok(())
     }
 }

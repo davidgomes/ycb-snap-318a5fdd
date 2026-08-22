@@ -5,7 +5,7 @@ use lightningcss::rules::CssRuleList;
 
 use crate::{
     arena::Allocator,
-    element::Element,
+    element::{Element, HashableElement},
     is_element,
     node::{self, Ref},
     style,
@@ -44,6 +44,8 @@ pub struct Context<'input, 'arena, 'i> {
     /// A parsed stylesheet for all `<style>` nodes in the document, as a result of calling
     /// [`Context::query_has_stylesheet`].
     pub query_has_stylesheet_result: Vec<RefCell<CssRuleList<'input>>>,
+    /// Elements whose relationships are used by a structure-sensitive selector.
+    pub structure_sensitive_elements: Vec<HashableElement<'input, 'arena>>,
     /// The root element of the document
     pub root: Element<'input, 'arena>,
     /// A set of boolean flags about the document and the visited node
@@ -63,6 +65,7 @@ impl<'input, 'arena, 'i> Context<'input, 'arena, 'i> {
     ) -> Self {
         Self {
             query_has_stylesheet_result: vec![],
+            structure_sensitive_elements: vec![],
             root,
             flags,
             info,
