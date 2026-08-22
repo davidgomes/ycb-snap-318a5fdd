@@ -4,6 +4,7 @@ use lightningcss::{properties::PropertyId, vendor_prefix::VendorPrefix};
 use oxvg_ast::{
     element::Element,
     get_attribute, has_attribute, is_element,
+    style,
     visitor::{Context, PrepareOutcome, Visitor},
 };
 use oxvg_collections::{
@@ -45,9 +46,10 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
 
     fn prepare(
         &self,
-        _document: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        document: &Element<'input, 'arena>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
+        context.query_has_stylesheet(document);
         Ok(if self.0 {
             PrepareOutcome::none
         } else {
@@ -58,7 +60,7 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
     fn exit_element(
         &self,
         element: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<(), Self::Error> {
         let Some(parent) = Element::parent_element(element) else {
             return Ok(());
@@ -70,11 +72,78 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
         if !is_element!(element, G) || !element.has_child_elements() {
             return Ok(());
         }
+        if is_structure_sensitive(element, &context.root, &context.query_has_stylesheet_result) {
+            return Ok(());
+        }
 
         move_attributes_to_child(element);
         flatten_when_all_attributes_moved(element);
         Ok(())
     }
+}
+
+fn is_structure_sensitive<'input, 'arena>(
+    group: &Element<'input, 'arena>,
+    root: &Element<'input, 'arena>,
+    stylesheets: &[std::cell::RefCell<lightningcss::rules::CssRuleList<'input>>],
+) -> bool {
+    use lightningcss::{printer::PrinterOptions, traits::ToCss};
+    fn iter_rules<'a>(
+        rules: &'a lightningcss::rules::CssRuleList<'a>,
+    ) -> impl Iterator<Item = &'a lightningcss::rules::CssRule<'a>> {
+        rules.0.iter()
+    }
+
+    fn implicated<'input, 'arena>(
+        group: &Element<'input, 'arena>,
+        root: &Element<'input, 'arena>,
+        rules: &lightningcss::rules::CssRuleList<'input>,
+    ) -> bool {
+        for rule in iter_rules(rules) {
+            match rule {
+                lightningcss::rules::CssRule::Style(rule) => {
+                    for selector in &rule.selectors.0 {
+                        let Ok(text) = selector.to_css_string(PrinterOptions::default()) else {
+                            continue;
+                        };
+                        if !(text.contains('>') || text.contains('+') || text.contains('~')
+                            || text.contains(' '))
+                        {
+                            continue;
+                        }
+                        let Ok(matches) = root.select(&text) else {
+                            continue;
+                        };
+                        for matched in matches {
+                            let mut current = Some(matched);
+                            while let Some(node) = current {
+                                if node == *group {
+                                    return true;
+                                }
+                                current = Element::parent_element(&node);
+                            }
+                        }
+                    }
+                }
+                lightningcss::rules::CssRule::Media(rule) => {
+                    if implicated(group, root, &rule.rules) {
+                        return true;
+                    }
+                }
+                lightningcss::rules::CssRule::Container(rule) => {
+                    if implicated(group, root, &rule.rules) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    stylesheets
+        .iter()
+        .any(|stylesheet| implicated(group, root, &stylesheet.borrow()))
 }
 
 impl Default for CollapseGroups {
