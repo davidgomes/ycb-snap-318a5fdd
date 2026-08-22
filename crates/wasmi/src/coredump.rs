@@ -382,7 +382,7 @@ mod tests {
                 (memory 1)
                 (global (mut i32) (i32.const 7))
                 (func (export "trap") (param i32) (local i64)
-                    (local.set 0 (i64.const 42))
+                    (local.set 1 (i64.const 42))
                     (unreachable))
             )"#,
         )
