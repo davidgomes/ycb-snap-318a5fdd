@@ -102,8 +102,12 @@ func bindVMFunctionParams(runInfo *runInfoStruct, funcExpr *ast.FuncExpr, in []r
 				continue
 			}
 			received := 0
-			for j := 1; j < len(in); j++ {
-				if !isMissingVMArg(in[j]) {
+			fixed := n
+			if funcExpr.VarArg {
+				fixed--
+			}
+			for j := 0; j < fixed; j++ {
+				if len(in) > j+1 && !isMissingVMArg(in[j+1]) {
 					received++
 				}
 			}
