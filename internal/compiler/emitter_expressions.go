@@ -944,6 +944,11 @@ func (em *emitter) emitUnaryOp(expr *ast.UnaryOperator, reg int8, regType reflec
 		case *ast.Identifier:
 			if em.fb.declaredInFunc(operand.Name) {
 				r := em.fb.scopeLookup(operand.Name)
+				ptrTyp := em.types.PointerTo(operandType)
+				if !canEmitDirectly(ptrTyp.Kind(), regType.Kind()) {
+					em.changeRegister(false, r, reg, ptrTyp, regType)
+					return
+				}
 				em.fb.emitNew(em.types.PointerTo(exprType), reg)
 				em.fb.emitMove(false, -r, reg, regType.Kind())
 				return

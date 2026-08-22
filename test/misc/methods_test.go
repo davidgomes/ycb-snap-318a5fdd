@@ -265,10 +265,18 @@ type testIface interface {
 }
 
 func TestPointerReceiverDoesNotSatisfyValueInterface(t *testing.T) {
+	packages := native.Packages{
+		"iface": native.Package{
+			Name: "iface",
+			Declarations: native.Declarations{
+				"I": reflect.TypeOf((*testIface)(nil)).Elem(),
+			},
+		},
+	}
 	src := `
 package main
 
-type I interface { M() }
+import "iface"
 
 type P int
 
@@ -276,12 +284,12 @@ func (p *P) M() {}
 
 func main() {
 	var p P
-	var i I = p
+	var i iface.I = p
 	_ = i
 }
 `
 	fsys := fstest.Files{"main.go": src}
-	_, err := scriggo.Build(fsys, nil)
+	_, err := scriggo.Build(fsys, &scriggo.BuildOptions{Packages: packages})
 	if err == nil {
 		t.Fatal("expected error")
 	}
