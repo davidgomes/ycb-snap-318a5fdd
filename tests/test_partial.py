@@ -2,9 +2,11 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 import pytest
-from attrs import define, field as attrs_field
+from attrs import define
+from attrs import field as attrs_field
 from typing_extensions import TypedDict
 
+import cattrs
 from cattrs import BaseConverter, Converter, PartialResult, partial_structure
 from cattrs.errors import ClassValidationError, ForbiddenExtraKeysError
 
@@ -322,6 +324,4 @@ def test_top_level_export():
 
 
 def test_export():
-    import cattrs
-
     assert cattrs.PartialResult is PartialResult

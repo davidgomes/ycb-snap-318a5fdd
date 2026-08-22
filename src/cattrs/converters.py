@@ -88,7 +88,6 @@ from .errors import (
     IterableValidationNote,
     StructureHandlerNotFoundError,
 )
-from .partial import PartialResult
 from .fns import Predicate, identity, raise_error
 from .gen import (
     AttributeOverride,
@@ -99,6 +98,7 @@ from .gen import (
     make_dict_unstructure_fn,
     make_hetero_tuple_unstructure_fn,
 )
+from .gen.typeddicts import _adapted_fields, _required_keys
 from .gen.typeddicts import make_dict_structure_fn as make_typeddict_dict_struct_fn
 from .gen.typeddicts import make_dict_unstructure_fn as make_typeddict_dict_unstruct_fn
 from .literals import is_literal_containing_enums
@@ -870,8 +870,6 @@ class BaseConverter:
         cl: type[T],
         previous: PartialResult | None,
     ) -> PartialResult:
-        from .gen.typeddicts import _adapted_fields, _required_keys
-
         origin = get_origin(cl) or cl
         attribs = _adapted_fields(origin)
         req_keys = _required_keys(origin)
