@@ -154,6 +154,68 @@ ruleTest({
         3.${' '}
       `,
     },
+    {
+      testName: 'Scoped disable markers skip trailing spaces for listed rules only',
+      before: dedent`
+        kept spaces  ${''}
+        <!-- linter-disable trailing-spaces -->
+        ignored spaces  ${''}
+        <!-- linter-enable trailing-spaces -->
+        after spaces  ${''}
+      `,
+      after: dedent`
+        kept spaces
+        <!-- linter-disable trailing-spaces -->
+        ignored spaces  ${''}
+        <!-- linter-enable trailing-spaces -->
+        after spaces
+      `,
+    },
+    {
+      testName: 'Obsidian next-line disable keeps trailing spaces on the following line',
+      before: dedent`
+        %% linter-disable-next-line trailing-spaces %%
+        next line spaces  ${''}
+        later spaces  ${''}
+      `,
+      after: dedent`
+        %% linter-disable-next-line trailing-spaces %%
+        next line spaces  ${''}
+        later spaces
+      `,
+    },
+    {
+      testName: 'Next-n-lines disable is clamped to the end of the file',
+      before: dedent`
+        <!-- linter-disable-next-n-lines: 5 trailing-spaces -->
+        one  ${''}
+        two  ${''}
+      `,
+      after: dedent`
+        <!-- linter-disable-next-n-lines: 5 trailing-spaces -->
+        one  ${''}
+        two  ${''}
+      `,
+    },
+    {
+      testName: 'Disable all then re-enable trailing-spaces formats only the re-enabled lines',
+      before: dedent`
+        <!-- linter-disable -->
+        still ignored  ${''}
+        <!-- linter-enable trailing-spaces -->
+        formatted again  ${''}
+        <!-- linter-enable -->
+        after  ${''}
+      `,
+      after: dedent`
+        <!-- linter-disable -->
+        still ignored  ${''}
+        <!-- linter-enable trailing-spaces -->
+        formatted again
+        <!-- linter-enable -->
+        after
+      `,
+    },
     { // accounts for https://github.com/platers/obsidian-linter/issues/1329
       testName: 'Make sure that we properly handle an empty list item when it is empty and has no spaces in it',
       before: dedent`

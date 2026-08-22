@@ -166,7 +166,7 @@ The logic for these tests tries to follow a similar setup to that of a general r
 of the specific function that is being tested:
 
 ``` TypeScript
-import {getAllCustomIgnoreSectionsInText} from '../src/utils/mdast';
+import {getAllCustomIgnoreSectionsInText} from '../src/utils/linter-ignore-markers';
 import dedent from 'ts-dedent';
 
 type customIgnoresInTextTestCase = {
@@ -278,7 +278,7 @@ describe('Get All Custom Ignore Sections in Text', () => {
 These tests general start by importing the function to test followed by the format of how the test cases will be formatted:
 
 ``` TypeScript
-import {getAllCustomIgnoreSectionsInText} from '../src/utils/mdast';
+import {getAllCustomIgnoreSectionsInText} from '../src/utils/linter-ignore-markers';
 import dedent from 'ts-dedent';
 
 type customIgnoresInTextTestCase = {

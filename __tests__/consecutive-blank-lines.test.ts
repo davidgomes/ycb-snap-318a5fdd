@@ -126,6 +126,48 @@ ruleTest({
         Line 2
       `,
     },
+    {
+      testName: 'A trailing-spaces-only disable does not keep consecutive blank lines',
+      before: dedent`
+        Line 1
+        <!-- linter-disable trailing-spaces -->
+        ${''}
+        ${''}
+        <!-- linter-enable trailing-spaces -->
+        Line 2
+      `,
+      after: dedent`
+        Line 1
+        <!-- linter-disable trailing-spaces -->
+        ${''}
+        <!-- linter-enable trailing-spaces -->
+        Line 2
+      `,
+    },
+    {
+      testName: 'A consecutive-blank-lines disable keeps extra blank lines in its scope',
+      before: dedent`
+        Line 1
+        <!-- linter-disable consecutive-blank-lines -->
+        ${''}
+        ${''}
+        <!-- linter-enable consecutive-blank-lines -->
+        Line 2
+        ${''}
+        ${''}
+        Line 3
+      `,
+      after: dedent`
+        Line 1
+        <!-- linter-disable consecutive-blank-lines -->
+        ${''}
+        ${''}
+        <!-- linter-enable consecutive-blank-lines -->
+        Line 2
+        ${''}
+        Line 3
+      `,
+    },
     { // accounts for https://github.com/platers/obsidian-linter/issues/538
       testName: 'Make sure that lists with a blank line between them are not affected since there are not 2 or more blank lines',
       before: dedent`

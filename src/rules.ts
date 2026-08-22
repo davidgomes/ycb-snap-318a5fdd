@@ -8,7 +8,8 @@ import {
 } from './option';
 import {LinterError} from './linter-error';
 import {getTextInLanguage, LanguageStringKey} from './lang/helpers';
-import {ignoreListOfTypes, IgnoreType} from './utils/ignore-types';
+import {customIgnoreForRule, ignoreListOfTypes, IgnoreType, IgnoreTypes} from './utils/ignore-types';
+import {setKnownRuleAliasProvider} from './utils/linter-ignore-markers';
 import {LinterSettings} from './settings-data';
 import {App} from 'obsidian';
 import {YAMLParseError} from 'yaml';
@@ -110,7 +111,15 @@ export class Rule {
   }
 
   public apply(text: string, options?: Options): string {
-    return ignoreListOfTypes(this.ignoreTypes, text, (textAfterIgnore: string) => {
+    const ignoreTypes = this.ignoreTypes.map((ignoreType) => {
+      if (ignoreType === IgnoreTypes.customIgnore) {
+        return customIgnoreForRule(this.alias);
+      }
+
+      return ignoreType;
+    });
+
+    return ignoreListOfTypes(ignoreTypes, text, (textAfterIgnore: string) => {
       return this.applyAfterIgnore(textAfterIgnore, options);
     });
   }
@@ -169,6 +178,7 @@ export function getDisabledRules(text: string): [string[], boolean] {
 export const rules: Rule[] = [];
 
 export const rulesDict = {} as Record<string, Rule>;
+setKnownRuleAliasProvider(() => new Set(Object.keys(rulesDict).map((alias) => alias.toLowerCase())));
 export const ruleTypeToRules = new Map<RuleType, Rule[]>;
 
 export function registerRule(rule: Rule): void {

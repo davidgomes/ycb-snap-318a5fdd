@@ -1,5 +1,6 @@
 import {obsidianMultilineCommentRegex, tagWithLeadingWhitespaceRegex, wikiLinkRegex, yamlRegex, escapeDollarSigns, genericLinkRegex, urlRegex, anchorTagRegex, templaterCommandRegex, footnoteDefinitionIndicatorAtStartOfLine} from './regex';
-import {getAllCustomIgnoreSectionsInText, getAllTablesInText, getPositions, MDAstTypes} from './mdast';
+import {getAllTablesInText, getPositions, MDAstTypes} from './mdast';
+import {getAllCustomIgnoreSectionsInText, getKnownRuleAliases} from './linter-ignore-markers';
 import type {Position} from 'unist';
 import {replaceTextBetweenStartAndEndWithNewValue} from './strings';
 
@@ -35,6 +36,13 @@ export const IgnoreTypes: Record<string, IgnoreType> = {
   table: {replaceAction: replaceTables, placeholder: '{TABLE_PLACEHOLDER}'},
   customIgnore: {replaceAction: replaceCustomIgnore, placeholder: '{CUSTOM_IGNORE_PLACEHOLDER}'},
 } as const;
+
+export function customIgnoreForRule(ruleAlias: string): IgnoreType {
+  return {
+    replaceAction: (text: string, placeholder: string) => replaceCustomIgnore(text, placeholder, ruleAlias),
+    placeholder: IgnoreTypes.customIgnore.placeholder,
+  };
+}
 
 export function ignoreListOfTypes(ignoreTypes: IgnoreType[], text: string, func: ((text: string) => string)): string {
   let setOfPlaceholders: {placeholder: string, replacedValues: string[]}[] = [];
@@ -199,8 +207,8 @@ function replaceTables(text: string, tablePlaceholder: string): [string[], strin
 }
 
 
-function replaceCustomIgnore(text: string, customIgnorePlaceholder: string): [string[], string] {
-  const customIgnorePositions = getAllCustomIgnoreSectionsInText(text);
+function replaceCustomIgnore(text: string, customIgnorePlaceholder: string, ruleAlias?: string): [string[], string] {
+  const customIgnorePositions = getAllCustomIgnoreSectionsInText(text, ruleAlias, getKnownRuleAliases());
 
   const replacedSections: string[] = new Array(customIgnorePositions.length);
   let index = 0;

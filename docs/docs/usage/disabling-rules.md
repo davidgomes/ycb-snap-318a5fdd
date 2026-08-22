@@ -48,34 +48,41 @@ disabled rules: [all]
 ---
 ```
 
-### Range Ignore
+### Comment Ignore Markers
 
-When there is a need to disable the Linter for part of a file, ranged ignores can be used. The syntax for a ranged ignore
-is `<!-- linter-disable -->` or `%%linter-disable%%` with an optional `<!-- linter-enable -->` or `%%linter-disable%%` where you want the Linter to start back up with its linting.
-Leaving off the ending of a range ignore will assume you want to ignore the file contents from the start of the range ignore to the end of the file. So be careful when not ending a range ignore.
+Comment markers can disable rules for a block of lines or for the next line(s). Both HTML and Obsidian comments work:
+
+`<!-- linter-disable ... -->`, `<!-- linter-enable ... -->`, `<!-- linter-disable-next-line ... -->`, `<!-- linter-disable-next-n-lines: N ... -->`
+
+`%% linter-disable ... %%`, `%% linter-enable ... %%`, `%% linter-disable-next-line ... %%`, `%% linter-disable-next-n-lines: N ... %%`
+
+A marker is recognized only when it is the only thing on the line (spaces or tabs around it are fine). Markers inside YAML frontmatter, fenced or indented code, inline code, or math blocks are ignored. Marker lines themselves are never changed by any rule.
+
+A disable marker with no rule list turns off every rule for that scope. A comma-separated list of rule aliases turns off only those rules. Unknown names, empty entries, and trailing commas are ignored. If a listed disable has no known aliases left after that, the marker does nothing.
+
+`linter-disable-next-line` and `linter-disable-next-n-lines: N` apply the same rule list to the next line or the next `N` lines. `N` must be a positive whole number. If there is no following line, the marker has no effect. A range that would run past the end of the file stops at the last line.
+
+Disable scopes nest. A bare `linter-enable` closes the most recent open disable scope. An `linter-enable` with a rule list turns those rules back on by removing each of them from the nearest scope that currently disables it.
 
 !!! warning
-    Ranged ignores only prevent the values in the ranged ignore from being linted. It *does not* prevent whitespace or other additions around the ranged ignore.
+    These markers only protect the lines they apply to. They do not stop rules from adding or removing blank lines around a protected region.
 
-The following example shows how you would ignore just a part of a file:
 ``` markdown
 Here is some text
 <!-- linter-disable -->
                           This area will not be formatted
 <!-- linter-enable -->
 More content goes here...
-%%linter-disable %%
-                          This area will not be formatted
-%%linter-enable%%
+%% linter-disable-next-line trailing-spaces %%
+this line keeps its trailing spaces
+%% linter-disable consecutive-blank-lines, trailing-spaces %%
+                          extra blank lines and spaces stay
+%% linter-enable trailing-spaces %%
+spaces here are formatted again
+%% linter-enable %%
 ```
 
-Here is another example that shows a ranged ignore without an ending indicator:
-``` markdown
-Here is some text
-<!-- linter-disable -->
-                          This area will not be formatted
-This content is also not formatted either.
-```
+Leaving off `linter-enable` keeps the disable in effect through the end of the file.
 
 !!! info
-    Paste rules are not affected by ranged ignores as that would require the copied text to have a ranged ignore in it.
+    Paste rules are not affected by these markers. That would require the pasted text to include a marker.

@@ -2,7 +2,7 @@ import {visit} from 'unist-util-visit';
 import type {Position} from 'unist';
 import type {Root} from 'mdast';
 import {hashString53Bit, makeSureContentHasEmptyLinesAddedBeforeAndAfter, replaceTextBetweenStartAndEndWithNewValue, getStartOfLineIndex, replaceAt, getStartOfLineWhitespaceOrBlockquoteLevel} from './strings';
-import {genericLinkRegex, tableRow, tableSeparator, tableStartingPipe, customIgnoreAllStartIndicator, customIgnoreAllEndIndicator, checklistBoxStartsTextRegex, footnoteDefinitionIndicatorAtStartOfLine, emptyLineMathBlockquoteRegex, startsWithBlockquote, startsWithListMarkerRegex} from './regex';
+import {genericLinkRegex, tableRow, tableSeparator, tableStartingPipe, checklistBoxStartsTextRegex, footnoteDefinitionIndicatorAtStartOfLine, emptyLineMathBlockquoteRegex, startsWithBlockquote, startsWithListMarkerRegex} from './regex';
 import {gfmFootnote} from 'micromark-extension-gfm-footnote';
 import {gfmTaskListItem} from 'micromark-extension-gfm-task-list-item';
 import {frontmatter} from 'micromark-extension-frontmatter';
@@ -1148,47 +1148,6 @@ function countTableDelimiters(line: string): number {
   }
 
   return numDelimiters;
-}
-
-export function getAllCustomIgnoreSectionsInText(text: string): {startIndex: number, endIndex: number}[] {
-  let iteratorIndex = 0;
-
-  const positions: {startIndex: number, endIndex: number}[] = [];
-  const startMatches = [...text.matchAll(customIgnoreAllStartIndicator)];
-  if (!startMatches || startMatches.length === 0) {
-    return positions;
-  }
-
-  const endMatches = [...text.matchAll(customIgnoreAllEndIndicator)];
-
-  startMatches.forEach((startMatch) => {
-    iteratorIndex = startMatch.index;
-
-    let foundEndingIndicator = false;
-    let endingPosition = text.length - 1;
-    // eslint-disable-next-line no-unmodified-loop-condition -- endMatches does not need to be modified with regards to being undefined or null
-    while (endMatches && endMatches.length !== 0 && !foundEndingIndicator) {
-      if (endMatches[0].index <= iteratorIndex) {
-        endMatches.shift();
-      } else {
-        foundEndingIndicator = true;
-
-        const endingIndicator = endMatches[0];
-        endingPosition = endingIndicator.index + endingIndicator[0].length;
-      }
-    }
-
-    positions.push({
-      startIndex: iteratorIndex,
-      endIndex: endingPosition,
-    });
-
-    if (!endMatches || endMatches.length === 0) {
-      return;
-    }
-  });
-
-  return positions.reverse();
 }
 
 export function ensureFencedCodeBlocksHasLanguage(text: string, defaultLanguage: string): string {
