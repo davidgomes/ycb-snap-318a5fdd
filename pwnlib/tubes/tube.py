@@ -1450,6 +1450,10 @@ class tube(Timeout, Logger):
 
         self.timeout = timeout
 
+    def mux(self, **kwargs):
+        from pwnlib.tubes.mux import TubeMultiplexer
+        return TubeMultiplexer(self, **kwargs)
+
 
     shutdown_directions = {
         'in':    'recv',

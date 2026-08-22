@@ -17,5 +17,7 @@ from pwnlib.tubes import server
 from pwnlib.tubes import sock
 from pwnlib.tubes import ssh
 from pwnlib.tubes import tube
+from pwnlib.tubes.mux import MuxChannel, TubeMultiplexer
 
-__all__ = ['tube', 'sock', 'remote', 'listen', 'process', 'serialtube', 'server', 'ssh']
+__all__ = ['tube', 'sock', 'remote', 'listen', 'process', 'serialtube', 'server', 'ssh',
+           'TubeMultiplexer', 'MuxChannel']
