@@ -10,6 +10,7 @@ import CommentImplementation from '../nodes/comment/Comment.js';
 import ImageImplementation from '../nodes/html-image-element/Image.js';
 import AudioImplementation from '../nodes/html-audio-element/Audio.js';
 import MutationObserverImplementation from '../mutation-observer/MutationObserver.js';
+import IntersectionObserverImplementation from '../intersection-observer/IntersectionObserver.js';
 import MessagePortImplementation from '../event/MessagePort.js';
 import CSSStyleSheetImplementation from '../css/CSSStyleSheet.js';
 import DOMExceptionImplementation from '../exception/DOMException.js';
@@ -96,6 +97,11 @@ export default class WindowContextClassExtender {
 		class MutationObserver extends MutationObserverImplementation {}
 		MutationObserver.prototype[PropertySymbol.window] = window;
 		(<typeof MutationObserver>window.MutationObserver) = MutationObserver;
+
+		// IntersectionObserver
+		class IntersectionObserver extends IntersectionObserverImplementation {}
+		IntersectionObserver.prototype[PropertySymbol.window] = window;
+		(<typeof IntersectionObserver>window.IntersectionObserver) = IntersectionObserver;
 
 		// MessagePort
 		class MessagePort extends MessagePortImplementation {}
