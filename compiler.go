@@ -59,6 +59,7 @@ type Compiler struct {
 	loopIndex       int
 	trace           io.Writer
 	indent          int
+	destrTempID     int
 }
 
 // NewCompiler creates a Compiler.
@@ -308,6 +309,13 @@ func (c *Compiler) Compile(node parser.Node) error {
 			}
 		}
 	case *parser.AssignStmt:
+		if node.Pattern != nil {
+			err := c.compileDestrAssign(node)
+			if err != nil {
+				return err
+			}
+			break
+		}
 		err := c.compileAssign(node, node.LHS, node.RHS, node.Token)
 		if err != nil {
 			return err
@@ -389,11 +397,12 @@ func (c *Compiler) Compile(node parser.Node) error {
 	case *parser.FuncLit:
 		c.enterScope()
 
-		for _, p := range node.Type.Params.List {
-			s := c.symbolTable.Define(p.Name)
+		if err := c.defineParamSymbols(node.Type.Params); err != nil {
+			return err
+		}
 
-			// function arguments is not assigned directly.
-			s.LocalAssigned = true
+		if err := c.compileParamDestructure(node, node.Type.Params); err != nil {
+			return err
 		}
 
 		if err := c.Compile(node.Body); err != nil {
@@ -463,7 +472,7 @@ func (c *Compiler) Compile(node parser.Node) error {
 		compiledFunction := &CompiledFunction{
 			Instructions:  instructions,
 			NumLocals:     numLocals,
-			NumParameters: len(node.Type.Params.List),
+			NumParameters: len(node.Type.Params.Params),
 			VarArgs:       node.Type.Params.VarArgs,
 			SourceMap:     sourceMap,
 		}
