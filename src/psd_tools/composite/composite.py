@@ -336,6 +336,15 @@ class Compositor(object):
         shape *= shape_mask
         alpha *= shape_mask * opacity_mask * opacity_const
 
+        backdrop_color = self._color
+        if backdrop_color.shape[2] == 1 and color.shape[2] > 1:
+            backdrop_color = np.repeat(backdrop_color, color.shape[2], axis=2)
+        if color.shape[2] == 1 and backdrop_color.shape[2] > 1:
+            color = np.repeat(color, backdrop_color.shape[2], axis=2)
+        blend_if = layer.blend_ranges.compute_visibility(color, backdrop_color)
+        shape *= blend_if
+        alpha *= blend_if
+
         # TODO: Tag.BLEND_INTERIOR_ELEMENTS controls how inner effects apply.
 
         # TODO: Apply before effects
