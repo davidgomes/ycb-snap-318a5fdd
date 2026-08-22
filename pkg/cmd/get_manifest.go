@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -59,7 +60,8 @@ func newGetManifestCmd(cfg *action.Configuration, out io.Writer) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(out, unifiedManifestStream(rac.Manifest(), rac.Hooks()))
+			hooks := rac.Hooks()
+			fmt.Fprintln(out, unifiedManifestStreamLegacy(rac.Manifest(), hooks))
 			return nil
 		},
 	}
@@ -77,4 +79,17 @@ func newGetManifestCmd(cfg *action.Configuration, out io.Writer) *cobra.Command 
 	}
 
 	return cmd
+}
+
+func unifiedManifestStreamLegacy(manifest string, hooks []release.Hook) string {
+	var result strings.Builder
+	for _, h := range hooks {
+		accessor, err := release.NewHookAccessor(h)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&result, "---\n# Source: %s\n%s\n", accessor.Path(), accessor.Manifest())
+	}
+	result.WriteString(strings.TrimSpace(manifest))
+	return strings.TrimSuffix(result.String(), "\n")
 }

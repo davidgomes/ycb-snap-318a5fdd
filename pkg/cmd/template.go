@@ -228,14 +228,16 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 func unifiedManifestStream(manifest string, hooks []*release.Hook) string {
 	var resources []releaseutil.Manifest
 	source := regexp.MustCompile(`(?m)^# Source: ([^\n]+)\n`)
-	for i, document := range releaseutil.SplitManifests(manifest) {
+	order := 0
+	for _, document := range releaseutil.SplitManifests(manifest) {
 		match := source.FindStringSubmatch(document)
 		if len(match) == 0 {
 			continue
 		}
 		resources = append(resources, releaseutil.Manifest{
-			Name: match[1], Content: strings.TrimSpace(document), Order: i,
+			Name: match[1], Content: strings.TrimSpace(document), Order: order,
 		})
+		order++
 	}
 	ordered := releaseutil.SortManifestsBySource(hooks, resources)
 	var result strings.Builder
