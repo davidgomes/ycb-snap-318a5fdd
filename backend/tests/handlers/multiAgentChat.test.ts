@@ -39,6 +39,23 @@ const mockAgent = {
   },
 };
 
+async function readStreamResponses(response: Response): Promise<any[]> {
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let streamData = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    streamData += decoder.decode(value);
+  }
+
+  return streamData
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line));
+}
+
 describe("handleMultiAgentChatRequest", () => {
   let mockContext: Partial<Context>;
   let requestAbortControllers: Map<string, AbortController>;
@@ -292,6 +309,202 @@ describe("handleMultiAgentChatRequest", () => {
     // Should have called the orchestrator
     expect(mockProvider.executeChat).toHaveBeenCalled();
   });
+
+  it("should recursively delegate and feed the result back to the parent", async () => {
+    const chatRequest: ChatRequest = {
+      message: "@test-agent start the workflow",
+      requestId: "req-delegate",
+      sessionId: "session-delegate",
+    };
+    vi.mocked(mockContext.req!.json).mockResolvedValue(chatRequest);
+
+    const toolUseId = "delegate-tool-1";
+    vi.mocked(mockProvider.executeChat).mockImplementation(async function* (
+      providerRequest,
+    ) {
+      if (providerRequest.message === "inspect the implementation") {
+        yield { type: "text" as const, content: "The implementation looks good." };
+        yield { type: "done" as const };
+        return;
+      }
+
+      if (providerRequest.message.startsWith('{"type":"tool_result"')) {
+        yield { type: "text" as const, content: "Thanks, continuing the workflow." };
+        yield { type: "done" as const };
+        return;
+      }
+
+      yield {
+        type: "tool_use" as const,
+        toolName: "delegate_task",
+        toolInput: {
+          agent_id: "worker-agent",
+          instructions: "inspect the implementation",
+        },
+        toolUseId,
+      };
+      yield { type: "done" as const };
+    });
+
+    const response = await handleMultiAgentChatRequest(
+      mockContext as Context,
+      requestAbortControllers,
+    );
+    const responses = await readStreamResponses(response);
+    const calls = vi.mocked(mockProvider.executeChat).mock.calls;
+    const toolResult = JSON.parse(calls[2][0].message);
+
+    expect(calls).toHaveLength(3);
+    expect(calls[1][0].message).toBe("inspect the implementation");
+    expect(toolResult).toEqual({
+      type: "tool_result",
+      is_error: false,
+      content: "The implementation looks good.",
+      tool_use_id: toolUseId,
+    });
+    expect(
+      responses.some(
+        (item) =>
+          item.data?.message?.content?.[0]?.type === "tool_use" &&
+          item.data.message.content[0].id === toolUseId,
+      ),
+    ).toBe(true);
+    expect(
+      responses.some((item) => item.data?.content === "Thanks, continuing the workflow."),
+    ).toBe(true);
+  });
+
+  it("should report unknown delegated agents and feed an error tool result", async () => {
+    const chatRequest: ChatRequest = {
+      message: "@test-agent delegate this",
+      requestId: "req-unknown-delegate",
+    };
+    vi.mocked(mockContext.req!.json).mockResolvedValue(chatRequest);
+    vi.mocked(globalRegistry.getProviderForAgent).mockImplementation((agentId) =>
+      agentId === "missing-agent" ? undefined : mockProvider,
+    );
+
+    vi.mocked(mockProvider.executeChat).mockImplementation(async function* (
+      providerRequest,
+    ) {
+      if (providerRequest.message.startsWith('{"type":"tool_result"')) {
+        yield { type: "done" as const };
+        return;
+      }
+
+      yield {
+        type: "tool_use" as const,
+        toolName: "delegate_task",
+        toolInput: {
+          agent_id: "missing-agent",
+          instructions: "do the missing work",
+        },
+        toolUseId: "unknown-tool-1",
+      };
+      yield { type: "done" as const };
+    });
+
+    const response = await handleMultiAgentChatRequest(
+      mockContext as Context,
+      requestAbortControllers,
+    );
+    const responses = await readStreamResponses(response);
+    const toolResult = JSON.parse(
+      vi.mocked(mockProvider.executeChat).mock.calls[1][0].message,
+    );
+
+    expect(responses.find((item) => item.type === "error")?.error).toContain(
+      "missing-agent",
+    );
+    expect(toolResult.is_error).toBe(true);
+    expect(toolResult.content).toContain("missing-agent");
+  });
+
+  it("should return sub-agent failures only through the tool result", async () => {
+    const chatRequest: ChatRequest = {
+      message: "@test-agent delegate this",
+      requestId: "req-failed-delegate",
+    };
+    vi.mocked(mockContext.req!.json).mockResolvedValue(chatRequest);
+
+    vi.mocked(mockProvider.executeChat).mockImplementation(async function* (
+      providerRequest,
+    ) {
+      if (providerRequest.message === "failing work") {
+        yield { type: "error" as const, error: "child provider failed" };
+        return;
+      }
+
+      if (providerRequest.message.startsWith('{"type":"tool_result"')) {
+        yield { type: "done" as const };
+        return;
+      }
+
+      yield {
+        type: "tool_use" as const,
+        toolName: "delegate_task",
+        toolInput: {
+          agent_id: "worker-agent",
+          instructions: "failing work",
+        },
+        toolUseId: "failed-tool-1",
+      };
+      yield { type: "done" as const };
+    });
+
+    const response = await handleMultiAgentChatRequest(
+      mockContext as Context,
+      requestAbortControllers,
+    );
+    const responses = await readStreamResponses(response);
+    const toolResult = JSON.parse(
+      vi.mocked(mockProvider.executeChat).mock.calls[2][0].message,
+    );
+
+    expect(responses.some((item) => item.type === "error")).toBe(false);
+    expect(toolResult.is_error).toBe(true);
+    expect(toolResult.content).toContain("child provider failed");
+  });
+
+  it("should stop circular delegation with a stream error", async () => {
+    const chatRequest: ChatRequest = {
+      message: "@test-agent start circular work",
+      requestId: "req-circular-delegate",
+    };
+    vi.mocked(mockContext.req!.json).mockResolvedValue(chatRequest);
+    vi.mocked(globalRegistry.getAgent).mockImplementation((agentId) => ({
+      ...mockAgent,
+      id: agentId,
+    }));
+
+    vi.mocked(mockProvider.executeChat).mockImplementation(async function* (
+      providerRequest,
+    ) {
+      yield {
+        type: "tool_use" as const,
+        toolName: "delegate_task",
+        toolInput:
+          providerRequest.message === "return to parent"
+            ? { agent_id: "test-agent", instructions: "return again" }
+            : { agent_id: "other-agent", instructions: "return to parent" },
+        toolUseId: providerRequest.message === "return to parent"
+          ? "circular-tool-2"
+          : "circular-tool-1",
+      };
+      yield { type: "done" as const };
+    });
+
+    const response = await handleMultiAgentChatRequest(
+      mockContext as Context,
+      requestAbortControllers,
+    );
+    const responses = await readStreamResponses(response);
+
+    expect(responses.find((item) => item.type === "error")?.error).toContain(
+      "circular",
+    );
+    expect(vi.mocked(mockProvider.executeChat)).toHaveBeenCalledTimes(2);
+  });
   
   it("should handle provider errors gracefully", async () => {
     const chatRequest: ChatRequest = {
@@ -344,10 +557,11 @@ describe("handleMultiAgentChatRequest", () => {
       yield { type: "done" as const };
     });
     
-    await handleMultiAgentChatRequest(
+    const response = await handleMultiAgentChatRequest(
       mockContext as Context,
       requestAbortControllers
     );
+    await readStreamResponses(response);
     
     // Abort controller should be cleaned up
     expect(requestAbortControllers.has("req-abort-test")).toBe(false);
