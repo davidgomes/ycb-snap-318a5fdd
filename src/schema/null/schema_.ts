@@ -13,11 +13,13 @@ import type {
   Always,
   AtLeastOnce,
   Never,
+  RequiredIf,
   Schema,
   SchemaProps,
   SchemaRequiredProp,
   Validator
 } from '../types/index.js'
+import { appendRequiredIf } from '../utils/requiredIf.js'
 import type { ResolvedNullSchema } from './resolve.js'
 import { NullSchema } from './schema.js'
 import type { NullSchemaProps } from './types.js'
@@ -60,6 +62,21 @@ export class NullSchema_<
    */
   optional(): NullSchema_<Overwrite<PROPS, { required: Never }>> {
     return this.required('never')
+  }
+
+  /**
+   * Require this attribute when a sibling matches one of the provided values.
+   * Multiple calls are combined with OR semantics.
+   */
+  requiredIf(
+    attributeName: string,
+    ...triggerValues: unknown[]
+  ): NullSchema_<Overwrite<PROPS, { requiredIf: RequiredIf }>> {
+    return new NullSchema_(
+      overwrite(this.props, {
+        requiredIf: appendRequiredIf(this.props.requiredIf, attributeName, triggerValues)
+      })
+    )
   }
 
   /**

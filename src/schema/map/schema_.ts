@@ -13,6 +13,7 @@ import type {
   Always,
   AtLeastOnce,
   Never,
+  RequiredIf,
   Schema,
   SchemaProps,
   SchemaRequiredProp,
@@ -20,6 +21,7 @@ import type {
 } from '../types/index.js'
 import type { Light, LightObj } from '../utils/light.js'
 import { lightObj } from '../utils/light.js'
+import { appendRequiredIf } from '../utils/requiredIf.js'
 import { MapSchema } from './schema.js'
 import type { MapAttributes } from './types.js'
 
@@ -65,6 +67,22 @@ export class MapSchema_<
    */
   optional(): MapSchema_<ATTRIBUTES, Overwrite<PROPS, { required: Never }>> {
     return this.required('never')
+  }
+
+  /**
+   * Require this attribute when a sibling matches one of the provided values.
+   * Multiple calls are combined with OR semantics.
+   */
+  requiredIf(
+    attributeName: string,
+    ...triggerValues: unknown[]
+  ): MapSchema_<ATTRIBUTES, Overwrite<PROPS, { requiredIf: RequiredIf }>> {
+    return new MapSchema_(
+      this.attributes,
+      overwrite(this.props, {
+        requiredIf: appendRequiredIf(this.props.requiredIf, attributeName, triggerValues)
+      })
+    )
   }
 
   /**

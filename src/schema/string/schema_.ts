@@ -13,10 +13,12 @@ import type {
   Always,
   AtLeastOnce,
   Never,
+  RequiredIf,
   Schema,
   SchemaRequiredProp,
   Validator
 } from '../types/index.js'
+import { appendRequiredIf } from '../utils/requiredIf.js'
 import type { ResolveStringSchema, ResolvedStringSchema } from './resolve.js'
 import { StringSchema } from './schema.js'
 import type { StringSchemaProps } from './types.js'
@@ -59,6 +61,21 @@ export class StringSchema_<
    */
   optional(): StringSchema_<Overwrite<PROPS, { required: Never }>> {
     return this.required('never')
+  }
+
+  /**
+   * Require this attribute when a sibling matches one of the provided values.
+   * Multiple calls are combined with OR semantics.
+   */
+  requiredIf(
+    attributeName: string,
+    ...triggerValues: unknown[]
+  ): StringSchema_<Overwrite<PROPS, { requiredIf: RequiredIf }>> {
+    return new StringSchema_(
+      overwrite(this.props, {
+        requiredIf: appendRequiredIf(this.props.requiredIf, attributeName, triggerValues)
+      })
+    )
   }
 
   /**

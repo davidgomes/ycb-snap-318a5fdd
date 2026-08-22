@@ -1,6 +1,7 @@
 import { DynamoDBToolboxError } from '~/errors/index.js'
 import { formatArrayPath } from '~/schema/actions/utils/formatArrayPath.js'
 import type { MapSchema } from '~/schema/index.js'
+import { assertRequiredIfSatisfied } from '~/schema/utils/requiredIf.js'
 import { cloneDeep } from '~/utils/cloneDeep.js'
 import { isObject } from '~/utils/validation/isObject.js'
 
@@ -85,6 +86,11 @@ export function* mapSchemaParser<OPTIONS extends ParseAttrValueOptions = {}>(
   )
   if (parsedValue !== undefined) {
     applyCustomValidation(schema, parsedValue, options)
+  }
+
+  if (mode === 'put') {
+    const path = valuePath !== undefined ? formatArrayPath(valuePath) : undefined
+    assertRequiredIfSatisfied(schema.attributes, parsedValue, path)
   }
 
   if (transform) {

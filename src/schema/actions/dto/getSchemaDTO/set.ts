@@ -2,7 +2,7 @@ import type { SetSchema } from '~/schema/set/index.js'
 
 import type { SetSchemaDTO } from '../types.js'
 import { getSchemaDTO } from './schema.js'
-import { getDefaultsDTO } from './utils.js'
+import { getDefaultsDTO, getRequiredIfDTO } from './utils.js'
 
 /**
  * @debt feature "handle defaults, links & validators DTOs"
@@ -18,6 +18,7 @@ export const getSetSchemaDTO = (schema: SetSchema): SetSchemaDTO => {
     ...(hidden !== undefined && hidden ? { hidden } : {}),
     ...(key !== undefined && key ? { key } : {}),
     ...(savedAs !== undefined ? { savedAs } : {}),
-    ...defaultsDTO
+    ...defaultsDTO,
+    ...getRequiredIfDTO(schema)
   }
 }

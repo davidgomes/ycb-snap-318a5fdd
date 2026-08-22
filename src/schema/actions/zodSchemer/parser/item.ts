@@ -4,6 +4,7 @@ import type { ItemSchema } from '~/schema/index.js'
 import type { Overwrite } from '~/types/overwrite.js'
 import type { SelectKeys } from '~/types/selectKeys.js'
 
+import { withRequiredIf } from '../requiredIf.js'
 import type { SchemaZodParser } from './schema.js'
 import { schemaZodParser } from './schema.js'
 import type { ZodParserOptions } from './types.js'
@@ -45,12 +46,15 @@ export const itemZodParser = <SCHEMA extends ItemSchema, OPTIONS extends ZodPars
   return withAttributeNameEncoding(
     schema,
     options,
-    z.object(
-      Object.fromEntries(
-        displayedAttrEntries.map(([attributeName, attribute]) => [
-          attributeName,
-          schemaZodParser(attribute, { ...options, defined: false })
-        ])
+    withRequiredIf(
+      schema,
+      z.object(
+        Object.fromEntries(
+          displayedAttrEntries.map(([attributeName, attribute]) => [
+            attributeName,
+            schemaZodParser(attribute, { ...options, defined: false })
+          ])
+        )
       )
     )
   ) as ItemZodParser<SCHEMA, OPTIONS>

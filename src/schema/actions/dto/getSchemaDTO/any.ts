@@ -2,7 +2,7 @@ import type { AnySchema } from '~/schema/any/index.js'
 import { isSerializableTransformer } from '~/transformers/index.js'
 
 import type { AnySchemaDTO, AnySchemaTransformerDTO } from '../types.js'
-import { getDefaultsDTO } from './utils.js'
+import { getDefaultsDTO, getRequiredIfDTO } from './utils.js'
 
 /**
  * @debt feature "handle defaults, links & validators DTOs"
@@ -24,6 +24,7 @@ export const getAnySchemaDTO = (schema: AnySchema): AnySchemaDTO => {
             : { transformerId: 'custom' }) as AnySchemaTransformerDTO
         }
       : {}),
-    ...defaultsDTO
+    ...defaultsDTO,
+    ...getRequiredIfDTO(schema)
   }
 }

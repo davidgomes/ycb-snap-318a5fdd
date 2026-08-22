@@ -1,4 +1,4 @@
-import type { AtLeastOnce, SchemaRequiredProp } from '~/schema/index.js'
+import type { AtLeastOnce, RequiredIf, SchemaRequiredProp } from '~/schema/index.js'
 import type { JSONStringifierDTO } from '~/transformers/jsonStringify.js'
 import type { PipeDTO } from '~/transformers/pipe.js'
 import type { PrefixerDTO } from '~/transformers/prefix.js'
@@ -35,6 +35,7 @@ interface SchemaLinksDTO {
 
 interface SchemaPropsDTO extends SchemaDefaultsDTO, SchemaLinksDTO {
   required?: SchemaRequiredProp
+  requiredIf?: RequiredIf
   hidden?: boolean
   key?: boolean
   savedAs?: string

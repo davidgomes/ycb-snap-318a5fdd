@@ -2,7 +2,7 @@ import type { AnyOfSchema } from '~/schema/anyOf/index.js'
 
 import type { AnyOfSchemaDTO } from '../types.js'
 import { getSchemaDTO } from './schema.js'
-import { getDefaultsDTO } from './utils.js'
+import { getDefaultsDTO, getRequiredIfDTO } from './utils.js'
 
 /**
  * @debt feature "handle defaults, links & validators DTOs"
@@ -19,6 +19,7 @@ export const getAnyOfSchemaDTO = (schema: AnyOfSchema): AnyOfSchemaDTO => {
     ...(key !== undefined && key ? { key } : {}),
     ...(savedAs !== undefined ? { savedAs } : {}),
     ...(discriminator !== undefined ? { discriminator } : {}),
-    ...defaultsDTO
+    ...defaultsDTO,
+    ...getRequiredIfDTO(schema)
   }
 }

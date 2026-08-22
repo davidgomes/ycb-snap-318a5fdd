@@ -1,5 +1,6 @@
 import { DynamoDBToolboxError } from '~/errors/index.js'
 import type { ItemSchema, Schema } from '~/schema/index.js'
+import { assertRequiredIfSatisfied } from '~/schema/utils/requiredIf.js'
 import { cloneDeep } from '~/utils/cloneDeep.js'
 import { isObject } from '~/utils/validation/isObject.js'
 
@@ -84,6 +85,10 @@ export function* itemParser<SCHEMA extends ItemSchema, OPTIONS extends ParseValu
       .map(([attrName, attr]) => [attrName, attr.next().value])
       .filter(([, attrValue]) => attrValue !== undefined)
   )
+
+  if (mode === 'put') {
+    assertRequiredIfSatisfied(schema.attributes, parsedValue)
+  }
 
   if (transform) {
     yield parsedValue
