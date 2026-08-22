@@ -5,6 +5,7 @@ import type {
   BinarySchema,
   BooleanSchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   NullSchema,
@@ -69,6 +70,7 @@ export type AttrCondition<
   // Size ok
   | (SCHEMA extends RecordSchema ? RecordSchemaCondition<ATTR_PATH, SCHEMA, ALL_PATHS> : never)
   | (SCHEMA extends AnyOfSchema ? AnyOfSchemaCondition<ATTR_PATH, SCHEMA, ALL_PATHS> : never)
+  | (SCHEMA extends LazySchema ? ExistsCondition<ATTR_PATH> | TypeCondition<ATTR_PATH> : never)
 
 export type ExistsCondition<ATTR_PATH extends string> = {
   attr: ATTR_PATH

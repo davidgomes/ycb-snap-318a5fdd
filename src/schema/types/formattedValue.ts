@@ -4,6 +4,7 @@ import type {
   BinarySchema,
   BooleanSchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   Never,
@@ -102,6 +103,7 @@ type SchemaFormattedValue<
       | (SCHEMA extends MapSchema ? MapSchemaFormattedValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends RecordSchema ? RecordSchemaFormattedValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends AnyOfSchema ? AnyOfSchemaFormattedValue<SCHEMA, OPTIONS> : never)
+      | (SCHEMA extends LazySchema ? If<MustBeDefined<SCHEMA>, never, undefined> | unknown : never)
 
 type AnySchemaFormattedValue<SCHEMA extends AnySchema> = AnySchema extends SCHEMA
   ? unknown

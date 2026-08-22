@@ -3,6 +3,7 @@ import type {
   AnyOfSchema,
   AnySchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   Never,
@@ -75,6 +76,12 @@ type SchemaValidValue<
       | (SCHEMA extends MapSchema ? MapSchemaValidValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends RecordSchema ? RecordSchemaValidValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends AnyOfSchema ? AnyOfSchemaValidValue<SCHEMA, OPTIONS> : never)
+      | (SCHEMA extends LazySchema
+          ?
+              | If<MustBeDefined<SCHEMA, OPTIONS>, never, undefined>
+              | SchemaExtendedWriteValue<SCHEMA, OPTIONS>
+              | unknown
+          : never)
 
 type AnySchemaValidValue<
   SCHEMA extends AnySchema,

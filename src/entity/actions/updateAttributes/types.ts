@@ -25,6 +25,7 @@ import type {
   AnySchema,
   ItemSchema,
   ItemUnextendedValue,
+  LazySchema,
   ListSchema,
   MapSchema,
   Never,
@@ -230,3 +231,4 @@ export type UpdateAttributeInput<
       | (SCHEMA extends AnyOfSchema
           ? UpdateAttributeInput<SCHEMA['elements'][number], FILLED, AVAILABLE_PATHS>
           : never)
+      | (SCHEMA extends LazySchema ? unknown : never)

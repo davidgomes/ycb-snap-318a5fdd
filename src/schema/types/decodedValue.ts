@@ -4,6 +4,7 @@ import type {
   BinarySchema,
   BooleanSchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   Never,
@@ -105,6 +106,7 @@ type SchemaDecodedValue<
       | (SCHEMA extends MapSchema ? MapSchemaDecodedValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends RecordSchema ? RecordSchemaDecodedValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends AnyOfSchema ? AnyOfSchemaDecodedValue<SCHEMA, OPTIONS> : never)
+      | (SCHEMA extends LazySchema ? If<MustBeDefined<SCHEMA>, never, undefined> | unknown : never)
 
 type AnySchemaDecodedValue<SCHEMA extends AnySchema> = AnySchema extends SCHEMA
   ? unknown

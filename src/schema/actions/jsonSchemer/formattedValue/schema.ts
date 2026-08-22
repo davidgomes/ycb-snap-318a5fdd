@@ -12,6 +12,7 @@ import type {
 
 import type { FormattedAnyOfJSONSchema } from './anyOf.js'
 import { getFormattedAnyOfJSONSchema } from './anyOf.js'
+import { assignJSONSchemaRef, getJSONSchemaContext, runWithJSONSchemaContext } from './context.js'
 import type { FormattedItemJSONSchema } from './item.js'
 import { getFormattedItemJSONSchema } from './item.js'
 import type { FormattedListJSONSchema } from './list.js'
@@ -37,31 +38,90 @@ export type FormattedValueJSONSchema<SCHEMA extends Schema> = Schema extends SCH
       | (SCHEMA extends AnyOfSchema ? FormattedAnyOfJSONSchema<SCHEMA> : never)
       | (SCHEMA extends ItemSchema ? FormattedItemJSONSchema<SCHEMA> : never)
 
-export const getFormattedValueJSONSchema = <SCHEMA extends Schema>(
+const getFormattedValueJSONSchemaInContext = <SCHEMA extends Schema>(
   schema: SCHEMA
 ): FormattedValueJSONSchema<SCHEMA> => {
   type RESPONSE = FormattedValueJSONSchema<SCHEMA>
 
+  const context = getJSONSchemaContext()
+
+  if (schema.type === 'lazy') {
+    return getFormattedValueJSONSchema(schema.resolve()) as RESPONSE
+  }
+
+  if (context !== undefined) {
+    const existingRef = context.refs.get(schema)
+    if (existingRef !== undefined) {
+      return { $ref: `#/$defs/${existingRef}` } as unknown as RESPONSE
+    }
+
+    if (context.visiting.has(schema)) {
+      const id = assignJSONSchemaRef(context, schema)
+      return { $ref: `#/$defs/${id}` } as unknown as RESPONSE
+    }
+
+    context.visiting.add(schema)
+  }
+
+  let jsonSchema: FormattedValueJSONSchema<SCHEMA>
+
   switch (schema.type) {
     case 'any':
-      return {} as RESPONSE
+      jsonSchema = {} as RESPONSE
+      break
     case 'null':
     case 'boolean':
     case 'number':
     case 'string':
     case 'binary':
-      return getFormattedPrimitiveJSONSchema(schema) as RESPONSE
+      jsonSchema = getFormattedPrimitiveJSONSchema(schema) as RESPONSE
+      break
     case 'set':
-      return getFormattedSetJSONSchema(schema) as RESPONSE
+      jsonSchema = getFormattedSetJSONSchema(schema) as RESPONSE
+      break
     case 'list':
-      return getFormattedListJSONSchema(schema) as RESPONSE
+      jsonSchema = getFormattedListJSONSchema(schema) as RESPONSE
+      break
     case 'map':
-      return getFormattedMapJSONSchema(schema) as RESPONSE
+      jsonSchema = getFormattedMapJSONSchema(schema) as RESPONSE
+      break
     case 'record':
-      return getFormattedRecordJSONSchema(schema) as RESPONSE
+      jsonSchema = getFormattedRecordJSONSchema(schema) as RESPONSE
+      break
     case 'anyOf':
-      return getFormattedAnyOfJSONSchema(schema) as RESPONSE
+      jsonSchema = getFormattedAnyOfJSONSchema(schema) as RESPONSE
+      break
     case 'item':
-      return getFormattedItemJSONSchema(schema) as RESPONSE
+      jsonSchema = getFormattedItemJSONSchema(schema) as RESPONSE
+      break
   }
+
+  if (context !== undefined) {
+    context.visiting.delete(schema)
+
+    if (context.refs.has(schema)) {
+      context.defs[context.refs.get(schema) as string] = jsonSchema as Record<string, unknown>
+    }
+  }
+
+  return jsonSchema
+}
+
+export const getFormattedValueJSONSchema = <SCHEMA extends Schema>(
+  schema: SCHEMA
+): FormattedValueJSONSchema<SCHEMA> => {
+  const existingContext = getJSONSchemaContext()
+  if (existingContext !== undefined) {
+    return getFormattedValueJSONSchemaInContext(schema)
+  }
+
+  return runWithJSONSchemaContext(context => {
+    const jsonSchema = getFormattedValueJSONSchemaInContext(schema)
+
+    if (Object.keys(context.defs).length === 0) {
+      return jsonSchema
+    }
+
+    return { ...jsonSchema, $defs: context.defs } as FormattedValueJSONSchema<SCHEMA>
+  })
 }

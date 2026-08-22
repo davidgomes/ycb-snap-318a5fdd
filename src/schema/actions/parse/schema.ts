@@ -121,6 +121,8 @@ export function* schemaParser<OPTIONS extends ParseAttrValueOptions = {}>(
       return yield* recordSchemaParser(schema, unextendedInput, nextOpts)
     case 'anyOf':
       return yield* anyOfSchemaParser(schema, unextendedInput, nextOpts)
+    case 'lazy':
+      return yield* schemaParser(schema.resolve(), unextendedInput, nextOpts)
   }
 }
 

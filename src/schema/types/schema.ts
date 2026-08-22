@@ -1,6 +1,7 @@
 import type { AnySchema, AnySchema_ } from '../any/index.js'
 import type { AnyOfSchema, AnyOfSchema_ } from '../anyOf/index.js'
 import type { ItemSchema, ItemSchema_ } from '../item/index.js'
+import type { LazySchema, LazySchema_ } from '../lazy/index.js'
 import type { ListSchema, ListSchema_ } from '../list/index.js'
 import type { MapSchema, MapSchema_ } from '../map/index.js'
 import type { PrimitiveSchema, PrimitiveSchema_ } from '../primitive/index.js'
@@ -16,6 +17,7 @@ export type Schema =
   | RecordSchema
   | AnyOfSchema
   | ItemSchema
+  | LazySchema
 
 export type Schema_ =
   | AnySchema_
@@ -26,3 +28,4 @@ export type Schema_ =
   | RecordSchema_
   | AnyOfSchema_
   | ItemSchema_
+  | LazySchema_

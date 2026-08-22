@@ -1,4 +1,4 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import type {
   AnyOfSchema,
@@ -6,6 +6,7 @@ import type {
   BinarySchema,
   BooleanSchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   NullSchema,
@@ -41,6 +42,7 @@ import { getSetZodFormatter } from './set.js'
 import type { StringZodFormatter } from './string.js'
 import { getStringZodFormatter } from './string.js'
 import type { ZodFormatterOptions } from './types.js'
+import { withOptional } from './utils.js'
 
 export type ZodFormatter<
   SCHEMA extends Schema,
@@ -68,6 +70,7 @@ export type SchemaZodFormatter<
       | (SCHEMA extends MapSchema ? MapZodFormatter<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends RecordSchema ? RecordZodFormatter<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends AnyOfSchema ? AnyOfZodFormatter<SCHEMA, OPTIONS> : never)
+      | (SCHEMA extends LazySchema ? z.ZodTypeAny : never)
 
 export const schemaZodFormatter = <SCHEMA extends Schema, OPTIONS extends ZodFormatterOptions = {}>(
   schema: SCHEMA,
@@ -101,5 +104,11 @@ export const schemaZodFormatter = <SCHEMA extends Schema, OPTIONS extends ZodFor
     case 'item':
       // NOTE: Should not happen
       return itemZodFormatter(schema, options) as unknown as ZOD_FORMATTER
+    case 'lazy':
+      return withOptional(
+        schema,
+        options,
+        z.lazy(() => schemaZodFormatter(schema.resolve(), { ...options, defined: true }))
+      ) as ZOD_FORMATTER
   }
 }

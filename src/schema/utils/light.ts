@@ -4,6 +4,7 @@ import type { AnySchema } from '../any/index.js'
 import type { AnyOfSchema } from '../anyOf/index.js'
 import type { BinarySchema } from '../binary/index.js'
 import type { BooleanSchema } from '../boolean/index.js'
+import type { LazySchema } from '../lazy/index.js'
 import type { ListSchema } from '../list/index.js'
 import type { MapSchema } from '../map/index.js'
 import type { NullSchema } from '../null/index.js'
@@ -37,7 +38,12 @@ export type Light<SCHEMA extends Schema> = SCHEMA extends AnySchema
                     ? RecordSchema<SCHEMA['keys'], SCHEMA['elements'], SCHEMA['props']>
                     : SCHEMA extends AnyOfSchema
                       ? AnyOfSchema<SCHEMA['elements'], SCHEMA['props']>
-                      : never
+                      : SCHEMA extends LazySchema
+                        ? LazySchema<
+                            SCHEMA extends LazySchema<infer GETTER> ? GETTER : () => Schema,
+                            SCHEMA['props']
+                          >
+                        : never
 
 type Lightener = <SCHEMA extends Schema>(schema: SCHEMA) => Light<SCHEMA>
 

@@ -2,6 +2,7 @@ import type {
   AnyOfSchema,
   AnySchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   RecordSchema,
@@ -31,6 +32,7 @@ export type SchemaPaths<SCHEMA extends Schema, SCHEMA_PATH extends string = ''> 
   | (SCHEMA extends MapSchema ? MapSchemaPaths<SCHEMA, SCHEMA_PATH> : never)
   | (SCHEMA extends RecordSchema ? RecordSchemaPaths<SCHEMA, SCHEMA_PATH> : never)
   | (SCHEMA extends AnyOfSchema ? AnyOfSchemaPaths<SCHEMA, SCHEMA_PATH> : never)
+  | (SCHEMA extends LazySchema ? string : never)
 
 export type ItemSchemaPaths<SCHEMA extends ItemSchema = ItemSchema> = ItemSchema extends SCHEMA
   ? string

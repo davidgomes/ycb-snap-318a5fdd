@@ -71,6 +71,8 @@ export const parseUpdateAttributesExtension: ExtensionParser<UpdateAttributesInp
       return parseMapExtension(schema, input, options)
     case 'record':
       return parseRecordExtension(schema, input, options)
+    case 'lazy':
+      return parseUpdateAttributesExtension(schema.resolve(), input, options)
     default:
       return {
         isExtension: false,

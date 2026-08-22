@@ -116,9 +116,15 @@ export interface SetSchemaDTO extends SchemaPropsDTO {
   }
 }
 
+export interface SchemaRefDTO {
+  $ref: string
+}
+
+export type SchemaDTOOrRef = ISchemaDTO | SchemaRefDTO
+
 export interface ListSchemaDTO extends SchemaPropsDTO {
   type: 'list'
-  elements: ISchemaDTO & {
+  elements: SchemaDTOOrRef & {
     required?: AtLeastOnce
     hidden?: false
     savedAs?: undefined
@@ -133,7 +139,7 @@ export interface ListSchemaDTO extends SchemaPropsDTO {
 
 export interface MapSchemaDTO extends SchemaPropsDTO {
   type: 'map'
-  attributes: { [name: string]: ISchemaDTO }
+  attributes: { [name: string]: SchemaDTOOrRef }
 }
 
 export interface RecordSchemaDTO extends SchemaPropsDTO {
@@ -150,7 +156,7 @@ export interface RecordSchemaDTO extends SchemaPropsDTO {
     putLink?: undefined
     updateLink?: undefined
   }
-  elements: ISchemaDTO & {
+  elements: SchemaDTOOrRef & {
     required?: AtLeastOnce
     hidden?: false
     key?: false
@@ -166,7 +172,7 @@ export interface RecordSchemaDTO extends SchemaPropsDTO {
 
 export interface AnyOfSchemaDTO extends SchemaPropsDTO {
   type: 'anyOf'
-  elements: (ISchemaDTO & {
+  elements: ((ISchemaDTO | SchemaRefDTO) & {
     required?: AtLeastOnce
     hidden?: false
     savedAs?: undefined
@@ -195,7 +201,9 @@ export interface ItemSchemaDTO extends SchemaPropsDTO {
       | MapSchemaDTO
       | RecordSchemaDTO
       | AnyOfSchemaDTO
+      | SchemaRefDTO
   }
+  $schemaDefs?: { [ref: string]: ISchemaDTO }
 }
 
 export type ISchemaDTO =

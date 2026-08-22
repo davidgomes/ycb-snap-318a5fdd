@@ -3,6 +3,7 @@ import type { ItemSchema } from '~/schema/item/index.js'
 import { item } from '~/schema/item/index.js'
 
 import { fromSchemaDTO } from './attribute.js'
+import { runWithFromSchemaDTOContext } from './context.js'
 
 type ItemSchemaDTO = Extract<ISchemaDTO, { type: 'item' }>
 
@@ -16,7 +17,8 @@ export const fromItemSchemaDTO = ({
   keyLink,
   putLink,
   updateLink,
-  attributes
+  attributes,
+  $schemaDefs
 }: ItemSchemaDTO): ItemSchema => {
   keyDefault
   putDefault
@@ -25,12 +27,14 @@ export const fromItemSchemaDTO = ({
   putLink
   updateLink
 
-  return item(
-    Object.fromEntries(
-      Object.entries(attributes).map(([attributeName, attribute]) => [
-        attributeName,
-        fromSchemaDTO(attribute)
-      ])
+  return runWithFromSchemaDTOContext($schemaDefs ?? {}, () =>
+    item(
+      Object.fromEntries(
+        Object.entries(attributes).map(([attributeName, attribute]) => [
+          attributeName,
+          fromSchemaDTO(attribute)
+        ])
+      )
     )
   )
 }

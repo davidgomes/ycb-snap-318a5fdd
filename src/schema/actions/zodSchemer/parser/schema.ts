@@ -1,4 +1,4 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import type {
   AnyOfSchema,
@@ -6,6 +6,7 @@ import type {
   BinarySchema,
   BooleanSchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   NullSchema,
@@ -41,6 +42,7 @@ import { getSetZodParser } from './set.js'
 import type { StringZodParser } from './string.js'
 import { getStringZodParser } from './string.js'
 import type { ZodParserOptions } from './types.js'
+import { withDefault, withOptional } from './utils.js'
 
 export type ZodParser<
   SCHEMA extends Schema,
@@ -68,6 +70,7 @@ export type SchemaZodParser<
       | (SCHEMA extends MapSchema ? MapZodParser<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends RecordSchema ? RecordZodParser<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends AnyOfSchema ? AnyOfZodParser<SCHEMA, OPTIONS> : never)
+      | (SCHEMA extends LazySchema ? z.ZodTypeAny : never)
 
 export const schemaZodParser = <SCHEMA extends Schema, OPTIONS extends ZodParserOptions = {}>(
   schema: SCHEMA,
@@ -101,5 +104,17 @@ export const schemaZodParser = <SCHEMA extends Schema, OPTIONS extends ZodParser
     case 'item':
       // NOTE: Should not happen
       return itemZodParser(schema, options) as unknown as ZOD_PARSER
+    case 'lazy':
+      return withDefault(
+        schema,
+        options,
+        withOptional(
+          schema,
+          options,
+          z.lazy(() =>
+            schemaZodParser(schema.resolve(), { ...options, defined: true, fill: false })
+          )
+        )
+      ) as ZOD_PARSER
   }
 }

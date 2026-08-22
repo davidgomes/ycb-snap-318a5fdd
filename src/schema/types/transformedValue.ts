@@ -7,6 +7,7 @@ import type {
   BinarySchema,
   BooleanSchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   Never,
@@ -94,6 +95,12 @@ type SchemaTransformedValue<
       | (SCHEMA extends MapSchema ? MapSchemaTransformedValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends RecordSchema ? RecordSchemaTransformedValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends AnyOfSchema ? AnyOfSchemaTransformedValue<SCHEMA, OPTIONS> : never)
+      | (SCHEMA extends LazySchema
+          ?
+              | If<MustBeDefined<SCHEMA, OPTIONS>, never, undefined>
+              | SchemaExtendedWriteValue<SCHEMA, OPTIONS>
+              | unknown
+          : never)
 
 type AnySchemaTransformedValue<
   SCHEMA extends AnySchema,

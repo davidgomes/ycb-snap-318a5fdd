@@ -76,5 +76,7 @@ export function* schemaFormatter<
       return yield* recordSchemaFormatter(schema, rawValue, options)
     case 'anyOf':
       return yield* anyOfSchemaFormatter(schema, rawValue, options)
+    case 'lazy':
+      return yield* schemaFormatter(schema.resolve(), rawValue, options)
   }
 }

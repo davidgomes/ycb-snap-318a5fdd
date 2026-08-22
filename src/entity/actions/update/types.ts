@@ -5,6 +5,7 @@ import type {
   AnySchema,
   ItemSchema,
   ItemUnextendedValue,
+  LazySchema,
   ListExtendedValue,
   ListSchema,
   MapExtendedValue,
@@ -330,3 +331,4 @@ export type UpdateValueInput<
         | (SCHEMA extends AnyOfSchema
             ? UpdateValueInput<SCHEMA['elements'][number], OPTIONS, AVAILABLE_PATHS>
             : never)
+        | (SCHEMA extends LazySchema ? unknown : never)
