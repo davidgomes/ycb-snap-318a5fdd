@@ -160,3 +160,127 @@ export function toOkOrElseErr<T extends {}, E>(
 export function fromResult<T extends {}>(result: Result<T, unknown>): Maybe<T> {
   return result.isOk ? Maybe.just(result.value) : Maybe.nothing<T>();
 }
+
+/**
+  {@linkcode "maybe".sequence sequence} an iterable of {@linkcode Maybe}s as a
+  {@linkcode Result}, using `errValue` for the first {@linkcode "maybe".Nothing
+  Nothing}.
+
+  @param errValue The error to use when a `Maybe` is `Nothing`.
+  @param maybes   The `Maybe`s to collect.
+ */
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E,
+  maybes: Iterable<Maybe<T>>
+): Result<T[], E>;
+/**
+  Curried form of {@linkcode sequenceMaybeAsResult}.
+
+  @param errValue The error to use when a `Maybe` is `Nothing`.
+ */
+export function sequenceMaybeAsResult<E>(
+  errValue: E
+): <T extends {}>(maybes: Iterable<Maybe<T>>) => Result<T[], E>;
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E,
+  maybes?: Iterable<Maybe<T>>
+): Result<T[], E> | ((maybes: Iterable<Maybe<T>>) => Result<T[], E>) {
+  const op = (items: Iterable<Maybe<T>>): Result<T[], E> => {
+    const values: T[] = [];
+
+    for (const maybe of items) {
+      if (maybe.isNothing) {
+        return Result.err(errValue);
+      }
+
+      values.push(maybe.value);
+    }
+
+    return Result.ok(values);
+  };
+
+  return curry1(op, maybes);
+}
+
+/**
+  {@linkcode "maybe".traverse traverse} an iterable as a {@linkcode Result},
+  using `errValue` for the first {@linkcode "maybe".Nothing Nothing}.
+
+  @param errValue The error to use when a mapped `Maybe` is `Nothing`.
+  @param items    The items to traverse.
+  @param fn       A function that produces a `Maybe` for each item.
+ */
+export function traverseMaybeAsResult<T, U extends {}, E>(
+  errValue: E,
+  items: Iterable<T>,
+  fn: (item: T) => Maybe<U>
+): Result<U[], E>;
+/**
+  Curried form of {@linkcode traverseMaybeAsResult}: pass `errValue` first, then
+  the remaining arguments.
+
+  @param errValue The error to use when a mapped `Maybe` is `Nothing`.
+ */
+export function traverseMaybeAsResult<E>(
+  errValue: E
+): <T, U extends {}>(items: Iterable<T>, fn: (item: T) => Maybe<U>) => Result<U[], E>;
+export function traverseMaybeAsResult<T, U extends {}, E>(
+  errValue: E,
+  items?: Iterable<T>,
+  fn?: (item: T) => Maybe<U>
+): Result<U[], E> | ((items: Iterable<T>, fn: (item: T) => Maybe<U>) => Result<U[], E>) {
+  const op = (source: Iterable<T>, mapFn: (item: T) => Maybe<U>): Result<U[], E> => {
+    const values: U[] = [];
+
+    for (const item of source) {
+      const mapped = mapFn(item);
+      if (mapped.isNothing) {
+        return Result.err(errValue);
+      }
+
+      values.push(mapped.value);
+    }
+
+    return Result.ok(values);
+  };
+
+  return items === undefined || fn === undefined ? op : op(items, fn);
+}
+
+/**
+  {@linkcode "maybe".zip zip} two {@linkcode Maybe}s as a {@linkcode Result},
+  using `errValue` if either is {@linkcode "maybe".Nothing Nothing}.
+
+  @param errValue The error to use when either `Maybe` is `Nothing`.
+  @param a        The first `Maybe`.
+  @param b        The second `Maybe`.
+ */
+export function zipMaybeAsResult<A extends {}, B extends {}, E>(
+  errValue: E,
+  a: Maybe<A>,
+  b: Maybe<B>
+): Result<[A, B], E>;
+/**
+  Curried form of {@linkcode zipMaybeAsResult}: pass `errValue` first, then the
+  remaining arguments.
+
+  @param errValue The error to use when either `Maybe` is `Nothing`.
+ */
+export function zipMaybeAsResult<E>(
+  errValue: E
+): <A extends {}, B extends {}>(a: Maybe<A>, b: Maybe<B>) => Result<[A, B], E>;
+export function zipMaybeAsResult<A extends {}, B extends {}, E>(
+  errValue: E,
+  a?: Maybe<A>,
+  b?: Maybe<B>
+): Result<[A, B], E> | ((a: Maybe<A>, b: Maybe<B>) => Result<[A, B], E>) {
+  const op = (left: Maybe<A>, right: Maybe<B>): Result<[A, B], E> => {
+    if (left.isJust && right.isJust) {
+      return Result.ok([left.value, right.value]);
+    }
+
+    return Result.err(errValue);
+  };
+
+  return a === undefined || b === undefined ? op : op(a, b);
+}

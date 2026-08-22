@@ -42,6 +42,14 @@ import Task, {
   stopRetrying,
   isRetryFailed,
   flatten,
+  sequence,
+  traverse,
+  traverseSerial,
+  zip,
+  zipWith,
+  tap,
+  tapRejected,
+  retryN,
 } from 'true-myth/task';
 import {
   exponential,
@@ -196,6 +204,26 @@ describe('`Task`', () => {
   });
 
   describe('instance methods', () => {
+    describe('async iterator', () => {
+      test('yields a single Ok when the task resolves', async () => {
+        const yielded: Result<number, string>[] = [];
+        for await (const item of Task.resolve<number, string>(42)) {
+          yielded.push(item);
+        }
+
+        expect(yielded).toEqual([Result.ok(42)]);
+      });
+
+      test('yields a single Err when the task rejects', async () => {
+        const yielded: Result<number, string>[] = [];
+        for await (const item of Task.reject<number, string>('nope')) {
+          yielded.push(item);
+        }
+
+        expect(yielded).toEqual([Result.err('nope')]);
+      });
+    });
+
     describe('`map`', () => {
       test('for a pending promise', async () => {
         let { promise, resolve } = deferred<number, string>();
@@ -3763,6 +3791,218 @@ describe('module-scope functions', () => {
           // the previous line only!
           .flatten();
       expect(flattened.state).toBe(State.Pending);
+    });
+  });
+
+  describe('`sequence`', () => {
+    test('with all resolved tasks', async () => {
+      const result = await sequence([Task.resolve(1), Task.resolve(2), Task.resolve(3)]);
+      expect(result).toEqual(Result.ok([1, 2, 3]));
+    });
+
+    test('with empty iterable', async () => {
+      const result = await sequence([]);
+      expect(result).toEqual(Result.ok([]));
+    });
+
+    test('with a rejected task', async () => {
+      const result = await sequence([Task.resolve(1), Task.reject('nope'), Task.resolve(3)]);
+      expect(result).toEqual(Result.err('nope'));
+    });
+  });
+
+  describe('`traverse`', () => {
+    const even = (n: number) => (n % 2 === 0 ? Task.resolve(n * 10) : Task.reject(`${n} is odd`));
+
+    test('with all successes', async () => {
+      const result = await traverse([2, 4, 6], even);
+      expect(result).toEqual(Result.ok([20, 40, 60]));
+    });
+
+    test('with a failure', async () => {
+      const result = await traverse([2, 3, 4], even);
+      expect(result).toEqual(Result.err('3 is odd'));
+    });
+
+    test('curried form', async () => {
+      const traverseEven = traverse(even);
+      expect(await traverseEven([2, 4])).toEqual(Result.ok([20, 40]));
+      expect(await traverseEven([2, 3])).toEqual(Result.err('3 is odd'));
+    });
+  });
+
+  describe('`traverseSerial`', () => {
+    test('runs tasks one after another', async () => {
+      const order: number[] = [];
+      const fn = (n: number) =>
+        new Task<number, string>((resolve) => {
+          order.push(n);
+          resolve(n * 10);
+        });
+
+      const result = await traverseSerial([1, 2, 3], fn);
+      expect(result).toEqual(Result.ok([10, 20, 30]));
+      expect(order).toEqual([1, 2, 3]);
+    });
+
+    test('stops on the first rejection and does not visit later items', async () => {
+      const visited: number[] = [];
+      const fn = (n: number) => {
+        visited.push(n);
+        return n === 2 ? Task.reject<number, string>('stop') : Task.resolve(n);
+      };
+
+      const result = await traverseSerial([1, 2, 3], fn);
+      expect(result).toEqual(Result.err('stop'));
+      expect(visited).toEqual([1, 2]);
+    });
+
+    test('curried form', async () => {
+      const serialDouble = traverseSerial((n: number) => Task.resolve(n * 2));
+      expect(await serialDouble([1, 2])).toEqual(Result.ok([2, 4]));
+    });
+  });
+
+  describe('`zip`', () => {
+    test('with two resolved tasks', async () => {
+      const result = await zip(Task.resolve('a'), Task.resolve(1));
+      expect(result).toEqual(Result.ok(['a', 1]));
+    });
+
+    test('with a rejected task', async () => {
+      expect(await zip(Task.resolve('a'), Task.reject('nope'))).toEqual(Result.err('nope'));
+      expect(await zip(Task.reject('left'), Task.resolve(1))).toEqual(Result.err('left'));
+    });
+
+    test('curried form', async () => {
+      const zipWithA = zip(Task.resolve('a'));
+      expect(await zipWithA(Task.resolve(1))).toEqual(Result.ok(['a', 1]));
+    });
+  });
+
+  describe('`zipWith`', () => {
+    const join = (a: string, b: number) => `${a}:${b}`;
+
+    test('with two resolved tasks', async () => {
+      expect(await zipWith(Task.resolve('a'), Task.resolve(1), join)).toEqual(Result.ok('a:1'));
+    });
+
+    test('with a rejected task', async () => {
+      expect(await zipWith(Task.resolve('a'), Task.reject('nope'), join)).toEqual(
+        Result.err('nope')
+      );
+    });
+  });
+
+  describe('`tap`', () => {
+    test('runs the side effect on resolution and passes the value through', async () => {
+      const seen: number[] = [];
+      const original = Task.resolve(21);
+      const tapped = tap(original, (value) => {
+        seen.push(value);
+      });
+
+      expect(await tapped).toEqual(Result.ok(21));
+      expect(seen).toEqual([21]);
+    });
+
+    test('does not run the side effect on rejection', async () => {
+      const seen: number[] = [];
+      const tapped = tap(Task.reject<number, string>('nope'), (value) => {
+        seen.push(value);
+      });
+
+      expect(await tapped).toEqual(Result.err('nope'));
+      expect(seen).toEqual([]);
+    });
+
+    test('curried form', async () => {
+      const seen: number[] = [];
+      const tapSeen = tap((value: number) => {
+        seen.push(value);
+      });
+
+      expect(await tapSeen(Task.resolve(3))).toEqual(Result.ok(3));
+      expect(seen).toEqual([3]);
+    });
+  });
+
+  describe('`tapRejected`', () => {
+    test('runs the side effect on rejection and passes the reason through', async () => {
+      const seen: string[] = [];
+      const tapped = tapRejected(Task.reject('nope'), (error) => {
+        seen.push(error);
+      });
+
+      expect(await tapped).toEqual(Result.err('nope'));
+      expect(seen).toEqual(['nope']);
+    });
+
+    test('does not run the side effect on resolution', async () => {
+      const seen: string[] = [];
+      const tapped = tapRejected(Task.resolve<number, string>(7), (error) => {
+        seen.push(error);
+      });
+
+      expect(await tapped).toEqual(Result.ok(7));
+      expect(seen).toEqual([]);
+    });
+
+    test('curried form', async () => {
+      const seen: string[] = [];
+      const tapSeen = tapRejected((error: string) => {
+        seen.push(error);
+      });
+
+      expect(await tapSeen(Task.reject('bad'))).toEqual(Result.err('bad'));
+      expect(seen).toEqual(['bad']);
+    });
+  });
+
+  describe('`retryN`', () => {
+    test('returns the first success without retrying', async () => {
+      let attempts = 0;
+      const result = await retryN(3, () => {
+        attempts += 1;
+        return Task.resolve(attempts);
+      });
+
+      expect(result).toEqual(Result.ok(1));
+      expect(attempts).toBe(1);
+    });
+
+    test('retries up to n additional times on rejection', async () => {
+      let attempts = 0;
+      const result = await retryN(2, () => {
+        attempts += 1;
+        return attempts === 3 ? Task.resolve('ok') : Task.reject(`fail ${attempts}`);
+      });
+
+      expect(result).toEqual(Result.ok('ok'));
+      expect(attempts).toBe(3);
+    });
+
+    test('returns the last rejection when retries are exhausted', async () => {
+      let attempts = 0;
+      const result = await retryN(1, () => {
+        attempts += 1;
+        return Task.reject(`fail ${attempts}`);
+      });
+
+      expect(result).toEqual(Result.err('fail 2'));
+      expect(attempts).toBe(2);
+    });
+
+    test('curried form', async () => {
+      const retryOnce = retryN(1);
+      let attempts = 0;
+      const result = await retryOnce(() => {
+        attempts += 1;
+        return attempts === 2 ? Task.resolve('done') : Task.reject('again');
+      });
+
+      expect(result).toEqual(Result.ok('done'));
+      expect(attempts).toBe(2);
     });
   });
 });

@@ -10,6 +10,9 @@ import {
   fromResult,
   fromMaybe,
   toMaybe,
+  sequenceMaybeAsResult,
+  traverseMaybeAsResult,
+  zipMaybeAsResult,
 } from 'true-myth/toolbelt';
 
 describe('transposeResult', () => {
@@ -114,4 +117,87 @@ test('`fromResult`', () => {
   const reason = 'oh teh noes';
   const anErr = Result.err<number, string>(reason);
   expect(fromResult(anErr)).toEqual(Maybe.nothing());
+});
+
+describe('`sequenceMaybeAsResult`', () => {
+  test('with all Just', () => {
+    expect(sequenceMaybeAsResult('missing', [Maybe.just(1), Maybe.just(2)])).toEqual(
+      Result.ok([1, 2])
+    );
+  });
+
+  test('converts the first Nothing into Err', () => {
+    let visits = 0;
+    const items: Iterable<Maybe<number>> = {
+      *[Symbol.iterator]() {
+        visits += 1;
+        yield Maybe.just(1);
+        visits += 1;
+        yield Maybe.nothing();
+        visits += 1;
+        yield Maybe.just(3);
+      },
+    };
+
+    expect(sequenceMaybeAsResult('missing', items)).toEqual(Result.err('missing'));
+    expect(visits).toBe(2);
+  });
+
+  test('curried form', () => {
+    const asResult = sequenceMaybeAsResult('missing');
+    expect(asResult([Maybe.just(1), Maybe.just(2)])).toEqual(Result.ok([1, 2]));
+    expect(asResult([Maybe.just(1), Maybe.nothing()])).toEqual(Result.err('missing'));
+  });
+});
+
+describe('`traverseMaybeAsResult`', () => {
+  const even = (n: number) => (n % 2 === 0 ? Maybe.just(n * 10) : Maybe.nothing<number>());
+
+  test('with all successes', () => {
+    expect(traverseMaybeAsResult('odd', [2, 4, 6], even)).toEqual(Result.ok([20, 40, 60]));
+  });
+
+  test('converts the first Nothing into Err and stops', () => {
+    let visits = 0;
+    const items: Iterable<number> = {
+      *[Symbol.iterator]() {
+        for (const n of [2, 3, 4]) {
+          visits += 1;
+          yield n;
+        }
+      },
+    };
+
+    expect(traverseMaybeAsResult('odd', items, even)).toEqual(Result.err('odd'));
+    expect(visits).toBe(2);
+  });
+
+  test('curried form', () => {
+    const asResult = traverseMaybeAsResult('odd');
+    expect(asResult([2, 4], even)).toEqual(Result.ok([20, 40]));
+    expect(asResult([2, 3], even)).toEqual(Result.err('odd'));
+  });
+});
+
+describe('`zipMaybeAsResult`', () => {
+  test('with two Justs', () => {
+    expect(zipMaybeAsResult('missing', Maybe.just('a'), Maybe.just(1))).toEqual(
+      Result.ok(['a', 1])
+    );
+  });
+
+  test('with a Nothing', () => {
+    expect(zipMaybeAsResult('missing', Maybe.just('a'), Maybe.nothing())).toEqual(
+      Result.err('missing')
+    );
+    expect(zipMaybeAsResult('missing', Maybe.nothing(), Maybe.just(1))).toEqual(
+      Result.err('missing')
+    );
+  });
+
+  test('curried form', () => {
+    const zipOrMissing = zipMaybeAsResult('missing');
+    expect(zipOrMissing(Maybe.just('a'), Maybe.just(1))).toEqual(Result.ok(['a', 1]));
+    expect(zipOrMissing(Maybe.just('a'), Maybe.nothing())).toEqual(Result.err('missing'));
+  });
 });

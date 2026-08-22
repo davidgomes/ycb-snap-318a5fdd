@@ -858,6 +858,115 @@ describe('`Result` pure functions', () => {
       expect(result.flatten(wrapped)).toEqual(wrapped);
     });
   });
+
+  describe('`sequence`', () => {
+    test('with all Ok', () => {
+      expect(result.sequence([result.ok(1), result.ok(2)])).toEqual(result.ok([1, 2]));
+    });
+
+    test('with empty iterable', () => {
+      expect(result.sequence([])).toEqual(result.ok([]));
+    });
+
+    test('with an Err', () => {
+      expect(result.sequence([result.ok(1), result.err('nope'), result.ok(3)])).toEqual(
+        result.err('nope')
+      );
+    });
+
+    test('stops advancing the iterator after the first Err', () => {
+      let visits = 0;
+      const items: Iterable<Result<number, string>> = {
+        *[Symbol.iterator]() {
+          visits += 1;
+          yield result.ok(1);
+          visits += 1;
+          yield result.err('stop');
+          visits += 1;
+          yield result.ok(3);
+        },
+      };
+
+      expect(result.sequence(items)).toEqual(result.err('stop'));
+      expect(visits).toBe(2);
+    });
+  });
+
+  describe('`traverse`', () => {
+    const even = (n: number) => (n % 2 === 0 ? result.ok(n * 10) : result.err(`${n} is odd`));
+
+    test('with all successes', () => {
+      expect(result.traverse([2, 4, 6], even)).toEqual(result.ok([20, 40, 60]));
+    });
+
+    test('with a failure', () => {
+      expect(result.traverse([2, 3, 4], even)).toEqual(result.err('3 is odd'));
+    });
+
+    test('stops advancing the iterator after the first Err', () => {
+      let visits = 0;
+      const items: Iterable<number> = {
+        *[Symbol.iterator]() {
+          for (const n of [2, 3, 4]) {
+            visits += 1;
+            yield n;
+          }
+        },
+      };
+
+      expect(result.traverse(items, even)).toEqual(result.err('3 is odd'));
+      expect(visits).toBe(2);
+    });
+
+    test('curried form', () => {
+      const traverseEven = result.traverse(even);
+      expect(traverseEven([2, 4])).toEqual(result.ok([20, 40]));
+      expect(traverseEven([2, 3])).toEqual(result.err('3 is odd'));
+    });
+  });
+
+  describe('`zip`', () => {
+    test('with two Oks', () => {
+      expect(result.zip(result.ok('a'), result.ok(1))).toEqual(result.ok(['a', 1]));
+    });
+
+    test('with an Err', () => {
+      expect(result.zip(result.ok('a'), result.err('nope'))).toEqual(result.err('nope'));
+      expect(result.zip(result.err('left'), result.ok(1))).toEqual(result.err('left'));
+    });
+
+    test('curried form', () => {
+      const zipWithA = result.zip(result.ok('a'));
+      expect(zipWithA(result.ok(1))).toEqual(result.ok(['a', 1]));
+    });
+  });
+
+  describe('`zipWith`', () => {
+    const join = (a: string, b: number) => `${a}:${b}`;
+
+    test('with two Oks', () => {
+      expect(result.zipWith(result.ok('a'), result.ok(1), join)).toEqual(result.ok('a:1'));
+    });
+
+    test('with an Err', () => {
+      expect(result.zipWith(result.ok('a'), result.err('nope'), join)).toEqual(result.err('nope'));
+    });
+  });
+
+  describe('`partition`', () => {
+    test('splits oks and errs', () => {
+      expect(
+        result.partition([result.ok(1), result.err('a'), result.ok(2), result.err('b')])
+      ).toEqual([
+        [1, 2],
+        ['a', 'b'],
+      ]);
+    });
+
+    test('with empty iterable', () => {
+      expect(result.partition([])).toEqual([[], []]);
+    });
+  });
 });
 
 describe('`transposeAll` function', () => {
@@ -984,6 +1093,10 @@ test('narrowing', () => {
 });
 
 describe('`Ok` instance', () => {
+  test('is iterable over its value', () => {
+    expect([...Result.ok(42)]).toEqual([42]);
+  });
+
   test('constructor', () => {
     const fullyQualifiedOk = Result.ok<number, string>(42);
     expectTypeOf(fullyQualifiedOk).toEqualTypeOf<Result<number, string>>();
@@ -1300,6 +1413,10 @@ describe('`Ok` instance', () => {
 });
 
 describe('`result.Err` class', () => {
+  test('is an empty iterable', () => {
+    expect([...Result.err('nope')]).toEqual([]);
+  });
+
   test('constructor', () => {
     const fullyQualifiedErr = Result.err<string, number>(42);
     expectTypeOf(fullyQualifiedErr).toEqualTypeOf<Result<string, number>>();

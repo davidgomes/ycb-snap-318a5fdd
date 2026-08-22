@@ -828,6 +828,146 @@ describe('`Maybe` pure functions', () => {
       expect(maybe.flatten(wrapped)).toEqual(maybe.nothing());
     });
   });
+
+  describe('`sequence`', () => {
+    test('with all Just', () => {
+      const result = maybe.sequence([maybe.just(1), maybe.just(2), maybe.just(3)]);
+      expect(result).toEqual(maybe.just([1, 2, 3]));
+    });
+
+    test('with empty iterable', () => {
+      expect(maybe.sequence([])).toEqual(maybe.just([]));
+    });
+
+    test('with a Nothing', () => {
+      expect(maybe.sequence([maybe.just(1), maybe.nothing<number>(), maybe.just(3)])).toEqual(
+        maybe.nothing()
+      );
+    });
+
+    test('stops advancing the iterator after the first Nothing', () => {
+      let visits = 0;
+      const items: Iterable<Maybe<number>> = {
+        *[Symbol.iterator]() {
+          visits += 1;
+          yield maybe.just(1);
+          visits += 1;
+          yield maybe.nothing();
+          visits += 1;
+          yield maybe.just(3);
+        },
+      };
+
+      expect(maybe.sequence(items)).toEqual(maybe.nothing());
+      expect(visits).toBe(2);
+    });
+  });
+
+  describe('`traverse`', () => {
+    const even = (n: number) => (n % 2 === 0 ? maybe.just(n * 10) : maybe.nothing<number>());
+
+    test('with all successes', () => {
+      expect(maybe.traverse([2, 4, 6], even)).toEqual(maybe.just([20, 40, 60]));
+    });
+
+    test('with a failure', () => {
+      expect(maybe.traverse([2, 3, 4], even)).toEqual(maybe.nothing());
+    });
+
+    test('stops advancing the iterator after the first Nothing', () => {
+      let visits = 0;
+      const items: Iterable<number> = {
+        *[Symbol.iterator]() {
+          for (const n of [2, 3, 4]) {
+            visits += 1;
+            yield n;
+          }
+        },
+      };
+
+      expect(maybe.traverse(items, even)).toEqual(maybe.nothing());
+      expect(visits).toBe(2);
+    });
+
+    test('curried form', () => {
+      const traverseEven = maybe.traverse(even);
+      expect(traverseEven([2, 4])).toEqual(maybe.just([20, 40]));
+      expect(traverseEven([2, 3])).toEqual(maybe.nothing());
+    });
+  });
+
+  describe('`zip`', () => {
+    test('with two Justs', () => {
+      expect(maybe.zip(maybe.just('a'), maybe.just(1))).toEqual(maybe.just(['a', 1]));
+    });
+
+    test('with a Nothing', () => {
+      expect(maybe.zip(maybe.just('a'), maybe.nothing<number>())).toEqual(maybe.nothing());
+      expect(maybe.zip(maybe.nothing<string>(), maybe.just(1))).toEqual(maybe.nothing());
+    });
+
+    test('curried form', () => {
+      const zipWithA = maybe.zip(maybe.just('a'));
+      expect(zipWithA(maybe.just(1))).toEqual(maybe.just(['a', 1]));
+    });
+  });
+
+  describe('`zipWith`', () => {
+    const join = (a: string, b: number) => `${a}:${b}`;
+
+    test('with two Justs', () => {
+      expect(maybe.zipWith(maybe.just('a'), maybe.just(1), join)).toEqual(maybe.just('a:1'));
+    });
+
+    test('with a Nothing', () => {
+      expect(maybe.zipWith(maybe.just('a'), maybe.nothing<number>(), join)).toEqual(
+        maybe.nothing()
+      );
+    });
+  });
+
+  describe('`compact`', () => {
+    test('drops Nothings and unwraps Justs', () => {
+      expect(maybe.compact([maybe.just(1), maybe.nothing<number>(), maybe.just(3)])).toEqual([
+        1, 3,
+      ]);
+    });
+
+    test('with empty iterable', () => {
+      expect(maybe.compact([])).toEqual([]);
+    });
+  });
+
+  describe('`filterMap`', () => {
+    const even = (n: number) => (n % 2 === 0 ? maybe.just(n * 10) : maybe.nothing<number>());
+
+    test('keeps only Just results', () => {
+      expect(maybe.filterMap([1, 2, 3, 4], even)).toEqual([20, 40]);
+    });
+
+    test('curried form', () => {
+      const filterEven = maybe.filterMap(even);
+      expect(filterEven([1, 2, 3, 4])).toEqual([20, 40]);
+    });
+  });
+
+  describe('`firstJust`', () => {
+    test('returns the first Just', () => {
+      expect(maybe.firstJust([maybe.nothing<number>(), maybe.just(2), maybe.just(3)])).toEqual(
+        maybe.just(2)
+      );
+    });
+
+    test('returns Nothing when none exist', () => {
+      expect(maybe.firstJust([maybe.nothing<number>(), maybe.nothing<number>()])).toEqual(
+        maybe.nothing()
+      );
+    });
+
+    test('returns Nothing for an empty array', () => {
+      expect(maybe.firstJust([])).toEqual(maybe.nothing());
+    });
+  });
 });
 
 // We aren't even really concerned with the "runtime" behavior here, which we
@@ -878,6 +1018,16 @@ describe('`Maybe` class', () => {
       const theJust = new Maybe('cool');
       expect(theJust.variant).toEqual(Variant.Just);
       expect((theJust as Just<string>).value).toEqual('cool');
+    });
+
+    test('is iterable over its value', () => {
+      expect([...maybe.just(123)]).toEqual([123]);
+
+      const values: number[] = [];
+      for (const value of maybe.just(7)) {
+        values.push(value);
+      }
+      expect(values).toEqual([7]);
     });
 
     test('static constructor', () => {
@@ -1186,6 +1336,10 @@ describe('`Maybe` class', () => {
     test('constructor', () => {
       const theNothing = new Maybe();
       expect(theNothing.variant).toEqual(Variant.Nothing);
+    });
+
+    test('is an empty iterable', () => {
+      expect([...maybe.nothing<number>()]).toEqual([]);
     });
 
     test('static constructor', () => {
