@@ -39,7 +39,7 @@ from ..enum_provider import (
 )
 from ..load_error import LoadError, ValidationLoadError
 from ..model.loader_provider import InlinedShapeModelLoaderProvider
-from ..name_layout.base import ExtraIn, ExtraOut
+from ..name_layout.aliases import _aliases_to_tuple
 from ..name_layout.component import ExtraMoveAndPoliciesOverlay, SievesOverlay, StructureOverlay
 from ..name_layout.name_mapping import (
     ConstNameMappingProvider,
@@ -187,6 +187,28 @@ def _name_mapping_extra(value: Union[str, Iterable[str], T]) -> Union[str, Itera
     return value
 
 
+def _name_mapping_convert_alias_style(
+    value: Omittable[Optional[Union[NameStyle, Iterable[NameStyle]]]],
+) -> Omittable[Optional[tuple[NameStyle, ...]]]:
+    if isinstance(value, Omitted):
+        return value
+    if value is None:
+        return None
+    if isinstance(value, NameStyle):
+        return (value,)
+    return tuple(value)
+
+
+def _name_mapping_convert_aliases(
+    value: Omittable[Union[Mapping[str, Union[str, Iterable[str]]], tuple[tuple[str, tuple[str, ...]], ...]]],
+) -> Omittable[tuple[tuple[str, tuple[str, ...]], ...]]:
+    if isinstance(value, Omitted):
+        return value
+    if isinstance(value, tuple):
+        return value
+    return _aliases_to_tuple(value)
+
+
 def name_mapping(
     pred: Omittable[Pred] = Omitted(),
     *,
@@ -198,6 +220,8 @@ def name_mapping(
     as_list: Omittable[bool] = Omitted(),
     trim_trailing_underscore: Omittable[bool] = Omitted(),
     name_style: Omittable[Optional[NameStyle]] = Omitted(),
+    aliases: Omittable[tuple[tuple[str, tuple[str, ...]], ...]] = Omitted(),
+    alias_style: Omittable[Optional[Union[NameStyle, Iterable[NameStyle]]]] = Omitted(),
     # filtering of dumped data
     omit_default: Omittable[Union[Iterable[Pred], Pred, bool]] = Omitted(),
     # policy for data that does not map to fields
@@ -229,6 +253,8 @@ def name_mapping(
     :param as_list:
     :param trim_trailing_underscore:
     :param name_style:
+    :param aliases:
+    :param alias_style:
     :param omit_default:
     :param extra_in:
     :param extra_out:
@@ -245,6 +271,8 @@ def name_mapping(
                     trim_trailing_underscore=trim_trailing_underscore,
                     name_style=name_style,
                     as_list=as_list,
+                    aliases=_name_mapping_convert_aliases(aliases),
+                    alias_style=_name_mapping_convert_alias_style(alias_style),
                 ),
                 SievesOverlay(
                     omit_default=_name_mapping_convert_omit_default(omit_default),

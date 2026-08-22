@@ -1,5 +1,5 @@
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, TypeVar, Union
 
 from ...common import VarTuple
@@ -69,9 +69,10 @@ ListExtraPolicy = Union[ExtraSkip, ExtraForbid]
 @dataclass(frozen=True)
 class InpDictCrown(BaseDictCrown["InpCrown"]):
     extra_policy: DictExtraPolicy
+    field_key_groups: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def __hash__(self):
-        return hash(MappingHashWrapper(self.map))
+        return hash((MappingHashWrapper(self.map), MappingHashWrapper(self.field_key_groups)))
 
 
 @dataclass(frozen=True)

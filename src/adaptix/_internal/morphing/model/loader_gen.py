@@ -94,10 +94,25 @@ class Namer:
             return f"extend_trail({error_expr}, {self._path!r})"
         return error_expr
 
+    def with_trail_at_leaf(self, error_expr: str, leaf_key_expr: str) -> str:
+        if self.debug_trail in (DebugTrail.FIRST, DebugTrail.ALL):
+            if len(self._path) == 0:
+                return error_expr
+            if len(self._path) == 1:
+                return f"append_trail({error_expr}, {leaf_key_expr})"
+            prefix = self._path[:-1]
+            return f"extend_trail({error_expr}, {prefix!r} + ({leaf_key_expr},))"
+        return error_expr
+
     def emit_error(self, error_expr: str) -> str:
         if self.debug_trail == DebugTrail.ALL:
             return f"errors.append({self.with_trail(error_expr)})"
         return f"raise {self.with_trail(error_expr)}"
+
+    def emit_error_at_leaf(self, error_expr: str, leaf_key_expr: str) -> str:
+        if self.debug_trail == DebugTrail.ALL:
+            return f"errors.append({self.with_trail_at_leaf(error_expr, leaf_key_expr)})"
+        return f"raise {self.with_trail_at_leaf(error_expr, leaf_key_expr)}"
 
 
 class GenState(Namer):
@@ -491,6 +506,12 @@ class BuiltinModelLoaderGen(ModelLoaderGen):
         )
         state.builder.empty_line()
 
+    def _get_dict_crown_known_keys(self, crown: InpDictCrown) -> set[str]:
+        known = set(crown.map.keys())
+        for group in crown.field_key_groups.values():
+            known.update(group)
+        return known
+
     def _get_dict_crown_required_keys(self, crown: InpDictCrown) -> set[str]:
         return {
             key for key, value in crown.map.items()
@@ -498,7 +519,7 @@ class BuiltinModelLoaderGen(ModelLoaderGen):
         }
 
     def _gen_dict_crown(self, state: GenState, crown: InpDictCrown):
-        state.namespace.add_constant(state.v_known_keys, set(crown.map.keys()))
+        state.namespace.add_constant(state.v_known_keys, self._get_dict_crown_known_keys(crown))
         state.namespace.add_constant(state.v_required_keys, self._get_dict_crown_required_keys(crown))
 
         if state.path:
@@ -516,7 +537,16 @@ class BuiltinModelLoaderGen(ModelLoaderGen):
 
             with self._maybe_wrap_with_type_load_error_catching(state):
                 for key, value in crown.map.items():
-                    self._gen_crown_dispatch(state, value, key)
+                    if isinstance(value, InpFieldCrown) and value.id in crown.field_key_groups:
+                        with state.add_key(value, key):
+                            state.get_field(value)
+                            self._gen_field_crown_with_aliases(
+                                state,
+                                value,
+                                crown.field_key_groups[value.id],
+                            )
+                    else:
+                        self._gen_crown_dispatch(state, value, key)
 
                 if state.path not in state.type_checked_type_paths:
                     with state.builder(f"if not isinstance({state.v_data}, CollectionsMapping):"):
@@ -652,6 +682,96 @@ class BuiltinModelLoaderGen(ModelLoaderGen):
                 )
 
         state.builder.empty_line()
+
+    def _gen_field_crown_with_aliases(
+        self,
+        state: GenState,
+        crown: InpFieldCrown,
+        key_group: tuple[str, ...],
+    ):
+        field = state.get_field(crown)
+        v_present = f"present_keys_{field.id}"
+        v_resolved = f"resolved_key_{field.id}"
+        state.namespace.add_constant(f"key_group_{field.id}", key_group)
+        state.builder(
+            f"""
+            {v_present} = [key for key in key_group_{field.id} if key in {state.parent.v_data}]
+            """,
+        )
+
+        conflict_error = f"ExtraFieldsLoadError(set({v_present}), {state.parent.v_data})"
+        with state.builder(f"if len({v_present}) > 1:"):
+            state.builder += state.emit_error(conflict_error)
+
+        if field.is_required:
+            not_found_error = (
+                "NoRequiredFieldsLoadError("
+                f"{{key for key in key_group_{field.id}}}, {state.parent.v_data}"
+                ")"
+            )
+            with state.builder(f"elif len({v_present}) == 1:"):
+                state.builder += f"{v_resolved} = {v_present}[0]"
+                self._gen_field_assignment_at_leaf(
+                    assign_to=state.v_field(field),
+                    field_id=field.id,
+                    loader_arg=f"{state.parent.v_data}[{v_resolved}]",
+                    state=state,
+                    leaf_key_expr=v_resolved,
+                )
+            with state.builder("else:"):
+                state.builder += state.emit_error(not_found_error)
+        else:
+            if self._is_packed_field(field):
+                param_name = self._field_id_to_param[field.id].name
+                assign_to = f"packed_fields[{param_name!r}]"
+            else:
+                assign_to = state.v_field(field)
+            on_lookup_error = (
+                "pass"
+                if self._is_packed_field(field)
+                else f"{state.v_field(field)} = {self._get_default_clause_expr(state, field)}"
+            )
+            with state.builder(f"elif len({v_present}) == 1:"):
+                state.builder += f"{v_resolved} = {v_present}[0]"
+                self._gen_field_assignment_at_leaf(
+                    assign_to=assign_to,
+                    field_id=field.id,
+                    loader_arg=f"{state.parent.v_data}[{v_resolved}]",
+                    state=state,
+                    leaf_key_expr=v_resolved,
+                )
+            with state.builder("else:"):
+                state.builder += on_lookup_error
+
+        state.builder.empty_line()
+
+    def _gen_field_assignment_at_leaf(
+        self,
+        assign_to: str,
+        field_id: str,
+        loader_arg: str,
+        state: GenState,
+        leaf_key_expr: str,
+    ):
+        if self._field_loaders[field_id] == as_is_stub:
+            processing_expr = loader_arg
+        else:
+            field_loader = state.v_field_loader(field_id)
+            processing_expr = f"{field_loader}({loader_arg})"
+
+        if self._debug_trail in (DebugTrail.ALL, DebugTrail.FIRST):
+            state.builder(
+                f"""
+                try:
+                    {assign_to} = {processing_expr}
+                except Exception as e:
+                    {state.emit_error_at_leaf('e', leaf_key_expr)}
+                """,
+            )
+        else:
+            state.builder(
+                f"{assign_to} = {processing_expr}",
+            )
 
     def _gen_optional_field_extraction_from_mapping(
         self,
@@ -805,6 +925,14 @@ class ModelInputJSONSchemaGen:
         self._field_default_dumper = field_default_dumper
 
     def _convert_dict_crown(self, crown: InpDictCrown) -> JSONSchema:
+        properties = {
+            key: self.convert_crown(value)
+            for key, value in crown.map.items()
+        }
+        for group in crown.field_key_groups.values():
+            primary_schema = properties[group[0]]
+            for alias in group[1:]:
+                properties[alias] = primary_schema
         return JSONSchema(
             type=JSONSchemaType.OBJECT,
             required=[
@@ -812,10 +940,7 @@ class ModelInputJSONSchemaGen:
                 for key, value in crown.map.items()
                 if self._is_required_crown(value)
             ],
-            properties={
-                key: self.convert_crown(value)
-                for key, value in crown.map.items()
-            },
+            properties=properties,
             additional_properties=crown.extra_policy != ExtraForbid(),
         )
 

@@ -69,6 +69,15 @@ class StructureMaker(ABC):
         ...
 
     @abstractmethod
+    def get_inp_field_key_groups(
+        self,
+        mediator: Mediator,
+        request: InputNameLayoutRequest,
+        extra_move: InpExtraMove,
+    ) -> PathsTo[Mapping[str, tuple[str, ...]]]:
+        ...
+
+    @abstractmethod
     def empty_as_list_inp(
         self,
         mediator: Mediator,

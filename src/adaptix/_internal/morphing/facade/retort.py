@@ -182,6 +182,8 @@ class FilledRetort(OperatingRetort, ABC):
             trim_trailing_underscore=True,
             name_style=None,
             as_list=False,
+            aliases=(),
+            alias_style=None,
             omit_default=False,
             extra_in=ExtraSkip(),
             extra_out=ExtraSkip(),

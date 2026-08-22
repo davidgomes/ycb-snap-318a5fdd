@@ -47,6 +47,7 @@ from ..model.crown_definitions import (
     OutputNameLayoutRequest,
     Sieve,
 )
+from .aliases import aliases_tuple_to_mapping, resolve_field_key_groups
 from .base import (
     ExtraIn,
     ExtraMoveMaker,
@@ -60,6 +61,9 @@ from .base import (
 )
 from .name_mapping import NameMappingRequest
 
+FieldAliases = tuple[tuple[str, tuple[str, ...]], ...]
+FieldKeyGroups = PathsTo[Mapping[str, tuple[str, ...]]]
+
 
 @dataclass(frozen=True)
 class StructureSchema(Schema):
@@ -70,6 +74,8 @@ class StructureSchema(Schema):
     trim_trailing_underscore: bool
     name_style: Optional[NameStyle]
     as_list: bool
+    aliases: FieldAliases
+    alias_style: Optional[tuple[NameStyle, ...]]
 
 
 @dataclass(frozen=True)
@@ -81,9 +87,18 @@ class StructureOverlay(Overlay[StructureSchema]):
     trim_trailing_underscore: Omittable[bool]
     name_style: Omittable[Optional[NameStyle]]
     as_list: Omittable[bool]
+    aliases: Omittable[FieldAliases]
+    alias_style: Omittable[Optional[Union[NameStyle, Sequence[NameStyle]]]]
 
     def _merge_map(self, old: VarTuple[Provider], new: VarTuple[Provider]) -> VarTuple[Provider]:
         return new + old
+
+    def _merge_aliases(self, old: FieldAliases, new: FieldAliases) -> FieldAliases:
+        merged = dict(new)
+        for field_id, field_aliases in old:
+            if field_id not in merged:
+                merged[field_id] = field_aliases
+        return tuple(sorted(merged.items()))
 
 
 AnyField = Union[InputField, OutputField]
@@ -109,6 +124,9 @@ class NameMappingRetort(OperatingRetort):
 
 
 class BuiltinStructureMaker(StructureMaker):
+    def __init__(self):
+        self._inp_field_key_groups: FieldKeyGroups = {}
+
     def _generate_key(self, schema: StructureSchema, shape: BaseShape, field: BaseField) -> Key:
         if schema.as_list:
             return shape.fields.index(field)
@@ -292,6 +310,27 @@ class BuiltinStructureMaker(StructureMaker):
     def _fill_output_gap(self, path: KeyPath) -> LeafOutCrown:
         return OutNoneCrown(placeholder=DefaultValue(None))
 
+    def _resolve_inp_field_key_groups(
+        self,
+        schema: StructureSchema,
+        fields_to_paths: Iterable[FieldAndPath[InputField]],
+    ) -> FieldKeyGroups:
+        if schema.as_list or (not schema.aliases and not schema.alias_style):
+            return {}
+        return resolve_field_key_groups(
+            list(fields_to_paths),
+            aliases_tuple_to_mapping(schema.aliases),
+            schema.alias_style,
+        )
+
+    def get_inp_field_key_groups(
+        self,
+        mediator: Mediator,
+        request: InputNameLayoutRequest,
+        extra_move: InpExtraMove,
+    ) -> FieldKeyGroups:
+        return self._inp_field_key_groups
+
     def make_inp_structure(
         self,
         mediator: Mediator,
@@ -302,6 +341,7 @@ class BuiltinStructureMaker(StructureMaker):
         fields_to_paths: list[FieldAndPath[InputField]] = list(
             self._map_fields(mediator, request, schema, extra_move),
         )
+        self._inp_field_key_groups = self._resolve_inp_field_key_groups(schema, fields_to_paths)
         skipped_required_fields = [
             field.id
             for field, path in fields_to_paths

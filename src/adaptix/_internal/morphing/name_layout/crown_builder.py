@@ -109,14 +109,21 @@ class BaseCrownBuilder(ABC, Generic[LeafCr, DictCr, ListCr]):
 
 
 class InpCrownBuilder(BaseCrownBuilder[LeafInpCrown, InpDictCrown, InpListCrown]):
-    def __init__(self, extra_policies: PathsTo[DictExtraPolicy], paths_to_leaves: PathsTo[LeafInpCrown]):
+    def __init__(
+        self,
+        extra_policies: PathsTo[DictExtraPolicy],
+        paths_to_leaves: PathsTo[LeafInpCrown],
+        field_key_groups: PathsTo[Mapping[str, tuple[str, ...]]] | None = None,
+    ):
         self.extra_policies = extra_policies
+        self._field_key_groups = field_key_groups or {}
         super().__init__(paths_to_leaves)
 
     def _make_dict_crown(self, current_path: KeyPath, paths_with_leaves: PathedLeaves[LeafInpCrown]) -> InpDictCrown:
         return InpDictCrown(
             map=self._get_dict_crown_map(current_path, paths_with_leaves),
             extra_policy=self.extra_policies[current_path],
+            field_key_groups=self._field_key_groups.get(current_path, {}),
         )
 
     def _make_list_crown(self, current_path: KeyPath, paths_with_leaves: PathedLeaves[LeafInpCrown]) -> InpListCrown:

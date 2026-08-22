@@ -1,4 +1,4 @@
-from typing import TypeVar
+from typing import Mapping, TypeVar
 
 from ...model_tools.definitions import InputShape, OutputShape
 from ...provider.essential import Mediator
@@ -17,6 +17,8 @@ from ..model.crown_definitions import (
 )
 from .base import ExtraMoveMaker, ExtraPoliciesMaker, PathsTo, SievesMaker, StructureMaker
 from .crown_builder import InpCrownBuilder, OutCrownBuilder
+
+FieldKeyGroups = PathsTo[Mapping[str, tuple[str, ...]]]
 
 T = TypeVar("T")
 
@@ -38,6 +40,7 @@ class BuiltinNameLayoutProvider(MethodsProvider):
     def _provide_input_name_layout(self, mediator: Mediator, request: InputNameLayoutRequest) -> InputNameLayout:
         extra_move = self._extra_move_maker.make_inp_extra_move(mediator, request)
         paths_to_leaves = self._structure_maker.make_inp_structure(mediator, request, extra_move)
+        field_key_groups = self._structure_maker.get_inp_field_key_groups(mediator, request, extra_move)
         extra_policies = self._extra_policies_maker.make_extra_policies(mediator, request, paths_to_leaves)
         if paths_to_leaves:
             crown = self._create_input_crown(
@@ -45,6 +48,7 @@ class BuiltinNameLayoutProvider(MethodsProvider):
                 request.shape,
                 paths_to_leaves,
                 extra_policies,
+                field_key_groups,
             )
         else:
             crown = self._create_empty_input_crown(
@@ -61,8 +65,9 @@ class BuiltinNameLayoutProvider(MethodsProvider):
         shape: InputShape,
         paths_to_leaves: PathsTo[LeafInpCrown],
         extra_policies: PathsTo[DictExtraPolicy],
+        field_key_groups: FieldKeyGroups,
     ) -> BranchInpCrown:
-        return InpCrownBuilder(extra_policies, paths_to_leaves).build_crown()
+        return InpCrownBuilder(extra_policies, paths_to_leaves, field_key_groups).build_crown()
 
     def _create_empty_input_crown(
         self,
