@@ -120,8 +120,7 @@ export class ClaudeCodeProvider implements AgentProvider {
               if (Array.isArray(messageData.message.content)) {
                 content = messageData.message.content.map((c: any) => 
                   typeof c === "string" ? c : 
-                  c.type === "text" ? c.text : 
-                  JSON.stringify(c)
+                  c.type === "text" ? c.text : ""
                 ).join("");
               } else if (typeof messageData.message.content === "string") {
                 content = messageData.message.content;
@@ -151,6 +150,7 @@ export class ClaudeCodeProvider implements AgentProvider {
                     type: "tool_use",
                     toolName: contentItem.name,
                     toolInput: contentItem.input,
+                    toolUseId: contentItem.id,
                   };
                 }
               }

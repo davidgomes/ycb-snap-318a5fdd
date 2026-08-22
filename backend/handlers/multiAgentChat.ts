@@ -142,28 +142,347 @@ async function* executeMultiAgentChat(
 /**
  * Execute chat with a single agent
  */
+interface AgentExecutionResult {
+  accumulatedText: string;
+  error?: string;
+  circular?: boolean;
+}
+
+interface DelegationState {
+  nextGeneratedToolUseId: number;
+}
+
+interface AgentExecutionOptions {
+  emitErrors: boolean;
+  emitDone: boolean;
+}
+
+function createSuccessfulResult(accumulatedText = ""): AgentExecutionResult {
+  return { accumulatedText };
+}
+
+function createFailedResult(
+  error: string,
+  accumulatedText = "",
+): AgentExecutionResult {
+  return { accumulatedText, error };
+}
+
+function parseDelegationInput(
+  input: unknown,
+): { agentId: string; instructions: string } | { error: string } {
+  if (!input || typeof input !== "object") {
+    return { error: "delegate_task input must be an object" };
+  }
+
+  const delegationInput = input as Record<string, unknown>;
+  const agentId = delegationInput.agent_id;
+  const instructions = delegationInput.instructions;
+
+  if (typeof agentId !== "string" || !agentId.trim()) {
+    return { error: "delegate_task input must include a non-empty agent_id" };
+  }
+
+  if (typeof instructions !== "string" || !instructions.trim()) {
+    return {
+      error: `delegate_task for agent '${agentId}' must include non-empty instructions`,
+    };
+  }
+
+  return {
+    agentId,
+    instructions,
+  };
+}
+
+function createToolUseStreamResponse(
+  response: ProviderResponse,
+  toolUseId: string,
+  sessionId?: string,
+): StreamResponse {
+  return {
+    type: "claude_json",
+    data: {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: toolUseId,
+            name: response.toolName,
+            input: response.toolInput || {},
+          },
+        ],
+      },
+      session_id: sessionId,
+    },
+  };
+}
+
+function createToolResult(
+  isError: boolean,
+  content: string,
+  toolUseId: string,
+): string {
+  return JSON.stringify({
+    type: "tool_result",
+    is_error: isError,
+    content,
+    tool_use_id: toolUseId,
+  });
+}
+
+async function* executeAgentConversation(
+  agentId: string,
+  request: ChatRequest,
+  providerRequest: ProviderChatRequest,
+  agentConfig: NonNullable<ReturnType<typeof globalRegistry.getAgent>>,
+  provider: NonNullable<ReturnType<typeof globalRegistry.getProviderForAgent>>,
+  abortController: AbortController,
+  debugMode: boolean,
+  delegationPath: string[],
+  state: DelegationState,
+  options: AgentExecutionOptions,
+): AsyncGenerator<StreamResponse, AgentExecutionResult> {
+  let accumulatedText = "";
+
+  try {
+    for await (const response of provider.executeChat(providerRequest, {
+      debugMode,
+      abortController,
+      temperature: agentConfig.config?.temperature,
+      maxTokens: agentConfig.config?.maxTokens,
+    })) {
+      if (response.type === "text") {
+        const text = response.content || "";
+        accumulatedText += text;
+
+        const chatRoomMessage = createChatRoomMessage(response, agentId);
+        if (chatRoomMessage) {
+          yield {
+            type: "claude_json",
+            data: {
+              type: "chat_room_message",
+              message: chatRoomMessage,
+              session_id: request.sessionId,
+            },
+          };
+        }
+
+        yield {
+          type: "claude_json",
+          data: {
+            type: "assistant",
+            content: response.content,
+            model: response.metadata?.model,
+          },
+        };
+        continue;
+      }
+
+      if (response.type === "tool_use") {
+        const toolUseId =
+          response.toolUseId ||
+          `${request.requestId}-${agentId}-tool-${++state.nextGeneratedToolUseId}`;
+
+        yield createToolUseStreamResponse(response, toolUseId, request.sessionId);
+
+        if (response.toolName !== "delegate_task") {
+          continue;
+        }
+
+        const parsedInput = parseDelegationInput(response.toolInput);
+        if ("error" in parsedInput) {
+          const toolResult = createToolResult(
+            true,
+            parsedInput.error,
+            toolUseId,
+          );
+          const continuation = yield* executeAgentConversation(
+            agentId,
+            request,
+            { ...providerRequest, message: toolResult },
+            agentConfig,
+            provider,
+            abortController,
+            debugMode,
+            delegationPath,
+            state,
+            options,
+          );
+          accumulatedText += continuation.accumulatedText;
+          if (continuation.error || continuation.circular) {
+            return {
+              accumulatedText,
+              error: continuation.error,
+              circular: continuation.circular,
+            };
+          }
+          return createSuccessfulResult(accumulatedText);
+        }
+
+        const { agentId: delegatedAgentId, instructions } = parsedInput;
+        const delegatedResult = yield* executeDelegatedAgent(
+          delegatedAgentId,
+          instructions,
+          request,
+          abortController,
+          debugMode,
+          [...delegationPath, delegatedAgentId],
+          state,
+        );
+
+        if (delegatedResult.circular) {
+          return {
+            accumulatedText,
+            error: delegatedResult.error,
+            circular: true,
+          };
+        }
+
+        const delegatedContent = delegatedResult.error
+          ? `Sub-agent '${delegatedAgentId}' failed: ${delegatedResult.error}`
+          : delegatedResult.accumulatedText || "(Sub-agent produced no textual output.)";
+        const toolResult = createToolResult(
+          Boolean(delegatedResult.error),
+          delegatedContent,
+          toolUseId,
+        );
+
+        const continuation = yield* executeAgentConversation(
+          agentId,
+          request,
+          { ...providerRequest, message: toolResult },
+          agentConfig,
+          provider,
+          abortController,
+          debugMode,
+          delegationPath,
+          state,
+          options,
+        );
+        accumulatedText += continuation.accumulatedText;
+
+        if (continuation.error || continuation.circular) {
+          return {
+            accumulatedText,
+            error: continuation.error,
+            circular: continuation.circular,
+          };
+        }
+        return createSuccessfulResult(accumulatedText);
+      }
+
+      if (response.type === "error") {
+        if (options.emitErrors) {
+          yield { type: "error", error: response.error };
+        }
+        return createFailedResult(response.error || "Provider execution failed", accumulatedText);
+      }
+
+      if (response.type === "done") {
+        if (options.emitDone) {
+          yield { type: "done" };
+        }
+        return createSuccessfulResult(accumulatedText);
+      }
+    }
+
+    if (options.emitDone) {
+      yield { type: "done" };
+    }
+    return createSuccessfulResult(accumulatedText);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (options.emitErrors) {
+      yield { type: "error", error: errorMessage };
+    }
+    return createFailedResult(errorMessage, accumulatedText);
+  }
+}
+
+async function* executeDelegatedAgent(
+  agentId: string,
+  instructions: string,
+  parentRequest: ChatRequest,
+  abortController: AbortController,
+  debugMode: boolean,
+  delegationPath: string[],
+  state: DelegationState,
+): AsyncGenerator<StreamResponse, AgentExecutionResult> {
+  if (delegationPath.slice(0, -1).includes(agentId)) {
+    const error = `Detected circular delegation involving agent '${agentId}'`;
+    yield { type: "error", error };
+    return {
+      accumulatedText: "",
+      error,
+      circular: true,
+    };
+  }
+
+  const provider = globalRegistry.getProviderForAgent(agentId);
+  const agentConfig = globalRegistry.getAgent(agentId);
+  if (!provider || !agentConfig) {
+    const error = `Agent '${agentId}' not found or provider not available`;
+    yield { type: "error", error };
+    return createFailedResult(error);
+  }
+
+  const delegatedRequest: ChatRequest = {
+    ...parentRequest,
+    message: instructions,
+    sessionId: undefined,
+    workingDirectory: agentConfig.workingDirectory,
+  };
+  const providerRequest: ProviderChatRequest = {
+    message: instructions,
+    requestId: parentRequest.requestId,
+    workingDirectory: agentConfig.workingDirectory,
+  };
+
+  return yield* executeAgentConversation(
+    agentId,
+    delegatedRequest,
+    providerRequest,
+    agentConfig,
+    provider,
+    abortController,
+    debugMode,
+    delegationPath,
+    state,
+    {
+      emitErrors: false,
+      emitDone: false,
+    },
+  );
+}
+
 async function* executeSingleAgent(
   agentId: string,
   request: ChatRequest,
   command: AgentCommand | null,
   abortController: AbortController,
-  debugMode: boolean
-): AsyncGenerator<StreamResponse> {
+  debugMode: boolean,
+  delegationPath: string[] = [agentId],
+  state: DelegationState = { nextGeneratedToolUseId: 0 },
+  options: AgentExecutionOptions = { emitErrors: true, emitDone: true },
+): AsyncGenerator<StreamResponse, AgentExecutionResult> {
   const provider = globalRegistry.getProviderForAgent(agentId);
   const agentConfig = globalRegistry.getAgent(agentId);
   
   if (!provider || !agentConfig) {
-    yield {
-      type: "error",
-      error: `Agent '${agentId}' not found or provider not available`,
-    };
-    return;
+    const error = `Agent '${agentId}' not found or provider not available`;
+    if (options.emitErrors) {
+      yield { type: "error", error };
+    }
+    return createFailedResult(error);
   }
   
   // Handle special commands
   if (command?.command === "capture_screen") {
     yield* handleScreenCapture(agentId, request, command, abortController, debugMode);
-    return;
+    return createSuccessfulResult();
   }
   
   // Build provider request
@@ -174,46 +493,18 @@ async function* executeSingleAgent(
     workingDirectory: request.workingDirectory || agentConfig.workingDirectory,
   };
   
-  // Execute with provider
-  for await (const response of provider.executeChat(providerRequest, {
-    debugMode,
+  return yield* executeAgentConversation(
+    agentId,
+    request,
+    providerRequest,
+    agentConfig,
+    provider,
     abortController,
-    temperature: agentConfig.config?.temperature,
-    maxTokens: agentConfig.config?.maxTokens,
-  })) {
-    // Convert provider response to stream response
-    const chatRoomMessage = createChatRoomMessage(response, agentId);
-    
-    if (chatRoomMessage) {
-      // Send as chat room protocol message
-      yield {
-        type: "claude_json",
-        data: {
-          type: "chat_room_message",
-          message: chatRoomMessage,
-          session_id: request.sessionId,
-        },
-      };
-    }
-    
-    // Also send original response format for compatibility
-    if (response.type === "text") {
-      yield {
-        type: "claude_json",
-        data: {
-          type: "assistant",
-          content: response.content,
-          model: response.metadata?.model,
-        },
-      };
-    } else if (response.type === "done") {
-      yield { type: "done" };
-      return;
-    } else if (response.type === "error") {
-      yield { type: "error", error: response.error };
-      return;
-    }
-  }
+    debugMode,
+    delegationPath,
+    state,
+    options,
+  );
 }
 
 /**
