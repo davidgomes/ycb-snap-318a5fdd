@@ -2,12 +2,23 @@ use super::state::{Inst, Ip, Mem0Len, Mem0Ptr, Sp, VmState, mem0_bytes};
 #[cfg(feature = "simd")]
 use crate::core::simd::ImmLaneIdx;
 use crate::{
-    Error, Func, Global, Instance, Memory, Nullable, RefType, Table, TrapCode, V128,
+    Error,
+    Func,
+    Global,
+    Instance,
+    Memory,
+    Nullable,
+    RefType,
+    Table,
+    TrapCode,
+    V128,
     core::{CoreElementSegment, CoreGlobal, CoreMemory, CoreTable, RawVal, WriteAs},
     engine::{
-        DedupFuncType, EngineFunc,
+        DedupFuncType,
+        EngineFunc,
         executor::{
-            LoadFromCellsByValue, StoreToCells,
+            LoadFromCellsByValue,
+            StoreToCells,
             handler::{Break, Control, Done, DoneReason},
         },
         utils::unreachable_unchecked,
@@ -478,12 +489,7 @@ pub fn call_host(
 ) -> Control<Sp, Break> {
     debug_assert_eq!(params.len(), host_func.len_param_cells());
     let trampoline = *host_func.trampoline();
-    let save_frames = state
-        .store
-        .inner()
-        .engine()
-        .config()
-        .get_generate_coredump();
+    let save_frames = state.store.inner().engine().config().get_generate_coredump();
     if save_frames {
         if let Some(caller_ip) = caller_ip {
             state.stack.sync_ip(caller_ip);
@@ -524,12 +530,7 @@ pub fn return_call_host(
 ) -> Control<(Ip, Sp, Inst), Break> {
     debug_assert_eq!(params.len(), host_func.len_param_cells());
     let trampoline = *host_func.trampoline();
-    let save_frames = state
-        .store
-        .inner()
-        .engine()
-        .config()
-        .get_generate_coredump();
+    let save_frames = state.store.inner().engine().config().get_generate_coredump();
     if save_frames {
         let frames = state.stack.coredump_frames(state.code);
         state.store.inner_mut().push_coredump_frames(frames);

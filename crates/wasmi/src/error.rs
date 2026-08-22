@@ -1,5 +1,10 @@
 use super::errors::{
-    EnforcedLimitsError, FuncError, GlobalError, InstantiationError, IrError, LinkerError,
+    EnforcedLimitsError,
+    FuncError,
+    GlobalError,
+    InstantiationError,
+    IrError,
+    LinkerError,
 };
 use crate::{
     TrapCode,
@@ -105,8 +110,7 @@ impl Error {
     where
         T: HostError,
     {
-        self.inner
-            .kind
+        self.inner.kind
             .as_host()
             .and_then(<dyn HostError + 'static>::downcast_ref)
     }
@@ -119,8 +123,7 @@ impl Error {
     where
         T: HostError,
     {
-        self.inner
-            .kind
+        self.inner.kind
             .as_host_mut()
             .and_then(<dyn HostError + 'static>::downcast_mut)
     }
@@ -133,8 +136,7 @@ impl Error {
     where
         T: HostError,
     {
-        self.inner
-            .kind
+        self.inner.kind
             .into_host()
             .and_then(|error| error.downcast().ok())
             .map(|boxed| *boxed)

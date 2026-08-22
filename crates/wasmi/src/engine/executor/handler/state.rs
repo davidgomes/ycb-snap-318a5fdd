@@ -1,10 +1,20 @@
 use crate::{
-    Error, Func, TrapCode,
     coredump::FrameSnapshot,
+    Error,
+    Func,
+    TrapCode,
     engine::{
-        ResumableHostTrapError, ResumableOutOfFuelError, StackConfig,
+        ResumableHostTrapError,
+        ResumableOutOfFuelError,
+        StackConfig,
         executor::{
-            Cell, CellError, CellsReader, CellsWriter, CodeMap, InOutParams, LoadFromCellsByValue,
+            Cell,
+            CellError,
+            CellsReader,
+            CellsWriter,
+            CodeMap,
+            InOutParams,
+            LoadFromCellsByValue,
             StoreToCells,
             handler::{
                 dispatch::{Control, ExecutionOutcome},
@@ -21,7 +31,8 @@ use alloc::vec::Vec;
 use core::{
     cmp,
     marker::PhantomData,
-    mem, ops,
+    mem,
+    ops,
     ptr::{self, NonNull},
     slice,
 };
@@ -681,9 +692,7 @@ impl Stack {
         callee_size: usize,
         callee_instance: Option<Inst>,
     ) -> Result<Sp, TrapCode> {
-        let start = self
-            .frames
-            .replace(callee_ip, callee_func, callee_instance)?;
+        let start = self.frames.replace(callee_ip, callee_func, callee_instance)?;
         self.values.replace(start, callee_size, callee_params)
     }
 }

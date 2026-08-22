@@ -1,7 +1,13 @@
 use crate::{
-    CallHook, Error, Instance, Store,
+    CallHook,
+    Error,
+    Instance,
+    Store,
     engine::{
-        CodeMap, EngineFunc, LiftFromCells, LowerToCells,
+        CodeMap,
+        EngineFunc,
+        LiftFromCells,
+        LowerToCells,
         executor::handler::{
             dispatch::{ExecutionOutcome, execute_until_done},
             state::{Inst, Ip, Sp, Stack, VmState},
