@@ -7,6 +7,14 @@ class TOMLKitError(Exception):
     pass
 
 
+class ConversionError(TOMLKitError):
+    """Raised when a document structure conversion cannot be performed."""
+
+    def __init__(self, message: str, key_path: str) -> None:
+        self.key_path = key_path
+        super().__init__(message)
+
+
 class ParseError(ValueError, TOMLKitError):
     """
     This error occurs when the parser encounters a syntax error
