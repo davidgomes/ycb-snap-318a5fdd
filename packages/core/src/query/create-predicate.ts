@@ -39,7 +39,7 @@ export function createPredicate<const T extends readonly Trait[]>(
         trait: result,
         dependencies: traits as unknown as Trait[],
         evaluate: predicate as (data: TraitRecord<Trait>[]) => boolean,
-        scratch: new Array(traits.length),
+        scratch: Array.from({ length: traits.length }),
     };
 
     registerPredicateDefinition(definition);

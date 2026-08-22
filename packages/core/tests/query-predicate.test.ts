@@ -190,16 +190,16 @@ describe('Query predicates', () => {
         expect(world.query(IsFar)).toEqual(expect.arrayContaining([entity]));
     });
 
-    it('defers set() during updateEach', () => {
-        const IsFar = createPredicate([Position], ([position]) => position.x > 10);
-        const entity = world.spawn(Position({ x: 0, y: 0 }));
+    it('defers add() during updateEach', () => {
+        const IsHurt = createPredicate([Health], ([health]) => health.value < 50);
+        const entity = world.spawn(Position);
 
         world.query(Position).updateEach((_, current) => {
-            current.set(Position, { x: 20 });
-            expect(world.query(IsFar).length).toBe(0);
+            current.add(Health({ value: 10 }));
+            expect(world.query(IsHurt).length).toBe(0);
         });
 
-        expect(world.query(IsFar)).toContain(entity);
+        expect(world.query(IsHurt)).toContain(entity);
     });
 
     it('composes with relation pairs', () => {
