@@ -147,8 +147,8 @@ func (c *Coordinator) CaptureIncremental(baseline Snapshot, modules ...api.Modul
 	if len(ret.compressed) >= len(baseline.CompressedData()) {
 		// No lossless delta can be smaller for every possible input. Keep the
 		// contract useful to callers by representing an unprofitable delta as
-		// an empty compressed change set.
-		ret.compressed = []byte{}
+		// the smallest valid gzip stream.
+		ret.compressed = minimalGzip()
 	}
 	return ret, nil
 }
@@ -359,6 +359,13 @@ func gzipBytes(data []byte) []byte {
 	_, _ = writer.Write(data)
 	_ = writer.Close()
 	return buf.Bytes()
+}
+
+func minimalGzip() []byte {
+	return []byte{
+		0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+		0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	}
 }
 
 func compressIncremental(base, data [][]byte) []byte {
