@@ -19,9 +19,9 @@ exports[`Statements - Return > Commonjs (fail) > return 1`] = `
 `;
 
 exports[`Statements - Return > Commonjs (fail) > using foo = null 1`] = `
-"SyntaxError [1:6-1:9]: Unexpected token: 'identifier'
+"SyntaxError [1:6-1:9]: using declarations are not allowed in the global scope
 > 1 | using foo = null
-    |       ^^^ Unexpected token: 'identifier'"
+    |       ^^^ using declarations are not allowed in the global scope"
 `;
 
 exports[`Statements - Return > Commonjs (pass) > new.target 1`] = `
