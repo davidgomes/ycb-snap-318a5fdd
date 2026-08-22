@@ -1867,6 +1867,25 @@ func kubeSchemaServer(t *testing.T) *httptest.Server {
 	return ts
 }
 
+func TestEvalPartialSourceReconstructsTemplateStrings(t *testing.T) {
+	query := `$"hello {input.x}"`
+	buf := new(bytes.Buffer)
+	params := newEvalCommandParams()
+	params.partial = true
+	_ = params.outputFormat.Set(formats.Source)
+	if _, err := eval([]string{query}, params, buf, nil); err != nil {
+		t.Fatal("unexpected error:", err)
+	}
+
+	got := buf.String()
+	if strings.Contains(got, ast.InternalTemplateString.Name) {
+		t.Fatalf("source output leaked %s:\n%s", ast.InternalTemplateString.Name, got)
+	}
+	if !strings.Contains(got, `$"hello {input.x}"`) && !strings.Contains(got, "hello {input.x}") {
+		t.Fatalf("source output did not reconstruct the template string:\n%s", got)
+	}
+}
+
 func TestEvalPartialFormattedOutput(t *testing.T) {
 
 	query := `time.clock(input.x) == time.clock(input.y)`

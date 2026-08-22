@@ -2658,6 +2658,8 @@ func (r *Rego) partial(ctx context.Context, ectx *EvalContext) (*PartialQueries,
 		Support: support,
 	}
 
+	reconstructPartialTemplateStrings(pq)
+
 	return pq, nil
 }
 
