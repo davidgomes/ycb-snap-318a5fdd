@@ -6,7 +6,7 @@ import { universe } from '../universe/universe';
 import type { World } from '../world';
 import type { Entity } from './types';
 import { allocateEntity, releaseEntity } from './utils/entity-index';
-import { getEntityId, getEntityWorldId } from './utils/pack-entity';
+import { getEntityId, getEntityWorldId, packEntity } from './utils/pack-entity';
 
 // Ensure entity methods are patched.
 import './entity-methods-patch';
@@ -28,18 +28,14 @@ export function createEntity(world: World, ...traits: ConfigurableTrait[]): Enti
     return entity;
 }
 
-export function createEntityWithId(
-    world: World,
-    id: number,
-    ...traits: ConfigurableTrait[]
-): Entity {
+export function createEntityWithId(world: World, id: number, ...traits: ConfigurableTrait[]): Entity {
     const ctx = world[$internal];
     const index = ctx.entityIndex;
     if (index.sparse[id] !== undefined && index.sparse[id] < index.aliveCount) {
         throw new Error(`Entity ID is already in use: ${id}`);
     }
 
-    const entity = (((world.id & 0xf) << 28) | (id & 0xfffff)) as Entity;
+    const entity = packEntity(world.id, 0, id);
     index.sparse[id] = index.aliveCount;
     index.dense[index.aliveCount] = entity;
     index.aliveCount++;
