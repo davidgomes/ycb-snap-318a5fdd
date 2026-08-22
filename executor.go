@@ -70,6 +70,9 @@ type (
 		TaskSorter         sort.Sorter
 		UserWorkingDir     string
 		EnableVersionCheck bool
+		graphFormat        GraphFormat
+		graphReverse       bool
+		graphNoStatus      bool
 
 		fuzzyModel     *fuzzy.Model
 		fuzzyModelOnce sync.Once
