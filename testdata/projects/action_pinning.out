@@ -1,0 +1,2 @@
+workflows/test.yaml:7:15: action "actions/checkout@v4" must be pinned to a semver tag in vMAJOR.MINOR.PATCH format. Did you mean "actions/checkout@v6"? [action-pinning]
+workflows/test.yaml:9:11: reusable workflow "owner/repo/.github/workflows/release.yml@main" must be pinned to a semver tag in vMAJOR.MINOR.PATCH format. Got ref "main" [action-pinning]

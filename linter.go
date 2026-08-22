@@ -91,6 +91,9 @@ type LinterOptions struct {
 	// function should return the modified rules.
 	// Note that syntax errors may be reported even if this function returns nil or an empty slice.
 	OnRulesCreated func([]Rule) []Rule
+	// ActionPinningLevel overrides the pinning level for the action-pinning rule. When non-empty,
+	// the rule is enabled even if it is disabled in the config file.
+	ActionPinningLevel string
 	// More options will come here
 }
 
@@ -109,6 +112,7 @@ type Linter struct {
 	errFmt         *ErrorFormatter
 	cwd            string
 	onRulesCreated func([]Rule) []Rule
+	actionPinningLevel string
 }
 
 // NewLinter creates a new Linter instance.
@@ -158,6 +162,12 @@ func NewLinter(out io.Writer, opts *LinterOptions) (*Linter, error) {
 		ignore = append(ignore, r)
 	}
 
+	if opts.ActionPinningLevel != "" {
+		if err := validateActionPinningLevel(ActionPinningLevel(opts.ActionPinningLevel)); err != nil {
+			return nil, err
+		}
+	}
+
 	var formatter *ErrorFormatter
 	if opts.Format != "" {
 		f, err := NewErrorFormatter(opts.Format)
@@ -193,6 +203,7 @@ func NewLinter(out io.Writer, opts *LinterOptions) (*Linter, error) {
 		formatter,
 		cwd,
 		opts.OnRulesCreated,
+		opts.ActionPinningLevel,
 	}
 
 	l.debug("Create a Linter instance with option %#v", opts)
@@ -567,6 +578,7 @@ func (l *Linter) check(
 			NewRuleGlob(),
 			NewRulePermissions(),
 			NewRuleWorkflowCall(path, localReusableWorkflows),
+			NewRuleActionPinning(path, l.actionPinningLevel),
 			NewRuleExpression(localActions, localReusableWorkflows),
 			NewRuleDeprecatedCommands(),
 			NewRuleIfCond(),

@@ -49,6 +49,8 @@ type PathConfig struct {
 	// Ignore is a list of patterns. They are used for ignoring errors by matching to the error messages.
 	// It is similar to the "-ignore" command line option.
 	Ignore IgnorePatterns `yaml:"ignore"`
+	// ActionPinning is per-path configuration for the action-pinning rule.
+	ActionPinning ActionPinningConfigField `yaml:"action-pinning"`
 }
 
 // Config is configuration of actionlint. This struct instance is parsed from "actionlint.yaml"
@@ -67,6 +69,8 @@ type Config struct {
 	// Paths is a "paths" mapping in the configuration file. The keys are glob patterns to match file paths.
 	// And the values are corresponding configurations applied to the file paths.
 	Paths map[string]PathConfig `yaml:"paths"`
+	// ActionPinning is configuration for the action-pinning rule.
+	ActionPinning ActionPinningConfigField `yaml:"action-pinning"`
 }
 
 // PathConfigs returns a list of all PathConfig values matching to the given file path. The path must
@@ -97,6 +101,18 @@ func ParseConfig(b []byte) (*Config, error) {
 	for pat := range c.Paths {
 		if !doublestar.ValidatePattern(pat) {
 			return nil, fmt.Errorf("invalid glob pattern %q in \"paths\"", pat)
+		}
+	}
+	if c.ActionPinning.Present && !c.ActionPinning.Disabled {
+		if err := validateActionPinningConfig(c.ActionPinning.Config); err != nil {
+			return nil, err
+		}
+	}
+	for pat, pc := range c.Paths {
+		if pc.ActionPinning.Present && !pc.ActionPinning.Disabled {
+			if err := validateActionPinningConfig(pc.ActionPinning.Config); err != nil {
+				return nil, fmt.Errorf("invalid action-pinning config in \"paths\" for %q: %w", pat, err)
+			}
 		}
 	}
 	return &c, nil

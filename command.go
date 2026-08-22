@@ -146,6 +146,7 @@ func (cmd *Command) Main(args []string) int {
 	flags.BoolVar(&opts.Debug, "debug", false, "Enable debug output (for development)")
 	flags.BoolVar(&ver, "version", false, "Show version and how this binary was installed")
 	flags.StringVar(&opts.StdinFileName, "stdin-filename", "<stdin>", "File name when reading input from stdin")
+	flags.StringVar(&opts.ActionPinningLevel, "action-pinning-level", "", "Override action-pinning level (major-minor, semver, commit-sha). Enables the action-pinning rule even when disabled in config")
 	flags.Usage = func() {
 		printUsageHeader(cmd.Stderr)
 		flags.PrintDefaults()
