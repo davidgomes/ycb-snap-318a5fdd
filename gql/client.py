@@ -1956,7 +1956,7 @@ class AsyncClientSession:
             async for payload in inner_generator:
                 if payload.data is not None:
                     if not data:
-                        data = payload.data.copy()
+                        data = deepcopy(payload.data)
                     else:
                         _merge_incremental(data, payload.data, [])
 

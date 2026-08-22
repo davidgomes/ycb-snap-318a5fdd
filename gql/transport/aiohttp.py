@@ -21,7 +21,7 @@ from aiohttp.client_exceptions import ClientResponseError
 from aiohttp.client_reqrep import Fingerprint
 from aiohttp.helpers import BasicAuth
 from aiohttp.typedefs import LooseCookies, LooseHeaders
-from graphql import ExecutionResult
+from graphql import ExecutionResult, print_ast
 from multidict import CIMultiDictProxy
 
 from ..graphql_request import GraphQLRequest
@@ -446,7 +446,15 @@ class AIOHTTPTransport(AsyncTransport):
                 "Content-Type": "application/json",
                 "Accept": (
                     "multipart/mixed;boundary=graphql;"
-                    "subscriptionSpec=1.0;deferSpec=20220824,application/json"
+                    + (
+                        "deferSpec=20220824"
+                        if any(
+                            directive in print_ast(request.document)
+                            for directive in ("@defer", "@stream")
+                        )
+                        else "subscriptionSpec=1.0"
+                    )
+                    + ",application/json"
                 ),
             }
         )
