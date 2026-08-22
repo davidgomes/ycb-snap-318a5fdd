@@ -12,6 +12,24 @@ import {
   walker,
 } from './plainer.js';
 import { copy } from 'copy-anything';
+import {
+  type ErrorStackOptions,
+  type NormalizedErrorStackOptions,
+  normalizeErrorStackOptions,
+} from './error-options.js';
+import {
+  ErrorClassRegistry,
+  type Processor,
+} from './error-class-registry.js';
+
+export {
+  processStackString,
+  processStackFrames,
+  normalizeStackNewlines,
+} from './error-stack.js';
+export { normalizeErrorStackOptions } from './error-options.js';
+export { sanitizeMessage } from './error-sanitizer.js';
+export { ErrorClassRegistry } from './error-class-registry.js';
 
 export default class SuperJSON {
   /**
@@ -20,14 +38,24 @@ export default class SuperJSON {
   private readonly dedupe: boolean;
 
   /**
+   * Normalized `errorStack` constructor option, or `undefined` when omitted.
+   */
+  readonly errorStack: NormalizedErrorStackOptions | undefined;
+
+  readonly errorClassRegistry = new ErrorClassRegistry();
+
+  /**
    * @param dedupeReferentialEqualities  If true, SuperJSON will make sure only one instance of referentially equal objects are serialized and the rest are replaced with `null`.
    */
   constructor({
     dedupe = false,
+    errorStack,
   }: {
     dedupe?: boolean;
+    errorStack?: ErrorStackOptions;
   } = {}) {
     this.dedupe = dedupe;
+    this.errorStack = normalizeErrorStackOptions(errorStack);
   }
 
   serialize(object: SuperJSONValue): SuperJSONResult {
@@ -114,6 +142,10 @@ export default class SuperJSON {
     this.allowedErrorProps.push(...props);
   }
 
+  registerErrorStackProcessor(className: string, fn: Processor) {
+    this.errorClassRegistry.register(className, fn);
+  }
+
   private static defaultInstance = new SuperJSON();
   static serialize = SuperJSON.defaultInstance.serialize.bind(
     SuperJSON.defaultInstance
@@ -139,6 +171,9 @@ export default class SuperJSON {
   static allowErrorProps = SuperJSON.defaultInstance.allowErrorProps.bind(
     SuperJSON.defaultInstance
   );
+  static registerErrorStackProcessor = SuperJSON.defaultInstance.registerErrorStackProcessor.bind(
+    SuperJSON.defaultInstance
+  );
 }
 
 export { SuperJSON, SuperJSONResult, SuperJSONValue };
@@ -153,3 +188,4 @@ export const registerClass = SuperJSON.registerClass;
 export const registerCustom = SuperJSON.registerCustom;
 export const registerSymbol = SuperJSON.registerSymbol;
 export const allowErrorProps = SuperJSON.allowErrorProps;
+export const registerErrorStackProcessor = SuperJSON.registerErrorStackProcessor;

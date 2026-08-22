@@ -16,6 +16,11 @@ import {
 } from './is.js';
 import { findArr } from './util.js';
 import SuperJSON from './index.js';
+import {
+  deserializeErrorValue,
+  errorMatchesStackMode,
+  serializeErrorValue,
+} from './error-transform.js';
 
 export type PrimitiveTypeAnnotation = 'number' | 'undefined' | 'bigint';
 
@@ -26,7 +31,13 @@ type ClassTypeAnnotation = ['class', string];
 type SymbolTypeAnnotation = ['symbol', string];
 type CustomTypeAnnotation = ['custom', string];
 
-type SimpleTypeAnnotation = LeafTypeAnnotation | 'map' | 'set' | 'Error';
+type SimpleTypeAnnotation =
+  | LeafTypeAnnotation
+  | 'map'
+  | 'set'
+  | 'Error'
+  | 'Error/stack'
+  | 'Error/frames';
 
 type CompositeTypeAnnotation =
   | TypedArrayAnnotation
@@ -79,35 +90,47 @@ const simpleRules = [
   ),
 
   simpleTransformation(
+    (v, superJson): v is Error =>
+      errorMatchesStackMode(v, superJson.errorStack, 'string'),
+    'Error/stack',
+    (v, superJson) =>
+      serializeErrorValue(
+        v,
+        superJson.errorStack,
+        superJson.allowedErrorProps,
+        superJson.errorClassRegistry,
+        'string'
+      ),
+    (v, superJson) => deserializeErrorValue(v, superJson.allowedErrorProps)
+  ),
+
+  simpleTransformation(
+    (v, superJson): v is Error =>
+      errorMatchesStackMode(v, superJson.errorStack, 'frames'),
+    'Error/frames',
+    (v, superJson) =>
+      serializeErrorValue(
+        v,
+        superJson.errorStack,
+        superJson.allowedErrorProps,
+        superJson.errorClassRegistry,
+        'frames'
+      ),
+    (v, superJson) => deserializeErrorValue(v, superJson.allowedErrorProps)
+  ),
+
+  simpleTransformation(
     isError,
     'Error',
-    (v, superJson) => {
-      const baseError: any = {
-        name: v.name,
-        message: v.message,
-      };
-
-      if ('cause' in v) {
-        baseError.cause = v.cause;
-      }
-
-      superJson.allowedErrorProps.forEach(prop => {
-        baseError[prop] = (v as any)[prop];
-      });
-
-      return baseError;
-    },
-    (v, superJson) => {
-      const e = new Error(v.message, { cause: v.cause });
-      e.name = v.name;
-      e.stack = v.stack;
-
-      superJson.allowedErrorProps.forEach(prop => {
-        (e as any)[prop] = v[prop];
-      });
-
-      return e;
-    }
+    (v, superJson) =>
+      serializeErrorValue(
+        v,
+        superJson.errorStack,
+        superJson.allowedErrorProps,
+        superJson.errorClassRegistry,
+        superJson.errorStack ? 'off' : 'legacy'
+      ),
+    (v, superJson) => deserializeErrorValue(v, superJson.allowedErrorProps)
   ),
 
   simpleTransformation(
