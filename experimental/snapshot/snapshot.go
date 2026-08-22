@@ -307,6 +307,9 @@ func countModified(base, current [][]byte) uint64 {
 }
 
 func cloneData(in [][]byte) [][]byte {
+	if in == nil {
+		return [][]byte{}
+	}
 	out := make([][]byte, len(in))
 	for i, b := range in {
 		out[i] = append([]byte{}, b...)

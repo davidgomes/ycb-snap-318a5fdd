@@ -25,17 +25,18 @@ func NewCoordinator() *Coordinator {
 // It returns an error containing "no modules" when mods is empty, and
 // "module closed" when any module is nil or closed.
 func (c *Coordinator) CaptureSnapshot(mods ...api.Module) (Snapshot, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if len(mods) == 0 {
 		return nil, errors.New("no modules")
 	}
-	if err := validateModules(mods); err != nil {
-		return nil, err
-	}
-	data, err := readAll(mods)
+	data, captured, err := copyModules(mods)
 	if err != nil {
 		return nil, err
 	}
-	return newFullSnapshot(c.nextVersion(), data, mods), nil
+	c.version++
+	return newFullSnapshot(c.version, data, captured), nil
 }
 
 // CaptureIncremental copies current linear memory and records a compact
@@ -45,6 +46,9 @@ func (c *Coordinator) CaptureSnapshot(mods ...api.Module) (Snapshot, error) {
 // nil, and "module count mismatch" when the number of modules differs from
 // the baseline.
 func (c *Coordinator) CaptureIncremental(baseline Snapshot, mods ...api.Module) (Snapshot, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if baseline == nil {
 		return nil, errors.New("baseline snapshot is nil")
 	}
@@ -52,15 +56,13 @@ func (c *Coordinator) CaptureIncremental(baseline Snapshot, mods ...api.Module) 
 	if len(mods) != len(baseData) {
 		return nil, errors.New("module count mismatch")
 	}
-	if err := validateModules(mods); err != nil {
-		return nil, err
-	}
-	data, err := readAll(mods)
+	data, captured, err := copyModules(mods)
 	if err != nil {
 		return nil, err
 	}
 	modified := countModified(baseData, data)
-	return newIncrementalSnapshot(c.nextVersion(), data, mods, baseline, modified), nil
+	c.version++
+	return newIncrementalSnapshot(c.version, data, captured, baseline, modified), nil
 }
 
 // RestoreSnapshot writes snapshot memory back into the provided modules.
@@ -72,18 +74,18 @@ func (c *Coordinator) CaptureIncremental(baseline Snapshot, mods ...api.Module) 
 // Passing more modules than were captured returns an error containing
 // "incompatible module".
 func (c *Coordinator) RestoreSnapshot(snap Snapshot, mods ...api.Module) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if snap == nil {
-		if len(mods) > 0 {
-			return errors.New("incompatible module")
-		}
-		return nil
+		return errors.New("snapshot is nil")
 	}
 	data := snap.Data()
-	captured := snapshotModules(snap, len(data))
 	if len(mods) > len(data) {
 		return errors.New("incompatible module")
 	}
-	assignments := matchModules(captured, mods)
+	captured := snapshotModules(snap)
+	assignments := matchModules(captured, mods, len(data))
 	for i, snapIdx := range assignments {
 		if snapIdx < 0 {
 			continue
@@ -95,94 +97,88 @@ func (c *Coordinator) RestoreSnapshot(snap Snapshot, mods ...api.Module) error {
 	return nil
 }
 
-func (c *Coordinator) nextVersion() uint64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.version++
-	return c.version
-}
-
-func snapshotModules(snap Snapshot, n int) []api.Module {
-	if s, ok := snap.(*snapshot); ok && len(s.modules) == n {
+func snapshotModules(snap Snapshot) []api.Module {
+	if s, ok := snap.(*snapshot); ok {
 		return s.modules
-	}
-	return make([]api.Module, n)
-}
-
-func matchModules(captured, mods []api.Module) []int {
-	assignments := make([]int, len(mods))
-	for i := range assignments {
-		assignments[i] = -1
-	}
-	used := make([]bool, len(captured))
-
-	for i, mod := range mods {
-		for j, cap := range captured {
-			if used[j] || !sameModule(mod, cap) {
-				continue
-			}
-			assignments[i] = j
-			used[j] = true
-			break
-		}
-	}
-
-	if len(mods) != len(captured) {
-		return assignments
-	}
-	for i := range mods {
-		if assignments[i] != -1 || used[i] {
-			continue
-		}
-		assignments[i] = i
-		used[i] = true
-	}
-	return assignments
-}
-
-func sameModule(a, b api.Module) bool {
-	return a != nil && b != nil && a == b
-}
-
-func validateModules(mods []api.Module) error {
-	for _, m := range mods {
-		if m == nil || m.IsClosed() {
-			return errors.New("module closed")
-		}
 	}
 	return nil
 }
 
-func readAll(mods []api.Module) ([][]byte, error) {
-	data := make([][]byte, len(mods))
-	for i, m := range mods {
-		copied, err := readMemory(m)
-		if err != nil {
-			return nil, err
+// matchModules maps each provided module to a snapshot slot.
+// A negative index means the module is unmatched and should be skipped.
+func matchModules(captured, provided []api.Module, snapCount int) []int {
+	assignments := make([]int, len(provided))
+	used := make([]bool, snapCount)
+	allIdentity := len(provided) > 0
+
+	for i, m := range provided {
+		assignments[i] = -1
+		if m == nil {
+			allIdentity = false
+			continue
 		}
-		data[i] = copied
+		for j := 0; j < snapCount; j++ {
+			if used[j] {
+				continue
+			}
+			if j < len(captured) && captured[j] != nil && captured[j] == m {
+				assignments[i] = j
+				used[j] = true
+				break
+			}
+		}
+		if assignments[i] < 0 {
+			allIdentity = false
+		}
 	}
-	return data, nil
+
+	if len(provided) == snapCount && !allIdentity {
+		for i := range provided {
+			assignments[i] = i
+		}
+	}
+	return assignments
+}
+
+func copyModules(mods []api.Module) (data [][]byte, captured []api.Module, err error) {
+	data = make([][]byte, len(mods))
+	captured = make([]api.Module, len(mods))
+	for i, m := range mods {
+		b, copyErr := readMemory(m)
+		if copyErr != nil {
+			return nil, nil, copyErr
+		}
+		data[i] = b
+		captured[i] = m
+	}
+	return data, captured, nil
 }
 
 func readMemory(m api.Module) ([]byte, error) {
+	if m == nil || m.IsClosed() {
+		return nil, errors.New("module closed")
+	}
 	mem := m.Memory()
 	if mem == nil {
 		return []byte{}, nil
 	}
 	size := mem.Size()
 	if size == 0 {
-		return []byte{}, nil
+		pages, _ := mem.Grow(0)
+		if pages == 0 || pages >= 65536 {
+			return []byte{}, nil
+		}
+		size = pages * 65536
 	}
 	buf, ok := mem.Read(0, size)
 	if !ok {
-		return nil, errors.New("failed to read module memory")
+		return []byte{}, nil
 	}
 	return append([]byte{}, buf...), nil
 }
 
 func writeMemory(m api.Module, data []byte) error {
-	if m == nil {
+	if m == nil || m.IsClosed() {
 		return errors.New("module closed")
 	}
 	if len(data) == 0 {
@@ -190,10 +186,10 @@ func writeMemory(m api.Module, data []byte) error {
 	}
 	mem := m.Memory()
 	if mem == nil || uint64(mem.Size()) < uint64(len(data)) {
-		return newCodedError("insufficient_memory", "insufficient memory")
+		return newCodedError("insufficient_memory", "insufficient_memory")
 	}
 	if !mem.Write(0, data) {
-		return newCodedError("insufficient_memory", "insufficient memory")
+		return newCodedError("insufficient_memory", "insufficient_memory")
 	}
 	return nil
 }

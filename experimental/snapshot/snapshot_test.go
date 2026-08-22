@@ -221,6 +221,12 @@ func TestRestore_IncompatibleAndInsufficient(t *testing.T) {
 	err = c.RestoreSnapshot(snap, small)
 	require.Error(t, err)
 	require.Equal(t, "insufficient_memory", snapshot.ErrorCode(err))
+
+	closed := newMod([]byte{1, 2, 3, 4})
+	require.NoError(t, closed.Close(context.Background()))
+	err = c.RestoreSnapshot(snap, closed)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "module closed")
 }
 
 func TestRegistryAndContext(t *testing.T) {
