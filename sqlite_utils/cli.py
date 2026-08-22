@@ -962,6 +962,7 @@ def insert_upsert_options(*, require_pk=False):
                     default=False,
                     help="Apply STRICT mode to created table",
                 ),
+                click.option("--safe-mode", is_flag=True, help="Rollback the import if it fails validation"),
             )
         ):
             fn = decorator(fn)
@@ -1006,6 +1007,7 @@ def insert_upsert_implementation(
     bulk_sql=None,
     functions=None,
     strict=False,
+    safe_mode=False,
 ):
     db = sqlite_utils.Database(path)
     _register_db_for_cleanup(db)
@@ -1140,20 +1142,41 @@ def insert_upsert_implementation(
 
         # For bulk_sql= we use cursor.executemany() instead
         if bulk_sql:
+            checkpoint_id = db.create_import_checkpoint() if safe_mode else None
             if batch_size:
                 doc_chunks = chunks(docs, batch_size)
             else:
                 doc_chunks = [docs]
-            for doc_chunk in doc_chunks:
-                with db.conn:
-                    db.conn.cursor().executemany(bulk_sql, doc_chunk)
+            try:
+                for doc_chunk in doc_chunks:
+                    with db.conn:
+                        db.conn.cursor().executemany(bulk_sql, doc_chunk)
+                if checkpoint_id:
+                    db.commit_checkpoint(checkpoint_id)
+            except Exception:
+                if checkpoint_id:
+                    db.rollback_to_checkpoint(checkpoint_id)
+                raise
             return
 
+        checkpoint_id = None
+        if safe_mode:
+            db.enable_safe_import()
+            checkpoint_id = db.create_import_checkpoint()
         try:
             db.table(table).insert_all(
                 docs, pk=pk, batch_size=batch_size, alter=alter, **extra_kwargs
             )
+            if safe_mode:
+                validation = db.validate_import_invariants(table)
+                if not validation["valid"]:
+                    raise click.ClickException(
+                        "Import invariant validation failed: {}".format(validation["failures"])
+                    )
+                db.commit_checkpoint(checkpoint_id)
         except Exception as e:
+            if checkpoint_id:
+                db.rollback_to_checkpoint(checkpoint_id)
             if (
                 isinstance(e, OperationalError)
                 and e.args
@@ -1248,6 +1271,7 @@ def insert(
     not_null,
     default,
     strict,
+    safe_mode,
 ):
     """
     Insert records from FILE into a table, creating the table if it
@@ -1328,6 +1352,7 @@ def insert(
             not_null=not_null,
             default=default,
             strict=strict,
+            safe_mode=safe_mode,
         )
     except UnicodeDecodeError as ex:
         raise click.ClickException(UNICODE_ERROR.format(ex))
@@ -1365,6 +1390,7 @@ def upsert(
     load_extension,
     silent,
     strict,
+    safe_mode,
 ):
     """
     Upsert records based on their primary key. Works like 'insert' but if
@@ -1411,6 +1437,7 @@ def upsert(
             load_extension=load_extension,
             silent=silent,
             strict=strict,
+            safe_mode=safe_mode,
         )
     except UnicodeDecodeError as ex:
         raise click.ClickException(UNICODE_ERROR.format(ex))
@@ -1453,6 +1480,7 @@ def bulk(
     no_headers,
     encoding,
     load_extension,
+    safe_mode,
 ):
     """
     Execute parameterized SQL against the provided list of documents.
@@ -1467,6 +1495,10 @@ def bulk(
             update chickens set name = :name where id = :id
         ' -
     """
+    if safe_mode:
+        db = sqlite_utils.Database(path)
+        db.enable_safe_import()
+        db.close()
     try:
         insert_upsert_implementation(
             path=path,
@@ -1499,9 +1531,72 @@ def bulk(
             silent=False,
             bulk_sql=sql,
             functions=functions,
+            safe_mode=safe_mode,
         )
     except (OperationalError, sqlite3.IntegrityError) as e:
         raise click.ClickException(str(e))
+
+
+@cli.command(name="enable-safe-import")
+@click.argument("path", type=click.Path(file_okay=True, dir_okay=False))
+def enable_safe_import(path):
+    """Enable safe import support for PATH."""
+    db = sqlite_utils.Database(path)
+    db.enable_safe_import()
+
+
+@cli.command(name="disable-safe-import")
+@click.argument("path", type=click.Path(file_okay=True, dir_okay=False))
+def disable_safe_import(path):
+    """Disable safe import mode for PATH."""
+    db = sqlite_utils.Database(path)
+    db.disable_safe_import()
+
+
+@cli.command(name="add-import-invariant")
+@click.argument("path", type=click.Path(file_okay=True, dir_okay=False))
+@click.argument("table")
+@click.argument("sql")
+def add_import_invariant(path, table, sql):
+    """Add an import invariant."""
+    db = sqlite_utils.Database(path)
+    db.enable_safe_import()
+    click.echo(db.add_import_invariant(table, sql))
+
+
+@cli.command(name="remove-import-invariant")
+@click.argument("path", type=click.Path(file_okay=True, dir_okay=False))
+@click.argument("table")
+@click.argument("invariant_id")
+def remove_import_invariant(path, table, invariant_id):
+    """Remove an import invariant."""
+    db = sqlite_utils.Database(path)
+    db.remove_import_invariant(table, invariant_id)
+
+
+@cli.command(name="list-import-invariants")
+@click.argument("path", type=click.Path(file_okay=True, dir_okay=False))
+@click.argument("table")
+def list_import_invariants(path, table):
+    """List import invariants for a table."""
+    db = sqlite_utils.Database(path)
+    for invariant in db.list_import_invariants(table):
+        click.echo("{}\t{}".format(invariant["id"], invariant["expression"]))
+
+
+@cli.command(name="validate-import-invariants")
+@click.argument("path", type=click.Path(file_okay=True, dir_okay=False))
+@click.argument("table")
+def validate_import_invariants(path, table):
+    """Validate import invariants and always exit successfully."""
+    db = sqlite_utils.Database(path)
+    result = db.validate_import_invariants(table)
+    if result["valid"]:
+        click.echo("PASS")
+    else:
+        click.echo("FAIL")
+        for failure in result["failures"]:
+            click.echo(failure["id"])
 
 
 @cli.command(name="create-database")
