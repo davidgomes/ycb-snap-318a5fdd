@@ -1229,7 +1229,7 @@ impl<'i, R: RuleType> ParserState<'i, R> {
     }
 
     pub fn match_ranges(mut self: Box<Self>, ranges: &[Range<char>]) -> ParseResult<Box<Self>> {
-        let Some(c) = self.position().as_str().chars().next() else { return Err(self); };
+        let Some(c) = self.input[self.position().pos()..].chars().next() else { return Err(self); };
         if ranges.iter().any(|range| range.contains(&c)) {
             self.position.skip(c.len_utf8());
             return Ok(self);
@@ -1238,7 +1238,7 @@ impl<'i, R: RuleType> ParserState<'i, R> {
     }
 
     pub fn match_negated_ranges(self: Box<Self>, ranges: &[Range<char>]) -> ParseResult<Box<Self>> {
-        let c = self.position().as_str().chars().next();
+        let c = self.input[self.position().pos()..].chars().next();
         if c.is_some_and(|c| !ranges.iter().any(|range| range.contains(&c))) {
             self.match_ranges(&[c.unwrap()..c.unwrap()])
         } else { Err(self) }
