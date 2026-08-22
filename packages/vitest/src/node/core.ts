@@ -18,7 +18,7 @@ import type { TestRunResult } from './types/tests'
 import os, { tmpdir } from 'node:os'
 import { getTasks, hasFailed, limitConcurrency } from '@vitest/runner/utils'
 import { SnapshotManager } from '@vitest/snapshot/manager'
-import { deepClone, deepMerge, nanoid, toArray } from '@vitest/utils/helpers'
+import { deepClone, deepMerge, nanoid, slash, toArray } from '@vitest/utils/helpers'
 import { serializeValue } from '@vitest/utils/serialize'
 import { join, normalize, relative } from 'pathe'
 import { isRunnableDevEnvironment } from 'vite'
@@ -47,6 +47,7 @@ import { BlobReporter, readBlobs } from './reporters/blob'
 import { HangingProcessReporter } from './reporters/hanging-process'
 import { createBenchmarkReporters, createReporters } from './reporters/utils'
 import { VitestResolver } from './resolver'
+import { writeFileDurations } from './sequencers/duration-history'
 import { VitestSpecifications } from './specifications'
 import { StateManager } from './state'
 import { populateProjectsTags } from './tags'
@@ -940,6 +941,25 @@ export class Vitest {
           }
         }
         finally {
+          if (this.config.sequence.recordFileDurations) {
+            try {
+              const durations = new Map<string, number>()
+              for (const file of this.state.getFiles()) {
+                const relativePath = slash(relative(this.config.root, file.filepath)).replace(/^\.\//, '')
+                const duration = file.result?.duration ?? 0
+                durations.set(relativePath, Math.round(duration >= 0 ? duration : 0))
+              }
+              await writeFileDurations(
+                this.config.root,
+                this.config.sequence.durationHistoryPath,
+                this.config.sequence.durationHistoryMaxRuns,
+                this.config.sequence.durationHistoryTTL,
+                durations,
+              )
+            }
+            catch {}
+          }
+
           const coverage = await this.coverageProvider?.generateCoverage({ allTestsRun })
 
           const errors = this.state.getUnhandledErrors()

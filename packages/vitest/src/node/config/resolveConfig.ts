@@ -27,6 +27,7 @@ import { isAgent, isCI, stdProvider } from '../../utils/env'
 import { getWorkersCountByPercentage } from '../../utils/workers'
 import { BaseSequencer } from '../sequencers/BaseSequencer'
 import { RandomSequencer } from '../sequencers/RandomSequencer'
+import { resolveSequenceShardingOptions } from './resolveSequenceSharding'
 
 function resolvePath(path: string, root: string) {
   return normalize(
@@ -778,6 +779,8 @@ export function resolveConfig(
   if (resolved.sequence.sequencer === RandomSequencer || resolved.sequence.shuffle) {
     resolved.sequence.seed ??= Date.now()
   }
+
+  Object.assign(resolved.sequence, resolveSequenceShardingOptions(resolved.sequence))
 
   resolved.typecheck = {
     ...configDefaults.typecheck,

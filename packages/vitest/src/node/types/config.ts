@@ -79,7 +79,16 @@ export interface ProjectName {
   color?: LabelColor
 }
 
-interface SequenceOptions {
+export type ShardStrategy = 'hash' | 'time' | 'round-robin' | 'affinity'
+export type DurationSmoothing = 'latest' | 'average' | 'p95' | 'median'
+export type DurationFallbackStrategy = 'hash' | 'equal-split'
+
+export interface ShardAffinityRule {
+  pattern: string
+  shardIndex: number
+}
+
+export interface SequenceOptions {
   /**
    * Class that handles sorting and sharding algorithm.
    * If you only need to change sorting, you can extend
@@ -140,6 +149,18 @@ interface SequenceOptions {
    * @default 'stack'
    */
   hooks?: SequenceHooks
+  shardStrategy?: ShardStrategy
+  balanceShardsByTime?: boolean
+  recordFileDurations?: boolean
+  durationBasedSorting?: boolean
+  durationHistoryTTL?: number
+  durationHistoryPath?: string
+  durationHistoryMaxRuns?: number
+  durationSmoothing?: DurationSmoothing
+  shardAffinityRules?: ShardAffinityRule[]
+  rebalanceThreshold?: number
+  isolateSlowThreshold?: number
+  durationFallbackStrategy?: DurationFallbackStrategy
 }
 
 export type DepsOptimizationOptions = Omit<
@@ -1189,6 +1210,18 @@ export interface ResolvedConfig
     concurrent?: boolean
     seed: number
     groupOrder: number
+    shardStrategy: ShardStrategy
+    balanceShardsByTime: boolean
+    recordFileDurations: boolean
+    durationBasedSorting: boolean
+    durationHistoryTTL: number
+    durationHistoryPath: string
+    durationHistoryMaxRuns: number
+    durationSmoothing: DurationSmoothing
+    shardAffinityRules: ShardAffinityRule[]
+    rebalanceThreshold: number
+    isolateSlowThreshold: number
+    durationFallbackStrategy: DurationFallbackStrategy
   }
 
   typecheck: Omit<TypecheckConfig, 'enabled'> & {
