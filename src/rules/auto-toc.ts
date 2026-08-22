@@ -10,16 +10,16 @@ type ListStyle = 'bullet' | 'number';
 type OrderedListStyle = 'always-one' | 'increment';
 
 class AutoTocOptions implements Options {
-  listStyle: ListStyle = 'bullet';
-  bulletMarker: string = '-';
-  orderedListStyle: OrderedListStyle = 'always-one';
-  indentSize: number = 2;
-  minLevel: number = 2;
-  maxLevel: number = 6;
-  title: string = '';
-  useExplicitIds: boolean = false;
-  stripFormattingInToc: boolean = false;
-  excludeHeadings: string[] = [];
+  listStyle?: ListStyle = 'bullet';
+  bulletMarker?: string = '-';
+  orderedListStyle?: OrderedListStyle = 'always-one';
+  indentSize?: Number = 2;
+  minLevel?: Number = 2;
+  maxLevel?: Number = 6;
+  title?: string = '';
+  useExplicitIds?: boolean = false;
+  stripFormattingInToc?: boolean = false;
+  excludeHeadings?: string[] = [];
 }
 
 type HeadingInfo = {
@@ -125,8 +125,8 @@ function getExcludedHeadings(options: AutoTocOptions): string[] {
 }
 
 function getHeadings(text: string, tocStart: number, tocEnd: number, options: AutoTocOptions): HeadingInfo[] {
-  const minLevel = options.minLevel ?? 2;
-  const maxLevel = options.maxLevel ?? 6;
+  const minLevel = Number(options.minLevel ?? 2);
+  const maxLevel = Number(options.maxLevel ?? 6);
   const excludedHeadings = getExcludedHeadings(options);
   const headings: HeadingInfo[] = [];
 
@@ -165,8 +165,8 @@ function createAnchor(heading: HeadingInfo, useExplicitIds: boolean, usedAnchors
 }
 
 function createTocItems(headings: HeadingInfo[], options: AutoTocOptions): string[] {
-  const indentSize = Math.max(0, options.indentSize ?? 2);
-  const minLevel = options.minLevel ?? 2;
+  const indentSize = Math.max(0, Number(options.indentSize ?? 2));
+  const minLevel = Number(options.minLevel ?? 2);
   const useNumberedList = options.listStyle === 'number';
   const bulletMarker = options.bulletMarker || '-';
   const usedAnchors = new Map<string, number>();
@@ -271,7 +271,6 @@ export default class AutoToc extends RuleBuilder<AutoTocOptions> {
       }),
     ];
   }
-
   get optionBuilders(): OptionBuilderBase<AutoTocOptions>[] {
     return [
       new DropdownOptionBuilder<AutoTocOptions, ListStyle>({
