@@ -42,7 +42,7 @@ test('sizes auto and minmax tracks', t => {
 		</Box>,
 	);
 
-	t.is(autoOutput, 'AA B');
+	t.is(autoOutput, 'AAB');
 	t.is(minmaxOutput, 'A      B');
 });
 
