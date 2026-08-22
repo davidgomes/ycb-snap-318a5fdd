@@ -18,6 +18,13 @@ func TestErrorHandlingFunctionForm(t *testing.T) {
 	require.Equal(t, 1, got)
 }
 
+func TestErrorHandlingBuiltinArity(t *testing.T) {
+	for _, code := range []string{`throw()`, `throw(1, 2)`, `errtype()`, `errtype(1, 2)`} {
+		_, err := expr.Eval(code, nil)
+		require.Error(t, err)
+	}
+}
+
 func TestErrorHandlingBlockForm(t *testing.T) {
 	tests := []struct {
 		name string
@@ -57,6 +64,10 @@ func TestErrorHandlingFinallyErrorOverridesResult(t *testing.T) {
 	_, err := expr.Eval(`try { 1 } catch { 2 } finally { 1 % 0 }`, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "integer divide by zero")
+
+	_, err = expr.Eval(`try { throw("body") } catch { throw("handler") } finally { 3 }`, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "handler")
 }
 
 func TestErrorHandlingRetry(t *testing.T) {
