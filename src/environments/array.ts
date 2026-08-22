@@ -112,9 +112,10 @@ function parseArray(
         leqno?: boolean;
     },
     style: StyleStr,
+    envName?: string,
 ): ParseNode<"array"> {
     parser.gullet.beginGroup();
-    parser.gullet.macros.set("\\@array@multicolumn", "1");
+    parser.gullet.macros.set("\\@array@multicolumn", envName || "");
     if (!singleRow) {
         // \cr is equivalent to \\ without the optional size argument (see below)
         // TODO: provide helpful error when \cr is used outside array environment
@@ -765,7 +766,8 @@ const alignedHandler = function(context: EnvContextLike, args: AnyParseNode[]) {
             maxNumCols: isSplit ? 2 : undefined,
             leqno: context.parser.settings.leqno,
         },
-        "display"
+        "display",
+        context.envName
     );
 
     // Determining number of columns.
@@ -880,7 +882,7 @@ defineEnvironment({
             hskipBeforeAndAfter: true, // \@preamble in lttab.dtx
             maxNumCols: cols.length,
         };
-        return parseArray(context.parser, res, dCellStyle(context.envName));
+        return parseArray(context.parser, res, dCellStyle(context.envName), context.envName);
     },
     htmlBuilder,
     mathmlBuilder,
@@ -944,7 +946,7 @@ defineEnvironment({
             }
         }
         const res: ParseNode<"array"> =
-            parseArray(context.parser, payload, dCellStyle(context.envName));
+            parseArray(context.parser, payload, dCellStyle(context.envName), context.envName);
         // Populate cols with the correct number of column alignment specs.
         const numCols = Math.max(0, ...res.body.map(row => row.length));
         res.cols = new Array(numCols).fill(
@@ -971,7 +973,7 @@ defineEnvironment({
     },
     handler(context) {
         const payload: Parameters<typeof parseArray>[1] = {arraystretch: 0.5};
-        const res = parseArray(context.parser, payload, "script");
+        const res = parseArray(context.parser, payload, "script", context.envName);
         res.colSeparationType = "small";
         return res;
     },
@@ -1057,7 +1059,7 @@ defineEnvironment({
             }],
         };
         const res: ParseNode<"array"> =
-            parseArray(context.parser, payload, dCellStyle(context.envName));
+            parseArray(context.parser, payload, dCellStyle(context.envName), context.envName);
         return {
             type: "leftright",
             mode: context.mode,
@@ -1112,7 +1114,7 @@ defineEnvironment({
             emptySingleRow: true,
             leqno: context.parser.settings.leqno,
         };
-        return parseArray(context.parser, res, "display");
+        return parseArray(context.parser, res, "display", context.envName);
     },
     htmlBuilder,
     mathmlBuilder,
@@ -1147,7 +1149,7 @@ defineEnvironment({
             maxNumCols: 1,
             leqno: context.parser.settings.leqno,
         };
-        return parseArray(context.parser, res, "display");
+        return parseArray(context.parser, res, "display", context.envName);
     },
     htmlBuilder,
     mathmlBuilder,
@@ -1179,7 +1181,11 @@ defineFunction({
         allowedInMath: true,
     },
     handler({parser}, args) {
-        if (parser.gullet.macros.get("\\@array@multicolumn") !== "1") {
+        const allowedEnvironments = new Set([
+            "array", "matrix", "pmatrix", "bmatrix", "Bmatrix", "vmatrix",
+            "Vmatrix", "cases", "rcases", "aligned", "smallmatrix",
+        ]);
+        if (!allowedEnvironments.has(parser.gullet.macros.get("\\@array@multicolumn") || "")) {
             throw new ParseError("\\multicolumn valid only within array environments");
         }
         const text = (arg: AnyParseNode) => {
