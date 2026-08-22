@@ -257,6 +257,20 @@ function parseStatementListItem(
       return parseLexicalDeclaration(parser, context, scope, privateScope, BindingKind.Const, Origin.None);
     case Token.LetKeyword:
       return parseLetIdentOrVarDeclarationStatement(parser, context, scope, privateScope, origin);
+    case Token.UsingKeyword:
+      if (parser.options.next)
+        return parseUsingDeclarationStatement(parser, context, scope, privateScope, origin, false);
+      {
+        let expr: ESTree.Identifier | ESTree.Expression = parseIdentifier(parser, context);
+        expr = parseMemberOrUpdateExpression(parser, context, privateScope, expr, 0, 0, start);
+        expr = parseAssignmentExpression(parser, context, privateScope, 0, 0, start, expr as ESTree.ArgumentExpression);
+        return parseExpressionStatement(parser, context, expr, start);
+      }
+    case Token.AwaitKeyword:
+      if (parser.options.next && isAwaitUsing(parser)) {
+        return parseUsingDeclarationStatement(parser, context, scope, privateScope, origin, true);
+      }
+      return parseStatement(parser, context, scope, privateScope, origin, labels, 1);
     // ExportDeclaration
     case Token.ExportKeyword:
       parser.report(Errors.InvalidImportExportSloppy, 'export');
@@ -1513,6 +1527,80 @@ function parseDoWhileStatement(
 }
 
 /**
+ * Parses a `using` declaration.
+ */
+function parseUsingDeclarationStatement(
+  parser: Parser,
+  context: Context,
+  scope: Scope | undefined,
+  privateScope: PrivateScope | undefined,
+  origin: Origin,
+  awaitUsing: boolean,
+): ESTree.VariableDeclaration | ESTree.ExpressionStatement {
+  const start = parser.tokenStart;
+  const keywordStart: Location = {
+    index: parser.startIndex,
+    line: parser.startLine,
+    column: parser.startColumn,
+  };
+
+  if (awaitUsing && parser.getToken() === Token.AwaitKeyword) {
+    nextToken(parser, context);
+    if ((parser.flags & Flags.NewLine) !== 0 || parser.getToken() !== Token.UsingKeyword) {
+      parser.report(Errors.Unexpected);
+    }
+  }
+
+  const keywordEnd: Location = {
+    index: parser.startIndex + parser.tokenValue.length,
+    line: parser.startLine,
+    column: parser.startColumn + parser.tokenValue.length,
+  };
+
+  let expr: ESTree.Identifier | ESTree.Expression = parseIdentifier(parser, context);
+
+  if ((parser.flags & Flags.NewLine) !== 0 || (parser.getToken() & (Token.IsIdentifier | Token.IsPatternStart)) === 0) {
+    expr = parseMemberOrUpdateExpression(parser, context, privateScope, expr, 0, 0, start);
+    expr = parseAssignmentExpression(parser, context, privateScope, 0, 0, start, expr as ESTree.ArgumentExpression);
+    return parseExpressionStatement(parser, context, expr, start);
+  }
+
+  if (awaitUsing && (context & (Context.InAwaitContext | Context.Module)) === 0) {
+    throw new ParseError(keywordStart, keywordEnd, Errors.AwaitUsingOutsideAsync);
+  }
+  if (!awaitUsing && (context & Context.InGlobal) !== 0 && (origin & Origin.ForStatement) === 0) {
+    throw new ParseError(keywordStart, keywordEnd, Errors.UsingInGlobalScope);
+  }
+
+  if (parser.getToken() & Token.IsPatternStart) parser.report(Errors.UsingDestructuring);
+  const declarations = parseVariableDeclarationList(
+    parser,
+    context,
+    scope,
+    privateScope,
+    awaitUsing ? BindingKind.AwaitUsing : BindingKind.Using,
+    origin,
+  );
+
+  if ((origin & Origin.ForStatement) === 0) {
+    matchOrInsertSemicolon(parser, context | Context.AllowRegExp);
+  }
+
+  return parser.finishNode<ESTree.VariableDeclaration>(
+    {
+      type: 'VariableDeclaration',
+      kind: awaitUsing ? 'await using' : 'using',
+      declarations,
+    },
+    start,
+  );
+}
+
+function isAwaitUsing(parser: Parser): boolean {
+  return /^await[^\S\r\n]+using\b/.test(parser.source.slice(parser.tokenIndex));
+}
+
+/**
  * Because we are not doing any backtracking - this parses `let` as an identifier
  * or a variable declaration statement.
  *
@@ -1800,6 +1888,12 @@ function parseVariableDeclaration(
   if (parser.getToken() === Token.Assign) {
     nextToken(parser, context | Context.AllowRegExp);
     init = parseExpression(parser, context, privateScope, 1, 0, parser.tokenStart);
+    if (kind & BindingKind.Using) {
+      if (origin & Origin.ForStatement) {
+        if (parser.getToken() === Token.InKeyword) parser.report(Errors.UsingInForIn);
+        parser.report(Errors.ForInOfLoopInitializer, 'of');
+      }
+    }
     if (origin & Origin.ForStatement || (token & Token.IsPatternStart) === 0) {
       // Lexical declarations in for-in / for-of loops can't be initialized
 
@@ -1818,9 +1912,11 @@ function parseVariableDeclaration(
     }
     // Normal const declarations, and const declarations in for(;;) heads, must be initialized.
   } else if (
-    (kind & BindingKind.Const || (token & Token.IsPatternStart) > 0) &&
-    (parser.getToken() & Token.IsInOrOf) !== Token.IsInOrOf
+    ((kind & BindingKind.Using) !== 0 && (parser.getToken() & Token.IsInOrOf) !== Token.IsInOrOf) ||
+    ((kind & BindingKind.Const || (token & Token.IsPatternStart) > 0) &&
+      (parser.getToken() & Token.IsInOrOf) !== Token.IsInOrOf)
   ) {
+    if (kind & BindingKind.Using) parser.report(Errors.UsingMissingInitializer);
     parser.report(Errors.DeclarationMissingInitializer, kind & BindingKind.Const ? 'const' : 'destructuring');
   }
 
@@ -1945,6 +2041,15 @@ function parseForStatement(
 
       parser.assignable = AssignmentKind.Assignable;
     }
+  } else if (parser.options.next && token === Token.UsingKeyword) {
+    init = parseUsingDeclarationStatement(parser, context, scope, privateScope, Origin.ForStatement, false);
+    parser.assignable = AssignmentKind.Assignable;
+    isVarDecl = true;
+  } else if (parser.options.next && token === Token.AwaitKeyword && isAwaitUsing(parser)) {
+    nextToken(parser, context);
+    init = parseUsingDeclarationStatement(parser, context, scope, privateScope, Origin.ForStatement, true);
+    parser.assignable = AssignmentKind.Assignable;
+    isVarDecl = true;
   } else if (token === Token.Semicolon) {
     if (forAwait) parser.report(Errors.InvalidForAwait);
   } else if ((token & Token.IsPatternStart) === Token.IsPatternStart) {
@@ -2025,6 +2130,9 @@ function parseForStatement(
       );
     }
 
+    if (init.type === 'VariableDeclaration' && (init.kind === 'using' || init.kind === 'await using')) {
+      parser.report(Errors.UsingInForIn);
+    }
     if (parser.assignable & AssignmentKind.CannotAssign) parser.report(Errors.CantAssignToInOfForLoop, 'in');
 
     reinterpretToPattern(parser, init);

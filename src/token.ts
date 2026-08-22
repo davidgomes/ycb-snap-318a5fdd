@@ -196,6 +196,7 @@ export const enum Token {
 
   // JSX
   JSXText           = 137,
+  UsingKeyword      = 138 | Contextual | IsExpressionStart | IsIdentifier,
 }
 
 export const KeywordDescTable = [
@@ -241,7 +242,7 @@ export const KeywordDescTable = [
 
   'BigIntLiteral', '??', '?.', 'WhiteSpace', 'Illegal', 'LineTerminator', 'PrivateField',
 
-  'Template', '@', 'target', 'meta', 'LineFeed', 'Escaped', 'JSXText'
+  'Template', '@', 'target', 'meta', 'LineFeed', 'Escaped', 'JSXText', 'using'
 ];
 
 export const descKeywordTable: { [key: string]: Token } =  {
@@ -303,4 +304,5 @@ export const descKeywordTable: { [key: string]: Token } =  {
   target: Token.Target,
   meta: Token.Meta,
   accessor: Token.AccessorKeyword,
+  using: Token.UsingKeyword,
 }
