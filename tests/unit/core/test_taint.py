@@ -129,3 +129,27 @@ requests.get(url)
             1,
             len(self._issues(source, injection_taint.ssrf)),
         )
+
+    def test_imported_sources_and_keyword_sink_arguments(self):
+        source = """
+from os import environ
+from sys import argv
+from flask import make_response
+import subprocess as process
+
+process.run(args=argv, shell=True)
+open(file=environ)
+make_response(response=environ)
+"""
+        self.assertEqual(
+            1,
+            len(self._issues(source, injection_taint.shell_injection)),
+        )
+        self.assertEqual(
+            1,
+            len(self._issues(source, injection_taint.path_traversal)),
+        )
+        self.assertEqual(
+            1,
+            len(self._issues(source, injection_taint.xss)),
+        )

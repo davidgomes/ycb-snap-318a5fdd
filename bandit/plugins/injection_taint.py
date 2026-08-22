@@ -74,13 +74,13 @@ def shell_injection(context):
     """Flag tainted values passed to shell command execution."""
     name = _call_name(context)
     if name in {"os.system", "os.popen"}:
-        command = _argument(context)
+        command = _argument(context, {"command", "cmd"})
     elif name in {
         "subprocess.call",
         "subprocess.run",
         "subprocess.Popen",
     } and _shell_true(context):
-        command = _argument(context)
+        command = _argument(context, {"args", "command"})
     else:
         return None
 
@@ -132,7 +132,12 @@ def xss(context):
         "make_response",
         "flask.make_response",
         "markupsafe.Markup",
-    } and _tainted(context, _argument(context)):
+    } and _tainted(
+        context,
+        _argument(
+            context, {"body", "response", "s", "source", "template"}
+        ),
+    ):
         return _finding(
             context,
             issue.Cwe.XSS,

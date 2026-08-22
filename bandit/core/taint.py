@@ -171,7 +171,7 @@ class TaintAnalyzer:
             return self.call_name(node) in {"input", "builtins.input"} or (
                 self._is_request_or_environment_access(node.func)
             )
-        if isinstance(node, (ast.Attribute, ast.Subscript)):
+        if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)):
             value = node.value if isinstance(node, ast.Subscript) else node
             return self._is_request_or_environment_access(value)
         return False
