@@ -10,6 +10,12 @@ import {
   wrappedDependencySourceMarker,
 } from "./dependency.ts";
 import { dispatchByMode, dispatchIterableByMode } from "./mode-dispatch.ts";
+import {
+  buildOptionReferenceMap,
+  type OptionDependencyContext,
+  isOptionDependencyHidden,
+  validateOptionDependency,
+} from "./option-dependency.ts";
 import type { DocEntry, DocFragment, DocSection } from "./doc.ts";
 import {
   type Message,
@@ -2085,6 +2091,7 @@ function* suggestObjectSync<
   context: ParserContext<{ readonly [K in keyof T]: unknown }>,
   prefix: string,
   parserPairs: [string | symbol, Parser<"sync", unknown, unknown>][],
+  dependencyContext?: OptionDependencyContext,
 ): Generator<Suggestion> {
   // Build dependency registry from all parsed fields
   const registry = context.dependencyRegistry instanceof DependencyRegistry
@@ -2108,6 +2115,12 @@ function* suggestObjectSync<
 
     // Find if any parser has this token as an option requiring a value
     for (const [field, parser] of parserPairs) {
+      if (
+        dependencyContext &&
+        isOptionDependencyHidden(parser, dependencyContext)
+      ) {
+        continue;
+      }
       if (isOptionRequiringValue(parser.usage, lastToken)) {
         // Only get suggestions from the parser that owns this option
         const fieldState =
@@ -2128,6 +2141,12 @@ function* suggestObjectSync<
   // Default behavior: try getting suggestions from each parser
   const suggestions: Suggestion[] = [];
   for (const [field, parser] of parserPairs) {
+    if (
+      dependencyContext &&
+      isOptionDependencyHidden(parser, dependencyContext)
+    ) {
+      continue;
+    }
     const fieldState = (context.state && typeof context.state === "object" &&
         field in context.state)
       ? (context.state as Record<string | symbol, unknown>)[field]
@@ -2154,6 +2173,7 @@ async function* suggestObjectAsync<
   context: ParserContext<{ readonly [K in keyof T]: unknown }>,
   prefix: string,
   parserPairs: readonly [string | symbol, Parser<Mode, unknown, unknown>][],
+  dependencyContext?: OptionDependencyContext,
 ): AsyncGenerator<Suggestion> {
   // Build dependency registry from all parsed fields
   const registry = context.dependencyRegistry instanceof DependencyRegistry
@@ -2174,6 +2194,12 @@ async function* suggestObjectAsync<
 
     // Find if any parser has this token as an option requiring a value
     for (const [field, parser] of parserPairs) {
+      if (
+        dependencyContext &&
+        isOptionDependencyHidden(parser, dependencyContext)
+      ) {
+        continue;
+      }
       if (isOptionRequiringValue(parser.usage, lastToken)) {
         // Only get suggestions from the parser that owns this option
         const fieldState =
@@ -2197,6 +2223,12 @@ async function* suggestObjectAsync<
   // Default behavior: try getting suggestions from each parser
   const suggestions: Suggestion[] = [];
   for (const [field, parser] of parserPairs) {
+    if (
+      dependencyContext &&
+      isOptionDependencyHidden(parser, dependencyContext)
+    ) {
+      continue;
+    }
     const fieldState = (context.state && typeof context.state === "object" &&
         field in context.state)
       ? (context.state as Record<string | symbol, unknown>)[field]
@@ -2660,6 +2692,16 @@ export function object<
     ? "async"
     : "sync";
 
+  const optionReferenceMap = buildOptionReferenceMap(parsers);
+
+  const buildDependencyContext = (
+    states: Readonly<Record<string | symbol, unknown>>,
+  ): OptionDependencyContext => ({
+    states,
+    parsers,
+    referenceMap: optionReferenceMap,
+  });
+
   // Helper function for sync parsing of a single field
   type ParseResult = ParserResult<{ readonly [K in keyof T]: unknown }>;
   const getInitialError = (
@@ -2983,6 +3025,19 @@ export function object<
               unknown
             >;
 
+            const dependencyError = validateOptionDependency(
+              fieldKey,
+              fieldParser,
+              fieldResolvedState,
+              buildDependencyContext(resolvedState as Record<
+                string | symbol,
+                unknown
+              >),
+            );
+            if (dependencyError !== undefined) {
+              return { success: false as const, error: dependencyError };
+            }
+
             // If this field was pre-completed in Phase 1 and is a DependencySourceState,
             // extract the value directly since complete() was already called.
             if (
@@ -3083,6 +3138,19 @@ export function object<
               (resolvedState as Record<string | symbol, unknown>)[fieldKey];
             const fieldParser = parsers[field];
 
+            const dependencyError = validateOptionDependency(
+              fieldKey,
+              fieldParser,
+              fieldResolvedState,
+              buildDependencyContext(resolvedState as Record<
+                string | symbol,
+                unknown
+              >),
+            );
+            if (dependencyError !== undefined) {
+              return { success: false as const, error: dependencyError };
+            }
+
             // If this field was pre-completed in Phase 1 and is a DependencySourceState,
             // extract the value directly since complete() was already called.
             if (
@@ -3113,6 +3181,13 @@ export function object<
       context: ParserContext<{ readonly [K in keyof T]: unknown }>,
       prefix: string,
     ) {
+      const dependencyContext = context.state &&
+          typeof context.state === "object"
+        ? buildDependencyContext(
+          context.state as Record<string | symbol, unknown>,
+        )
+        : buildDependencyContext(initialState);
+
       return dispatchIterableByMode(
         combinedMode,
         () => {
@@ -3120,13 +3195,19 @@ export function object<
             string | symbol,
             Parser<"sync", unknown, unknown>,
           ][];
-          return suggestObjectSync(context, prefix, syncParserPairs);
+          return suggestObjectSync(
+            context,
+            prefix,
+            syncParserPairs,
+            dependencyContext,
+          );
         },
         () =>
           suggestObjectAsync(
             context,
             prefix,
             parserPairs as [string | symbol, Parser<Mode, unknown, unknown>][],
+            dependencyContext,
           ),
       );
     },
@@ -3134,7 +3215,15 @@ export function object<
       state: DocState<{ readonly [K in keyof T]: unknown }>,
       defaultValue?: { readonly [K in keyof T]: unknown },
     ) {
+      const dependencyStates = state.kind === "available"
+        ? state.state as Record<string | symbol, unknown>
+        : initialState;
+      const dependencyContext = buildDependencyContext(dependencyStates);
+
       const fragments = parserPairs.flatMap(([field, p]) => {
+        if (isOptionDependencyHidden(p, dependencyContext)) {
+          return [];
+        }
         const fieldState: DocState<unknown> = state.kind === "unavailable"
           ? { kind: "unavailable" }
           : { kind: "available", state: state.state[field] };

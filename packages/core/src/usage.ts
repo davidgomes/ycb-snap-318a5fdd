@@ -1,3 +1,4 @@
+import type { DependsOnConfig } from "./option-dependency.ts";
 import type { NonEmptyString } from "./nonempty.ts";
 
 /**
@@ -65,6 +66,11 @@ export type UsageTerm =
      * @since 0.9.0
      */
     readonly hidden?: boolean;
+    /**
+     * Conditional dependency metadata for this option.
+     * @since 0.10.0
+     */
+    readonly dependsOn?: DependsOnConfig;
   }
   /**
    * A command term, which represents a subcommand in the command-line

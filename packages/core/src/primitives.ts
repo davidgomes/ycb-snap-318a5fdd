@@ -76,6 +76,11 @@ import {
   DEFAULT_FIND_SIMILAR_OPTIONS,
   findSimilar,
 } from "./suggestion.ts";
+import {
+  type DependsOnConfig,
+  type OptionDependencyCondition,
+  normalizeDependsOn,
+} from "./option-dependency.ts";
 import type { OptionName, UsageTerm } from "./usage.ts";
 import { extractCommandNames, extractOptionNames } from "./usage.ts";
 import {
@@ -128,6 +133,13 @@ export interface OptionOptions {
    * @since 0.9.0
    */
   readonly hidden?: boolean;
+
+  /**
+   * Declares that this option depends on the presence or value of other
+   * options.
+   * @since 0.10.0
+   */
+  readonly dependsOn?: DependsOnConfig;
 
   /**
    * Error message customization options.
@@ -650,6 +662,7 @@ export function option<M extends Mode, T>(
             type: "option",
             names: optionNames,
             ...(options.hidden && { hidden: true }),
+            ...(options.dependsOn && { dependsOn: options.dependsOn }),
           }],
         }
         : {
@@ -657,6 +670,7 @@ export function option<M extends Mode, T>(
           names: optionNames,
           metavar: valueParser.metavar,
           ...(options.hidden && { hidden: true }),
+          ...(options.dependsOn && { dependsOn: options.dependsOn }),
         },
     ],
     initialState: valueParser == null
@@ -2320,4 +2334,160 @@ export function passThrough(
       return `passThrough(${format})`;
     },
   };
+}
+
+function optionWithDependsOn(
+  dependsOn: DependsOnConfig,
+  args: readonly unknown[],
+): ReturnType<typeof option> {
+  const lastArg = args.at(-1);
+  const secondLastArg = args.at(-2);
+
+  if (
+    typeof lastArg === "object" && lastArg != null &&
+    !Array.isArray(lastArg) &&
+    !isValueParser(lastArg as ValueParser<Mode, unknown>)
+  ) {
+    const options = { ...(lastArg as OptionOptions), dependsOn };
+    if (isValueParser(secondLastArg as ValueParser<Mode, unknown>)) {
+      return option(
+        ...(args.slice(0, -1) as [...readonly OptionName[], ValueParser<
+          Mode,
+          unknown
+        >]),
+        options,
+      );
+    }
+    return option(
+      ...(args.slice(0, -1) as readonly OptionName[]),
+      options,
+    );
+  }
+
+  if (isValueParser(lastArg as ValueParser<Mode, unknown>)) {
+    return option(
+      ...(args as readonly [...readonly OptionName[], ValueParser<Mode, unknown>]),
+      { dependsOn },
+    );
+  }
+
+  return option(
+    ...(args as readonly OptionName[]),
+    { dependsOn },
+  );
+}
+
+/**
+ * Creates an option that is available only when a dependency condition is
+ * satisfied. When the option is used, the dependency must be satisfied.
+ *
+ * @param condition The dependency condition or full {@link DependsOnConfig}.
+ * @param args The same arguments accepted by {@link option}.
+ * @returns An option parser equivalent to
+ *          `option(..., { dependsOn: { ..., required: true } })`.
+ * @since 0.10.0
+ */
+export function requiredWhen(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly OptionName[]
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+
+export function requiredWhen<M extends Mode, T>(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly [...readonly OptionName[], ValueParser<M, T>]
+): Parser<M, T, ValueParserResult<T> | undefined>;
+
+export function requiredWhen<M extends Mode, T>(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly [...readonly OptionName[], ValueParser<M, T>, OptionOptions]
+): Parser<M, T, ValueParserResult<T> | undefined>;
+
+export function requiredWhen(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly [...readonly OptionName[], OptionOptions]
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+
+export function requiredWhen(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly unknown[]
+): Parser<Mode, unknown, unknown> {
+  return optionWithDependsOn(
+    normalizeDependsOn(condition, { required: true }),
+    args,
+  );
+}
+
+/**
+ * Creates an option that is hidden unless a dependency condition is satisfied.
+ * The option may still be parsed when provided explicitly.
+ *
+ * @param condition The dependency condition or full {@link DependsOnConfig}.
+ * @param args The same arguments accepted by {@link option}.
+ * @returns An option parser equivalent to
+ *          `option(..., { dependsOn: { ..., required: false } })`.
+ * @since 0.10.0
+ */
+export function optionalWhen(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly OptionName[]
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+
+export function optionalWhen<M extends Mode, T>(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly [...readonly OptionName[], ValueParser<M, T>]
+): Parser<M, T, ValueParserResult<T> | undefined>;
+
+export function optionalWhen<M extends Mode, T>(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly [...readonly OptionName[], ValueParser<M, T>, OptionOptions]
+): Parser<M, T, ValueParserResult<T> | undefined>;
+
+export function optionalWhen(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly [...readonly OptionName[], OptionOptions]
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+
+export function optionalWhen(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly unknown[]
+): Parser<Mode, unknown, unknown> {
+  return optionWithDependsOn(
+    normalizeDependsOn(condition, { required: false }),
+    args,
+  );
+}
+
+/**
+ * Creates an option whose availability depends on other options.
+ *
+ * @param condition The dependency condition or full {@link DependsOnConfig}.
+ * @param args The same arguments accepted by {@link option}.
+ * @returns An option parser with the given dependency configuration.
+ * @since 0.10.0
+ */
+export function conditionalOption(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly OptionName[]
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+
+export function conditionalOption<M extends Mode, T>(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly [...readonly OptionName[], ValueParser<M, T>]
+): Parser<M, T, ValueParserResult<T> | undefined>;
+
+export function conditionalOption<M extends Mode, T>(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly [...readonly OptionName[], ValueParser<M, T>, OptionOptions]
+): Parser<M, T, ValueParserResult<T> | undefined>;
+
+export function conditionalOption(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly [...readonly OptionName[], OptionOptions]
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+
+export function conditionalOption(
+  condition: OptionDependencyCondition | DependsOnConfig,
+  ...args: readonly unknown[]
+): Parser<Mode, unknown, unknown> {
+  return optionWithDependsOn(normalizeDependsOn(condition), args);
 }
