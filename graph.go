@@ -301,7 +301,7 @@ func (g *taskGraph) depths() [][]string {
 	groups := make([][]string, max+1)
 	for name := range g.nodes {
 		d := depth(name)
-		groups[max-d] = append(groups[max-d], name)
+		groups[d] = append(groups[d], name)
 	}
 	for _, group := range groups {
 		sort.Strings(group)
