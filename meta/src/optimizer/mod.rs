@@ -27,6 +27,7 @@ mod restorer;
 mod rotator;
 mod skipper;
 mod unroller;
+mod charclass;
 
 /// Takes pest's ASTs and optimizes them
 pub fn optimize(rules: Vec<Rule>) -> Vec<OptimizedRule> {
@@ -46,6 +47,7 @@ pub fn optimize(rules: Vec<Rule>) -> Vec<OptimizedRule> {
     optimized
         .into_iter()
         .map(|rule| restorer::restore_on_err(rule, &optimized_map))
+        .map(charclass::coalesce)
         .collect()
 }
 
@@ -130,6 +132,10 @@ pub enum OptimizedExpr {
     Insens(String),
     /// Matches one character in the range, e.g. `'a'..'z'`
     Range(String, String),
+    /// Matches one character from merged ranges.
+    CharClass(Vec<(String, String)>),
+    /// Matches one character outside merged ranges.
+    NegCharClass(Vec<(String, String)>),
     /// Matches the rule with the given name, e.g. `a`
     Ident(String),
     /// Matches a custom part of the stack, e.g. `PEEK[..]`
@@ -278,6 +284,8 @@ impl core::fmt::Display for OptimizedExpr {
                 let end = end.chars().next().expect("Empty range end.");
                 write!(f, "({:?}..{:?})", start, end)
             }
+            OptimizedExpr::CharClass(ranges) => write!(f, "[{}]", ranges.iter().map(|(s, e)| format!("{:?}..{:?}", s.chars().next().unwrap(), e.chars().next().unwrap())).collect::<Vec<_>>().join(", ")),
+            OptimizedExpr::NegCharClass(ranges) => write!(f, "[^{}]", ranges.iter().map(|(s, e)| format!("{:?}..{:?}", s.chars().next().unwrap(), e.chars().next().unwrap())).collect::<Vec<_>>().join(", ")),
             OptimizedExpr::Ident(id) => write!(f, "{}", id),
             OptimizedExpr::PeekSlice(start, end) => match end {
                 Some(end) => write!(f, "PEEK[{}..{}]", start, end),

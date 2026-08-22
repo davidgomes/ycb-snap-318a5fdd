@@ -434,6 +434,19 @@ fn generate_expr(expr: OptimizedExpr) -> TokenStream {
                 state.match_range(#start..#end)
             }
         }
+        OptimizedExpr::CharClass(ranges) | OptimizedExpr::NegCharClass(ranges) => {
+            let negated = matches!(expr, OptimizedExpr::NegCharClass(_));
+            let checks = ranges.into_iter().map(|(start, end)| {
+                let start = start.chars().next().unwrap();
+                let end = end.chars().next().unwrap();
+                quote! { #start..#end }
+            });
+            if negated {
+                quote! { state.match_negated_ranges(&[#(#checks),*]) }
+            } else {
+                quote! { state.match_ranges(&[#(#checks),*]) }
+            }
+        }
         OptimizedExpr::Ident(ident) => {
             let ident = format_ident!("r#{}", ident);
             quote! { self::#ident(state) }
