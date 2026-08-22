@@ -95,6 +95,47 @@ func TestShapeIndexEncodeDecodeEmpty(t *testing.T) {
 	}
 }
 
+func TestShapeIndexEncodeDecodeZeroEdgeShapes(t *testing.T) {
+	emptyPolyline := Polyline{}
+	emptyPoints := PointVector{}
+	emptyLaxPolyline := LaxPolylineFromPoints(nil)
+	emptyLaxLoop := LaxLoopFromPoints(nil)
+	emptyLaxPolygon := LaxPolygonFromPoints(nil)
+	fullLaxPolygon := LaxPolygonFromPoints([][]Point{nil})
+	emptyPolygon := &Polygon{}
+
+	index := NewShapeIndex()
+	shapes := []Shape{
+		EmptyLoop(), FullLoop(), &emptyPolygon, FullPolygon(),
+		&emptyPolyline, &emptyPoints, emptyLaxPolyline, emptyLaxLoop,
+		emptyLaxPolygon, fullLaxPolygon,
+	}
+	for _, shape := range shapes {
+		index.Add(shape)
+	}
+
+	var encoded bytes.Buffer
+	if err := index.Encode(&encoded); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	decoded := NewShapeIndex()
+	if err := decoded.Decode(&encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	for id, want := range shapes {
+		got := decoded.Shape(int32(id))
+		if got == nil {
+			t.Fatalf("decoded shape %d is nil", id)
+		}
+		if got.NumEdges() != want.NumEdges() || got.NumChains() != want.NumChains() ||
+			got.IsEmpty() != want.IsEmpty() || got.IsFull() != want.IsFull() {
+			t.Errorf("shape %d properties did not round trip", id)
+		}
+	}
+	quadraticValidate(t, decoded)
+	testIteratorMethods(t, decoded)
+}
+
 func TestShapeIndexDecodeRejectsMalformedInput(t *testing.T) {
 	index := NewShapeIndex()
 	pointVector := PointVector(parsePoints("0:0"))
