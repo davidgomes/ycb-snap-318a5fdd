@@ -1,0 +1,23 @@
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: Backend
+metadata:
+  name: dfp-backend
+  namespace: kgateway-base
+spec:
+  type: DynamicForwardProxy
+  dynamicForwardProxy: {}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  namespace: kgateway-base
+  name: route-dfp
+spec:
+  parentRefs:
+    - name: gateway
+      namespace: kgateway-base
+  rules:
+    - backendRefs:
+        - name: dfp-backend
+          group: gateway.kgateway.dev
+          kind: Backend

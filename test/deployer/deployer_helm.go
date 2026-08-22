@@ -1,0 +1,415 @@
+package deployer
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	envoybootstrapv3 "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
+	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gwxv1a1 "sigs.k8s.io/gateway-api/apisx/v1alpha1"
+	"sigs.k8s.io/yaml"
+
+	"github.com/kgateway-dev/kgateway/v2/pkg/apiclient"
+	pkgdeployer "github.com/kgateway-dev/kgateway/v2/pkg/deployer"
+	internaldeployer "github.com/kgateway-dev/kgateway/v2/pkg/kgateway/deployer"
+	"github.com/kgateway-dev/kgateway/v2/pkg/pluginsdk/collections"
+	"github.com/kgateway-dev/kgateway/v2/pkg/utils/envutils"
+	"github.com/kgateway-dev/kgateway/v2/pkg/validator"
+	"github.com/kgateway-dev/kgateway/v2/test/testutils"
+)
+
+type HelmTestCase struct {
+	Name   string
+	Inputs *pkgdeployer.Inputs
+	// InputFile is just the name of the manifest omitting the file extension suffix
+	InputFile string
+	// Validate is an optional function to run additional validation on the output YAML
+	Validate func(t *testing.T, outputYaml string)
+	// HelmValuesGeneratorOverride is an optional function to modify deployer inputs before rendering.
+	// This is useful for tests that need special configuration like TLS.
+	HelmValuesGeneratorOverride func(inputs *pkgdeployer.Inputs) pkgdeployer.HelmValuesGenerator
+}
+
+type DeployerTester struct {
+	ControllerName    string
+	ClassName         string
+	WaypointClassName string
+}
+
+// NoSecurityContextValidator returns a validation function that ensures no securityContext appears in output.
+// Use this for null-based deletion with server-side apply, which completely removes the field.
+func NoSecurityContextValidator() func(t *testing.T, outputYaml string) {
+	return func(t *testing.T, outputYaml string) {
+		t.Helper()
+		assert.NotContains(t, outputYaml, "securityContext:",
+			"output YAML should not contain securityContext when omitDefaultSecurityContext is true")
+	}
+}
+
+// EmptySecurityContextValidator returns a validation function that allows
+// securityContext: {} but ensures no actual security values are configured.
+// Use this for $patch: delete, which sets securityContext to empty struct.
+// OpenShift treats an empty securityContext the same as a nonexistent one --
+// the SCC (by default, `restricted-v2`) will fill in the securityContext.
+func EmptySecurityContextValidator() func(t *testing.T, outputYaml string) {
+	return func(t *testing.T, outputYaml string) {
+		t.Helper()
+		// These are actual security values that should NOT be present when using $patch: delete
+		forbiddenValues := []string{
+			"runAsUser:",
+			"runAsGroup:",
+			"runAsNonRoot:",
+			"allowPrivilegeEscalation:",
+			"capabilities:",
+			"readOnlyRootFilesystem:",
+			"privileged:",
+			"fsGroup:",
+			"supplementalGroups:",
+		}
+		for _, val := range forbiddenValues {
+			assert.NotContains(t, outputYaml, val,
+				"output YAML should not contain security values when $patch: delete is used, found: %s", val)
+		}
+	}
+}
+
+// VerifyAllYAMLFilesReferenced ensures every YAML file in testDataDir has a corresponding test case.
+// The exclude parameter allows skipping files that are tested elsewhere (e.g., TLS tests).
+func VerifyAllYAMLFilesReferenced(t *testing.T, testDataDir string, testCases []HelmTestCase, exclude ...string) {
+	t.Helper()
+	if envutils.IsEnvTruthy("REFRESH_GOLDEN") {
+		t.Log("Skipping reference validation because REFRESH_GOLDEN is set")
+		return
+	}
+	yamlFiles, err := filepath.Glob(filepath.Join(testDataDir, "*.yaml"))
+	require.NoError(t, err, "failed to list YAML files in %s", testDataDir)
+
+	referencedFiles := make(map[string]bool)
+	for _, tc := range testCases {
+		referencedFiles[tc.InputFile] = true
+	}
+	for _, excl := range exclude {
+		referencedFiles[excl] = true
+	}
+
+	var unreferenced []string
+	for _, yamlFile := range yamlFiles {
+		baseName := filepath.Base(yamlFile)
+		// Skip golden files
+		if strings.HasSuffix(baseName, "-out.yaml") {
+			continue
+		}
+		inputName := strings.TrimSuffix(baseName, ".yaml")
+		if !referencedFiles[inputName] {
+			unreferenced = append(unreferenced, baseName)
+		}
+	}
+
+	require.Empty(t, unreferenced, "Found YAML files in %s without corresponding test cases: %v", testDataDir, unreferenced)
+}
+
+// VerifyAllEnvoyBootstrapAreValid ensures that envoy bootstrap configs are accepted by envoy.
+func VerifyAllEnvoyBootstrapAreValid(t *testing.T, testDataDir string) {
+	t.Helper()
+
+	if envutils.IsEnvTruthy("REFRESH_GOLDEN") {
+		t.Log("Skipping envoy bootstrap validation because REFRESH_GOLDEN is set")
+		return
+	}
+
+	yamlFiles, err := filepath.Glob(filepath.Join(testDataDir, "*-out.yaml"))
+	require.NoError(t, err, "failed to list YAML files in %s", testDataDir)
+
+	// split
+	var wg sync.WaitGroup
+	var envoyErr error
+	var once sync.Once
+	validator := validator.NewDocker(validator.EtcEnvoyVolume(filepath.Join(testDataDir, "etc-envoy")))
+
+	for _, yamlFile := range yamlFiles {
+		// deserialize the YAML file
+		data, err := os.ReadFile(yamlFile)
+		require.NoError(t, err, "failed to read YAML file %s", yamlFile)
+
+		documents := strings.Split(string(data), "\n---\n")
+		for i, doc := range documents {
+			if d := strings.TrimSpace(doc); d == "" || d == "---" {
+				continue
+			}
+			var obj corev1.ConfigMap
+			err := yaml.Unmarshal([]byte(doc), &obj)
+			if err != nil && obj.Kind == "ConfigMap" {
+				require.NoErrorf(t, err, "failed to unmarshal document %d in %s", i+1, yamlFile)
+			}
+			envoyYaml, ok := obj.Data["envoy.yaml"]
+			if !ok {
+				continue
+			}
+			envoyJsn, err := yaml.YAMLToJSON([]byte(envoyYaml))
+			require.NoErrorf(t, err, "failed to convert envoy.yaml to JSON for document %d in %s", i+1, yamlFile)
+			var bootstrap envoybootstrapv3.Bootstrap
+			err = protojson.Unmarshal(envoyJsn, &bootstrap)
+			require.NoErrorf(t, err, "failed to unmarshal envoy.yaml as Envoy bootstrap config for document %d in %s", i+1, yamlFile)
+
+			wg.Go(func() {
+				// validate envoy bootstrap
+				err := validator.Validate(t.Context(), &bootstrap)
+				if err != nil {
+					once.Do(func() {
+						envoyErr = fmt.Errorf("envoy bootstrap validation failed for document %d in %s: %w", i+1, yamlFile, err)
+					})
+				}
+			})
+		}
+		wg.Wait()
+		require.NoErrorf(t, envoyErr, "envoy bootstrap validation failed")
+	}
+}
+
+// ExtractCommonObjs will return a collection containing only objects necessary for collections.CommonCollections,
+// so we don't add unknown objects to avoid logging from krttest package re: objects not consumed
+func ExtractCommonObjs(t *testing.T, objs []client.Object) ([]client.Object, *gwv1.Gateway) {
+	var commonObjs []client.Object
+	var gtw *gwv1.Gateway
+	for i := range objs {
+		switch obj := objs[i].(type) {
+		case *gwv1.Gateway:
+			if gtw != nil {
+				t.Log("found extraneous Gateway in input manifests", client.ObjectKeyFromObject(obj).String())
+				t.Fail()
+			}
+			gtw = obj
+			commonObjs = append(commonObjs, gtw)
+		case *gwv1.GatewayClass:
+			commonObjs = append(commonObjs, obj)
+		case *gwxv1a1.XListenerSet:
+			commonObjs = append(commonObjs, obj)
+		}
+	}
+	return commonObjs, gtw
+}
+
+func (dt DeployerTester) GetObjects(
+	t *testing.T,
+	tt HelmTestCase,
+	scheme *runtime.Scheme,
+	dir string,
+	crdDir string,
+) []client.Object {
+	filePath := filepath.Join(dir, "testdata/", tt.InputFile)
+	inputFile := filePath + ".yaml"
+
+	gvkToStructuralSchema, err := testutils.GetStructuralSchemas(crdDir)
+	require.NoError(t, err, "error getting structural schemas")
+
+	objs, err := testutils.LoadFromFiles(inputFile, scheme, gvkToStructuralSchema)
+	require.NoError(t, err, "error loading files from input file")
+
+	return objs
+}
+
+func (dt DeployerTester) RunHelmChartTest(
+	t *testing.T,
+	tt HelmTestCase,
+	scheme *runtime.Scheme,
+	dir string,
+	crdDir string,
+	fakeClient apiclient.Client,
+) {
+	filePath := filepath.Join(dir, "testdata/", tt.InputFile)
+	outputFile := filePath + "-out.yaml"
+
+	objs := dt.GetObjects(t, tt, scheme, dir, crdDir)
+
+	commonObjs, gtw := ExtractCommonObjs(t, objs)
+	if gtw == nil {
+		t.Log("No Gateway found in test files, failing...")
+		t.FailNow()
+	}
+	commonCols := NewCommonCols(t, commonObjs...)
+	inputs := DefaultDeployerInputs(dt, commonCols)
+	if tt.Inputs != nil {
+		inputs = tt.Inputs
+	}
+
+	gwParams := internaldeployer.NewGatewayParameters(
+		fakeClient,
+		inputs,
+	)
+	if tt.HelmValuesGeneratorOverride != nil {
+		gwParams.WithHelmValuesGeneratorOverride(tt.HelmValuesGeneratorOverride(inputs))
+	}
+	deployer, err := internaldeployer.NewGatewayDeployer(
+		dt.ControllerName,
+		scheme,
+		fakeClient,
+		gwParams,
+	)
+	assert.NoError(t, err, "error creating gateway deployer")
+
+	ctx := t.Context()
+	fakeClient.RunAndWait(ctx.Done())
+
+	// Get post-processed objects (what actually gets deployed)
+	deployObjs, err := deployer.GetObjsToDeploy(ctx, gtw)
+	assert.NoError(t, err, "error getting objects to deploy")
+
+	got, err := objectsToYAML(deployObjs)
+	assert.NoError(t, err, "error converting objects to YAML")
+
+	got = sanitizeOutput(got)
+
+	if envutils.IsEnvTruthy("REFRESH_GOLDEN") {
+		t.Log("REFRESH_GOLDEN is set, writing output file", outputFile)
+		err = os.WriteFile(outputFile, got, 0o644) //nolint:gosec // G306: Golden test file can be readable
+		assert.NoError(t, err, "error writing output file")
+	}
+	data, err := os.ReadFile(outputFile)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			t.Log("outputFile does not exist, writing output file", outputFile)
+			err = os.WriteFile(outputFile, got, 0o644) //nolint:gosec // G306: Golden test file can be readable
+			assert.NoError(t, err, "error writing output file")
+			t.FailNow()
+		} else {
+			t.Log("could not read outputFile", outputFile, err)
+			t.FailNow()
+		}
+	}
+
+	// Validate the output YAML
+	validateYAML(t, outputFile, data)
+
+	diff := cmp.Diff(data, got)
+	outputStr := "%s\nthe golden file, which can be refreshed via `REFRESH_GOLDEN=true go test ./test/deployer`, is\n%s"
+	assert.Empty(t, diff, outputStr, diff, outputFile)
+
+	// Run additional validation if provided
+	if tt.Validate != nil {
+		tt.Validate(t, string(data))
+	}
+}
+
+// sanitizeOutput removes things that change often but are not relevant to the tests
+func sanitizeOutput(got []byte) []byte {
+	return got
+}
+
+// objectsToYAML converts a slice of client.Object to YAML bytes, separated by "---"
+func objectsToYAML(objs []client.Object) ([]byte, error) {
+	var result []byte
+	for i, obj := range objs {
+		objYAML, err := yaml.Marshal(obj)
+		if err != nil {
+			return nil, err
+		}
+		if i > 0 {
+			result = append(result, []byte("---\n")...)
+		}
+		result = append(result, objYAML...)
+	}
+	return result, nil
+}
+
+func DefaultDeployerInputs(dt DeployerTester, commonCols *collections.CommonCollections) *pkgdeployer.Inputs {
+	return &pkgdeployer.Inputs{
+		Dev:               false,
+		CommonCollections: commonCols,
+		ControlPlane: pkgdeployer.ControlPlaneInfo{
+			XdsHost: "xds.cluster.local",
+			XdsPort: 9977,
+		},
+		ImageInfo: &pkgdeployer.ImageInfo{
+			Registry: "ghcr.io",
+			Tag:      "v2.1.0-dev",
+		},
+		GatewayClassName:         dt.ClassName,
+		WaypointGatewayClassName: dt.WaypointClassName,
+	}
+}
+
+// validateYAML checks that the YAML file is valid:
+//
+// 1. No lines should end with whitespace. This sometimes means you forgot
+// something important, such as handling edge cases when certain values are
+// absent, e.g. `foo: {{ bar }}` leads to `foo: ` if bar is the empty string,
+// and should probably be handled by omitting `foo:` altogether. If it's not a
+// real problem, it's lint that can be quickly fixed.
+//
+// 2. No blank lines appear, which helps ensure good hygiene around usage of
+// helm `indent` and `nindent` template functions.
+//
+// 3. Each YAML document should round-trip: unmarshaling and then marshaling
+// should produce the same YAML content.
+func validateYAML(t *testing.T, filename string, data []byte) {
+	t.Helper()
+
+	// Check for (1,2)
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		if strings.HasSuffix(line, " ") || strings.HasSuffix(line, "\t") {
+			t.Errorf("helm chart produced yaml indicative of a buggy helm chart not handling edge cases: line %d in %s ends with whitespace: %q", i+1, filename, line)
+		}
+		if line == "" && i+1 != len(lines) {
+			t.Errorf("helm chart produced yaml with blank lines; please remove these to help ensure good hygiene around usage of helm template functions indent/nindent: line %d in %s is blank", i+1, filename)
+		}
+	}
+
+	// (3) Split into YAML documents and verify each one round-trips
+	documents := strings.Split(string(data), "\n---\n")
+	for i, doc := range documents {
+		doc = strings.TrimSpace(doc)
+		if doc == "" || doc == "---" {
+			continue
+		}
+		var obj any
+		if err := yaml.Unmarshal([]byte(doc), &obj); err != nil {
+			t.Errorf("helm chart produced invalid yaml: failed to unmarshal document %d in %s: %v", i+1, filename, err)
+			continue
+		}
+
+		// Verify round-trip: marshal back to YAML and compare
+		marshaled, err := yaml.Marshal(obj)
+		if err != nil {
+			t.Errorf("helm chart produced yaml that cannot be marshaled back: failed to marshal document %d in %s: %v", i+1, filename, err)
+			continue
+		}
+
+		// Unmarshal round-trip and compare objects (handles key ordering)
+		var objRoundTrip any
+		if err := yaml.Unmarshal(marshaled, &objRoundTrip); err != nil {
+			t.Errorf("helm chart produced yaml that fails to unmarshal after round-trip: document %d in %s: %v", i+1, filename, err)
+			continue
+		}
+
+		// First check: objects should be semantically equal (order-independent)
+		if diff := cmp.Diff(obj, objRoundTrip); diff != "" {
+			t.Errorf("helm chart produced yaml that does not round-trip semantically: document %d in %s\nDiff (- original, + after round-trip):\n%s", i+1, filename, diff)
+			continue
+		}
+
+		// Second check: string comparison to catch implicit null becoming
+		// explicit, which could be a mistaken use of '{{- with ... }}'
+		// Normalize whitespace but preserve the actual YAML syntax differences
+		originalNorm := strings.TrimSpace(doc)
+		marshaledNorm := strings.TrimSpace(string(marshaled))
+
+		// Check if marshaled version has explicit 'null' that wasn't in original
+		if !strings.Contains(originalNorm, ": null") && strings.Contains(marshaledNorm, ": null") {
+			diff := cmp.Diff(originalNorm, marshaledNorm)
+			t.Errorf("helm chart produced yaml with implicit null that becomes explicit: document %d in %s\nDiff (- original, + after round-trip):\n%s", i+1, filename, diff)
+		}
+	}
+}

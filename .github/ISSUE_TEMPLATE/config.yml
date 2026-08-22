@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Talk with us on the CNCF Slack!
+    url: https://slack.cncf.io/
+    about: "We are in the #kgateway channel!"
+  - name: kgateway Documentation
+    url: https://kgateway.dev/docs/
+    about: Check out the kgateway docs for helpful information.

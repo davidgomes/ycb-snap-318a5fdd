@@ -1,0 +1,71 @@
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: route-1
+spec:
+  parentRefs:
+    - name: gw
+  hostnames:
+    - "www.example.com"
+  rules:
+    - backendRefs:
+        - name: backend
+          port: 3000
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: route-2
+spec:
+  parentRefs:
+    - name: gw
+  hostnames:
+    - "www.example.com"
+  rules:
+    - name: rule0
+      matches:
+        - path:
+            type: PathPrefix
+            value: /myapp
+      backendRefs:
+        - name: backend
+          port: 3000
+    - name: rule1
+      matches:
+        - path:
+            type: PathPrefix
+            value: /extproc-disabled
+      backendRefs:
+        - name: backend
+          port: 3000          
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: gateway-test
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: gw
+  extProc:
+    extensionRef:
+      name: ext-proc-extension
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: disable-extproc
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: route-2
+      sectionName: rule1
+  extProc:
+    disable: {}

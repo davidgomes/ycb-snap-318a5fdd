@@ -1,0 +1,47 @@
+//go:build e2e
+
+package cors
+
+import (
+	"path/filepath"
+
+	"github.com/kgateway-dev/kgateway/v2/pkg/utils/fsutils"
+	"github.com/kgateway-dev/kgateway/v2/test/e2e/tests/base"
+)
+
+var (
+	// manifests
+	simpleServiceManifest  = filepath.Join(fsutils.MustGetThisDir(), "testdata", "service.yaml")
+	httpRoutesManifest     = filepath.Join(fsutils.MustGetThisDir(), "testdata", "httproutes.yaml")
+	corsHttpRoutesManifest = filepath.Join(fsutils.MustGetThisDir(), "testdata", "httproutes-cors.yaml")
+
+	// traffic policies with cors configuration
+	gwCorsTrafficPolicyManifest    = filepath.Join(fsutils.MustGetThisDir(), "testdata", "tp-gw-cors.yaml")
+	routeCorsTrafficPolicyManifest = filepath.Join(fsutils.MustGetThisDir(), "testdata", "tp-route-cors.yaml")
+
+	// objects created by deployer after applying gateway manifest
+	setup = base.TestCase{
+		Manifests: []string{
+			simpleServiceManifest,
+		},
+	}
+
+	testCases = map[string]*base.TestCase{
+		"TestTrafficPolicyCorsForRoute": {
+			Manifests: []string{httpRoutesManifest, routeCorsTrafficPolicyManifest},
+		},
+		"TestTrafficPolicyCorsAtGatewayLevel": {
+			Manifests: []string{httpRoutesManifest, gwCorsTrafficPolicyManifest},
+		},
+		"TestTrafficPolicyRouteCorsOverrideGwCors": {
+			Manifests: []string{httpRoutesManifest, gwCorsTrafficPolicyManifest, routeCorsTrafficPolicyManifest},
+		},
+		"TestHttpRouteCorsInRouteRules": {
+			Manifests: []string{httpRoutesManifest, corsHttpRoutesManifest},
+		},
+		"TestHttpRouteAndTrafficPolicyCors": {
+			Manifests:       []string{httpRoutesManifest, corsHttpRoutesManifest, gwCorsTrafficPolicyManifest},
+			MinGwApiVersion: base.GwApiRequireCorsFilters,
+		},
+	}
+)

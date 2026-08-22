@@ -1,0 +1,81 @@
+name: Prep Go Runner
+
+description: Common setup steps for kgateway actions
+
+inputs:
+  working-directory:
+    description: 'directory to run setup steps in'
+    required: false
+    default: '.'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cancel Previous Actions
+      uses: styfle/cancel-workflow-action@85880fa0301c86cca9da44039ee3bb12d3bedbfa # 0.12.1
+      with:
+        access_token: ${{ github.token }}
+    - name: Free disk space
+      shell: bash
+      run: |
+        echo "Before clearing disk space:"
+        df -h
+        docker system df -v
+
+        # https://github.com/actions/runner-images/discussions/3242 github runners are bad at cleanup
+
+        # Clean up pre-installed tools
+        # For some reason, GHA often takes minutes (up to 20min observed) to clean up somehow.
+        # Presumably this is due to a slow disk?
+        function clean-dir() {
+          echo "Cleaning $1"
+          time sudo rm -rf "$1" || true
+        }
+        # These two were found to take very very long. Even though its large, its not worth the cost
+        # clean-dir /usr/local/lib/android  # 8.9gb
+        # clean-dir $AGENT_TOOLSDIRECTORY  # 5.6gb
+        clean-dir /usr/share/dotnet  # 3.4gb
+        clean-dir /usr/share/swift  # 3.1gb
+        clean-dir /usr/local/.ghcup  # 6.3gb
+        clean-dir /usr/local/share/powershell  # 1.2gb
+        clean-dir /usr/local/share/chromium  # 600mb
+
+        # Clean up images
+        docker image rm node:18 || true
+        docker image rm node:18-alpine || true
+        docker image rm node:20 || true
+        docker image rm node:20-alpine || true
+        # remove the dangling images and containers
+        docker images | tail -n +2 | awk '$1 == "<none>" {print $3}' | xargs --no-run-if-empty docker rmi
+        docker ps -a | tail -n +2 | awk '$2 ~ "^[0-9a-f]+$" {print $1}' | xargs --no-run-if-empty docker rm --volumes=true
+
+        echo "After clearing disk space:"
+        df -h
+        docker system df -v
+    - name: Set up Go
+      id: setup-go
+      uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+      with:
+        # https://github.com/actions/setup-go/blob/main/action.yml
+        go-version-file: ${{ inputs.working-directory }}/go.mod
+        # Using the go-version-file, we will build with the latest go patch version
+        check-latest: true
+        # Caching in setup-go is limited, so we opt to use the more configurable https://github.com/actions/cache
+        cache: false
+    - name: Go Cache Paths
+      id: go-cache-paths
+      shell: bash
+      run: |
+        echo "go-mod=$(go env GOMODCACHE)" >> $GITHUB_OUTPUT
+    - name: Cache
+      uses: actions/cache@v4
+      id: cache
+      with:
+        # https://github.com/actions/cache/blob/main/examples.md#go---modules
+        path: |
+          ${{ steps.go-cache-paths.outputs.go-mod }}
+        key: ${{ runner.os }}-go-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('**/go.sum') }}
+    - name: Install Dependencies
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: time make mod-download

@@ -1,0 +1,243 @@
+package settings
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/kelseyhightower/envconfig"
+	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
+)
+
+// ValidationMode determines how invalid routes and policies are handled during translation.
+// Higher levels increase safety guarantees, but may have performance implications.
+type ValidationMode string
+
+const (
+	// ValidationStandard rewrites invalid routes to direct responses
+	// (typically HTTP 500), preserving a valid config while isolating failures.
+	// This limits the blast radius of misconfigured routes or policies without
+	// affecting unrelated tenants.
+	ValidationStandard ValidationMode = "STANDARD"
+	// ValidationStrict builds on standard by running targeted validation
+	// (e.g. RDS, CDS, and security-related policies). Routes that fail these
+	// checks are also replaced with direct responses, and helps prevent unsafe
+	// config from reaching Envoy.
+	// Strict Validation is not supported with Rustformation yet,
+	// see docs/guides/transformation.md for details
+	ValidationStrict ValidationMode = "STRICT"
+)
+
+// Decode implements envconfig.Decoder.
+func (v *ValidationMode) Decode(value string) error {
+	level := ValidationMode(strings.ToUpper(value))
+	switch level {
+	case ValidationStandard, ValidationStrict:
+		*v = level
+		return nil
+	default:
+		return fmt.Errorf("invalid validation mode: %q", value)
+	}
+}
+
+// DnsLookupFamily controls the DNS lookup family for all static clusters created via Backend resources.
+type DnsLookupFamily string
+
+const (
+	// DnsLookupFamilyV4Preferred is the default value for DnsLookupFamily.
+	// The DNS resolver will first perform a lookup for addresses in the IPv4 family
+	// and fallback to a lookup for addresses in the IPv6 family. The callback target
+	// will only get v6 addresses if there were no v4 addresses to return.
+	DnsLookupFamilyV4Preferred DnsLookupFamily = "V4_PREFERRED"
+	// DnsLookupFamilyV4Only is the value for DnsLookupFamily that only performs
+	// DNS lookups for addresses in the IPv4 family.
+	DnsLookupFamilyV4Only DnsLookupFamily = "V4_ONLY"
+	// DnsLookupFamilyV6Only is the value for DnsLookupFamily that only performs
+	// DNS lookups for addresses in the IPv6 family.
+	DnsLookupFamilyV6Only DnsLookupFamily = "V6_ONLY"
+	// DnsLookupFamilyAll is the value for DnsLookupFamily that performs lookups
+	// for both IPv4 and IPv6 families and returns all resolved addresses.
+	DnsLookupFamilyAll DnsLookupFamily = "ALL"
+	// DnsLookupFamilyAuto is the value for DnsLookupFamily that first performs
+	// a lookup for addresses in the IPv6 family and falls back to a lookup for
+	// addresses in the IPv4 family. This is semantically equivalent to a
+	// non-existent V6_PREFERRED option and is a legacy name that will be
+	// deprecated in favor of V6_PREFERRED in a future major version.
+	DnsLookupFamilyAuto DnsLookupFamily = "AUTO"
+)
+
+// Decode implements envconfig.Decoder.
+func (m *DnsLookupFamily) Decode(value string) error {
+	mode := DnsLookupFamily(value)
+	switch mode {
+	case DnsLookupFamilyV4Preferred, DnsLookupFamilyV4Only, DnsLookupFamilyV6Only, DnsLookupFamilyAll, DnsLookupFamilyAuto:
+		*m = mode
+		return nil
+	default:
+		return fmt.Errorf("invalid DNS lookup family: %q", value)
+	}
+}
+
+// GatewayClassParametersRefs maps GatewayClass names to ParametersReference
+type GatewayClassParametersRefs map[string]*gwv1.ParametersReference
+
+// Decode implements envconfig.Decoder
+func (r *GatewayClassParametersRefs) Decode(value string) error {
+	if value == "" {
+		*r = nil
+		return nil
+	}
+
+	// First parse as a simple map to validate name is present
+	var simpleParsed map[string]struct {
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+		Group     string `json:"group,omitempty"`
+		Kind      string `json:"kind,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(value), &simpleParsed); err != nil {
+		return fmt.Errorf("invalid gateway class parameters refs: %w", err)
+	}
+
+	parsed := make(map[string]*gwv1.ParametersReference, len(simpleParsed))
+	for className, ref := range simpleParsed {
+		if strings.TrimSpace(ref.Name) == "" {
+			return fmt.Errorf("gateway class %q parametersRef.name must be set", className)
+		}
+		if strings.TrimSpace(ref.Namespace) == "" {
+			return fmt.Errorf("gateway class %q parametersRef.namespace must be set", className)
+		}
+		ns := gwv1.Namespace(ref.Namespace)
+		paramsRef := &gwv1.ParametersReference{
+			Name:      ref.Name,
+			Namespace: &ns,
+		}
+		if ref.Group != "" {
+			paramsRef.Group = gwv1.Group(ref.Group)
+		}
+		if ref.Kind != "" {
+			paramsRef.Kind = gwv1.Kind(ref.Kind)
+		}
+
+		parsed[className] = paramsRef
+	}
+
+	*r = parsed
+	return nil
+}
+
+type Settings struct {
+	// Controls the DnsLookupFamily for all static clusters created via Backend resources.
+	// If not set, kgateway will default to "V4_PREFERRED". Note that this is different
+	// from the Envoy default of "AUTO", which is effectively "V6_PREFERRED".
+	// Supported values are: "ALL", "AUTO", "V4_PREFERRED", "V4_ONLY", "V6_ONLY"
+	// Details on the behavior of these options are available on the Envoy documentation:
+	// https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/cluster.proto#enum-config-cluster-v3-cluster-dnslookupfamily
+	DnsLookupFamily DnsLookupFamily `split_words:"true" default:"V4_PREFERRED"`
+
+	// Controls the listener bind address. Can be either V4 or V6
+	ListenerBindIpv6 bool `split_words:"true" default:"true"`
+
+	EnableIstioIntegration bool `split_words:"true"`
+	EnableIstioAutoMtls    bool `split_words:"true"`
+
+	// IstioNamespace is the namespace where Istio control plane components are installed.
+	// Defaults to "istio-system".
+	IstioNamespace string `split_words:"true" default:"istio-system"`
+
+	// XdsServiceHost is the host that serves xDS config.
+	// It overrides xdsServiceName if set.
+	XdsServiceHost string `split_words:"true"`
+
+	// XdsServiceName is the name of the Kubernetes Service that serves xDS config.
+	// It is assumed to be in the kgateway install namespace.
+	// Ignored if XdsServiceHost is set.
+	XdsServiceName string `split_words:"true" default:"kgateway"`
+
+	// XdsServicePort is the port of the Kubernetes Service that serves xDS config.
+	// This corresponds to the value of the `grpc-xds` port in the service.
+	XdsServicePort uint32 `split_words:"true" default:"9977"`
+
+	// XdsAuth enables or disables xDS authentication between the data-plane and control-plane.
+	// By default, this is enabled.
+	XdsAuth bool `split_words:"true" default:"true"`
+
+	// XdsTLS enables or disables TLS encryption for xDS communication between the data-plane and control-plane.
+	// By default, this is disabled.
+	XdsTLS bool `split_words:"true" default:"false"`
+
+	// DefaultImageRegistry is the default image registry to use for the kgateway image.
+	DefaultImageRegistry string `split_words:"true" default:"cr.kgateway.dev"`
+	// DefaultImageTag is the default image tag to use for the kgateway image.
+	DefaultImageTag string `split_words:"true" default:""`
+	// DefaultImagePullPolicy is the default image pull policy to use for the kgateway image.
+	DefaultImagePullPolicy string `split_words:"true" default:"IfNotPresent"`
+
+	// WaypointLocalBinding will make the waypoint bind to a loopback address,
+	// so that only the zTunnel can make connections to it. This requires the zTunnel
+	// shipped with Istio 1.26.0+.
+	WaypointLocalBinding bool `split_words:"true" default:"false"`
+
+	// IngressUseWaypoints enables the waypoint feature for ingress traffic.
+	// When enabled, backends with the ambient.istio.io/redirection=enabled annotation and
+	// istio.io/ingress-use-waypoint=true label will be redirected through a waypoint proxy.
+	// The feature is enabled by default and can be disabled by setting this to false.
+	IngressUseWaypoints bool `split_words:"true" default:"true"`
+
+	// LogLevel specifies the logging level (e.g., "trace", "debug", "info", "warn", "error").
+	// Defaults to "info" if not set.
+	LogLevel string `split_words:"true" default:"info"`
+
+	// JSON representation of list of metav1.LabelSelector to select namespaces considered for resource discovery.
+	// Defaults to an empty list which selects all namespaces.
+	// E.g., [{"matchExpressions":[{"key":"kubernetes.io/metadata.name","operator":"In","values":["infra"]}]},{"matchLabels":{"app":"a"}}]
+	DiscoveryNamespaceSelectors string `split_words:"true" default:"[]"`
+
+	// EnableEnvoy enables kgateway to send config to Envoy
+	EnableEnvoy bool `split_words:"true" default:"true"`
+
+	// WeightedRoutePrecedence enables routes with a larger weight to take precedence over routes with a smaller weight.
+	// If two routes have the same weight, Gateway API route precedence rules apply.
+	// When enabled, the default weight for a route is 0.
+	WeightedRoutePrecedence bool `split_words:"true" default:"false"`
+
+	// ValidationMode determines how invalid routes and policies are handled during translation.
+	// If not set, kgateway will default to "STANDARD". Supported values are:
+	// - "STANDARD": Rewrites invalid routes to direct responses (typically HTTP 500)
+	// - "STRICT": Builds on STANDARD by running targeted validation
+	ValidationMode ValidationMode `split_words:"true" default:"STANDARD"`
+
+	// EnableBuiltinDefaultMetrics enables the default builtin controller-runtime metrics and go runtime metrics.
+	// Since these metrics can be numerous, it is disabled by default.
+	EnableBuiltinDefaultMetrics bool `split_words:"true" default:"false"`
+
+	// GlobalPolicyNamespace is the namespace where policies that can attach to resources
+	// in any namespace are defined.
+	GlobalPolicyNamespace string `split_words:"true"`
+
+	// Controls if leader election is disabled. Defaults to false.
+	DisableLeaderElection bool `split_words:"true" default:"false"`
+
+	PolicyMerge string `split_words:"true" default:"{}"`
+
+	// EnableWaypoint enables kgateway to translate istio waypoints
+	EnableWaypoint bool `split_words:"true" default:"false"`
+
+	// EnableExperimentalGatewayAPIFeatures enables kgateway to support experimental features and APIs
+	EnableExperimentalGatewayAPIFeatures bool `split_words:"true" default:"true"`
+
+	// GatewayClassParametersRefs configures the GatewayParameters references to set on the default GatewayClasses.
+	// Format: JSON map where keys are GatewayClass names and values are objects with "name" (required),
+	// "namespace" (required), "group" (optional), and "kind" (optional) fields.
+	// E.g., {"gateway-class-name":{"name":"params-name","namespace":"params-namespace","group":"gateway.networking.k8s.io","kind":"GatewayParameters"}}
+	GatewayClassParametersRefs GatewayClassParametersRefs `split_words:"true" default:"{}"`
+}
+
+// BuildSettings returns a zero-valued Settings obj if error is encountered when parsing env
+func BuildSettings() (*Settings, error) {
+	settings := &Settings{}
+	if err := envconfig.Process("KGW", settings); err != nil {
+		return settings, err
+	}
+	return settings, nil
+}

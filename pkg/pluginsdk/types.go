@@ -1,0 +1,173 @@
+package pluginsdk
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+
+	envoyclusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	"istio.io/istio/pkg/kube/controllers"
+	"istio.io/istio/pkg/kube/krt"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/cache"
+	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/kgateway-dev/kgateway/v2/pkg/kgateway/endpoints"
+	"github.com/kgateway-dev/kgateway/v2/pkg/pluginsdk/ir"
+	"github.com/kgateway-dev/kgateway/v2/pkg/pluginsdk/reporter"
+	"github.com/kgateway-dev/kgateway/v2/pkg/reports"
+)
+
+// ErrNotFound is returned when a requested resource is not found
+var ErrNotFound = errors.New("not found")
+
+type (
+	EndpointsInputs = endpoints.EndpointsInputs
+	ProcessBackend  func(ctx context.Context, pol ir.PolicyIR, in ir.BackendObjectIR, out *envoyclusterv3.Cluster)
+	EndpointPlugin  func(
+		kctx krt.HandlerContext,
+		ctx context.Context,
+		ucc ir.UniqlyConnectedClient,
+		out *EndpointsInputs,
+	) uint64
+)
+
+// TODO: consider changing PerClientProcessBackend to look like this:
+// PerClientProcessBackend  func(kctx krt.HandlerContext, ctx context.Context, ucc ir.UniqlyConnectedClient, in ir.BackendObjectIR)
+// so that it only attaches the policy to the backend, and doesn't modify the backend (except for attached policies) or the cluster itself.
+// leaving as is for now as this requires better understanding of how krt would handle this.
+type PerClientProcessBackend func(
+	kctx krt.HandlerContext,
+	ctx context.Context,
+	ucc ir.UniqlyConnectedClient,
+	in ir.BackendObjectIR,
+	out *envoyclusterv3.Cluster,
+)
+
+type (
+	// GetPolicyStatusFn is a type that plugins can implement to get the PolicyStatus for the given policy
+	GetPolicyStatusFn func(context.Context, types.NamespacedName) (gwv1.PolicyStatus, error)
+	// PatchPolicyStatusFn is a type that plugins can implement to patch the PolicyStatus for the given policy
+	PatchPolicyStatusFn func(context.Context, types.NamespacedName, gwv1.PolicyStatus) error
+)
+
+type PolicyPlugin struct {
+	Name                      string
+	NewGatewayTranslationPass func(tctx ir.GwTranslationCtx, reporter reporter.Reporter) ir.ProxyTranslationPass
+
+	// Backend processing for envoy proxy
+	ProcessBackend            ProcessBackend
+	PerClientProcessBackend   PerClientProcessBackend
+	PerClientProcessEndpoints EndpointPlugin
+
+	Policies krt.Collection[ir.PolicyWrapper]
+	// ProcessPolicyStaleStatusMarkers add empty reports for policies to clear stale status
+	ProcessPolicyStaleStatusMarkers func(krt.HandlerContext, *reports.ReportMap)
+	GlobalPolicies                  func(krt.HandlerContext) ir.PolicyIR
+	// PoliciesFetch can optionally be set if the plugin needs a custom mechanism for fetching the policy IR,
+	// rather than the default behavior of fetching by name from the aggregated policy KRT collection
+	PoliciesFetch func(n, ns string) ir.PolicyIR
+	MergePolicies func(pols []ir.PolicyAtt) ir.PolicyAtt
+
+	GetPolicyStatus   GetPolicyStatusFn
+	PatchPolicyStatus PatchPolicyStatusFn
+}
+
+type BackendPlugin struct {
+	ir.BackendInit
+	AliasKinds []schema.GroupKind
+	Backends   krt.Collection[ir.BackendObjectIR]
+	Endpoints  krt.Collection[ir.EndpointsForBackend]
+}
+
+type KGwTranslator interface {
+	// This function is called by the reconciler when a K8s Gateway resource is created or updated.
+	// It returns an instance of the kgateway Proxy resource, that should configure a target kgateway Proxy workload.
+	// A null return value indicates the K8s Gateway resource failed to translate into a kgateway Proxy. The error will be reported on the provided reporter.
+	Translate(kctx krt.HandlerContext,
+		ctx context.Context,
+		gateway *ir.Gateway,
+		reporter reporter.Reporter) *ir.GatewayIR
+}
+type (
+	GwTranslatorFactory func(gw *gwv1.Gateway) KGwTranslator
+	ContributesPolicies map[schema.GroupKind]PolicyPlugin
+)
+
+type Plugin struct {
+	ContributesPolicies     ContributesPolicies
+	ContributesBackends     map[schema.GroupKind]BackendPlugin
+	ContributesGwTranslator GwTranslatorFactory
+	// ContributesLeaderAction is a lifecycle hook called after all collections are synced
+	// allowing Plugins to register handlers against collections, e.g. for status reporting
+	// This is executed only on a leader pod.
+	ContributesLeaderAction map[schema.GroupKind]func()
+	// extra has sync beyond primary resources in the collections above
+	ExtraHasSynced func() bool
+}
+
+type (
+	AncestorReports map[ir.ObjectSource][]error
+	PolicyReport    map[ir.AttachedPolicyRef]AncestorReports
+)
+
+// marshal json for krt debugging
+func (p PolicyReport) MarshalJSON() ([]byte, error) {
+	m := map[string]map[string][]error{}
+	for key, pol := range p {
+		objErrMap := map[string][]error{}
+		for objKey, errs := range pol {
+			objErrMap[objKey.ResourceName()] = errs
+		}
+		m[key.ID()] = objErrMap
+	}
+	return json.Marshal(m)
+}
+
+func (p Plugin) HasSynced() bool {
+	for _, up := range p.ContributesBackends {
+		if up.Backends != nil && !up.Backends.HasSynced() {
+			return false
+		}
+		if up.Endpoints != nil && !up.Endpoints.HasSynced() {
+			return false
+		}
+	}
+	for _, pol := range p.ContributesPolicies {
+		if pol.Policies != nil && !pol.Policies.HasSynced() {
+			return false
+		}
+	}
+	if p.ExtraHasSynced != nil && !p.ExtraHasSynced() {
+		return false
+	}
+	return true
+}
+
+type K8sGatewayExtensions2 struct {
+	Plugins []Plugin
+}
+
+func CloneObjectMetaForStatus(m metav1.ObjectMeta) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Name:            m.GetName(),
+		Namespace:       m.GetNamespace(),
+		ResourceVersion: m.GetResourceVersion(),
+	}
+}
+
+// GatewayControllerExtension is an interface for extending the Gateway controller with custom behavior
+type GatewayControllerExtension interface {
+	// Register is called to allow the extension to interact with the Queue used to reconcile Gateways,
+	// and access to a ResourceEventHandler that the extension can use to integrate additional Gateway parameter events
+	// that should contribute to triggering Gateway reconciliation
+	Register(gatewayQueue controllers.Queue, gatewayParamEventHandler cache.ResourceEventHandler)
+
+	// Start is called to start the extension. It must be non-blocking.
+	Start(context.Context) error
+
+	// Stop is called to stop the extension.
+	Stop() error
+}

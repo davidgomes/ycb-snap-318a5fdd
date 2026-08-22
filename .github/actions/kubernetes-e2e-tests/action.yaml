@@ -1,0 +1,42 @@
+name: Kubernetes End-to-End tests
+
+description: Kubernetes End-to-End tests
+
+inputs:
+  cluster-name:
+    required: true
+    description: The name of the KinD cluster
+  test-args:
+    required: true
+    description: The list of arguments passed to the test invocation
+  run-regex:
+    required: true
+    # In the future, it would be preferable to accept this as a list of strings
+    # and to then build the regex from that list
+    description: The regex passed to the test invocation with the -run flag
+  istio-version:
+    required: true
+    description: The version of Istio to use
+  matrix-label:
+    required: true
+    description: The version of the matrix being used - used to name artifacts to prevent filename collisions
+
+runs:
+  using: "composite"
+  steps:
+  - name: Execute tests
+    env:
+      GO_TEST_USER_ARGS: ${{ inputs.test-args }} -run "${{ inputs.run-regex }}"
+      CLUSTER_NAME: ${{ inputs.cluster-name }}
+      ISTIO_VERSION: ${{ inputs.istio-version }}
+      TEST_PKG: ./test/e2e/tests
+      # Doesn't really matter, but using the same as `go build` means we can re-use the same Go cache.
+      CGO_ENABLED: 0
+    shell: bash
+    run: make e2e-test
+  - name: Archive bug report directory on failure
+    if: ${{ failure() }}
+    uses: ./.github/actions/upload-artifact
+    with:
+      name: bug-report-${{ inputs.cluster-name }}-${{ inputs.matrix-label }}
+      path: ./_test/bug_report/${{ inputs.cluster-name }}

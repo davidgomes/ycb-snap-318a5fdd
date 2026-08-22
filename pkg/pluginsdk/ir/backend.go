@@ -1,0 +1,575 @@
+package ir
+
+import (
+	"encoding/json"
+	"fmt"
+	"reflect"
+	"strconv"
+	"strings"
+
+	"istio.io/istio/pkg/kube/krt"
+	"istio.io/istio/pkg/slices"
+	"istio.io/istio/pkg/util/smallset"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	apiannotations "github.com/kgateway-dev/kgateway/v2/api/annotations"
+	"github.com/kgateway-dev/kgateway/v2/api/v1alpha1/kgateway"
+	"github.com/kgateway-dev/kgateway/v2/pkg/kgateway/wellknown"
+	"github.com/kgateway-dev/kgateway/v2/pkg/pluginsdk/reporter"
+)
+
+type ObjectSource struct {
+	Group     string `json:"group,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name"`
+}
+
+// GetKind returns the kind of the route.
+func (c ObjectSource) GetGroupKind() schema.GroupKind {
+	return schema.GroupKind{
+		Group: c.Group,
+		Kind:  c.Kind,
+	}
+}
+
+// GetName returns the name of the route.
+func (c ObjectSource) GetName() string {
+	return c.Name
+}
+
+// GetNamespace returns the namespace of the route.
+func (c ObjectSource) GetNamespace() string {
+	return c.Namespace
+}
+
+func (c ObjectSource) ResourceName() string {
+	return fmt.Sprintf("%s/%s/%s/%s", c.Group, c.Kind, c.Namespace, c.Name)
+}
+
+func (c ObjectSource) String() string {
+	return fmt.Sprintf("%s/%s/%s/%s", c.Group, c.Kind, c.Namespace, c.Name)
+}
+
+func (c ObjectSource) Equals(in ObjectSource) bool {
+	return c.Namespace == in.Namespace && c.Name == in.Name && c.Group == in.Group && c.Kind == in.Kind
+}
+
+func (c ObjectSource) NamespacedName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: c.Namespace,
+		Name:      c.Name,
+	}
+}
+
+type Namespaced interface {
+	GetName() string
+	GetNamespace() string
+}
+
+type AppProtocol string
+
+const (
+	DefaultAppProtocol   AppProtocol = ""
+	HTTP2AppProtocol     AppProtocol = "http2"
+	WebSocketAppProtocol AppProtocol = "ws"
+)
+
+// ParseAppProtocol takes an app protocol string provided on a Backend or Kubernetes Service, and maps it
+// to one of the app protocol types supported by kgateway (http2, websocket, or default).
+// Recognizes http2 app protocols defined by istio (https://istio.io/latest/docs/ops/configuration/traffic-management/protocol-selection/)
+// and GEP-1911 (https://gateway-api.sigs.k8s.io/geps/gep-1911/#api-semantics).
+func ParseAppProtocol(appProtocol *string) AppProtocol {
+	switch strings.ToLower(ptr.Deref(appProtocol, "")) {
+	case string(kgateway.AppProtocolHttp2):
+		fallthrough
+	case string(kgateway.AppProtocolGrpc):
+		fallthrough
+	case string(kgateway.AppProtocolGrpcWeb):
+		fallthrough
+	case string(kgateway.AppProtocolKubernetesH2C):
+		return HTTP2AppProtocol
+	case string(kgateway.AppProtocolKubernetesWs):
+		return WebSocketAppProtocol
+	default:
+		return DefaultAppProtocol
+	}
+}
+
+type BackendObjectIR struct {
+	// Ref to source object. sometimes the group and kind are not populated from api-server, so
+	// set them explicitly here, and pass this around as the reference.
+	ObjectSource `json:",inline"`
+	// optional port for if ObjectSource is a service that can have multiple ports.
+	// +krtEqualsTodo propagate backend port differences in equality
+	Port int32
+	// optional application protocol for the backend. Can be used to enable http2.
+	// +krtEqualsTodo include AppProtocol in backend equality
+	AppProtocol AppProtocol
+
+	// prefix the cluster name with this string to distinguish it from other GVKs.
+	// here explicitly as it shows up in stats. each (group, kind) pair should have a unique prefix.
+	// +krtEqualsTodo incorporate prefix changes into equality or remove field
+	GvPrefix string
+	// for things that integrate with destination rule, we need to know what hostname to use.
+	// +krtEqualsTodo evaluate canonical hostname equality
+	CanonicalHostname string
+	// original object. Opaque to us other than metadata.
+	Obj metav1.Object
+
+	// can this just be any?
+	// i think so, assuming obj -> objir is a 1:1 mapping.
+	ObjIr interface{ Equals(any) bool }
+
+	// Aliases that we can key by when referencing this backend from policy or routes.
+	// +krtEqualsTodo ensure alias list is compared
+	Aliases []ObjectSource
+
+	// ExtraKey allows ensuring uniqueness in the KRT key
+	// when there is more than one backend per ObjectSource+port.
+	// TODO this is a hack for ServiceEntry to workaround only having one
+	// CanonicalHostname. We should see if it's possible to have multiple
+	// CanonicalHostnames.
+	// +krtEqualsTodo determine equality semantics for extra key
+	ExtraKey string
+
+	// RequiresPolicyStatus indicates if this Backend may require updating status of an attached policy
+	// This is essentially a precomputation of whether there are any 'AttachedPolicies' that are objects
+	// +krtEqualsTodo compare RequiresPolicyStatus or document ignoring
+	RequiresPolicyStatus bool
+
+	// +krtEqualsTodo include attached policies in equality diff
+	AttachedPolicies AttachedPolicies
+
+	// Errors is a list of errors, if any, encountered while constructing this BackendObject
+	// Not added to Equals() as it is derived from the inner ObjIr, which is already evaluated
+	// +noKrtEquals
+	Errors []error
+
+	// resourceName is the pre-calculated resource name. used as the krt resource name.
+	resourceName string
+
+	// TrafficDistribution is the desired traffic distribution for the backend.
+	TrafficDistribution wellknown.TrafficDistribution
+
+	// DisableIstioAutoMTLS indicates if Istio auto-mTLS should be disabled for this backend
+	DisableIstioAutoMTLS bool
+}
+
+// NewBackendObjectIR creates a new BackendObjectIR with pre-calculated resource name
+func NewBackendObjectIR(objSource ObjectSource, port int32, extraKey string) BackendObjectIR {
+	return BackendObjectIR{
+		ObjectSource: objSource,
+		Port:         port,
+		ExtraKey:     extraKey,
+		resourceName: BackendResourceName(objSource, port, extraKey),
+	}
+}
+
+func BackendResourceName(objSource ObjectSource, port int32, extraKey string) string {
+	var sb strings.Builder
+	sb.WriteString(objSource.ResourceName())
+	sb.WriteString(fmt.Sprintf(":%d", port))
+
+	if extraKey != "" {
+		sb.WriteRune('_')
+		sb.WriteString(extraKey)
+	}
+	return sb.String()
+}
+
+// ResourceName returns the pre-calculated resource name for this backend.
+// This method is required to implement the krt.Named interface.
+func (c BackendObjectIR) ResourceName() string {
+	return c.resourceName
+}
+
+func (c BackendObjectIR) Equals(in BackendObjectIR) bool {
+	if !c.ObjectSource.Equals(in.ObjectSource) {
+		return false
+	}
+	if !versionEquals(c.Obj, in.Obj) {
+		return false
+	}
+	if c.ObjIr != nil && !c.ObjIr.Equals(in.ObjIr) {
+		return false
+	}
+	if !c.AttachedPolicies.Equals(in.AttachedPolicies) {
+		return false
+	}
+	if c.resourceName != in.resourceName {
+		return false
+	}
+	if c.DisableIstioAutoMTLS != in.DisableIstioAutoMTLS {
+		return false
+	}
+	if c.TrafficDistribution != in.TrafficDistribution {
+		return false
+	}
+	return true
+}
+
+func (c BackendObjectIR) ClusterName() string {
+	// TODO: fix this to somthing that's friendly to stats
+	gvPrefix := c.GvPrefix
+	if c.GvPrefix == "" {
+		gvPrefix = strings.ToLower(c.Kind)
+	}
+	if c.ExtraKey != "" {
+		return fmt.Sprintf("%s_%s_%s_%s_%d", gvPrefix, c.Namespace, c.Name, c.ExtraKey, c.Port)
+	}
+	return fmt.Sprintf("%s_%s_%s_%d", gvPrefix, c.Namespace, c.Name, c.Port)
+	// return fmt.Sprintf("%s~%s:%d", c.GvPrefix, c.ObjectSource.ResourceName(), c.Port)
+}
+
+func (c BackendObjectIR) GetObjectSource() ObjectSource {
+	return c.ObjectSource
+}
+
+func (c BackendObjectIR) GetObjectLabels() map[string]string {
+	if c.Obj == nil {
+		return make(map[string]string)
+	}
+	return c.Obj.GetLabels()
+}
+
+func (c BackendObjectIR) GetAttachedPolicies() AttachedPolicies {
+	return c.AttachedPolicies
+}
+
+type Secret struct {
+	// Ref to source object. sometimes the group and kind are not populated from api-server, so
+	// set them explicitly here, and pass this around as the reference.
+	// TODO: why does this have json tag?
+	ObjectSource
+
+	// original object. Opaque to us other than metadata.
+	Obj metav1.Object
+
+	// +krtEqualsTodo evaluate secret data equality handling
+	Data map[string][]byte
+}
+
+func (c Secret) ResourceName() string {
+	return c.ObjectSource.ResourceName()
+}
+
+func (c Secret) Equals(in Secret) bool {
+	return c.ObjectSource.Equals(in.ObjectSource) && versionEquals(c.Obj, in.Obj)
+}
+
+var (
+	_ krt.ResourceNamer   = Secret{}
+	_ krt.Equaler[Secret] = Secret{}
+	_ json.Marshaler      = Secret{}
+)
+
+func (l Secret) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Name      string
+		Namespace string
+		Kind      string
+		Data      string
+	}{
+		Name:      l.Name,
+		Namespace: l.Namespace,
+		Kind:      fmt.Sprintf("%T", l.Obj),
+		Data:      "[REDACTED]",
+	})
+}
+
+// TODO: why is this in backend.go?
+type Listener struct {
+	gwv1.Listener
+	// +krtEqualsTodo compare parent reference in listener equality
+	Parent client.Object
+	// +krtEqualsTodo include attached listener policies in equality
+	AttachedPolicies AttachedPolicies
+	// +krtEqualsTodo include policy ancestor reference in equality
+	PolicyAncestorRef gwv1.ParentReference
+}
+
+func (listener Listener) GetParentReporter(reporter reporter.Reporter) reporter.GatewayReporter {
+	switch t := listener.Parent.(type) {
+	case *gwv1.Gateway:
+		return reporter.Gateway(t)
+	default:
+		return reporter.ListenerSet(t)
+	}
+}
+
+// TODO: need to reevaluate DeepEqual usage
+func (c Listener) Equals(in Listener) bool {
+	return reflect.DeepEqual(c, in)
+}
+
+type GatewayForDeployer struct {
+	ObjectSource
+	// Controller name for the gateway
+	ControllerName string
+	// All ports from all listeners
+	Ports smallset.Set[int32]
+}
+
+func (c GatewayForDeployer) ResourceName() string {
+	return c.ObjectSource.ResourceName()
+}
+
+func (c GatewayForDeployer) Equals(in GatewayForDeployer) bool {
+	return c.ObjectSource.Equals(in.ObjectSource) &&
+		c.ControllerName == in.ControllerName &&
+		slices.Equal(c.Ports.List(), in.Ports.List())
+}
+
+type ListenerForDeployer struct {
+	Name       gwv1.SectionName
+	Port       gwv1.PortNumber
+	Parent     types.NamespacedName
+	ParentKind string
+}
+
+type Gateway struct {
+	ObjectSource        `json:",inline"`
+	Listeners           Listeners
+	AllowedListenerSets GVKListenerSets
+	DeniedListenerSets  GVKListenerSets
+	Obj                 *gwv1.Gateway
+
+	AttachedListenerPolicies AttachedPolicies
+	AttachedHttpPolicies     AttachedPolicies
+
+	PerConnectionBufferLimitBytes *uint32
+	FrontendTLSConfig             *FrontendTLSConfigIR
+}
+
+// FrontendTLSConfigIR represents the Gateway-level frontend TLS configuration
+type FrontendTLSConfigIR struct {
+	// Default client certificate validation configuration for all HTTPS listeners
+	DefaultValidation *ClientCertificateValidationIR
+	// PerPort client certificate validation configuration, keyed by port number
+	PerPortValidation map[gwv1.PortNumber]*ClientCertificateValidationIR
+
+	// The per-port and default configs are independent, so store errors per port and default separately.
+	PortErrors map[gwv1.PortNumber]error
+	// Error encountered during construction of the default client certificate validation configuration.
+	DefaultError error
+}
+
+// ClientCertificateValidationIR holds the client certificate validation configuration with references
+// CA certificates are fetched later during listener translation
+type ClientCertificateValidationIR struct {
+	// CACertificateRefs contains references to ConfigMaps or Secrets containing CA certificates
+	// +noKrtEquals. Fields are compared in Equal in helper function however linter still complains.
+	CACertificateRefs []gwv1.ObjectReference
+	// RequireClientCertificate indicates whether client certificates are required
+	// +noKrtEquals
+	RequireClientCertificate bool
+}
+
+func (c *ClientCertificateValidationIR) Equals(in any) bool {
+	c2, ok := in.(*ClientCertificateValidationIR)
+	if !ok {
+		return false
+	}
+	return equalsClientCertValidationIR(c, c2)
+}
+
+func (c Gateway) ResourceName() string {
+	return c.ObjectSource.ResourceName()
+}
+
+func (c Gateway) Equals(in Gateway) bool {
+	return c.ObjectSource.Equals(in.ObjectSource) &&
+		ptrEquals(c.PerConnectionBufferLimitBytes, in.PerConnectionBufferLimitBytes) &&
+		versionEquals(c.Obj, in.Obj) &&
+		c.AttachedListenerPolicies.Equals(in.AttachedListenerPolicies) &&
+		c.AttachedHttpPolicies.Equals(in.AttachedHttpPolicies) &&
+		c.Listeners.Equals(in.Listeners) &&
+		c.AllowedListenerSets.Equals(in.AllowedListenerSets) &&
+		c.DeniedListenerSets.Equals(in.DeniedListenerSets) &&
+		equalsFrontendTLSConfig(c.FrontendTLSConfig, in.FrontendTLSConfig)
+}
+
+func equalsFrontendTLSConfig(a, b *FrontendTLSConfigIR) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if !equalsClientCertValidationIR(a.DefaultValidation, b.DefaultValidation) {
+		return false
+	}
+	if len(a.PerPortValidation) != len(b.PerPortValidation) {
+		return false
+	}
+	for port, valA := range a.PerPortValidation {
+		valB, ok := b.PerPortValidation[port]
+		if !ok || !equalsClientCertValidationIR(valA, valB) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalsClientCertValidationIR(a, b *ClientCertificateValidationIR) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.RequireClientCertificate != b.RequireClientCertificate {
+		return false
+	}
+	if len(a.CACertificateRefs) != len(b.CACertificateRefs) {
+		return false
+	}
+	for i := range a.CACertificateRefs {
+		if !objectRefEqual(a.CACertificateRefs[i], b.CACertificateRefs[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func objectRefEqual(a, b gwv1.ObjectReference) bool {
+	return a.Group == b.Group &&
+		a.Kind == b.Kind &&
+		a.Name == b.Name &&
+		ptrEquals(a.Namespace, b.Namespace)
+}
+
+type BackendRefIR struct {
+	// TODO: remove cluster name from here, it's redundant.
+	ClusterName string
+	Weight      uint32
+
+	// backend could be nil if not found or no ref grant
+	BackendObject *BackendObjectIR
+	// if nil, error might say why
+	Err error
+}
+
+// Equals returns true if the two BackendRefIR instances are equal in cluster name, weight, backend object equality, and error.
+func (a BackendRefIR) Equals(b BackendRefIR) bool {
+	if a.ClusterName != b.ClusterName || a.Weight != b.Weight {
+		return false
+	}
+	if !backendObjectEqual(a.BackendObject, b.BackendObject) {
+		return false
+	}
+	if !errorsEqual(a.Err, b.Err) {
+		return false
+	}
+	return true
+}
+
+func backendObjectEqual(a, b *BackendObjectIR) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equals(*b)
+}
+
+func errorsEqual(a, b error) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Error() == b.Error()
+}
+
+// TODO: why is this in backend.go?
+type ListenerSet struct {
+	ObjectSource `json:",inline"`
+	Listeners    Listeners
+	Obj          client.Object
+	// ListenerSet polices are attached to the individual listeners in addition
+	// to their specific policies
+
+	// Err contains any error encountered during ListenerSet construction to be used for status reporting
+	Err error
+}
+
+func (c ListenerSet) ResourceName() string {
+	return c.ObjectSource.ResourceName()
+}
+
+func (c ListenerSet) Equals(in ListenerSet) bool {
+	return c.ObjectSource.Equals(in.ObjectSource) &&
+		versionEquals(c.Obj, in.Obj) &&
+		c.Listeners.Equals(in.Listeners) &&
+		errorsEqual(c.Err, in.Err)
+}
+
+type GVKListenerSets map[schema.GroupVersionKind]ListenerSets
+
+func (c GVKListenerSets) Equals(in GVKListenerSets) bool {
+	if len(c) != len(in) {
+		return false
+	}
+	for gvk, ls := range c {
+		if !ls.Equals(in[gvk]) {
+			return false
+		}
+	}
+	return true
+}
+
+// implement marshal json for krt snapshot dump
+func (l GVKListenerSets) MarshalJSON() ([]byte, error) {
+	m := make(map[string]ListenerSets)
+	for gvk, ls := range l {
+		m[gvk.String()] = ls
+	}
+	return json.Marshal(m)
+}
+
+type ListenerSets []ListenerSet
+
+func (c ListenerSets) Equals(in ListenerSets) bool {
+	if len(c) != len(in) {
+		return false
+	}
+	for i, ls := range c {
+		if !ls.Equals(in[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+type Listeners []Listener
+
+func (c Listeners) Equals(in Listeners) bool {
+	if len(c) != len(in) {
+		return false
+	}
+	for i, l := range c {
+		if !l.Equals(in[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// ParseObjectAnnotations parses common annotations from a Kubernetes object
+// and sets the corresponding fields on the BackendObjectIR. If parsing fails, an error is added
+// to the backend's errors slice.
+func ParseObjectAnnotations(backend *BackendObjectIR, obj metav1.Object) {
+	if obj == nil {
+		return
+	}
+
+	annotations := obj.GetAnnotations()
+
+	// Parse Istio auto-mTLS annotation
+	if val, exists := annotations[apiannotations.DisableIstioAutoMTLS]; exists {
+		if disabled, err := strconv.ParseBool(val); err != nil {
+			// Add error to backend.errors instead of just logging
+			backend.Errors = append(backend.Errors, fmt.Errorf("invalid annotation %s value %q: %w", apiannotations.DisableIstioAutoMTLS, val, err))
+		} else {
+			// Store the parsed value
+			backend.DisableIstioAutoMTLS = disabled
+		}
+	}
+}

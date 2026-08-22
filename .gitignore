@@ -1,0 +1,63 @@
+_output
+_test
+.idea
+.vscode
+*.code-workspace
+.venv
+.cursor
+
+# ignore local pollution from kind setup script
+docker-local
+
+# OSX files
+.DS_Store
+
+# ignore intermediate files that gomock sometimes generates
+**/gomock_reflect*
+
+.vscode/launch.json
+.vscode/settings.json
+*__debug_bin
+
+# junit
+junit.xml
+junit-*.xml
+
+# e2e tests
+*.test
+# swp files
+*.swp
+
+# Ginkgo test report output
+test-report.json
+
+# Ginkgo test coverage output
+*.cov
+
+# Vscode Ginkgo test explorer report
+**/ginkgo.report
+
+# Go test coverage output
+cover.out
+
+# At time we run kgateway locally and store configuration in a local directory named `data`
+# These should be ignored, as often times `source_data` is the configuration we check into the repo
+data
+
+# python pickle files
+*.p
+
+# The istio binary downloaded for the kubernetes e2e tests
+istio-*/*
+
+# Bin directory created by e2e test
+.bin/
+# Added by goreleaser init:
+dist/
+
+*.o
+*.d
+*-build
+
+# Rust target directory created by cargo
+internal/envoyinit/rustformations/target/*
