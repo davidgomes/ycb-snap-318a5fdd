@@ -1,0 +1,25 @@
+packages:
+  - packages/*
+  - examples/sims/*
+  - examples/apps/*
+  - .config/*
+
+catalog:
+  '@react-three/drei': ^10.7.7
+  '@react-three/fiber': ^9.4.0
+  '@types/react': ^19.2.6
+  '@types/react-dom': ^19.2.3
+  '@types/three': ^0.181.0
+  directed: ^0.1.6
+  react: ^19.2.0
+  react-dom: ^19.2.0
+  three: ^0.181.2
+  unplugin-inline-functions: ^0.3.10
+  vite: ^7.2.4
+  vitest: ^4.0.13
+
+manage-package-manager-versions: true
+
+onlyBuiltDependencies:
+  - '@swc/core'
+  - esbuild
