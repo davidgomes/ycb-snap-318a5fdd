@@ -601,4 +601,77 @@ describe('BigQueryFormatter', () => {
       expect(format(input, { linesBetweenQueries: 0 })).toBe(input);
     });
   });
+
+  describe('BigQuery pipe queries', () => {
+    it('formats pipe clauses and nested aggregate grouping', () => {
+      expect(
+        format(`
+          FROM Produce
+          |> WHERE item != 'bananas' AND category IN ('fruit', 'nut')
+          |> AGGREGATE COUNT(*) AS num_items, SUM(sales) AS total_sales GROUP BY item
+          |> ORDER BY item DESC;
+        `)
+      ).toBe(dedent`
+        FROM
+          Produce
+        |> WHERE
+          item != 'bananas'
+          AND category IN ('fruit', 'nut')
+        |> AGGREGATE
+          COUNT(*) AS num_items,
+          SUM(sales) AS total_sales
+          GROUP BY
+            item;
+      `);
+    });
+
+    it('keeps one-line pipe clauses on the pipe line', () => {
+      expect(format('FROM source |> SELECT * |> JOIN other ON source.id = other.id |> AS result |> LIMIT 10'))
+        .toBe(dedent`
+          FROM
+            source
+          |> SELECT
+            *
+          |> JOIN other ON source.id = other.id
+          |> AS result
+          |> LIMIT 10
+        `);
+    });
+
+    it('applies keywordCase to pipe keywords', () => {
+      expect(format('from source |> aggregate count(*) as total group by category |> extend total + 1 as next', {
+        keywordCase: 'lower',
+      })).toBe(dedent`
+        from
+          source
+        |> aggregate
+          count(*) as total
+          group by
+            category
+        |> extend
+          total + 1 as next
+      `);
+    });
+
+    it('formats parenthesized pipe queries and mixed statements independently', () => {
+      expect(
+        format('SELECT * FROM (FROM source |> WHERE active = TRUE); FROM other |> LIMIT 5', {
+          linesBetweenQueries: 0,
+        })
+      ).toBe(dedent`
+        SELECT
+          *
+        FROM
+          (
+            FROM
+              source
+            |> WHERE
+              active = TRUE
+          );
+        FROM
+          other
+        |> LIMIT 5
+      `);
+    });
+  });
 });

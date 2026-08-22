@@ -199,7 +199,31 @@ export const bigquery: DialectOptions = {
 };
 
 function postProcess(tokens: Token[]): Token[] {
-  return detectArraySubscripts(combineParameterizedTypes(tokens));
+  return detectArraySubscripts(promotePipeClauses(combineParameterizedTypes(tokens)));
+}
+
+// AGGREGATE and EXTEND are only clauses when they follow a pipe operator.
+// Keeping them as identifiers elsewhere preserves traditional BigQuery parsing.
+function promotePipeClauses(tokens: Token[]): Token[] {
+  let afterPipe = false;
+
+  return tokens.map(token => {
+    if (token.type === TokenType.PIPE_OPERATOR) {
+      afterPipe = true;
+      return token;
+    }
+    if (token.type === TokenType.BLOCK_COMMENT || token.type === TokenType.LINE_COMMENT) {
+      return token;
+    }
+
+    if (afterPipe) {
+      afterPipe = false;
+      if (token.text.toUpperCase() === 'AGGREGATE' || token.text.toUpperCase() === 'EXTEND') {
+        return { ...token, type: TokenType.RESERVED_CLAUSE, text: token.text.toUpperCase() };
+      }
+    }
+    return token;
+  });
 }
 
 // Converts OFFSET token inside array from RESERVED_CLAUSE to RESERVED_FUNCTION_NAME

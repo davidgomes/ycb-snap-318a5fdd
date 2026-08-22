@@ -31,6 +31,7 @@ import {
   DataTypeNode,
   ParameterizedDataTypeNode,
   DisableCommentNode,
+  PipeClauseNode,
 } from '../parser/ast.js';
 
 import Layout, { WS } from './Layout.js';
@@ -118,6 +119,8 @@ export default class ExpressionFormatter {
         return this.formatCaseElse(node);
       case NodeType.clause:
         return this.formatClause(node);
+      case NodeType.pipe_clause:
+        return this.formatPipeClause(node);
       case NodeType.set_operation:
         return this.formatSetOperation(node);
       case NodeType.limit_clause:
@@ -283,6 +286,39 @@ export default class ExpressionFormatter {
     this.layout.indentation.increaseTopLevel();
     this.layout = this.formatSubExpression(node.children);
     this.layout.indentation.decreaseTopLevel();
+  }
+
+  private formatPipeClause(node: PipeClauseNode) {
+    this.layout.add(
+      WS.NEWLINE,
+      WS.INDENT,
+      node.pipeOperator.text,
+      WS.SPACE,
+      this.showKw(node.nameKw)
+    );
+
+    if (this.isPipeOnelineClause(node)) {
+      this.layout.add(WS.SPACE);
+      this.layout = this.formatSubExpression(node.children);
+      return;
+    }
+
+    this.layout.add(WS.NEWLINE);
+    this.layout.indentation.increaseTopLevel();
+    this.layout.add(WS.INDENT);
+    this.layout = this.formatSubExpression(node.children);
+    if (node.groupBy) {
+      this.formatNode(node.groupBy);
+    }
+    this.layout.indentation.decreaseTopLevel();
+  }
+
+  private isPipeOnelineClause(node: PipeClauseNode): boolean {
+    return (
+      node.nameKw.text === 'AS' ||
+      node.nameKw.tokenType === TokenType.LIMIT ||
+      node.nameKw.tokenType === TokenType.RESERVED_JOIN
+    );
   }
 
   private formatSetOperation(node: SetOperationNode) {

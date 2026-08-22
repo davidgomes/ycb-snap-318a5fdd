@@ -1,7 +1,16 @@
 @preprocessor typescript
 @{%
 import LexerAdapter from './LexerAdapter.js';
-import { NodeType, AstNode, CommentNode, KeywordNode, IdentifierNode, DataTypeNode } from './ast.js';
+import {
+  NodeType,
+  AstNode,
+  CommentNode,
+  KeywordNode,
+  IdentifierNode,
+  DataTypeNode,
+  ClauseNode,
+  PipeClauseNode,
+} from './ast.js';
 import { Token, TokenType } from '../lexer/token.js';
 
 // The lexer here is only to provide the has() method,
@@ -27,6 +36,11 @@ const toDataTypeNode = (token: Token): DataTypeNode => ({
   type: NodeType.data_type,
   text: token.text,
   raw: token.raw,
+});
+
+const toOperatorNode = (token: Token) => ({
+  type: NodeType.operator,
+  text: token.text,
 });
 
 interface CommentAttachments {
@@ -89,8 +103,72 @@ statement -> expressions_or_clauses (%DELIMITER | %EOF) {%
 %}
 
 # To avoid ambiguity, plain expressions can only come before clauses
-expressions_or_clauses -> free_form_sql:* clause:* {%
+expressions_or_clauses ->
+  ( pipe_query
+  | standard_expressions_or_clauses ) {% unwrap %}
+
+standard_expressions_or_clauses -> free_form_sql:* clause:* {%
   ([expressions, clauses]) => [...expressions, ...clauses]
+%}
+
+pipe_query -> from_clause pipe_clause:+ {%
+  ([from, clauses]) => [from, ...clauses]
+%}
+
+from_clause -> %RESERVED_CLAUSE free_form_sql:* {%
+  ([nameToken, children]) => {
+    if (nameToken.text !== 'FROM') {
+      throw new Error('Pipe queries must start with FROM');
+    }
+    return {
+      type: NodeType.clause,
+      nameKw: toKeywordNode(nameToken),
+      children,
+    };
+  }
+%}
+
+pipe_clause ->
+  %PIPE_OPERATOR pipe_clause_name free_form_sql:* pipe_group_by_clause:? {%
+  ([pipeToken, nameKw, children, optionalGroupBy]) => {
+    const groupBy = optionalGroupBy ? optionalGroupBy[0] : undefined;
+    if (groupBy && nameKw.text !== 'AGGREGATE') {
+      throw new Error('GROUP BY is only valid after AGGREGATE in a pipe query');
+    }
+    const node: PipeClauseNode = {
+      type: NodeType.pipe_clause,
+      pipeOperator: toOperatorNode(pipeToken),
+      nameKw,
+      children,
+    };
+    if (groupBy) {
+      node.groupBy = groupBy;
+    }
+    return node;
+  }
+%}
+
+pipe_clause_name ->
+  ( %RESERVED_CLAUSE
+  | %RESERVED_SELECT
+  | %LIMIT
+  | %RESERVED_JOIN
+  | %RESERVED_KEYWORD ) {%
+  ([[token]]) => toKeywordNode(token)
+%}
+
+pipe_group_by_clause -> %RESERVED_CLAUSE free_form_sql:* {%
+  ([nameToken, children]) => {
+    if (nameToken.text !== 'GROUP BY') {
+      throw new Error('Only GROUP BY can follow AGGREGATE in a pipe query');
+    }
+    const node: ClauseNode = {
+      type: NodeType.clause,
+      nameKw: toKeywordNode(nameToken),
+      children,
+    };
+    return node;
+  }
 %}
 
 clause ->
