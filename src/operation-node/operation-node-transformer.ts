@@ -99,6 +99,8 @@ import type { OrActionNode } from './or-action-node.js'
 import type { CollateNode } from './collate-node.js'
 import type { QueryId } from '../util/query-id.js'
 import type { RenameConstraintNode } from './rename-constraint-node.js'
+import type { FrameNode } from './frame-node.js'
+import type { FrameBoundNode } from './frame-bound-node.js'
 
 /**
  * Transforms an operation node tree into another one.
@@ -242,6 +244,8 @@ export class OperationNodeTransformer {
     OutputNode: this.transformOutput.bind(this),
     OrActionNode: this.transformOrAction.bind(this),
     CollateNode: this.transformCollate.bind(this),
+    FrameNode: this.transformFrame.bind(this),
+    FrameBoundNode: this.transformFrameBound.bind(this),
   })
 
   transformNode<T extends OperationNode | undefined>(
@@ -1071,6 +1075,7 @@ export class OperationNodeTransformer {
       withinGroup: this.transformNode(node.withinGroup, queryId),
       filter: this.transformNode(node.filter, queryId),
       over: this.transformNode(node.over, queryId),
+      nulls: node.nulls,
     })
   }
 
@@ -1079,6 +1084,7 @@ export class OperationNodeTransformer {
       kind: 'OverNode',
       orderBy: this.transformNode(node.orderBy, queryId),
       partitionBy: this.transformNode(node.partitionBy, queryId),
+      frame: this.transformNode(node.frame, queryId),
     })
   }
 
@@ -1352,5 +1358,26 @@ export class OperationNodeTransformer {
   ): CollateNode {
     // An Object.freezed leaf node. No need to clone.
     return node
+  }
+
+  protected transformFrame(node: FrameNode, queryId?: QueryId): FrameNode {
+    return requireAllProps({
+      kind: 'FrameNode',
+      mode: node.mode,
+      start: this.transformNode(node.start, queryId),
+      end: this.transformNode(node.end, queryId),
+      exclusion: node.exclusion,
+    })
+  }
+
+  protected transformFrameBound(
+    node: FrameBoundNode,
+    queryId?: QueryId,
+  ): FrameBoundNode {
+    return requireAllProps({
+      kind: 'FrameBoundNode',
+      type: node.type,
+      offset: this.transformNode(node.offset, queryId),
+    })
   }
 }

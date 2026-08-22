@@ -447,6 +447,62 @@ export class AggregateFunctionBuilder<DB, TB extends keyof DB, O = unknown>
     return new AggregateFunctionBuilder(this.#props)
   }
 
+  /**
+   * Adds a `respect nulls` clause after the function arguments.
+   *
+   * The clause is emitted after the closing parenthesis of the function
+   * arguments and before any subsequent clause (`within group`, `filter`, `over`).
+   *
+   * ### Examples
+   *
+   * ```ts
+   * eb.fn.firstValue('age').respectNulls().over()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * first_value("age") respect nulls over()
+   * ```
+   */
+  respectNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNulls(
+        this.#props.aggregateFunctionNode,
+        'respect',
+      ),
+    })
+  }
+
+  /**
+   * Adds an `ignore nulls` clause after the function arguments.
+   *
+   * The clause is emitted after the closing parenthesis of the function
+   * arguments and before any subsequent clause (`within group`, `filter`, `over`).
+   *
+   * ### Examples
+   *
+   * ```ts
+   * eb.fn.lastValue('age').ignoreNulls().over()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * last_value("age") ignore nulls over()
+   * ```
+   */
+  ignoreNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNulls(
+        this.#props.aggregateFunctionNode,
+        'ignore',
+      ),
+    })
+  }
+
   toOperationNode(): AggregateFunctionNode {
     return this.#props.aggregateFunctionNode
   }

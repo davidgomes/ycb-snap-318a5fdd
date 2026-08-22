@@ -15,6 +15,10 @@ import {
 } from '../parser/partition-by-parser.js'
 import { freeze } from '../util/object-utils.js'
 import type { OrderByInterface } from './order-by-interface.js'
+import {
+  createFrameBuilder,
+  type FrameBuilderCallback,
+} from './frame-builder.js'
 
 export class OverBuilder<DB, TB extends keyof DB>
   implements OrderByInterface<DB, TB, {}>, OperationNodeSource
@@ -127,6 +131,85 @@ export class OverBuilder<DB, TB extends keyof DB>
       overNode: OverNode.cloneWithPartitionByItems(
         this.#props.overNode,
         parsePartitionBy(partitionBy),
+      ),
+    })
+  }
+
+  /**
+   * Adds a `rows` window frame extent inside the `over` clause.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * eb.fn.avg<number>('age').over((ob) =>
+   *   ob.orderBy('first_name').rows((rb) =>
+   *     rb.betweenUnboundedPreceding().andCurrentRow()
+   *   )
+   * )
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * avg("age") over(order by "first_name" rows between unbounded preceding and current row)
+   * ```
+   */
+  rows(callback: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#frame('rows', callback)
+  }
+
+  /**
+   * Adds a `range` window frame extent inside the `over` clause.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * eb.fn.sum<number>('age').over((ob) =>
+   *   ob.orderBy('id').range((rb) => rb.unboundedPreceding())
+   * )
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * sum("age") over(order by "id" range unbounded preceding)
+   * ```
+   */
+  range(callback: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#frame('range', callback)
+  }
+
+  /**
+   * Adds a `groups` window frame extent inside the `over` clause.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * eb.fn.count<number>('id').over((ob) =>
+   *   ob.orderBy('last_name').groups((gb) =>
+   *     gb.betweenPreceding(1).andFollowing(1)
+   *   )
+   * )
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * count("id") over(order by "last_name" groups between $1 preceding and $2 following)
+   * ```
+   */
+  groups(callback: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#frame('groups', callback)
+  }
+
+  #frame(
+    mode: 'rows' | 'range' | 'groups',
+    callback: FrameBuilderCallback,
+  ): OverBuilder<DB, TB> {
+    return new OverBuilder({
+      overNode: OverNode.cloneWithFrame(
+        this.#props.overNode,
+        callback(createFrameBuilder(mode)).toOperationNode(),
       ),
     })
   }

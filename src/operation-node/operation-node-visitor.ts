@@ -100,6 +100,8 @@ import type { RefreshMaterializedViewNode } from './refresh-materialized-view-no
 import type { OrActionNode } from './or-action-node.js'
 import type { CollateNode } from './collate-node.js'
 import type { RenameConstraintNode } from './rename-constraint-node.js'
+import type { FrameNode } from './frame-node.js'
+import type { FrameBoundNode } from './frame-bound-node.js'
 
 export abstract class OperationNodeVisitor {
   protected readonly nodeStack: OperationNode[] = []
@@ -207,6 +209,8 @@ export abstract class OperationNodeVisitor {
     OutputNode: this.visitOutput.bind(this),
     OrActionNode: this.visitOrAction.bind(this),
     CollateNode: this.visitCollate.bind(this),
+    FrameNode: this.visitFrame.bind(this),
+    FrameBoundNode: this.visitFrameBound.bind(this),
   })
 
   protected readonly visitNode = (node: OperationNode): void => {
@@ -324,4 +328,6 @@ export abstract class OperationNodeVisitor {
   protected abstract visitOutput(node: OutputNode): void
   protected abstract visitOrAction(node: OrActionNode): void
   protected abstract visitCollate(node: CollateNode): void
+  protected abstract visitFrame(node: FrameNode): void
+  protected abstract visitFrameBound(node: FrameBoundNode): void
 }
