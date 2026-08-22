@@ -63,6 +63,37 @@ func TestSortStreamEntriesForGetManifest(t *testing.T) {
 	assert.Equal(t, "chart/templates/mixed.yaml", got[2].Source)
 }
 
+func TestBuildLegacyGetManifestStream(t *testing.T) {
+	manifest := `apiVersion: v1
+kind: Secret
+metadata:
+  name: fixture`
+	hooks := []*release.Hook{{
+		Path: "pre-install-hook.yaml",
+		Manifest: `apiVersion: v1
+kind: Job
+metadata:
+  annotations:
+    "helm.sh/hook": pre-install
+`,
+	}}
+
+	got := BuildGetManifestStream(manifest, hooks)
+	expected := `apiVersion: v1
+kind: Secret
+metadata:
+  name: fixture
+---
+# Source: pre-install-hook.yaml
+apiVersion: v1
+kind: Job
+metadata:
+  annotations:
+    "helm.sh/hook": pre-install
+`
+	assert.Equal(t, expected, got)
+}
+
 func TestParseAndBuildGetManifestStream(t *testing.T) {
 	manifest := `---
 # Source: chart/templates/mixed.yaml

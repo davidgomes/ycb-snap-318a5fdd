@@ -141,6 +141,11 @@ func ParseManifestStream(manifest string) []ManifestStreamEntry {
 
 // BuildGetManifestStream assembles the manifest stream for helm get manifest.
 func BuildGetManifestStream(manifest string, hooks []*release.Hook) string {
+	manifest = strings.TrimSpace(manifest)
+	if manifest != "" && !strings.Contains(manifest, "# Source: ") {
+		return buildLegacyGetManifestStream(manifest, hooks)
+	}
+
 	entries := ParseManifestStream(manifest)
 	seen := make(map[string]struct{}, len(entries))
 	for _, e := range entries {
@@ -163,6 +168,39 @@ func BuildGetManifestStream(manifest string, hooks []*release.Hook) string {
 
 	entries = SortStreamEntriesForGetManifest(entries)
 	return FormatManifestStream(entries, FormatManifestStreamOptions{TrailingNewline: true})
+}
+
+func buildLegacyGetManifestStream(manifest string, hooks []*release.Hook) string {
+	manifest = strings.TrimRight(manifest, "\n")
+
+	var b strings.Builder
+	if manifest != "" {
+		b.WriteString(manifest)
+	}
+
+	if len(hooks) > 0 {
+		hookEntries := make([]ManifestStreamEntry, 0, len(hooks))
+		for _, h := range hooks {
+			hookEntries = append(hookEntries, ManifestStreamEntry{
+				Source:  h.Path,
+				Content: h.Manifest,
+				IsHook:  true,
+			})
+		}
+		hookEntries = SortStreamEntriesForGetManifest(hookEntries)
+		hookStream := strings.TrimRight(FormatManifestStream(hookEntries, FormatManifestStreamOptions{}), "\n")
+		if hookStream != "" {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(hookStream)
+		}
+	}
+
+	if b.Len() == 0 {
+		return ""
+	}
+	return b.String() + "\n"
 }
 
 // FilterManifestStreamEntries removes hook entries based on CLI options.
