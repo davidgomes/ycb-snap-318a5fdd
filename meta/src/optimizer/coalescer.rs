@@ -246,6 +246,7 @@ mod tests {
             coalesce(rule(expr)).expr,
             OptimizedExpr::CharClass(vec![
                 ("A".to_owned(), "B".to_owned()),
+                ("D".to_owned(), "D".to_owned()),
                 ("b".to_owned(), "d".to_owned()),
             ])
         );
