@@ -346,10 +346,16 @@ type graphJSON struct {
 type graphJSONNode struct {
 	Name     string        `json:"name"`
 	Desc     string        `json:"desc"`
-	Location *ast.Location `json:"location"`
+	Location graphLocation `json:"location"`
 	UpToDate *bool         `json:"up_to_date,omitempty"`
 	Deps     []string      `json:"deps"`
 	Method   string        `json:"method"`
+}
+
+type graphLocation struct {
+	Taskfile string `json:"taskfile"`
+	Line     int    `json:"line"`
+	Column   int    `json:"column"`
 }
 
 type graphJSONEdge struct {
@@ -363,7 +369,15 @@ func (g *taskGraph) writeJSON(w interface{ Write([]byte) (int, error) }, noStatu
 	out := graphJSON{Roots: g.roots, Nodes: map[string]graphJSONNode{}, DepthGroups: g.depthGroups, LongestPath: g.longestPath}
 	for name, node := range g.nodes {
 		deps := uniqueSorted(g.adj[name])
-		item := graphJSONNode{Name: name, Desc: node.desc, Location: node.task.Location, Deps: deps, Method: node.method}
+		location := graphLocation{}
+		if node.task.Location != nil {
+			location = graphLocation{
+				Taskfile: node.task.Location.Taskfile,
+				Line:     node.task.Location.Line,
+				Column:   node.task.Location.Column,
+			}
+		}
+		item := graphJSONNode{Name: name, Desc: node.desc, Location: location, Deps: deps, Method: node.method}
 		if !noStatus {
 			value := node.upToDate
 			item.UpToDate = &value
@@ -422,7 +436,9 @@ func (g *taskGraph) writeText(w interface{ Write([]byte) (int, error) }) error {
 			return
 		}
 		b.WriteByte('\n')
-		for _, next := range uniqueSorted(g.adj[name]) {
+		nextTasks := append([]string(nil), g.adj[name]...)
+		sort.Strings(nextTasks)
+		for _, next := range nextTasks {
 			print(next, depth+1)
 		}
 	}
