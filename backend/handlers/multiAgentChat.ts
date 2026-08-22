@@ -375,6 +375,8 @@ async function* executeAgent(
         } else if (response.type === "error") {
           providerError = response.error || "Agent provider failed";
           break;
+        } else if (response.type === "done") {
+          break;
         }
       }
     } catch (error) {
