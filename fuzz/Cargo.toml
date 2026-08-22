@@ -1,0 +1,44 @@
+[package]
+name = "fuzz"
+version = "0.0.0"
+authors.workspace = true
+readme.workspace = true
+license.workspace = true
+publish = false
+edition.workspace = true
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+wasmi_fuzz = { workspace = true }
+wasmi = { workspace = true, features = ["std", "simd"] }
+wasm-smith = { workspace = true }
+libfuzzer-sys = "0.4.10"
+arbitrary = "1.4"
+wasmprinter = { workspace = true, optional = true }
+
+[features]
+default = []
+differential = ["wasmi_fuzz/differential", "dep:wasmprinter"]
+wasmi-v1 = ["wasmi_fuzz/wasmi-v1"]
+wasmtime = ["wasmi_fuzz/wasmtime"]
+
+[[bin]]
+name = "translate"
+path = "fuzz_targets/translate.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "execute"
+path = "fuzz_targets/execute.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "differential"
+path = "fuzz_targets/differential.rs"
+required-features = ["differential"]
+test = false
+doc = false

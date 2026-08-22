@@ -1,0 +1,27 @@
+[package]
+name = "wasmi_wast"
+version.workspace = true
+rust-version.workspace = true
+documentation = "https://docs.rs/wasmi_wast"
+description = "Utilities to execute Wast files and directives with Wasmi"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+exclude.workspace = true
+
+[dependencies]
+wasmi = { workspace = true, features = ["std", "simd"] }
+wast = { workspace = true, features = ["wasm-module"] }
+anyhow = "1.0"
+
+[features]
+default = ["stable", "portable-dispatch", "extra-checks"]
+portable-dispatch = ["wasmi/portable-dispatch"]
+indirect-dispatch = ["wasmi/indirect-dispatch"]
+extra-checks = ["wasmi/extra-checks"]
+stable = []
+unstable = ["wasmi/unstable"]

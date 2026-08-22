@@ -1,0 +1,288 @@
+use core::fmt::{self, Display};
+use std::fmt::Write;
+
+#[derive(Copy, Clone)]
+pub enum Case {
+    Camel,
+    Snake,
+}
+
+impl Case {
+    pub fn wrap<T>(self, value: T) -> ChosenCase<T> {
+        match self {
+            Self::Camel => ChosenCase::Camel(value),
+            Self::Snake => ChosenCase::Snake(value),
+        }
+    }
+}
+
+/// Runtime selected casing, either [`CamelCase`] or [`SnakeCase`].
+#[derive(Copy, Clone)]
+pub enum ChosenCase<T> {
+    Camel(T),
+    Snake(T),
+}
+
+impl<T> Display for ChosenCase<T>
+where
+    CamelCase<T>: Display,
+    SnakeCase<T>: Display,
+    T: Clone,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Camel(value) => CamelCase(value.clone()).fmt(f),
+            Self::Snake(value) => SnakeCase(value.clone()).fmt(f),
+        }
+    }
+}
+
+/// Camel-case tokens, e.g. `HelloWorld`.
+pub struct CamelCase<T>(pub T);
+
+/// Snake-case tokens, e.g. `hello_world`.
+pub struct SnakeCase<T>(pub T);
+
+/// A word separator as required by some casings, e.g. snake case uses `_`.
+#[derive(Copy, Clone)]
+pub struct Sep;
+
+impl Display for CamelCase<Sep> {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ok(())
+    }
+}
+
+impl Display for SnakeCase<Sep> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_char('_')
+    }
+}
+
+macro_rules! define_ident {
+    (
+        $(
+            $camel_ident:ident: $snake_ident:ident
+        ),* $(,)?
+    ) => {
+        #[derive(Copy, Clone)]
+        pub enum Ident {
+            $( $camel_ident ),*
+        }
+
+        impl Display for CamelCase<Ident> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                let frag: &'static str = match self.0 {
+                    $(
+                        Ident::$camel_ident => stringify!($camel_ident),
+                    )*
+                };
+                f.write_str(frag)
+            }
+        }
+
+        impl Display for SnakeCase<Ident> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                let frag: &'static str = match self.0 {
+                    $(
+                        Ident::$camel_ident => stringify!($snake_ident),
+                    )*
+                };
+                f.write_str(frag)
+            }
+        }
+    };
+}
+define_ident!(
+    Add: add,
+    AddSat: add_sat,
+    Sub: sub,
+    SubSat: sub_sat,
+    Mul: mul,
+    Div: div,
+    Rem: rem,
+    Min: min,
+    Max: max,
+    Pmin: pmin,
+    Pmax: pmax,
+    Copysign: copysign,
+    Avgr: avgr,
+
+    Shl: shl,
+    Shr: shr,
+    Rotl: rotl,
+    Rotr: rotr,
+
+    Eq: eq,
+    And: and,
+    AndNot: and_not,
+    Or: or,
+    Xor: xor,
+    NotEq: not_eq,
+    NotAnd: not_and,
+    NotOr: not_or,
+    Lt: lt,
+    Le: le,
+    NotLt: not_lt,
+    NotLe: not_le,
+
+    BitAnd: bitand,
+    BitOr: bitor,
+    BitXor: bitxor,
+
+    Branch: branch,
+    BranchTable: branch_table,
+    BranchTableSpan: branch_table_span,
+    Select: select,
+    Select128: select128,
+    Load: load,
+    Store: store,
+
+    CopySlot: copy_slot,
+    CopyImm32: copy_imm32,
+    CopyImm64: copy_imm64,
+    CopySpanAsc: copy_span_asc,
+    CopySpanDes: copy_span_des,
+
+    Table: table,
+    Memory: memory,
+    Func: func,
+    FuncType: func_type,
+    Global: global,
+    Elem: elem,
+    Data: data,
+    Trap: trap,
+
+    CallInternal: call_internal,
+    CallImported: call_imported,
+    CallIndirect: call_indirect,
+    ReturnCallInternal: return_call_internal,
+    ReturnCallImported: return_call_imported,
+    ReturnCallIndirect: return_call_indirect,
+
+    Clz: clz,
+    Ctz: ctz,
+    Popcnt: popcnt,
+    Wrap: wrap,
+    Sext: sext,
+    Abs: abs,
+    Neg: neg,
+    Ceil: ceil,
+    Floor: floor,
+    Trunc: trunc,
+    TruncSat: trunc_sat,
+    Nearest: nearest,
+    Sqrt: sqrt,
+    Demote: demote,
+    Promote: promote,
+    Convert: convert,
+
+    Offset: offset,
+    TrapCode: trap_code,
+    ConsumeFuel: consume_fuel,
+    Fuel: fuel,
+    Return: r#return,
+    ReturnImm32: return_imm32,
+    ReturnImm64: return_imm64,
+    ReturnSlot: return_slot,
+    ReturnSpan: return_span,
+    Values: values,
+    Value: value,
+    Result: result,
+    Results: results,
+    Condition: condition,
+    TrueVal: true_val,
+    FalseVal: false_val,
+    Params: params,
+    Len: len,
+    LenTargets: len_targets,
+    LenValues: len_values,
+    Delta: delta,
+    Dst: dst,
+    Src: src,
+    Index: index,
+    DstMemory: dst_memory,
+    SrcMemory: src_memory,
+    DstTable: dst_table,
+    SrcTable: src_table,
+    TableGet: table_get,
+    TableSet: table_set,
+    TableSize: table_size,
+    TableGrow: table_grow,
+    TableCopy: table_copy,
+    TableFill: table_fill,
+    TableInit: table_init,
+    ElemDrop: elem_drop,
+    DataDrop: data_drop,
+    MemoryGrow: memory_grow,
+    MemorySize: memory_size,
+    MemoryCopy: memory_copy,
+    MemoryFill: memory_fill,
+    MemoryInit: memory_init,
+    GlobalGet64: global_get64,
+    GlobalGet128: global_get128,
+    GlobalSet32I: global_set32_i,
+    GlobalSet64S: global_set64_s,
+    GlobalSet64I: global_set64_i,
+    GlobalSet128S: global_set128_s,
+    RefFunc: ref_func,
+    Mem0: mem0,
+    Offset16: offset16,
+
+    I64Add128: i64_add128,
+    I64Sub128: i64_sub128,
+    I64MulWide: i64_mul_wide,
+    U64MulWide: u64_mul_wide,
+
+    Lhs: lhs,
+    Rhs: rhs,
+    LhsLo: lhs_lo,
+    LhsHi: lhs_hi,
+    RhsLo: rhs_lo,
+    RhsHi: rhs_hi,
+    Ptr: ptr,
+    ValTrue: val_true,
+    ValFalse: val_false,
+
+    CopyImm128: copy_imm128,
+    ValueLo: value_lo,
+    ValueHi: value_hi,
+    Selector: selector,
+
+    V128: v128,
+    Lane: lane,
+    Splat: splat,
+    Widen: widen,
+    Extend: extend,
+    Low: low,
+    ExtractLane: extract_lane,
+    ReplaceLane: replace_lane,
+    Swizzle: swizzle,
+    I8x16Shuffle: i8x16_shuffle,
+    Q15MulrSat: q15_mulr_sat,
+    Narrow: narrow,
+    ExtmulLow: extmul_low,
+    ExtmulHigh: extmul_high,
+    Not: not,
+    AnyTrue: any_true,
+    Dot: dot,
+    AllTrue: all_true,
+    Bitmask: bitmask,
+    ExtaddPairwise: extadd_pairwise,
+    ExtendLow: extend_low,
+    ExtendHigh: extend_high,
+    DemoteZero: demote_zero,
+    PromoteLow: promote_low,
+    TruncSatZero: trunc_sat_zero,
+    ConvertLow: convert_low,
+
+    Bitselect: bitselect,
+    RelaxedDotI8x16I7x16: relaxed_dot_i8x16_i7x16,
+    RelaxedDotI8x16I7x16Add: relaxed_dot_i8x16_i7x16_add,
+    RelaxedMadd: relaxed_madd,
+    RelaxedNmadd: relaxed_nmadd,
+
+    A: a,
+    B: b,
+    C: c,
+);
