@@ -352,7 +352,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 	// Sort hooks, manifests, and partials. Only hooks and manifests are returned,
 	// as partials are not used after renderer.Render. Empty manifests are also
 	// removed here.
-	hs, manifests, err := releaseutil.SortManifests(files, nil, releaseutil.InstallOrder)
+	hs, _, stream, err := releaseutil.SortManifests(files, nil, releaseutil.InstallOrder)
 	if err != nil {
 		// By catching parse errors here, we can prevent bogus releases from going
 		// to Kubernetes.
@@ -368,44 +368,47 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 		return hs, b, "", err
 	}
 
-	// Aggregate all valid manifests into one big doc.
-	fileWritten := make(map[string]bool)
-
 	if includeCrds {
 		for _, crd := range ch.CRDObjects() {
-			if outputDir == "" {
-				fmt.Fprintf(b, "---\n# Source: %s\n%s\n", crd.Filename, string(crd.File.Data[:]))
-			} else {
-				err = writeToFile(outputDir, crd.Filename, string(crd.File.Data[:]), fileWritten[crd.Filename])
-				if err != nil {
-					return hs, b, "", err
-				}
-				fileWritten[crd.Filename] = true
-			}
+			stream = append(stream, releaseutil.ManifestStreamEntry{
+				Source:  crd.Filename,
+				Content: string(crd.File.Data[:]),
+			})
 		}
 	}
+	stream = releaseutil.SortStreamBySourcePath(stream)
 
-	for _, m := range manifests {
-		if outputDir == "" {
-			if hideSecret && m.Head.Kind == "Secret" && m.Head.Version == "v1" {
-				fmt.Fprintf(b, "---\n# Source: %s\n# HIDDEN: The Secret output has been suppressed\n", m.Name)
-			} else {
-				fmt.Fprintf(b, "---\n# Source: %s\n%s\n", m.Name, m.Content)
+	// Aggregate all valid manifests into one unified stream.
+	fileWritten := make(map[string]bool)
+
+	if outputDir == "" {
+		for _, entry := range stream {
+			content := entry.Content
+			if hideSecret && releaseutil.IsSecretV1Manifest(content) {
+				fmt.Fprintf(b, "---\n# Source: %s\n# HIDDEN: The Secret output has been suppressed\n", entry.Source)
+				continue
 			}
-		} else {
-			newDir := outputDir
-			if useReleaseName {
-				newDir = filepath.Join(outputDir, releaseName)
+			fmt.Fprintf(b, "---\n# Source: %s\n%s\n", entry.Source, content)
+		}
+	} else {
+		newDir := outputDir
+		if useReleaseName {
+			newDir = filepath.Join(outputDir, releaseName)
+		}
+		for _, entry := range stream {
+			content := entry.Content
+			if hideSecret && releaseutil.IsSecretV1Manifest(content) {
+				continue
 			}
 			// NOTE: We do not have to worry about the post-renderer because
 			// output dir is only used by `helm template`. In the next major
 			// release, we should move this logic to template only as it is not
 			// used by install or upgrade
-			err = writeToFile(newDir, m.Name, m.Content, fileWritten[m.Name])
+			err = writeToFile(newDir, entry.Source, content, fileWritten[entry.Source])
 			if err != nil {
 				return hs, b, "", err
 			}
-			fileWritten[m.Name] = true
+			fileWritten[entry.Source] = true
 		}
 	}
 

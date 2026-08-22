@@ -17,7 +17,6 @@ limitations under the License.
 package cmd
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -25,11 +24,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
-
-	release "helm.sh/helm/v4/pkg/release/v1"
 
 	"github.com/spf13/cobra"
 
@@ -117,41 +113,25 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			// We ignore a potential error here because, when the --debug flag was specified,
 			// we always want to print the YAML, even if it is not valid. The error is still returned afterwards.
 			if rel != nil {
-				var manifests bytes.Buffer
-				fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
-				if !client.DisableHooks {
+				entries := releaseutil.ParseManifestStream(rel.Manifest)
+				entries = releaseutil.FilterManifestStreamEntries(entries, client.DisableHooks, skipTests)
+
+				if client.OutputDir != "" {
 					fileWritten := make(map[string]bool)
-					for _, m := range rel.Hooks {
-						if skipTests && isTestHook(m) {
-							continue
-						}
-						if client.OutputDir == "" {
-							fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", m.Path, m.Manifest)
-						} else {
-							newDir := client.OutputDir
-							if client.UseReleaseName {
-								newDir = filepath.Join(client.OutputDir, client.ReleaseName)
-							}
-							_, err := os.Stat(filepath.Join(newDir, m.Path))
-							if err == nil {
-								fileWritten[m.Path] = true
-							}
-
-							err = writeToFile(newDir, m.Path, m.Manifest, fileWritten[m.Path])
-							if err != nil {
-								return err
-							}
-						}
-
+					newDir := client.OutputDir
+					if client.UseReleaseName {
+						newDir = filepath.Join(client.OutputDir, client.ReleaseName)
 					}
-				}
-
-				// if we have a list of files to render, then check that each of the
-				// provided files exists in the chart.
-				if len(showFiles) > 0 {
-					// This is necessary to ensure consistent manifest ordering when using --show-only
-					// with globs or directory names.
-					splitManifests := releaseutil.SplitManifests(manifests.String())
+					for _, entry := range entries {
+						err = writeToFile(newDir, entry.Source, entry.Content, fileWritten[entry.Source])
+						if err != nil {
+							return err
+						}
+						fileWritten[entry.Source] = true
+					}
+				} else if len(showFiles) > 0 {
+					manifestStream := releaseutil.FormatManifestStream(entries, releaseutil.FormatManifestStreamOptions{})
+					splitManifests := releaseutil.SplitManifests(manifestStream)
 					manifestsKeys := make([]string, 0, len(splitManifests))
 					for k := range splitManifests {
 						manifestsKeys = append(manifestsKeys, k)
@@ -194,7 +174,7 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 						fmt.Fprintf(out, "---\n%s\n", m)
 					}
 				} else {
-					fmt.Fprintf(out, "%s", manifests.String())
+					fmt.Fprint(out, releaseutil.FormatManifestStream(entries, releaseutil.FormatManifestStreamOptions{TrailingNewline: true}))
 				}
 			}
 
@@ -223,10 +203,6 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("validate", "dry-run")
 
 	return cmd
-}
-
-func isTestHook(h *release.Hook) bool {
-	return slices.Contains(h.Events, release.HookTest)
 }
 
 // The following functions (writeToFile, createOrOpenFile, and ensureDirectoryForFile)

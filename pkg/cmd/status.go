@@ -228,11 +228,11 @@ func (s statusPrinter) WriteTable(out io.Writer) error {
 	}
 
 	if strings.EqualFold(rel.Info.Description, "Dry run complete") || s.debug {
-		_, _ = fmt.Fprintln(out, "HOOKS:")
-		for _, h := range rel.Hooks {
-			_, _ = fmt.Fprintf(out, "---\n# Source: %s\n%s\n", h.Path, h.Manifest)
+		manifest := strings.TrimRight(rel.Manifest, "\n")
+		_, _ = fmt.Fprintf(out, "MANIFEST:\n%s", manifest)
+		if manifest != "" {
+			_, _ = fmt.Fprintln(out)
 		}
-		_, _ = fmt.Fprintf(out, "MANIFEST:\n%s\n", rel.Manifest)
 	}
 
 	// Hide notes from output - option in install and upgrades

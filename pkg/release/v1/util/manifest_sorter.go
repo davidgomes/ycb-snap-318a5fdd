@@ -47,6 +47,7 @@ type manifestFile struct {
 type result struct {
 	hooks   []*release.Hook
 	generic []Manifest
+	stream  []ManifestStreamEntry
 }
 
 // TODO: Refactor this out. It's here because naming conventions were not followed through.
@@ -74,7 +75,7 @@ var events = map[string]release.HookEvent{
 //
 // Files that do not parse into the expected format are simply placed into a map and
 // returned.
-func SortManifests(files map[string]string, _ common.VersionSet, ordering KindSortOrder) ([]*release.Hook, []Manifest, error) {
+func SortManifests(files map[string]string, _ common.VersionSet, ordering KindSortOrder) ([]*release.Hook, []Manifest, []ManifestStreamEntry, error) {
 	result := &result{}
 
 	var sortedFilePaths []string
@@ -102,11 +103,11 @@ func SortManifests(files map[string]string, _ common.VersionSet, ordering KindSo
 		}
 
 		if err := manifestFile.sort(result); err != nil {
-			return result.hooks, result.generic, err
+			return result.hooks, result.generic, result.stream, err
 		}
 	}
 
-	return sortHooksByKind(result.hooks, ordering), sortManifestsByKind(result.generic, ordering), nil
+	return sortHooksByKind(result.hooks, ordering), sortManifestsByKind(result.generic, ordering), result.stream, nil
 }
 
 // sort takes a manifestFile object which may contain multiple resource definition
@@ -144,7 +145,7 @@ func (file *manifestFile) sort(result *result) error {
 	}
 	sort.Sort(BySplitManifestsOrder(sortedEntryKeys))
 
-	for _, entryKey := range sortedEntryKeys {
+	for order, entryKey := range sortedEntryKeys {
 		m := file.entries[entryKey]
 
 		var entry SimpleHead
@@ -158,6 +159,11 @@ func (file *manifestFile) sort(result *result) error {
 				Content: m,
 				Head:    &entry,
 			})
+			result.stream = append(result.stream, ManifestStreamEntry{
+				Source:  file.path,
+				Content: m,
+				Order:   order,
+			})
 			continue
 		}
 
@@ -167,6 +173,11 @@ func (file *manifestFile) sort(result *result) error {
 				Name:    file.path,
 				Content: m,
 				Head:    &entry,
+			})
+			result.stream = append(result.stream, ManifestStreamEntry{
+				Source:  file.path,
+				Content: m,
+				Order:   order,
 			})
 			continue
 		}
@@ -201,6 +212,12 @@ func (file *manifestFile) sort(result *result) error {
 		}
 
 		result.hooks = append(result.hooks, h)
+		result.stream = append(result.stream, ManifestStreamEntry{
+			Source:  file.path,
+			Content: m,
+			IsHook:  true,
+			Order:   order,
+		})
 
 		operateAnnotationValues(entry, release.HookDeleteAnnotation, func(value string) {
 			h.DeletePolicies = append(h.DeletePolicies, release.HookDeletePolicy(value))
