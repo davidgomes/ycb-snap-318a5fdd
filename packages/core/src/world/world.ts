@@ -1,4 +1,5 @@
 import { $internal } from '../common';
+import { rollbackWorld, snapshotWorld } from '../snapshot';
 import { createEntity, destroyEntity } from '../entity/entity';
 import type { Entity } from '../entity/types';
 import { createEntityIndex, getAliveEntities, isEntityAlive } from '../entity/utils/entity-index';
@@ -180,6 +181,14 @@ export function createWorld(
             for (const sub of ctx.resetSubscriptions) {
                 sub(world);
             }
+        },
+
+        snapshot(registry) {
+            return snapshotWorld(world, registry);
+        },
+
+        rollback(registry, checkpoint) {
+            rollbackWorld(world, registry, checkpoint);
         },
 
         query(...args: any[]) {
