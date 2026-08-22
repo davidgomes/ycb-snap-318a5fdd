@@ -97,6 +97,20 @@ func (runInfo *runInfoStruct) runSingleStmt() {
 
 	// VarStmt
 	case *ast.VarStmt:
+		var target reflect.Type
+		if stmt.TypeData != nil {
+			target = makeType(runInfo, stmt.TypeData)
+			if runInfo.err != nil {
+				runInfo.rv = nilValue
+				return
+			}
+			if target == nil {
+				runInfo.err = newStringError(stmt, "unknown type")
+				runInfo.rv = nilValue
+				return
+			}
+		}
+
 		// get right side expression values
 		rvs := make([]reflect.Value, len(stmt.Exprs))
 		var i int
@@ -112,6 +126,38 @@ func (runInfo *runInfoStruct) runSingleStmt() {
 			}
 		}
 
+		define := func(name string, value reflect.Value) bool {
+			if target != nil && runInfo.options.TypedBindings && name != "_" {
+				value, runInfo.err = typedBindingValue(name, value, target)
+				if runInfo.err != nil {
+					runInfo.err = newError(stmt, runInfo.err)
+					runInfo.rv = nilValue
+					return false
+				}
+			}
+			if target != nil {
+				runInfo.err = runInfo.env.DefineValueWithConstraint(name, value, target)
+			} else {
+				runInfo.err = runInfo.env.DefineValue(name, value)
+			}
+			if runInfo.err != nil {
+				runInfo.rv = nilValue
+				return false
+			}
+			return true
+		}
+
+		if target != nil && len(rvs) == 0 {
+			value := reflect.Zero(target)
+			for _, name := range stmt.Names {
+				if !define(name, value) {
+					return
+				}
+			}
+			runInfo.rv = value
+			return
+		}
+
 		if len(rvs) == 1 && len(stmt.Names) > 1 {
 			// only one right side value but many left side names
 			value := rvs[0]
@@ -121,7 +167,9 @@ func (runInfo *runInfoStruct) runSingleStmt() {
 			if (value.Kind() == reflect.Slice || value.Kind() == reflect.Array) && value.Len() > 0 {
 				// value is slice/array, add each value to left side names
 				for i := 0; i < value.Len() && i < len(stmt.Names); i++ {
-					runInfo.env.DefineValue(stmt.Names[i], value.Index(i))
+					if !define(stmt.Names[i], value.Index(i)) {
+						return
+					}
 				}
 				// return last value of slice/array
 				runInfo.rv = value.Index(value.Len() - 1)
@@ -131,11 +179,17 @@ func (runInfo *runInfoStruct) runSingleStmt() {
 
 		// define all names with right side values
 		for i = 0; i < len(rvs) && i < len(stmt.Names); i++ {
-			runInfo.env.DefineValue(stmt.Names[i], rvs[i])
+			if !define(stmt.Names[i], rvs[i]) {
+				return
+			}
 		}
 
 		// return last right side value
-		runInfo.rv = rvs[len(rvs)-1]
+		if len(rvs) > 0 {
+			runInfo.rv = rvs[len(rvs)-1]
+		} else {
+			runInfo.rv = nilValue
+		}
 
 	// LetsStmt
 	case *ast.LetsStmt:

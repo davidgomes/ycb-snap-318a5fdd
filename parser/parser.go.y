@@ -261,6 +261,16 @@ stmt_var :
 		$$ = &ast.VarStmt{Names: $2, Exprs: $4}
 		$$.SetPosition($1.Position())
 	}
+	| VAR expr_idents ':' type_data
+	{
+		$$ = &ast.VarStmt{Names: $2, TypeData: $4}
+		$$.SetPosition($1.Position())
+	}
+	| VAR expr_idents ':' type_data '=' exprs
+	{
+		$$ = &ast.VarStmt{Names: $2, Exprs: $6, TypeData: $4}
+		$$.SetPosition($1.Position())
+	}
 
 stmt_lets :
 	expr '=' expr

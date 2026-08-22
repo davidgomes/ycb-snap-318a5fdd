@@ -12,9 +12,21 @@ func (runInfo *runInfoStruct) invokeLetExpr() {
 
 	// IdentExpr
 	case *ast.IdentExpr:
-		if runInfo.env.SetValue(expr.Lit, runInfo.rv) != nil {
+		value := runInfo.rv
+		if runInfo.options.TypedBindings && expr.Lit != "_" {
+			if target, ok := runInfo.env.GetValueConstraint(expr.Lit); ok {
+				value, runInfo.err = typedBindingValue(expr.Lit, value, target)
+				if runInfo.err != nil {
+					runInfo.err = newError(expr, runInfo.err)
+					runInfo.rv = nilValue
+					return
+				}
+				runInfo.rv = value
+			}
+		}
+		if runInfo.env.SetValue(expr.Lit, value) != nil {
 			runInfo.err = nil
-			runInfo.env.DefineValue(expr.Lit, runInfo.rv)
+			runInfo.env.DefineValue(expr.Lit, value)
 		}
 
 	// MemberExpr

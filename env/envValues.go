@@ -18,11 +18,29 @@ func (e *Env) Define(symbol string, value interface{}) error {
 
 // DefineValue defines/sets reflect value to symbol in current scope.
 func (e *Env) DefineValue(symbol string, value reflect.Value) error {
+	return e.defineValue(symbol, value, nil)
+}
+
+// DefineValueWithConstraint defines/sets a reflect value and its type
+// constraint to a symbol in the current scope.
+func (e *Env) DefineValueWithConstraint(symbol string, value reflect.Value, constraint reflect.Type) error {
+	return e.defineValue(symbol, value, constraint)
+}
+
+func (e *Env) defineValue(symbol string, value reflect.Value, constraint reflect.Type) error {
 	if strings.Contains(symbol, ".") {
 		return ErrSymbolContainsDot
 	}
 	e.rwMutex.Lock()
 	e.values[symbol] = value
+	if constraint == nil {
+		delete(e.constraints, symbol)
+	} else {
+		if e.constraints == nil {
+			e.constraints = make(map[string]reflect.Type)
+		}
+		e.constraints[symbol] = constraint
+	}
 	e.rwMutex.Unlock()
 
 	return nil
@@ -70,6 +88,23 @@ func (e *Env) SetValue(symbol string, value reflect.Value) error {
 		return fmt.Errorf("undefined symbol '%s'", symbol)
 	}
 	return e.parent.SetValue(symbol, value)
+}
+
+// GetValueConstraint returns the type constraint for the first matching
+// value symbol found in the current or parent scope.
+func (e *Env) GetValueConstraint(symbol string) (reflect.Type, bool) {
+	e.rwMutex.RLock()
+	_, valueDefined := e.values[symbol]
+	constraint, constrained := e.constraints[symbol]
+	e.rwMutex.RUnlock()
+	if valueDefined {
+		return constraint, constrained
+	}
+
+	if e.parent == nil {
+		return nil, false
+	}
+	return e.parent.GetValueConstraint(symbol)
 }
 
 // get
@@ -121,6 +156,7 @@ func (e *Env) GetValueSymbols() []string {
 func (e *Env) Delete(symbol string) {
 	e.rwMutex.Lock()
 	delete(e.values, symbol)
+	delete(e.constraints, symbol)
 	e.rwMutex.Unlock()
 }
 

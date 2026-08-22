@@ -12,7 +12,8 @@ import (
 
 // Options provides options to run VM with
 type Options struct {
-	Debug bool // run in Debug mode
+	Debug         bool // run in Debug mode
+	TypedBindings bool // enforce type constraints on typed variable bindings
 }
 
 type (
@@ -133,6 +134,33 @@ func isNum(v reflect.Value) bool {
 		return true
 	}
 	return false
+}
+
+func typedBindingValue(variable string, value reflect.Value, target reflect.Type) (reflect.Value, error) {
+	if !value.IsValid() || (value.Kind() == reflect.Interface && value.IsNil()) {
+		if target.Kind() == reflect.Interface ||
+			target.Kind() == reflect.Slice ||
+			target.Kind() == reflect.Map ||
+			target.Kind() == reflect.Ptr ||
+			target.Kind() == reflect.Chan {
+			return reflect.Zero(target), nil
+		}
+		return nilValue, typedBindingTypeError(variable, "<nil>", target)
+	}
+
+	if value.Kind() == reflect.Interface {
+		value = value.Elem()
+	}
+
+	if (target.Kind() == reflect.Interface && value.Type().AssignableTo(target)) ||
+		value.Type() == target {
+		return value, nil
+	}
+	return nilValue, typedBindingTypeError(variable, value.Type().String(), target)
+}
+
+func typedBindingTypeError(variable, source string, target reflect.Type) error {
+	return fmt.Errorf("type error: variable %s cannot assign source type %s to declared target type %s", variable, source, target.String())
 }
 
 // equal returns true when lhsV and rhsV is same value.
