@@ -570,12 +570,59 @@ export class CrudService<T extends CrudEntity> {
 
       const em = opParams.em || this.entityManager.fork();
       const opts = this.getReadOptions(ctx, opParams);
+      const cursor = opts.cursor;
+      const sort = this.getCursorSort(opts.orderBy);
+      if (cursor && !sort.length) {
+        throw new BadRequestException('cursor requires orderBy');
+      }
+      if (cursor && opts.offset !== undefined) {
+        throw new BadRequestException(
+          'cursor and offset cannot be provided simultaneously',
+        );
+      }
+
+      let query = entity;
+      if (sort.length) {
+        if (!sort.some((item) => item.field === this.crudConfig.id_field)) {
+          sort.push({ field: this.crudConfig.id_field, direction: 'asc' });
+        }
+        opts.orderBy = sort.reduce(
+          (orderBy, item) => ({
+            ...orderBy,
+            [item.field]: item.direction,
+          }),
+          {},
+        ) as any;
+      }
+      if (cursor) {
+        const cursorData = this.decodeCursor(cursor, sort);
+        query = {
+          $and: [entity, { $or: this.getCursorQuery(sort, cursorData) }],
+        } as any;
+      }
+
       let result: FindResponseDto<T>;
       if (opts.limit) {
-        const res = await em.findAndCount(this.entity, entity, opts as any);
-        result = { data: res[0], total: res[1], limit: opts.limit };
+        const requestedLimit = opts.limit;
+        const findOpts = { ...opts, limit: requestedLimit + 1, cursor: undefined };
+        const res = await em.findAndCount(this.entity, query, findOpts as any);
+        const hasNextPage = res[0].length > requestedLimit;
+        result = {
+          data: res[0].slice(0, requestedLimit),
+          total: res[1],
+          limit: requestedLimit,
+        };
+        if (hasNextPage && sort.length) {
+          result.nextCursor = this.encodeCursor(
+            result.data[result.data.length - 1],
+            sort,
+          );
+        }
       } else {
-        const res = await em.find(this.entity, entity, opts as any);
+        const res = await em.find(this.entity, query, {
+          ...opts,
+          cursor: undefined,
+        } as any);
         result = { data: res };
       }
       if (!opParams.options?.skipServiceHooks) {
@@ -591,6 +638,94 @@ export class CrudService<T extends CrudEntity> {
       }
       throw e;
     }
+  }
+
+  private getCursorSort(orderBy: any) {
+    const entries: { field: string; direction: 'asc' | 'desc' }[] = [];
+    for (const order of Array.isArray(orderBy) ? orderBy : [orderBy]) {
+      for (const field of Object.keys(order || {})) {
+        const rawDirection = String(order[field]).toLowerCase();
+        const direction = rawDirection.startsWith('desc') ? 'desc' : 'asc';
+        entries.push({ field, direction });
+      }
+    }
+    return entries;
+  }
+
+  private decodeCursor(cursor: string, sort: { field: string; direction: string }[]) {
+    let data: any;
+    try {
+      data = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
+    } catch {
+      throw new BadRequestException('Invalid cursor');
+    }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new BadRequestException('Invalid cursor');
+    }
+
+    const expectedSort = sort
+      .map((item) => `${item.field}:${item.direction}`)
+      .join(',');
+    if (data.__sort !== expectedSort) {
+      throw new BadRequestException('Cursor sort does not match orderBy');
+    }
+    if (!Object.prototype.hasOwnProperty.call(data, this.crudConfig.id_field)) {
+      throw new BadRequestException('Cursor is missing the entity ID');
+    }
+    for (const item of sort) {
+      if (!Object.prototype.hasOwnProperty.call(data, item.field)) {
+        throw new BadRequestException('Cursor is missing a sort field');
+      }
+    }
+    return data;
+  }
+
+  private getCursorQuery(
+    sort: { field: string; direction: 'asc' | 'desc' }[],
+    cursor: Record<string, any>,
+  ) {
+    return sort.map((item, index) => {
+      const query: Record<string, any> = {};
+      for (let i = 0; i < index; i++) {
+        query[sort[i].field] = this.getCursorValue(
+          sort[i].field,
+          cursor[sort[i].field],
+        );
+      }
+      const value = this.getCursorValue(item.field, cursor[item.field]);
+      query[item.field] = {
+        [item.direction === 'asc' ? '$gt' : '$lt']: value,
+      };
+      return query;
+    });
+  }
+
+  private getCursorValue(field: string, value: any) {
+    if (field === this.crudConfig.id_field) {
+      return this.dbAdapter.checkId(value);
+    }
+    const property = this.entityManager
+      .getMetadata()
+      .get(this.entity.name)
+      .properties[field];
+    if (property?.type === Date && typeof value === 'string') {
+      return new Date(value);
+    }
+    return value;
+  }
+
+  private encodeCursor(
+    entity: T,
+    sort: { field: string; direction: 'asc' | 'desc' }[],
+  ) {
+    const data: Record<string, any> = { __sort: '' };
+    for (const item of sort) {
+      data[item.field] = entity?.[item.field];
+    }
+    data.__sort = sort
+      .map((item) => `${item.field}:${item.direction}`)
+      .join(',');
+    return Buffer.from(JSON.stringify(data)).toString('base64');
   }
 
   async $findIds(
