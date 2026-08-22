@@ -196,9 +196,8 @@ func (e *Element) DeepEqual(other *Element) bool {
 	if e == nil || other == nil {
 		return e == other
 	}
-	if e.Tag != other.Tag || e.Space != other.Space ||
-		e.NamespaceURI() != other.NamespaceURI() || len(e.Attr) != len(other.Attr) ||
-		len(e.Child) != len(other.Child) {
+	if e.Tag != other.Tag || elementNamespace(e) != elementNamespace(other) ||
+		len(e.Attr) != len(other.Attr) || len(e.Child) != len(other.Child) {
 		return false
 	}
 
@@ -208,8 +207,8 @@ func (e *Element) DeepEqual(other *Element) bool {
 	for _, a := range e.Attr {
 		found := false
 		for i, b := range other.Attr {
-			if !used[i] && a.Space == b.Space && a.Key == b.Key &&
-				a.Value == b.Value && attrNamespaceURI(a) == attrNamespaceURI(b) {
+			if !used[i] && a.Key == b.Key &&
+				a.Value == b.Value && attributeNamespace(a) == attributeNamespace(b) {
 				used[i], found = true, true
 				break
 			}
@@ -226,11 +225,26 @@ func (e *Element) DeepEqual(other *Element) bool {
 	return true
 }
 
-func attrNamespaceURI(a Attr) string {
-	if a.element == nil {
-		return ""
+func elementNamespace(e *Element) string {
+	if uri := e.NamespaceURI(); uri != "" {
+		return "uri:" + uri
 	}
-	return a.NamespaceURI()
+	if e.Space != "" {
+		return "prefix:" + e.Space
+	}
+	return ""
+}
+
+func attributeNamespace(a Attr) string {
+	if a.element != nil {
+		if uri := a.NamespaceURI(); uri != "" {
+			return "uri:" + uri
+		}
+	}
+	if a.Space != "" {
+		return "prefix:" + a.Space
+	}
+	return ""
 }
 
 func ElementsDeepEqual(a, b *Element) bool { return a.DeepEqual(b) }
@@ -288,7 +302,7 @@ func normalizeDiffOptions(opts DiffOptions) DiffOptions {
 }
 
 func sameElementName(a, b *Element) bool {
-	return a.Tag == b.Tag && a.Space == b.Space && a.NamespaceURI() == b.NamespaceURI()
+	return a.Tag == b.Tag && elementNamespace(a) == elementNamespace(b)
 }
 
 func diffElement(base, target *Element, opts DiffOptions, ops *[]DiffOperation) {
@@ -561,7 +575,7 @@ func elementHash(e *Element) string {
 }
 
 func writeHashElement(b *strings.Builder, e *Element) {
-	b.WriteString(e.Space)
+	b.WriteString(elementNamespace(e))
 	b.WriteByte(':')
 	b.WriteString(e.Tag)
 	attrs := append([]Attr(nil), e.Attr...)
