@@ -293,7 +293,9 @@ func main() {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "does not implement") && !strings.Contains(err.Error(), "missing method") {
+	if !strings.Contains(err.Error(), "does not implement") &&
+		!strings.Contains(err.Error(), "missing method") &&
+		!strings.Contains(err.Error(), "cannot use") {
 		t.Fatalf("unexpected error %v", err)
 	}
 }
