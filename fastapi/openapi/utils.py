@@ -282,6 +282,10 @@ def get_openapi_path(
     route_response_media_type: str | None = current_response_class.media_type
     if route.include_in_schema:
         for method in route.methods:
+            if method == "HEAD" and getattr(route, "has_implicit_head", False):
+                continue
+            if method == "OPTIONS" and getattr(route, "is_implicit_options", False):
+                continue
             operation = get_openapi_operation_metadata(
                 route=route, method=method, operation_ids=operation_ids
             )
