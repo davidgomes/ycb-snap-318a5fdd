@@ -28,10 +28,9 @@ fn compare_entries(a: &DirEntry, b: &DirEntry, options: &SortOptions) -> Orderin
     if options.dirs_first || options.files_first {
         let a_group = grouping_value(a, options);
         let b_group = grouping_value(b, options);
-        if let Some(ordering) = a_group.partial_cmp(&b_group) {
-            if ordering != Ordering::Equal {
-                return ordering;
-            }
+        let ordering = a_group.cmp(&b_group);
+        if ordering != Ordering::Equal {
+            return ordering;
         }
     }
 
