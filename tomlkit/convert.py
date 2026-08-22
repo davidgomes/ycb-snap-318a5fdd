@@ -123,6 +123,8 @@ def _leaves(table, prefix, max_depth, depth=0):
         if key is None or isinstance(value, (Whitespace, Comment, Null)):
             continue
         full = prefix.concat(key) if prefix else key
+        if isinstance(full, DottedKey):
+            full.sep = " = "
         if isinstance(value, (Table, InlineTable)) and (
             max_depth is None or depth < max_depth
         ):
