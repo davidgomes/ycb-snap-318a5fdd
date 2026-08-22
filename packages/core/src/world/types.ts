@@ -10,6 +10,7 @@ import type {
     QueryUnsubscriber,
 } from '../query/types';
 import type { Relation, RelationPair } from '../relation/types';
+import type { EntitySnapshot, TraitRegistry, WorldSnapshot } from '../snapshot/types';
 import type {
     ConfigurableTrait,
     ExtractSchema,
@@ -121,4 +122,6 @@ export type World = {
         input: Trait | Relation<Trait> | RelationPair,
         callback: (entity: Entity, target?: Entity) => void
     ): QueryUnsubscriber;
+    snapshot(registry: TraitRegistry): WorldSnapshot;
+    rollback(registry: TraitRegistry, checkpoint: WorldSnapshot): void;
 };

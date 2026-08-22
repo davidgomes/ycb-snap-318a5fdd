@@ -105,3 +105,33 @@ export const isEntityAlive = /* @inline @pure */ (index: EntityIndex, entity: En
 export const getAliveEntities = (index: EntityIndex): Entity[] => {
     return index.dense.slice(0, index.aliveCount);
 };
+
+/**
+ * Allocates an entity at a specific entity id.
+ * Used when restoring world snapshots.
+ */
+export const allocateEntityAtId = (index: EntityIndex, entityId: number): Entity => {
+    const entity = packEntity(index.worldId, 0, entityId);
+
+    if (entityId >= index.maxId) {
+        index.maxId = entityId + 1;
+    }
+
+    index.sparse[entityId] = index.aliveCount;
+    index.dense.push(entity);
+    index.aliveCount++;
+
+    return entity;
+};
+
+/**
+ * Resets the entity index to contain only the world entity after rollback.
+ */
+export const resetEntityIndexForRollback = (index: EntityIndex, worldEntity: Entity): void => {
+    const worldEntityId = getEntityId(worldEntity);
+    index.dense = [worldEntity];
+    index.sparse = [];
+    index.sparse[worldEntityId] = 0;
+    index.aliveCount = 1;
+    index.maxId = Math.max(index.maxId, worldEntityId + 1);
+};

@@ -11,6 +11,8 @@ import { getTrackingCursor, setTrackingMasks } from '../query/utils/tracking-cur
 import { getEntitiesWithRelationTo } from '../relation/relation';
 import type { Relation, RelationPair } from '../relation/types';
 import { isRelation, isRelationPair } from '../relation/utils/is-relation';
+import { rollbackWorld, snapshotWorld } from '../snapshot';
+import type { TraitRegistry, WorldSnapshot } from '../snapshot/types';
 import { addTrait, getTrait, hasTrait, registerTrait, removeTrait, setTrait } from '../trait/trait';
 import { clearTraitInstance, getTraitInstance, hasTraitInstance } from '../trait/trait-instance';
 import type {
@@ -371,6 +373,14 @@ export function createWorld(
                 data.changeSubscriptions.delete(resolvedCallback);
                 if (data.changeSubscriptions.size === 0) ctx.trackedTraits.delete(resolvedTrait);
             };
+        },
+
+        snapshot(registry: TraitRegistry): WorldSnapshot {
+            return snapshotWorld(world, registry);
+        },
+
+        rollback(registry: TraitRegistry, checkpoint: WorldSnapshot): void {
+            rollbackWorld(world, registry, checkpoint);
         },
     } as World;
 
