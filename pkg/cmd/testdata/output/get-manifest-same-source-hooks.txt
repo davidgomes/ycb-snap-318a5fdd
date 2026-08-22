@@ -1,0 +1,14 @@
+---
+# Source: chart/templates/mixed.yaml
+apiVersion: v1
+kind: Job
+metadata:
+  name: hook
+  annotations:
+    "helm.sh/hook": pre-install
+---
+# Source: chart/templates/mixed.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: regular

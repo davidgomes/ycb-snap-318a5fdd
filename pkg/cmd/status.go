@@ -227,7 +227,12 @@ func (s statusPrinter) WriteTable(out io.Writer) error {
 		_, _ = fmt.Fprintln(out)
 	}
 
-	if strings.EqualFold(rel.Info.Description, "Dry run complete") || s.debug {
+	if strings.EqualFold(rel.Info.Description, "Dry run complete") {
+		// Install/upgrade dry-run output is a single MANIFEST section whose
+		// body is the unified hook+resource stream. The stream already ends
+		// with a trailing newline, so do not add another blank line.
+		_, _ = fmt.Fprintf(out, "MANIFEST:\n%s", unifiedManifestStreamFromV1(rel, rel.Hooks))
+	} else if s.debug {
 		_, _ = fmt.Fprintln(out, "HOOKS:")
 		for _, h := range rel.Hooks {
 			_, _ = fmt.Fprintf(out, "---\n# Source: %s\n%s\n", h.Path, h.Manifest)

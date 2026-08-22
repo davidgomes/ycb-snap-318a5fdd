@@ -117,8 +117,7 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			// We ignore a potential error here because, when the --debug flag was specified,
 			// we always want to print the YAML, even if it is not valid. The error is still returned afterwards.
 			if rel != nil {
-				var manifests bytes.Buffer
-				fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
+				var hooks []*release.Hook
 				if !client.DisableHooks {
 					fileWritten := make(map[string]bool)
 					for _, m := range rel.Hooks {
@@ -126,7 +125,7 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 							continue
 						}
 						if client.OutputDir == "" {
-							fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", m.Path, m.Manifest)
+							hooks = append(hooks, m)
 						} else {
 							newDir := client.OutputDir
 							if client.UseReleaseName {
@@ -144,6 +143,13 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 						}
 
 					}
+				}
+
+				var manifests bytes.Buffer
+				if client.OutputDir == "" {
+					manifests.WriteString(unifiedManifestStreamFromV1(rel, hooks))
+				} else {
+					fmt.Fprint(&manifests, rel.Manifest)
 				}
 
 				// if we have a list of files to render, then check that each of the
@@ -194,7 +200,7 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 						fmt.Fprintf(out, "---\n%s\n", m)
 					}
 				} else {
-					fmt.Fprintf(out, "%s", manifests.String())
+					fmt.Fprint(out, manifests.String())
 				}
 			}
 

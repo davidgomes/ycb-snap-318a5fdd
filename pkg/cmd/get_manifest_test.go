@@ -29,12 +29,42 @@ func TestGetManifest(t *testing.T) {
 		golden: "output/get-manifest.txt",
 		rels:   []*release.Release{release.Mock(&release.MockReleaseOptions{Name: "juno"})},
 	}, {
+		name:   "get manifest places same-source hooks before non-hooks",
+		cmd:    "get manifest mixed",
+		golden: "output/get-manifest-same-source-hooks.txt",
+		rels:   []*release.Release{sameSourceHookRelease("mixed")},
+	}, {
 		name:      "get manifest without args",
 		cmd:       "get manifest",
 		golden:    "output/get-manifest-no-args.txt",
 		wantError: true,
 	}}
 	runTestCmd(t, tests)
+}
+
+func sameSourceHookRelease(name string) *release.Release {
+	rel := release.Mock(&release.MockReleaseOptions{Name: name})
+	rel.Manifest = `---
+# Source: chart/templates/mixed.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: regular
+`
+	rel.Hooks = []*release.Hook{{
+		Name: "pre-install-hook",
+		Kind: "Job",
+		Path: "chart/templates/mixed.yaml",
+		Manifest: `apiVersion: v1
+kind: Job
+metadata:
+  name: hook
+  annotations:
+    "helm.sh/hook": pre-install
+`,
+		Events: []release.HookEvent{release.HookPreInstall},
+	}}
+	return rel
 }
 
 func TestGetManifestCompletion(t *testing.T) {

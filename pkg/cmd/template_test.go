@@ -19,6 +19,7 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -168,6 +169,21 @@ func TestTemplateCmd(t *testing.T) {
 		},
 	}
 	runTestCmd(t, tests)
+}
+
+func TestTemplateUnifiedStreamTrailingNewline(t *testing.T) {
+	defer resetEnv()()
+
+	_, out, err := executeActionCommandC(storageFixture(), fmt.Sprintf("template '%s'", chartPath))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasSuffix(out, "\n") {
+		t.Fatal("helm template output must end with a trailing newline")
+	}
+	if strings.HasSuffix(out, "\n\n") {
+		t.Fatal("helm template output must not end with extra blank lines")
+	}
 }
 
 func TestTemplateVersionCompletion(t *testing.T) {
