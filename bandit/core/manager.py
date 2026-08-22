@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 import collections
+import ast
 import fnmatch
 import io
 import json
@@ -24,7 +25,10 @@ from bandit.core import node_visitor as b_node_visitor
 from bandit.core import test_set as b_test_set
 
 LOG = logging.getLogger(__name__)
-NOSEC_COMMENT = re.compile(r"#\s*nosec:?\s*(?P<tests>[^#]+)?#?")
+NOSEC_COMMENT = re.compile(
+    r"#\s*nosec(?:-(?:begin|end|next-line))?\b:?\s*(?P<tests>[^#]*)",
+    re.IGNORECASE,
+)
 NOSEC_COMMENT_TESTS = re.compile(r"(?:(B\d+|[a-z\d_]+),?)+", re.IGNORECASE)
 PROGRESS_THRESHOLD = 50
 
@@ -313,9 +317,11 @@ class BanditManager:
                 tokens = tokenize.tokenize(fdata.readline)
 
                 if not self.ignore_nosec:
+                    comments = {}
                     for toktype, tokval, (lineno, _), _, _ in tokens:
                         if toktype == tokenize.COMMENT:
-                            nosec_lines[lineno] = _parse_nosec_comment(tokval)
+                            comments[lineno] = tokval
+                    nosec_lines = _parse_nosec_directives(lines, comments, data)
 
             except tokenize.TokenError:
                 pass
@@ -497,3 +503,125 @@ def _parse_nosec_comment(comment):
                 test_ids.add(test_id)
 
     return test_ids
+
+
+def _parse_nosec_directives(lines, comments, data):
+    """Expand all nosec directives into a physical-line suppression map."""
+    extman = extension_loader.MANAGER
+    plugins = list(extman.plugins)
+    universe = {p.plugin._test_id for p in plugins}
+
+    def selector(text):
+        text = text.strip()
+        if not text or text.lower() == "all":
+            return set()
+        if text.lower() == "none":
+            return None
+        names = {p.plugin.__name__.lower(): p.plugin._test_id for p in plugins}
+
+        def atom(value):
+            value = value.lower()
+            return {
+                p.plugin._test_id for p in plugins
+                if fnmatch.fnmatch(p.plugin._test_id.lower(), value)
+                or names.get(value) == p.plugin._test_id
+            }
+
+        # A small set-expression parser; malformed expressions use union.
+        tokens = re.findall(r"[A-Za-z0-9_*.-]+|[()!&|-]", text)
+        pos = 0
+        def unary():
+            nonlocal pos
+            if pos < len(tokens) and tokens[pos] == "!":
+                pos += 1
+                return universe - unary()
+            if pos < len(tokens) and tokens[pos] == "(":
+                pos += 1
+                value = union()
+                if pos >= len(tokens) or tokens[pos] != ")":
+                    raise ValueError
+                pos += 1
+                return value
+            if pos >= len(tokens):
+                raise ValueError
+            value = atom(tokens[pos])
+            pos += 1
+            return value
+        def difference():
+            nonlocal pos
+            value = unary()
+            while pos < len(tokens) and tokens[pos] == "-":
+                pos += 1
+                value -= unary()
+            return value
+        def intersection():
+            nonlocal pos
+            value = difference()
+            while pos < len(tokens) and tokens[pos] == "&":
+                pos += 1
+                value &= difference()
+            return value
+        def union():
+            nonlocal pos
+            value = intersection()
+            while pos < len(tokens) and tokens[pos] == "|":
+                pos += 1
+                value |= intersection()
+            return value
+        try:
+            value = union()
+            if pos != len(tokens):
+                raise ValueError
+            return value
+        except ValueError:
+            value = set()
+            for token in re.findall(r"[A-Za-z0-9_*.-]+", text):
+                value |= atom(token)
+            return value
+
+    def combine(old, new):
+        if old == set() or new == set():
+            return set()
+        if old is None:
+            return new
+        if new is None:
+            return old
+        return old | new
+
+    result, regions, pending = {}, [], []
+    for lineno, comment in comments.items():
+        match = re.search(
+            r"#\s*nosec(?P<kind>-(?:begin|end|next-line))?\b:?\s*(?P<selector>[^#]*)",
+            comment, re.IGNORECASE,
+        )
+        if not match:
+            continue
+        kind = (match.group("kind") or "").lower()
+        tests = selector(match.group("selector"))
+        if kind == "-end":
+            if regions:
+                start, active = regions.pop()
+                for line in range(start, lineno):
+                    result[line] = combine(result.get(line), active)
+        elif kind == "-begin":
+            regions.append((lineno + 1, tests))
+        elif kind == "-next-line" and tests is not None:
+            pending.append((lineno, tests))
+        elif not kind:
+            result[lineno] = tests
+
+    for start, tests in regions:
+        for line in range(start, len(lines) + 1):
+            result[line] = combine(result.get(line), tests)
+    try:
+        tree = ast.parse(data)
+        nodes = sorted((n for n in ast.walk(tree) if hasattr(n, "lineno")),
+                       key=lambda n: n.lineno)
+        for directive, tests in pending:
+            target = next((n for n in nodes if n.lineno > directive), None)
+            if target:
+                for line in range(target.lineno, getattr(target, "end_lineno", target.lineno) + 1):
+                    result[line] = combine(result.get(line), tests)
+    except SyntaxError:
+        pass
+    return result
