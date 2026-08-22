@@ -22,6 +22,7 @@ use crate::exec;
 use crate::exit_codes::{ExitCode, merge_exitcodes};
 use crate::filesystem;
 use crate::output;
+use crate::sorting;
 
 /// The receiver thread can either be buffering results or directly streaming to the console.
 #[derive(PartialEq)]
@@ -29,6 +30,9 @@ enum ReceiverMode {
     /// Receiver is still buffering in order to sort the results, if the search finishes fast
     /// enough.
     Buffering,
+
+    /// Receiver is collecting all results so they can be sorted before output.
+    Sorting,
 
     /// Receiver is directly printing results to the output.
     Streaming,
@@ -156,6 +160,11 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
         let interrupt_flag = state.interrupt_flag.as_ref();
         let max_buffer_time = config.max_buffer_time.unwrap_or(DEFAULT_MAX_BUFFER_TIME);
         let deadline = Instant::now() + max_buffer_time;
+        let mode = if config.sorting.is_some() {
+            ReceiverMode::Sorting
+        } else {
+            ReceiverMode::Buffering
+        };
 
         Self {
             config,
@@ -163,7 +172,7 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
             interrupt_flag,
             rx,
             stdout,
-            mode: ReceiverMode::Buffering,
+            mode,
             deadline,
             buffer: Vec::with_capacity(MAX_BUFFER_LENGTH),
             num_results: 0,
@@ -187,6 +196,7 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                 // Wait at most until we should switch to streaming
                 self.rx.recv_deadline(self.deadline)
             }
+            ReceiverMode::Sorting => Ok(self.rx.recv()?),
             ReceiverMode::Streaming => {
                 // Wait however long it takes for a result
                 Ok(self.rx.recv()?)
@@ -206,9 +216,11 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                             }
 
                             match self.mode {
-                                ReceiverMode::Buffering => {
+                                ReceiverMode::Buffering | ReceiverMode::Sorting => {
                                     self.buffer.push(dir_entry);
-                                    if self.buffer.len() > MAX_BUFFER_LENGTH {
+                                    if self.mode == ReceiverMode::Buffering
+                                        && self.buffer.len() > MAX_BUFFER_LENGTH
+                                    {
                                         self.stream()?;
                                     }
                                 }
@@ -218,7 +230,8 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                             }
 
                             self.num_results += 1;
-                            if let Some(max_results) = self.config.max_results
+                            if self.mode != ReceiverMode::Sorting
+                                && let Some(max_results) = self.config.max_results
                                 && self.num_results >= max_results
                             {
                                 return self.stop();
@@ -238,7 +251,9 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                self.stream()?;
+                if self.mode == ReceiverMode::Buffering {
+                    self.stream()?;
+                }
             }
             Err(RecvTimeoutError::Disconnected) => {
                 return self.stop();
@@ -280,7 +295,20 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
 
     /// Stop looping.
     fn stop(&mut self) -> Result<(), ExitCode> {
-        if self.mode == ReceiverMode::Buffering {
+        if self.mode == ReceiverMode::Sorting {
+            self.buffer.sort_by(|a, b| {
+                sorting::compare_entries(a, b, self.config.sorting.as_ref().unwrap())
+            });
+            if let Some(max_results) = self.config.max_results {
+                self.buffer.truncate(max_results);
+            }
+            self.mode = ReceiverMode::Streaming;
+            let buffer = mem::take(&mut self.buffer);
+            for path in buffer {
+                self.print(&path)?;
+            }
+            self.flush()?;
+        } else if self.mode == ReceiverMode::Buffering {
             self.buffer.sort();
             self.stream()?;
         }

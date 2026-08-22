@@ -11,6 +11,7 @@ mod fmt;
 mod hyperlink;
 mod output;
 mod regex_helper;
+mod sorting;
 mod walk;
 
 use std::env;
@@ -33,6 +34,7 @@ use crate::filetypes::FileTypes;
 use crate::filter::OwnerFilter;
 use crate::filter::TimeFilter;
 use crate::regex_helper::{pattern_has_uppercase_char, pattern_matches_strings_with_leading_dot};
+use crate::sorting::SortConfig;
 
 // We use jemalloc for performance reasons, see https://github.com/sharkdp/fd/pull/481
 // FIXME: re-enable jemalloc on macOS, see comment in Cargo.toml file for more infos
@@ -244,6 +246,16 @@ fn construct_config(mut opts: Opts, pattern_regexps: &[String]) -> Result<Config
     };
     let command = extract_command(&mut opts, colored_output)?;
     let has_command = command.is_some();
+    let sorting = opts.sort.take().map(|fields| SortConfig {
+        fields,
+        reverse: opts.reverse,
+        dirs_first: opts.dirs_first,
+        files_first: opts.files_first,
+        case_sensitive: opts.sort_case_sensitive,
+        missing_last: opts.sort_missing_last,
+        natural: opts.sort_natural,
+        seed: opts.sort_seed.unwrap_or_else(current_sort_seed),
+    });
 
     Ok(Config {
         case_sensitive,
@@ -327,7 +339,16 @@ fn construct_config(mut opts: Opts, pattern_regexps: &[String]) -> Result<Config
         max_results: opts.max_results(),
         strip_cwd_prefix: opts.strip_cwd_prefix(|| !(opts.null_separator || has_command)),
         ignore_contain: opts.ignore_contain,
+        sorting,
     })
+}
+
+fn current_sort_seed() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos() as u64)
 }
 
 fn extract_command(opts: &mut Opts, colored_output: bool) -> Result<Option<CommandSet>> {

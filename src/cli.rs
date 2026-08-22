@@ -17,6 +17,7 @@ use crate::filesystem;
 #[cfg(unix)]
 use crate::filter::OwnerFilter;
 use crate::filter::SizeFilter;
+use crate::sorting::SortField;
 
 #[derive(Parser)]
 #[command(
@@ -565,6 +566,45 @@ pub struct Opts {
         long_help
     )]
     max_one_result: bool,
+
+    /// Sort results by one or more fields. Fields are applied from left to right.
+    #[arg(
+        long,
+        value_name = "field",
+        value_enum,
+        conflicts_with("execs"),
+        help = "Sort results by field (repeatable)",
+        long_help
+    )]
+    pub sort: Option<Vec<SortField>>,
+
+    /// Seed the pseudo-random sort order with an unsigned 64-bit integer.
+    #[arg(long, value_name = "n", requires("sort"), value_parser = value_parser!(u64))]
+    pub sort_seed: Option<u64>,
+
+    /// Reverse the final sorted order.
+    #[arg(long, requires("sort"))]
+    pub reverse: bool,
+
+    /// Group directories before other entries.
+    #[arg(long, requires("sort"), conflicts_with("files_first"))]
+    pub dirs_first: bool,
+
+    /// Group regular files before other entries.
+    #[arg(long, requires("sort"), conflicts_with("dirs_first"))]
+    pub files_first: bool,
+
+    /// Use case-sensitive comparisons for text sort fields.
+    #[arg(long, requires("sort"))]
+    pub sort_case_sensitive: bool,
+
+    /// Place entries with missing sort values after entries with values.
+    #[arg(long, requires("sort"))]
+    pub sort_missing_last: bool,
+
+    /// Use natural ordering for name, path, and extension sort fields.
+    #[arg(long, requires("sort"))]
+    pub sort_natural: bool,
 
     /// When the flag is present, the program does not print anything and will
     /// return with an exit code of 0 if there is at least one match. Otherwise, the
