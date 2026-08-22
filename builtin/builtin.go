@@ -1089,8 +1089,10 @@ var Builtins = []*Function{
 		},
 	},
 	{
-		Name:  "errtype",
-		Fast:  runtime.ErrorType,
+		Name: "errtype",
+		Fast: func(arg any) any {
+			return runtime.ErrorType(arg)
+		},
 		Types: types(new(func(any) string)),
 		Deref: func(i int, arg reflect.Type) bool {
 			return false
