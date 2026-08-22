@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 )
 
@@ -93,18 +92,4 @@ func AsError(value any) error {
 		return err
 	}
 	return fmt.Errorf("%v", value)
-}
-
-// IsTypedNil reports whether value is a nil reference, including typed nils.
-func IsTypedNil(value any) bool {
-	if value == nil {
-		return true
-	}
-	rv := reflect.ValueOf(value)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.Interface, reflect.Slice:
-		return rv.IsNil()
-	default:
-		return false
-	}
 }
