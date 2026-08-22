@@ -564,6 +564,19 @@ export default {
         'description': 'Attempts to enclose bare URIs with angle brackets except when enclosed in back ticks, square braces, or single or double quotes.',
       },
     },
+    // link-style.ts
+    'link-style': {
+      'name': 'Link Style',
+      'description': 'Converts between Obsidian wiki links and markdown links.',
+      'link-style': {
+        'name': 'Link Style',
+        'description': 'The style to use for links.',
+      },
+      'image-style': {
+        'name': 'Image Style',
+        'description': 'The style to use for images.',
+      },
+    },
     // ordered-list-style.ts
     'ordered-list-style': {
       'name': 'Ordered List Style',
