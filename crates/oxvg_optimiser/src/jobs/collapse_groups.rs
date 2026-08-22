@@ -6,7 +6,7 @@ use lightningcss::{
     selector::Selector,
     traits::ToCss,
     vendor_prefix::VendorPrefix,
-    visitor::{self, Visit, VisitTypes},
+    visitor::{self, VisitTypes},
 };
 use oxvg_ast::{
     element::{Element, HashableElement},
@@ -115,61 +115,30 @@ impl<'input, 'arena> visitor::Visitor<'input>
     }
 
     fn visit_selector(&mut self, selector: &mut Selector<'input>) -> Result<(), Self::Error> {
+        if !selector.has_combinator() {
+            return Ok(());
+        }
+
         let Ok(selector) = selector.to_css_string(PrinterOptions {
             minify: true,
             ..PrinterOptions::default()
         }) else {
             return Ok(());
         };
-        if !selector.has_combinator() && !is_structure_sensitive_selector(&selector) {
-            return Ok(());
-        }
         let Ok(matches) = self.root.select(&selector) else {
             return Ok(());
         };
 
         for target in matches {
-            let mut element = Some(target.clone());
+            let mut element = Some(target);
             while let Some(current) = element {
                 self.elements.push(HashableElement::new(current.clone()));
                 element = current.parent_element();
-            }
-
-            if selector.contains('+') || selector.contains('~') {
-                let mut sibling = target.previous_element_sibling();
-                while let Some(current) = sibling {
-                    self.elements.push(HashableElement::new(current.clone()));
-                    sibling = if selector.contains('~') {
-                        current.previous_element_sibling()
-                    } else {
-                        None
-                    };
-                }
             }
         }
 
         Ok(())
     }
-}
-
-fn is_structure_sensitive_selector(selector: &str) -> bool {
-    [
-        ":first-child",
-        ":last-child",
-        ":only-child",
-        ":nth-child",
-        ":nth-last-child",
-        ":first-of-type",
-        ":last-of-type",
-        ":only-of-type",
-        ":nth-of-type",
-        ":nth-last-of-type",
-        ":empty",
-        ":has(",
-        ":root",
-    ]
-    .iter()
-    .any(|pseudo| selector.contains(pseudo))
 }
 
 impl Default for CollapseGroups {
@@ -588,50 +557,5 @@ fn collapse_groups() -> anyhow::Result<()> {
         )
     )?);
 
-    Ok(())
-}
-
-#[test]
-fn preserves_only_groups_used_by_structural_selectors() -> anyhow::Result<()> {
-    use crate::test_config;
-
-    let output = test_config(
-        r#"{ "collapseGroups": true }"#,
-        Some(
-            r#"<svg>
-    <style>g.keep > path.marked { fill: red; }</style>
-    <g class="keep">
-        <path class="marked"/>
-    </g>
-    <g class="plain">
-        <path/>
-    </g>
-</svg>"#,
-        ),
-    )?;
-
-    assert!(output.contains(r#"<g class="keep">"#));
-    assert!(!output.contains(r#"<g class="plain">"#));
-    Ok(())
-}
-
-#[test]
-fn preserves_sibling_selector_anchors() -> anyhow::Result<()> {
-    use crate::test_config;
-
-    let output = test_config(
-        r#"{ "collapseGroups": true }"#,
-        Some(
-            r#"<svg>
-    <style>g.anchor + path.target { fill: red; }</style>
-    <g class="anchor">
-        <path/>
-    </g>
-    <path class="target"/>
-</svg>"#,
-        ),
-    )?;
-
-    assert!(output.contains(r#"<g class="anchor">"#));
     Ok(())
 }
