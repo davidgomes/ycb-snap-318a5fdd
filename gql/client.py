@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 import logging
 import time
 import warnings
@@ -40,6 +41,7 @@ from tenacity import (
 
 from .graphql_request import GraphQLRequest, support_deprecated_request
 from .transport.async_transport import AsyncTransport
+from .transport.common.incremental import IncrementalResult
 from .transport.exceptions import TransportConnectionFailed, TransportQueryError
 from .transport.local_schema import LocalSchemaTransport
 from .transport.transport import Transport
@@ -1275,6 +1277,44 @@ class SyncClientSession:
         return self.client.transport
 
 
+def _merge_incremental(
+    root: Dict[str, Any],
+    value: Any,
+    path: List[Any],
+    *,
+    streamed: bool = False,
+) -> None:
+    """Apply one incremental item to the accumulated response."""
+    if not path:
+        if isinstance(value, dict):
+            root.update(value)
+        return
+
+    parent: Any = root
+    navigation = path[:-1] if streamed else path
+    for segment in navigation:
+        if isinstance(parent, dict):
+            parent = parent.get(segment)
+        elif isinstance(parent, list) and isinstance(segment, int):
+            parent = parent[segment] if 0 <= segment < len(parent) else None
+        else:
+            parent = None
+        if parent is None:
+            return
+
+    if streamed:
+        last = path[-1]
+        if not isinstance(parent, list) or not isinstance(last, int):
+            return
+        parent[last:last] = value if isinstance(value, list) else [value]
+    elif isinstance(parent, dict) and isinstance(value, dict):
+        parent.update(value)
+    elif isinstance(parent, list) and isinstance(path[-1], int):
+        last = path[-1]
+        if 0 <= last < len(parent):
+            parent[last] = value
+
+
 class AsyncClientSession:
     """An instance of this class is created when using :code:`async with` on a
     :class:`client <gql.client.Client>`.
@@ -1883,6 +1923,70 @@ class AsyncClientSession:
     @property
     def transport(self):
         return self.client.transport
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        parse_result: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalResult, None]:
+        """Execute a query and yield its accumulated incremental results.
+
+        Each result contains the errors, extensions, and ``has_next`` value from
+        the corresponding transport payload. The data is accumulated by applying
+        deferred objects and streamed list items to the initial response.
+        """
+        request = support_deprecated_request(request, kwargs)
+
+        if self.client.schema:
+            self.client.validate(request)
+            if request.variable_values is not None and (
+                serialize_variables
+                or (serialize_variables is None and self.client.serialize_variables)
+            ):
+                request = request.serialize_variable_values(self.client.schema)
+
+        data: Dict[str, Any] = {}
+        inner_generator = self.transport.subscribe(request, **kwargs)
+        self._generator = inner_generator
+
+        try:
+            async for payload in inner_generator:
+                if payload.data is not None:
+                    if not data:
+                        data = payload.data.copy()
+                    else:
+                        _merge_incremental(data, payload.data, [])
+
+                for item in getattr(payload, "incremental", None) or []:
+                    path = item.get("path", [])
+                    if "items" in item:
+                        _merge_incremental(data, item["items"], path, streamed=True)
+                    elif "data" in item:
+                        _merge_incremental(data, item["data"], path)
+
+                result = IncrementalResult(
+                    data=deepcopy(data),
+                    errors=payload.errors,
+                    extensions=payload.extensions,
+                    has_next=getattr(payload, "has_next", False),
+                )
+
+                if self.client.schema and (
+                    parse_result or (parse_result is None and self.client.parse_results)
+                ):
+                    result.data = parse_result_fn(
+                        self.client.schema,
+                        request.document,
+                        result.data,
+                        operation_name=request.operation_name,
+                    )
+
+                yield result
+        finally:
+            await inner_generator.aclose()
 
 
 _CallableT = TypeVar("_CallableT", bound=Callable[..., Any])

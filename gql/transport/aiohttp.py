@@ -29,6 +29,7 @@ from .appsync_auth import AppSyncAuthentication
 from .async_transport import AsyncTransport
 from .common.aiohttp_closed_event import create_aiohttp_closed_event
 from .common.batch import get_batch_execution_result_list
+from .common.incremental import IncrementalResult
 from .exceptions import (
     TransportAlreadyConnected,
     TransportClosed,
@@ -324,10 +325,12 @@ class AIOHTTPTransport(AsyncTransport):
                 response, 'No "data" or "errors" keys in answer'
             )
 
-        return ExecutionResult(
+        return IncrementalResult(
             errors=result.get("errors"),
             data=result.get("data"),
             extensions=result.get("extensions"),
+            incremental=result.get("incremental"),
+            has_next=result.get("hasNext", False),
         )
 
     async def _prepare_batch_result(
@@ -443,7 +446,7 @@ class AIOHTTPTransport(AsyncTransport):
                 "Content-Type": "application/json",
                 "Accept": (
                     "multipart/mixed;boundary=graphql;"
-                    "subscriptionSpec=1.0,application/json"
+                    "subscriptionSpec=1.0;deferSpec=20220824,application/json"
                 ),
             }
         )
@@ -470,7 +473,10 @@ class AIOHTTPTransport(AsyncTransport):
                 if (
                     ("multipart/mixed" not in initial_content_type)
                     or ("boundary=graphql" not in initial_content_type)
-                    or ("subscriptionSpec=1.0" not in initial_content_type)
+                    or (
+                        "subscriptionSpec=1.0" not in initial_content_type
+                        and "deferSpec=20220824" not in initial_content_type
+                    )
                 ):
                     raise TransportProtocolError(
                         f"Unexpected content-type: {initial_content_type}. "
@@ -591,10 +597,12 @@ class AIOHTTPTransport(AsyncTransport):
                     return None
 
             # Extract GraphQL data from payload
-            return ExecutionResult(
+            return IncrementalResult(
                 data=payload.get("data"),
                 errors=payload.get("errors"),
                 extensions=payload.get("extensions"),
+                incremental=payload.get("incremental"),
+                has_next=payload.get("hasNext", False),
             )
         except json.JSONDecodeError as e:
             log.warning(

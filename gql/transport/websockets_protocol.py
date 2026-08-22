@@ -9,6 +9,7 @@ from graphql import ExecutionResult
 from ..graphql_request import GraphQLRequest
 from .common.adapters.connection import AdapterConnection
 from .common.base import SubscriptionTransportBase
+from .common.incremental import IncrementalResult
 from .exceptions import (
     TransportConnectionFailed,
     TransportProtocolError,
@@ -297,15 +298,22 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
                         if not isinstance(payload, dict):
                             raise ValueError("payload is not a dict")
 
-                        if "errors" not in payload and "data" not in payload:
+                        if (
+                            "errors" not in payload
+                            and "data" not in payload
+                            and "incremental" not in payload
+                            and "hasNext" not in payload
+                        ):
                             raise ValueError(
                                 "payload does not contain 'data' or 'errors' fields"
                             )
 
-                        execution_result = ExecutionResult(
+                        execution_result = IncrementalResult(
                             errors=payload.get("errors"),
                             data=payload.get("data"),
                             extensions=payload.get("extensions"),
+                            incremental=payload.get("incremental"),
+                            has_next=payload.get("hasNext", False),
                         )
 
                         # Saving answer_type as 'data' to be understood with superclass
@@ -368,15 +376,22 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
 
                     if answer_type == "data":
 
-                        if "errors" not in payload and "data" not in payload:
+                        if (
+                            "errors" not in payload
+                            and "data" not in payload
+                            and "incremental" not in payload
+                            and "hasNext" not in payload
+                        ):
                             raise ValueError(
                                 "payload does not contain 'data' or 'errors' fields"
                             )
 
-                        execution_result = ExecutionResult(
+                        execution_result = IncrementalResult(
                             errors=payload.get("errors"),
                             data=payload.get("data"),
                             extensions=payload.get("extensions"),
+                            incremental=payload.get("incremental"),
+                            has_next=payload.get("hasNext", False),
                         )
 
                     elif answer_type == "error":
