@@ -1,0 +1,98 @@
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+  exclusions:
+    generated: lax
+
+  settings:
+    gofmt:
+      simplify: true
+
+    goimports:
+      local-prefixes:
+        - helm.sh/helm/v4
+
+linters:
+  default: none
+
+  # Keep sorted alphabetically
+  enable:
+    - depguard
+    - dupl
+    - exhaustive
+    - gomodguard
+    - govet
+    - ineffassign
+    - misspell
+    - modernize
+    - nakedret
+    - nolintlint
+    - revive
+    - sloglint
+    - staticcheck
+    - thelper
+    - unused
+    - usestdlibvars
+    - usetesting
+
+  exclusions:
+  
+    generated: lax
+
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+
+    warn-unused: true
+
+  # Keep sorted alphabetically
+  settings:
+    depguard:
+      rules:
+        Main:
+          deny:
+            - pkg: github.com/hashicorp/go-multierror
+              desc: "use errors instead"
+            - pkg: github.com/pkg/errors
+              desc: "use errors instead"
+
+    dupl:
+      threshold: 400
+
+    exhaustive:
+      default-signifies-exhaustive: true
+
+    gomodguard:
+      blocked:
+        modules:
+          - github.com/evanphx/json-patch:
+              recommendations:
+                - github.com/evanphx/json-patch/v5
+
+    nolintlint:
+      require-specific: true
+
+    revive:
+      max-open-files: 2048
+      enable-default-rules: true
+      rules:
+        - name: var-naming
+          arguments:
+            - ["ID"] # AllowList
+            - ["VM"] # DenyList
+            - - skip-initialism-name-checks: true
+                upper-case-const: true
+                skip-package-name-checks: true
+                skip-package-name-collision-with-go-std: true
+                extra-bad-package-names:
+                  - helpers
+                  - models
+
+run:
+  timeout: 10m
+
+version: "2"
