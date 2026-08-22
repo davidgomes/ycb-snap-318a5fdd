@@ -13,10 +13,12 @@ import type {
   Always,
   AtLeastOnce,
   Never,
+  RequiredIf,
   Schema,
   SchemaRequiredProp,
   Validator
 } from '../types/index.js'
+import { appendRequiredIf } from '../utils/requiredIf.js'
 import type { ResolveBinarySchema, ResolvedBinarySchema } from './resolve.js'
 import { BinarySchema } from './schema.js'
 import type { BinarySchemaProps } from './types.js'
@@ -59,6 +61,21 @@ export class BinarySchema_<
    */
   optional(): BinarySchema_<Overwrite<PROPS, { required: Never }>> {
     return this.required('never')
+  }
+
+  /**
+   * Require this attribute when a sibling matches one of the provided values.
+   * Multiple calls are combined with OR semantics.
+   */
+  requiredIf(
+    attributeName: string,
+    ...triggerValues: unknown[]
+  ): BinarySchema_<Overwrite<PROPS, { requiredIf: RequiredIf }>> {
+    return new BinarySchema_(
+      overwrite(this.props, {
+        requiredIf: appendRequiredIf(this.props.requiredIf, attributeName, triggerValues)
+      })
+    )
   }
 
   /**

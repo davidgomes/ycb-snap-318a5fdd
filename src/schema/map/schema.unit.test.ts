@@ -62,4 +62,33 @@ describe('map properties check', () => {
       expect.objectContaining({ code: 'schema.map.duplicateSavedAs', path: pathMock })
     )
   })
+
+  test('throws if requiredIf references an unknown sibling', () => {
+    const invalidCall = () =>
+      map({ breed: string().optional().requiredIf('kind', 'dog') }).check(pathMock)
+
+    expect(invalidCall).toThrow(DynamoDBToolboxError)
+    expect(invalidCall).toThrow(
+      expect.objectContaining({ code: 'schema.map.invalidRequiredIf', path: 'some.path.breed' })
+    )
+  })
+
+  test('throws if requiredIf is a self-reference', () => {
+    const invalidCall = () =>
+      map({ kind: string().optional().requiredIf('kind', 'dog') }).check(pathMock)
+
+    expect(invalidCall).toThrow(DynamoDBToolboxError)
+    expect(invalidCall).toThrow(expect.objectContaining({ code: 'schema.map.invalidRequiredIf' }))
+  })
+
+  test('throws if requiredIf is used on a key attribute', () => {
+    const invalidCall = () =>
+      map({
+        kind: string(),
+        id: string().key().requiredIf('kind', 'dog')
+      }).check(pathMock)
+
+    expect(invalidCall).toThrow(DynamoDBToolboxError)
+    expect(invalidCall).toThrow(expect.objectContaining({ code: 'schema.map.invalidRequiredIf' }))
+  })
 })

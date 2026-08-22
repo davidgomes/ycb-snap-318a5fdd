@@ -17,6 +17,7 @@ export const fromAnyOfSchemaDTO = ({ elements, ...props }: AnyOfSchemaDTO): AnyO
 
   const {
     required,
+    requiredIf,
     hidden,
     key,
     savedAs,
@@ -53,6 +54,12 @@ export const fromAnyOfSchemaDTO = ({ elements, ...props }: AnyOfSchemaDTO): AnyO
 
   if (discriminator !== undefined) {
     $attr = $attr.discriminate(discriminator)
+  }
+
+  if (requiredIf !== undefined) {
+    for (const { attributeName, triggerValues } of requiredIf) {
+      $attr = $attr.requiredIf(attributeName, ...triggerValues)
+    }
   }
 
   return $attr

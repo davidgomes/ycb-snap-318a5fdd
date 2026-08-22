@@ -13,10 +13,12 @@ import type {
   Always,
   AtLeastOnce,
   Never,
+  RequiredIf,
   Schema,
   SchemaRequiredProp,
   Validator
 } from '../types/index.js'
+import { appendRequiredIf } from '../utils/requiredIf.js'
 import type { ResolveBooleanSchema, ResolvedBooleanSchema } from './resolve.js'
 import { BooleanSchema } from './schema.js'
 import type { BooleanSchemaProps } from './types.js'
@@ -59,6 +61,21 @@ export class BooleanSchema_<
    */
   optional(): BooleanSchema_<Overwrite<PROPS, { required: Never }>> {
     return this.required('never')
+  }
+
+  /**
+   * Require this attribute when a sibling matches one of the provided values.
+   * Multiple calls are combined with OR semantics.
+   */
+  requiredIf(
+    attributeName: string,
+    ...triggerValues: unknown[]
+  ): BooleanSchema_<Overwrite<PROPS, { requiredIf: RequiredIf }>> {
+    return new BooleanSchema_(
+      overwrite(this.props, {
+        requiredIf: appendRequiredIf(this.props.requiredIf, attributeName, triggerValues)
+      })
+    )
   }
 
   /**

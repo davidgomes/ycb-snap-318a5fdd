@@ -3,7 +3,7 @@ import { isSerializableTransformer } from '~/transformers/index.js'
 import { isBigInt } from '~/utils/validation/isBigInt.js'
 
 import type { PrimitiveSchemaDTO } from '../types.js'
-import { getDefaultsDTO } from './utils.js'
+import { getDefaultsDTO, getRequiredIfDTO } from './utils.js'
 
 /**
  * @debt feature "handle defaults, links & validators DTOs"
@@ -27,7 +27,8 @@ export const getPrimitiveSchemaDTO = (schema: PrimitiveSchema): PrimitiveSchemaD
             : { transformerId: 'custom' }
         }
       : {}),
-    ...defaultsDTO
+    ...defaultsDTO,
+    ...getRequiredIfDTO(schema)
     // We need to cast as `.enum` is not coupled to `.type`
   } as PrimitiveSchemaDTO
 

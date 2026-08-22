@@ -69,6 +69,15 @@ describe('string', () => {
     expect(strOpt.props.required).toBe('never')
   })
 
+  test('returns requiredIf string (method)', () => {
+    const str = string().optional().requiredIf('kind', 'dog').requiredIf('kind', 'wolf')
+
+    expect(str.props.requiredIf).toStrictEqual([
+      { attributeName: 'kind', triggerValues: ['dog'] },
+      { attributeName: 'kind', triggerValues: ['wolf'] }
+    ])
+  })
+
   test('returns hidden string (prop)', () => {
     const str = string({ hidden: true })
 

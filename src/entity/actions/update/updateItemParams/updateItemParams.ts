@@ -7,6 +7,7 @@ import { omit } from '~/utils/omit.js'
 
 import { expressUpdate } from '../expressUpdate/index.js'
 import type { UpdateItemOptions } from '../options.js'
+import { getRequiredIfUpdateCondition, mergeUpdateConditions } from '../requiredIfCondition.js'
 import type { UpdateItemInput } from '../types.js'
 import { parseUpdateExtension } from './extension/index.js'
 import { parseUpdateItemOptions } from './parseUpdateItemOptions.js'
@@ -40,7 +41,13 @@ export const updateItemParams: UpdateItemParamsGetter = <
     ExpressionAttributeNames: optionsExpressionAttributeNames,
     ExpressionAttributeValues: optionsExpressionAttributeValues,
     ...awsOptions
-  } = parseUpdateItemOptions(entity, options)
+  } = parseUpdateItemOptions(entity, {
+    ...options,
+    condition: mergeUpdateConditions(
+      getRequiredIfUpdateCondition(entity.schema, parsedItem),
+      options.condition
+    )
+  })
 
   const ExpressionAttributeNames = {
     ...optionsExpressionAttributeNames,

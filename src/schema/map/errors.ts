@@ -6,4 +6,12 @@ type DuplicateSavedAsErrorBlueprint = ErrorBlueprint<{
   payload: { savedAs: string }
 }>
 
-export type MapSchemaErrorBlueprint = DuplicateSavedAsErrorBlueprint
+type InvalidRequiredIfErrorBlueprint = ErrorBlueprint<{
+  code: 'schema.map.invalidRequiredIf'
+  hasPath: true
+  payload: { attributeName: string; controllerName?: string; reason: 'key' | 'self' | 'unknown' }
+}>
+
+export type MapSchemaErrorBlueprint =
+  | DuplicateSavedAsErrorBlueprint
+  | InvalidRequiredIfErrorBlueprint

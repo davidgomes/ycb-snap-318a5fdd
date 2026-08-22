@@ -43,6 +43,21 @@ const nameSchema = string().optional()
 const nameSchema = string({ required: 'never' })
 ```
 
+### `.requiredIf()`
+
+<p style={{ marginTop: '-15px' }}><i><code>(attributeName, ...triggerValues) => schema</code></i></p>
+
+Marks the attribute required when a **sibling** matches one of the given values. Use this for single-table discriminators instead of duplicating shared fields in `anyOf`. Multiple calls combine with OR semantics. `required('always')` still applies unconditionally.
+
+```ts
+const pokemonSchema = item({
+  pokeType: string().enum('fire', 'water', 'grass'),
+  flame: string().optional().requiredIf('pokeType', 'fire')
+})
+```
+
+Absent controlling attributes are ignored. Defaults applied during parsing satisfy the requirement.
+
 ### `.hidden()`
 
 <p style={{ marginTop: '-15px' }}><i><code>boolean | undefined</code></i></p>
