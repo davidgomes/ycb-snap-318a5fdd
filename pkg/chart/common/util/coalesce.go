@@ -378,10 +378,8 @@ func coalesceTablesFullKeyWithRules(printf printFn, dst, src map[string]any, pre
 		} else if !ok {
 			// key not in user values, preserve src value (including nil)
 			dst[key] = val
-		} else if rule, ok := rules[fullkey]; ok {
-			if merged, ok := mergeArrayValues(val, dv, rule, fullkey, rules); ok {
-				dst[key] = merged
-			}
+		} else if rule, ok := rules[fullkey]; ok && mergeableArrays(val, dv) {
+			dst[key], _ = mergeArrayValues(val, dv, rule, fullkey, rules)
 		} else if istable(val) {
 			if istable(dv) {
 				coalesceTablesFullKeyWithRules(printf, dv.(map[string]any), val.(map[string]any), fullkey, merge, rules)

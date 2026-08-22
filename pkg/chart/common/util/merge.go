@@ -327,6 +327,12 @@ func anySlice(value any) ([]any, bool) {
 	return result, true
 }
 
+func mergeableArrays(defaults, user any) bool {
+	_, defaultsOK := anySlice(defaults)
+	_, userOK := anySlice(user)
+	return defaultsOK && userOK
+}
+
 func mergeArrayValues(defaults, user any, rule mergeRule, path string, nestedRules map[string]mergeRule) (any, bool) {
 	defaultElements, defaultsOK := anySlice(defaults)
 	userElements, userOK := anySlice(user)
