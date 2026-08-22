@@ -8,6 +8,7 @@ import { getStore } from '../trait/trait';
 import type { Trait } from '../trait/types';
 import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
+import { flushRange } from '../world/deferred';
 import { isModifier } from './modifier';
 import { setChanged } from './modifiers/changed';
 import type {
@@ -53,6 +54,7 @@ export function createQueryResult<T extends QueryParameter[]>(
             callback: (state: InstancesFromParameters<T>, entity: Entity, index: number) => void,
             options: QueryResultOptions = { changeDetection: 'auto' }
         ) {
+            const deferredStart = world[$internal].deferred.commands.length;
             const state = Array.from({ length: traits.length });
 
             // Inline all three permutations of updateEach for performance.
@@ -170,6 +172,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                 }
             }
 
+            flushRange(world, deferredStart);
             return results;
         },
 
@@ -304,11 +307,13 @@ const relationOnlyMethods = {
         }
         return this;
     },
-    updateEach(this: QueryResult<any>, callback: any) {
+    updateEach(this: QueryResult<any>, callback: any, world: World) {
+        const deferredStart = world[$internal].deferred.commands.length;
         // No traits to update, just iterate entities
         for (let i = 0; i < this.length; i++) {
             callback([], this[i], i);
         }
+        flushRange(world, deferredStart);
         return this;
     },
     useStores(this: QueryResult<any>, callback: any) {
@@ -327,11 +332,14 @@ const relationOnlyMethods = {
  * Skips store/trait setup since we only need to iterate entities.
  */
 export function createRelationOnlyQueryResult<T extends QueryParameter[]>(
-    entities: Entity[]
+    entities: Entity[],
+    world: World
 ): QueryResult<T> {
     const results = Object.assign(entities, {
         readEach: relationOnlyMethods.readEach,
-        updateEach: relationOnlyMethods.updateEach,
+        updateEach(callback: any) {
+            return relationOnlyMethods.updateEach.call(this, callback, world);
+        },
         useStores: relationOnlyMethods.useStores,
         select: relationOnlyMethods.select,
         sort(

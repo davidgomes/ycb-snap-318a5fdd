@@ -9,7 +9,7 @@ import type {
     QueryResult,
     QueryUnsubscriber,
 } from '../query/types';
-import type { Relation } from '../relation/types';
+import type { Relation, RelationPair, RelationTarget } from '../relation/types';
 import type {
     ConfigurableTrait,
     ExtractSchema,
@@ -43,6 +43,34 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    deferred: DeferredState;
+};
+
+export type DeferredCommand =
+    | { kind: 'spawn'; entity: Entity; traits: ConfigurableTrait[] }
+    | { kind: 'destroy'; entity: Entity }
+    | { kind: 'add'; entity: Entity; traits: ConfigurableTrait[] }
+    | { kind: 'remove'; entity: Entity; traits: (Trait | RelationPair)[] }
+    | { kind: 'exclusive'; entity: Entity; pair: RelationPair };
+
+export type DeferredState = {
+    commands: DeferredCommand[];
+    flushing: boolean;
+};
+
+export type DeferredWorld = {
+    spawn(...traits: ConfigurableTrait[]): Entity;
+    destroy(entity: Entity): void;
+    add(entity: Entity, ...traits: ConfigurableTrait[]): void;
+    remove(entity: Entity, ...traits: (Trait | RelationPair)[]): void;
+    addExclusive(entity: Entity, pair: RelationPair): void;
+    addExclusive(
+        entity: Entity,
+        relation: Relation,
+        target: RelationTarget,
+        params?: Record<string, unknown>
+    ): void;
+    flush(): void;
 };
 
 export type World = {
@@ -51,6 +79,7 @@ export type World = {
     readonly entities: Entity[];
     readonly traits: Set<Trait>;
     [$internal]: WorldInternal;
+    readonly deferred: DeferredWorld;
     init(...traits: ConfigurableTrait[]): void;
     spawn(...traits: ConfigurableTrait[]): Entity;
     has(entity: Entity): boolean;

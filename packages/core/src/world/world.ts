@@ -1,7 +1,7 @@
 import { $internal } from '../common';
 import { createEntity, destroyEntity } from '../entity/entity';
 import type { Entity } from '../entity/types';
-import { createEntityIndex, getAliveEntities, isEntityAlive } from '../entity/utils/entity-index';
+import { createEntityIndex, getAliveEntities } from '../entity/utils/entity-index';
 import { IsExcluded, createQueryInstance } from '../query/query';
 import { createRelationOnlyQueryResult } from '../query/query-result';
 import type { Query, QueryInstance, QueryParameter, QueryUnsubscriber } from '../query/types';
@@ -24,6 +24,7 @@ import type {
 import { universe } from '../universe/universe';
 import type { World, WorldInternal, WorldOptions } from './types';
 import { allocateWorldId, releaseWorldId } from './utils/world-index';
+import { createDeferred, flushEntity, projectedGet, projectedHas, projectedAlive } from './deferred';
 
 export function createWorld(options: WorldOptions): World;
 export function createWorld(...traits: ConfigurableTrait[]): World;
@@ -54,6 +55,7 @@ export function createWorld(
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
+            deferred: { commands: [], flushing: false },
         } as WorldInternal,
 
         traits: new Set<Trait>(),
@@ -90,27 +92,31 @@ export function createWorld(
 
         has(target: Entity | Trait): boolean {
             return typeof target === 'number'
-                ? isEntityAlive(world[$internal].entityIndex, target)
-                : hasTrait(world, world[$internal].worldEntity, target);
+                ? projectedAlive(world, target)
+                : projectedHas(world, world[$internal].worldEntity, target);
         },
 
         add(...addTraits: ConfigurableTrait[]) {
+            flushEntity(world, world[$internal].worldEntity);
             addTrait(world, world[$internal].worldEntity, ...addTraits);
         },
 
         remove(...removeTraits: Trait[]) {
+            flushEntity(world, world[$internal].worldEntity);
             removeTrait(world, world[$internal].worldEntity, ...removeTraits);
         },
 
         get<T extends Trait>(trait: T): TraitRecord<ExtractSchema<T>> | undefined {
-            return getTrait(world, world[$internal].worldEntity, trait);
+            return projectedGet(world, world[$internal].worldEntity, trait);
         },
 
         set<T extends Trait>(trait: T, value: TraitValue<ExtractSchema<T>> | SetTraitCallback<T>) {
+            flushEntity(world, world[$internal].worldEntity);
             setTrait(world, world[$internal].worldEntity, trait, value, true);
         },
 
         destroy() {
+            flushEntity(world, world[$internal].worldEntity);
             // Destroy world entity.
             destroyEntity(world, world[$internal].worldEntity);
             world[$internal].worldEntity = null!;
@@ -125,6 +131,7 @@ export function createWorld(
         reset() {
             lazyTraits = undefined;
             const ctx = world[$internal];
+            ctx.deferred.commands.length = 0;
 
             // Destroy all entities so any cleanup is done.
             world.entities.forEach((entity) => {
@@ -201,7 +208,7 @@ export function createWorld(
                             relation as Relation<Trait>,
                             target as Entity
                         );
-                        return createRelationOnlyQueryResult(entities.slice() as Entity[]);
+                        return createRelationOnlyQueryResult(entities.slice() as Entity[], world);
                     }
                 }
 
@@ -352,6 +359,11 @@ export function createWorld(
             };
         },
     } as World;
+
+    Object.defineProperty(world, 'deferred', {
+        value: createDeferred(world),
+        enumerable: true,
+    });
 
     // Read-only properties via getters
     Object.defineProperty(world, 'id', {
