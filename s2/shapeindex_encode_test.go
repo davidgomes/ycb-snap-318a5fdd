@@ -106,7 +106,7 @@ func TestShapeIndexEncodeDecodeZeroEdgeShapes(t *testing.T) {
 
 	index := NewShapeIndex()
 	shapes := []Shape{
-		EmptyLoop(), FullLoop(), &emptyPolygon, FullPolygon(),
+		EmptyLoop(), FullLoop(), emptyPolygon, FullPolygon(),
 		&emptyPolyline, &emptyPoints, emptyLaxPolyline, emptyLaxLoop,
 		emptyLaxPolygon, fullLaxPolygon,
 	}
