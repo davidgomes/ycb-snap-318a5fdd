@@ -211,6 +211,8 @@ class BaseTestClass:
     self._execution_local = threading.local()
     self._synchronization_lock = threading.Lock()
     self._synchronization_barriers = {}
+    self._record_signature_lock = threading.Lock()
+    self._record_signatures = set()
     self._registered_controller_objects = []
     class_identifier = self.__class__.__name__
     if configs.test_class_name_suffix:
@@ -712,6 +714,16 @@ class BaseTestClass:
       else:
         self.exec_one_test(test_name, test_method)
 
+  def _make_record_signature_unique(self, record):
+    """Keeps concurrent test output paths distinct."""
+    with self._record_signature_lock:
+      original_signature = record.signature
+      signature = original_signature
+      while signature in self._record_signatures:
+        signature = '%s-%s' % (original_signature, len(self._record_signatures))
+      self._record_signatures.add(signature)
+      record.signature = signature
+
   def _run_grouped_tests(self, tests):
     """Runs tests according to the configured participant grouping mode."""
     entries, explicit, groups = self._get_execution_groups()
@@ -1138,6 +1150,7 @@ class BaseTestClass:
     tr_record = record or records.TestResultRecord(test_name, self.TAG)
     tr_record.uid = getattr(test_method, 'uid', None)
     tr_record.test_begin()
+    self._make_record_signature_unique(tr_record)
     self.current_test_info = runtime_test_info.RuntimeTestInfo(
         test_name, self.log_path, tr_record
     )
