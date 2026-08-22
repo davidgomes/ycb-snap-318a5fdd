@@ -2486,10 +2486,8 @@ fn test_sorting() {
         ],
     );
 
-    let output = te.assert_success_and_get_output(
-        ".",
-        &["file|same", "--sort", "name", "--sort", "path"],
-    );
+    let output =
+        te.assert_success_and_get_output(".", &["file|same", "--sort", "name", "--sort", "path"]);
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
         "file007
@@ -2539,10 +2537,7 @@ file007
 
 #[test]
 fn test_sorting_groups_and_missing_values() {
-    let te = TestEnv::new(
-        &["bdir", "adir"],
-        &["zfile", "afile", "with.rs", "without"],
-    );
+    let te = TestEnv::new(&["bdir", "adir"], &["zfile", "afile", "with.rs", "without"]);
 
     let output = te.assert_success_and_get_output(".", &["--sort", "name", "--dirs-first"]);
     assert_eq!(
@@ -2557,10 +2552,8 @@ zfile
 "
     );
 
-    let output = te.assert_success_and_get_output(
-        ".",
-        &["--sort", "extension", "--sort-missing-last"],
-    );
+    let output =
+        te.assert_success_and_get_output(".", &["--sort", "extension", "--sort-missing-last"]);
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
         "with.rs
