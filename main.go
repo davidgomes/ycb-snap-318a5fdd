@@ -84,6 +84,7 @@ func main() {
 			processor.LocomoOutputPriceSet = cmd.PersistentFlags().Changed("locomo-output-price")
 			processor.LocomoTPSSet = cmd.PersistentFlags().Changed("locomo-tps")
 			processor.LocomoCyclesSet = cmd.PersistentFlags().Changed("locomo-cycles")
+			processor.SortRequested = cmd.PersistentFlags().Changed("sort")
 
 			processor.Process()
 		},

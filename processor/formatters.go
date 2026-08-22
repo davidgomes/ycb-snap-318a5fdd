@@ -1012,7 +1012,7 @@ func fileSummarizeMultiBounded(input chan *FileJob) string {
 				destination = file
 			}
 			jobs := readBoundedMemoryJobs(spill.Name())
-			if SortBy != "" {
+			if SortRequested {
 				var sorted []*FileJob
 				for job := range jobs {
 					if job != nil {

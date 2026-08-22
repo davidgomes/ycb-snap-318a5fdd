@@ -124,6 +124,9 @@ var Dryness = false
 // SortBy sets which column output in formatter should be sorted by
 var SortBy = ""
 
+// SortRequested records whether the CLI explicitly requested sorting
+var SortRequested = false
+
 // Exclude is a regular expression which is used to exclude files from being processed
 var Exclude = []string{}
 
