@@ -17,6 +17,8 @@ from .callbacks import CallbacksRegistry
 from .callbacks import SpecListGrouper
 from .callbacks import SpecReference
 from .configuration import Configuration
+from .data import DataChangeInfo
+from .data import DataVar
 from .dispatcher import Listener
 from .dispatcher import Listeners
 from .engines.async_ import AsyncEngine
@@ -148,6 +150,8 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         self.history_values: Dict[
             str, List[State]
         ] = {}  # Mapping of compound states to last active state(s).
+        self._state_data: Dict[str, Dict[str, Any]] = {}
+        self._data_changes: List[DataChangeInfo] = []
         self.state_field = state_field
         self.start_configuration_values = (
             [start_value] if start_value is not None else list(self.start_configuration_values)
@@ -368,6 +372,55 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         """The state configuration values is the set of currently active states's values
         (or ids if no custom value is defined)."""
         return self._config.values
+
+    @property
+    def state_data_values(self) -> Dict[str, Dict[str, Any]]:
+        return {state_id: dict(data) for state_id, data in self._state_data.items()}
+
+    def get_state_data(self, state: "State") -> "Dict[str, Any] | None":
+        return self._state_data.get(state.id)
+
+    def _state_data_scope(self, state: "State") -> Dict[str, Any]:
+        scope: Dict[str, Any] = {}
+        for ancestor in reversed([*state.ancestors(), state]):
+            values = self._state_data.get(ancestor.id)
+            if values:
+                scope.update(values)
+        return scope
+
+    def set_state_data(self, state: "State", key: str, value: Any):
+        if state not in self.configuration:
+            raise InvalidDefinition(_("State must be active."))
+        if key not in state.data:
+            raise InvalidDefinition(_("State data key is not declared."))
+        declaration = state.data[key]
+        if isinstance(declaration, DataVar) and declaration.type is not None:
+            if not isinstance(value, declaration.type):
+                raise InvalidDefinition(_("State data value has an invalid type."))
+        values = self._state_data[state.id]
+        old_value = values.get(key)
+        values[key] = value
+        self._data_changes.append(DataChangeInfo(state.id, key, old_value, value))
+
+    def get_data_changes(self) -> List[DataChangeInfo]:
+        return list(self._data_changes)
+
+    def _enter_state_data(self, state: "State"):
+        from copy import deepcopy
+
+        values = {}
+        for key, declaration in state.data.items():
+            if isinstance(declaration, DataVar):
+                value = declaration.create()
+            elif callable(declaration):
+                value = declaration()
+            else:
+                value = deepcopy(declaration)
+            values[key] = value
+        self._state_data[state.id] = values
+
+    def _exit_state_data(self, state: "State"):
+        self._state_data.pop(state.id, None)
 
     @property
     def configuration(self) -> OrderedSet["State"]:

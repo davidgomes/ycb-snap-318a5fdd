@@ -508,6 +508,7 @@ class BaseEngine:
             if info.state is not None:  # pragma: no branch
                 self._debug("%s Exiting state: %s", self._log_id, info.state)
                 self.sm._callbacks.call(info.state.exit.key, *args, on_error=on_error, **kwargs)
+                self.sm._exit_state_data(info.state)
 
             self._remove_state_from_configuration(info.state)
 
@@ -673,6 +674,7 @@ class BaseEngine:
 
             self._debug("%s Entering state: %s", self._log_id, target)
             self._add_state_to_configuration(target)
+            self.sm._enter_state_data(target)
 
             # Execute `onentry` handlers — each handler is a separate block per
             # SCXML spec: errors in one block MUST NOT affect other blocks.
