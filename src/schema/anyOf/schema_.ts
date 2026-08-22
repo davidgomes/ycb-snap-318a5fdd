@@ -11,12 +11,14 @@ import type {
   Always,
   AtLeastOnce,
   Never,
+  RequiredIf,
   Schema,
   SchemaRequiredProp,
   Validator
 } from '../types/index.js'
 import type { LightTuple } from '../utils/light.js'
 import { lightTuple } from '../utils/light.js'
+import { appendRequiredIf } from '../utils/requiredIf.js'
 import { AnyOfSchema } from './schema.js'
 import type { AnyOfElementSchema, AnyOfSchemaProps, Discriminator } from './types.js'
 
@@ -56,6 +58,22 @@ export class AnyOfSchema_<
    */
   optional(): AnyOfSchema_<ELEMENTS, Overwrite<PROPS, { required: Never }>> {
     return this.required('never')
+  }
+
+  /**
+   * Require this attribute when a sibling matches one of the provided values.
+   * Multiple calls are combined with OR semantics.
+   */
+  requiredIf(
+    attributeName: string,
+    ...triggerValues: unknown[]
+  ): AnyOfSchema_<ELEMENTS, Overwrite<PROPS, { requiredIf: RequiredIf }>> {
+    return new AnyOfSchema_(
+      this.elements,
+      overwrite(this.props, {
+        requiredIf: appendRequiredIf(this.props.requiredIf, attributeName, triggerValues)
+      })
+    )
   }
 
   /**

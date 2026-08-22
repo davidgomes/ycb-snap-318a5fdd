@@ -2,6 +2,7 @@ import type { ItemSchema } from '~/schema/item/index.js'
 import type { ComputeObject } from '~/types/computeObject.js'
 import type { OmitKeys } from '~/types/omitKeys.js'
 
+import { getRequiredIfJSONSchema } from './requiredIf.js'
 import type { FormattedValueJSONSchema } from './schema.js'
 import { getFormattedValueJSONSchema } from './schema.js'
 import type { RequiredProperties } from './shared.js'
@@ -40,6 +41,7 @@ export const getFormattedItemJSONSchema = <SCHEMA extends ItemSchema>(
         getFormattedValueJSONSchema(attribute)
       ])
     ),
-    ...(requiredProperties.length > 0 ? { required: requiredProperties } : {})
+    ...(requiredProperties.length > 0 ? { required: requiredProperties } : {}),
+    ...getRequiredIfJSONSchema(schema.attributes)
   } as FormattedItemJSONSchema<SCHEMA>
 }

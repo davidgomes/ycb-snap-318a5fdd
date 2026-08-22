@@ -2,7 +2,7 @@ import type { MapSchema } from '~/schema/map/index.js'
 
 import type { MapSchemaDTO } from '../types.js'
 import { getSchemaDTO } from './schema.js'
-import { getDefaultsDTO } from './utils.js'
+import { getDefaultsDTO, getRequiredIfDTO } from './utils.js'
 
 /**
  * @debt feature "handle defaults, links & validators DTOs"
@@ -23,6 +23,7 @@ export const getMapSchemaDTO = (schema: MapSchema): MapSchemaDTO => {
     ...(hidden !== undefined && hidden ? { hidden } : {}),
     ...(key !== undefined && key ? { key } : {}),
     ...(savedAs !== undefined ? { savedAs } : {}),
-    ...defaultsDTO
+    ...defaultsDTO,
+    ...getRequiredIfDTO(schema)
   }
 }

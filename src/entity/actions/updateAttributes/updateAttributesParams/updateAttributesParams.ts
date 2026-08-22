@@ -6,6 +6,10 @@ import type { Entity } from '~/entity/index.js'
 import { isEmpty } from '~/utils/isEmpty.js'
 import { omit } from '~/utils/omit.js'
 
+import {
+  getRequiredIfUpdateCondition,
+  mergeUpdateConditions
+} from '../../update/requiredIfCondition.js'
 import type { UpdateAttributesOptions } from '../options.js'
 import type { UpdateAttributesInput } from '../types.js'
 import { parseUpdateAttributesExtension } from './extension/index.js'
@@ -43,7 +47,13 @@ export const updateAttributesParams: UpdateAttributesParamsGetter = <
     ExpressionAttributeNames: optionsExpressionAttributeNames,
     ExpressionAttributeValues: optionsExpressionAttributeValues,
     ...awsOptions
-  } = parseUpdateAttributesOptions(entity, options)
+  } = parseUpdateAttributesOptions(entity, {
+    ...options,
+    condition: mergeUpdateConditions(
+      getRequiredIfUpdateCondition(entity.schema, parsedItem),
+      options.condition
+    )
+  })
 
   const ExpressionAttributeNames = {
     ...optionsExpressionAttributeNames,

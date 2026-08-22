@@ -11,6 +11,7 @@ import type {
   Always,
   AtLeastOnce,
   Never,
+  RequiredIf,
   Schema,
   SchemaProps,
   SchemaRequiredProp,
@@ -18,6 +19,7 @@ import type {
 } from '../types/index.js'
 import type { Light } from '../utils/light.js'
 import { light } from '../utils/light.js'
+import { appendRequiredIf } from '../utils/requiredIf.js'
 import { SetSchema } from './schema.js'
 import type { SetElementSchema } from './types.js'
 
@@ -68,6 +70,22 @@ export class SetSchema_<
    */
   optional(): SetSchema_<ELEMENTS, Overwrite<PROPS, { required: Never }>> {
     return this.required('never')
+  }
+
+  /**
+   * Require this attribute when a sibling matches one of the provided values.
+   * Multiple calls are combined with OR semantics.
+   */
+  requiredIf(
+    attributeName: string,
+    ...triggerValues: unknown[]
+  ): SetSchema_<ELEMENTS, Overwrite<PROPS, { requiredIf: RequiredIf }>> {
+    return new SetSchema_(
+      this.elements,
+      overwrite(this.props, {
+        requiredIf: appendRequiredIf(this.props.requiredIf, attributeName, triggerValues)
+      })
+    )
   }
 
   /**
