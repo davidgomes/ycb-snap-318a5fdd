@@ -1,17 +1,30 @@
 use super::{ControlFrame, ControlFrameKind, FuncTranslator, LocalIdx};
 use crate::{
-    Error, F32, F64, FuncType, Mutability, RefType, TrapCode, ValType,
+    Error,
+    F32,
+    F64,
+    FuncType,
+    Mutability,
+    RefType,
+    TrapCode,
+    ValType,
     core::{FuelCostsProvider, IndexType, RawRef, TypedRawRef, TypedRawVal, wasm},
     engine::{
         BlockType,
         translator::func::{
-            ControlFrameBase, Input, Operand, op,
+            ControlFrameBase,
+            Input,
+            Operand,
+            op,
             stack::{AcquiredTarget, IfReachability},
         },
     },
     ir::{self, Op, index},
     module::{
-        self, MemoryIdx, TableIdx, WasmiValueType,
+        self,
+        MemoryIdx,
+        TableIdx,
+        WasmiValueType,
         init_expr::{EmptyEvalContext, Eval},
     },
 };
