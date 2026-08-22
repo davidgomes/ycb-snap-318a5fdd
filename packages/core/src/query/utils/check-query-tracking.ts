@@ -90,6 +90,33 @@ export function checkQueryTracking(
                     const genMasks = entityMasks[eventGenerationId];
                     const entityMask = genMasks ? (genMasks[eid] | 0) : 0;
                     if (!(entityMask & eventBitflag)) return false;
+
+                    if (group.aspect) {
+                        const bitmaskLen = groupBitmasks.length;
+                        for (let genId = 0; genId < bitmaskLen; genId++) {
+                            const mask = groupBitmasks[genId];
+                            if (!mask) continue;
+                            const maskForGen = entityMasks[genId];
+                            const currentMask = maskForGen ? (maskForGen[eid] | 0) : 0;
+                            if ((currentMask & mask) !== mask) return false;
+                        }
+                    }
+                }
+
+                if (group.aspect && eventType === 'remove') {
+                    const snapshot = world[$internal].trackingSnapshots.get(group.id)!;
+                    let hadAll = true;
+                    const bitmaskLen = groupBitmasks.length;
+                    for (let genId = 0; genId < bitmaskLen; genId++) {
+                        const mask = groupBitmasks[genId];
+                        if (!mask) continue;
+                        const oldMask = snapshot[genId]?.[eid] || 0;
+                        if ((oldMask & mask) !== mask) {
+                            hadAll = false;
+                            break;
+                        }
+                    }
+                    if (!hadAll) continue;
                 }
 
                 // PERF: Cache tracker array reference before mutation

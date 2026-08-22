@@ -84,6 +84,34 @@ For detailed patterns and monorepo structures, see [references/architecture.md](
 | **AoS (Callback)** | `trait(() => new Thing())` | Complex objects/instances | `Ref` (DOM), `Keyboard` (Set)    |
 | **Tag**            | `trait()`                  | No data, just a flag      | `IsPlayer`, `IsEnemy`, `IsDead`  |
 
+## Aspects
+
+Aspects group multiple traits into a single composite handle with unified operations.
+
+```typescript
+import { createAspect, trait } from 'koota'
+
+const Position = trait({ x: 0, y: 0 })
+const Velocity = trait({ vx: 0, vy: 0 })
+const Transform = createAspect(Position, Velocity)
+
+entity.has(Transform)
+entity.get(Transform)
+entity.set(Transform, { x: 1, y: 2, vx: 3, vy: 4 })
+entity.add([Transform, { x: 1, y: 2, vx: 3, vy: 4 }])
+entity.remove(Transform)
+
+world.query(Transform).updateEach(([transform]) => {
+  transform.x += transform.vx
+})
+
+world.onAdd(Transform, (entity) => {})
+world.onRemove(Transform, (entity) => {})
+world.onChange(Transform, (entity) => {})
+```
+
+Overlapping field names between constituents throw at creation time. Relation constituents are not supported. Tag traits are valid. Nested aspects flatten to individual traits.
+
 ## Trait naming conventions
 
 | Type          | Pattern         | Examples                         |

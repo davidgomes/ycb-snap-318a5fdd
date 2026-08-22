@@ -1,4 +1,6 @@
 import { $internal } from '../common';
+import { isAspect } from '../aspect/aspect';
+import type { Aspect } from '../aspect/types';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { hasRelationPair } from '../relation/relation';
@@ -139,6 +141,7 @@ function processTrackingModifier(
             id,
             bitmasks: [],
             trackers: [],
+            aspect: modifier.aspect,
         };
         groupsMap.set(key, group);
         query.trackingGroups.push(group);
@@ -194,6 +197,8 @@ export function createQueryInstance<T extends QueryParameter[]>(
         addSubscriptions: new Set<QuerySubscriber>(),
         removeSubscriptions: new Set<QuerySubscriber>(),
         relationFilters: [],
+        aspects: [],
+        aspectNot: [],
 
         run: (world: World, params: QueryParameter[]) => runQuery(world, query, params),
         add: (entity: Entity) => addEntityToQuery(query, entity),
@@ -243,9 +248,13 @@ export function createQueryInstance<T extends QueryParameter[]>(
             }
 
             if (parameter.type === 'not') {
-                query.traitInstances.forbidden.push(
-                    ...traits.map((t) => getTraitInstance(ctx.traitInstances, t)!)
-                );
+                if (parameter.aspect) {
+                    query.aspectNot.push(parameter.aspect);
+                } else {
+                    query.traitInstances.forbidden.push(
+                        ...traits.map((t) => getTraitInstance(ctx.traitInstances, t)!)
+                    );
+                }
             } else if (parameter.type === 'or') {
                 // Handle regular traits in Or
                 query.traitInstances.or.push(
@@ -261,9 +270,23 @@ export function createQueryInstance<T extends QueryParameter[]>(
                     }
                 }
             } else if (isTrackingModifier(parameter)) {
-                // Top-level tracking modifiers use AND logic
-                processTrackingModifier(world, query, parameter, 'and', ctx, trackingGroupsMap);
+                const logic =
+                    parameter.aspect && parameter.type.includes('changed')
+                        ? 'or'
+                        : parameter.aspect && parameter.type.includes('removed')
+                          ? 'or'
+                          : 'and';
+                processTrackingModifier(world, query, parameter, logic, ctx, trackingGroupsMap);
             }
+        } else if (isAspect(parameter)) {
+            const aspect = parameter as Aspect;
+            for (let j = 0; j < aspect.traits.length; j++) {
+                const t = aspect.traits[j];
+                if (!hasTraitInstance(ctx.traitInstances, t)) registerTrait(world, t);
+                query.traitInstances.required.push(getTraitInstance(ctx.traitInstances, t)!);
+                query.traits.push(t);
+            }
+            query.aspects.push(aspect);
         } else {
             // Regular trait
             const t = parameter as Trait;
