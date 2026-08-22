@@ -1,0 +1,12 @@
+ignore:
+  - "testutils/*"
+coverage:
+  status:
+    patch:
+      default:
+        target: 60%
+        threshold: 1%
+    project:
+      default:
+        target: 70%
+        threshold: 1%
