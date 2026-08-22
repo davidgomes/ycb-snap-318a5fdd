@@ -1,0 +1,37 @@
+exclude-labels:
+  - ignore
+  - release
+  - dependencies
+name-template: 'Narwhals unreleased'
+version-template: unreleased
+
+change-template: '- $TITLE (#$NUMBER)' 
+
+categories:
+  - title: 🏆 Highlights
+    labels: highlight
+  - title: 💥 Breaking changes
+    labels:
+      - breaking
+  - title: ⚠️ Deprecations
+    labels: deprecation
+  - title: 🚀 Performance improvements
+    labels: performance
+  - title: ✨ Enhancements
+    labels: enhancement
+  - title: 🐞 Bug fixes
+    labels: fix
+  - title: 📖 Documentation
+    labels: documentation
+  - title: 📦 Build system
+    labels: build
+  - title: 🛠️ Other improvements
+    labels: internal
+
+template: |
+  ## Changes
+
+  $CHANGES
+
+  Thank you to all our contributors for making this release possible!
+  $CONTRIBUTORS
