@@ -73,6 +73,9 @@ function causeForSerialization(
   seen: Set<any>
 ): any {
   if (!(cause instanceof Error) || seen.has(cause)) return undefined;
+  if (options.includeCauses === 'deep' && depth > options.maxCauseDepth) {
+    return undefined;
+  }
   const copy = Object.create(Object.getPrototypeOf(cause));
   Object.defineProperties(copy, {
     name: { value: cause.name, enumerable: true, writable: true },
