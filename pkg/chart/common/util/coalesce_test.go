@@ -765,3 +765,177 @@ func TestCoalesceValuesEmptyMapWithNils(t *testing.T) {
 	is.True(ok, "Expected data.baz key to be present but it was removed")
 	is.Nil(data["baz"], "Expected data.baz key to be nil but it is not")
 }
+
+func TestCoalesceValuesMergeStrategies(t *testing.T) {
+	is := assert.New(t)
+	defaults := map[string]any{
+		"append": []any{"default"},
+		"items": []any{
+			map[string]any{
+				"metadata": map[string]any{"name": "one"},
+				"value":    "default",
+				"nested":   map[string]any{"default": true},
+			},
+			"default-without-key",
+		},
+	}
+	chartDefaults := &chart.Chart{
+		Metadata: &chart.Metadata{
+			Name: "test",
+			Annotations: map[string]string{
+				"helm.sh/merge-strategy/append": "append",
+				"helm.sh/merge-strategy/items":  "merge",
+				"helm.sh/merge-key/items":       "metadata.name",
+			},
+		},
+		Values: defaults,
+	}
+	values := map[string]any{
+		"append": []any{"user"},
+		"items": []any{
+			map[string]any{
+				"metadata": map[string]any{"name": "one"},
+				"value":    "user",
+				"nested":   map[string]any{"user": true, "default": nil},
+			},
+			"user-without-key",
+			map[string]any{
+				"metadata": map[string]any{"name": "two"},
+			},
+		},
+	}
+
+	got, err := CoalesceValues(chartDefaults, values)
+	is.NoError(err)
+	is.Equal([]any{"default", "user"}, got["append"])
+	is.Equal([]any{
+		map[string]any{
+			"metadata": map[string]any{"name": "one"},
+			"value":    "user",
+			"nested":   map[string]any{"default": nil, "user": true},
+		},
+		"default-without-key",
+		"user-without-key",
+		map[string]any{"metadata": map[string]any{"name": "two"}},
+	}, got["items"])
+	is.Equal(defaults, chartDefaults.Values)
+}
+
+func TestCoalesceValuesMergeStrategiesAreChartScoped(t *testing.T) {
+	root := &chart.Chart{
+		Metadata: &chart.Metadata{
+			Name: "root",
+			Annotations: map[string]string{
+				"helm.sh/merge-strategy/items": "append",
+			},
+		},
+		Values: map[string]any{
+			"items": []any{"root-default"},
+		},
+	}
+	subchart := &chart.Chart{
+		Metadata: &chart.Metadata{
+			Name: "subchart",
+			Annotations: map[string]string{
+				"helm.sh/merge-strategy/global.items": "append",
+			},
+		},
+		Values: map[string]any{
+			"items":  []any{"subchart-default"},
+			"global": map[string]any{"items": []any{"subchart-global-default"}},
+		},
+	}
+	root.AddDependency(subchart)
+
+	got, err := CoalesceValues(root, map[string]any{
+		"items":  []any{"root-user"},
+		"global": map[string]any{"items": []any{"global-user"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	is := assert.New(t)
+	is.Equal([]any{"root-default", "root-user"}, got["items"])
+	is.Equal([]any{"subchart-default"}, got["subchart"].(map[string]any)["items"])
+	is.Equal([]any{"subchart-global-default", "global-user"},
+		got["subchart"].(map[string]any)["global"].(map[string]any)["items"])
+}
+
+func TestExtractMergeStrategies(t *testing.T) {
+	annotations := map[string]string{
+		"helm.sh/merge-strategy/append":        "append",
+		"helm.sh/merge-strategy/no-key":        "merge",
+		"helm.sh/merge-strategy/keyed":         "merge",
+		"helm.sh/merge-key/keyed":              "metadata.name",
+		"helm.sh/merge-key/orphan":             "name",
+		"helm.sh/merge-strategy/invalid..path": "append",
+		"helm.sh/merge-strategy/unsupported":   "replace",
+	}
+
+	is := assert.New(t)
+	is.Equal(map[string]string{
+		"append": "append",
+		"no-key": "append",
+		"keyed":  "merge",
+	}, ExtractMergeStrategies(annotations))
+	is.Equal(map[string]string{"keyed": "metadata.name"}, ExtractMergeKeys(annotations))
+}
+
+func TestValidateMergeStrategies(t *testing.T) {
+	annotations := map[string]string{
+		"helm.sh/merge-strategy/unsupported": "replace",
+		"helm.sh/merge-strategy/missing-key": "merge",
+		"helm.sh/merge-strategy/not-found":   "append",
+		"helm.sh/merge-strategy/not-array":   "append",
+		"helm.sh/merge-key/orphan":           "name",
+	}
+	values := map[string]any{
+		"not-array": "value",
+	}
+
+	err := ValidateMergeStrategies(annotations, values)
+	if err == nil {
+		t.Fatal("expected merge strategy validation warnings")
+	}
+	for _, message := range []string{
+		"unsupported",
+		"missing-key",
+		"not-found",
+		"not-array",
+		"orphan",
+	} {
+		assert.Contains(t, err.Error(), message)
+	}
+}
+
+func TestCoalesceValuesMergeStrategyCLIOverride(t *testing.T) {
+	c := &chart.Chart{
+		Metadata: &chart.Metadata{
+			Name: "test",
+			Annotations: map[string]string{
+				"helm.sh/merge-strategy/items": "append",
+			},
+		},
+		Values: map[string]any{
+			"items": []any{
+				map[string]any{"name": "default", "value": "old"},
+			},
+		},
+	}
+
+	got, err := CoalesceValuesWithOptions(c, map[string]any{
+		"items": []any{
+			map[string]any{"name": "default", "value": "new"},
+		},
+	}, MergeStrategyOptions{
+		MergeStrategies: []string{"items=merge"},
+		MergeKeys:       []string{"items=name"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, []any{
+		map[string]any{"name": "default", "value": "new"},
+	}, got["items"])
+}

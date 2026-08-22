@@ -302,6 +302,9 @@ func setMergePath(values map[string]any, path string, value any) bool {
 }
 
 func copyMergeValue(value any) any {
+	if value == nil {
+		return nil
+	}
 	copied, err := copystructure.Copy(value)
 	if err != nil {
 		return value
