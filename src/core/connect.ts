@@ -2,6 +2,7 @@ import { BuiltLogic, ConnectDefinitions, Logic, LogicBuilder, LogicWrapper, Sele
 import { isBuiltLogic, isLogicWrapper } from '../utils'
 import { getContext, getStoreState } from '../kea/context'
 import { createActionType } from './actions'
+import { registerSelectorFn } from './atomicSelectors'
 
 /*
   Copy the connect'ed logic stores' selectors and actions into this object
@@ -129,6 +130,9 @@ export function connect<L extends Logic = Logic>(
           ) as Selector
         }
 
+        if (logic.selectors[to]) {
+          registerSelectorFn(logic, to, logic.selectors[to])
+        }
         if (logic.selectors[to] && !logic.values.hasOwnProperty(to)) {
           Object.defineProperty(logic.values, to, {
             get: function () {

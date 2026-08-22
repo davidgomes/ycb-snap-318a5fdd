@@ -124,8 +124,8 @@ describe('atomic selectors', () => {
         ],
       }),
       selectors({
-        userName: [(s) => [s.user], (user) => user.name],
         greeting: [(s) => [s.userName], (userName) => `Hello ${userName}`],
+        userName: [(s) => [s.user], (user) => user.name],
         unused: [(s) => [s.user], (user) => user.extra],
       }),
     ])
@@ -234,6 +234,110 @@ describe('atomic selectors', () => {
       fireEvent.click(getByTestId('name-btn'))
     })
     expect(getByTestId('name').textContent).toBe('Grace')
+    expect(renders).toBe(start + 1)
+  })
+
+  test('tracks nested collection leaves and advanced array methods', () => {
+    resetContext({ createStore: true, atomicSelectors: true })
+    const logic = kea([
+      actions({
+        setList: (list) => ({ list }),
+        setMap: (data) => ({ data }),
+      }),
+      reducers({
+        list: [
+          [
+            { id: 1, name: 'Ada' },
+            { id: 2, name: 'Grace' },
+          ],
+          { setList: (_, { list }) => list },
+        ],
+        data: [
+          new Map([
+            ['a', { name: 'Ada' }],
+            ['b', { name: 'Grace' }],
+          ]),
+          { setMap: (_, { data }) => data },
+        ],
+      }),
+      selectors({
+        firstMatch: [(s) => [s.list], (list) => list.find((item) => item.id === 1)?.name],
+        mapName: [(s) => [s.data], (data) => data.get('a')?.name],
+      }),
+    ])
+    logic.mount()
+
+    expect(logic.values.firstMatch).toBe('Ada')
+    expect(logic.values.mapName).toBe('Ada')
+    expect(logic.selectorHealth().selectors.firstMatch.dependencies).toEqual(['list.0.id', 'list.0.name'])
+    expect(logic.selectorHealth().selectors.mapName.dependencies).toEqual(['data.map:a.name'])
+
+    const firstMatchEvaluations = logic.selectorHealth().selectors.firstMatch.evaluations
+    const mapNameEvaluations = logic.selectorHealth().selectors.mapName.evaluations
+    logic.actions.setList([
+      { id: 1, name: 'Ada' },
+      { id: 2, name: 'Updated' },
+    ])
+    logic.actions.setMap(
+      new Map([
+        ['a', { name: 'Ada' }],
+        ['b', { name: 'Updated' }],
+      ]),
+    )
+    expect(logic.values.firstMatch).toBe('Ada')
+    expect(logic.values.mapName).toBe('Ada')
+    expect(logic.selectorHealth().selectors.firstMatch.evaluations).toBe(firstMatchEvaluations)
+    expect(logic.selectorHealth().selectors.mapName.evaluations).toBe(mapNameEvaluations)
+  })
+
+  test('invalidates selectors when props used as inputs change', () => {
+    resetContext({ createStore: true, atomicSelectors: true })
+    const logic = kea([
+      reducers({ names: [['Ada', 'Grace'], {}] }),
+      selectors({
+        selectedName: [(s, p) => [s.names, p.index], (names, index) => names[index]],
+      }),
+    ])
+    const builtLogic = logic({ index: 0 })
+    builtLogic.mount()
+    expect(builtLogic.values.selectedName).toBe('Ada')
+
+    const nextLogic = logic({ index: 1 })
+    expect(nextLogic).toBe(builtLogic)
+    expect(builtLogic.values.selectedName).toBe('Grace')
+  })
+
+  test('applies atomic subscriptions to wrapped components', () => {
+    resetContext({ createStore: true, atomicSelectors: true })
+    const logic = kea([
+      actions({
+        setName: (name) => ({ name }),
+        setAge: (age) => ({ age }),
+      }),
+      reducers({
+        user: [
+          { name: 'Ada', age: 36 },
+          {
+            setName: (state, { name }) => ({ ...state, name }),
+            setAge: (state, { age }) => ({ ...state, age }),
+          },
+        ],
+      }),
+    ])
+
+    let renders = 0
+    const Component = ({ user }) => {
+      renders += 1
+      return <div data-testid="wrapped-name">{user.name}</div>
+    }
+    const Wrapped = logic(Component)
+    const { getByTestId } = render(<Wrapped />)
+    const start = renders
+
+    act(() => logic.actions.setAge(40))
+    expect(renders).toBe(start)
+    act(() => logic.actions.setName('Grace'))
+    expect(getByTestId('wrapped-name').textContent).toBe('Grace')
     expect(renders).toBe(start + 1)
   })
 })

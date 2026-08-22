@@ -8,6 +8,7 @@ import {
   getAtomicCache,
   getValueAtPath,
   isAtomicSelectorsEnabled,
+  normalizeDependencies,
 } from '../core/atomicSelectors'
 
 /** True if we dispatched an action in a component's body *while* rendering. For example when mounting a logic.
@@ -21,94 +22,109 @@ export function useSelector(selector: Selector): any {
   return useSyncExternalStore(getContext().store.subscribe, () => selector(getStoreState()))
 }
 
-function fingerprintValue(value: any): string {
-  if (value instanceof Map) {
-    return `Map(${[...value.entries()].map(([k, v]) => `${String(k)}:${String(v)}`).join(',')})`
+type AtomicAccess = {
+  keys: Set<string>
+  leaves: Set<string>
+}
+
+type AtomicSelection = {
+  key: string
+  value: any
+}[]
+
+function selectionEqual(previous: AtomicSelection | undefined, next: AtomicSelection): boolean {
+  return (
+    !!previous &&
+    previous.length === next.length &&
+    previous.every((entry, index) => entry.key === next[index].key && Object.is(entry.value, next[index].value))
+  )
+}
+
+function getAtomicSelection(builtLogic: BuiltLogic, accessed: AtomicAccess): AtomicSelection {
+  let reducerState: any
+  try {
+    reducerState = builtLogic.selector ? builtLogic.selector(getStoreState()) : undefined
+  } catch {
+    reducerState = undefined
   }
-  if (value instanceof Set) {
-    return `Set(${[...value].map(String).join(',')})`
-  }
-  if (typeof value === 'object' && value !== null) {
-    try {
-      return JSON.stringify(value)
-    } catch {
-      return String(value)
+
+  const cache = getAtomicCache(builtLogic)
+  const leaves = normalizeDependencies(accessed.leaves)
+  const selection: AtomicSelection = []
+
+  for (const key of accessed.keys) {
+    const hasNestedStateLeaf = leaves.some((leaf) => leaf === key || leaf.startsWith(`${key}.`))
+    if (cache.nodes[key]?.isDerived || !hasNestedStateLeaf) {
+      selection.push({ key: `selector:${key}`, value: builtLogic.selectors[key](getStoreState(), builtLogic.props) })
     }
   }
-  return String(value)
+
+  for (const leaf of leaves) {
+    if (!Array.from(accessed.keys).some((key) => cache.nodes[key]?.isDerived && (leaf === key || leaf.startsWith(`${key}.`)))) {
+      selection.push({ key: `leaf:${leaf}`, value: getValueAtPath(reducerState, leaf) })
+    }
+  }
+  return selection
+}
+
+function useAtomicValues<L extends Logic = Logic>(builtLogic: BuiltLogic<L>): L['values'] {
+  const accessedRef = useRef<AtomicAccess>({ keys: new Set<string>(), leaves: new Set<string>() })
+  const versionRef = useRef(0)
+  const selectionRef = useRef<AtomicSelection>()
+
+  const getSnapshot = () => {
+    const selection = getAtomicSelection(builtLogic, accessedRef.current)
+    if (!selectionEqual(selectionRef.current, selection)) {
+      selectionRef.current = selection
+      versionRef.current += 1
+    }
+    return versionRef.current
+  }
+
+  useSyncExternalStore(getContext().store.subscribe, getSnapshot, getSnapshot)
+
+  useLayoutEffect(() => {
+    selectionRef.current = getAtomicSelection(builtLogic, accessedRef.current)
+  })
+
+  return useMemo(() => {
+    const response: Record<string, any> = {}
+    for (const key of Object.keys(builtLogic.selectors)) {
+      Object.defineProperty(response, key, {
+        enumerable: true,
+        get: () => {
+          accessedRef.current.keys.add(key)
+          const value = builtLogic.selectors[key](getStoreState(), builtLogic.props)
+          return createTrackingProxy(value, key, (dep) => accessedRef.current.leaves.add(dep))
+        },
+      })
+    }
+    return response as L['values']
+  }, [builtLogic.pathString])
 }
 
 export function useValues<L extends Logic = Logic>(logic: BuiltLogic<L> | LogicWrapper<L>): L['values'] {
   const builtLogic = useMountedLogic(logic)
-  const accessedRef = useRef({ keys: new Set<string>(), leaves: new Set<string>() })
-  const versionRef = useRef(0)
-  const lastFingerprintRef = useRef<string | null>(null)
-
-  const computeAtomicFingerprint = () => {
-    let reducerState: any
-    try {
-      reducerState = builtLogic.selector ? builtLogic.selector(getStoreState()) : undefined
-    } catch {
-      reducerState = undefined
-    }
-    const parts: string[] = []
-    for (const key of accessedRef.current.keys) {
-      const cache = getAtomicCache(builtLogic)
-      if (cache.nodes[key]?.isDerived) {
-        parts.push(`${key}:${fingerprintValue(builtLogic.selectors[key]())}`)
-      }
-    }
-    for (const leaf of accessedRef.current.leaves) {
-      parts.push(`${leaf}:${fingerprintValue(getValueAtPath(reducerState, leaf))}`)
-    }
-    return parts.join('|')
+  if (isAtomicSelectorsEnabled()) {
+    return useAtomicValues(builtLogic)
   }
-
-  const getAtomicSnapshot = () => {
-    const fingerprint = computeAtomicFingerprint()
-    if (lastFingerprintRef.current === null || fingerprint === lastFingerprintRef.current) {
-      return versionRef.current
-    }
-    lastFingerprintRef.current = fingerprint
-    versionRef.current += 1
-    return versionRef.current
-  }
-
-  useLayoutEffect(() => {
-    if (isAtomicSelectorsEnabled()) {
-      lastFingerprintRef.current = computeAtomicFingerprint()
-    }
-  })
-
-  useSyncExternalStore(
-    isAtomicSelectorsEnabled() ? getContext().store.subscribe : () => () => {},
-    isAtomicSelectorsEnabled() ? getAtomicSnapshot : () => 0,
-  )
 
   return useMemo(() => {
     const response = {}
-
     for (const key of Object.keys(builtLogic.selectors)) {
       Object.defineProperty(response, key, {
-        get: () => {
-          if (isAtomicSelectorsEnabled()) {
-            accessedRef.current.keys.add(key)
-            const value = builtLogic.selectors[key](getStoreState(), builtLogic.props)
-            return createTrackingProxy(value, key, (dep) => {
-              accessedRef.current.leaves.add(dep)
-            })
-          }
-          return useSelector(builtLogic.selectors[key])
-        },
+        get: () => useSelector(builtLogic.selectors[key]),
       })
     }
-
     return response
   }, [builtLogic.pathString])
 }
 
 export function useAllValues<L extends Logic = Logic>(logic: BuiltLogic<L> | LogicWrapper<L>): L['values'] {
   const builtLogic = useMountedLogic(logic)
+  if (isAtomicSelectorsEnabled()) {
+    return useAtomicValues(builtLogic)
+  }
 
   const response: Record<string, any> = {}
   for (const key of Object.keys(builtLogic.selectors)) {

@@ -8,6 +8,7 @@ import { addConnection } from '../core/connect'
 import { key, path, props } from '../core'
 import { shallowCompare } from '../utils'
 import { batchChanges } from '../react/hooks'
+import { invalidateAtomicSelectors } from '../core/atomicSelectors'
 
 // Converts `input` into `logic` by running all build steps in succession
 function applyInputToLogic(logic: BuiltLogic, input: LogicInput | LogicBuilder) {
@@ -67,6 +68,7 @@ export function getBuiltLogic<L extends Logic = Logic>(
       prevPropsClone = { ...cachedLogic.props }
       Object.assign(cachedLogic.props, props)
       cachedLogic.lastProps = props
+      invalidateAtomicSelectors(cachedLogic, 'props')
     }
     if (prevPropsClone && cachedLogic.events.propsChanged) {
       const newPropsClone = { ...cachedLogic.props }
@@ -145,6 +147,7 @@ export function getBuiltLogic<L extends Logic = Logic>(
 
     runPlugins('afterBuild', logic, wrapper.inputs)
   } catch (e) {
+    wrapperContext.builtLogics.delete(logic.key)
     throw e
   } finally {
     wrapperContext.isBuilding = false

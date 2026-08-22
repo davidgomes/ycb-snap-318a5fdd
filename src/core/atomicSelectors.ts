@@ -23,7 +23,7 @@ export type AtomicNode = {
   lastValue: any
   hasValue: boolean
   lastLeaves: Record<string, any>
-  lastSelectorInputs: Record<string, any>
+  lastInputValues: any[]
   dependencies: string[]
   dependents: Set<string>
   evaluations: number
@@ -39,6 +39,8 @@ export type AtomicCache = {
   lastReducerState: any
   initialized: boolean
 }
+
+const selectorIdentityKey = Symbol.for('kea.atomicSelectorIdentity')
 
 export function isAtomicSelectorsEnabled(): boolean {
   try {
@@ -70,6 +72,15 @@ export function registerSelectorFn(logic: Logic, name: string, fn: Function): vo
   }
   const cache = getAtomicCache(logic)
   cache.fnToName.set(fn, name)
+  try {
+    Object.defineProperty(fn, selectorIdentityKey, {
+      configurable: true,
+      value: selectorIdentity(logic, name),
+    })
+  } catch {
+    // Some user supplied selectors may be non-extensible. The local map still
+    // handles the normal build-time wrapper in that case.
+  }
 }
 
 export function ensureAtomicNode(
@@ -89,7 +100,7 @@ export function ensureAtomicNode(
       lastValue: undefined,
       hasValue: false,
       lastLeaves: {},
-      lastSelectorInputs: {},
+      lastInputValues: [],
       dependencies: [],
       dependents: new Set(),
       evaluations: 0,
@@ -163,66 +174,362 @@ function leavesEqual(a: any, b: any): boolean {
   return Object.is(a, b)
 }
 
+function appendPath(path: string, part: string): string {
+  return path ? `${path}.${part}` : part
+}
+
+export function normalizeDependencies(dependencies: Iterable<string>): string[] {
+  const unique = Array.from(new Set(dependencies)).filter(Boolean)
+  return unique.filter(
+    (dependency) => !unique.some((other) => other !== dependency && other.startsWith(`${dependency}.`)),
+  )
+}
+
+function collectionPath(path: string, kind: 'map' | 'set', value: any): string {
+  return appendPath(path, `${kind}:${String(value)}`)
+}
+
+function isArrayIndex(prop: PropertyKey): boolean {
+  return typeof prop === 'string' && /^(0|[1-9]\d*)$/.test(prop)
+}
+
+function trackedMapIterator(
+  iterator: IterableIterator<[any, any]>,
+  path: string,
+  collect: (dep: string) => void,
+  kind: 'entries' | 'keys' | 'values',
+): IterableIterator<any> {
+  return {
+    next() {
+      const result = iterator.next()
+      if (result.done) {
+        collect(appendPath(path, 'size'))
+        return result
+      }
+      const [key, value] = result.value
+      collect(collectionPath(path, 'map', key))
+      if (kind === 'keys') {
+        return { done: false, value: key }
+      }
+      if (kind === 'values') {
+        return {
+          done: false,
+          value: createTrackingProxy(value, collectionPath(path, 'map', key), collect),
+        }
+      }
+      return {
+        done: false,
+        value: [key, createTrackingProxy(value, collectionPath(path, 'map', key), collect)],
+      }
+    },
+    [Symbol.iterator]() {
+      return this
+    },
+  } as IterableIterator<any>
+}
+
+function trackedSetIterator(
+  iterator: IterableIterator<any>,
+  path: string,
+  collect: (dep: string) => void,
+  kind: 'entries' | 'values',
+): IterableIterator<any> {
+  return {
+    next() {
+      const result = iterator.next()
+      if (result.done) {
+        collect(appendPath(path, 'size'))
+        return result
+      }
+      const value = result.value
+      collect(collectionPath(path, 'set', value))
+      const proxiedValue = createTrackingProxy(value, collectionPath(path, 'set', value), collect)
+      return {
+        done: false,
+        value: kind === 'entries' ? [proxiedValue, proxiedValue] : proxiedValue,
+      }
+    },
+    [Symbol.iterator]() {
+      return this
+    },
+  } as IterableIterator<any>
+}
+
+function trackedArrayIterator(
+  target: any[],
+  path: string,
+  collect: (dep: string) => void,
+): IterableIterator<any> {
+  let index = 0
+  return {
+    next() {
+      if (index >= target.length) {
+        collect(appendPath(path, 'length'))
+        return { done: true, value: undefined }
+      }
+      const currentIndex = index++
+      const itemPath = appendPath(path, String(currentIndex))
+      collect(itemPath)
+      return { done: false, value: createTrackingProxy(target[currentIndex], itemPath, collect) }
+    },
+    [Symbol.iterator]() {
+      return this
+    },
+  } as IterableIterator<any>
+}
+
+function trackedArrayEntries(
+  target: any[],
+  path: string,
+  collect: (dep: string) => void,
+): IterableIterator<[number, any]> {
+  let index = 0
+  return {
+    next() {
+      if (index >= target.length) {
+        collect(appendPath(path, 'length'))
+        return { done: true, value: undefined }
+      }
+      const currentIndex = index++
+      const itemPath = appendPath(path, String(currentIndex))
+      collect(itemPath)
+      return {
+        done: false,
+        value: [currentIndex, createTrackingProxy(target[currentIndex], itemPath, collect)],
+      }
+    },
+    [Symbol.iterator]() {
+      return this
+    },
+  } as IterableIterator<[number, any]>
+}
+
+function createTrackedMap(value: Map<any, any>, path: string, collect: (dep: string) => void): any {
+  let proxy: any
+  proxy = new Proxy(value, {
+    get(target, prop) {
+      if (prop === 'size') {
+        collect(appendPath(path, 'size'))
+        return target.size
+      }
+      if (prop === 'get' || prop === 'has') {
+        return (key: any) => {
+          const keyPath = collectionPath(path, 'map', key)
+          collect(keyPath)
+          const result = (target as any)[prop](key)
+          return prop === 'get' ? createTrackingProxy(result, keyPath, collect) : result
+        }
+      }
+      if (prop === 'forEach') {
+        return (callback: (value: any, key: any, map: Map<any, any>) => void, thisArg?: any) =>
+          target.forEach((entryValue, key) => {
+            const keyPath = collectionPath(path, 'map', key)
+            collect(keyPath)
+            callback.call(thisArg, createTrackingProxy(entryValue, keyPath, collect), key, proxy)
+          })
+      }
+      if (prop === 'entries' || prop === Symbol.iterator) {
+        return () => trackedMapIterator(target.entries(), path, collect, 'entries')
+      }
+      if (prop === 'keys') {
+        return () => trackedMapIterator(target.entries(), path, collect, 'keys')
+      }
+      if (prop === 'values') {
+        return () => trackedMapIterator(target.entries(), path, collect, 'values')
+      }
+      const result = Reflect.get(target, prop, target)
+      return typeof result === 'function' ? result.bind(target) : result
+    },
+  })
+  return proxy
+}
+
+function createTrackedSet(value: Set<any>, path: string, collect: (dep: string) => void): any {
+  let proxy: any
+  proxy = new Proxy(value, {
+    get(target, prop) {
+      if (prop === 'size') {
+        collect(appendPath(path, 'size'))
+        return target.size
+      }
+      if (prop === 'has') {
+        return (item: any) => {
+          collect(collectionPath(path, 'set', item))
+          return target.has(item)
+        }
+      }
+      if (prop === 'forEach') {
+        return (callback: (value: any, key: any, set: Set<any>) => void, thisArg?: any) =>
+          target.forEach((item) => {
+            const itemPath = collectionPath(path, 'set', item)
+            collect(itemPath)
+            const proxiedItem = createTrackingProxy(item, itemPath, collect)
+            callback.call(thisArg, proxiedItem, proxiedItem, proxy)
+          })
+      }
+      if (prop === 'entries' || prop === 'values' || prop === 'keys' || prop === Symbol.iterator) {
+        return () =>
+          trackedSetIterator(
+            target.values(),
+            path,
+            collect,
+            prop === 'entries' ? 'entries' : 'values',
+          )
+      }
+      const result = Reflect.get(target, prop, target)
+      return typeof result === 'function' ? result.bind(target) : result
+    },
+  })
+  return proxy
+}
+
+const trackedArrayMethods = new Set([
+  'at',
+  'concat',
+  'copyWithin',
+  'entries',
+  'every',
+  'fill',
+  'filter',
+  'find',
+  'findIndex',
+  'findLast',
+  'findLastIndex',
+  'flat',
+  'flatMap',
+  'forEach',
+  'includes',
+  'indexOf',
+  'join',
+  'keys',
+  'lastIndexOf',
+  'map',
+  'pop',
+  'push',
+  'reduce',
+  'reduceRight',
+  'reverse',
+  'shift',
+  'slice',
+  'some',
+  'sort',
+  'splice',
+  'toReversed',
+  'toSorted',
+  'toSpliced',
+  'unshift',
+  'values',
+  'with',
+])
+
+const arrayValueCallbackMethods = new Set([
+  'every',
+  'filter',
+  'find',
+  'findIndex',
+  'findLast',
+  'findLastIndex',
+  'forEach',
+  'flatMap',
+  'map',
+  'some',
+])
+
+function createTrackedArray(value: any[], path: string, collect: (dep: string) => void): any {
+  let proxy: any
+  let methodProxy: any
+
+  const handler: ProxyHandler<any[]> = {
+    get(target, prop, receiver) {
+      if (prop === 'length') {
+        if (receiver !== methodProxy) {
+          collect(appendPath(path, 'length'))
+        }
+        return target.length
+      }
+      if (isArrayIndex(prop)) {
+        const itemPath = appendPath(path, String(prop))
+        collect(itemPath)
+        return createTrackingProxy(target[prop as any], itemPath, collect)
+      }
+      if (prop === Symbol.iterator) {
+        return () => trackedArrayIterator(target, path, collect)
+      }
+      if (prop === 'entries') {
+        return () => trackedArrayEntries(target, path, collect)
+      }
+      if (prop === 'values') {
+        return () => trackedArrayIterator(target, path, collect)
+      }
+      if (typeof prop === 'string' && trackedArrayMethods.has(prop)) {
+        const method = (target as any)[prop]
+        return (...args: any[]) => {
+          const methodArgs = args.slice()
+          let matchedIndex: number | undefined
+          if (arrayValueCallbackMethods.has(prop) && typeof methodArgs[0] === 'function') {
+            const callback = methodArgs[0]
+            const callbackThisArg = methodArgs[1]
+            methodArgs[0] = (item: any, index: number, array: any[]) => {
+              const result = callback.call(
+                callbackThisArg,
+                createTrackingProxy(item, appendPath(path, String(index)), collect),
+                index,
+                proxy,
+              )
+              if ((prop === 'find' || prop === 'findLast') && result) {
+                matchedIndex = index
+              }
+              return result
+            }
+          } else if ((prop === 'reduce' || prop === 'reduceRight') && typeof methodArgs[0] === 'function') {
+            const callback = methodArgs[0]
+            methodArgs[0] = (accumulator: any, item: any, index: number, array: any[]) =>
+              callback(accumulator, createTrackingProxy(item, appendPath(path, String(index)), collect), index, proxy)
+          }
+          const result = method.apply(methodProxy, methodArgs)
+          if ((prop === 'find' || prop === 'findLast') && matchedIndex !== undefined) {
+            return createTrackingProxy(result, appendPath(path, String(matchedIndex)), collect)
+          }
+          return result
+        }
+      }
+      const result = Reflect.get(target, prop, receiver)
+      return typeof result === 'function' ? result.bind(target) : result
+    },
+  }
+
+  proxy = new Proxy(value, handler)
+  methodProxy = new Proxy(value, {
+    get(target, prop) {
+      if (prop === 'length') {
+        return target.length
+      }
+      if (isArrayIndex(prop)) {
+        const itemPath = appendPath(path, String(prop))
+        collect(itemPath)
+        return target[prop as any]
+      }
+      return Reflect.get(target, prop, target)
+    },
+  })
+  return proxy
+}
+
 export function createTrackingProxy(value: any, path: string, collect: (dep: string) => void): any {
-  if (value === null || value === undefined) {
+  if (value === null || value === undefined || typeof value === 'function') {
     return value
   }
 
   if (value instanceof Map) {
-    return new Proxy(value, {
-      get(target, prop, receiver) {
-        if (prop === 'get' || prop === 'has') {
-          return (key: any) => {
-            collect(`${path}.map:${key}`)
-            const result = (target as any)[prop](key)
-            return prop === 'get' ? createTrackingProxy(result, `${path}.map:${key}`, collect) : result
-          }
-        }
-        const result = Reflect.get(target, prop, receiver)
-        return typeof result === 'function' ? result.bind(target) : result
-      },
-    })
+    return createTrackedMap(value, path, collect)
   }
 
   if (value instanceof Set) {
-    return new Proxy(value, {
-      get(target, prop, receiver) {
-        if (prop === 'has') {
-          return (key: any) => {
-            collect(`${path}.set:${key}`)
-            return target.has(key)
-          }
-        }
-        const result = Reflect.get(target, prop, receiver)
-        return typeof result === 'function' ? result.bind(target) : result
-      },
-    })
+    return createTrackedSet(value, path, collect)
   }
 
   if (Array.isArray(value)) {
-    return new Proxy(value, {
-      get(target, prop, receiver) {
-        if (prop === 'includes') {
-          return (search: any) => {
-            for (let i = 0; i < target.length; i++) {
-              collect(`${path}.${i}`)
-              if (Object.is(target[i], search)) {
-                return true
-              }
-            }
-            collect(`${path}.length`)
-            return false
-          }
-        }
-        if (prop === 'length' || (typeof prop === 'string' && /^\d+$/.test(prop))) {
-          collect(`${path}.${String(prop)}`)
-          const result = (target as any)[prop]
-          return createTrackingProxy(result, `${path}.${String(prop)}`, collect)
-        }
-        const result = Reflect.get(target, prop, receiver)
-        return typeof result === 'function' ? result.bind(target) : result
-      },
-    })
+    return createTrackedArray(value, path, collect)
   }
 
   if (isPlainObject(value)) {
@@ -231,7 +538,7 @@ export function createTrackingProxy(value: any, path: string, collect: (dep: str
         if (typeof prop === 'symbol' || prop === 'then' || prop === 'toJSON' || prop === '$$typeof') {
           return (target as any)[prop]
         }
-        const nextPath = path ? `${path}.${String(prop)}` : String(prop)
+        const nextPath = appendPath(path, String(prop))
         collect(nextPath)
         return createTrackingProxy((target as any)[prop], nextPath, collect)
       },
@@ -253,13 +560,14 @@ export function getValueAtPath(root: any, path: string): any {
     }
     if (part.startsWith('map:')) {
       const key = part.slice(4)
-      current = current instanceof Map ? current.get(key) : current[key]
+      if (current instanceof Map) {
+        current = Array.from(current.entries()).find(([mapKey]) => String(mapKey) === key)?.[1]
+      } else {
+        current = current[part]
+      }
     } else if (part.startsWith('set:')) {
       const key = part.slice(4)
-      current = current instanceof Set ? current.has(key) : undefined
-    } else if (part.startsWith('includes:')) {
-      const key = part.slice(9)
-      current = Array.isArray(current) ? current.includes(key) : undefined
+      current = current instanceof Set ? Array.from(current).some((item) => String(item) === key) : undefined
     } else {
       current = current[part]
     }
@@ -277,13 +585,18 @@ function collectChangedLeaves(prev: any, next: any, path: string, out: string[])
     const nextMap = next instanceof Map ? next : new Map()
     const keys = new Set<any>([...prevMap.keys(), ...nextMap.keys()])
     for (const key of keys) {
-      const childPath = `${path}.map:${key}`
+      const childPath = collectionPath(path, 'map', key)
       if (!prevMap.has(key) || !nextMap.has(key) || !Object.is(prevMap.get(key), nextMap.get(key))) {
         out.push(childPath)
         collectChangedLeaves(prevMap.get(key), nextMap.get(key), childPath, out)
       }
     }
-    out.push(path)
+    if (prevMap.size !== nextMap.size) {
+      out.push(appendPath(path, 'size'))
+    }
+    if (path) {
+      out.push(path)
+    }
     return
   }
 
@@ -293,10 +606,15 @@ function collectChangedLeaves(prev: any, next: any, path: string, out: string[])
     const values = new Set<any>([...prevSet, ...nextSet])
     for (const value of values) {
       if (prevSet.has(value) !== nextSet.has(value)) {
-        out.push(`${path}.set:${value}`)
+        out.push(collectionPath(path, 'set', value))
       }
     }
-    out.push(path)
+    if (prevSet.size !== nextSet.size) {
+      out.push(appendPath(path, 'size'))
+    }
+    if (path) {
+      out.push(path)
+    }
     return
   }
 
@@ -315,12 +633,14 @@ function collectChangedLeaves(prev: any, next: any, path: string, out: string[])
     const nextArr = Array.isArray(next) ? next : []
     const len = Math.max(prevArr.length, nextArr.length)
     if (prevArr.length !== nextArr.length) {
-      out.push(`${path}.length`)
+      out.push(appendPath(path, 'length'))
     }
     for (let i = 0; i < len; i++) {
-      collectChangedLeaves(prevArr[i], nextArr[i], `${path}.${i}`, out)
+      collectChangedLeaves(prevArr[i], nextArr[i], appendPath(path, String(i)), out)
     }
-    out.push(path)
+    if (path) {
+      out.push(path)
+    }
     return
   }
 
@@ -338,12 +658,22 @@ function rebuildDependents(cache: AtomicCache): void {
     node.dependents.clear()
   }
   for (const node of Object.values(cache.nodes)) {
-    for (const dep of node.dependencies) {
+    for (const dep of getDerivedDependencies(cache, node)) {
       if (cache.nodes[dep]) {
         cache.nodes[dep].dependents.add(node.name)
       }
     }
   }
+}
+
+function getDerivedDependencies(cache: AtomicCache, node: AtomicNode): string[] {
+  return Array.from(
+    new Set(
+      node.dependencies
+        .concat(node.inputNames.filter((name): name is string => !!name))
+        .filter((name) => cache.nodes[name]?.isDerived),
+    ),
+  )
 }
 
 function topologicalOrder(cache: AtomicCache): string[] {
@@ -355,7 +685,7 @@ function topologicalOrder(cache: AtomicCache): string[] {
     edges[name] = []
   }
   for (const node of Object.values(cache.nodes)) {
-    for (const dep of node.dependencies) {
+    for (const dep of getDerivedDependencies(cache, node)) {
       if (cache.nodes[dep]) {
         edges[dep].push(node.name)
         incoming[node.name]++
@@ -433,6 +763,19 @@ function markDirty(cache: AtomicCache, name: string, cause: string, seen: Set<st
   }
 }
 
+export function invalidateAtomicSelectors(logic: Logic, cause: string): void {
+  if (!isAtomicSelectorsEnabled()) {
+    return
+  }
+  const cache = getAtomicCache(logic)
+  const seen = new Set<string>()
+  for (const node of Object.values(cache.nodes)) {
+    if (node.isDerived) {
+      markDirty(cache, node.name, cause, seen)
+    }
+  }
+}
+
 export function processLogicStateChange(logic: BuiltLogic): string[] {
   if (!isAtomicSelectorsEnabled() || !logic.selector) {
     return []
@@ -480,16 +823,32 @@ function snapshotLeaves(reducerState: any, deps: string[]): Record<string, any> 
   return result
 }
 
-function leavesUnchanged(node: AtomicNode, reducerState: any): boolean {
+function leavesUnchanged(cache: AtomicCache, node: AtomicNode, reducerState: any): boolean {
   for (const dep of node.dependencies) {
-    if (node.lastSelectorInputs && dep in node.lastSelectorInputs) {
+    if (dep === '' || dep.startsWith('selector:') || cache.nodes[dep]?.isDerived) {
       continue
     }
-    if (!leavesEqual(node.lastLeaves[dep], getValueAtPath(reducerState, dep))) {
+    if (!node.lastLeaves || !(dep in node.lastLeaves)) {
       return false
     }
+    if (leavesEqual(node.lastLeaves[dep], getValueAtPath(reducerState, dep))) {
+      continue
+    }
+    return false
   }
   return true
+}
+
+function selectorInputsUnchanged(cache: AtomicCache, node: AtomicNode, rawInputs: any[]): boolean {
+  return node.inputNames.every((inputName, index) => {
+    if (inputName && cache.nodes[inputName]?.isDerived) {
+      return Object.is(node.lastInputValues[index], rawInputs[index])
+    }
+    if (!inputName) {
+      return Object.is(node.lastInputValues[index], rawInputs[index])
+    }
+    return true
+  })
 }
 
 export function evaluateAtomicSelector(logic: Logic, name: string, state?: any, props?: any): any {
@@ -508,7 +867,7 @@ export function evaluateAtomicSelector(logic: Logic, name: string, state?: any, 
     reducerState = undefined
   }
 
-  if (node.hasValue && !node.dirty && leavesUnchanged(node, reducerState)) {
+  if (node.hasValue && !node.dirty && leavesUnchanged(cache, node, reducerState)) {
     return node.lastValue
   }
 
@@ -519,13 +878,8 @@ export function evaluateAtomicSelector(logic: Logic, name: string, state?: any, 
   node.computing = true
   try {
     const rawInputs = node.inputFns.map((fn) => fn(storeState, logicProps))
-    const selectorInputsChanged = node.inputNames.some((inputName, index) => {
-      if (!inputName || !cache.nodes[inputName]?.isDerived) {
-        return false
-      }
-      return !node.hasValue || !Object.is(node.lastSelectorInputs[inputName], rawInputs[index])
-    })
-    const leafInputsChanged = !node.hasValue || !leavesUnchanged(node, reducerState)
+    const selectorInputsChanged = !node.hasValue || !selectorInputsUnchanged(cache, node, rawInputs)
+    const leafInputsChanged = !node.hasValue || !leavesUnchanged(cache, node, reducerState)
 
     if (node.hasValue && !selectorInputsChanged && !leafInputsChanged) {
       node.dirty = false
@@ -560,13 +914,9 @@ export function evaluateAtomicSelector(logic: Logic, name: string, state?: any, 
     })
     if (node.memoizeOptions?.resultEqualityCheck && node.hasValue) {
       if (node.memoizeOptions.resultEqualityCheck(node.lastValue, nextValue)) {
-        node.dependencies = Array.from(collected)
+        node.dependencies = normalizeDependencies(collected)
         node.lastLeaves = snapshotLeaves(reducerState, node.dependencies)
-        node.lastSelectorInputs = Object.fromEntries(
-          node.inputNames
-            .map((n, i) => [n, rawInputs[i]] as const)
-            .filter((entry): entry is [string, any] => !!entry[0]),
-        )
+        node.lastInputValues = rawInputs
         rebuildDependents(cache)
         node.dirty = false
         node.hasValue = true
@@ -575,13 +925,9 @@ export function evaluateAtomicSelector(logic: Logic, name: string, state?: any, 
     }
     node.lastValue = nextValue
     node.hasValue = true
-    node.dependencies = Array.from(collected)
+    node.dependencies = normalizeDependencies(collected)
     node.lastLeaves = snapshotLeaves(reducerState, node.dependencies)
-    node.lastSelectorInputs = Object.fromEntries(
-      node.inputNames
-        .map((n, i) => [n, rawInputs[i]] as const)
-        .filter((entry): entry is [string, any] => !!entry[0]),
-    )
+    node.lastInputValues = rawInputs
     rebuildDependents(cache)
     node.dirty = false
     return node.lastValue
@@ -604,7 +950,7 @@ export function attachSelectorHealth(logic: BuiltLogic): void {
         continue
       }
       selectors[name] = {
-        dependencies: [...node.dependencies],
+        dependencies: normalizeDependencies(node.dependencies.concat(getDerivedDependencies(cache, node))),
         dependents: Array.from(node.dependents),
         evaluations: node.evaluations,
         dirtyCause: node.dirtyCause,
@@ -622,6 +968,12 @@ export function finalizeAtomicLogic(logic: BuiltLogic): void {
     return
   }
   const cache = getAtomicCache(logic)
+  for (const [name, selector] of Object.entries(logic.selectors)) {
+    registerSelectorFn(logic, name, selector)
+  }
+  for (const node of Object.values(cache.nodes)) {
+    node.inputNames = resolveInputNames(logic, node.inputFns)
+  }
   detectCircularDependencies(logic)
   rebuildDependents(cache)
   attachSelectorHealth(logic)
@@ -635,5 +987,13 @@ export function finalizeAtomicLogic(logic: BuiltLogic): void {
 
 export function resolveInputNames(logic: Logic, inputFns: Selector[]): (string | null)[] {
   const cache = getAtomicCache(logic)
-  return inputFns.map((fn) => cache.fnToName.get(fn) ?? null)
+  return inputFns.map((fn) => {
+    const localName = cache.fnToName.get(fn)
+    if (localName) {
+      return localName
+    }
+    const identity = (fn as any)[selectorIdentityKey]
+    const prefix = `${logic.pathString}::`
+    return typeof identity === 'string' && identity.startsWith(prefix) ? identity.slice(prefix.length) : null
+  })
 }
