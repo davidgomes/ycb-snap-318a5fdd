@@ -11,6 +11,7 @@ import { universe } from '../universe/universe';
 import { SparseSet } from '../utils/sparse-set';
 import type { World } from '../world';
 import { getTrackingType, isModifier, isOrWithModifiers, isTrackingModifier } from './modifier';
+import { isPredicateTrait } from './utils/predicate-runtime';
 import { createQueryResult } from './query-result';
 import { $queryRef } from './symbols';
 import {
@@ -161,6 +162,10 @@ function processTrackingModifier(
         if (trackingType === 'change') {
             query.changedTraits.add(trait);
             query.hasChangedModifiers = true;
+            if (isPredicateTrait(trait)) {
+                query.predicateChangeBitmasks[genId] =
+                    (query.predicateChangeBitmasks[genId] || 0) | instance.bitflag;
+            }
         }
     }
 
@@ -190,6 +195,7 @@ export function createQueryInstance<T extends QueryParameter[]>(
         isTracking: false,
         hasChangedModifiers: false,
         changedTraits: new Set<Trait>(),
+        predicateChangeBitmasks: [],
         toRemove: new SparseSet(),
         addSubscriptions: new Set<QuerySubscriber>(),
         removeSubscriptions: new Set<QuerySubscriber>(),

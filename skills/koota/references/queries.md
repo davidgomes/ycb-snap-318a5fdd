@@ -55,6 +55,30 @@ world.query(Or(IsPlayer, IsEnemy))
 world.query(Position, Not(Velocity), Or(IsPlayer, IsEnemy))
 ```
 
+## Predicates
+
+Filter by trait values with `createPredicate`. Each call returns a distinct instance. The function receives one array of dependency data, in order. Tags and relations cannot be dependencies.
+
+```typescript
+import { createPredicate, createAdded, createChanged, createRemoved, Not, Or } from 'koota'
+
+const IsHurt = createPredicate([Health], ([health]) => health.value < 50)
+
+world.query(IsHurt)
+world.query(Not(IsHurt))
+world.query(Or(IsHurt, IsStunned))
+
+const Added = createAdded()
+const Removed = createRemoved()
+const Changed = createChanged()
+
+world.query(Added(IsHurt))
+world.query(Removed(IsHurt))
+world.query(Changed(IsHurt))
+```
+
+`set` or `add` on a dependency re-evaluates the predicate. Changes during `updateEach` wait until iteration ends. Predicates add no callback-tuple data and compose with relation pairs.
+
 ## Tracking modifiers
 
 Track structural and data changes. Each tracking modifier must be created as a unique instance.

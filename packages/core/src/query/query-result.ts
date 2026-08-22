@@ -10,6 +10,11 @@ import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
 import { isModifier } from './modifier';
 import { setChanged } from './modifiers/changed';
+import {
+    beginDeferredPredicateEvaluation,
+    endDeferredPredicateEvaluation,
+    notifyPredicateDependencies,
+} from './utils/predicate-runtime';
 import type {
     InstancesFromParameters,
     QueryInstance,
@@ -55,6 +60,9 @@ export function createQueryResult<T extends QueryParameter[]>(
         ) {
             const state = Array.from({ length: traits.length });
 
+            beginDeferredPredicateEvaluation(world);
+
+            try {
             // Inline all three permutations of updateEach for performance.
             if (options.changeDetection === 'auto') {
                 const changedPairs: [Entity, Trait][] = [];
@@ -104,6 +112,10 @@ export function createQueryResult<T extends QueryParameter[]>(
                         const store = stores[index];
                         ctx.fastSet(eid, store, state[index]);
                     }
+
+                    for (let j = 0; j < traits.length; j++) {
+                        notifyPredicateDependencies(world, entity, traits[j]);
+                    }
                 }
 
                 // Trigger change events for each entity that was modified.
@@ -144,6 +156,10 @@ export function createQueryResult<T extends QueryParameter[]>(
                         // Collect changed traits.
                         if (changed) changedPairs.push([entity, trait] as const);
                     }
+
+                    for (let j = 0; j < traits.length; j++) {
+                        notifyPredicateDependencies(world, entity, traits[j]);
+                    }
                 }
 
                 // Trigger change events for each entity that was modified.
@@ -167,7 +183,14 @@ export function createQueryResult<T extends QueryParameter[]>(
                         const ctx = trait[$internal];
                         ctx.fastSet(eid, stores[j], state[j]);
                     }
+
+                    for (let j = 0; j < traits.length; j++) {
+                        notifyPredicateDependencies(world, entity, traits[j]);
+                    }
                 }
+            }
+            } finally {
+                endDeferredPredicateEvaluation(world);
             }
 
             return results;

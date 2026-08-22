@@ -160,6 +160,8 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     isTracking: boolean;
     hasChangedModifiers: boolean;
     changedTraits: Set<Trait>;
+    /** Bitmasks of predicate tags tracked by Changed(), indexed by generationId */
+    predicateChangeBitmasks: number[];
     toRemove: SparseSet;
     addSubscriptions: Set<QuerySubscriber>;
     removeSubscriptions: Set<QuerySubscriber>;

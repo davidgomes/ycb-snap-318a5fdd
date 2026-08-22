@@ -10,6 +10,7 @@ import type { World } from '../../world';
 import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
+import { notifyPredicateDependencies } from '../utils/predicate-runtime';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
 
 export function createChanged() {
@@ -70,6 +71,8 @@ function markChanged(world: World, entity: Entity, trait: Trait) {
         if (match) query.add(entity);
         else query.remove(world, entity);
     }
+
+    notifyPredicateDependencies(world, entity, trait);
 
     return data;
 }

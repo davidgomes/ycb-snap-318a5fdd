@@ -5,6 +5,8 @@ export type { Entity } from './entity/types';
 export { unpackEntity } from './entity/utils/pack-entity';
 export { createAdded } from './query/modifiers/added';
 export { createChanged } from './query/modifiers/changed';
+export { createPredicate } from './query/create-predicate';
+export type { Predicate, TraitRecordsFromTraits } from './query/create-predicate';
 export { Not } from './query/modifiers/not';
 export { Or } from './query/modifiers/or';
 export { createRemoved } from './query/modifiers/removed';

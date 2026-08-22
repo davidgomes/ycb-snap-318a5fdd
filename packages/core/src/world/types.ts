@@ -43,6 +43,8 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    predicateEvalDepth: number;
+    pendingPredicateEvals: unknown[];
 };
 
 export type World = {

@@ -29,6 +29,8 @@ export type Trait<TSchema extends Schema = any> = {
         /** Reference to parent relation if this trait is owned by a relation */
         relation: Relation<any> | null;
         type: StoreType;
+        /** True when this tag represents a createPredicate result */
+        isPredicate?: boolean;
     };
 } & ((params?: TraitValue<TSchema>) => [Trait<TSchema>, TraitValue<TSchema>]);
 
