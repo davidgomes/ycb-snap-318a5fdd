@@ -607,6 +607,9 @@ class BaseTestClass:
       try:
         with self._log_test_stage(hook_name):
           hook_result = hook(*args)
+      except signals.TestAbortAll as e:
+        setattr(e, 'results', self.results)
+        raise
       except signals.TestAbortSignal:
         raise
       except Exception as e:
@@ -1486,9 +1489,11 @@ class BaseTestClass:
       setattr(e, 'results', self.results)
       raise e
     finally:
-      if global_setup_attempted:
-        self._run_hook(STAGE_NAME_GLOBAL_TEARDOWN, self.global_teardown)
-      self._teardown_class()
+      try:
+        if global_setup_attempted:
+          self._run_hook(STAGE_NAME_GLOBAL_TEARDOWN, self.global_teardown)
+      finally:
+        self._teardown_class()
       logging.info(
           'Summary for test class %s: %s', self.TAG, self.results.summary_str()
       )
