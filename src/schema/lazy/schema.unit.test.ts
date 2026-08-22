@@ -7,8 +7,15 @@ import { JSONSchemer } from '~/schema/actions/jsonSchemer/index.js'
 import { Parser } from '~/schema/actions/parse/index.js'
 import { ZodSchemer } from '~/schema/actions/zodSchemer/index.js'
 import { item, lazy, list, map, string } from '~/schema/index.js'
+import type { LazySchema, ListSchema, MapSchema_, StringSchema } from '~/schema/index.js'
 
-type RecursiveMapSchema = ReturnType<typeof map>
+type RecursiveMapSchema = MapSchema_<
+  {
+    value: StringSchema
+    children: ListSchema<LazySchema<RecursiveMapSchema>>
+  },
+  {}
+>
 
 describe('lazy schema', () => {
   test('resolves once and checks recursive schemas', () => {
