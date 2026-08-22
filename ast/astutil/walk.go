@@ -196,6 +196,13 @@ func walkExpr(expr ast.Expr, f WalkFunc) error {
 	case *ast.ParenExpr:
 		return walkExpr(expr.SubExpr, f)
 	case *ast.FuncExpr:
+		for _, param := range expr.Params {
+			if param.Default != nil {
+				if err := walkExpr(param.Default, f); err != nil {
+					return err
+				}
+			}
+		}
 		return walkStmt(expr.Stmt, f)
 	case *ast.LetsExpr:
 		if err := walkExprs(expr.LHSS, f); err != nil {

@@ -39,18 +39,18 @@ func (runInfo *runInfoStruct) funcExpr() {
 		// add Params to newEnv, except last Params
 		for i := 0; i < len(funcExpr.Params)-1; i++ {
 			runInfo.rv = in[i+1].Interface().(reflect.Value)
-			runInfo.env.DefineValue(funcExpr.Params[i], runInfo.rv)
+			runInfo.env.DefineValue(funcExpr.Params[i].Name, runInfo.rv)
 		}
 		// add last Params to newEnv
 		if len(funcExpr.Params) > 0 {
 			if funcExpr.VarArg {
 				// function is variadic, add last Params to newEnv without convert to Interface and then reflect.Value
 				runInfo.rv = in[len(funcExpr.Params)]
-				runInfo.env.DefineValue(funcExpr.Params[len(funcExpr.Params)-1], runInfo.rv)
+				runInfo.env.DefineValue(funcExpr.Params[len(funcExpr.Params)-1].Name, runInfo.rv)
 			} else {
 				// function is not variadic, add last Params to newEnv
 				runInfo.rv = in[len(funcExpr.Params)].Interface().(reflect.Value)
-				runInfo.env.DefineValue(funcExpr.Params[len(funcExpr.Params)-1], runInfo.rv)
+				runInfo.env.DefineValue(funcExpr.Params[len(funcExpr.Params)-1].Name, runInfo.rv)
 			}
 		}
 
@@ -71,6 +71,7 @@ func (runInfo *runInfoStruct) funcExpr() {
 
 	// make the reflect.Value function that calls runVMFunction
 	runInfo.rv = reflect.MakeFunc(funcType, runVMFunction)
+	registerVMFunc(runInfo.rv, funcExpr)
 
 	// if function name is not empty, define it in the env
 	if funcExpr.Name != "" {
@@ -128,6 +129,8 @@ func (runInfo *runInfoStruct) callExpr() {
 		runInfo.rv = nilValue
 		return
 	}
+
+	callExpr.Func = f
 
 	var rvs []reflect.Value
 	var args []reflect.Value
@@ -210,7 +213,16 @@ func checkIfRunVMFunction(rt reflect.Type) bool {
 // makeCallArgs creates the arguments reflect.Value slice for the four different kinds of functions.
 // Also returns true if CallSlice should be used on the arguments, or false if Call should be used.
 func (runInfo *runInfoStruct) makeCallArgs(rt reflect.Type, isRunVMFunction bool, callExpr *ast.CallExpr) ([]reflect.Value, bool) {
-	// number of arguments
+	if isRunVMFunction && callExpr.Func.IsValid() {
+		if funcExpr, ok := getVMFuncExpr(callExpr.Func); ok && hasDefaultParams(funcExpr) {
+			return runInfo.makeVMCallArgsWithDefaults(funcExpr, callExpr, rt)
+		}
+	}
+
+	return runInfo.makeCallArgsInner(rt, isRunVMFunction, callExpr)
+}
+
+func (runInfo *runInfoStruct) makeCallArgsInner(rt reflect.Type, isRunVMFunction bool, callExpr *ast.CallExpr) ([]reflect.Value, bool) {
 	numInReal := rt.NumIn()
 	numIn := numInReal
 	if isRunVMFunction {

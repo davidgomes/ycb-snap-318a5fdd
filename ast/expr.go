@@ -129,12 +129,18 @@ type SliceExpr struct {
 	Cap   Expr
 }
 
+// Param provide function parameter.
+type Param struct {
+	Name    string
+	Default Expr
+}
+
 // FuncExpr provide function expression.
 type FuncExpr struct {
 	ExprImpl
 	Name   string
 	Stmt   Stmt
-	Params []string
+	Params []Param
 	VarArg bool
 }
 
