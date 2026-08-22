@@ -177,6 +177,10 @@ function parseArray(
     hLinesBeforeRow.push(getHLines(parser));
 
     while (true) {  // eslint-disable-line no-constant-condition
+        if (maxNumCols) {
+            parser.gullet.macros.set("\\@arrayremaining",
+                String(maxNumCols - row.length));
+        }
         // Parse each cell in its own group (namespace)
         const cellBody = parser.parseExpression(false, singleRow ? "\\end" : "\\\\");
         parser.gullet.endGroup();
@@ -1167,6 +1171,10 @@ defineFunction({
         }
         if (!/^\|*[lcr]\|*$/.test(alignText)) {
             throw new ParseError("Invalid \\multicolumn alignment", context.token);
+        }
+        const remaining = context.parser.gullet.macros.get("\\@arrayremaining");
+        if (remaining != null && span > Number(remaining)) {
+            throw new ParseError("Invalid \\multicolumn span", context.token);
         }
         const align = alignText.replace(/\|/g, "");
         const cell = args[2] as AnyParseNode & Partial<MulticolumnCell>;
