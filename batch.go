@@ -371,6 +371,14 @@ type batchInternal struct {
 
 	commitErr error
 
+	// commitCorrelationID is copied from WriteOptions.CommitCorrelationID when
+	// the batch begins to commit.
+	commitCorrelationID uint64
+
+	// durableInflight tracks an in-progress Sync commit so apply and WAL sync
+	// completion can be joined for BatchDurable.
+	durableInflight *inflightDurable
+
 	// Position bools together to reduce the sizeof the struct.
 
 	// ingestedSSTBatch indicates that the batch contains one or more key kinds

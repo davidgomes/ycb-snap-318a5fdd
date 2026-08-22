@@ -301,6 +301,10 @@ type DB struct {
 
 	commit *commitPipeline
 
+	// durability tracks Sync-commit WAL durability for EventListener.BatchDurable
+	// and the WaitForDurability family of APIs.
+	durability *durabilityTracker
+
 	// readState provides access to the state needed for reading without needing
 	// to acquire DB.mu.
 	readState struct {
@@ -801,6 +805,10 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 		panic(errors.AssertionFailedf("pebble: batch db mismatch: %p != %p", errors.Safe(batch.db), errors.Safe(d)))
 	}
 
+	if opts != nil {
+		batch.commitCorrelationID = opts.CommitCorrelationID
+	}
+
 	sync := opts.GetSync()
 	if sync && d.opts.DisableWAL {
 		return errors.New("pebble: WAL disabled")
@@ -850,12 +858,18 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 	return nil
 }
 
-func (d *DB) commitApply(b *Batch, mem *memTable) error {
+func (d *DB) commitApply(b *Batch, mem *memTable) (err error) {
+	start := crtime.NowMono()
+	defer func() {
+		if rec := b.durableInflight; rec != nil {
+			rec.finishApply(start.Elapsed(), err)
+		}
+	}()
 	if b.flushable != nil {
 		// This is a large batch which was already added to the immutable queue.
 		return nil
 	}
-	err := mem.apply(b, b.SeqNum())
+	err = mem.apply(b, b.SeqNum())
 	if err != nil {
 		return err
 	}
@@ -889,6 +903,11 @@ func (d *DB) commitApply(b *Batch, mem *memTable) error {
 func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*memTable, error) {
 	var size int64
 	repr := b.Repr()
+	wrapSync := func() {
+		if syncWG != nil && !d.opts.DisableWAL && d.durability != nil {
+			syncWG, syncErr = d.durability.intercept(b, syncWG, syncErr)
+		}
+	}
 
 	if b.flushable != nil {
 		// We have a large batch. Such batches are special in that they don't get
@@ -903,6 +922,7 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 		b.flushable.setSeqNum(b.SeqNum())
 		if !d.opts.DisableWAL {
 			var err error
+			wrapSync()
 			size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr}, b)
 			if err != nil {
 				panic(err)
@@ -937,6 +957,11 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 		}
 	}
 	if err != nil {
+		if rec := b.durableInflight; rec != nil {
+			// Flushable path: the WAL sync is already queued. Unblock apply
+			// wait so BatchDurable can fire after the sync completes.
+			rec.finishApply(0, err)
+		}
 		return nil, err
 	}
 	if d.opts.DisableWAL {
@@ -945,6 +970,7 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 	d.logBytesIn.Add(uint64(len(repr)))
 
 	if b.flushable == nil {
+		wrapSync()
 		size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr}, b)
 		if err != nil {
 			panic(err)
@@ -1570,6 +1596,9 @@ func (d *DB) Close() error {
 	d.closed.Store(errors.WithStack(ErrClosed))
 	close(d.closedCh)
 	d.bgCtxCancel()
+	if d.durability != nil {
+		d.durability.close()
+	}
 
 	defer d.cacheHandle.Close()
 
@@ -2081,6 +2110,10 @@ func (d *DB) Metrics() *Metrics {
 	metrics.Uptime = d.opts.private.timeNow().Sub(d.openedAt)
 
 	metrics.manualMemory = manual.GetMetrics()
+
+	if d.durability != nil {
+		metrics.DurableCommitCount, metrics.DurableCommitDuration = d.durability.metrics()
+	}
 
 	return metrics
 }

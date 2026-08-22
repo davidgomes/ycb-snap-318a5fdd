@@ -345,6 +345,15 @@ type Metrics struct {
 	// Uptime is the total time since this DB was opened.
 	Uptime time.Duration
 
+	// DurableCommitCount is the number of successful Sync commits whose WAL
+	// sync completed. Accumulated only when EventListener.BatchDurable is
+	// configured.
+	DurableCommitCount uint64
+	// DurableCommitDuration is the cumulative WAL sync phase time for those
+	// commits (not total commit time). Accumulated only when
+	// EventListener.BatchDurable is configured.
+	DurableCommitDuration time.Duration
+
 	WAL struct {
 		// Number of live WAL files.
 		Files int64

@@ -74,6 +74,9 @@ func FileCacheSize(maxOpenFiles int) int {
 func Open(dirname string, opts *Options) (db *DB, err error) {
 	// Make a copy of the options so that we don't mutate the passed in options.
 	opts = opts.Clone()
+	// Capture whether the user configured BatchDurable before EnsureDefaults
+	// installs a no-op callback.
+	batchDurableConfigured := opts.EventListener != nil && opts.EventListener.BatchDurable != nil
 	opts.EnsureDefaults()
 	if err := opts.Validate(); err != nil {
 		return nil, err
@@ -165,6 +168,7 @@ func Open(dirname string, opts *Options) (db *DB, err error) {
 		bgCtx:               ctx,
 		bgCtxCancel:         cancel,
 	}
+	d.durability = newDurabilityTracker(d, batchDurableConfigured, opts.DisableWAL)
 	d.mu.versions = &versionSet{}
 	d.diskAvailBytes.Store(math.MaxUint64)
 	d.problemSpans.Init(manifest.NumLevels, opts.Comparer.Compare)

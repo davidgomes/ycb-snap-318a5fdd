@@ -405,6 +405,11 @@ type WriteOptions struct {
 	//
 	// The default value is true.
 	Sync bool
+
+	// CommitCorrelationID is an optional caller-provided identifier that is
+	// propagated to BatchDurableInfo.CorrelationID when a Sync commit becomes
+	// durable. It is ignored for non-sync commits.
+	CommitCorrelationID uint64
 }
 
 // Sync specifies the default write options for writes which synchronize to

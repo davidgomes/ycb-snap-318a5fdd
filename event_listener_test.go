@@ -46,6 +46,9 @@ func TestEventListener(t *testing.T) {
 		case "open":
 			memLog.Reset()
 			lel := MakeLoggingEventListener(&memLog)
+			// BatchDurable timings are not deterministic; suppress them so
+			// testdata/event_listener stays stable.
+			lel.BatchDurable = func(BatchDurableInfo) {}
 			flushBegin, flushEnd := lel.FlushBegin, lel.FlushEnd
 			lel.FlushBegin = func(info FlushInfo) {
 				// Make deterministic.

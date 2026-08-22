@@ -915,6 +915,49 @@ func (k APIMisuseKind) String() string {
 	}
 }
 
+// BatchDurableInfo contains the information for a BatchDurable event.
+type BatchDurableInfo struct {
+	// JobID identifies this Sync commit for WaitForJobDurability.
+	JobID int
+	// SeqNum is the starting sequence number assigned to the committed batch.
+	SeqNum base.SeqNum
+	// Err is set if the WAL sync (or apply) failed. It is nil on success.
+	Err error
+	// ApplyDuration is the wall-clock time spent applying the batch to the
+	// memtable. Positive for successful Sync commits.
+	ApplyDuration time.Duration
+	// SyncDuration is the wall-clock time spent in the WAL sync phase.
+	// Positive for successful Sync commits.
+	SyncDuration time.Duration
+	// CorrelationID is copied from WriteOptions.CommitCorrelationID.
+	CorrelationID uint64
+	// BatchSize is the encoded batch size in bytes.
+	BatchSize int
+	// KeyCount is the number of memtable-modifying operations in the batch.
+	KeyCount uint32
+}
+
+func (i BatchDurableInfo) String() string {
+	return redact.StringWithoutMarkers(i)
+}
+
+// SafeFormat implements redact.SafeFormatter.
+func (i BatchDurableInfo) SafeFormat(w redact.SafePrinter, _ rune) {
+	if i.Err != nil {
+		w.Printf("[JOB %d] batch durable error seqnum=%s: %s",
+			redact.Safe(i.JobID), i.SeqNum, i.Err)
+		return
+	}
+	w.Printf("[JOB %d] batch durable seqnum=%s keys=%d size=%s apply=%.1fs sync=%.1fs",
+		redact.Safe(i.JobID), i.SeqNum, redact.Safe(i.KeyCount),
+		redact.Safe(humanize.Bytes.Uint64(uint64(i.BatchSize))),
+		redact.Safe(i.ApplyDuration.Seconds()),
+		redact.Safe(i.SyncDuration.Seconds()))
+	if i.CorrelationID != 0 {
+		w.Printf(" correlation=%d", redact.Safe(i.CorrelationID))
+	}
+}
+
 // EventListener contains a set of functions that will be invoked when various
 // significant DB events occur. Note that the functions should not run for an
 // excessive amount of time as they are invoked synchronously by the DB and may
@@ -924,6 +967,11 @@ type EventListener struct {
 	// BackgroundError is invoked whenever an error occurs during a background
 	// operation such as flush or compaction.
 	BackgroundError func(error)
+
+	// BatchDurable is invoked exactly once per Sync commit after the WAL sync
+	// completes, including when the sync fails. It is never invoked for
+	// non-sync commits or when DisableWAL is true.
+	BatchDurable func(BatchDurableInfo)
 
 	// BlobFileCreated is invoked after a blob file has been created.
 	BlobFileCreated func(BlobFileCreateInfo)
@@ -1036,6 +1084,9 @@ func (l *EventListener) EnsureDefaults(logger Logger) {
 			l.BackgroundError = func(error) {}
 		}
 	}
+	if l.BatchDurable == nil {
+		l.BatchDurable = func(info BatchDurableInfo) {}
+	}
 	if l.BlobFileCreated == nil {
 		l.BlobFileCreated = func(info BlobFileCreateInfo) {}
 	}
@@ -1133,6 +1184,9 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 		BackgroundError: func(err error) {
 			logger.Errorf("background error: %s", err)
 		},
+		BatchDurable: func(info BatchDurableInfo) {
+			logger.Infof("%s", info)
+		},
 		BlobFileCreated: func(info BlobFileCreateInfo) {
 			logger.Infof("%s", info)
 		},
@@ -1222,6 +1276,10 @@ func TeeEventListener(a, b EventListener) EventListener {
 		BackgroundError: func(err error) {
 			a.BackgroundError(err)
 			b.BackgroundError(err)
+		},
+		BatchDurable: func(info BatchDurableInfo) {
+			a.BatchDurable(info)
+			b.BatchDurable(info)
 		},
 		BlobFileCreated: func(info BlobFileCreateInfo) {
 			a.BlobFileCreated(info)
