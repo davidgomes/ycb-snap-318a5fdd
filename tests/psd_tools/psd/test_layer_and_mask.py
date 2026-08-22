@@ -100,6 +100,13 @@ def test_layer_blending_ranges() -> None:
     )
 
 
+def test_layer_blending_ranges_write_validates_pair_counts() -> None:
+    with pytest.raises(ValueError):
+        LayerBlendingRanges([(0, 1)], [[(0, 1), (0, 1)]]).write(io.BytesIO())
+    with pytest.raises(ValueError):
+        LayerBlendingRanges([(0, 1), (0, 1)], [[(0, 1)]]).write(io.BytesIO())
+
+
 def test_layer_record() -> None:
     tagged_blocks = TaggedBlocks(
         [  # type: ignore[arg-type]

@@ -106,6 +106,7 @@ from PIL import Image, ImageChops
 
 import psd_tools.psd.engine_data as engine_data
 from psd_tools.api import pil_io
+from psd_tools.api.blend_range import BlendRanges
 from psd_tools.api.effects import Effects
 from psd_tools.api.mask import Mask
 from psd_tools.api.protocols import GroupMixinProtocol, LayerProtocol, PSDProtocol
@@ -155,6 +156,7 @@ class Layer(LayerProtocol):
         self._parent: "GroupMixinProtocol | None" = parent
         self._record = record
         self._channels = channels
+        self._blend_ranges: BlendRanges | None = None
 
     @property
     def name(self) -> str:
@@ -285,6 +287,33 @@ class Layer(LayerProtocol):
         :return: `bool`
         """
         return False
+
+    @property
+    def blend_ranges(self) -> BlendRanges:
+        """
+        Blend If sliders for this layer. Writable.
+
+        :return: :py:class:`~psd_tools.api.blend_range.BlendRanges`
+        """
+        if getattr(self, "_blend_ranges", None) is None:
+            ranges = BlendRanges.from_raw(self._record.blending_ranges)
+            on_updated = None
+            if self._psd is not None:
+                on_updated = self._psd._mark_updated
+            ranges._attach(self._record.blending_ranges, on_updated)
+            self._blend_ranges = ranges
+        return self._blend_ranges
+
+    @blend_ranges.setter
+    def blend_ranges(self, value: BlendRanges) -> None:
+        if self._psd is not None:
+            self._psd._mark_updated()
+        value.apply_to_raw(self._record.blending_ranges)
+        on_updated = None
+        if self._psd is not None:
+            on_updated = self._psd._mark_updated
+        value._attach(self._record.blending_ranges, on_updated)
+        self._blend_ranges = value
 
     @property
     def blend_mode(self) -> BlendMode:

@@ -336,6 +336,12 @@ class Compositor(object):
         shape *= shape_mask
         alpha *= shape_mask * opacity_mask * opacity_const
 
+        blend_if = layer.blend_ranges
+        if not blend_if.is_default:
+            weight = blend_if.compute_visibility(color, self._color)
+            shape = shape * weight
+            alpha = alpha * weight
+
         # TODO: Tag.BLEND_INTERIOR_ELEMENTS controls how inner effects apply.
 
         # TODO: Apply before effects
