@@ -1,4 +1,6 @@
 import { $internal } from '../common';
+import { getAspect, isAspect, setAspect } from '../aspect/aspect';
+import type { Aspect } from '../aspect/types';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { isRelationPair } from '../relation/utils/is-relation';
@@ -19,6 +21,157 @@ import type {
     StoresFromParameters,
 } from './types';
 
+type QueryReadSlot =
+    | { kind: 'trait'; trait: Trait; store: Store<any> }
+    | { kind: 'aspect'; aspect: Aspect };
+
+function buildReadSlots(
+    params: QueryParameter[],
+    traits: Trait[],
+    stores: Store<any>[],
+    world: World
+): QueryReadSlot[] {
+    const slots: QueryReadSlot[] = [];
+
+    for (let i = 0; i < params.length; i++) {
+        const param = params[i];
+
+        if (isRelationPair(param)) {
+            const pairCtx = param[$internal];
+            const relation = pairCtx.relation as Relation<Trait>;
+            const baseTrait = relation[$internal].trait;
+            if (baseTrait[$internal].type !== 'tag') {
+                traits.push(baseTrait);
+                stores.push(getStore(world, baseTrait));
+                slots.push({ kind: 'trait', trait: baseTrait, store: stores[stores.length - 1] });
+            }
+            continue;
+        }
+
+        if (isModifier(param)) {
+            if (param.type === 'not') continue;
+
+            if (param.aspect) {
+                slots.push({ kind: 'aspect', aspect: param.aspect });
+                const dataTraits = param.aspect[$internal].dataTraits;
+                for (let j = 0; j < dataTraits.length; j++) {
+                    const trait = dataTraits[j];
+                    traits.push(trait);
+                    stores.push(getStore(world, trait));
+                }
+                continue;
+            }
+
+            const modifierTraits = param.traits;
+            for (let j = 0; j < modifierTraits.length; j++) {
+                const trait = modifierTraits[j];
+                if (trait[$internal].type === 'tag') continue;
+                traits.push(trait);
+                stores.push(getStore(world, trait));
+                slots.push({ kind: 'trait', trait, store: stores[stores.length - 1] });
+            }
+            continue;
+        }
+
+        if (isAspect(param)) {
+            slots.push({ kind: 'aspect', aspect: param });
+            const dataTraits = param[$internal].dataTraits;
+            for (let j = 0; j < dataTraits.length; j++) {
+                const trait = dataTraits[j];
+                traits.push(trait);
+                stores.push(getStore(world, trait));
+            }
+            continue;
+        }
+
+        const trait = param as Trait;
+        if (trait[$internal].type === 'tag') continue;
+        traits.push(trait);
+        stores.push(getStore(world, trait));
+        slots.push({ kind: 'trait', trait, store: stores[stores.length - 1] });
+    }
+
+    return slots;
+}
+
+function createReadSlotSnapshots(
+    world: World,
+    entity: Entity,
+    eid: number,
+    slots: QueryReadSlot[],
+    state: any[],
+    atomicSnapshots?: any[]
+) {
+    for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+        if (slot.kind === 'aspect') {
+            const value = getAspect(world, entity, slot.aspect);
+            state[i] = value ? { ...value } : {};
+            if (atomicSnapshots) atomicSnapshots[i] = { ...state[i] };
+        } else {
+            const value = slot.trait[$internal].get(eid, slot.store);
+            state[i] = value;
+            if (atomicSnapshots) {
+                atomicSnapshots[i] = slot.trait[$internal].type === 'aos' ? { ...value } : null;
+            }
+        }
+    }
+}
+
+function commitReadSlotSnapshots(
+    world: World,
+    entity: Entity,
+    eid: number,
+    slots: QueryReadSlot[],
+    state: any[],
+    atomicSnapshots: any[] | null,
+    changeDetection: QueryResultOptions['changeDetection'],
+    query: QueryInstance,
+    changedPairs: [Entity, Trait][]
+) {
+    for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+
+        if (slot.kind === 'aspect') {
+            const triggerChanged = changeDetection !== 'never';
+            setAspect(world, entity, slot.aspect, state[i], triggerChanged);
+            continue;
+        }
+
+        const trait = slot.trait;
+        const ctx = trait[$internal];
+        const newValue = state[i];
+        const store = slot.store;
+
+        if (changeDetection === 'never') {
+            ctx.fastSet(eid, store, newValue);
+            continue;
+        }
+
+        const hasTracked = world[$internal].trackedTraits.has(trait);
+        const hasChanged = query.hasChangedModifiers && query.changedTraits.has(trait);
+        const shouldDetect =
+            changeDetection === 'always' || (changeDetection === 'auto' && (hasTracked || hasChanged));
+
+        if (!shouldDetect) {
+            ctx.fastSet(eid, store, newValue);
+            continue;
+        }
+
+        let changed = false;
+        if (ctx.type === 'aos') {
+            changed = ctx.fastSetWithChangeDetection(eid, store, newValue);
+            if (!changed && atomicSnapshots) {
+                changed = !shallowEqual(newValue, atomicSnapshots[i]);
+            }
+        } else {
+            changed = ctx.fastSetWithChangeDetection(eid, store, newValue);
+        }
+
+        if (changed) changedPairs.push([entity, trait]);
+    }
+}
+
 export function createQueryResult<T extends QueryParameter[]>(
     world: World,
     entities: Entity[],
@@ -27,22 +180,18 @@ export function createQueryResult<T extends QueryParameter[]>(
 ): QueryResult<T> {
     const traits: Trait[] = [];
     const stores: Store<any>[] = [];
-
-    getQueryStores(params, traits, stores, world);
+    const readSlots = buildReadSlots(params, traits, stores, world);
 
     const results = Object.assign(entities, {
         readEach(
             callback: (state: InstancesFromParameters<T>, entity: Entity, index: number) => void
         ) {
-            const state = Array.from({ length: traits.length }) as InstancesFromParameters<T>;
+            const state = Array.from({ length: readSlots.length }) as InstancesFromParameters<T>;
 
             for (let i = 0; i < entities.length; i++) {
                 const entity = entities[i];
                 const eid = getEntityId(entity);
-
-                // Create snapshots without atomic tracking
-                createSnapshots(eid, traits, stores, state);
-
+                createReadSlotSnapshots(world, entity, eid, readSlots, state);
                 callback(state, entity, i);
             }
 
@@ -53,121 +202,45 @@ export function createQueryResult<T extends QueryParameter[]>(
             callback: (state: InstancesFromParameters<T>, entity: Entity, index: number) => void,
             options: QueryResultOptions = { changeDetection: 'auto' }
         ) {
-            const state = Array.from({ length: traits.length });
+            const state = Array.from({ length: readSlots.length });
+            const changedPairs: [Entity, Trait][] = [];
+            const atomicSnapshots =
+                options.changeDetection === 'auto' || options.changeDetection === 'always'
+                    ? []
+                    : null;
 
-            // Inline all three permutations of updateEach for performance.
-            if (options.changeDetection === 'auto') {
-                const changedPairs: [Entity, Trait][] = [];
-                const atomicSnapshots: any[] = [];
-                const trackedIndices: number[] = [];
-                const untrackedIndices: number[] = [];
+            for (let i = 0; i < entities.length; i++) {
+                const entity = entities[i];
+                const eid = getEntityId(entity);
 
-                getTrackedTraits(traits, world, query, trackedIndices, untrackedIndices);
+                createReadSlotSnapshots(
+                    world,
+                    entity,
+                    eid,
+                    readSlots,
+                    state,
+                    atomicSnapshots ?? undefined
+                );
+                callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
-                for (let i = 0; i < entities.length; i++) {
-                    const entity = entities[i];
-                    const eid = getEntityId(entity);
+                if (!world.has(entity)) continue;
 
-                    createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                commitReadSlotSnapshots(
+                    world,
+                    entity,
+                    eid,
+                    readSlots,
+                    state,
+                    atomicSnapshots,
+                    options.changeDetection ?? 'auto',
+                    query,
+                    changedPairs
+                );
+            }
 
-                    // Skip if the entity has been destroyed.
-                    if (!world.has(entity)) continue;
-
-                    // Commit all changes back to the stores for tracked traits.
-                    for (let j = 0; j < trackedIndices.length; j++) {
-                        const index = trackedIndices[j];
-                        const trait = traits[index];
-                        const ctx = trait[$internal];
-                        const newValue = state[index];
-                        const store = stores[index];
-
-                        let changed = false;
-                        if (ctx.type === 'aos') {
-                            changed = ctx.fastSetWithChangeDetection(eid, store, newValue);
-                            if (!changed) {
-                                changed = !shallowEqual(newValue, atomicSnapshots[index]);
-                            }
-                        } else {
-                            changed = ctx.fastSetWithChangeDetection(eid, store, newValue);
-                        }
-
-                        // Collect changed traits.
-                        if (changed) changedPairs.push([entity, trait] as const);
-                    }
-
-                    // Commit all changes back to the stores for untracked traits.
-                    for (let j = 0; j < untrackedIndices.length; j++) {
-                        const index = untrackedIndices[j];
-                        const trait = traits[index];
-                        const ctx = trait[$internal];
-                        const store = stores[index];
-                        ctx.fastSet(eid, store, state[index]);
-                    }
-                }
-
-                // Trigger change events for each entity that was modified.
-                for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
-                }
-            } else if (options.changeDetection === 'always') {
-                const changedPairs: [Entity, Trait][] = [];
-                const atomicSnapshots: any[] = [];
-
-                for (let i = 0; i < entities.length; i++) {
-                    const entity = entities[i];
-                    const eid = getEntityId(entity);
-
-                    createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
-
-                    // Skip if the entity has been destroyed.
-                    if (!world.has(entity)) continue;
-
-                    // Commit all changes back to the stores.
-                    for (let j = 0; j < traits.length; j++) {
-                        const trait = traits[j];
-                        const ctx = trait[$internal];
-                        const newValue = state[j];
-
-                        let changed = false;
-                        if (ctx.type === 'aos') {
-                            changed = ctx.fastSetWithChangeDetection(eid, stores[j], newValue);
-                            if (!changed) {
-                                changed = !shallowEqual(newValue, atomicSnapshots[j]);
-                            }
-                        } else {
-                            changed = ctx.fastSetWithChangeDetection(eid, stores[j], newValue);
-                        }
-
-                        // Collect changed traits.
-                        if (changed) changedPairs.push([entity, trait] as const);
-                    }
-                }
-
-                // Trigger change events for each entity that was modified.
-                for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
-                }
-            } else if (options.changeDetection === 'never') {
-                for (let i = 0; i < entities.length; i++) {
-                    const entity = entities[i];
-                    const eid = getEntityId(entity);
-                    createSnapshots(eid, traits, stores, state);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
-
-                    // Skip if the entity has been destroyed.
-                    if (!world.has(entity)) continue;
-
-                    // Commit all changes back to the stores.
-                    for (let j = 0; j < traits.length; j++) {
-                        const trait = traits[j];
-                        const ctx = trait[$internal];
-                        ctx.fastSet(eid, stores[j], state[j]);
-                    }
-                }
+            for (let i = 0; i < changedPairs.length; i++) {
+                const [entity, trait] = changedPairs[i];
+                setChanged(world, entity, trait);
             }
 
             return results;
@@ -181,7 +254,8 @@ export function createQueryResult<T extends QueryParameter[]>(
         select<U extends QueryParameter[]>(...params: U): QueryResult<U> {
             traits.length = 0;
             stores.length = 0;
-            getQueryStores(params, traits, stores, world);
+            readSlots.length = 0;
+            readSlots.push(...buildReadSlots(params, traits, stores, world));
             return results as unknown as QueryResult<U>;
         },
 

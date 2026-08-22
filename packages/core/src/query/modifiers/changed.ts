@@ -1,4 +1,6 @@
 import { $internal } from '../../common';
+import { isAspect, notifyAspectConstituentChanged } from '../../aspect/aspect';
+import type { Aspect } from '../../aspect/types';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { isRelation } from '../../relation/utils/is-relation';
@@ -20,9 +22,19 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends (TraitOrRelation | Aspect)[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
+        if (inputs.length === 1 && isAspect(inputs[0])) {
+            const aspect = inputs[0] as Aspect;
+            const modifier = createModifier(`changed-${id}`, id, [...aspect.traits]) as Modifier<
+                Trait[],
+                `changed-${number}`
+            >;
+            modifier.aspect = aspect;
+            return modifier as Modifier<ExtractTraits<T>, `changed-${number}`>;
+        }
+
         const traits = inputs.map((input) =>
             isRelation(input) ? input[$internal].trait : input
         ) as ExtractTraits<T>;
@@ -78,6 +90,7 @@ export function setChanged(world: World, entity: Entity, trait: Trait) {
     const data = markChanged(world, entity, trait);
     if (!data) return;
     for (const sub of data.changeSubscriptions) sub(entity);
+    notifyAspectConstituentChanged(world, entity, trait);
 }
 
 export function setPairChanged(world: World, entity: Entity, trait: Trait, target: Entity) {

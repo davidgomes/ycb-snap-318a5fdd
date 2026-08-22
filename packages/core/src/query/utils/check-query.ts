@@ -1,3 +1,4 @@
+import { hasAspect, isAspect } from '../../aspect/aspect';
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
@@ -14,7 +15,11 @@ export function checkQuery(world: World, query: QueryInstance, entity: Entity): 
     const ctx = world[$internal];
     const eid = getEntityId(entity);
 
-    if (query.traitInstances.all.length === 0) return false;
+    if (query.traitInstances.all.length === 0 && query.aspectNot.length === 0) return false;
+
+    for (let i = 0; i < query.aspectNot.length; i++) {
+        if (hasAspect(world, entity, query.aspectNot[i])) return false;
+    }
 
     for (let i = 0; i < generations.length; i++) {
         const generationId = generations[i];
