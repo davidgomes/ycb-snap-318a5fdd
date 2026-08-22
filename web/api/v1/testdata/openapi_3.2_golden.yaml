@@ -3927,6 +3927,11 @@ components:
                     description: Whether the most recent reload attempt was successful.
                 error_category:
                     type: string
+                    enum:
+                        - none
+                        - load_error
+                        - apply_error
+                        - rollback_error
                     description: Category of the most recent reload error.
                 error_message:
                     type: string

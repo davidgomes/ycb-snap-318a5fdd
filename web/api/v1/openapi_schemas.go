@@ -1050,10 +1050,10 @@ func (*OpenAPIBuilder) reloadStatusSchema() *base.SchemaProxy {
 	props.Set("error_category", base.CreateSchemaProxy(&base.Schema{
 		Type: []string{"string"},
 		Enum: []*yaml.Node{
-			createYAMLNode("none"),
-			createYAMLNode("load_error"),
-			createYAMLNode("apply_error"),
-			createYAMLNode("rollback_error"),
+			{Kind: yaml.ScalarNode, Value: "none"},
+			{Kind: yaml.ScalarNode, Value: "load_error"},
+			{Kind: yaml.ScalarNode, Value: "apply_error"},
+			{Kind: yaml.ScalarNode, Value: "rollback_error"},
 		},
 		Description: "Category of the most recent reload error.",
 	}))
