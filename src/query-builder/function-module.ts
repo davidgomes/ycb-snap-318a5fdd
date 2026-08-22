@@ -29,6 +29,8 @@ import type { SelectQueryBuilderExpression } from '../query-builder/select-query
 import { isString } from '../util/object-utils.js'
 import { parseTable } from '../parser/table-parser.js'
 import type { Selectable, SelectType } from '../util/column-type.js'
+import { ValueNode } from '../operation-node/value-node.js'
+import type { OperationNode } from '../operation-node/operation-node.js'
 
 /**
  * Helpers for type safe SQL function calls.
@@ -769,6 +771,128 @@ export interface FunctionModule<DB, TB extends keyof DB> {
         ? Simplify<ShallowDehydrateObject<O>>
         : never
   >
+
+  /**
+   * Calls the `grouping` function for the column or expression given as the argument.
+   *
+   * Used with `GROUP BY CUBE`, `ROLLUP`, or `GROUPING SETS` to distinguish super-aggregate
+   * null values from regular nulls.
+   */
+  grouping<
+    O extends number = number,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+  ): ExpressionWrapper<DB, TB, O>
+
+  rowNumber<O extends number = number>(): AggregateFunctionBuilder<DB, TB, O>
+
+  rank<O extends number = number>(): AggregateFunctionBuilder<DB, TB, O>
+
+  denseRank<O extends number = number>(): AggregateFunctionBuilder<DB, TB, O>
+
+  percentRank<O extends number = number>(): AggregateFunctionBuilder<DB, TB, O>
+
+  cumeDist<O extends number = number>(): AggregateFunctionBuilder<DB, TB, O>
+
+  ntile<O extends number = number>(
+    buckets: number | bigint,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  firstValue<
+    O extends number | string | Date | bigint | null = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true
+      ? ExtractTypeFromReferenceExpression<
+          DB,
+          TB,
+          RE,
+          number | string | Date | bigint
+        >
+      : O
+  >
+
+  lastValue<
+    O extends number | string | Date | bigint | null = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true
+      ? ExtractTypeFromReferenceExpression<
+          DB,
+          TB,
+          RE,
+          number | string | Date | bigint
+        >
+      : O
+  >
+
+  nthValue<
+    O extends number | string | Date | bigint | null = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+    nth: number | bigint,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true
+      ? ExtractTypeFromReferenceExpression<
+          DB,
+          TB,
+          RE,
+          number | string | Date | bigint
+        >
+      : O
+  >
+
+  lag<
+    O extends number | string | Date | bigint | null = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true
+      ? ExtractTypeFromReferenceExpression<
+          DB,
+          TB,
+          RE,
+          number | string | Date | bigint
+        >
+      : O
+  >
+
+  lead<
+    O extends number | string | Date | bigint | null = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true
+      ? ExtractTypeFromReferenceExpression<
+          DB,
+          TB,
+          RE,
+          number | string | Date | bigint
+        >
+      : O
+  >
 }
 
 export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
@@ -786,14 +910,38 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
 
   const agg = <O>(
     name: string,
-    args?: ReadonlyArray<ReferenceExpression<DB, TB>>,
+    args?: ReadonlyArray<ReferenceExpression<DB, TB> | OperationNode>,
   ): AggregateFunctionBuilder<DB, TB, O> => {
+    const parsedArgs = args?.map((arg) =>
+      typeof arg === 'object' && 'kind' in arg
+        ? arg
+        : parseReferenceExpressionOrList([arg as ReferenceExpression<DB, TB>])[0],
+    )
+
     return new AggregateFunctionBuilder({
       aggregateFunctionNode: AggregateFunctionNode.create(
         name,
-        args ? parseReferenceExpressionOrList(args) : undefined,
+        parsedArgs,
       ),
     })
+  }
+
+  const parseLagLeadArgs = (
+    column: ReferenceExpression<DB, TB>,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): OperationNode[] => {
+    const args: OperationNode[] = parseReferenceExpressionOrList([column])
+
+    if (offset !== undefined) {
+      args.push(ValueNode.create(offset))
+    }
+
+    if (defaultValue !== undefined) {
+      args.push(ValueNode.create(defaultValue))
+    }
+
+    return args
   }
 
   return Object.assign(fn, {
@@ -859,6 +1007,74 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
           isString(table) ? parseTable(table) : table.toOperationNode(),
         ]),
       )
+    },
+
+    grouping(column: ReferenceExpression<DB, TB>): any {
+      return fn('grouping', [column])
+    },
+
+    rowNumber<O extends number = number>(): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('row_number')
+    },
+
+    rank<O extends number = number>(): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('rank')
+    },
+
+    denseRank<O extends number = number>(): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('dense_rank')
+    },
+
+    percentRank<O extends number = number>(): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('percent_rank')
+    },
+
+    cumeDist<O extends number = number>(): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('cume_dist')
+    },
+
+    ntile<O extends number = number>(
+      buckets: number | bigint,
+    ): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('ntile', [ValueNode.create(buckets) as any])
+    },
+
+    firstValue(column: ReferenceExpression<DB, TB>): any {
+      return agg('first_value', [column])
+    },
+
+    lastValue(column: ReferenceExpression<DB, TB>): any {
+      return agg('last_value', [column])
+    },
+
+    nthValue(column: ReferenceExpression<DB, TB>, nth: number | bigint): any {
+      return agg('nth_value', [column, ValueNode.create(nth) as any])
+    },
+
+    lag(
+      column: ReferenceExpression<DB, TB>,
+      offset?: number | bigint,
+      defaultValue?: number | bigint,
+    ): any {
+      return new AggregateFunctionBuilder({
+        aggregateFunctionNode: AggregateFunctionNode.create(
+          'lag',
+          parseLagLeadArgs(column, offset, defaultValue),
+        ),
+      })
+    },
+
+    lead(
+      column: ReferenceExpression<DB, TB>,
+      offset?: number | bigint,
+      defaultValue?: number | bigint,
+    ): any {
+      return new AggregateFunctionBuilder({
+        aggregateFunctionNode: AggregateFunctionNode.create(
+          'lead',
+          parseLagLeadArgs(column, offset, defaultValue),
+        ),
+      })
     },
   })
 }

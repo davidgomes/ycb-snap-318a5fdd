@@ -32,6 +32,12 @@ import type { OrderByNode } from './order-by-node.js'
 import type { OrderByItemNode } from './order-by-item-node.js'
 import type { GroupByNode } from './group-by-node.js'
 import type { GroupByItemNode } from './group-by-item-node.js'
+import type { GroupByCubeNode } from './group-by-cube-node.js'
+import type { GroupByRollupNode } from './group-by-rollup-node.js'
+import type { GroupByGroupingSetNode } from './group-by-grouping-set-node.js'
+import type { GroupByGroupingSetsNode } from './group-by-grouping-sets-node.js'
+import type { WindowFrameNode } from './window-frame-node.js'
+import type { WindowFrameBoundNode } from './window-frame-bound-node.js'
 import type { UpdateQueryNode } from './update-query-node.js'
 import type { ColumnUpdateNode } from './column-update-node.js'
 import type { LimitNode } from './limit-node.js'
@@ -141,6 +147,12 @@ export abstract class OperationNodeVisitor {
     OrderByItemNode: this.visitOrderByItem.bind(this),
     GroupByNode: this.visitGroupBy.bind(this),
     GroupByItemNode: this.visitGroupByItem.bind(this),
+    GroupByCubeNode: this.visitGroupByCube.bind(this),
+    GroupByRollupNode: this.visitGroupByRollup.bind(this),
+    GroupByGroupingSetNode: this.visitGroupByGroupingSet.bind(this),
+    GroupByGroupingSetsNode: this.visitGroupByGroupingSets.bind(this),
+    WindowFrameNode: this.visitWindowFrame.bind(this),
+    WindowFrameBoundNode: this.visitWindowFrameBound.bind(this),
     UpdateQueryNode: this.visitUpdateQuery.bind(this),
     ColumnUpdateNode: this.visitColumnUpdate.bind(this),
     LimitNode: this.visitLimit.bind(this),
@@ -240,6 +252,12 @@ export abstract class OperationNodeVisitor {
   protected abstract visitOrderByItem(node: OrderByItemNode): void
   protected abstract visitGroupBy(node: GroupByNode): void
   protected abstract visitGroupByItem(node: GroupByItemNode): void
+  protected abstract visitGroupByCube(node: GroupByCubeNode): void
+  protected abstract visitGroupByRollup(node: GroupByRollupNode): void
+  protected abstract visitGroupByGroupingSet(node: GroupByGroupingSetNode): void
+  protected abstract visitGroupByGroupingSets(node: GroupByGroupingSetsNode): void
+  protected abstract visitWindowFrame(node: WindowFrameNode): void
+  protected abstract visitWindowFrameBound(node: WindowFrameBoundNode): void
   protected abstract visitUpdateQuery(node: UpdateQueryNode): void
   protected abstract visitColumnUpdate(node: ColumnUpdateNode): void
   protected abstract visitLimit(node: LimitNode): void

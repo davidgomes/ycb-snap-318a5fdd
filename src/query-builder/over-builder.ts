@@ -15,6 +15,10 @@ import {
 } from '../parser/partition-by-parser.js'
 import { freeze } from '../util/object-utils.js'
 import type { OrderByInterface } from './order-by-interface.js'
+import {
+  createWindowFrameBuilder,
+  type WindowFrameBuilderCallback,
+} from './window-frame-builder.js'
 
 export class OverBuilder<DB, TB extends keyof DB>
   implements OrderByInterface<DB, TB, {}>, OperationNodeSource
@@ -128,6 +132,29 @@ export class OverBuilder<DB, TB extends keyof DB>
         this.#props.overNode,
         parsePartitionBy(partitionBy),
       ),
+    })
+  }
+
+  rows(callback: WindowFrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#withFrame('rows', callback)
+  }
+
+  range(callback: WindowFrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#withFrame('range', callback)
+  }
+
+  groups(callback: WindowFrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#withFrame('groups', callback)
+  }
+
+  #withFrame(
+    mode: 'rows' | 'range' | 'groups',
+    callback: WindowFrameBuilderCallback,
+  ): OverBuilder<DB, TB> {
+    const frame = callback(createWindowFrameBuilder(mode)).toOperationNode()
+
+    return new OverBuilder({
+      overNode: OverNode.cloneWithFrame(this.#props.overNode, frame),
     })
   }
 

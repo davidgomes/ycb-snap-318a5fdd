@@ -12,6 +12,12 @@ import type { DropTableNode } from '../operation-node/drop-table-node.js'
 import type { FromNode } from '../operation-node/from-node.js'
 import type { GroupByItemNode } from '../operation-node/group-by-item-node.js'
 import type { GroupByNode } from '../operation-node/group-by-node.js'
+import type { GroupByCubeNode } from '../operation-node/group-by-cube-node.js'
+import type { GroupByRollupNode } from '../operation-node/group-by-rollup-node.js'
+import type { GroupByGroupingSetNode } from '../operation-node/group-by-grouping-set-node.js'
+import type { GroupByGroupingSetsNode } from '../operation-node/group-by-grouping-sets-node.js'
+import type { WindowFrameNode } from '../operation-node/window-frame-node.js'
+import type { WindowFrameBoundNode } from '../operation-node/window-frame-bound-node.js'
 import type { IdentifierNode } from '../operation-node/identifier-node.js'
 import { InsertQueryNode } from '../operation-node/insert-query-node.js'
 import type { JoinNode, JoinType } from '../operation-node/join-node.js'
@@ -797,6 +803,30 @@ export class DefaultQueryCompiler
     this.visitNode(node.groupBy)
   }
 
+  protected override visitGroupByCube(node: GroupByCubeNode): void {
+    this.append('cube(')
+    this.compileList(node.columns)
+    this.append(')')
+  }
+
+  protected override visitGroupByRollup(node: GroupByRollupNode): void {
+    this.append('rollup(')
+    this.compileList(node.columns)
+    this.append(')')
+  }
+
+  protected override visitGroupByGroupingSet(node: GroupByGroupingSetNode): void {
+    this.append('(')
+    this.compileList(node.columns)
+    this.append(')')
+  }
+
+  protected override visitGroupByGroupingSets(node: GroupByGroupingSetsNode): void {
+    this.append('grouping sets (')
+    this.compileList(node.sets)
+    this.append(')')
+  }
+
   protected override visitUpdateQuery(node: UpdateQueryNode): void {
     const wrapInParens =
       this.parentNode !== undefined &&
@@ -1488,6 +1518,11 @@ export class DefaultQueryCompiler
 
     this.append(')')
 
+    if (node.nullsTreatment) {
+      this.append(' ')
+      this.append(node.nullsTreatment)
+    }
+
     if (node.withinGroup) {
       this.append(' within group (')
       this.visitNode(node.withinGroup)
@@ -1512,16 +1547,52 @@ export class DefaultQueryCompiler
     if (node.partitionBy) {
       this.visitNode(node.partitionBy)
 
-      if (node.orderBy) {
+      if (node.orderBy || node.frame) {
         this.append(' ')
       }
     }
 
     if (node.orderBy) {
       this.visitNode(node.orderBy)
+
+      if (node.frame) {
+        this.append(' ')
+      }
+    }
+
+    if (node.frame) {
+      this.visitNode(node.frame)
     }
 
     this.append(')')
+  }
+
+  protected override visitWindowFrame(node: WindowFrameNode): void {
+    this.append(node.mode)
+    this.append(' ')
+
+    if (node.end) {
+      this.append('between ')
+      this.visitNode(node.start)
+      this.append(' and ')
+      this.visitNode(node.end)
+    } else {
+      this.visitNode(node.start)
+    }
+
+    if (node.exclusion) {
+      this.append(' exclude ')
+      this.append(node.exclusion)
+    }
+  }
+
+  protected override visitWindowFrameBound(node: WindowFrameBoundNode): void {
+    if (node.offset) {
+      this.visitNode(node.offset)
+      this.append(' ')
+    }
+
+    this.append(node.boundType)
   }
 
   protected override visitPartitionBy(node: PartitionByNode): void {

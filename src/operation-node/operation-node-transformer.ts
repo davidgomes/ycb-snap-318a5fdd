@@ -29,6 +29,12 @@ import type { OrderByNode } from './order-by-node.js'
 import type { OrderByItemNode } from './order-by-item-node.js'
 import type { GroupByNode } from './group-by-node.js'
 import type { GroupByItemNode } from './group-by-item-node.js'
+import type { GroupByCubeNode } from './group-by-cube-node.js'
+import type { GroupByRollupNode } from './group-by-rollup-node.js'
+import type { GroupByGroupingSetNode } from './group-by-grouping-set-node.js'
+import type { GroupByGroupingSetsNode } from './group-by-grouping-sets-node.js'
+import type { WindowFrameNode } from './window-frame-node.js'
+import type { WindowFrameBoundNode } from './window-frame-bound-node.js'
 import type { UpdateQueryNode } from './update-query-node.js'
 import type { ColumnUpdateNode } from './column-update-node.js'
 import type { LimitNode } from './limit-node.js'
@@ -175,6 +181,12 @@ export class OperationNodeTransformer {
     OrderByItemNode: this.transformOrderByItem.bind(this),
     GroupByNode: this.transformGroupBy.bind(this),
     GroupByItemNode: this.transformGroupByItem.bind(this),
+    GroupByCubeNode: this.transformGroupByCube.bind(this),
+    GroupByRollupNode: this.transformGroupByRollup.bind(this),
+    GroupByGroupingSetNode: this.transformGroupByGroupingSet.bind(this),
+    GroupByGroupingSetsNode: this.transformGroupByGroupingSets.bind(this),
+    WindowFrameNode: this.transformWindowFrame.bind(this),
+    WindowFrameBoundNode: this.transformWindowFrameBound.bind(this),
     UpdateQueryNode: this.transformUpdateQuery.bind(this),
     ColumnUpdateNode: this.transformColumnUpdate.bind(this),
     LimitNode: this.transformLimit.bind(this),
@@ -576,6 +588,70 @@ export class OperationNodeTransformer {
     return requireAllProps<GroupByItemNode>({
       kind: 'GroupByItemNode',
       groupBy: this.transformNode(node.groupBy, queryId),
+    })
+  }
+
+  protected transformGroupByCube(
+    node: GroupByCubeNode,
+    queryId?: QueryId,
+  ): GroupByCubeNode {
+    return requireAllProps({
+      kind: 'GroupByCubeNode',
+      columns: this.transformNodeList(node.columns, queryId),
+    })
+  }
+
+  protected transformGroupByRollup(
+    node: GroupByRollupNode,
+    queryId?: QueryId,
+  ): GroupByRollupNode {
+    return requireAllProps({
+      kind: 'GroupByRollupNode',
+      columns: this.transformNodeList(node.columns, queryId),
+    })
+  }
+
+  protected transformGroupByGroupingSet(
+    node: GroupByGroupingSetNode,
+    queryId?: QueryId,
+  ): GroupByGroupingSetNode {
+    return requireAllProps({
+      kind: 'GroupByGroupingSetNode',
+      columns: this.transformNodeList(node.columns, queryId),
+    })
+  }
+
+  protected transformGroupByGroupingSets(
+    node: GroupByGroupingSetsNode,
+    queryId?: QueryId,
+  ): GroupByGroupingSetsNode {
+    return requireAllProps({
+      kind: 'GroupByGroupingSetsNode',
+      sets: this.transformNodeList(node.sets, queryId),
+    })
+  }
+
+  protected transformWindowFrame(
+    node: WindowFrameNode,
+    queryId?: QueryId,
+  ): WindowFrameNode {
+    return requireAllProps({
+      kind: 'WindowFrameNode',
+      mode: node.mode,
+      start: this.transformNode(node.start, queryId),
+      end: this.transformNode(node.end, queryId),
+      exclusion: node.exclusion,
+    })
+  }
+
+  protected transformWindowFrameBound(
+    node: WindowFrameBoundNode,
+    queryId?: QueryId,
+  ): WindowFrameBoundNode {
+    return requireAllProps({
+      kind: 'WindowFrameBoundNode',
+      boundType: node.boundType,
+      offset: this.transformNode(node.offset, queryId),
     })
   }
 
@@ -1071,6 +1147,7 @@ export class OperationNodeTransformer {
       withinGroup: this.transformNode(node.withinGroup, queryId),
       filter: this.transformNode(node.filter, queryId),
       over: this.transformNode(node.over, queryId),
+      nullsTreatment: node.nullsTreatment,
     })
   }
 
@@ -1079,6 +1156,7 @@ export class OperationNodeTransformer {
       kind: 'OverNode',
       orderBy: this.transformNode(node.orderBy, queryId),
       partitionBy: this.transformNode(node.partitionBy, queryId),
+      frame: this.transformNode(node.frame, queryId),
     })
   }
 

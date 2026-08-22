@@ -45,7 +45,14 @@ import type { Compilable } from '../util/compilable.js'
 import type { QueryExecutor } from '../query-executor/query-executor.js'
 import type { QueryId } from '../util/query-id.js'
 import { asArray, freeze } from '../util/object-utils.js'
-import { type GroupByArg, parseGroupBy } from '../parser/group-by-parser.js'
+import {
+  type GroupByArg,
+  type GroupByExpression,
+  parseGroupBy,
+  parseGroupByCube,
+  parseGroupByGroupingSets,
+  parseGroupByRollup,
+} from '../parser/group-by-parser.js'
 import type { KyselyPlugin } from '../plugin/kysely-plugin.js'
 import type { WhereInterface } from './where-interface.js'
 import {
@@ -1086,6 +1093,24 @@ export interface SelectQueryBuilder<DB, TB extends keyof DB, O>
    */
   groupBy<GE extends GroupByArg<DB, TB, O>>(
     groupBy: GE,
+  ): SelectQueryBuilder<DB, TB, O>
+
+  groupByCube<
+    GE extends GroupByExpression<DB, TB, O>,
+  >(
+    ...columns: ReadonlyArray<GE>
+  ): SelectQueryBuilder<DB, TB, O>
+
+  groupByRollup<
+    GE extends GroupByExpression<DB, TB, O>,
+  >(
+    ...columns: ReadonlyArray<GE>
+  ): SelectQueryBuilder<DB, TB, O>
+
+  groupByGroupingSets<
+    GE extends GroupByExpression<DB, TB, O>,
+  >(
+    ...sets: ReadonlyArray<ReadonlyArray<GE>>
   ): SelectQueryBuilder<DB, TB, O>
 
   orderBy<OE extends OrderByExpression<DB, TB, O>>(
@@ -2418,6 +2443,42 @@ class SelectQueryBuilderImpl<
       queryNode: SelectQueryNode.cloneWithGroupByItems(
         this.#props.queryNode,
         parseGroupBy(groupBy),
+      ),
+    })
+  }
+
+  groupByCube(
+    ...columns: ReadonlyArray<GroupByExpression<DB, TB, O>>
+  ): SelectQueryBuilder<DB, TB, O> {
+    return new SelectQueryBuilderImpl({
+      ...this.#props,
+      queryNode: SelectQueryNode.cloneWithGroupByItems(
+        this.#props.queryNode,
+        parseGroupByCube(columns),
+      ),
+    })
+  }
+
+  groupByRollup(
+    ...columns: ReadonlyArray<GroupByExpression<DB, TB, O>>
+  ): SelectQueryBuilder<DB, TB, O> {
+    return new SelectQueryBuilderImpl({
+      ...this.#props,
+      queryNode: SelectQueryNode.cloneWithGroupByItems(
+        this.#props.queryNode,
+        parseGroupByRollup(columns),
+      ),
+    })
+  }
+
+  groupByGroupingSets(
+    ...sets: ReadonlyArray<ReadonlyArray<GroupByExpression<DB, TB, O>>>
+  ): SelectQueryBuilder<DB, TB, O> {
+    return new SelectQueryBuilderImpl({
+      ...this.#props,
+      queryNode: SelectQueryNode.cloneWithGroupByItems(
+        this.#props.queryNode,
+        parseGroupByGroupingSets(sets),
       ),
     })
   }

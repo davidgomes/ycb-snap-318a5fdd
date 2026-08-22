@@ -4,11 +4,13 @@ import type { OrderByItemNode } from './order-by-item-node.js'
 import { OrderByNode } from './order-by-node.js'
 import type { PartitionByItemNode } from './partition-by-item-node.js'
 import { PartitionByNode } from './partition-by-node.js'
+import type { WindowFrameNode } from './window-frame-node.js'
 
 export interface OverNode extends OperationNode {
   readonly kind: 'OverNode'
   readonly orderBy?: OrderByNode
   readonly partitionBy?: PartitionByNode
+  readonly frame?: WindowFrameNode
 }
 
 type OverNodeFactory = Readonly<{
@@ -21,6 +23,10 @@ type OverNodeFactory = Readonly<{
   cloneWithPartitionByItems(
     overNode: OverNode,
     items: ReadonlyArray<PartitionByItemNode>,
+  ): Readonly<OverNode>
+  cloneWithFrame(
+    overNode: OverNode,
+    frame: WindowFrameNode,
   ): Readonly<OverNode>
 }>
 
@@ -53,6 +59,13 @@ export const OverNode: OverNodeFactory = freeze<OverNodeFactory>({
       partitionBy: overNode.partitionBy
         ? PartitionByNode.cloneWithItems(overNode.partitionBy, items)
         : PartitionByNode.create(items),
+    })
+  },
+
+  cloneWithFrame(overNode, frame) {
+    return freeze({
+      ...overNode,
+      frame,
     })
   },
 })

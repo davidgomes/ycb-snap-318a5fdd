@@ -116,6 +116,7 @@ export * from './plugin/with-schema/with-schema-plugin.js'
 export * from './plugin/parse-json-results/parse-json-results-plugin.js'
 export * from './plugin/handle-empty-in-lists/handle-empty-in-lists-plugin.js'
 export * from './plugin/handle-empty-in-lists/handle-empty-in-lists.js'
+export * from './plugin/simplify-frame/simplify-frame-plugin.js'
 
 export * from './operation-node/add-column-node.js'
 export * from './operation-node/add-constraint-node.js'
