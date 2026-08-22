@@ -16,6 +16,7 @@ from rich.text import Text
 from textual.cache import LRUCache
 from textual.events import Resize
 from textual.geometry import Size
+from textual.message import Message
 from textual.reactive import var
 from textual.scroll_view import ScrollView
 from textual.strip import Strip
@@ -64,6 +65,16 @@ class RichLog(ScrollView, can_focus=True):
     highlight: var[bool] = var(False)
     markup: var[bool] = var(False)
     auto_scroll: var[bool] = var(True)
+
+    class FollowChanged(Message):
+        """Posted when the log starts or stops following its end."""
+
+        def __init__(self, widget: RichLog) -> None:
+            self.widget = widget
+            self.is_following_end = widget.is_following_end
+            self.scroll_y = widget.scroll_y
+            self.max_scroll_y = widget.max_scroll_y
+            super().__init__()
 
     def __init__(
         self,
@@ -124,10 +135,39 @@ class RichLog(ScrollView, can_focus=True):
         self._size_known = False
         """Flag which is set to True when the size of the RichLog is known,
         indicating we can proceed with rendering deferred writes."""
+        self._entries: list[DeferredRender] = []
+        self._is_rebuilding = False
+        self._is_following_end = True
+
+    @property
+    def is_following_end(self) -> bool:
+        """Whether the log is scrolled to the end."""
+        return self._is_following_end
+
+    def _update_follow_state(self, is_following_end: bool | None = None) -> None:
+        if is_following_end is None:
+            is_following_end = self.is_vertical_scroll_end
+        if is_following_end != self._is_following_end:
+            self._is_following_end = is_following_end
+            self.post_message(self.FollowChanged(self))
+
+    def follow_end(self, animate: bool = False) -> Self:
+        """Scroll to the end and follow new content."""
+        self.scroll_end(animate=animate, immediate=True, x_axis=False)
+        self._update_follow_state(True)
+        return self
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        self._update_follow_state()
 
     def notify_style_update(self) -> None:
         super().notify_style_update()
         self._line_cache.clear()
+
+    def watch_min_width(self, old_width: int, new_width: int) -> None:
+        if new_width != old_width and getattr(self, "_size_known", False):
+            self._rerender_entries()
 
     def on_resize(self, event: Resize) -> None:
         if event.size.width and not self._size_known:
@@ -137,6 +177,26 @@ class RichLog(ScrollView, can_focus=True):
             while deferred_renders:
                 deferred_render = deferred_renders.popleft()
                 self.write(*deferred_render)
+
+    def _rerender_entries(self) -> None:
+        """Re-render entries whose width depends on the current widget size."""
+        if self._is_rebuilding or not self._entries:
+            return
+        is_following_end = self.is_following_end
+        scroll_y = self.scroll_y
+        self._is_rebuilding = True
+        self.lines.clear()
+        self._line_cache.clear()
+        self._start_line = 0
+        self._widest_line_width = 0
+        try:
+            for entry in self._entries:
+                self.write(*entry)
+        finally:
+            self._is_rebuilding = False
+        if not is_following_end:
+            self.scroll_y = min(scroll_y, self.max_scroll_y)
+        self._update_follow_state()
 
     def get_content_width(self, container: Size, viewport: Size) -> int:
         if self._size_known:
@@ -212,13 +272,24 @@ class RichLog(ScrollView, can_focus=True):
             )
             return self
 
+        if not self._is_rebuilding:
+            if isinstance(content, Text):
+                content = content.copy()
+            self._entries.append(DeferredRender(content, width, expand, shrink, scroll_end))
+
+        is_following_end = self.is_following_end
+        old_scroll_y = self.scroll_y
         renderable = self._make_renderable(content)
         auto_scroll = self.auto_scroll if scroll_end is None else scroll_end
 
         console = self.app.console
         render_options = console.options
 
-        if isinstance(renderable, Text) and not self.wrap:
+        if (
+            isinstance(renderable, Text)
+            and not self.wrap
+            and not (expand and width is None)
+        ):
             render_options = render_options.update(overflow="ignore", no_wrap=True)
 
         if width is not None:
@@ -261,8 +332,10 @@ class RichLog(ScrollView, can_focus=True):
                 strip.adjust_cell_length(render_width)
             self.lines.extend(strips)
 
+            removed_lines = 0
             if self.max_lines is not None and len(self.lines) > self.max_lines:
-                self._start_line += len(self.lines) - self.max_lines
+                removed_lines = len(self.lines) - self.max_lines
+                self._start_line += removed_lines
                 self.refresh()
                 self.lines = self.lines[-self.max_lines :]
 
@@ -274,12 +347,18 @@ class RichLog(ScrollView, can_focus=True):
                 max(sum([segment.cell_length for segment in _line]) for _line in lines),
             )
 
+        if not lines:
+            removed_lines = 0
+
         # Update the virtual size - the width may have changed after adding
         # the new line(s), and the height will definitely have changed.
         self.virtual_size = Size(self._widest_line_width, len(self.lines))
 
-        if auto_scroll:
+        if auto_scroll and (scroll_end is True or is_following_end):
             self.scroll_end(animate=animate, immediate=False, x_axis=False)
+        elif removed_lines and not is_following_end:
+            self.scroll_y = max(0, old_scroll_y - removed_lines)
+        self._update_follow_state()
 
         return self
 
@@ -294,8 +373,10 @@ class RichLog(ScrollView, can_focus=True):
         self._start_line = 0
         self._widest_line_width = 0
         self._deferred_renders.clear()
+        self._entries.clear()
         self.virtual_size = Size(0, len(self.lines))
         self.refresh()
+        self._update_follow_state()
         return self
 
     def render_line(self, y: int) -> Strip:

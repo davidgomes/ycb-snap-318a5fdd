@@ -12,6 +12,7 @@ from textual import work
 from textual._line_split import line_split
 from textual.cache import LRUCache
 from textual.geometry import Size
+from textual.message import Message
 from textual.reactive import var
 from textual.scroll_view import ScrollView
 from textual.selection import Selection
@@ -43,6 +44,16 @@ class Log(ScrollView, can_focus=True):
 
     auto_scroll: var[bool] = var(True)
     """Automatically scroll to new lines."""
+
+    class FollowChanged(Message):
+        """Posted when the log starts or stops following its end."""
+
+        def __init__(self, widget: Log) -> None:
+            self.widget = widget
+            self.is_following_end = widget.is_following_end
+            self.scroll_y = widget.scroll_y
+            self.max_scroll_y = widget.max_scroll_y
+            super().__init__()
 
     def __init__(
         self,
@@ -77,6 +88,31 @@ class Log(ScrollView, can_focus=True):
         self.highlighter: Highlighter = ReprHighlighter()
         """The Rich Highlighter object to use, if `highlight=True`"""
         self._clear_y = 0
+        self._is_following_end = True
+
+    @property
+    def is_following_end(self) -> bool:
+        """Whether the log is scrolled to the end."""
+        return self._is_following_end
+
+    def _update_follow_state(self, is_following_end: bool | None = None) -> None:
+        if is_following_end is None:
+            is_following_end = self.is_vertical_scroll_end
+        if is_following_end != self._is_following_end:
+            self._is_following_end = is_following_end
+            self.post_message(self.FollowChanged(self))
+
+    def follow_end(self, animate: bool = False) -> Self:
+        """Scroll to the end and follow new content."""
+        self.scroll_end(
+            animate=animate, immediate=True, x_axis=False
+        )
+        self._update_follow_state(True)
+        return self
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        self._update_follow_state()
 
     @property
     def allow_select(self) -> bool:
@@ -173,7 +209,8 @@ class Log(ScrollView, can_focus=True):
         Returns:
             The `Log` instance.
         """
-        is_vertical_scroll_end = self.is_vertical_scroll_end
+        is_following_end = self.is_following_end
+        old_scroll_y = self.scroll_y
         if data:
             if not self._lines:
                 self._lines.append("")
@@ -187,12 +224,17 @@ class Log(ScrollView, can_focus=True):
                     self._lines.append("")
             self.virtual_size = Size(self._width, self.line_count)
 
+        removed_lines = 0
         if self.max_lines is not None and len(self._lines) > self.max_lines:
+            removed_lines = len(self._lines) - self.max_lines
             self._prune_max_lines()
 
         auto_scroll = self.auto_scroll if scroll_end is None else scroll_end
-        if auto_scroll:
+        if auto_scroll and (scroll_end is True or is_following_end):
             self.scroll_end(animate=False, immediate=True, x_axis=False)
+        elif removed_lines and not is_following_end:
+            self.scroll_y = max(0, old_scroll_y - removed_lines)
+        self._update_follow_state()
         return self
 
     def write_line(
@@ -226,14 +268,17 @@ class Log(ScrollView, can_focus=True):
         Returns:
             The `Log` instance.
         """
-        is_vertical_scroll_end = self.is_vertical_scroll_end
+        is_following_end = self.is_following_end
+        old_scroll_y = self.scroll_y
         auto_scroll = self.auto_scroll if scroll_end is None else scroll_end
         new_lines = []
         for line in lines:
             new_lines.extend(line.splitlines())
         start_line = len(self._lines)
         self._lines.extend(new_lines)
+        removed_lines = 0
         if self.max_lines is not None and len(self._lines) > self.max_lines:
+            removed_lines = len(self._lines) - self.max_lines
             self._prune_max_lines()
         self.virtual_size = Size(self._width, len(self._lines))
         self._update_size(self._updates, new_lines)
@@ -241,11 +286,14 @@ class Log(ScrollView, can_focus=True):
         if (
             auto_scroll
             and not self.is_vertical_scrollbar_grabbed
-            and is_vertical_scroll_end
+            and (scroll_end is True or is_following_end)
         ):
             self.scroll_end(animate=False, immediate=True, x_axis=False)
         else:
+            if removed_lines and not is_following_end:
+                self.scroll_y = max(0, old_scroll_y - removed_lines)
             self.refresh()
+        self._update_follow_state()
         return self
 
     def clear(self) -> Self:
