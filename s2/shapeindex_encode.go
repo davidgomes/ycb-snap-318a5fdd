@@ -56,7 +56,8 @@ func (s *ShapeIndex) Encode(w io.Writer) error {
 	if err := e.i32(s.nextID); err != nil {
 		return err
 	}
-	if len(s.shapes) > maxShapeIndexItems || len(s.cells) > maxShapeIndexItems {
+	if s.nextID < 0 || s.nextID > maxShapeIndexItems ||
+		len(s.shapes) > maxShapeIndexItems || len(s.cells) > maxShapeIndexItems {
 		return errors.New("s2: shape index too large")
 	}
 	if err := e.u32(uint32(s.nextID)); err != nil {
