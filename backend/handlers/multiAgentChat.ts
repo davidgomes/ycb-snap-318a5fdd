@@ -362,7 +362,9 @@ async function* executeAgent(
 
           const resultContent = subAgentResult.error
             ? subAgentResult.error
-            : subAgentResult.accumulatedText || "Sub-agent completed without textual output.";
+            : subAgentResult.accumulatedText.trim()
+              ? subAgentResult.accumulatedText
+              : "Sub-agent completed without textual output.";
 
           delegatedToolResult = {
             type: "tool_result",
