@@ -17,6 +17,7 @@ import type {
   StringSchema
 } from '~/schema/index.js'
 
+import { withValidate } from '../utils.js'
 import type { AnyZodParser } from './any.js'
 import { anyZodParser } from './any.js'
 import type { AnyOfZodParser } from './anyOf.js'
@@ -42,7 +43,6 @@ import { getSetZodParser } from './set.js'
 import type { StringZodParser } from './string.js'
 import { getStringZodParser } from './string.js'
 import type { ZodParserOptions } from './types.js'
-import { withValidate } from '../utils.js'
 import { withDefault, withOptional } from './utils.js'
 
 export type ZodParser<
@@ -87,7 +87,10 @@ export const schemaZodParser = <SCHEMA extends Schema, OPTIONS extends ZodParser
         withOptional(
           schema,
           options,
-          withValidate(schema, z.lazy(() => schemaZodParser(schema.resolve(), options)))
+          withValidate(
+            schema,
+            z.lazy(() => schemaZodParser(schema.resolve(), options))
+          )
         )
       ) as ZOD_PARSER
     case 'any':

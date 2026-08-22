@@ -11,16 +11,19 @@ type ListSchemaDTO = Extract<ISchemaDTO, { type: 'list' }>
 /**
  * @debt feature "handle defaults, links & validators"
  */
-export const fromListSchemaDTO = ({
-  keyDefault,
-  putDefault,
-  updateDefault,
-  keyLink,
-  putLink,
-  updateLink,
-  elements,
-  ...props
-}: ListSchemaDTO, context: FromSchemaDTOContext): ListSchema => {
+export const fromListSchemaDTO = (
+  {
+    keyDefault,
+    putDefault,
+    updateDefault,
+    keyLink,
+    putLink,
+    updateLink,
+    elements,
+    ...props
+  }: ListSchemaDTO,
+  context: FromSchemaDTOContext
+): ListSchema => {
   keyDefault
   putDefault
   updateDefault

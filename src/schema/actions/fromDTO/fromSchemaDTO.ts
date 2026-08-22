@@ -3,8 +3,8 @@ import { item } from '~/schema/item/index.js'
 import type { ItemSchema } from '~/schema/item/index.js'
 
 import {
-  createFromSchemaDTOContext,
-  fromSchemaDTO as _fromSchemaDTO
+  fromSchemaDTO as _fromSchemaDTO,
+  createFromSchemaDTOContext
 } from './fromSchemaDTO/index.js'
 
 export const fromSchemaDTO = (schemaDTO: ItemSchemaDTO): ItemSchema => {

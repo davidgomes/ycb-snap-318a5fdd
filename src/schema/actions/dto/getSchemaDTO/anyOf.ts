@@ -17,7 +17,9 @@ export const getAnyOfSchemaDTO = (
 
   return {
     type: 'anyOf',
-    elements: schema.elements.map(element => getSchemaDTO(element, context)) as AnyOfSchemaDTO['elements'],
+    elements: schema.elements.map(element =>
+      getSchemaDTO(element, context)
+    ) as AnyOfSchemaDTO['elements'],
     ...(required !== undefined && required !== 'atLeastOnce' ? { required } : {}),
     ...(hidden !== undefined && hidden ? { hidden } : {}),
     ...(key !== undefined && key ? { key } : {}),

@@ -17,6 +17,7 @@ import type {
   StringSchema
 } from '~/schema/index.js'
 
+import { withValidate } from '../utils.js'
 import type { AnyZodFormatter } from './any.js'
 import { anyZodFormatter } from './any.js'
 import type { AnyOfZodFormatter } from './anyOf.js'
@@ -42,7 +43,6 @@ import { getSetZodFormatter } from './set.js'
 import type { StringZodFormatter } from './string.js'
 import { getStringZodFormatter } from './string.js'
 import type { ZodFormatterOptions } from './types.js'
-import { withValidate } from '../utils.js'
 import { withOptional } from './utils.js'
 
 export type ZodFormatter<
@@ -84,7 +84,10 @@ export const schemaZodFormatter = <SCHEMA extends Schema, OPTIONS extends ZodFor
       return withOptional(
         schema,
         options,
-        withValidate(schema, z.lazy(() => schemaZodFormatter(schema.resolve(), options)))
+        withValidate(
+          schema,
+          z.lazy(() => schemaZodFormatter(schema.resolve(), options))
+        )
       ) as ZOD_FORMATTER
     case 'any':
       return anyZodFormatter(schema, options) as ZOD_FORMATTER
