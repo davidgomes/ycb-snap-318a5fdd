@@ -452,6 +452,10 @@ const layoutGrid = (node: DOMElement): void => {
 		node.yogaNode.getComputedHeight(),
 		Yoga.DIRECTION_LTR,
 	);
+	for (const placement of placements) {
+		layoutTree(placement.node);
+	}
+
 	node.internal_grid = {
 		x: node.internal_grid?.x ?? node.yogaNode.getComputedLeft(),
 		y: node.internal_grid?.y ?? node.yogaNode.getComputedTop(),
