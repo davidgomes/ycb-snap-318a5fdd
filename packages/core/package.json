@@ -131,6 +131,14 @@
       "import": "./dist/nonempty.js",
       "require": "./dist/nonempty.cjs"
     },
+    "./option-dependency": {
+      "types": {
+        "import": "./dist/option-dependency.d.ts",
+        "require": "./dist/option-dependency.d.cts"
+      },
+      "import": "./dist/option-dependency.js",
+      "require": "./dist/option-dependency.cjs"
+    },
     "./parser": {
       "types": {
         "import": "./dist/parser.d.ts",

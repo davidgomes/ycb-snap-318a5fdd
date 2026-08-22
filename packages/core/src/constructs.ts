@@ -10,6 +10,12 @@ import {
   wrappedDependencySourceMarker,
 } from "./dependency.ts";
 import { dispatchByMode, dispatchIterableByMode } from "./mode-dispatch.ts";
+import {
+  buildOptionKeyMaps,
+  popObjectFieldContext,
+  pushObjectFieldContext,
+  type ObjectFieldContext,
+} from "./option-dependency.ts";
 import type { DocEntry, DocFragment, DocSection } from "./doc.ts";
 import {
   type Message,
@@ -2076,6 +2082,24 @@ export interface ObjectErrorOptions {
 }
 
 /**
+ * Creates an {@link ObjectFieldContext} for conditional option dependency evaluation.
+ * @internal
+ */
+function createObjectFieldContext(
+  fieldKey: string | symbol,
+  siblingStates: Readonly<Record<string | symbol, unknown>>,
+  parserPairs: readonly [string | symbol, Parser<Mode, unknown, unknown>][],
+  flagToKey: ReadonlyMap<string, string | symbol>,
+  keyToPrimaryFlag: ReadonlyMap<string | symbol, string>,
+): ObjectFieldContext {
+  const parsers: Record<string | symbol, Parser<Mode, unknown, unknown>> = {};
+  for (const [key, parser] of parserPairs) {
+    parsers[key] = parser;
+  }
+  return { fieldKey, siblingStates, flagToKey, keyToPrimaryFlag, parsers };
+}
+
+/**
  * Internal sync helper for object suggest functionality.
  * @internal
  */
@@ -2085,6 +2109,8 @@ function* suggestObjectSync<
   context: ParserContext<{ readonly [K in keyof T]: unknown }>,
   prefix: string,
   parserPairs: [string | symbol, Parser<"sync", unknown, unknown>][],
+  flagToKey: ReadonlyMap<string, string | symbol>,
+  keyToPrimaryFlag: ReadonlyMap<string | symbol, string>,
 ): Generator<Suggestion> {
   // Build dependency registry from all parsed fields
   const registry = context.dependencyRegistry instanceof DependencyRegistry
@@ -2117,7 +2143,17 @@ function* suggestObjectSync<
             : parser.initialState;
 
         yield* parser.suggest(
-          { ...contextWithRegistry, state: fieldState },
+          {
+            ...contextWithRegistry,
+            state: fieldState,
+            objectFieldContext: createObjectFieldContext(
+              field,
+              context.state ?? {},
+              parserPairs,
+              flagToKey,
+              keyToPrimaryFlag,
+            ),
+          },
           prefix,
         );
         return;
@@ -2136,6 +2172,13 @@ function* suggestObjectSync<
     const fieldSuggestions = parser.suggest({
       ...contextWithRegistry,
       state: fieldState,
+      objectFieldContext: createObjectFieldContext(
+        field,
+        context.state ?? {},
+        parserPairs,
+        flagToKey,
+        keyToPrimaryFlag,
+      ),
     }, prefix);
 
     suggestions.push(...fieldSuggestions);
@@ -2154,6 +2197,8 @@ async function* suggestObjectAsync<
   context: ParserContext<{ readonly [K in keyof T]: unknown }>,
   prefix: string,
   parserPairs: readonly [string | symbol, Parser<Mode, unknown, unknown>][],
+  flagToKey: ReadonlyMap<string, string | symbol>,
+  keyToPrimaryFlag: ReadonlyMap<string | symbol, string>,
 ): AsyncGenerator<Suggestion> {
   // Build dependency registry from all parsed fields
   const registry = context.dependencyRegistry instanceof DependencyRegistry
@@ -2183,7 +2228,17 @@ async function* suggestObjectAsync<
             : parser.initialState;
 
         const suggestions = parser.suggest(
-          { ...contextWithRegistry, state: fieldState },
+          {
+            ...contextWithRegistry,
+            state: fieldState,
+            objectFieldContext: createObjectFieldContext(
+              field,
+              context.state ?? {},
+              parserPairs,
+              flagToKey,
+              keyToPrimaryFlag,
+            ),
+          },
           prefix,
         ) as AsyncIterable<Suggestion>;
         for await (const s of suggestions) {
@@ -2203,7 +2258,17 @@ async function* suggestObjectAsync<
       : parser.initialState;
 
     const fieldSuggestions = parser.suggest(
-      { ...contextWithRegistry, state: fieldState },
+      {
+        ...contextWithRegistry,
+        state: fieldState,
+        objectFieldContext: createObjectFieldContext(
+          field,
+          context.state ?? {},
+          parserPairs,
+          flagToKey,
+          keyToPrimaryFlag,
+        ),
+      },
       prefix,
     );
 
@@ -2634,6 +2699,7 @@ export function object<
   parserPairs.sort(([_, parserA], [__, parserB]) =>
     parserB.priority - parserA.priority
   );
+  const { flagToKey, keyToPrimaryFlag } = buildOptionKeyMaps(parserPairs);
   const initialState: Record<string | symbol, unknown> = {};
   for (const key of parserKeys) {
     initialState[key as string | symbol] = parsers[key].initialState;
@@ -2724,6 +2790,13 @@ export function object<
               field as string | symbol
             ]
             : parser.initialState,
+          objectFieldContext: createObjectFieldContext(
+            field,
+            (currentContext.state ?? {}) as Record<string | symbol, unknown>,
+            parserPairs,
+            flagToKey,
+            keyToPrimaryFlag,
+          ),
         });
 
         if (result.success && result.consumed.length > 0) {
@@ -2812,6 +2885,13 @@ export function object<
               field as string | symbol
             ]
             : parser.initialState,
+          objectFieldContext: createObjectFieldContext(
+            field,
+            (currentContext.state ?? {}) as Record<string | symbol, unknown>,
+            parserPairs,
+            flagToKey,
+            keyToPrimaryFlag,
+          ),
         });
         const result = await resultOrPromise;
 
@@ -2999,7 +3079,19 @@ export function object<
               continue;
             }
 
-            const valueResult = fieldParser.complete(fieldResolvedState);
+            pushObjectFieldContext(createObjectFieldContext(
+              fieldKey,
+              resolvedState as Record<string | symbol, unknown>,
+              parserPairs,
+              flagToKey,
+              keyToPrimaryFlag,
+            ));
+            let valueResult;
+            try {
+              valueResult = fieldParser.complete(fieldResolvedState);
+            } finally {
+              popObjectFieldContext();
+            }
             if (valueResult.success) {
               (result as Record<string | symbol, unknown>)[fieldKey] =
                 valueResult.value;
@@ -3099,7 +3191,19 @@ export function object<
               continue;
             }
 
-            const valueResult = await fieldParser.complete(fieldResolvedState);
+            pushObjectFieldContext(createObjectFieldContext(
+              fieldKey,
+              resolvedState as Record<string | symbol, unknown>,
+              parserPairs,
+              flagToKey,
+              keyToPrimaryFlag,
+            ));
+            let valueResult;
+            try {
+              valueResult = await fieldParser.complete(fieldResolvedState);
+            } finally {
+              popObjectFieldContext();
+            }
             if (valueResult.success) {
               (result as Record<string | symbol, unknown>)[fieldKey] =
                 valueResult.value;
@@ -3120,13 +3224,21 @@ export function object<
             string | symbol,
             Parser<"sync", unknown, unknown>,
           ][];
-          return suggestObjectSync(context, prefix, syncParserPairs);
+          return suggestObjectSync(
+            context,
+            prefix,
+            syncParserPairs,
+            flagToKey,
+            keyToPrimaryFlag,
+          );
         },
         () =>
           suggestObjectAsync(
             context,
             prefix,
             parserPairs as [string | symbol, Parser<Mode, unknown, unknown>][],
+            flagToKey,
+            keyToPrimaryFlag,
           ),
       );
     },
@@ -3138,6 +3250,20 @@ export function object<
         const fieldState: DocState<unknown> = state.kind === "unavailable"
           ? { kind: "unavailable" }
           : { kind: "available", state: state.state[field] };
+        if (state.kind === "available") {
+          pushObjectFieldContext(createObjectFieldContext(
+            field,
+            state.state as Record<string | symbol, unknown>,
+            parserPairs,
+            flagToKey,
+            keyToPrimaryFlag,
+          ));
+          try {
+            return p.getDocFragments(fieldState, defaultValue?.[field]).fragments;
+          } finally {
+            popObjectFieldContext();
+          }
+        }
         return p.getDocFragments(fieldState, defaultValue?.[field]).fragments;
       });
       const entries: DocEntry[] = fragments.filter((d) => d.type === "entry");

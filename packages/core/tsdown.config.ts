@@ -13,6 +13,7 @@ export default defineConfig({
     "src/message.ts",
     "src/modifiers.ts",
     "src/nonempty.ts",
+    "src/option-dependency.ts",
     "src/parser.ts",
     "src/primitives.ts",
     "src/program.ts",

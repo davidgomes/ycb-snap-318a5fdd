@@ -2,8 +2,11 @@ import type { DocEntry, DocFragments, DocPage, DocSection } from "./doc.ts";
 import { type Message, message } from "./message.ts";
 import type { DependencyRegistryLike } from "./registry-types.ts";
 import { normalizeUsage, type Usage, type UsageTerm } from "./usage.ts";
+import type { ObjectFieldContext } from "./option-dependency.ts";
 import type { ValueParserResult } from "./valueparser.ts";
 import { annotationKey, type ParseOptions } from "./annotations.ts";
+
+export type { ObjectFieldContext } from "./option-dependency.ts";
 
 export type { ParseOptions };
 
@@ -220,6 +223,13 @@ export interface ParserContext<TState> {
    * @since 0.10.0
    */
   readonly dependencyRegistry?: DependencyRegistryLike;
+
+  /**
+   * Context for evaluating conditional option dependencies within an
+   * {@link object} parser. Set by {@link object} when invoking child parsers.
+   * @since 0.11.0
+   */
+  readonly objectFieldContext?: ObjectFieldContext;
 }
 
 /**

@@ -18,6 +18,16 @@ import {
 } from "./dependency.ts";
 import type { DocFragment } from "./doc.ts";
 import type { DependencyRegistryLike } from "./registry-types.ts";
+import {
+  type DependsOnCondition,
+  type DependsOnConfig,
+  extractDependsOnFromUsage,
+  isOptionExplicitlyProvided,
+  normalizeDependsOnConfig,
+  peekObjectFieldContext,
+  shouldHideDependentOption,
+  validateOptionDependency,
+} from "./option-dependency.ts";
 
 /**
  * State type for options that may use deferred parsing (DerivedValueParser).
@@ -76,7 +86,7 @@ import {
   DEFAULT_FIND_SIMILAR_OPTIONS,
   findSimilar,
 } from "./suggestion.ts";
-import type { OptionName, UsageTerm } from "./usage.ts";
+import type { OptionName, Usage, UsageTerm } from "./usage.ts";
 import { extractCommandNames, extractOptionNames } from "./usage.ts";
 import {
   isValueParser,
@@ -134,6 +144,12 @@ export interface OptionOptions {
    * @since 0.5.0
    */
   readonly errors?: OptionErrorOptions;
+
+  /**
+   * Conditional dependency on other options.
+   * @since 0.11.0
+   */
+  readonly dependsOn?: DependsOnConfig;
 }
 
 /**
@@ -246,6 +262,77 @@ function* getSuggestionsWithDependency<T>(
   yield* valueParser.suggest(prefix);
 }
 
+function isOptionHidden(
+  explicitlyHidden: boolean,
+  usage: Usage,
+  context: ParserContext<unknown> | undefined,
+): boolean {
+  if (explicitlyHidden) return true;
+  const dependsOn = extractDependsOnFromUsage(usage);
+  if (!dependsOn) return false;
+  return shouldHideDependentOption(dependsOn, context?.objectFieldContext);
+}
+
+/**
+ * Validates dependency constraints after a successful option parse.
+ * @internal
+ */
+function validateParseDependency<T>(
+  dependsOn: DependsOnConfig | undefined,
+  optionNames: readonly OptionName[],
+  context: ParserContext<ValueParserResult<T | boolean> | undefined>,
+  newState: ValueParserResult<T | boolean> | DeferredParseState<T> | DependencySourceState<T>,
+  consumed: readonly string[],
+): { success: false; consumed: number; error: Message } | undefined {
+  if (!dependsOn || !context.objectFieldContext) return undefined;
+  const fieldContext = {
+    ...context.objectFieldContext,
+    siblingStates: {
+      ...context.objectFieldContext.siblingStates,
+      [context.objectFieldContext.fieldKey]: newState,
+    },
+  };
+  const error = validateOptionDependency(
+    dependsOn,
+    fieldContext,
+    optionNames,
+    true,
+  );
+  if (error) {
+    return { success: false, consumed: consumed.length, error };
+  }
+  return undefined;
+}
+
+/**
+ * Applies dependency validation to a successful option parse result.
+ * @internal
+ */
+function finalizeOptionParseResult<
+  TState extends ValueParserResult<T | boolean> | DeferredParseState<T> | DependencySourceState<T>,
+>(
+  dependsOn: DependsOnConfig | undefined,
+  optionNames: readonly OptionName[],
+  context: ParserContext<ValueParserResult<T | boolean> | undefined>,
+  result: {
+    success: true;
+    next: ParserContext<TState>;
+    consumed: readonly string[];
+  },
+):
+  | typeof result
+  | { success: false; consumed: number; error: Message } {
+  const depError = validateParseDependency(
+    dependsOn,
+    optionNames,
+    context,
+    result.next.state as TState,
+    result.consumed,
+  );
+  if (depError) return depError;
+  return result;
+}
+
 /**
  * Internal sync helper for option suggest functionality.
  * @internal
@@ -254,12 +341,13 @@ function* suggestOptionSync<T>(
   optionNames: readonly string[],
   valueParser: ValueParser<"sync", T> | undefined,
   hidden: boolean,
+  usage: Usage,
   context: ParserContext<
     ValueParserResult<T | boolean> | undefined
   >,
   prefix: string,
 ): Generator<Suggestion> {
-  if (hidden) return;
+  if (isOptionHidden(hidden, usage, context)) return;
 
   // Check for --option=value format
   const equalsIndex = prefix.indexOf("=");
@@ -416,12 +504,13 @@ async function* suggestOptionAsync<T>(
   optionNames: readonly string[],
   valueParser: ValueParser<Mode, T> | undefined,
   hidden: boolean,
+  usage: Usage,
   context: ParserContext<
     ValueParserResult<T | boolean> | undefined
   >,
   prefix: string,
 ): AsyncGenerator<Suggestion> {
-  if (hidden) return;
+  if (isOptionHidden(hidden, usage, context)) return;
 
   // Check for --option=value format
   const equalsIndex = prefix.indexOf("=");
@@ -634,6 +723,7 @@ export function option<M extends Mode, T>(
   }
   const mode: M = (valueParser?.$mode ?? "sync") as M;
   const isAsync = mode === "async";
+  const dependsOn = options.dependsOn;
 
   // Use 'as any' to allow both sync and async returns from parse method
   // The actual mode is set correctly at the end via spread with $mode
@@ -650,6 +740,7 @@ export function option<M extends Mode, T>(
             type: "option",
             names: optionNames,
             ...(options.hidden && { hidden: true }),
+            ...(dependsOn && { dependsOn }),
           }],
         }
         : {
@@ -657,6 +748,7 @@ export function option<M extends Mode, T>(
           names: optionNames,
           metavar: valueParser.metavar,
           ...(options.hidden && { hidden: true }),
+          ...(dependsOn && { dependsOn }),
         },
     ],
     initialState: valueParser == null
@@ -733,7 +825,7 @@ export function option<M extends Mode, T>(
           };
         }
         if (valueParser == null) {
-          return {
+          return finalizeOptionParseResult(dependsOn, optionNames, context, {
             success: true,
             next: {
               ...context,
@@ -741,7 +833,7 @@ export function option<M extends Mode, T>(
               buffer: context.buffer.slice(1),
             },
             consumed: context.buffer.slice(0, 1),
-          };
+          });
         }
         if (context.buffer.length < 2) {
           return {
@@ -756,7 +848,7 @@ export function option<M extends Mode, T>(
         const parseResultOrPromise = valueParser!.parse(rawInput);
         if (isAsync) {
           return (parseResultOrPromise as Promise<ValueParserResult<T>>).then(
-            (parseResult) => ({
+            (parseResult) => finalizeOptionParseResult(dependsOn, optionNames, context, {
               success: true as const,
               next: {
                 ...context,
@@ -771,7 +863,7 @@ export function option<M extends Mode, T>(
             }),
           );
         }
-        return {
+        return finalizeOptionParseResult(dependsOn, optionNames, context, {
           success: true,
           next: {
             ...context,
@@ -783,7 +875,7 @@ export function option<M extends Mode, T>(
             buffer: context.buffer.slice(2),
           },
           consumed: context.buffer.slice(0, 2),
-        };
+        });
       }
 
       // When the input is not split by spaces, but joined by = or :
@@ -824,7 +916,7 @@ export function option<M extends Mode, T>(
         const parseResultOrPromise = valueParser.parse(rawInput);
         if (isAsync) {
           return (parseResultOrPromise as Promise<ValueParserResult<T>>).then(
-            (parseResult) => ({
+            (parseResult) => finalizeOptionParseResult(dependsOn, optionNames, context, {
               success: true as const,
               next: {
                 ...context,
@@ -839,7 +931,7 @@ export function option<M extends Mode, T>(
             }),
           );
         }
-        return {
+        return finalizeOptionParseResult(dependsOn, optionNames, context, {
           success: true,
           next: {
             ...context,
@@ -851,7 +943,7 @@ export function option<M extends Mode, T>(
             buffer: context.buffer.slice(1),
           },
           consumed: context.buffer.slice(0, 1),
-        };
+        });
       }
 
       if (valueParser == null) {
@@ -877,7 +969,7 @@ export function option<M extends Mode, T>(
                 } cannot be used multiple times.`,
             };
           }
-          return {
+          return finalizeOptionParseResult(dependsOn, optionNames, context, {
             success: true,
             next: {
               ...context,
@@ -888,7 +980,7 @@ export function option<M extends Mode, T>(
               ],
             },
             consumed: [context.buffer[0].slice(0, 2)],
-          };
+          });
         }
       }
 
@@ -989,7 +1081,31 @@ export function option<M extends Mode, T>(
             : message`${eOptionNames(optionNames)}: ${result.error}`,
         };
       }
-      if (state.success) return state;
+      if (state.success) {
+        const dependsOnConfig = extractDependsOnFromUsage(result.usage);
+        const fieldContext = peekObjectFieldContext();
+        if (dependsOnConfig && fieldContext) {
+          const updatedContext = {
+            ...fieldContext,
+            siblingStates: {
+              ...fieldContext.siblingStates,
+              [fieldContext.fieldKey]: state,
+            },
+          };
+          const explicitlyProvided = isOptionExplicitlyProvided(
+            state,
+            result.initialState,
+          );
+          const depError = validateOptionDependency(
+            dependsOnConfig,
+            updatedContext,
+            optionNames,
+            explicitlyProvided,
+          );
+          if (depError) return { success: false, error: depError };
+        }
+        return state;
+      }
       return {
         success: false,
         error: options.errors?.invalidValue
@@ -1011,6 +1127,7 @@ export function option<M extends Mode, T>(
           optionNames,
           valueParser,
           options.hidden ?? false,
+          result.usage,
           context,
           prefix,
         );
@@ -1019,6 +1136,7 @@ export function option<M extends Mode, T>(
         optionNames,
         valueParser as ValueParser<"sync", T> | undefined,
         options.hidden ?? false,
+        result.usage,
         context,
         prefix,
       );
@@ -1027,7 +1145,14 @@ export function option<M extends Mode, T>(
       _state: DocState<ValueParserResult<T | boolean> | undefined>,
       defaultValue?: T | boolean,
     ) {
-      if (options.hidden) {
+      const fieldContext = peekObjectFieldContext();
+      if (
+        isOptionHidden(
+          options.hidden ?? false,
+          result.usage,
+          fieldContext ? { objectFieldContext: fieldContext } as ParserContext<unknown> : undefined,
+        )
+      ) {
         return { fragments: [], description: options.description };
       }
       const fragments: readonly DocFragment[] = [{
@@ -2320,4 +2445,142 @@ export function passThrough(
       return `passThrough(${format})`;
     },
   };
+}
+
+export type {
+  DependsOnCondition,
+  DependsOnConfig,
+  DependsOnSingle,
+  DependsOnCompound,
+  ObjectFieldContext,
+} from "./option-dependency.ts";
+
+/**
+ * Creates an option that is only available when a dependency condition is met,
+ * and requires the dependency to be satisfied when the option is used.
+ *
+ * @param condition The dependency condition: option name, condition object,
+ *                  compound shape, or full {@link DependsOnConfig}.
+ * @param flagSpec The option flag name(s).
+ * @param valueParser Optional value parser for the option.
+ * @param options Additional option metadata.
+ * @returns A parser equivalent to
+ *          `option(flagSpec, valueParser, { dependsOn: { ..., required: true } })`.
+ * @since 0.11.0
+ */
+export function requiredWhen<M extends Mode, T>(
+  condition: DependsOnCondition | DependsOnConfig,
+  ...flagSpec: readonly [...readonly OptionName[], ValueParser<M, T>]
+): Parser<M, T, ValueParserResult<T> | undefined>;
+
+export function requiredWhen(
+  condition: DependsOnCondition | DependsOnConfig,
+  ...flagSpec: readonly OptionName[]
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+
+export function requiredWhen<M extends Mode, T>(
+  condition: DependsOnCondition | DependsOnConfig,
+  ...args: readonly [...readonly OptionName[], ValueParser<M, T>, OptionOptions?]
+    | readonly [...readonly OptionName[], OptionOptions?]
+    | readonly OptionName[]
+): Parser<M, T | boolean, ValueParserResult<T | boolean> | undefined> {
+  return conditionalOption(
+    normalizeDependsOnConfig(condition, true),
+    ...(args as readonly OptionName[]),
+  ) as Parser<M, T | boolean, ValueParserResult<T | boolean> | undefined>;
+}
+
+/**
+ * Creates an option that is only visible when a dependency condition is met.
+ * The option remains parseable even when hidden.
+ *
+ * @param condition The dependency condition.
+ * @param flagSpec The option flag name(s).
+ * @param valueParser Optional value parser for the option.
+ * @param options Additional option metadata.
+ * @returns A parser equivalent to
+ *          `option(flagSpec, valueParser, { dependsOn: { ..., required: false } })`.
+ * @since 0.11.0
+ */
+export function optionalWhen<M extends Mode, T>(
+  condition: DependsOnCondition | DependsOnConfig,
+  ...flagSpec: readonly [...readonly OptionName[], ValueParser<M, T>]
+): Parser<M, T, ValueParserResult<T> | undefined>;
+
+export function optionalWhen(
+  condition: DependsOnCondition | DependsOnConfig,
+  ...flagSpec: readonly OptionName[]
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+
+export function optionalWhen<M extends Mode, T>(
+  condition: DependsOnCondition | DependsOnConfig,
+  ...args: readonly [...readonly OptionName[], ValueParser<M, T>, OptionOptions?]
+    | readonly [...readonly OptionName[], OptionOptions?]
+    | readonly OptionName[]
+): Parser<M, T | boolean, ValueParserResult<T | boolean> | undefined> {
+  return conditionalOption(
+    normalizeDependsOnConfig(condition, false),
+    ...(args as readonly OptionName[]),
+  ) as Parser<M, T | boolean, ValueParserResult<T | boolean> | undefined>;
+}
+
+/**
+ * Creates an option with conditional dependency configuration.
+ *
+ * @param condition The full {@link DependsOnConfig} or a condition shape.
+ * @param flagSpec The option flag name(s), value parser, and optional metadata.
+ * @returns An option parser with the given dependency configuration.
+ * @since 0.11.0
+ */
+export function conditionalOption<M extends Mode, T>(
+  condition: DependsOnCondition | DependsOnConfig,
+  ...flagSpec: readonly [...readonly OptionName[], ValueParser<M, T>]
+): Parser<M, T, ValueParserResult<T> | undefined>;
+
+export function conditionalOption(
+  condition: DependsOnCondition | DependsOnConfig,
+  ...flagSpec: readonly OptionName[]
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+
+export function conditionalOption<M extends Mode, T>(
+  condition: DependsOnCondition | DependsOnConfig,
+  ...args:
+    | readonly [...readonly OptionName[], ValueParser<M, T>, OptionOptions?]
+    | readonly [...readonly OptionName[], OptionOptions?]
+    | readonly OptionName[]
+): Parser<M, T | boolean, ValueParserResult<T | boolean> | undefined> {
+  const dependsOn = normalizeDependsOnConfig(condition);
+  const lastArg = args.at(-1);
+  const secondLastArg = args.at(-2);
+
+  if (isValueParser(lastArg)) {
+    const optionNames = args.slice(0, -1) as OptionName[];
+    return option(...optionNames, lastArg, { dependsOn }) as Parser<
+      M,
+      T,
+      ValueParserResult<T> | undefined
+    >;
+  }
+  if (typeof lastArg === "object" && lastArg != null) {
+    const optionNames = isValueParser(secondLastArg)
+      ? args.slice(0, -2) as OptionName[]
+      : args.slice(0, -1) as OptionName[];
+    const extraOptions = lastArg as OptionOptions;
+    if (isValueParser(secondLastArg)) {
+      return option(...optionNames, secondLastArg, {
+        ...extraOptions,
+        dependsOn,
+      }) as Parser<M, T, ValueParserResult<T> | undefined>;
+    }
+    return option(...optionNames, { ...extraOptions, dependsOn }) as Parser<
+      M,
+      boolean,
+      ValueParserResult<boolean> | undefined
+    >;
+  }
+  return option(...(args as OptionName[]), { dependsOn }) as Parser<
+    M,
+    boolean,
+    ValueParserResult<boolean> | undefined
+  >;
 }
