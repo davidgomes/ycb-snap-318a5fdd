@@ -69,6 +69,14 @@ def _extract_state_actions(state: "State", getter) -> List[DiagramAction]:
                     DiagramAction(type=ActionType.INTERNAL, body=f"{transition.event} / {on_text}")
                 )
 
+    if getattr(state, "data", None):
+        actions.append(
+            DiagramAction(
+                type=ActionType.ENTRY,
+                body="data: " + ", ".join(state.data),
+            )
+        )
+
     return actions
 
 
