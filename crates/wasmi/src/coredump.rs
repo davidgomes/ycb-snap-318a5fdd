@@ -421,4 +421,61 @@ mod tests {
             .unwrap_err();
         assert!(trap.coredump().is_none());
     }
+    #[test]
+    fn reentrant_wasm_trap_keeps_outer_frames() {
+        let mut config = Config::default();
+        config.generate_coredump(true);
+        let engine = Engine::new(&config);
+        let module = Module::new(
+            &engine,
+            r#"(module
+                (import "env" "reenter" (func $reenter))
+                (func (export "inner") unreachable)
+                (func (export "outer") call $reenter)
+            )"#,
+        )
+        .unwrap();
+        let mut store = Store::new(&engine, ());
+        let mut linker = Linker::new(&engine);
+        let _ = linker.func_wrap("env", "reenter", |mut caller: Caller<'_, ()>| {
+            let inner = caller.get_export("inner").unwrap().into_func().unwrap();
+            inner.call(&mut caller, &[], &mut [])
+        });
+        let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
+        let trap = instance
+            .get_func(&store, "outer")
+            .unwrap()
+            .call(&mut store, &[], &mut [])
+            .unwrap_err();
+        let dump = trap.coredump().expect("inner Wasm trap should have a coredump");
+        let stack = Parser::new(0)
+            .parse_all(dump)
+            .filter_map(|payload| match payload.unwrap() {
+                Payload::CustomSection(section) if section.name() == "corestack" => {
+                    Some(section.data())
+                }
+                _ => None,
+            })
+            .next()
+            .unwrap();
+        let mut offset = 0;
+        assert_eq!(read_u32(stack, &mut offset), 0);
+        let name_len = read_u32(stack, &mut offset) as usize;
+        offset += name_len;
+        assert_eq!(read_u32(stack, &mut offset), 2);
+    }
+
+    fn read_u32(bytes: &[u8], offset: &mut usize) -> u32 {
+        let mut value = 0;
+        let mut shift = 0;
+        loop {
+            let byte = bytes[*offset];
+            *offset += 1;
+            value |= u32::from(byte & 0x7F) << shift;
+            if byte & 0x80 == 0 {
+                return value;
+            }
+            shift += 7;
+        }
+    }
 }
