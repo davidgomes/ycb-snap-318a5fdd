@@ -12,11 +12,7 @@ const calculateLayout = (rootNode: DOMElement, width?: number): void => {
 	}
 
 	prepareGridLayout(rootNode);
-	rootNode.yogaNode.calculateLayout(
-		undefined,
-		undefined,
-		Yoga.DIRECTION_LTR,
-	);
+	rootNode.yogaNode.calculateLayout(undefined, undefined, Yoga.DIRECTION_LTR);
 	finalizeGridLayout(rootNode);
 };
 

@@ -64,12 +64,7 @@ test('display grid - gap applies to tracks', t => {
 
 test('display grid - column and row gap', t => {
 	const output = renderToString(
-		<Box
-			display="grid"
-			gridTemplateColumns="1 1"
-			columnGap={2}
-			rowGap={1}
-		>
+		<Box display="grid" gridTemplateColumns="1 1" columnGap={2} rowGap={1}>
 			<Text>A</Text>
 			<Text>B</Text>
 			<Text>C</Text>
@@ -77,6 +72,46 @@ test('display grid - column and row gap', t => {
 	);
 
 	t.is(output, 'A  B\n\nC');
+});
+
+test('display grid - explicit row placement', t => {
+	const output = renderToString(
+		<Box display="grid" gridTemplateColumns="1fr 1fr" width={4}>
+			<Box gridColumn={1} gridRow={2}>
+				<Text>C</Text>
+			</Box>
+			<Text>A</Text>
+			<Text>B</Text>
+		</Box>,
+	);
+
+	t.is(output, 'A B\nC');
+});
+
+test('display grid - mixed fixed and fr columns', t => {
+	const output = renderToString(
+		<Box display="grid" gridTemplateColumns="2 1fr 1" width={7}>
+			<Text>AB</Text>
+			<Text>C</Text>
+			<Text>D</Text>
+		</Box>,
+	);
+
+	t.is(output, 'ABC   D');
+});
+
+test('display grid - skips display none children', t => {
+	const output = renderToString(
+		<Box display="grid" gridTemplateColumns="1fr 1fr" width={4}>
+			<Box display="none">
+				<Text>X</Text>
+			</Box>
+			<Text>A</Text>
+			<Text>B</Text>
+		</Box>,
+	);
+
+	t.is(output, 'A B');
 });
 
 test('display grid - explicit placement', t => {

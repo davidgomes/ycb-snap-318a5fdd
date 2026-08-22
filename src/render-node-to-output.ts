@@ -126,7 +126,8 @@ const renderNodeToOutput = (
 		}
 
 		// Left and top positions in Yoga are relative to their parent node
-		const x = offsetX + (node.gridItemLayout?.left ?? yogaNode.getComputedLeft());
+		const x =
+			offsetX + (node.gridItemLayout?.left ?? yogaNode.getComputedLeft());
 		const y = offsetY + (node.gridItemLayout?.top ?? yogaNode.getComputedTop());
 
 		// Transformers are functions that transform final text output of each component

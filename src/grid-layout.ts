@@ -147,7 +147,7 @@ const hasExplicitDimension = (
 ): boolean => property in style && style[property] !== undefined;
 
 const resetPositionType = (node: DOMElement): void => {
-	const yogaNode = node.yogaNode;
+	const {yogaNode} = node;
 	if (!yogaNode) {
 		return;
 	}
@@ -167,7 +167,7 @@ const resetPositionType = (node: DOMElement): void => {
 };
 
 const resetItemDimensions = (node: DOMElement): void => {
-	const yogaNode = node.yogaNode;
+	const {yogaNode} = node;
 	if (!yogaNode) {
 		return;
 	}
@@ -194,7 +194,7 @@ const resetItemDimensions = (node: DOMElement): void => {
 };
 
 const resetContainerDimensions = (node: DOMElement): void => {
-	const yogaNode = node.yogaNode;
+	const {yogaNode} = node;
 	if (!yogaNode) {
 		return;
 	}
@@ -233,7 +233,7 @@ const resetContainerDimensions = (node: DOMElement): void => {
 };
 
 const measureNode = (node: DOMElement): {width: number; height: number} => {
-	const yogaNode = node.yogaNode;
+	const {yogaNode} = node;
 	if (!yogaNode) {
 		return {width: 0, height: 0};
 	}
@@ -250,7 +250,7 @@ const boxEdges = (
 	node: DOMElement,
 	axis: 'horizontal' | 'vertical',
 ): number => {
-	const yogaNode = node.yogaNode;
+	const {yogaNode} = node;
 	if (!yogaNode) {
 		return 0;
 	}
@@ -300,29 +300,24 @@ const styleBoxEdges = (
 	);
 };
 
-const occupy = (
-	occupied: Set<string>,
-	rowStart: number,
-	rowEnd: number,
-	columnStart: number,
-	columnEnd: number,
-): void => {
-	for (let row = rowStart; row < rowEnd; row++) {
-		for (let column = columnStart; column < columnEnd; column++) {
+type CellSpan = {
+	rowStart: number;
+	rowEnd: number;
+	columnStart: number;
+	columnEnd: number;
+};
+
+const occupy = (occupied: Set<string>, span: CellSpan): void => {
+	for (let row = span.rowStart; row < span.rowEnd; row++) {
+		for (let column = span.columnStart; column < span.columnEnd; column++) {
 			occupied.add(`${row},${column}`);
 		}
 	}
 };
 
-const isOccupied = (
-	occupied: Set<string>,
-	rowStart: number,
-	rowEnd: number,
-	columnStart: number,
-	columnEnd: number,
-): boolean => {
-	for (let row = rowStart; row < rowEnd; row++) {
-		for (let column = columnStart; column < columnEnd; column++) {
+const isOccupied = (occupied: Set<string>, span: CellSpan): boolean => {
+	for (let row = span.rowStart; row < span.rowEnd; row++) {
+		for (let column = span.columnStart; column < span.columnEnd; column++) {
 			if (occupied.has(`${row},${column}`)) {
 				return true;
 			}
@@ -332,28 +327,35 @@ const isOccupied = (
 	return false;
 };
 
-const findOpenCell = (
-	occupied: Set<string>,
-	columnCount: number,
-	columnSpan: number,
-	rowSpan: number,
-	startRow: number,
-	startColumn: number,
-	fixedColumn: boolean,
-): {rowStart: number; columnStart: number} => {
+const findOpenCell = ({
+	occupied,
+	columnCount,
+	columnSpan,
+	rowSpan,
+	startRow,
+	startColumn,
+	fixedColumn,
+}: {
+	occupied: Set<string>;
+	columnCount: number;
+	columnSpan: number;
+	rowSpan: number;
+	startRow: number;
+	startColumn: number;
+	fixedColumn: boolean;
+}): {rowStart: number; columnStart: number} => {
 	let rowStart = startRow;
 	let columnStart = startColumn;
 
 	while (true) {
 		if (fixedColumn) {
 			if (
-				!isOccupied(
-					occupied,
+				!isOccupied(occupied, {
 					rowStart,
-					rowStart + rowSpan,
+					rowEnd: rowStart + rowSpan,
 					columnStart,
-					columnStart + columnSpan,
-				)
+					columnEnd: columnStart + columnSpan,
+				})
 			) {
 				return {rowStart, columnStart};
 			}
@@ -369,13 +371,12 @@ const findOpenCell = (
 		}
 
 		if (
-			!isOccupied(
-				occupied,
+			!isOccupied(occupied, {
 				rowStart,
-				rowStart + rowSpan,
+				rowEnd: rowStart + rowSpan,
 				columnStart,
-				columnStart + columnSpan,
-			)
+				columnEnd: columnStart + columnSpan,
+			})
 		) {
 			return {rowStart, columnStart};
 		}
@@ -394,8 +395,7 @@ const placeItems = (
 	rowCount: number;
 } => {
 	const occupied = new Set<string>();
-	const items: Array<Omit<GridItem, 'intrinsicWidth' | 'intrinsicHeight'>> =
-		[];
+	const items: Array<Omit<GridItem, 'intrinsicWidth' | 'intrinsicHeight'>> = [];
 
 	let columnCount = Math.max(1, explicitColumnCount);
 	let rowCount = explicitRowCount;
@@ -418,13 +418,12 @@ const placeItems = (
 
 	for (const item of resolved) {
 		if (item.column && item.row) {
-			occupy(
-				occupied,
-				item.row.start - 1,
-				item.row.end - 1,
-				item.column.start - 1,
-				item.column.end - 1,
-			);
+			occupy(occupied, {
+				rowStart: item.row.start - 1,
+				rowEnd: item.row.end - 1,
+				columnStart: item.column.start - 1,
+				columnEnd: item.column.end - 1,
+			});
 			items.push({node: item.node, column: item.column, row: item.row});
 		}
 	}
@@ -439,48 +438,43 @@ const placeItems = (
 
 		if (item.row && !item.column) {
 			const rowStart = item.row.start - 1;
-			const found = findOpenCell(
+			const found = findOpenCell({
 				occupied,
 				columnCount,
 				columnSpan,
 				rowSpan,
-				rowStart,
-				0,
-				false,
-			);
-			const columnStart =
-				found.rowStart === rowStart ? found.columnStart : 0;
-			const nextColumnCount = Math.max(
-				columnCount,
-				columnStart + columnSpan,
-			);
+				startRow: rowStart,
+				startColumn: 0,
+				fixedColumn: false,
+			});
+			const columnStart = found.rowStart === rowStart ? found.columnStart : 0;
+			const nextColumnCount = Math.max(columnCount, columnStart + columnSpan);
 			columnCount = nextColumnCount;
 			const column = {
 				start: columnStart + 1,
 				end: columnStart + 1 + columnSpan,
 			};
-			occupy(
-				occupied,
+			occupy(occupied, {
 				rowStart,
-				rowStart + rowSpan,
-				column.start - 1,
-				column.end - 1,
-			);
+				rowEnd: rowStart + rowSpan,
+				columnStart: column.start - 1,
+				columnEnd: column.end - 1,
+			});
 			items.push({node: item.node, column, row: item.row});
 			continue;
 		}
 
 		const startColumn = item.column ? item.column.start - 1 : 0;
 		const startRow = item.row ? item.row.start - 1 : 0;
-		const found = findOpenCell(
+		const found = findOpenCell({
 			occupied,
 			columnCount,
 			columnSpan,
 			rowSpan,
 			startRow,
 			startColumn,
-			Boolean(item.column),
-		);
+			fixedColumn: Boolean(item.column),
+		});
 		const column = item.column ?? {
 			start: found.columnStart + 1,
 			end: found.columnStart + 1 + columnSpan,
@@ -490,13 +484,12 @@ const placeItems = (
 			end: found.rowStart + 1 + rowSpan,
 		};
 
-		occupy(
-			occupied,
-			row.start - 1,
-			row.end - 1,
-			column.start - 1,
-			column.end - 1,
-		);
+		occupy(occupied, {
+			rowStart: row.start - 1,
+			rowEnd: row.end - 1,
+			columnStart: column.start - 1,
+			columnEnd: column.end - 1,
+		});
 		rowCount = Math.max(rowCount, row.end - 1);
 		columnCount = Math.max(columnCount, column.end - 1);
 		items.push({node: item.node, column, row});
@@ -561,13 +554,19 @@ const trackFixedMax = (track: Track): number | undefined => {
 	return undefined;
 };
 
-const sizeTracks = (
-	tracks: Track[],
-	items: GridItem[],
-	axis: 'column' | 'row',
-	available: number | undefined,
-	gap: number,
-): number[] => {
+const sizeTracks = ({
+	tracks,
+	items,
+	axis,
+	available,
+	gap,
+}: {
+	tracks: Track[];
+	items: GridItem[];
+	axis: 'column' | 'row';
+	available?: number;
+	gap: number;
+}): number[] => {
 	const sizes = tracks.map(track => {
 		if (track.type === 'fixed') {
 			return track.value;
@@ -667,9 +666,10 @@ const sizeTracks = (
 		const extras = distributeFr(remaining, weights);
 		for (const [index, extra] of extras.entries()) {
 			sizes[index] = (sizes[index] ?? 0) + extra;
-			const max = trackFixedMax(tracks[index]!);
+			const track = tracks[index];
+			const max = track ? trackFixedMax(track) : undefined;
 			if (max !== undefined) {
-				sizes[index] = Math.min(sizes[index]!, max);
+				sizes[index] = Math.min(sizes[index] ?? 0, max);
 			}
 		}
 	}
@@ -699,7 +699,7 @@ const collectGridItems = (node: DOMElement): DOMElement[] =>
 	node.childNodes.filter(child => isVisibleGridItem(child));
 
 const prepareGridContainer = (node: DOMElement): void => {
-	const yogaNode = node.yogaNode;
+	const {yogaNode} = node;
 	if (!yogaNode || node.style.display !== 'grid') {
 		return;
 	}
@@ -713,11 +713,11 @@ const prepareGridContainer = (node: DOMElement): void => {
 
 	const columnTracks = parseTrackList(node.style.gridTemplateColumns);
 	const rowTracks = parseTrackList(node.style.gridTemplateRows);
-	const {items: placed, columnCount, rowCount} = placeItems(
-		children,
-		columnTracks.length,
-		rowTracks.length,
-	);
+	const {
+		items: placed,
+		columnCount,
+		rowCount,
+	} = placeItems(children, columnTracks.length, rowTracks.length);
 
 	const columns = expandTracks(columnTracks, columnCount);
 	const rows = expandTracks(rowTracks, rowCount);
@@ -736,14 +736,18 @@ const prepareGridContainer = (node: DOMElement): void => {
 		child.yogaNode?.setPositionType(Yoga.POSITION_TYPE_ABSOLUTE);
 	}
 
-	const columnSizes = sizeTracks(
-		columns,
+	const columnSizes = sizeTracks({
+		tracks: columns,
 		items,
-		'column',
-		undefined,
-		gaps.column,
-	);
-	const rowSizes = sizeTracks(rows, items, 'row', undefined, gaps.row);
+		axis: 'column',
+		gap: gaps.column,
+	});
+	const rowSizes = sizeTracks({
+		tracks: rows,
+		items,
+		axis: 'row',
+		gap: gaps.row,
+	});
 
 	const intrinsicWidth =
 		sum(columnSizes) +
@@ -755,7 +759,7 @@ const prepareGridContainer = (node: DOMElement): void => {
 		styleBoxEdges(node.style, 'vertical');
 
 	if (!hasExplicitDimension(node.style, 'width')) {
-		const minWidth = node.style.minWidth;
+		const {minWidth} = node.style;
 		yogaNode.setMinWidth(
 			typeof minWidth === 'number'
 				? Math.max(minWidth, intrinsicWidth)
@@ -764,7 +768,7 @@ const prepareGridContainer = (node: DOMElement): void => {
 	}
 
 	if (!hasExplicitDimension(node.style, 'height')) {
-		const minHeight = node.style.minHeight;
+		const {minHeight} = node.style;
 		yogaNode.setMinHeight(
 			typeof minHeight === 'number'
 				? Math.max(minHeight, intrinsicHeight)
@@ -778,7 +782,7 @@ const setItemSize = (
 	cellWidth: number,
 	cellHeight: number,
 ): void => {
-	const yogaNode = node.yogaNode;
+	const {yogaNode} = node;
 	if (!yogaNode) {
 		return;
 	}
@@ -809,7 +813,7 @@ const setItemSize = (
 };
 
 const finalizeGridContainer = (node: DOMElement): void => {
-	const yogaNode = node.yogaNode;
+	const {yogaNode} = node;
 	if (!yogaNode || node.style.display !== 'grid') {
 		return;
 	}
@@ -817,11 +821,11 @@ const finalizeGridContainer = (node: DOMElement): void => {
 	const children = collectGridItems(node);
 	const columnTracks = parseTrackList(node.style.gridTemplateColumns);
 	const rowTracks = parseTrackList(node.style.gridTemplateRows);
-	const {items: placed, columnCount, rowCount} = placeItems(
-		children,
-		columnTracks.length,
-		rowTracks.length,
-	);
+	const {
+		items: placed,
+		columnCount,
+		rowCount,
+	} = placeItems(children, columnTracks.length, rowTracks.length);
 
 	const columns = expandTracks(columnTracks, columnCount);
 	const rows = expandTracks(rowTracks, rowCount);
@@ -845,14 +849,20 @@ const finalizeGridContainer = (node: DOMElement): void => {
 		Math.round(yogaNode.getComputedHeight() - boxEdges(node, 'vertical')),
 	);
 
-	const columnSizes = sizeTracks(
-		columns,
+	const columnSizes = sizeTracks({
+		tracks: columns,
 		items,
-		'column',
-		contentWidth,
-		gaps.column,
-	);
-	const rowSizes = sizeTracks(rows, items, 'row', contentHeight, gaps.row);
+		axis: 'column',
+		available: contentWidth,
+		gap: gaps.column,
+	});
+	const rowSizes = sizeTracks({
+		tracks: rows,
+		items,
+		axis: 'row',
+		available: contentHeight,
+		gap: gaps.row,
+	});
 	const columnStarts = trackOffsets(columnSizes, gaps.column);
 	const rowStarts = trackOffsets(rowSizes, gaps.row);
 
@@ -876,7 +886,10 @@ const finalizeGridContainer = (node: DOMElement): void => {
 
 		setItemSize(
 			item.node,
-			Math.max(0, (columnStarts[columnEnd] ?? 0) - (columnStarts[columnStart] ?? 0)),
+			Math.max(
+				0,
+				(columnStarts[columnEnd] ?? 0) - (columnStarts[columnStart] ?? 0),
+			),
 			Math.max(0, (rowStarts[rowEnd] ?? 0) - (rowStarts[rowStart] ?? 0)),
 		);
 	}
@@ -892,9 +905,11 @@ export const prepareGridLayout = (node: DOMElement): void => {
 	}
 
 	for (const child of node.childNodes) {
-		if (child.yogaNode || child.nodeName !== '#text') {
-			prepareGridLayout(child as DOMElement);
+		if (child.nodeName === '#text' && !child.yogaNode) {
+			continue;
 		}
+
+		prepareGridLayout(child as DOMElement);
 	}
 
 	if (node.style.display === 'grid') {
@@ -908,8 +923,10 @@ export const finalizeGridLayout = (node: DOMElement): void => {
 	}
 
 	for (const child of node.childNodes) {
-		if (child.yogaNode || child.nodeName !== '#text') {
-			finalizeGridLayout(child as DOMElement);
+		if (child.nodeName === '#text' && !child.yogaNode) {
+			continue;
 		}
+
+		finalizeGridLayout(child as DOMElement);
 	}
 };
