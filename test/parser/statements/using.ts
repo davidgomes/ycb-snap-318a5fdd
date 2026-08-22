@@ -112,6 +112,7 @@ describe('Statements - using declarations', () => {
     assert.throws(() => parseSource('await using resource = acquire();', next), /only allowed inside async/);
     assert.throws(() => parseSource('{ using resource; }', next), /must have an initializer/);
     assert.throws(() => parseSource('{ using { resource } = acquire(); }', next), /cannot have destructuring/);
+    assert.throws(() => parseSource('for (using { resource } of resources) {}', next), /cannot have destructuring/);
     assert.throws(() => parseSource('for (using resource in resources) {}', next), /not allowed in for-in/);
     assert.throws(
       () => parseSource('switch (value) { case 0: using resource = acquire(); }', next),

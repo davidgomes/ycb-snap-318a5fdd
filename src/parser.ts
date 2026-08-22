@@ -2187,6 +2187,10 @@ function parseForStatement(
     } else if (token === Token.UsingKeyword) {
       const usingIdentifier = parseIdentifier(parser, context);
 
+      if ((parser.flags & Flags.NewLine) === 0 && (parser.getToken() & Token.IsPatternStart) === Token.IsPatternStart) {
+        parser.report(Errors.UsingDeclarationDestructuring);
+      }
+
       if ((parser.flags & Flags.NewLine) !== 0 || !isResourceBindingStart(parser.getToken())) {
         isVarDecl = false;
         parser.assignable = AssignmentKind.Assignable;
