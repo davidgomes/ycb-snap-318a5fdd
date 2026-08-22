@@ -72,9 +72,13 @@ class AsyncEngine(BaseEngine):
     # --- Callback dispatch overrides (async versions of BaseEngine methods) ---
 
     async def _get_args_kwargs(
-        self, transition: "Transition", trigger_data: TriggerData, target: "State | None" = None
+        self,
+        transition: "Transition",
+        trigger_data: TriggerData,
+        target: "State | None" = None,
+        data_scope: "State | None" = None,
     ):
-        cache_key = (id(transition), id(trigger_data), id(target))
+        cache_key = (id(transition), id(trigger_data), id(target), id(data_scope))
 
         if cache_key in self._cache:
             return self._cache[cache_key]
@@ -85,6 +89,7 @@ class AsyncEngine(BaseEngine):
             event_data.target = target
 
         args, kwargs = event_data.args, event_data.extended_kwargs
+        kwargs["state_data"] = self.sm.get_scoped_state_data(data_scope or target)
 
         result = await self.sm._callbacks.async_call(self.sm.prepare.key, *args, **kwargs)
         for new_kwargs in result:
@@ -174,7 +179,9 @@ class AsyncEngine(BaseEngine):
             if info.state is not None:  # pragma: no branch
                 self._invoke_manager.cancel_for_state(info.state)
 
-            args, kwargs = await self._get_args_kwargs(info.transition, trigger_data)
+            args, kwargs = await self._get_args_kwargs(
+                info.transition, trigger_data, data_scope=info.state
+            )
 
             if info.state is not None:  # pragma: no branch
                 self._debug("%s Exiting state: %s", self._log_id, info.state)
@@ -183,6 +190,8 @@ class AsyncEngine(BaseEngine):
                 )
 
             self._remove_state_from_configuration(info.state)
+            if info.state is not None:  # pragma: no branch
+                self.sm._remove_state_data_for_exit(info.state)
 
         return result
 
@@ -230,10 +239,13 @@ class AsyncEngine(BaseEngine):
                 transition,
                 trigger_data,
                 target=target,
+                data_scope=target,
             )
 
             self._debug("%s Entering state: %s", self._log_id, target)
+            self.sm._init_state_data_for_entry(target)
             self._add_state_to_configuration(target)
+            kwargs["state_data"] = self.sm.get_scoped_state_data(target)
 
             on_entry_result = await self.sm._callbacks.async_call(
                 target.enter.key, *args, on_error=on_error, **kwargs
@@ -376,6 +388,7 @@ class AsyncEngine(BaseEngine):
                 # Phase 1: eventless transitions and internal events
                 while not macrostep_done:
                     self._microstep_count = 0
+                    self.sm._clear_data_changes()
                     self._debug(
                         "%s Macrostep %d: eventless/internal queue",
                         self._log_id,
@@ -425,6 +438,7 @@ class AsyncEngine(BaseEngine):
 
                     self._macrostep_count += 1
                     self._microstep_count = 0
+                    self.sm._clear_data_changes()
                     self._debug(
                         "%s macrostep %d: event=%s",
                         self._log_id,

@@ -89,6 +89,7 @@ class SyncEngine(BaseEngine):
                 # handles eventless transitions and internal events
                 while not macrostep_done:
                     self._microstep_count = 0
+                    self.sm._clear_data_changes()
                     self._debug(
                         "%s Macrostep %d: eventless/internal queue",
                         self._log_id,
@@ -142,6 +143,7 @@ class SyncEngine(BaseEngine):
 
                     self._macrostep_count += 1
                     self._microstep_count = 0
+                    self.sm._clear_data_changes()
                     self._debug(
                         "%s macrostep %d: event=%s",
                         self._log_id,

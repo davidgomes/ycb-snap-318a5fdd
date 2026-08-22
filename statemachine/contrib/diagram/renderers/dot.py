@@ -259,6 +259,11 @@ class DotRenderer:
             penwidth="0",
         )
 
+    def _format_data_vars(self, state: DiagramState) -> str:
+        if not state.data_vars:
+            return ""
+        return ", ".join(_escape_html(name) for name in state.data_vars)
+
     def _create_atomic_node(self, state: DiagramState) -> pydot.Node:
         """Create a node for an atomic state.
 
@@ -268,10 +273,11 @@ class DotRenderer:
         shape to render UML-style compartments (name + separator + actions).
         """
         actions = [a for a in state.actions if a.type != ActionType.INTERNAL or a.body]
+        data_vars = self._format_data_vars(state)
         fillcolor = self.config.state_active_fillcolor if state.is_active else "white"
         penwidth = self.config.state_active_penwidth if state.is_active else 2
 
-        if not actions:
+        if not actions and not data_vars:
             # Simple state: native rounded rectangle
             node = pydot.Node(
                 state.id,
@@ -284,11 +290,22 @@ class DotRenderer:
                 penwidth=penwidth,
                 peripheries=2 if state.type == StateType.FINAL else 1,
             )
+        elif not actions and data_vars:
+            label = f"{_escape_html(state.name)}\\n[{data_vars}]"
+            node = pydot.Node(
+                state.id,
+                label=label,
+                shape="rectangle",
+                style="rounded, filled",
+                fontname=self.config.font_name,
+                fontsize=self.config.state_font_size,
+                fillcolor=fillcolor,
+                penwidth=penwidth,
+                peripheries=2 if state.type == StateType.FINAL else 1,
+            )
         else:
-            # State with actions: native shape + HTML TABLE label (border=0).
-            # The native shape handles edge clipping; the TABLE provides
-            # UML compartment layout with <hr/> separator.
-            label = self._build_html_table_label(state, actions)
+            # State with actions and/or data vars: native shape + HTML TABLE label
+            label = self._build_html_table_label(state, actions, data_vars)
             node = pydot.Node(
                 state.id,
                 label=f"<{label}>",
@@ -308,6 +325,7 @@ class DotRenderer:
         self,
         state: DiagramState,
         actions: List[DiagramAction],
+        data_vars: str = "",
     ) -> str:
         """Build an HTML TABLE label with UML compartments (name | actions).
 
@@ -318,15 +336,35 @@ class DotRenderer:
         font_size = self.config.state_font_size
         action_font_size = self.config.transition_font_size
 
-        action_lines = "<br/>".join(
-            f'<font point-size="{action_font_size}">{_escape_html(self._format_action(a))}</font>'
-            for a in actions
-        )
+        rows = [f'<font point-size="{font_size}">{name}</font>']
+        if data_vars:
+            rows.append(
+                f'<font point-size="{action_font_size}">[{data_vars}]</font>'
+            )
+        body_lines: List[str] = []
+        if actions:
+            body_lines.append(
+                "<br/>".join(
+                    (
+                        f'<font point-size="{action_font_size}">'
+                        f"{_escape_html(self._format_action(a))}</font>"
+                    )
+                    for a in actions
+                )
+            )
+        if not body_lines:
+            return (
+                f'<table border="0" cellborder="0" cellspacing="0" cellpadding="0">'
+                f'<tr><td cellpadding="4">{"<br/>".join(rows)}</td></tr>'
+                f"</table>"
+            )
+
+        action_lines = body_lines[0]
 
         return (
             f'<table border="0" cellborder="0" cellspacing="0" cellpadding="0">'
             f'<tr><td cellpadding="4">'
-            f'<font point-size="{font_size}">{name}</font>'
+            f"{'<br/>'.join(rows)}"
             f"</td></tr>"
             f"<hr/>"
             f'<tr><td align="left" cellpadding="6">'
@@ -418,10 +456,13 @@ class DotRenderer:
             return f"<b>{name}</b> &#9783;"
 
         actions = [a for a in state.actions if a.type != ActionType.INTERNAL or a.body]
-        if not actions:
+        data_vars = self._format_data_vars(state)
+        if not actions and not data_vars:
             return f"<b>{name}</b>"
 
         rows = [f"<b>{name}</b>"]
+        if data_vars:
+            rows.append(f"[{data_vars}]")
         for action in actions:
             action_text = _escape_html(self._format_action(action))
             rows.append(

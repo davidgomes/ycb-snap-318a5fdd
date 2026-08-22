@@ -1,3 +1,4 @@
+import copy
 import warnings
 from inspect import isawaitable
 from typing import TYPE_CHECKING
@@ -33,6 +34,9 @@ from .i18n import _
 from .model import Model
 from .signature import SignatureAdapter
 from .state import InstanceState
+from .state_data import DataChangeInfo
+from .state_data import init_state_data
+from .state_data import validate_set_value
 from .utils import run_async_from_sync
 
 if TYPE_CHECKING:
@@ -148,6 +152,10 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         self.history_values: Dict[
             str, List[State]
         ] = {}  # Mapping of compound states to last active state(s).
+        self.history_data_values: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._state_data: Dict[str, Dict[str, Any]] = {}
+        self._pending_data_restore: Dict[str, Dict[str, Any]] = {}
+        self._data_changes: List[DataChangeInfo] = []
         self.state_field = state_field
         self.start_configuration_values = (
             [start_value] if start_value is not None else list(self.start_configuration_values)
@@ -507,6 +515,97 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         completion -- it works for flat, compound, and parallel topologies.
         """
         return not self._engine.running
+
+    def _resolve_state(self, state: "State") -> "State":
+        underlying = getattr(state, "_state", state)
+        return underlying
+
+    def get_scoped_state_data(self, scope_state: "State | None" = None) -> Dict[str, Any]:
+        """Build merged state data for callback injection."""
+        if scope_state is not None:
+            scope_state = self._resolve_state(scope_state)
+            merged: Dict[str, Any] = {}
+            chain = list(reversed(list(scope_state.ancestors()))) + [scope_state]
+            for state in chain:
+                if state in self.configuration and state.id in self._state_data:
+                    merged.update(self._state_data[state.id])
+            return merged
+
+        merged = {}
+        for state in sorted(self.configuration, key=lambda s: s.document_order):
+            if state.id in self._state_data:
+                merged.update(self._state_data[state.id])
+        return merged
+
+    def get_state_data(self, state: "State") -> Dict[str, Any] | None:
+        """Return active data for *state*, or ``None`` if inactive or undeclared."""
+        state = self._resolve_state(state)
+        if state not in self.configuration or state.id not in self._state_data:
+            return None
+        return self._state_data[state.id]
+
+    @property
+    def state_data_values(self) -> Dict[str, Dict[str, Any]]:
+        """Snapshot of all active state data keyed by state identifier."""
+        return {
+            state_id: data.copy()
+            for state_id, data in self._state_data.items()
+            if any(s.id == state_id for s in self.configuration)
+        }
+
+    def set_state_data(self, state: "State", key: str, value: Any) -> None:
+        """Set a declared data key on an active state."""
+        state = self._resolve_state(state)
+        if state not in self.configuration:
+            raise InvalidDefinition(
+                _("Cannot set data on inactive state {state!r}.").format(state=state.id)
+            )
+        validate_set_value(state, key, value)
+        if state.id not in self._state_data:
+            self._state_data[state.id] = init_state_data(state)
+        old_value = self._state_data[state.id].get(key)
+        if old_value == value:
+            return
+        self._state_data[state.id][key] = value
+        self._data_changes.append(
+            DataChangeInfo(state_id=state.id, key=key, old_value=old_value, new_value=value)
+        )
+
+    def get_data_changes(self) -> List[DataChangeInfo]:
+        """Return data mutations accumulated during the current macrostep."""
+        return list(self._data_changes)
+
+    def _init_state_data_for_entry(self, state: "State") -> None:
+        if not getattr(state, "_data_schema", None):
+            return
+        if state.id in self._pending_data_restore:
+            self._state_data[state.id] = copy.deepcopy(self._pending_data_restore.pop(state.id))
+        else:
+            self._state_data[state.id] = init_state_data(state)
+
+    def _remove_state_data_for_exit(self, state: "State") -> None:
+        self._state_data.pop(state.id, None)
+
+    def _save_history_data(self, compound: "State", history: "State", is_deep: bool) -> None:
+        if is_deep:
+            states = [s for s in self.configuration if s.is_descendant(compound)]
+        else:
+            states = [s for s in self.configuration if s.parent == compound]
+        snapshot: Dict[str, Dict[str, Any]] = {}
+        for active in states:
+            if active.id in self._state_data:
+                snapshot[active.id] = copy.deepcopy(self._state_data[active.id])
+        if snapshot:
+            self.history_data_values[history.id] = snapshot
+
+    def _queue_history_data_restore(self, history_id: str) -> None:
+        snapshot = self.history_data_values.get(history_id)
+        if not snapshot:
+            return
+        self._pending_data_restore.update(copy.deepcopy(snapshot))
+
+    def _clear_data_changes(self) -> None:
+        self._data_changes.clear()
 
 
 class StateMachine(StateChart):

@@ -207,6 +207,9 @@ class SCXMLProcessor:
         if state.history:
             state_dict["history"] = self._process_history(state.history)
 
+        if state.data:
+            state_dict["data"] = dict(state.data)
+
         return state_dict
 
     def _process_invocation(self, invoke_def: InvokeDefinition) -> SCXMLInvoker:

@@ -421,10 +421,14 @@ class BaseEngine:
         return result
 
     def _get_args_kwargs(
-        self, transition: Transition, trigger_data: TriggerData, target: "State | None" = None
+        self,
+        transition: Transition,
+        trigger_data: TriggerData,
+        target: "State | None" = None,
+        data_scope: "State | None" = None,
     ):
         # Generate a unique key for the cache, the cache is invalidated once per loop
-        cache_key = (id(transition), id(trigger_data), id(target))
+        cache_key = (id(transition), id(trigger_data), id(target), id(data_scope))
 
         # Check the cache for existing results
         if cache_key in self._cache:
@@ -436,6 +440,7 @@ class BaseEngine:
             event_data.target = target
 
         args, kwargs = event_data.args, event_data.extended_kwargs
+        kwargs["state_data"] = self.sm.get_scoped_state_data(data_scope or target)
 
         result = self.sm._callbacks.call(self.sm.prepare.key, *args, **kwargs)
         for new_kwargs in result:
@@ -482,6 +487,7 @@ class BaseEngine:
                     [s.id for s in history_value],
                 )
                 self.sm.history_values[history.id] = history_value
+                self.sm._save_history_data(state, history, history.type.is_deep)
 
         return ordered_states, result
 
@@ -502,7 +508,9 @@ class BaseEngine:
             if info.state is not None:  # pragma: no branch
                 self._invoke_manager.cancel_for_state(info.state)
 
-            args, kwargs = self._get_args_kwargs(info.transition, trigger_data)
+            args, kwargs = self._get_args_kwargs(
+                info.transition, trigger_data, data_scope=info.state
+            )
 
             # Execute `onexit` handlers — same per-block error isolation as onentry.
             if info.state is not None:  # pragma: no branch
@@ -510,6 +518,8 @@ class BaseEngine:
                 self.sm._callbacks.call(info.state.exit.key, *args, on_error=on_error, **kwargs)
 
             self._remove_state_from_configuration(info.state)
+            if info.state is not None:  # pragma: no branch
+                self.sm._remove_state_data_for_exit(info.state)
 
         return result
 
@@ -669,10 +679,13 @@ class BaseEngine:
                 transition,
                 trigger_data,
                 target=target,
+                data_scope=target,
             )
 
             self._debug("%s Entering state: %s", self._log_id, target)
+            self.sm._init_state_data_for_entry(target)
             self._add_state_to_configuration(target)
+            kwargs["state_data"] = self.sm.get_scoped_state_data(target)
 
             # Execute `onentry` handlers — each handler is a separate block per
             # SCXML spec: errors in one block MUST NOT affect other blocks.
@@ -771,6 +784,7 @@ class BaseEngine:
             parent_id = state.parent and state.parent.id
             default_history_content[parent_id] = [info]
             if state.id in self.sm.history_values:
+                self.sm._queue_history_data_restore(state.id)
                 self._debug(
                     "%s History state '%s.%s' %s restoring: '%s'",
                     self._log_id,

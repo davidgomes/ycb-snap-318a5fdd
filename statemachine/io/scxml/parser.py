@@ -1,5 +1,7 @@
+import ast
 import re
 import xml.etree.ElementTree as ET
+from typing import Any
 from typing import List
 from typing import Literal
 from typing import Set
@@ -105,6 +107,24 @@ def _find_own_datamodel_elements(root: ET.Element) -> List[ET.Element]:
 
     _walk(root)
     return result
+
+
+def _parse_data_literal(data_elem: ET.Element) -> Any:
+    """Parse SCXML ``<data>`` element value as a Python literal."""
+    expr = data_elem.attrib.get("expr")
+    if expr is not None:
+        return ast.literal_eval(expr)
+    content = data_elem.text and re.sub(r"\s+", " ", data_elem.text).strip() or None
+    if content:
+        return ast.literal_eval(content)
+    return None
+
+
+def _parse_state_data(state_elem: ET.Element) -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    for data_elem in state_elem.findall("data"):
+        data[data_elem.attrib["id"]] = _parse_data_literal(data_elem)
+    return data
 
 
 def parse_datamodel(root: ET.Element) -> "DataModel | None":
@@ -228,6 +248,10 @@ def parse_state(  # noqa: C901
         donedata_elem = state_elem.find("donedata")
         if donedata_elem is not None:
             state.donedata = parse_donedata(donedata_elem)
+
+    state_data = _parse_state_data(state_elem)
+    if state_data:
+        state.data = state_data
 
     return state
 

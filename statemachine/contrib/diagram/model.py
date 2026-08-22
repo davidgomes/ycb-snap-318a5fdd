@@ -37,6 +37,7 @@ class DiagramState:
     name: str
     type: StateType
     actions: List[DiagramAction] = field(default_factory=list)
+    data_vars: List[str] = field(default_factory=list)
     children: List["DiagramState"] = field(default_factory=list)
     is_active: bool = False
     is_parallel_area: bool = False

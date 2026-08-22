@@ -13,6 +13,7 @@ from .event import _expand_event_id
 from .exceptions import InvalidDefinition
 from .i18n import _
 from .invoke import normalize_invoke_callbacks
+from .state_data import validate_data_schema
 from .transition import Transition
 from .transition_list import TransitionList
 
@@ -214,6 +215,7 @@ class State:
         exit: Any = None,
         invoke: Any = None,
         donedata: Any = None,
+        data: Any = None,
         _callbacks: Any = None,
     ):
         self.name = name
@@ -227,6 +229,7 @@ class State:
         self.is_active = False
         self._id: str = ""
         self._callbacks = _callbacks
+        self._data_schema = validate_data_schema(data) if data is not None else {}
         self.parent: "State | None" = None
         self.transitions = TransitionList()
         self._specs = CallbackSpecList()
