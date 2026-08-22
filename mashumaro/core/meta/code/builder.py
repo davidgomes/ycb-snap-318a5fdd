@@ -10,7 +10,7 @@ from contextlib import contextmanager
 
 # noinspection PyProtectedMember
 from dataclasses import _FIELDS  # type: ignore
-from dataclasses import MISSING, Field, is_dataclass
+from dataclasses import MISSING, Field, fields, is_dataclass
 from functools import lru_cache
 
 try:
@@ -96,6 +96,55 @@ __POST_DESERIALIZE__ = "__post_deserialize__"
 
 
 SIMPLE_TYPES = (int, float, bool, str, NoneType)
+
+
+def _flatten_dict(
+    value: typing.Optional[typing.Mapping[str, typing.Any]],
+    prefix: str = "",
+    rename: typing.Optional[typing.Mapping[str, str]] = None,
+) -> dict[str, typing.Any]:
+    if value is None:
+        return {}
+    result = {}
+    for key, item in value.items():
+        result[prefix + (rename.get(key, key) if rename else key)] = item
+    return result
+
+
+def _merge_flattened(
+    result: dict[str, typing.Any], *values: typing.Mapping[str, typing.Any]
+) -> dict[str, typing.Any]:
+    for value in values:
+        result.update(value)
+    return result
+
+
+def _validate_flatten_options(
+    cls: typing.Type, fname: str, ftype: typing.Any,
+    metadata: typing.Mapping[str, typing.Any],
+) -> None:
+    flatten = metadata.get("flatten", False)
+    prefix = metadata.get("flatten_prefix")
+    rename = metadata.get("flatten_rename")
+    if not flatten and prefix is None and rename is None:
+        return
+    if not is_dataclass(ftype):
+        if is_optional(ftype):
+            args = get_args(ftype)
+            ftype = next((arg for arg in args if arg is not NoneType), ftype)
+    if not is_dataclass(ftype):
+        raise TypeError(f"Field '{fname}' must be a dataclass to be flattened")
+    if prefix is not None and prefix is not True and not isinstance(prefix, str):
+        raise TypeError(f"flatten_prefix for '{fname}' must be a string or True")
+    if prefix is not None and rename is not None:
+        raise ValueError(f"flatten_prefix and flatten_rename are mutually exclusive for '{fname}'")
+    if rename is not None:
+        if not isinstance(rename, dict) or any(
+            not isinstance(k, str) or not isinstance(v, str) for k, v in rename.items()
+        ):
+            raise TypeError(f"flatten_rename for '{fname}' must map strings to strings")
+        if len(set(rename.values())) != len(rename):
+            raise ValueError(f"flatten_rename for '{fname}' contains duplicate keys")
 
 
 class InternalMethodName(str):
@@ -870,7 +919,9 @@ class CodeBuilder:
                 fnames_and_types = sorted(fnames_and_types, key=lambda x: x[0])
 
             for fname, ftype in fnames_and_types:
-                if self.metadatas.get(fname, {}).get("serialize") == "omit":
+                metadata = self.metadatas.get(fname, {})
+                _validate_flatten_options(self.cls, fname, ftype, metadata)
+                if metadata.get("serialize") == "omit":
                     continue
                 packer, alias, could_be_none = self._get_field_packer(
                     fname, ftype, config, force_value
@@ -889,6 +940,10 @@ class CodeBuilder:
                 or by_alias_feature
                 and aliases
                 or omit_default
+                or any(
+                    self.metadatas.get(fname, {}).get("flatten", False)
+                    for fname in packers
+                )
             ):
                 kwargs = "kwargs"
                 self.add_line("kwargs = {}")
@@ -896,6 +951,17 @@ class CodeBuilder:
                     if force_value:
                         self.add_line(f"value = self.{fname}")
                     alias = aliases.get(fname)
+                    metadata = self.metadatas.get(fname, {})
+                    if metadata.get("flatten"):
+                        prefix = metadata.get("flatten_prefix")
+                        if prefix is True:
+                            prefix = f"{fname}_"
+                        elif prefix is None:
+                            prefix = ""
+                        rename = metadata.get("flatten_rename")
+                        flattened = f"_flatten_dict({packer}, {prefix!r}, {rename!r})"
+                        self.add_line(f"kwargs.update({flattened})")
+                        continue
                     if omit_default:
                         # do not call default_factory if we don't need to
                         default = self.get_field_default(
@@ -965,6 +1031,17 @@ class CodeBuilder:
             else:
                 kwargs_parts = []
                 for fname, packer in packers.items():
+                    metadata = self.metadatas.get(fname, {})
+                    if metadata.get("flatten"):
+                        prefix = metadata.get("flatten_prefix")
+                        if prefix is True:
+                            prefix = f"{fname}_"
+                        elif prefix is None:
+                            prefix = ""
+                        kwargs_parts.append(
+                            ("__flatten__", f"_flatten_dict({packer}, {prefix!r}, {metadata.get('flatten_rename')!r})")
+                        )
+                        continue
                     if serialize_by_alias:
                         fname_or_alias = aliases.get(fname, fname)
                     else:
@@ -975,8 +1052,11 @@ class CodeBuilder:
                             packer if packer != "value" else f"self.{fname}",
                         )
                     )
-                kwargs = ", ".join(f"'{k}': {v}" for k, v in kwargs_parts)
-                kwargs = f"{{{kwargs}}}"
+                normal = [f"'{k}': {v}" for k, v in kwargs_parts if k != "__flatten__"]
+                flat = [v for k, v in kwargs_parts if k == "__flatten__"]
+                kwargs = f"{{{', '.join(normal)}}}"
+                if flat:
+                    kwargs = f"_merge_flattened({kwargs}, {', '.join(flat)})"
             post_serialize = self.get_declared_hook(__POST_SERIALIZE__)
             if self.encoder is not None:
                 if self.encoder_kwargs:
