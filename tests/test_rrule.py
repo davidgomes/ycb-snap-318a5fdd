@@ -4628,7 +4628,6 @@ def test_generated_aware_dtstart():
 
 @pytest.mark.rrule
 @pytest.mark.rrulestr
-@pytest.mark.xfail(reason="rrulestr loses time zone, gh issue #637")
 @freeze_time(datetime(2018, 3, 6, 5, 36, tzinfo=tz.UTC))
 def test_generated_aware_dtstart_rrulestr():
     rrule_without_dtstart = rrule(freq=HOURLY,
