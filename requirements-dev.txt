@@ -1,0 +1,37 @@
+# extra
+msgpack>=0.5.6
+pyyaml>=3.13
+tomli-w>=1.0
+tomli>=1.1.0;python_version<'3.11'
+orjson>=3.10.10
+
+# tests
+mypy>=0.812
+isort>=5.6.4
+pytest>=6.2.1
+pytest-mock>=3.5.1
+pytest-cov>=2.10.1
+pytest-xdist>=3.5.0
+coveralls>=3.0.0
+black==24.3.0
+ruff>=0.0.285
+codespell>=2.2.2
+
+# third party features
+ciso8601>=2.1.3
+pendulum>=2.1.2
+
+# benchmark
+pyperf>=2.6.1
+termtables>=0.2.3
+pytablewriter[html]>=0.58.0
+cattrs==24.1.2
+pydantic==2.12.0
+dacite==1.7.0  # see https://github.com/konradhalas/dacite/issues/236#issuecomment-1613987368
+marshmallow>=3.19.0
+dataclasses-json==0.6.7
+
+# library stubs
+types-backports
+types-dataclasses
+types-PyYAML

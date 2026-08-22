@@ -1,0 +1,88 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools>=77.0"]
+
+[project]
+name = "mashumaro"
+version = "3.19"
+license = "Apache-2.0"
+description = "Fast and well tested serialization library"
+readme = "README.md"
+authors = [{ name = "Alexander Tikhonov", email = "random.gauss@gmail.com" }]
+requires-python = ">=3.9"
+classifiers = [
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Development Status :: 5 - Production/Stable",
+]
+dependencies = [
+    "typing_extensions>=4.14.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Fatal1ty/mashumaro"
+
+[project.optional-dependencies]
+orjson = ["orjson"]
+msgpack = ["msgpack>=0.5.6"]
+yaml = ["pyyaml>=3.13"]
+toml = [
+    "tomli-w>=1.0",
+    "tomli>=1.1.0;python_version<'3.11'",
+]
+
+[tool.setuptools.packages.find]
+include = ["mashumaro*"]
+
+[tool.setuptools.package-data]
+mashumaro = [
+    "py.typed",
+    "mixins/orjson.pyi",
+]
+
+[tool.mypy]
+ignore_missing_imports = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[[tool.mypy.overrides]]
+module = [
+    'mashumaro.mixins.dict',
+    'mashumaro.mixins.msgpack',
+    'mashumaro.mixins.toml',
+    'mashumaro.codecs.*',
+]
+disable_error_code = 'empty-body'
+
+[[tool.mypy.overrides]]
+module = [
+    'mashumaro.core.meta.types.pack',
+    'mashumaro.core.meta.types.unpack',
+    'mashumaro.jsonschema.schema',
+]
+disable_error_code = 'return'
+
+[tool.isort]
+profile = 'black'
+line_length = 79
+multi_line_output = 3
+include_trailing_comma = true
+ensure_newline_before_comments = true
+
+[tool.black]
+line-length = 79
+target-version = ['py39', 'py310', 'py311', 'py312']
+
+[tool.ruff]
+line-length = 79
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "@overload", "@abstractmethod"]
+ignore_errors = true
