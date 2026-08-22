@@ -57,7 +57,8 @@ export const itemZodFormatter = <
             schemaZodFormatter(attribute, { ...options, defined: false })
           ])
         )
-      )
+      ),
+      displayedAttrEntries.map(([attributeName]) => attributeName)
     )
   ) as ItemZodFormatter<SCHEMA, OPTIONS>
 }

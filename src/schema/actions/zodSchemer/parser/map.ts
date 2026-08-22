@@ -73,7 +73,8 @@ export const mapZodParser = (schema: MapSchema, options: ZodParserOptions = {}):
                   schemaZodParser(attribute, { ...options, defined: false })
                 ])
               )
-            )
+            ),
+            displayedAttrEntries.map(([attributeName]) => attributeName)
           )
         )
       )

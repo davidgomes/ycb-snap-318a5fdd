@@ -5,13 +5,14 @@ import { isConditionallyRequired } from '~/schema/utils/requiredIf.js'
 
 export const withRequiredIf = (
   schema: ItemSchema | MapSchema,
-  zodSchema: z.ZodTypeAny
+  zodSchema: z.ZodTypeAny,
+  attributeNames?: string[]
 ): z.ZodTypeAny => {
-  const hasRequiredIf = Object.values(schema.attributes).some(
-    attribute => attribute.props.requiredIf !== undefined
+  const conditionalAttributes = Object.entries(schema.attributes).filter(
+    ([attributeName]) => attributeNames === undefined || attributeNames.includes(attributeName)
   )
 
-  if (!hasRequiredIf) {
+  if (!conditionalAttributes.some(([, attribute]) => attribute.props.requiredIf !== undefined)) {
     return zodSchema
   }
 
@@ -22,7 +23,7 @@ export const withRequiredIf = (
 
     const parentValue = value as Record<string, unknown>
 
-    for (const [attributeName, attribute] of Object.entries(schema.attributes)) {
+    for (const [attributeName, attribute] of conditionalAttributes) {
       if (parentValue[attributeName] !== undefined) {
         continue
       }

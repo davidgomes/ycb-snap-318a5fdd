@@ -1,5 +1,10 @@
 import { EntityParser } from '~/entity/actions/parse/index.js'
+import type { Condition } from '~/entity/actions/parseCondition/index.js'
 import { expressUpdate } from '~/entity/actions/update/expressUpdate/index.js'
+import {
+  getRequiredIfUpdateCondition,
+  mergeUpdateConditions
+} from '~/entity/actions/update/requiredIfCondition.js'
 import type { UpdateItemInput } from '~/entity/actions/update/index.js'
 import { parseUpdateExtension } from '~/entity/actions/update/updateItemParams/extension/index.js'
 import type { Entity } from '~/entity/index.js'
@@ -74,7 +79,13 @@ export class UpdateTransaction<
       ExpressionAttributeNames: optionsExpressionAttributeNames,
       ExpressionAttributeValues: optionsExpressionAttributeValues,
       ...awsOptions
-    } = parseOptions(this.entity, options)
+    } = parseOptions(this.entity, {
+      ...options,
+      condition: mergeUpdateConditions(
+        getRequiredIfUpdateCondition(this.entity.schema, parsedItem),
+        options.condition
+      ) as Condition<ENTITY> | undefined
+    })
 
     const ExpressionAttributeNames = {
       ...optionsExpressionAttributeNames,

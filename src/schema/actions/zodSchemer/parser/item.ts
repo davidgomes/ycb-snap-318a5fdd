@@ -55,7 +55,8 @@ export const itemZodParser = <SCHEMA extends ItemSchema, OPTIONS extends ZodPars
             schemaZodParser(attribute, { ...options, defined: false })
           ])
         )
-      )
+      ),
+      displayedAttrEntries.map(([attributeName]) => attributeName)
     )
   ) as ItemZodParser<SCHEMA, OPTIONS>
 }
