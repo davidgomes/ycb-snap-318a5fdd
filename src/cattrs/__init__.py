@@ -1,6 +1,12 @@
 from typing import Final
 
-from .converters import BaseConverter, Converter, GenConverter, UnstructureStrategy
+from .converters import (
+    BaseConverter,
+    Converter,
+    GenConverter,
+    PartialResult,
+    UnstructureStrategy,
+)
 from .errors import (
     AttributeValidationNote,
     BaseValidationError,
@@ -24,6 +30,7 @@ __all__ = [
     "GenConverter",
     "IterableValidationError",
     "IterableValidationNote",
+    "PartialResult",
     "SimpleStructureHook",
     "StructureHandlerNotFoundError",
     "UnstructureStrategy",
@@ -31,6 +38,7 @@ __all__ = [
     "get_unstructure_hook",
     "global_converter",
     "override",
+    "partial_structure",
     "register_structure_hook",
     "register_structure_hook_func",
     "register_unstructure_hook",
@@ -47,6 +55,7 @@ global_converter: Final = Converter()
 
 unstructure = global_converter.unstructure
 structure = global_converter.structure
+partial_structure = global_converter.partial_structure
 structure_attrs_fromtuple = global_converter.structure_attrs_fromtuple
 structure_attrs_fromdict = global_converter.structure_attrs_fromdict
 register_structure_hook = global_converter.register_structure_hook
