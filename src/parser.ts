@@ -255,6 +255,8 @@ function parseStatementListItem(
     // LetOrConst BindingList[?In, ?Yield]
     case Token.ConstKeyword:
       return parseLexicalDeclaration(parser, context, scope, privateScope, BindingKind.Const, Origin.None);
+    case Token.UsingKeyword:
+      return parseUsingDeclaration(parser, context, scope, privateScope, Origin.None, false);
     case Token.LetKeyword:
       return parseLetIdentOrVarDeclarationStatement(parser, context, scope, privateScope, origin);
     // ExportDeclaration
@@ -278,6 +280,33 @@ function parseStatementListItem(
     default:
       return parseStatement(parser, context, scope, privateScope, origin, labels, 1);
   }
+}
+
+function parseUsingDeclaration(
+  parser: Parser,
+  context: Context,
+  scope: Scope | undefined,
+  privateScope: PrivateScope | undefined,
+  origin: Origin,
+  awaitUsing: boolean,
+): ESTree.VariableDeclaration {
+  const start = parser.tokenStart;
+  if (!awaitUsing && context & Context.InGlobal) parser.report(Errors.UsingGlobalScope);
+  if (awaitUsing && !(context & (Context.InAwaitContext | Context.Module))) parser.report(Errors.AwaitUsingContext);
+  nextToken(parser, context);
+  const declarations = parseVariableDeclarationList(
+    parser,
+    context,
+    scope,
+    privateScope,
+    awaitUsing ? BindingKind.AwaitUsing : BindingKind.Using,
+    origin,
+  );
+  matchOrInsertSemicolon(parser, context | Context.AllowRegExp);
+  return parser.finishNode<ESTree.VariableDeclaration>(
+    { type: 'VariableDeclaration', kind: awaitUsing ? 'await using' : 'using', declarations },
+    start,
+  );
 }
 
 /**
@@ -1797,6 +1826,10 @@ function parseVariableDeclaration(
 
   const id = parseBindingPattern(parser, context, scope, privateScope, kind, origin);
 
+  if (kind & (BindingKind.Using | BindingKind.AwaitUsing)) {
+    if (token & Token.IsPatternStart) parser.report(Errors.UsingDestructuring);
+  }
+
   if (parser.getToken() === Token.Assign) {
     nextToken(parser, context | Context.AllowRegExp);
     init = parseExpression(parser, context, privateScope, 1, 0, parser.tokenStart);
@@ -1818,8 +1851,12 @@ function parseVariableDeclaration(
     }
     // Normal const declarations, and const declarations in for(;;) heads, must be initialized.
   } else if (
+    kind & (BindingKind.Using | BindingKind.AwaitUsing)
+      ? true
+      : (
     (kind & BindingKind.Const || (token & Token.IsPatternStart) > 0) &&
     (parser.getToken() & Token.IsInOrOf) !== Token.IsInOrOf
+      )
   ) {
     parser.report(Errors.DeclarationMissingInitializer, kind & BindingKind.Const ? 'const' : 'destructuring');
   }
@@ -1870,13 +1907,42 @@ function parseForStatement(
   let isVarDecl =
     parser.getToken() === Token.VarKeyword ||
     parser.getToken() === Token.LetKeyword ||
-    parser.getToken() === Token.ConstKeyword;
+    parser.getToken() === Token.ConstKeyword ||
+    parser.getToken() === Token.UsingKeyword ||
+    (parser.getToken() === Token.AwaitKeyword && !parser.flags);
   let right;
 
   const { tokenStart } = parser;
   const token = parser.getToken();
 
   if (isVarDecl) {
+    let declarationKind: BindingKind | null = null;
+    if (token === Token.UsingKeyword) declarationKind = BindingKind.Using;
+    if (token === Token.AwaitKeyword) {
+      nextToken(parser, context);
+      if (parser.getToken() === Token.UsingKeyword) declarationKind = BindingKind.AwaitUsing;
+    }
+    if (declarationKind) {
+      if (declarationKind === BindingKind.Using && context & Context.InGlobal) parser.report(Errors.UsingGlobalScope);
+      if (declarationKind === BindingKind.AwaitUsing && !(context & (Context.InAwaitContext | Context.Module)))
+        parser.report(Errors.AwaitUsingContext);
+      nextToken(parser, context);
+      init = parser.finishNode<ESTree.VariableDeclaration>(
+        {
+          type: 'VariableDeclaration',
+          kind: declarationKind === BindingKind.AwaitUsing ? 'await using' : 'using',
+          declarations: parseVariableDeclarationList(
+            parser,
+            context | Context.DisallowIn,
+            scope,
+            privateScope,
+            declarationKind,
+            Origin.ForStatement,
+          ),
+        },
+        tokenStart,
+      );
+    } else
     if (token === Token.LetKeyword) {
       init = parseIdentifier(parser, context);
       if (parser.getToken() & (Token.IsIdentifier | Token.IsPatternStart)) {

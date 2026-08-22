@@ -120,6 +120,7 @@ export const enum Token {
   VarKeyword   = 72 | IsExpressionStart | Reserved,
   LetKeyword   = 73 | IsExpressionStart | FutureReserved | IsIdentifier,
   ConstKeyword = 74 | IsExpressionStart | Reserved,
+  UsingKeyword = 138 | IsExpressionStart | Reserved,
 
   /* Other reserved words */
   BreakKeyword    = 75 | Reserved,
@@ -271,6 +272,7 @@ export const descKeywordTable: { [key: string]: Token } =  {
   finally: Token.FinallyKeyword,
   async: Token.AsyncKeyword,
   await: Token.AwaitKeyword,
+  using: Token.UsingKeyword,
   class: Token.ClassKeyword,
   const: Token.ConstKeyword,
   constructor: Token.ConstructorKeyword,
