@@ -110,6 +110,8 @@ func (s *SettingsService) getDefaultSettings() *models.Settings {
 		AutoHealExcludedContainers:      models.SettingVariable{Value: ""},
 		AutoHealMaxRestarts:             models.SettingVariable{Value: "5"},
 		AutoHealRestartWindow:           models.SettingVariable{Value: "30"},
+		DriftDetectionEnabled:           models.SettingVariable{Value: "true"},
+		DriftDetectionInterval:          models.SettingVariable{Value: "0 0 * * * *"},
 		GitopsSyncInterval:              models.SettingVariable{Value: "0 */1 * * * *"},
 		BaseServerURL:                   models.SettingVariable{Value: "http://localhost"},
 		EnableGravatar:                  models.SettingVariable{Value: "true"},

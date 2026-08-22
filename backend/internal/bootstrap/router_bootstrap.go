@@ -13,6 +13,7 @@ import (
 	"github.com/getarcaneapp/arcane/backend/internal/api"
 	"github.com/getarcaneapp/arcane/backend/internal/config"
 	"github.com/getarcaneapp/arcane/backend/internal/huma"
+	"github.com/getarcaneapp/arcane/backend/internal/huma/handlers"
 	"github.com/getarcaneapp/arcane/backend/internal/middleware"
 	"github.com/getarcaneapp/arcane/backend/pkg/libarcane/edge"
 	"github.com/getarcaneapp/arcane/backend/pkg/utils/cookie"
@@ -155,10 +156,12 @@ func setupRouter(ctx context.Context, cfg *config.Config, appServices *Services)
 		GitOpsSync:        appServices.GitOpsSync,
 		Vulnerability:     appServices.Vulnerability,
 		Dashboard:         appServices.Dashboard,
+		DriftDetection:    appServices.DriftDetection,
 		Config:            cfg,
 	}
 
 	_ = huma.SetupAPI(router, apiGroup, cfg, humaServices)
+	handlers.NewComplianceHandler(appServices.DriftDetection).RegisterRoutes(apiGroup)
 
 	for _, register := range registerBuildableRoutes {
 		register(apiGroup, appServices)
