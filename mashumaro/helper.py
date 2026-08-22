@@ -11,6 +11,31 @@ __all__ = [
 ]
 
 
+def _flatten_dict(
+    value: dict[str, Any], prefix: Union[str, None], rename: Optional[dict[str, str]]
+) -> dict[str, Any]:
+    result = {}
+    for key, item in value.items():
+        output_key = rename.get(key, key) if rename else key
+        result[(prefix or "") + output_key] = item
+    return result
+
+
+def _unflatten_dict(
+    value: dict[str, Any], keys: set[str], prefix: Union[str, None],
+    rename: Optional[dict[str, str]],
+) -> dict[str, Any]:
+    result = {}
+    reverse = {v: k for k, v in (rename or {}).items()}
+    for key in keys:
+        output_key = (prefix or "") + (rename.get(key, key) if rename else key)
+        if output_key in value:
+            result[key] = value[output_key]
+        elif (prefix or "") + reverse.get(key, key) in value:
+            result[key] = value[(prefix or "") + reverse.get(key, key)]
+    return result
+
+
 NamedTupleDeserializationEngine = Literal["as_dict", "as_list"]
 DateTimeDeserializationEngine = Literal["ciso8601", "pendulum"]
 AnyDeserializationEngine = Literal[
@@ -36,15 +61,25 @@ def field_options(
     ] = None,
     serialization_strategy: Optional[SerializationStrategy] = None,
     alias: Optional[str] = None,
+    flatten: bool = False,
+    flatten_prefix: Union[str, bool, None] = None,
+    flatten_rename: Optional[dict[str, str]] = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    return {
+    options = {
         "serialize": serialize,
         "deserialize": deserialize,
         "serialization_strategy": serialization_strategy,
         "alias": alias,
         **kwargs,
     }
+    if flatten:
+        options["flatten"] = True
+    if flatten_prefix is not None:
+        options["flatten_prefix"] = flatten_prefix
+    if flatten_rename is not None:
+        options["flatten_rename"] = flatten_rename
+    return options
 
 
 class _PassThrough(SerializationStrategy):

@@ -889,6 +889,10 @@ class CodeBuilder:
                 or by_alias_feature
                 and aliases
                 or omit_default
+                or any(
+                    self.metadatas.get(fname, {}).get("flatten")
+                    for fname in packers
+                )
             ):
                 kwargs = "kwargs"
                 self.add_line("kwargs = {}")
@@ -1039,6 +1043,18 @@ class CodeBuilder:
         by_alias_feature: bool,
         packed_value: str,
     ) -> None:
+        metadata = self.metadatas.get(fname, {})
+        if metadata.get("flatten"):
+            self.ensure_object_imported(
+                __import__("mashumaro.helper", fromlist=["_flatten_dict"])._flatten_dict,
+                "_flatten_dict",
+            )
+            prefix = metadata.get("flatten_prefix")
+            prefix = f"{fname}_" if prefix is True else prefix
+            rename = metadata.get("flatten_rename")
+            transformed = f"_flatten_dict({packed_value},{prefix!r},{rename!r})"
+            self.add_line(f"kwargs.update({transformed})")
+            return
         if by_alias_feature and alias is not None:
             with self.indent("if by_alias:"):
                 self.add_line(f"kwargs['{alias}'] = {packed_value}")
@@ -1158,6 +1174,39 @@ class CodeBuilder:
         force_value: bool = False,
     ) -> typing.Tuple[str, typing.Optional[str], bool]:
         metadata = self.metadatas.get(fname, {})
+        flatten = metadata.get("flatten", False)
+        flatten_prefix = metadata.get("flatten_prefix")
+        flatten_rename = metadata.get("flatten_rename")
+        if flatten or flatten_prefix is not None or flatten_rename is not None:
+            nested_type = self.get_real_type(fname, ftype)
+            if is_optional(ftype, self.get_field_resolved_type_params(fname)):
+                nested_type = next(
+                    (arg for arg in get_args(nested_type) if arg is not NoneType),
+                    nested_type,
+                )
+            if not is_dataclass(nested_type):
+                raise ValueError(
+                    f"Field '{fname}' with flatten options must be a dataclass"
+                )
+            if flatten_prefix is not None and not (
+                flatten_prefix is True or isinstance(flatten_prefix, str)
+            ):
+                raise ValueError("flatten_prefix must be a string or True")
+            if flatten_prefix is not None and flatten_rename is not None:
+                raise ValueError(
+                    "flatten_prefix and flatten_rename are mutually exclusive"
+                )
+            if flatten_rename is not None:
+                if not isinstance(flatten_rename, dict) or any(
+                    not isinstance(k, str) or not isinstance(v, str)
+                    for k, v in flatten_rename.items()
+                ):
+                    raise ValueError("flatten_rename must map strings to strings")
+                if len(set(flatten_rename.values())) != len(flatten_rename):
+                    raise ValueError("flatten_rename contains duplicate values")
+                child_names = {field.name for field in nested_type.__dataclass_fields__.values()}
+                if not set(flatten_rename).issubset(child_names):
+                    raise ValueError("flatten_rename contains unknown child fields")
         alias = self.__get_field_alias(fname, ftype, metadata, config)
         could_be_none = (
             ftype in (typing.Any, type(None), None)
@@ -1321,6 +1370,19 @@ class FieldUnpackerCodeBlockBuilder:
             )
             or default is None
         )
+        if metadata.get("flatten"):
+            prefix = metadata.get("flatten_prefix")
+            prefix = f"{fname}_" if prefix is True else prefix or ""
+            rename = metadata.get("flatten_rename") or {}
+            self.add_line(
+                "value = {"
+                f"{{v: k for k, v in {rename!r}.items()}}.get("
+                f"k[{len(prefix)}:], k[{len(prefix)}:]): v "
+                f"for k, v in d.items() if k.startswith({prefix!r})"
+                "}"
+                if prefix
+                else f"value = dict(d)"
+            )
         unpacked_value = UnpackerRegistry.get(
             ValueSpec(
                 type=ftype,
