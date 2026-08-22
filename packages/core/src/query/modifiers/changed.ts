@@ -24,8 +24,8 @@ export function createChanged() {
     return <T extends TraitOrRelation[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
-        if (inputs.length === 1 && (inputs[0] as Modifier<[], 'predicate'>).predicate)
-            return withPredicateMode(inputs[0] as Modifier<[], 'predicate'>, 'changed') as Modifier<
+        if (inputs.length === 1 && (inputs[0] as unknown as Modifier<[], 'predicate'>).predicate)
+            return withPredicateMode(inputs[0] as unknown as Modifier<[], 'predicate'>, 'changed') as unknown as Modifier<
                 ExtractTraits<T>,
                 `changed-${number}`
             >;

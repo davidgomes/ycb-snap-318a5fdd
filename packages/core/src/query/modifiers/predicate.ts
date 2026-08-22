@@ -24,7 +24,7 @@ export function withPredicateMode(
     predicate: Modifier<[], 'predicate'>,
     mode: NonNullable<Predicate['mode']>
 ): Modifier<[], 'predicate'> {
-    return createModifier(`predicate-${mode}`, ++predicateId, [], {
+    return createModifier('predicate', ++predicateId, [], {
         ...predicate.predicate!,
         mode,
     });

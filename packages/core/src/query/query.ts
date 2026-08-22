@@ -261,7 +261,9 @@ export function createQueryInstance<T extends QueryParameter[]>(
                     ...traits.map((t) => getTraitInstance(ctx.traitInstances, t)!)
                 );
             } else if (parameter.type === 'or') {
-                const predicateModifiers = (parameter.modifiers || []).filter((m) => m.predicate);
+                const predicateModifiers = isOrWithModifiers(parameter)
+                    ? parameter.modifiers.filter((m) => m.predicate)
+                    : [];
                 if (predicateModifiers.length) {
                     const group = predicateModifiers.map((m) => m.predicate!);
                     query.predicateOrGroups.push(group);
