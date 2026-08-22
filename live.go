@@ -44,8 +44,9 @@ type Live struct {
 // Generative AI API. It provides methods for sending client messages and
 // receiving server messages over the established connection.
 type Session struct {
-	conn      *websocket.Conn
-	apiClient *apiClient
+	conn                    *websocket.Conn
+	apiClient               *apiClient
+	functionCallAccumulator streamedFunctionCallAccumulator
 }
 
 // Preview. Connect establishes a WebSocket connection to the specified
@@ -319,6 +320,9 @@ func (s *Session) Receive() (*LiveServerMessage, error) {
 	var message = new(LiveServerMessage)
 	err = mapToStruct(responseMap, message)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.functionCallAccumulator.addLiveServerMessage(message); err != nil {
 		return nil, err
 	}
 	return message, err
