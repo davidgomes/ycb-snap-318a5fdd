@@ -1359,12 +1359,12 @@ class BaseTestClass:
 
   def _get_regex_matching_test_methods(self, test_name_regex):
     matching_name_tuples = []
-    for name, method in inspect.getmembers(self, callable):
+    for name, _ in inspect.getmembers(type(self), callable):
       if (
           name.startswith('test_')
           and re.fullmatch(test_name_regex, name) is not None
       ):
-        matching_name_tuples.append((name, method))
+        matching_name_tuples.append((name, getattr(self, name)))
     for name, method in self._generated_test_table.items():
       if re.fullmatch(test_name_regex, name) is not None:
         self._assert_valid_test_name(name)
