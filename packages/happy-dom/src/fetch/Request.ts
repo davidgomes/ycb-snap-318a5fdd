@@ -303,9 +303,27 @@ export default class Request implements Request {
 			);
 		}
 
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
 		this[PropertySymbol.bodyUsed] = true;
+
+		const bodyBuffer = this[PropertySymbol.bodyBuffer];
+
+		if (bodyBuffer) {
+			return <ArrayBuffer>(
+				bodyBuffer.buffer.slice(
+					bodyBuffer.byteOffset,
+					bodyBuffer.byteOffset + bodyBuffer.byteLength
+				)
+			);
+		}
+
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+
+		if (!asyncTaskManager) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
 
 		const taskID = asyncTaskManager.startTask(() => {
 			this[PropertySymbol.aborted] = true;
@@ -354,9 +372,22 @@ export default class Request implements Request {
 			);
 		}
 
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
 		this[PropertySymbol.bodyUsed] = true;
+
+		const bodyBuffer = this[PropertySymbol.bodyBuffer];
+
+		if (bodyBuffer) {
+			return bodyBuffer;
+		}
+
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+
+		if (!asyncTaskManager) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
 
 		const taskID = asyncTaskManager.startTask(() => {
 			this[PropertySymbol.aborted] = true;
@@ -391,9 +422,22 @@ export default class Request implements Request {
 			);
 		}
 
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
 		this[PropertySymbol.bodyUsed] = true;
+
+		const bodyBuffer = this[PropertySymbol.bodyBuffer];
+
+		if (bodyBuffer) {
+			return new TextDecoder().decode(bodyBuffer);
+		}
+
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+
+		if (!asyncTaskManager) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
 
 		const taskID = asyncTaskManager.startTask(() => {
 			this[PropertySymbol.aborted] = true;
@@ -430,8 +474,6 @@ export default class Request implements Request {
 	 */
 	public async formData(): Promise<FormData> {
 		const window = this[PropertySymbol.window];
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
 		const contentType = this[PropertySymbol.contentType];
 
 		if (this.body && contentType && /multipart/i.test(contentType)) {
@@ -439,6 +481,15 @@ export default class Request implements Request {
 				throw new window.DOMException(
 					`Body has already been used for "${this.url}".`,
 					DOMExceptionNameEnum.invalidStateError
+				);
+			}
+
+			const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+
+			if (!asyncTaskManager) {
+				throw new window.DOMException(
+					'Failed to read response body: The stream was aborted.',
+					DOMExceptionNameEnum.abortError
 				);
 			}
 
