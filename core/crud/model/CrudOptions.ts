@@ -54,6 +54,10 @@ export class CrudOptions<T = any> implements ICrudOptions {
   offset?: number;
 
   @IsOptional()
+  @IsString()
+  cursor?: string;
+
+  @IsOptional()
   @IsObject({ each: true })
   orderBy?: OrderByType<T>;
 

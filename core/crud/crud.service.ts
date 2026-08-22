@@ -570,10 +570,72 @@ export class CrudService<T extends CrudEntity> {
 
       const em = opParams.em || this.entityManager.fork();
       const opts = this.getReadOptions(ctx, opParams);
+      const cursor = opts.cursor;
+      if (cursor && !opts.orderBy) {
+        throw new BadRequestException('cursor requires orderBy');
+      }
+      if (cursor && opts.offset !== undefined) {
+        throw new BadRequestException('cursor cannot be used with offset');
+      }
+      const sort = this.getCursorSort(opts.orderBy);
+      const requestedLimit = opts.limit;
+      if (cursor) {
+        const payload = this.decodeCursor(cursor);
+        if (payload.__sort !== sort.map(({ field, dir }) => `${field}:${dir}`).join(',')) {
+          throw new BadRequestException('cursor orderBy does not match request');
+        }
+        if (!(this.crudConfig.id_field in payload)) {
+          throw new BadRequestException('cursor is missing the entity ID');
+        }
+        entity = {
+          $and: [
+            entity,
+            {
+              $or: sort.map(({ field, dir }, index) => ({
+                [field]: {
+                  [dir === 'asc' ? '$gt' : '$lt']: payload[field],
+                },
+                ...(index
+                  ? {
+                      $and: sort
+                        .slice(0, index)
+                        .map(({ field: previousField }) => ({
+                          [previousField]: payload[previousField],
+                        })),
+                    }
+                  : {}),
+              })),
+            },
+          ],
+        } as Partial<T>;
+      }
+      if (sort.length && opts.limit) {
+        opts.orderBy = sort.reduce(
+          (result, { field, dir }) => ({ ...result, [field]: dir }),
+          {},
+        );
+        opts.limit += 1;
+      }
+      delete opts.cursor;
       let result: FindResponseDto<T>;
       if (opts.limit) {
         const res = await em.findAndCount(this.entity, entity, opts as any);
-        result = { data: res[0], total: res[1], limit: opts.limit };
+        const hasMore = sort.length && res[0].length > opts.limit - 1;
+        const data = hasMore ? res[0].slice(0, -1) : res[0];
+        result = { data, total: res[1], limit: requestedLimit };
+        if (hasMore) {
+          const last = data[data.length - 1];
+          const cursorPayload = sort.reduce(
+            (payload, { field }) => ({ ...payload, [field]: last[field] }),
+            {
+              [this.crudConfig.id_field]: last[this.crudConfig.id_field],
+              __sort: sort.map(({ field, dir }) => `${field}:${dir}`).join(','),
+            },
+          );
+          result.nextCursor = Buffer.from(JSON.stringify(cursorPayload)).toString(
+            'base64',
+          );
+        }
       } else {
         const res = await em.find(this.entity, entity, opts as any);
         result = { data: res };
@@ -590,6 +652,33 @@ export class CrudService<T extends CrudEntity> {
         }
       }
       throw e;
+    }
+  }
+
+  private getCursorSort(orderBy: CrudOptionsType<T>['orderBy']) {
+    if (!orderBy) return [];
+    const entries = (Array.isArray(orderBy) ? orderBy : [orderBy]).flatMap(
+      (part) => Object.entries(part),
+    );
+    const sort = entries.map(([field, value]) => ({
+      field,
+      dir: String(value).toLowerCase().split(' ')[0] === 'desc' ? 'desc' : 'asc',
+    }));
+    if (!sort.some(({ field }) => field === this.crudConfig.id_field)) {
+      sort.push({ field: this.crudConfig.id_field, dir: 'asc' });
+    }
+    return sort;
+  }
+
+  private decodeCursor(cursor: string): Record<string, any> {
+    try {
+      const decoded = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
+      if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
+        throw new Error();
+      }
+      return decoded;
+    } catch {
+      throw new BadRequestException('invalid cursor');
     }
   }
 

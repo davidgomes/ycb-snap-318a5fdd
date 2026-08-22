@@ -28,6 +28,7 @@ export interface ICrudOptions<T = any> {
   fields?: string[];
   limit?: number;
   offset?: number;
+  cursor?: string;
   cached?: boolean;
   allowIdOverride?: boolean;
 
@@ -55,6 +56,7 @@ export interface FindResponseDto<T = any> {
   data: T[];
   total?: number;
   limit?: number;
+  nextCursor?: string;
 }
 
 export interface PatchResponseDto<T = any> {
