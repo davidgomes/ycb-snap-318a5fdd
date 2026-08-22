@@ -117,6 +117,8 @@ import { logOnce } from '../util/log-once.js'
 import type { CollateNode } from '../operation-node/collate-node.js'
 import type { QueryId } from '../util/query-id.js'
 import type { RenameConstraintNode } from '../operation-node/rename-constraint-node.js'
+import type { FrameNode } from '../operation-node/frame-node.js'
+import type { FrameBoundNode } from '../operation-node/frame-bound-node.js'
 
 const LIT_WRAP_REGEX = /'/g
 
@@ -1488,6 +1490,12 @@ export class DefaultQueryCompiler
 
     this.append(')')
 
+    if (node.nulls === 'ignore') {
+      this.append(' ignore nulls')
+    } else if (node.nulls === 'respect') {
+      this.append(' respect nulls')
+    }
+
     if (node.withinGroup) {
       this.append(' within group (')
       this.visitNode(node.withinGroup)
@@ -1509,19 +1517,64 @@ export class DefaultQueryCompiler
   protected override visitOver(node: OverNode): void {
     this.append('over(')
 
+    let separator = false
+
     if (node.partitionBy) {
       this.visitNode(node.partitionBy)
-
-      if (node.orderBy) {
-        this.append(' ')
-      }
+      separator = true
     }
 
     if (node.orderBy) {
+      if (separator) {
+        this.append(' ')
+      }
+
       this.visitNode(node.orderBy)
+      separator = true
+    }
+
+    if (node.frame) {
+      if (separator) {
+        this.append(' ')
+      }
+
+      this.visitNode(node.frame)
     }
 
     this.append(')')
+  }
+
+  protected override visitFrame(node: FrameNode): void {
+    this.append(node.mode)
+    this.append(' ')
+
+    if (node.end) {
+      this.append('between ')
+      this.visitNode(node.start)
+      this.append(' and ')
+      this.visitNode(node.end)
+    } else {
+      this.visitNode(node.start)
+    }
+
+    if (node.exclusion) {
+      this.append(' exclude ')
+      this.append(node.exclusion)
+    }
+  }
+
+  protected override visitFrameBound(node: FrameBoundNode): void {
+    if (node.type === 'preceding' || node.type === 'following') {
+      if (node.offset) {
+        this.visitNode(node.offset)
+        this.append(' ')
+      }
+
+      this.append(node.type)
+      return
+    }
+
+    this.append(node.type)
   }
 
   protected override visitPartitionBy(node: PartitionByNode): void {
