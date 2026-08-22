@@ -82,6 +82,7 @@ class StencilFunc(object):
         self._targetctx = registry.cpu_target.target_context
         self._install_type(self._typingctx)
         self.neighborhood = self.options.get("neighborhood")
+        self._mode = mode
         self._type_cache = {}
         self._lower_me = StencilFuncLowerer(self)
 
@@ -136,6 +137,7 @@ class StencilFunc(object):
         """
         const_dict = {}
         kernel_consts = []
+        modes = self._mode if isinstance(self._mode, tuple) else (self._mode,) * ndim
 
         if config.DEBUG_ARRAY_OPT >= 1:
             print("add_indices_to_kernel", ndim, neighborhood)
@@ -223,16 +225,14 @@ class StencilFunc(object):
                             slice_addition_call = ir.Expr.call(sa_var, [stmt_index_var, index_var], (), loc)
                             calltypes[slice_addition_call] = sa_func_typ.get_call_type(self._typingctx, [stmt_index_var_typ, types.intp], {})
                             new_body.append(ir.Assign(slice_addition_call, tmpvar, loc))
-                            new_body.append(ir.Assign(
-                                           ir.Expr.getitem(stmt.value.value, tmpvar, loc),
-                                           stmt.target, loc))
+                            access = ir.Expr.getitem(stmt.value.value, tmpvar, loc)
+                            new_body.append(ir.Assign(access, stmt.target, loc))
                         else:
                             acc_call = ir.Expr.binop(operator.add, stmt_index_var,
                                                      index_var, loc)
                             new_body.append(ir.Assign(acc_call, tmpvar, loc))
-                            new_body.append(ir.Assign(
-                                           ir.Expr.getitem(stmt.value.value, tmpvar, loc),
-                                           stmt.target, loc))
+                            access = ir.Expr.getitem(stmt.value.value, tmpvar, loc)
+                            new_body.append(ir.Assign(access, stmt.target, loc))
                     else:
                         index_vars = []
                         sum_results = []
@@ -285,9 +285,8 @@ class StencilFunc(object):
 
                         tuple_call = ir.Expr.build_tuple(ind_stencils, loc)
                         new_body.append(ir.Assign(tuple_call, s_index_var, loc))
-                        new_body.append(ir.Assign(
-                                  ir.Expr.getitem(stmt.value.value,s_index_var,loc),
-                                  stmt.target,loc))
+                        access = ir.Expr.getitem(stmt.value.value, s_index_var, loc)
+                        new_body.append(ir.Assign(access, stmt.target, loc))
                 else:
                     new_body.append(stmt)
             block.body = new_body
@@ -513,6 +512,14 @@ class StencilFunc(object):
 
         # Get a list of the standard indexed array names.
         standard_indexed = self.options.get("standard_indexing", [])
+        modes = self._mode
+        if isinstance(modes, tuple):
+            if len(modes) != the_array.ndim:
+                raise NumbaValueError("Mode tuple length does not match array "
+                                      "dimensionality.")
+            mode_by_dim = modes
+        else:
+            mode_by_dim = (modes,) * the_array.ndim
 
         if first_arg in standard_indexed:
             raise NumbaValueError("The first argument to a stencil kernel must "
@@ -639,13 +646,17 @@ class StencilFunc(object):
             # ranges[i][1] is the maximum of 0 and the observed maximum index
             # in this dimension because negative maximums would not cause us to
             # preclude any entry in the array from being used.
-            func_text += ("for {} in range(-min(0,{}),"
-                          "{}[{}]-max(0,{})):\n").format(
+            if mode_by_dim[i] == 'constant':
+                func_text += ("for {} in range(-min(0,{}),"
+                              "{}[{}]-max(0,{})):\n").format(
                             index_vars[i],
                             ranges[i][0],
                             shape_name,
                             i,
                             ranges[i][1])
+            else:
+                func_text += "for {} in range({}[{}]):\n".format(
+                    index_vars[i], shape_name, i)
             offset += 1
 
         for j in range(offset):
@@ -803,7 +814,7 @@ class StencilFunc(object):
 
 def stencil(func_or_mode='constant', **options):
     # called on function without specifying mode style
-    if not isinstance(func_or_mode, str):
+    if not isinstance(func_or_mode, (str, tuple)):
         mode = 'constant'  # default style
         func = func_or_mode
     else:
@@ -820,8 +831,14 @@ def stencil(func_or_mode='constant', **options):
     return wrapper
 
 def _stencil(mode, options):
-    if mode != 'constant':
+    valid_modes = ('constant', 'wrap', 'nearest', 'reflect', 'symmetric')
+    if isinstance(mode, tuple):
+        if not all(isinstance(x, str) and x in valid_modes for x in mode):
+            raise NumbaValueError("Unsupported mode style " + repr(mode))
+    elif mode not in valid_modes:
         raise NumbaValueError("Unsupported mode style " + mode)
+    if mode != 'constant' and "cval" not in options:
+        options["cval"] = 0
 
     def decorated(func):
         from numba.core import compiler
