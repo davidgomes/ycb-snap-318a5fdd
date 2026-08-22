@@ -927,6 +927,14 @@ class FunctionalTests(testtools.TestCase):
                 "markupsafe_markup_xss_allowed_calls.py", expect
             )
 
+    def test_taint_injection(self):
+        """Taint-tracking injection plugins B620-B624."""
+        expect = {
+            "SEVERITY": {"UNDEFINED": 0, "LOW": 3, "MEDIUM": 7, "HIGH": 38},
+            "CONFIDENCE": {"UNDEFINED": 0, "LOW": 2, "MEDIUM": 26, "HIGH": 20},
+        }
+        self.check_example("taint_injection.py", expect)
+
     def test_huggingface_unsafe_download(self):
         expect = {
             "SEVERITY": {"UNDEFINED": 0, "LOW": 0, "MEDIUM": 15, "HIGH": 0},
