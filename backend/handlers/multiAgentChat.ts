@@ -342,6 +342,14 @@ async function delegateTask(
     [...delegationPath, delegatedAgentId],
   )) {
     if (chunk.type === "error") {
+      if (chunk.error?.toLowerCase().includes("circular")) {
+        return {
+          content: chunk.error,
+          isError: true,
+          circular: true,
+          error: chunk.error,
+        };
+      }
       failed = true;
       output = chunk.error || "Sub-agent failed without an error message.";
     } else if (chunk.type === "claude_json") {
