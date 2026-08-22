@@ -132,7 +132,8 @@ function transformError(v: Error, superJson: SuperJSON): any {
 
   superJson.allowedErrorProps.forEach(prop => {
     if (
-      (!options || (prop !== 'stack' && prop !== 'stackFrames')) &&
+      (!options ||
+        (prop !== 'stack' && prop !== 'stackFrames' && prop !== 'cause')) &&
       !(prop in baseError)
     ) {
       baseError[prop] = (v as any)[prop];

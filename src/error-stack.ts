@@ -15,6 +15,7 @@ function redact(line: string, mode: ErrorStackOptions['redactPaths']): string {
     return line.replace(/(?:[A-Za-z]:[\\/]|\/)[^()\s:]+[\\/]/g, '');
   }
   if (mode === 'strip_cwd') {
+    if (typeof process === 'undefined') return line;
     const cwd = process.cwd().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return line.replace(new RegExp(cwd + '[\\\\/]', 'g'), '');
   }
