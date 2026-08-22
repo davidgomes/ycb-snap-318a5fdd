@@ -2,10 +2,7 @@ import { $internal } from './common';
 import { createEntityWithId } from './entity/entity';
 import type { Entity } from './entity/types';
 import { getEntityId, packEntity } from './entity/utils/pack-entity';
-import {
-    getRelationData,
-    getRelationTargets,
-} from './relation/relation';
+import { getRelationData, getRelationTargets } from './relation/relation';
 import type { Relation } from './relation/types';
 import { isRelation } from './relation/utils/is-relation';
 import { getStore } from './trait/trait';
@@ -71,7 +68,9 @@ function entityForId(world: World, id: number): Entity {
 function snapshotTrait(world: World, entity: Entity, trait: Trait): object | true | undefined {
     if (!hasTrait(world, entity, trait)) return undefined;
     if (trait[$internal].type === 'tag') return true;
-    return clone(getStore(world, trait) && trait[$internal].get(getEntityId(entity), getStore(world, trait)));
+    return clone(
+        getStore(world, trait) && trait[$internal].get(getEntityId(entity), getStore(world, trait))
+    );
 }
 
 export function snapshotEntity(
@@ -80,6 +79,10 @@ export function snapshotEntity(
     registry: TraitRegistry
 ): EntitySnapshot {
     requireEntity(world, entity);
+    for (const trait of world[$internal].entityTraits.get(entity) ?? []) {
+        const key = registry.keys.get(trait[$internal].relation ?? trait);
+        if (!key) throw new Error('Entity has an unregistered trait or relation.');
+    }
     const traits: Record<string, object | true> = {};
     const relations: Record<string, Array<{ targetId: number; data?: object }>> = {};
 
@@ -92,8 +95,8 @@ export function snapshotEntity(
                     return value[$internal].trait[$internal].type === 'tag'
                         ? { targetId: getEntityId(target) }
                         : data === undefined
-                        ? { targetId: getEntityId(target) }
-                        : { targetId: getEntityId(target), data: clone(data as object) };
+                          ? { targetId: getEntityId(target) }
+                          : { targetId: getEntityId(target), data: clone(data as object) };
                 });
             }
         } else {
@@ -143,9 +146,16 @@ export function rollbackEntity(
         }
     }
 
-    for (const [key, trait] of registry.traits) {
-        if (!Object.hasOwn(snapshot.traits, key) && hasTrait(world, entity, trait)) {
-            removeTrait(world, entity, trait);
+    for (const trait of Array.from(world[$internal].entityTraits.get(entity) ?? [])) {
+        const registryValue = trait[$internal].relation ?? trait;
+        const key = registry.keys.get(registryValue);
+        if (!key) throw new Error('Entity has an unregistered trait or relation.');
+        if (!Object.hasOwn(snapshot.traits, key) && !Object.hasOwn(snapshot.relations ?? {}, key)) {
+            removeTrait(
+                world,
+                entity,
+                trait[$internal].relation ? trait[$internal].relation('*') : trait
+            );
         }
     }
     for (const [key, relation] of registry.relations) {
@@ -169,9 +179,31 @@ export function rollbackEntity(
         const relation = registry.relations.get(key)!;
         for (const entry of entries) {
             const target = entityForId(world, entry.targetId);
-            addTrait(world, entity, relation(target, entry.data ? clone(entry.data) : undefined));
+            if (entry.data !== undefined && hasRelationTarget(world, relation, entity, target)) {
+                entity.set(relation(target), clone(entry.data) as Record<string, unknown>);
+            } else {
+                addTrait(
+                    world,
+                    entity,
+                    relation(
+                        target,
+                        entry.data !== undefined
+                            ? (clone(entry.data) as Record<string, unknown>)
+                            : undefined
+                    )
+                );
+            }
         }
     }
+}
+
+function hasRelationTarget(
+    world: World,
+    relation: Relation,
+    entity: Entity,
+    target: Entity
+): boolean {
+    return getRelationTargets(world, relation, entity).some((current) => current === target);
 }
 
 export function rollbackWorld(
@@ -209,7 +241,10 @@ function equalData(a: unknown, b: unknown): boolean {
     if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
     const ak = Object.keys(a);
     const bk = Object.keys(b);
-    return ak.length === bk.length && ak.every((key) => Object.hasOwn(b as object, key) && (a as any)[key] === (b as any)[key]);
+    return (
+        ak.length === bk.length &&
+        ak.every((key) => Object.hasOwn(b as object, key) && (a as any)[key] === (b as any)[key])
+    );
 }
 
 export function diffEntitySnapshots(a: EntitySnapshot, b: EntitySnapshot) {
@@ -234,7 +269,12 @@ export function diffEntitySnapshots(a: EntitySnapshot, b: EntitySnapshot) {
 function entityEqual(a: EntitySnapshot, b: EntitySnapshot): boolean {
     const traitKeys = new Set([...Object.keys(a.traits), ...Object.keys(b.traits)]);
     for (const key of traitKeys) {
-        if (!Object.hasOwn(a.traits, key) || !Object.hasOwn(b.traits, key) || !equalData(a.traits[key], b.traits[key])) return false;
+        if (
+            !Object.hasOwn(a.traits, key) ||
+            !Object.hasOwn(b.traits, key) ||
+            !equalData(a.traits[key], b.traits[key])
+        )
+            return false;
     }
     const relationsA = a.relations ?? {};
     const relationsB = b.relations ?? {};
@@ -245,7 +285,13 @@ function entityEqual(a: EntitySnapshot, b: EntitySnapshot): boolean {
         if (pairsA.length !== pairsB.length) return false;
         const sortedA = pairsA.slice().sort((x, y) => x.targetId - y.targetId);
         const sortedB = pairsB.slice().sort((x, y) => x.targetId - y.targetId);
-        if (sortedA.some((pair, i) => pair.targetId !== sortedB[i].targetId || !equalData(pair.data, sortedB[i].data))) return false;
+        if (
+            sortedA.some(
+                (pair, i) =>
+                    pair.targetId !== sortedB[i].targetId || !equalData(pair.data, sortedB[i].data)
+            )
+        )
+            return false;
     }
     return true;
 }
