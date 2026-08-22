@@ -7,11 +7,12 @@ import { JSONSchemer } from '~/schema/actions/jsonSchemer/index.js'
 import { Parser } from '~/schema/actions/parse/index.js'
 import { ZodSchemer } from '~/schema/actions/zodSchemer/index.js'
 import { item, lazy, list, map, string } from '~/schema/index.js'
+import type { MapSchema } from '~/schema/map/index.js'
 
 describe('lazy schema', () => {
   test('resolves once and checks recursive schemas', () => {
     const thunk = vi.fn()
-    const treeSchema = map({
+    const treeSchema: MapSchema = map({
       value: string(),
       children: list(lazy(() => treeSchema)).optional()
     })
@@ -25,7 +26,7 @@ describe('lazy schema', () => {
   })
 
   test('parses and formats recursive values', () => {
-    const treeSchema = map({
+    const treeSchema: MapSchema = map({
       value: string(),
       children: list(lazy(() => treeSchema)).optional()
     })
@@ -47,7 +48,7 @@ describe('lazy schema', () => {
   })
 
   test('serializes and deserializes recursive DTOs', () => {
-    const treeSchema = map({
+    const treeSchema: MapSchema = map({
       value: string(),
       children: list(lazy(() => treeSchema)).optional()
     })
@@ -62,11 +63,11 @@ describe('lazy schema', () => {
 
     const reconstructed = fromSchemaDTO(serialized)
     const value = { tree: { value: 'root', children: [{ value: 'leaf' }] } }
-    expect(reconstructed.build(Parser).parse(value, { fill: false })).toStrictEqual(value)
+    expect(new Parser(reconstructed).parse(value, { fill: false })).toStrictEqual(value)
   })
 
   test('exports recursive JSON Schema and Zod schemas', () => {
-    const treeSchema = map({
+    const treeSchema: MapSchema = map({
       value: string(),
       children: list(lazy(() => treeSchema)).optional()
     })
@@ -85,7 +86,7 @@ describe('lazy schema', () => {
   })
 
   test('finds paths and discriminator schemas through lazy references', () => {
-    const treeSchema = map({
+    const treeSchema: MapSchema = map({
       value: string(),
       child: lazy(() => treeSchema).optional()
     })
