@@ -537,6 +537,71 @@ pub struct Opts {
     #[arg(long, short = 'j', value_name = "num", hide_short_help = true, value_parser = str::parse::<NonZeroUsize>)]
     pub threads: Option<NonZeroUsize>,
 
+    /// Sort search results by the given field. This option can be specified more
+    /// than once; fields are applied from left to right.
+    #[arg(
+        long,
+        value_name = "field",
+        value_enum,
+        action = ArgAction::Append,
+        conflicts_with_all(["exec", "exec_batch", "list_details"]),
+        help = "Sort results by field",
+        long_help
+    )]
+    pub sort: Vec<SortField>,
+
+    /// Reverse the final sort order.
+    #[arg(long, requires("sort"), help = "Reverse the sort order")]
+    pub reverse: bool,
+
+    /// Sort directories before all other entries.
+    #[arg(
+        long,
+        requires("sort"),
+        conflicts_with("files_first"),
+        help = "Sort directories first"
+    )]
+    pub dirs_first: bool,
+
+    /// Sort regular files before all other entries.
+    #[arg(
+        long,
+        requires("sort"),
+        conflicts_with("dirs_first"),
+        help = "Sort regular files first"
+    )]
+    pub files_first: bool,
+
+    /// Use case-sensitive comparisons for text sort fields.
+    #[arg(
+        long,
+        requires("sort"),
+        help = "Use case-sensitive sort comparisons"
+    )]
+    pub sort_case_sensitive: bool,
+
+    /// Sort entries with missing optional values after entries with values.
+    #[arg(
+        long,
+        requires("sort"),
+        help = "Sort missing values last"
+    )]
+    pub sort_missing_last: bool,
+
+    /// Use natural ordering for text sort fields.
+    #[arg(long, requires("sort"), help = "Use natural sort order")]
+    pub sort_natural: bool,
+
+    /// Use a fixed unsigned 64-bit seed for random sorting.
+    #[arg(
+        long,
+        value_name = "n",
+        value_parser = value_parser!(u64),
+        requires("sort"),
+        help = "Use a fixed seed for random sorting"
+    )]
+    pub sort_seed: Option<u64>,
+
     /// Milliseconds to buffer before streaming search results to console
     ///
     /// Amount of time in milliseconds to buffer, before streaming the search
@@ -797,6 +862,22 @@ pub enum FileType {
     Socket,
     #[value(alias = "p")]
     Pipe,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
+pub enum SortField {
+    Path,
+    Name,
+    Extension,
+    Size,
+    Modified,
+    Created,
+    Accessed,
+    Depth,
+    Type,
+    NameLength,
+    PathLength,
+    Random,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]

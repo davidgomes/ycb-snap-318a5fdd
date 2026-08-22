@@ -22,6 +22,7 @@ use crate::exec;
 use crate::exit_codes::{ExitCode, merge_exitcodes};
 use crate::filesystem;
 use crate::output;
+use crate::sort;
 
 /// The receiver thread can either be buffering results or directly streaming to the console.
 #[derive(PartialEq)]
@@ -183,6 +184,7 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
     /// Receive the next worker result.
     fn recv(&self) -> Result<Batch, RecvTimeoutError> {
         match self.mode {
+            ReceiverMode::Buffering if self.config.sorting.is_some() => Ok(self.rx.recv()?),
             ReceiverMode::Buffering => {
                 // Wait at most until we should switch to streaming
                 self.rx.recv_deadline(self.deadline)
@@ -208,7 +210,7 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                             match self.mode {
                                 ReceiverMode::Buffering => {
                                     self.buffer.push(dir_entry);
-                                    if self.buffer.len() > MAX_BUFFER_LENGTH {
+                                    if self.config.sorting.is_none() && self.buffer.len() > MAX_BUFFER_LENGTH {
                                         self.stream()?;
                                     }
                                 }
@@ -218,7 +220,8 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                             }
 
                             self.num_results += 1;
-                            if let Some(max_results) = self.config.max_results
+                            if self.config.sorting.is_none()
+                                && let Some(max_results) = self.config.max_results
                                 && self.num_results >= max_results
                             {
                                 return self.stop();
@@ -281,7 +284,14 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
     /// Stop looping.
     fn stop(&mut self) -> Result<(), ExitCode> {
         if self.mode == ReceiverMode::Buffering {
-            self.buffer.sort();
+            if let Some(sorting) = &self.config.sorting {
+                sort::sort_entries(&mut self.buffer, sorting);
+                if let Some(max_results) = self.config.max_results {
+                    self.buffer.truncate(max_results);
+                }
+            } else {
+                self.buffer.sort();
+            }
             self.stream()?;
         }
 

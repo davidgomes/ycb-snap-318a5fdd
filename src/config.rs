@@ -5,6 +5,7 @@ use regex::bytes::RegexSet;
 
 use crate::exec::CommandSet;
 use crate::filetypes::FileTypes;
+use crate::cli::SortField;
 #[cfg(unix)]
 use crate::filter::OwnerFilter;
 use crate::filter::{SizeFilter, TimeFilter};
@@ -125,6 +126,9 @@ pub struct Config {
     /// The maximum number of search results
     pub max_results: Option<usize>,
 
+    /// Sorting options for standard output.
+    pub sorting: Option<SortOptions>,
+
     /// Whether or not to strip the './' prefix for search results
     pub strip_cwd_prefix: bool,
 
@@ -133,6 +137,17 @@ pub struct Config {
 
     /// Names that should stop traversal down their parent. (e.g. https://bford.info/cachedir/).
     pub ignore_contain: Vec<String>,
+}
+
+pub struct SortOptions {
+    pub fields: Vec<SortField>,
+    pub reverse: bool,
+    pub dirs_first: bool,
+    pub files_first: bool,
+    pub case_sensitive: bool,
+    pub missing_last: bool,
+    pub natural: bool,
+    pub seed: u64,
 }
 
 impl Config {
