@@ -430,6 +430,16 @@ impl<'input, 'arena> CollectMatchingSelectors<'_, '_, 'input, 'arena> {
             log::debug!("selector has pseudo-element: {selector:?}");
             return Some(Vec::with_capacity(0));
         }
+        let Ok(selector_string) = selector.to_css_string(PrinterOptions {
+            minify: true,
+            ..PrinterOptions::default()
+        }) else {
+            return None;
+        };
+        if is_structure_sensitive_selector(&selector_string) {
+            log::debug!("selector has structure-sensitive pseudo-class");
+            return None;
+        }
         if selector.has_combinator() {
             return None;
         }
@@ -502,6 +512,26 @@ impl<'input, 'arena> CollectMatchingSelectors<'_, '_, 'input, 'arena> {
             None
         }
     }
+}
+
+fn is_structure_sensitive_selector(selector: &str) -> bool {
+    [
+        ":first-child",
+        ":last-child",
+        ":only-child",
+        ":nth-child",
+        ":nth-last-child",
+        ":first-of-type",
+        ":last-of-type",
+        ":only-of-type",
+        ":nth-of-type",
+        ":nth-last-of-type",
+        ":empty",
+        ":has(",
+        ":root",
+    ]
+    .iter()
+    .any(|pseudo| selector.contains(pseudo))
 }
 
 impl<'input> visitor::Visitor<'input> for CollectMatchingSelectors<'_, '_, 'input, '_> {
