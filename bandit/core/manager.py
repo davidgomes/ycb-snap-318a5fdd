@@ -521,6 +521,10 @@ def _parse_nosec_directives(lines, comments, data):
 
         def atom(value):
             value = value.lower()
+            if value == "all":
+                return set(universe)
+            if value == "none":
+                return set()
             return {
                 p.plugin._test_id for p in plugins
                 if fnmatch.fnmatch(p.plugin._test_id.lower(), value)
