@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from graphql import ExecutionResult
 
 from ..graphql_request import GraphQLRequest
+from .async_transport import IncrementalPayload
 from .common.adapters.connection import AdapterConnection
 from .common.base import SubscriptionTransportBase
 from .exceptions import (
@@ -258,7 +259,7 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
 
     def _parse_answer_graphqlws(
         self, json_answer: Dict[str, Any]
-    ) -> Tuple[str, Optional[int], Optional[ExecutionResult]]:
+    ) -> Tuple[str, Optional[int], Optional[IncrementalPayload]]:
         """Parse the answer received from the server if the server supports the
         graphql-ws protocol.
 
@@ -297,15 +298,19 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
                         if not isinstance(payload, dict):
                             raise ValueError("payload is not a dict")
 
-                        if "errors" not in payload and "data" not in payload:
+                        if not (
+                            {"errors", "data", "incremental", "hasNext"} & payload.keys()
+                        ):
                             raise ValueError(
                                 "payload does not contain 'data' or 'errors' fields"
                             )
 
-                        execution_result = ExecutionResult(
+                        execution_result = IncrementalPayload(
                             errors=payload.get("errors"),
                             data=payload.get("data"),
                             extensions=payload.get("extensions"),
+                            has_next=payload.get("hasNext", False),
+                            incremental=payload.get("incremental"),
                         )
 
                         # Saving answer_type as 'data' to be understood with superclass
@@ -338,7 +343,7 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
 
     def _parse_answer_apollo(
         self, json_answer: Dict[str, Any]
-    ) -> Tuple[str, Optional[int], Optional[ExecutionResult]]:
+    ) -> Tuple[str, Optional[int], Optional[IncrementalPayload]]:
         """Parse the answer received from the server if the server supports the
         apollo websockets protocol.
 
@@ -368,15 +373,19 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
 
                     if answer_type == "data":
 
-                        if "errors" not in payload and "data" not in payload:
+                        if not (
+                            {"errors", "data", "incremental", "hasNext"} & payload.keys()
+                        ):
                             raise ValueError(
                                 "payload does not contain 'data' or 'errors' fields"
                             )
 
-                        execution_result = ExecutionResult(
+                        execution_result = IncrementalPayload(
                             errors=payload.get("errors"),
                             data=payload.get("data"),
                             extensions=payload.get("extensions"),
+                            has_next=payload.get("hasNext", False),
+                            incremental=payload.get("incremental"),
                         )
 
                     elif answer_type == "error":

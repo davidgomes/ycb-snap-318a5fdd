@@ -8,7 +8,7 @@ from typing import Any, AsyncGenerator, Dict, Optional, Tuple, Union
 from graphql import ExecutionResult
 
 from ...graphql_request import GraphQLRequest
-from ..async_transport import AsyncTransport
+from ..async_transport import AsyncTransport, IncrementalPayload
 from ..exceptions import (
     TransportAlreadyConnected,
     TransportClosed,
@@ -354,6 +354,22 @@ class SubscriptionTransportBase(AsyncTransport):
             )
 
         return first_result
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalPayload, None]:
+        """Execute a query while forwarding every websocket payload."""
+        async for result in self.subscribe(request, send_stop=False, **kwargs):
+            if isinstance(result, IncrementalPayload):
+                yield result
+            else:
+                yield IncrementalPayload(
+                    data=result.data,
+                    errors=result.errors,
+                    extensions=result.extensions,
+                )
 
     async def connect(self) -> None:
         """Coroutine which will:

@@ -34,11 +34,13 @@ from graphql import (
     FragmentDefinitionNode,
     FragmentSpreadNode,
     GraphQLArgument,
+    GraphQLBoolean,
     GraphQLDirective,
     GraphQLEnumType,
     GraphQLError,
     GraphQLField,
     GraphQLID,
+    GraphQLInt,
     GraphQLInputObjectType,
     GraphQLInputType,
     GraphQLInterfaceType,
@@ -92,6 +94,31 @@ else:
 log = logging.getLogger(__name__)
 
 _re_integer_string = re.compile("^-?(?:0|[1-9][0-9]*)$")
+
+
+_incremental_directives = {
+    "defer": GraphQLDirective(
+        name="defer",
+        locations=(
+            DirectiveLocation.FRAGMENT_DEFINITION,
+            DirectiveLocation.FRAGMENT_SPREAD,
+            DirectiveLocation.INLINE_FRAGMENT,
+        ),
+        args={
+            "if": GraphQLArgument(GraphQLBoolean, default_value=True),
+            "label": GraphQLArgument(GraphQLString),
+        },
+    ),
+    "stream": GraphQLDirective(
+        name="stream",
+        locations=(DirectiveLocation.FIELD,),
+        args={
+            "if": GraphQLArgument(GraphQLBoolean, default_value=True),
+            "label": GraphQLArgument(GraphQLString),
+            "initialCount": GraphQLArgument(GraphQLInt, default_value=0),
+        },
+    ),
+}
 
 
 def ast_from_serialized_value_untyped(serialized: Any) -> Optional[ValueNode]:
@@ -353,6 +380,9 @@ class DSLDirective:
             # Try to find in built-in directives using specified_directives
             builtins = {builtin.name: builtin for builtin in specified_directives}
             directive_def = builtins.get(name)
+
+        if directive_def is None:
+            directive_def = _incremental_directives.get(name)
 
         if directive_def is None:
             available: Set[str] = set()
@@ -1186,6 +1216,27 @@ class DSLField(DSLSelectableWithAlias, DSLFieldSelector):
 
         return self
 
+    def stream(
+        self,
+        label: Optional[str] = None,
+        initial_count: Optional[int] = None,
+    ) -> Self:
+        """Add the ``@stream`` directive to a list field."""
+        field_type = self.field.type
+        if is_non_null_type(field_type):
+            field_type = field_type.of_type
+        if not is_list_type(field_type):
+            raise GraphQLError("@stream can only be used on list fields.")
+
+        args = {}
+        if label is not None:
+            args["label"] = label
+        if initial_count is not None:
+            args["initialCount"] = initial_count
+        return self.directives(
+            DSLDirective("stream", self.dsl_type._dsl_schema)(**args)
+        )
+
     def is_valid_directive(self, directive: DSLDirective) -> bool:
         """Check if directive is valid for Field locations."""
         return DirectiveLocation.FIELD in directive.directive_def.locations
@@ -1341,6 +1392,13 @@ class DSLFragmentSpread(DSLSelectable):
         self.ast_field.directives = self.directives_ast
         return self
 
+    def defer(self, label: Optional[str] = None) -> Self:
+        """Add the ``@defer`` directive to this fragment spread."""
+        args = {} if label is None else {"label": label}
+        return self.directives(
+            DSLDirective("defer", self._fragment._dsl_schema)(**args)
+        )
+
     def is_valid_directive(self, directive: DSLDirective) -> bool:
         """Check if directive is valid for Fragment Spread locations."""
         return DirectiveLocation.FRAGMENT_SPREAD in directive.directive_def.locations
@@ -1370,6 +1428,7 @@ class DSLFragment(DSLSelectable, DSLFragmentSelector, DSLExecutable):
         self.ast_field = FragmentSpreadNode(name=NameNode(value=name), directives=())
 
         self._type = None
+        self._dsl_schema: Optional[DSLSchema] = None
 
         log.debug(f"Creating {self!r}")
 
@@ -1417,8 +1476,20 @@ class DSLFragment(DSLSelectable, DSLFragmentSelector, DSLExecutable):
         """
 
         self._type = type_condition._type
+        self._dsl_schema = type_condition._dsl_schema
 
         return self
+
+    def defer(self, label: Optional[str] = None) -> Self:
+        """Add the ``@defer`` directive to this fragment definition."""
+        if self._dsl_schema is None:
+            raise AttributeError(
+                "Missing type condition. Please use .on(type_condition) method"
+            )
+        args = {} if label is None else {"label": label}
+        return self.directives(
+            DSLDirective("defer", self._dsl_schema)(**args)
+        )
 
     @property
     def executable_ast(self) -> FragmentDefinitionNode:

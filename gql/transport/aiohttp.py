@@ -26,7 +26,7 @@ from multidict import CIMultiDictProxy
 
 from ..graphql_request import GraphQLRequest
 from .appsync_auth import AppSyncAuthentication
-from .async_transport import AsyncTransport
+from .async_transport import AsyncTransport, IncrementalPayload
 from .common.aiohttp_closed_event import create_aiohttp_closed_event
 from .common.batch import get_batch_execution_result_list
 from .exceptions import (
@@ -388,6 +388,62 @@ class AIOHTTPTransport(AsyncTransport):
             if upload_files:
                 close_files(list(self.files.values()))
 
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        extra_args: Optional[Dict[str, Any]] = None,
+        upload_files: bool = False,
+    ) -> AsyncGenerator[IncrementalPayload, None]:
+        """Execute a query and yield incremental HTTP response payloads."""
+        if self.session is None:
+            raise TransportClosed("Transport is not connected")
+
+        post_args = self._prepare_request(request, extra_args, upload_files)
+        headers = post_args.get("headers", {})
+        headers.update(
+            {
+                "Content-Type": "application/json",
+                "Accept": "multipart/mixed;boundary=graphql;deferSpec=20220824,"
+                "application/json",
+            }
+        )
+        post_args["headers"] = headers
+
+        try:
+            async with self.session.post(self.url, ssl=self.ssl, **post_args) as resp:
+                self.response_headers = resp.headers
+                if resp.status >= 400:
+                    self._raise_transport_server_error_if_status_more_than_400(resp)
+
+                content_type = resp.headers.get("Content-Type", "")
+                if "multipart/mixed" not in content_type:
+                    result = await self._get_json_result(resp)
+                    yield IncrementalPayload(
+                        data=result.get("data"),
+                        errors=result.get("errors"),
+                        extensions=result.get("extensions"),
+                        has_next=result.get("hasNext", False),
+                        incremental=result.get("incremental"),
+                    )
+                    return
+
+                if "boundary=graphql" not in content_type or "deferSpec=20220824" not in content_type:
+                    raise TransportProtocolError(
+                        f"Unexpected content-type: {content_type}. "
+                        "Server may not support the incremental delivery protocol."
+                    )
+
+                async for result in self._parse_multipart_response(resp):
+                    yield result
+        except TransportError:
+            raise
+        except Exception as e:
+            raise TransportConnectionFailed(str(e)) from e
+        finally:
+            if upload_files:
+                close_files(list(self.files.values()))
+
     async def execute_batch(
         self,
         reqs: List[GraphQLRequest],
@@ -531,7 +587,7 @@ class AIOHTTPTransport(AsyncTransport):
 
     async def _parse_multipart_part(
         self, part: BodyPartReader
-    ) -> Optional[ExecutionResult]:
+    ) -> Optional[IncrementalPayload]:
         """
         Parse a single part from a multipart response.
 
@@ -565,12 +621,17 @@ class AIOHTTPTransport(AsyncTransport):
                 log.debug("Received heartbeat, ignoring")
                 return None
 
-            # The multipart subscription protocol wraps data in a "payload" property
-            if "payload" not in data:
-                log.warning("Invalid response: missing 'payload' field")
-                return None
+            # Subscription responses wrap payloads; deferSpec responses do not.
+            payload = data.get("payload", data)
 
-            payload = data["payload"]
+            if payload is not None and (
+                not isinstance(payload, dict)
+                or not (
+                {"data", "errors", "incremental", "hasNext"} & payload.keys()
+                )
+            ):
+                log.warning("Invalid response: missing GraphQL payload fields")
+                return None
 
             # Check for transport-level errors (payload is null)
             if payload is None:
@@ -590,11 +651,16 @@ class AIOHTTPTransport(AsyncTransport):
                     # Null payload without errors - just skip this part
                     return None
 
+            if not isinstance(payload, dict):
+                return None
+
             # Extract GraphQL data from payload
-            return ExecutionResult(
+            return IncrementalPayload(
                 data=payload.get("data"),
                 errors=payload.get("errors"),
                 extensions=payload.get("extensions"),
+                has_next=payload.get("hasNext", False),
+                incremental=payload.get("incremental"),
             )
         except json.JSONDecodeError as e:
             log.warning(

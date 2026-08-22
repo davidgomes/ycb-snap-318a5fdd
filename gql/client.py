@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 import time
 import warnings
@@ -39,7 +40,7 @@ from tenacity import (
 )
 
 from .graphql_request import GraphQLRequest, support_deprecated_request
-from .transport.async_transport import AsyncTransport
+from .transport.async_transport import AsyncTransport, IncrementalPayload
 from .transport.exceptions import TransportConnectionFailed, TransportQueryError
 from .transport.local_schema import LocalSchemaTransport
 from .transport.transport import Transport
@@ -48,6 +49,56 @@ from .utilities import parse_result as parse_result_fn
 from .utils import str_first_element
 
 log = logging.getLogger(__name__)
+
+
+class IncrementalExecutionResult:
+    """Accumulated result returned by :meth:`execute_incremental`."""
+
+    def __init__(self, data, has_next, errors=None, extensions=None):
+        self.data = data
+        self.has_next = has_next
+        self.errors = errors
+        self.extensions = extensions
+
+
+def _merge_incremental(data, item):
+    path = item.get("path", [])
+    if "items" in item:
+        if path and isinstance(path[-1], int):
+            parent = _get_incremental_path(data, path[:-1])
+            if isinstance(parent, list):
+                index = path[-1]
+                parent[index:index] = item["items"]
+        return
+
+    value = item.get("data")
+    if not path:
+        if isinstance(data, dict) and isinstance(value, dict):
+            data.update(value)
+        return
+
+    parent = _get_incremental_path(data, path[:-1])
+    key = path[-1]
+    if isinstance(parent, dict):
+        parent[key] = value
+    elif isinstance(parent, list) and isinstance(key, int) and key < len(parent):
+        parent[key] = value
+
+
+def _get_incremental_path(data, path):
+    current = data
+    for key in path:
+        if isinstance(current, dict):
+            current = current.get(key)
+        elif isinstance(current, list) and isinstance(key, int):
+            if key >= len(current):
+                return None
+            current = current[key]
+        else:
+            return None
+        if current is None:
+            return None
+    return current
 
 
 class Client:
@@ -1509,6 +1560,64 @@ class AsyncClientSession:
                 )
 
         return result
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        parse_result: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalExecutionResult, None]:
+        """Execute a query and yield accumulated incremental results.
+
+        Each result contains the errors, extensions, and ``has_next`` flag from
+        its individual transport payload.
+        """
+        request = support_deprecated_request(request, kwargs)
+
+        if self.client.schema:
+            self.client.validate(request)
+            if request.variable_values is not None and (
+                serialize_variables
+                or (serialize_variables is None and self.client.serialize_variables)
+            ):
+                request = request.serialize_variable_values(self.client.schema)
+
+        accumulated: Dict[str, Any] = {}
+        async for payload in self.transport.execute_incremental(request, **kwargs):
+            if not isinstance(payload, IncrementalPayload):
+                payload = IncrementalPayload(
+                    data=payload.data,
+                    errors=payload.errors,
+                    extensions=payload.extensions,
+                    has_next=getattr(payload, "has_next", False),
+                    incremental=getattr(payload, "incremental", None),
+                )
+
+            if isinstance(payload.data, dict):
+                accumulated.update(payload.data)
+
+            for item in payload.incremental or []:
+                _merge_incremental(accumulated, item)
+
+            result_data = accumulated
+            if self.client.schema and (
+                parse_result or (parse_result is None and self.client.parse_results)
+            ):
+                result_data = parse_result_fn(
+                    self.client.schema,
+                    request.document,
+                    copy.deepcopy(accumulated),
+                    operation_name=request.operation_name,
+                )
+
+            yield IncrementalExecutionResult(
+                data=result_data,
+                has_next=payload.has_next,
+                errors=payload.errors,
+                extensions=payload.extensions,
+            )
 
     @overload
     async def execute(
