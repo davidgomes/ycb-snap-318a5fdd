@@ -36,22 +36,8 @@ func (runInfo *runInfoStruct) funcExpr() {
 	runVMFunction := func(in []reflect.Value) []reflect.Value {
 		runInfo := runInfoStruct{ctx: in[0].Interface().(context.Context), options: runInfo.options, env: envFunc.NewEnv(), stmt: funcExpr.Stmt, rv: nilValue}
 
-		// add Params to newEnv, except last Params
-		for i := 0; i < len(funcExpr.Params)-1; i++ {
-			runInfo.rv = in[i+1].Interface().(reflect.Value)
-			runInfo.env.DefineValue(funcExpr.Params[i], runInfo.rv)
-		}
-		// add last Params to newEnv
-		if len(funcExpr.Params) > 0 {
-			if funcExpr.VarArg {
-				// function is variadic, add last Params to newEnv without convert to Interface and then reflect.Value
-				runInfo.rv = in[len(funcExpr.Params)]
-				runInfo.env.DefineValue(funcExpr.Params[len(funcExpr.Params)-1], runInfo.rv)
-			} else {
-				// function is not variadic, add last Params to newEnv
-				runInfo.rv = in[len(funcExpr.Params)].Interface().(reflect.Value)
-				runInfo.env.DefineValue(funcExpr.Params[len(funcExpr.Params)-1], runInfo.rv)
-			}
+		if !bindVMFunctionParams(&runInfo, funcExpr, in) {
+			return []reflect.Value{reflectValueNilValue, reflect.ValueOf(reflect.ValueOf(newError(funcExpr, runInfo.err)))}
 		}
 
 		// run function statements
@@ -76,6 +62,58 @@ func (runInfo *runInfoStruct) funcExpr() {
 	if funcExpr.Name != "" {
 		runInfo.env.DefineValue(funcExpr.Name, runInfo.rv)
 	}
+}
+
+type missingArg struct{}
+
+var missingArgSentinel = reflect.ValueOf((*missingArg)(nil))
+
+func isMissingVMArg(v reflect.Value) bool {
+	inner, ok := v.Interface().(reflect.Value)
+	if !ok {
+		return false
+	}
+	return inner.Type() == missingArgSentinel.Type()
+}
+
+func bindVMFunctionParams(runInfo *runInfoStruct, funcExpr *ast.FuncExpr, in []reflect.Value) bool {
+	n := len(funcExpr.Params)
+	for i := 0; i < n; i++ {
+		isVar := funcExpr.VarArg && i == n-1
+		if isVar {
+			if len(in) <= i+1 {
+				runInfo.rv = reflect.MakeSlice(interfaceSliceType, 0, 0)
+				runInfo.env.DefineValue(funcExpr.Params[i], runInfo.rv)
+				continue
+			}
+			runInfo.rv = in[i+1]
+			runInfo.env.DefineValue(funcExpr.Params[i], runInfo.rv)
+			continue
+		}
+		if len(in) <= i+1 || isMissingVMArg(in[i+1]) {
+			if i < len(funcExpr.Defaults) && funcExpr.Defaults[i] != nil {
+				runInfo.expr = funcExpr.Defaults[i]
+				runInfo.invokeExpr()
+				if runInfo.err != nil {
+					runInfo.err = newError(funcExpr, runInfo.err)
+					return false
+				}
+				runInfo.env.DefineValue(funcExpr.Params[i], runInfo.rv)
+				continue
+			}
+			received := 0
+			for j := 1; j < len(in); j++ {
+				if !isMissingVMArg(in[j]) {
+					received++
+				}
+			}
+			runInfo.err = newStringError(funcExpr, fmt.Sprintf("function wants %v arguments but received %v", n, received))
+			return false
+		}
+		runInfo.rv = in[i+1].Interface().(reflect.Value)
+		runInfo.env.DefineValue(funcExpr.Params[i], runInfo.rv)
+	}
+	return true
 }
 
 // anonCallExpr handles ast.AnonCallExpr which calls a function anonymously
@@ -228,10 +266,15 @@ func (runInfo *runInfoStruct) makeCallArgs(rt reflect.Type, isRunVMFunction bool
 
 	// number of expressions
 	numExprs := len(callExpr.SubExprs)
+	numFixed := numIn
+	if rt.IsVariadic() {
+		numFixed--
+	}
 	// checks to short circuit wrong number of arguments
-	if (!rt.IsVariadic() && !callExpr.VarArg && numIn != numExprs) ||
+	if (!rt.IsVariadic() && !callExpr.VarArg && numExprs > numIn) ||
+		(!rt.IsVariadic() && !callExpr.VarArg && numExprs < numIn && !isRunVMFunction) ||
 		(rt.IsVariadic() && callExpr.VarArg && (numIn < numExprs || numIn > numExprs+1)) ||
-		(rt.IsVariadic() && !callExpr.VarArg && numIn > numExprs+1) ||
+		(rt.IsVariadic() && !callExpr.VarArg && numIn > numExprs+1 && !isRunVMFunction) ||
 		(!rt.IsVariadic() && callExpr.VarArg && numIn < numExprs) {
 		runInfo.err = newStringError(callExpr, fmt.Sprintf("function wants %v arguments but received %v", numIn, numExprs))
 		runInfo.rv = nilValue
@@ -257,6 +300,22 @@ func (runInfo *runInfoStruct) makeCallArgs(rt reflect.Type, isRunVMFunction bool
 		// for runVMFunction first arg is always context
 		args = append(args, reflect.ValueOf(runInfo.ctx))
 		indexInReal++
+	}
+
+	if isRunVMFunction && !callExpr.VarArg && numExprs < numFixed {
+		for i := 0; i < numFixed; i++ {
+			if i < numExprs {
+				runInfo.expr = callExpr.SubExprs[i]
+				runInfo.invokeExpr()
+				if runInfo.err != nil {
+					return nil, false
+				}
+				args = append(args, reflect.ValueOf(runInfo.rv))
+				continue
+			}
+			args = append(args, reflect.ValueOf(missingArgSentinel))
+		}
+		return args, false
 	}
 
 	// create arguments except the last one

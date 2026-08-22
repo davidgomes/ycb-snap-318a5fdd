@@ -565,6 +565,10 @@ type Lexer struct {
 	pos  ast.Position
 	e    error
 	stmt ast.Stmt
+
+	expectFuncParams  bool
+	inFuncParams      bool
+	funcDefaultsStack [][]ast.Expr
 }
 
 // Lex scans the token and literals.
@@ -577,6 +581,32 @@ func (l *Lexer) Lex(lval *yySymType) int {
 	lval.tok.SetPosition(pos)
 	l.lit = lit
 	l.pos = pos
+
+	switch {
+	case tok == FUNC:
+		l.expectFuncParams = true
+	case l.expectFuncParams && tok == int('\n'):
+		// keep looking for the parameter list
+	case l.expectFuncParams && tok == IDENT:
+		// named function: still waiting for '('
+	case l.expectFuncParams && tok == int('('):
+		l.expectFuncParams = false
+		l.inFuncParams = true
+		l.pushFuncDefaults()
+	case l.expectFuncParams:
+		l.expectFuncParams = false
+	}
+
+	if l.inFuncParams {
+		switch tok {
+		case IDENT:
+			l.appendFuncDefault(l.tryParseParamDefault())
+		case VARARG:
+			l.rejectVariadicDefault()
+		case int(')'):
+			l.inFuncParams = false
+		}
+	}
 	return tok
 }
 

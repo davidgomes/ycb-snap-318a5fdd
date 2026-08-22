@@ -485,21 +485,25 @@ expr :
 	{
 		$$ = &ast.FuncExpr{Params: $3, Stmt: $6}
 		$$.SetPosition($1.Position())
+		applyFuncDefaults(yylex, $$.(*ast.FuncExpr))
 	}
 	| FUNC '(' expr_idents VARARG ')' '{' compstmt '}'
 	{
 		$$ = &ast.FuncExpr{Params: $3, Stmt: $7, VarArg: true}
 		$$.SetPosition($1.Position())
+		applyFuncDefaults(yylex, $$.(*ast.FuncExpr))
 	}
 	| FUNC IDENT '(' expr_idents ')' '{' compstmt '}'
 	{
 		$$ = &ast.FuncExpr{Name: $2.Lit, Params: $4, Stmt: $7}
 		$$.SetPosition($1.Position())
+		applyFuncDefaults(yylex, $$.(*ast.FuncExpr))
 	}
 	| FUNC IDENT '(' expr_idents VARARG ')' '{' compstmt '}'
 	{
 		$$ = &ast.FuncExpr{Name: $2.Lit, Params: $4, Stmt: $8, VarArg: true}
 		$$.SetPosition($1.Position())
+		applyFuncDefaults(yylex, $$.(*ast.FuncExpr))
 	}
 	| '[' ']'
 	{

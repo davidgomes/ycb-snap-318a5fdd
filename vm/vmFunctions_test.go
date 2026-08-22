@@ -797,6 +797,32 @@ func TestCallFunctionWithVararg(t *testing.T) {
 	}
 }
 
+func TestDefaultFunctionArguments(t *testing.T) {
+	t.Parallel()
+
+	tests := []Test{
+		{Script: `func a(b = 1) { return b }; a()`, RunOutput: int64(1)},
+		{Script: `func a(b = 1) { return b }; a(2)`, RunOutput: int64(2)},
+		{Script: `func a(b, c = 2) { return [b, c] }; a(1)`, RunOutput: []interface{}{int64(1), int64(2)}},
+		{Script: `func a(b, c = 2, d = 3) { return [b, c, d] }; a(1)`, RunOutput: []interface{}{int64(1), int64(2), int64(3)}},
+		{Script: `func a(b, c = 2, d = 3) { return [b, c, d] }; a(1, 8)`, RunOutput: []interface{}{int64(1), int64(8), int64(3)}},
+		{Script: `func a(b, c = 2, d = 3) { return [b, c, d] }; a(1, 8, 9)`, RunOutput: []interface{}{int64(1), int64(8), int64(9)}},
+		{Script: `func a(b = 1 + 2) { return b }; a()`, RunOutput: int64(3)},
+		{Script: `n = 3; func a(b = n) { return b }; n = 7; a()`, RunOutput: int64(7), Output: map[string]interface{}{"n": int64(7)}},
+		{Script: `func a(b, c = b + 1) { return c }; a(10)`, RunOutput: int64(11)},
+		{Script: `func a(b, c = b + 1, d = c * 2) { return [b, c, d] }; a(10)`, RunOutput: []interface{}{int64(10), int64(11), int64(22)}},
+		{Script: `func a(b = 1, c...) { return [b, c] }; a()`, RunOutput: []interface{}{int64(1), []interface{}{}}},
+		{Script: `func a(b = 1, c...) { return [b, c] }; a(4, 5, 6)`, RunOutput: []interface{}{int64(4), []interface{}{int64(5), int64(6)}}},
+		{Script: `func(b = "x") { return b }()`, RunOutput: "x"},
+		{Script: `func a(b = func(){ return 4 }()) { return b }; a()`, RunOutput: int64(4)},
+		{Script: `func a(b = 1, c) { }`, ParseError: fmt.Errorf("invalid default argument declaration")},
+		{Script: `func a(b... = 1) { }`, ParseError: fmt.Errorf("invalid default argument declaration")},
+		{Script: `func a(b = 1...) { }`, ParseError: fmt.Errorf("invalid default argument declaration")},
+		{Script: `func a(b = 1, c, d = 2) { }`, ParseError: fmt.Errorf("invalid default argument declaration")},
+	}
+	runTests(t, tests, nil, &Options{Debug: true})
+}
+
 func TestGoFunctionConcurrency(t *testing.T) {
 	t.Parallel()
 

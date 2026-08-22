@@ -1738,6 +1738,7 @@ yydefault:
 		{
 			yyVAL.expr = &ast.FuncExpr{Params: yyDollar[3].expr_idents, Stmt: yyDollar[6].compstmt}
 			yyVAL.expr.SetPosition(yyDollar[1].tok.Position())
+			applyFuncDefaults(yylex, yyVAL.expr.(*ast.FuncExpr))
 		}
 	case 66:
 		yyDollar = yyS[yypt-8 : yypt+1]
@@ -1745,6 +1746,7 @@ yydefault:
 		{
 			yyVAL.expr = &ast.FuncExpr{Params: yyDollar[3].expr_idents, Stmt: yyDollar[7].compstmt, VarArg: true}
 			yyVAL.expr.SetPosition(yyDollar[1].tok.Position())
+			applyFuncDefaults(yylex, yyVAL.expr.(*ast.FuncExpr))
 		}
 	case 67:
 		yyDollar = yyS[yypt-8 : yypt+1]
@@ -1752,6 +1754,7 @@ yydefault:
 		{
 			yyVAL.expr = &ast.FuncExpr{Name: yyDollar[2].tok.Lit, Params: yyDollar[4].expr_idents, Stmt: yyDollar[7].compstmt}
 			yyVAL.expr.SetPosition(yyDollar[1].tok.Position())
+			applyFuncDefaults(yylex, yyVAL.expr.(*ast.FuncExpr))
 		}
 	case 68:
 		yyDollar = yyS[yypt-9 : yypt+1]
@@ -1759,6 +1762,7 @@ yydefault:
 		{
 			yyVAL.expr = &ast.FuncExpr{Name: yyDollar[2].tok.Lit, Params: yyDollar[4].expr_idents, Stmt: yyDollar[8].compstmt, VarArg: true}
 			yyVAL.expr.SetPosition(yyDollar[1].tok.Position())
+			applyFuncDefaults(yylex, yyVAL.expr.(*ast.FuncExpr))
 		}
 	case 69:
 		yyDollar = yyS[yypt-2 : yypt+1]
