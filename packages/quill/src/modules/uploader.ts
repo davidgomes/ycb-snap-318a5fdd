@@ -38,6 +38,10 @@ class Uploader extends Module<UploaderOptions> {
     });
   }
 
+  getMimetypes() {
+    return this.options.mimetypes ?? [];
+  }
+
   upload(range: Range, files: FileList | File[]) {
     const uploads: File[] = [];
     Array.from(files).forEach((file) => {

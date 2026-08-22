@@ -245,4 +245,150 @@ describe('Toolbar', () => {
       expect(boldButton?.classList.contains('ql-active')).toBe(true);
     });
   });
+
+  describe('shared container', () => {
+    const setup = () => {
+      const toolbar = createContainer(`
+        <button class="ql-bold"></button>
+        <select class="ql-size">
+          <option selected></option>
+          <option value="large"></option>
+        </select>
+        <button class="ql-image"></button>
+      `);
+      const editorOne = createContainer('<p>one</p>');
+      const editorTwo = createContainer('<p>two</p>');
+      const registry = createRegistry([SizeClass, Bold]);
+      Quill.register(
+        {
+          'themes/snow': SnowTheme,
+          'modules/toolbar': Toolbar,
+          'modules/clipboard': Clipboard,
+          'modules/keyboard': Keyboard,
+          'modules/history': History,
+          'modules/uploader': Uploader,
+          'modules/input': Input,
+          'modules/uiNode': UINode,
+        },
+        true,
+      );
+      const options = {
+        modules: {
+          toolbar: { container: toolbar },
+          uploader: { mimetypes: ['image/png'] },
+        },
+        theme: 'snow',
+        registry,
+      };
+      const quillOne = new Quill(editorOne, options);
+      const quillTwo = new Quill(editorTwo, options);
+      return {
+        toolbar,
+        quillOne,
+        quillTwo,
+        bold: toolbar.querySelector('button.ql-bold') as HTMLButtonElement,
+        size: toolbar.querySelector('select.ql-size') as HTMLSelectElement,
+        image: toolbar.querySelector('button.ql-image') as HTMLButtonElement,
+      };
+    };
+
+    test('routes actions and state to the focused editor', () => {
+      const { toolbar, quillOne, quillTwo, bold, size, image } = setup();
+      quillOne.setSelection(0, 1);
+      expect(bold.disabled).toBe(false);
+      bold.click();
+      expect(quillOne.getFormat(0, 1).bold).toBe(true);
+      image.click();
+      expect(
+        toolbar.querySelectorAll('input[data-ql-image-input]'),
+      ).toHaveLength(1);
+
+      quillTwo.setSelection(0, 1);
+      expect(bold.classList.contains('ql-active')).toBe(false);
+      size.value = 'large';
+      size.dispatchEvent(new Event('change', { bubbles: true }));
+      expect(quillTwo.getFormat(0, 1).size).toBe('large');
+      expect(quillOne.getFormat(0, 1).size).toBe(undefined);
+      expect(toolbar.querySelectorAll('.ql-picker')).toHaveLength(1);
+      image.click();
+      expect(
+        toolbar.querySelectorAll('input[data-ql-image-input]'),
+      ).toHaveLength(1);
+    });
+
+    test('disables shared controls with a disabled active editor', () => {
+      const { toolbar, quillOne, bold, size } = setup();
+      quillOne.setSelection(0, 1);
+      quillOne.disable();
+      expect(bold.disabled).toBe(true);
+      expect(size.disabled).toBe(true);
+      expect(
+        toolbar
+          .querySelector('.ql-picker-label')
+          ?.getAttribute('aria-disabled'),
+      ).toBe('true');
+      bold.click();
+      expect(quillOne.getFormat(0, 1).bold).toBe(undefined);
+    });
+
+    test('removes dead active editors without selecting a replacement', () => {
+      const { toolbar, quillOne, quillTwo, bold } = setup();
+      quillOne.setSelection(0, 1);
+      quillOne.container.remove();
+      bold.click();
+      expect(bold.disabled).toBe(true);
+      expect(quillTwo.getFormat(0, 1).bold).toBe(undefined);
+
+      quillTwo.setSelection(0, 1);
+      bold.click();
+      expect(quillTwo.getFormat(0, 1).bold).toBe(true);
+      expect(
+        toolbar.querySelectorAll('input[data-ql-image-input]'),
+      ).toHaveLength(0);
+    });
+
+    test('binds dynamic buttons once across removal and re-addition', () => {
+      const toolbar = createContainer();
+      const editorOne = createContainer('<p>one</p>');
+      const editorTwo = createContainer('<p>two</p>');
+      let calls = 0;
+      const options = {
+        modules: {
+          toolbar: {
+            container: toolbar,
+            handlers: {
+              custom() {
+                calls += 1;
+              },
+            },
+          },
+        },
+        registry: createRegistry(),
+      };
+      Quill.register(
+        {
+          'themes/snow': SnowTheme,
+          'modules/toolbar': Toolbar,
+          'modules/clipboard': Clipboard,
+          'modules/keyboard': Keyboard,
+          'modules/history': History,
+          'modules/uploader': Uploader,
+          'modules/input': Input,
+          'modules/uiNode': UINode,
+        },
+        true,
+      );
+      new Quill(editorOne, options);
+      const quillTwo = new Quill(editorTwo, options);
+      const button = document.createElement('button');
+      button.className = 'ql-custom';
+      toolbar.appendChild(button);
+      quillTwo.setSelection(0, 1);
+      button.click();
+      toolbar.removeChild(button);
+      toolbar.appendChild(button);
+      button.click();
+      expect(calls).toBe(2);
+    });
+  });
 });

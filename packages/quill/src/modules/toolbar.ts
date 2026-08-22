@@ -4,10 +4,13 @@ import Quill from '../core/quill.js';
 import logger from '../core/logger.js';
 import Module from '../core/module.js';
 import type { Range } from '../core/selection.js';
+import type Picker from '../ui/picker.js';
 
 const debug = logger('quill:toolbar');
 
 type Handler = (this: Toolbar, value: any) => void;
+type ActiveChangeHandler = (toolbar: Toolbar | null) => void;
+type ControlChangeHandler = (input: HTMLElement) => void;
 
 export type ToolbarConfig = Array<
   string[] | Array<string | Record<string, unknown>>
@@ -20,12 +23,298 @@ export interface ToolbarProps {
   theme?: boolean;
 }
 
+const toolbarGroups = new WeakMap<HTMLElement, ToolbarGroup>();
+
+class ToolbarGroup {
+  toolbars: Toolbar[] = [];
+  active: Toolbar | null = null;
+  controls = new Map<HTMLElement, string>();
+  pickers = new Set<Picker>();
+  activeChangeHandlers = new Map<Toolbar, Set<ActiveChangeHandler>>();
+  controlChangeHandlers = new Map<Toolbar, Set<ControlChangeHandler>>();
+  private observer: MutationObserver;
+  private documentObserver: MutationObserver;
+
+  constructor(public container: HTMLElement) {
+    this.container.addEventListener('click', this.handleClick);
+    this.container.addEventListener('change', this.handleChange);
+    this.observer = new MutationObserver(() => {
+      this.syncControls();
+      this.update();
+    });
+    this.observer.observe(this.container, { childList: true, subtree: true });
+    this.documentObserver = new MutationObserver(() => this.prune());
+    this.documentObserver.observe(document, { childList: true, subtree: true });
+  }
+
+  register(toolbar: Toolbar) {
+    this.toolbars.push(toolbar);
+    this.syncControls();
+    this.update();
+  }
+
+  unregister(toolbar: Toolbar) {
+    if (this.active === toolbar) {
+      this.setActive(null);
+    }
+    const index = this.toolbars.indexOf(toolbar);
+    if (index !== -1) {
+      this.toolbars.splice(index, 1);
+    }
+    this.activeChangeHandlers.delete(toolbar);
+    this.controlChangeHandlers.delete(toolbar);
+    if (this.toolbars.length === 0) {
+      this.dispose();
+    } else {
+      this.syncControls();
+      this.update();
+    }
+  }
+
+  dispose() {
+    this.container.removeEventListener('click', this.handleClick);
+    this.container.removeEventListener('change', this.handleChange);
+    this.observer.disconnect();
+    this.documentObserver.disconnect();
+    this.pickers.forEach((picker) => picker.destroy());
+    this.pickers.clear();
+    this.container
+      .querySelectorAll('input[data-ql-image-input]')
+      .forEach((input) => input.remove());
+    this.controls.clear();
+    toolbarGroups.delete(this.container);
+  }
+
+  getActive() {
+    this.prune();
+    return this.active;
+  }
+
+  activate(toolbar: Toolbar) {
+    if (this.toolbars.includes(toolbar) && this.isLive(toolbar)) {
+      this.setActive(toolbar);
+    }
+  }
+
+  addControl(input: HTMLElement, format: string) {
+    if (!this.controls.has(input)) {
+      if (input.tagName === 'BUTTON') {
+        input.setAttribute('type', 'button');
+      }
+      this.controls.set(input, format);
+      this.controlChangeHandlers.forEach((handlers) => {
+        handlers.forEach((handler) => handler(input));
+      });
+    }
+  }
+
+  addPicker(picker: Picker) {
+    this.pickers.add(picker);
+    this.update();
+  }
+
+  onActiveChange(toolbar: Toolbar, handler: ActiveChangeHandler) {
+    let handlers = this.activeChangeHandlers.get(toolbar);
+    if (handlers == null) {
+      handlers = new Set();
+      this.activeChangeHandlers.set(toolbar, handlers);
+    }
+    handlers.add(handler);
+    handler(this.active);
+  }
+
+  onControlChange(toolbar: Toolbar, handler: ControlChangeHandler) {
+    let handlers = this.controlChangeHandlers.get(toolbar);
+    if (handlers == null) {
+      handlers = new Set();
+      this.controlChangeHandlers.set(toolbar, handlers);
+    }
+    handlers.add(handler);
+  }
+
+  handleEditorChange(
+    toolbar: Toolbar,
+    type: string,
+    range: Range | null,
+    source: string,
+  ) {
+    if (!this.isLive(toolbar)) {
+      this.prune();
+      return;
+    }
+    if (
+      toolbar.quill.hasFocus() ||
+      (type === Quill.events.SELECTION_CHANGE &&
+        range != null &&
+        source === Quill.sources.USER)
+    ) {
+      this.activate(toolbar);
+    }
+    if (this.active === toolbar) {
+      this.update();
+    }
+  }
+
+  handleEnabledChange(toolbar: Toolbar) {
+    if (this.active === toolbar) {
+      this.update();
+    }
+  }
+
+  private handleClick = (event: Event) => {
+    const input = this.getControl(event);
+    if (input?.tagName === 'BUTTON') {
+      this.handleControl(input, event);
+    }
+  };
+
+  private handleChange = (event: Event) => {
+    const input = this.getControl(event);
+    if (input?.tagName === 'SELECT') {
+      this.handleControl(input, event);
+    }
+  };
+
+  private getControl(event: Event) {
+    if (!(event.target instanceof Element)) return null;
+    const input = event.target.closest('button, select');
+    return input instanceof HTMLElement && this.container.contains(input)
+      ? input
+      : null;
+  }
+
+  private handleControl(input: HTMLElement, event: Event) {
+    this.syncControls();
+    const toolbar = this.getActive();
+    if (
+      toolbar == null ||
+      !toolbar.quill.isEnabled() ||
+      !toolbar.supports(this.controls.get(input) || getFormat(input))
+    ) {
+      return;
+    }
+    toolbar.handleControl(input, event);
+  }
+
+  private setActive(toolbar: Toolbar | null) {
+    if (this.active === toolbar) {
+      this.update();
+      return;
+    }
+    this.active = toolbar;
+    this.update();
+    this.activeChangeHandlers.forEach((handlers) => {
+      handlers.forEach((handler) => handler(toolbar));
+    });
+  }
+
+  private isLive(toolbar: Toolbar) {
+    return toolbar.quill.root.isConnected;
+  }
+
+  private prune() {
+    this.toolbars
+      .slice()
+      .filter((toolbar) => !this.isLive(toolbar))
+      .forEach((toolbar) => toolbar.destroy());
+    if (this.active != null && !this.isLive(this.active)) {
+      this.setActive(null);
+    }
+  }
+
+  private syncControls() {
+    const current = new Set<HTMLElement>();
+    Array.from(
+      this.container.querySelectorAll<HTMLElement>('button, select'),
+    ).forEach((input) => {
+      current.add(input);
+      const format = getFormat(input);
+      if (format != null) {
+        this.addControl(input, format);
+      }
+    });
+    this.controls.forEach((_format, input) => {
+      if (!current.has(input)) {
+        this.controls.delete(input);
+      }
+    });
+    this.pickers.forEach((picker) => {
+      if (!this.container.contains(picker.select)) {
+        picker.destroy();
+        this.pickers.delete(picker);
+      }
+    });
+  }
+
+  update() {
+    const toolbar = this.active;
+    const range =
+      toolbar == null ? null : toolbar.quill.selection.getRange()[0];
+    const formats =
+      toolbar == null || range == null ? {} : toolbar.quill.getFormat(range);
+
+    this.syncControls();
+    this.controls.forEach((format, input) => {
+      updateControl(input, format, formats, range);
+      setControlDisabled(
+        input,
+        toolbar == null ||
+          !toolbar.quill.isEnabled() ||
+          !toolbar.supports(format),
+      );
+    });
+    this.pickers.forEach((picker) => {
+      const format = getFormat(picker.select);
+      picker.setDisabled(
+        toolbar == null ||
+          !toolbar.quill.isEnabled() ||
+          !toolbar.supports(format),
+      );
+      picker.update();
+    });
+    this.container
+      .querySelectorAll<HTMLInputElement>('input[data-ql-image-input]')
+      .forEach((input) => {
+        if (toolbar == null) {
+          input.remove();
+        } else {
+          input.disabled = !toolbar.quill.isEnabled();
+          input.accept = toolbar.quill.uploader.getMimetypes().join(', ');
+        }
+      });
+  }
+}
+
+export function getToolbarGroup(container: HTMLElement) {
+  let group = toolbarGroups.get(container);
+  if (group == null) {
+    group = new ToolbarGroup(container);
+    toolbarGroups.set(container, group);
+  }
+  return group;
+}
+
 class Toolbar extends Module<ToolbarProps> {
   static DEFAULTS: ToolbarProps;
 
   container?: HTMLElement | null;
   controls: [string, HTMLElement][];
   handlers: Record<string, Handler>;
+  private group?: ToolbarGroup;
+  private handleEditorChange = (
+    type: string,
+    range: Range | null,
+    _oldRange: Range | null,
+    source: string,
+  ) => {
+    this.group?.handleEditorChange(this, type, range, source);
+  };
+  private handleEnabledChange = () => {
+    this.group?.handleEnabledChange(this);
+  };
+  private handleFocus = () => {
+    this.group?.activate(this);
+  };
 
   constructor(quill: Quill, options: Partial<ToolbarProps>) {
     super(quill, options);
@@ -47,6 +336,8 @@ class Toolbar extends Module<ToolbarProps> {
     this.container.classList.add('ql-toolbar');
     this.controls = [];
     this.handlers = {};
+    this.group = getToolbarGroup(this.container);
+    this.group.register(this);
     if (this.options.handlers) {
       Object.keys(this.options.handlers).forEach((format) => {
         const handler = this.options.handlers?.[format];
@@ -61,10 +352,11 @@ class Toolbar extends Module<ToolbarProps> {
         this.attach(input);
       },
     );
-    this.quill.on(Quill.events.EDITOR_CHANGE, () => {
-      const [range] = this.quill.selection.getRange(); // quill.getSelection triggers update
-      this.update(range);
-    });
+    this.quill.emitter.on(Quill.events.EDITOR_CHANGE, this.handleEditorChange);
+    this.quill.emitter.on(Quill.events.ENABLE_CHANGE, this.handleEnabledChange);
+    this.quill.root.addEventListener('focusin', this.handleFocus);
+    this.quill.root.addEventListener('mousedown', this.handleFocus);
+    this.group.update();
   }
 
   addHandler(format: string, handler: Handler) {
@@ -72,116 +364,171 @@ class Toolbar extends Module<ToolbarProps> {
   }
 
   attach(input: HTMLElement) {
-    let format = Array.from(input.classList).find((className) => {
-      return className.indexOf('ql-') === 0;
-    });
+    const format = getFormat(input);
     if (!format) return;
-    format = format.slice('ql-'.length);
     if (input.tagName === 'BUTTON') {
       input.setAttribute('type', 'button');
     }
-    if (
-      this.handlers[format] == null &&
-      this.quill.scroll.query(format) == null
-    ) {
+    if (!this.supports(format)) {
       debug.warn('ignoring attaching to nonexistent format', format, input);
       return;
     }
-    const eventName = input.tagName === 'SELECT' ? 'change' : 'click';
-    input.addEventListener(eventName, (e) => {
-      let value;
-      if (input.tagName === 'SELECT') {
-        // @ts-expect-error
-        if (input.selectedIndex < 0) return;
-        // @ts-expect-error
-        const selected = input.options[input.selectedIndex];
-        if (selected.hasAttribute('selected')) {
-          value = false;
-        } else {
-          value = selected.value || false;
-        }
-      } else {
-        if (input.classList.contains('ql-active')) {
-          value = false;
-        } else {
-          // @ts-expect-error
-          value = input.value || !input.hasAttribute('value');
-        }
-        e.preventDefault();
-      }
-      this.quill.focus();
-      const [range] = this.quill.selection.getRange();
-      if (this.handlers[format] != null) {
-        this.handlers[format].call(this, value);
-      } else if (
-        // @ts-expect-error
-        this.quill.scroll.query(format).prototype instanceof EmbedBlot
-      ) {
-        value = prompt(`Enter ${format}`); // eslint-disable-line no-alert
-        if (!value) return;
-        this.quill.updateContents(
-          new Delta()
-            // @ts-expect-error Fix me later
-            .retain(range.index)
-            // @ts-expect-error Fix me later
-            .delete(range.length)
-            .insert({ [format]: value }),
-          Quill.sources.USER,
-        );
-      } else {
-        this.quill.format(format, value, Quill.sources.USER);
-      }
-      this.update(range);
-    });
-    this.controls.push([format, input]);
+    if (!this.controls.some(([, control]) => control === input)) {
+      this.controls.push([format, input]);
+    }
+    this.group?.addControl(input, format);
+  }
+
+  addPicker(picker: Picker) {
+    this.group?.addPicker(picker);
+  }
+
+  onActiveChange(handler: ActiveChangeHandler) {
+    this.group?.onActiveChange(this, handler);
+  }
+
+  onControlChange(handler: ControlChangeHandler) {
+    this.group?.onControlChange(this, handler);
+  }
+
+  getActive() {
+    return this.group?.getActive() || null;
+  }
+
+  supports(format: string | null) {
+    return (
+      format != null &&
+      (this.handlers[format] != null || this.quill.scroll.query(format) != null)
+    );
+  }
+
+  handleControl(input: HTMLElement, event: Event) {
+    const format = getFormat(input);
+    if (format == null) return;
+    let value;
+    if (input.tagName === 'SELECT') {
+      const select = input as HTMLSelectElement;
+      if (select.selectedIndex < 0) return;
+      const selected = select.options[select.selectedIndex];
+      value = selected.hasAttribute('selected')
+        ? false
+        : selected.value || false;
+    } else {
+      const button = input as HTMLButtonElement;
+      value = button.classList.contains('ql-active')
+        ? false
+        : button.value || !button.hasAttribute('value');
+      event.preventDefault();
+    }
+    this.quill.focus();
+    const [range] = this.quill.selection.getRange();
+    if (this.handlers[format] != null) {
+      this.handlers[format].call(this, value);
+    } else if (
+      // @ts-expect-error
+      this.quill.scroll.query(format).prototype instanceof EmbedBlot
+    ) {
+      if (range == null) return;
+      value = prompt(`Enter ${format}`); // eslint-disable-line no-alert
+      if (!value) return;
+      this.quill.updateContents(
+        new Delta()
+          .retain(range.index)
+          .delete(range.length)
+          .insert({ [format]: value }),
+        Quill.sources.USER,
+      );
+    } else {
+      this.quill.format(format, value, Quill.sources.USER);
+    }
+    this.update(range);
+  }
+
+  destroy() {
+    this.quill.emitter.off(Quill.events.EDITOR_CHANGE, this.handleEditorChange);
+    this.quill.emitter.off(
+      Quill.events.ENABLE_CHANGE,
+      this.handleEnabledChange,
+    );
+    this.quill.root.removeEventListener('focusin', this.handleFocus);
+    this.quill.root.removeEventListener('mousedown', this.handleFocus);
+    if (this.group) {
+      const group = this.group;
+      this.group = undefined;
+      group.unregister(this);
+    }
   }
 
   update(range: Range | null) {
-    const formats = range == null ? {} : this.quill.getFormat(range);
-    this.controls.forEach((pair) => {
-      const [format, input] = pair;
-      if (input.tagName === 'SELECT') {
-        let option: HTMLOptionElement | null = null;
-        if (range == null) {
-          option = null;
-        } else if (formats[format] == null) {
-          option = input.querySelector('option[selected]');
-        } else if (!Array.isArray(formats[format])) {
-          let value = formats[format];
-          if (typeof value === 'string') {
-            value = value.replace(/"/g, '\\"');
-          }
-          option = input.querySelector(`option[value="${value}"]`);
-        }
-        if (option == null) {
-          // @ts-expect-error TODO fix me later
-          input.value = ''; // TODO make configurable?
-          // @ts-expect-error TODO fix me later
-          input.selectedIndex = -1;
-        } else {
-          option.selected = true;
-        }
-      } else if (range == null) {
-        input.classList.remove('ql-active');
-        input.setAttribute('aria-pressed', 'false');
-      } else if (input.hasAttribute('value')) {
-        // both being null should match (default values)
-        // '1' should match with 1 (headers)
-        const value = formats[format] as boolean | number | string | object;
-        const isActive =
-          value === input.getAttribute('value') ||
-          (value != null && value.toString() === input.getAttribute('value')) ||
-          (value == null && !input.getAttribute('value'));
-        input.classList.toggle('ql-active', isActive);
-        input.setAttribute('aria-pressed', isActive.toString());
-      } else {
-        const isActive = formats[format] != null;
-        input.classList.toggle('ql-active', isActive);
-        input.setAttribute('aria-pressed', isActive.toString());
-      }
-    });
+    if (this.group?.active === this) {
+      this.group.update();
+    } else if (this.group == null) {
+      const formats = range == null ? {} : this.quill.getFormat(range);
+      this.controls.forEach(([format, input]) =>
+        updateControl(input, format, formats, range),
+      );
+    }
   }
 }
+
+function getFormat(input: HTMLElement) {
+  const className = Array.from(input.classList).find((name) =>
+    name.startsWith('ql-'),
+  );
+  return className == null ? null : className.slice('ql-'.length);
+}
+
+function setControlDisabled(input: HTMLElement, disabled: boolean) {
+  if ('disabled' in input) {
+    (input as HTMLButtonElement | HTMLSelectElement).disabled = disabled;
+  }
+}
+
+function updateControl(
+  input: HTMLElement,
+  format: string,
+  formats: Record<string, unknown>,
+  range: Range | null,
+) {
+  if (input.tagName === 'SELECT') {
+    const select = input as HTMLSelectElement;
+    let option: HTMLOptionElement | undefined;
+    if (range != null && formats[format] == null) {
+      option = Array.from(select.options).find((item) =>
+        item.hasAttribute('selected'),
+      );
+    } else if (range != null && !Array.isArray(formats[format])) {
+      const value = formats[format];
+      option = Array.from(select.options).find(
+        (item) => item.value === String(value),
+      );
+    }
+    if (option == null) {
+      select.value = '';
+      select.selectedIndex = -1;
+    } else {
+      select.selectedIndex = Array.from(select.options).indexOf(option);
+    }
+  } else if (range == null) {
+    input.classList.remove('ql-active');
+    input.setAttribute('aria-pressed', 'false');
+  } else if (input.hasAttribute('value')) {
+    // both being null should match (default values)
+    // '1' should match with 1 (headers)
+    const value = formats[format] as boolean | number | string | object;
+    const isActive =
+      value === input.getAttribute('value') ||
+      (value != null && value.toString() === input.getAttribute('value')) ||
+      (value == null && !input.getAttribute('value'));
+    input.classList.toggle('ql-active', isActive);
+    input.setAttribute('aria-pressed', isActive.toString());
+  } else {
+    const isActive = formats[format] != null;
+    input.classList.toggle('ql-active', isActive);
+    input.setAttribute('aria-pressed', isActive.toString());
+  }
+}
+
 Toolbar.DEFAULTS = {};
 
 function addButton(container: HTMLElement, format: string, value?: string) {

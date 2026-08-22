@@ -25,6 +25,7 @@ class Emitter extends EventEmitter<string> {
     SCROLL_OPTIMIZE: 'scroll-optimize',
     SCROLL_UPDATE: 'scroll-update',
     SCROLL_EMBED_UPDATE: 'scroll-embed-update',
+    ENABLE_CHANGE: 'enable-change',
     SELECTION_CHANGE: 'selection-change',
     TEXT_CHANGE: 'text-change',
     COMPOSITION_BEFORE_START: 'composition-before-start',

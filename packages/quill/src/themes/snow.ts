@@ -105,9 +105,21 @@ class SnowTheme extends BaseTheme {
 
   extendToolbar(toolbar: Toolbar) {
     if (toolbar.container != null) {
+      this.registerToolbar(toolbar);
+      toolbar.onControlChange((input) => {
+        if (input.tagName === 'BUTTON') {
+          this.buildButtons([input], icons);
+        } else if (input.tagName === 'SELECT') {
+          this.buildPickers([input as HTMLSelectElement], icons, toolbar);
+        }
+      });
       toolbar.container.classList.add('ql-snow');
       this.buildButtons(toolbar.container.querySelectorAll('button'), icons);
-      this.buildPickers(toolbar.container.querySelectorAll('select'), icons);
+      this.buildPickers(
+        toolbar.container.querySelectorAll('select'),
+        icons,
+        toolbar,
+      );
       // @ts-expect-error
       this.tooltip = new SnowTooltip(this.quill, this.options.bounds);
       if (toolbar.container.querySelector('.ql-link')) {

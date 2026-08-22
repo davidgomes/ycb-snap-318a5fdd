@@ -1,6 +1,7 @@
 import DropdownIcon from '../assets/icons/dropdown.svg';
 
 let optionsCounter = 0;
+const pickerInstances = new WeakMap<HTMLSelectElement, Picker>();
 
 function toggleAriaAttribute(element: HTMLElement, attribute: string) {
   element.setAttribute(
@@ -13,19 +14,28 @@ class Picker {
   select: HTMLSelectElement;
   container: HTMLElement;
   label: HTMLElement;
+  options: HTMLElement;
+  private originalDisplay: string;
+  private originalDisabled: boolean;
 
   constructor(select: HTMLSelectElement) {
     this.select = select;
+    this.originalDisplay = select.style.display;
+    this.originalDisabled = select.disabled;
+    pickerInstances.set(select, this);
     this.container = document.createElement('span');
     this.buildPicker();
     this.select.style.display = 'none';
     // @ts-expect-error Fix me later
     this.select.parentNode.insertBefore(this.container, this.select);
 
-    this.label.addEventListener('mousedown', () => {
+    this.label.addEventListener('mousedown', (event) => {
+      if (this.select.disabled) return;
+      event.preventDefault();
       this.togglePicker();
     });
     this.label.addEventListener('keydown', (event) => {
+      if (this.select.disabled) return;
       switch (event.key) {
         case 'Enter':
           this.togglePicker();
@@ -41,10 +51,10 @@ class Picker {
   }
 
   togglePicker() {
+    if (this.select.disabled) return;
     this.container.classList.toggle('ql-expanded');
     // Toggle aria-expanded and aria-hidden to make the picker accessible
     toggleAriaAttribute(this.label, 'aria-expanded');
-    // @ts-expect-error
     toggleAriaAttribute(this.options, 'aria-hidden');
   }
 
@@ -107,7 +117,6 @@ class Picker {
     optionsCounter += 1;
     this.label.setAttribute('aria-controls', options.id);
 
-    // @ts-expect-error
     this.options = options;
 
     Array.from(this.select.options).forEach((option) => {
@@ -140,17 +149,21 @@ class Picker {
   close() {
     this.container.classList.remove('ql-expanded');
     this.label.setAttribute('aria-expanded', 'false');
-    // @ts-expect-error
     this.options.setAttribute('aria-hidden', 'true');
   }
 
   selectItem(item: HTMLElement | null, trigger = false) {
+    if (trigger && this.select.disabled) return;
     const selected = this.container.querySelector('.ql-selected');
     if (item === selected) return;
     if (selected != null) {
       selected.classList.remove('ql-selected');
     }
-    if (item == null) return;
+    if (item == null) {
+      this.label.removeAttribute('data-value');
+      this.label.removeAttribute('data-label');
+      return;
+    }
     item.classList.add('ql-selected');
     // @ts-expect-error Fix me later
     this.select.selectedIndex = Array.from(item.parentNode.children).indexOf(
@@ -169,9 +182,26 @@ class Picker {
       this.label.removeAttribute('data-label');
     }
     if (trigger) {
-      this.select.dispatchEvent(new Event('change'));
+      this.select.dispatchEvent(new Event('change', { bubbles: true }));
       this.close();
     }
+  }
+
+  setDisabled(disabled: boolean) {
+    const isDisabled = disabled || this.originalDisabled;
+    this.select.disabled = isDisabled;
+    this.container.classList.toggle('ql-disabled', isDisabled);
+    this.label.setAttribute('aria-disabled', isDisabled.toString());
+    if (isDisabled) {
+      this.close();
+    }
+  }
+
+  destroy() {
+    pickerInstances.delete(this.select);
+    this.select.disabled = this.originalDisabled;
+    this.select.style.display = this.originalDisplay;
+    this.container.remove();
   }
 
   update() {
@@ -195,4 +225,9 @@ class Picker {
   }
 }
 
+function getPicker(select: HTMLSelectElement) {
+  return pickerInstances.get(select);
+}
+
+export { getPicker };
 export default Picker;

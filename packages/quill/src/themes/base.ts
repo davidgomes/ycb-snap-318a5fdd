@@ -5,7 +5,7 @@ import Theme from '../core/theme.js';
 import type { ThemeOptions } from '../core/theme.js';
 import ColorPicker from '../ui/color-picker.js';
 import IconPicker from '../ui/icon-picker.js';
-import Picker from '../ui/picker.js';
+import Picker, { getPicker } from '../ui/picker.js';
 import Tooltip from '../ui/tooltip.js';
 import type { Range } from '../core/selection.js';
 import type Clipboard from '../modules/clipboard.js';
@@ -13,6 +13,8 @@ import type History from '../modules/history.js';
 import type Keyboard from '../modules/keyboard.js';
 import type Uploader from '../modules/uploader.js';
 import type Selection from '../core/selection.js';
+import type Toolbar from '../modules/toolbar.js';
+import { getToolbarGroup } from '../modules/toolbar.js';
 
 const ALIGNS = [false, 'center', 'right', 'justify'];
 
@@ -59,9 +61,10 @@ const FONTS = [false, 'serif', 'monospace'];
 const HEADERS = ['1', '2', '3', false];
 
 const SIZES = ['small', false, 'large', 'huge'];
+const imageInputHandlers = new WeakSet<HTMLInputElement>();
 
 class BaseTheme extends Theme {
-  pickers: Picker[];
+  pickers: Picker[] = [];
   tooltip?: Tooltip;
 
   constructor(quill: Quill, options: ThemeOptions) {
@@ -109,7 +112,7 @@ class BaseTheme extends Theme {
   }
 
   buildButtons(
-    buttons: NodeListOf<HTMLElement>,
+    buttons: NodeListOf<HTMLElement> | HTMLElement[],
     icons: Record<string, Record<string, string> | string>,
   ) {
     Array.from(buttons).forEach((button) => {
@@ -138,16 +141,24 @@ class BaseTheme extends Theme {
   }
 
   buildPickers(
-    selects: NodeListOf<HTMLSelectElement>,
+    selects: NodeListOf<HTMLSelectElement> | HTMLSelectElement[],
     icons: Record<string, string | Record<string, string>>,
+    toolbar?: Toolbar,
   ) {
-    this.pickers = Array.from(selects).map((select) => {
+    const pickers = Array.from(selects).map((select) => {
+      let picker = getPicker(select);
+      if (picker != null) {
+        toolbar?.addPicker(picker);
+        return picker;
+      }
       if (select.classList.contains('ql-align')) {
         if (select.querySelector('option') == null) {
           fillSelect(select, ALIGNS);
         }
         if (typeof icons.align === 'object') {
-          return new IconPicker(select, icons.align);
+          picker = new IconPicker(select, icons.align);
+          toolbar?.addPicker(picker);
+          return picker;
         }
       }
       if (
@@ -164,7 +175,9 @@ class BaseTheme extends Theme {
             format === 'background' ? '#ffffff' : '#000000',
           );
         }
-        return new ColorPicker(select, icons[format] as string);
+        picker = new ColorPicker(select, icons[format] as string);
+        toolbar?.addPicker(picker);
+        return picker;
       }
       if (select.querySelector('option') == null) {
         if (select.classList.contains('ql-font')) {
@@ -175,14 +188,19 @@ class BaseTheme extends Theme {
           fillSelect(select, SIZES);
         }
       }
-      return new Picker(select);
+      picker = new Picker(select);
+      toolbar?.addPicker(picker);
+      return picker;
     });
-    const update = () => {
-      this.pickers.forEach((picker) => {
-        picker.update();
-      });
-    };
-    this.quill.on(Emitter.events.EDITOR_CHANGE, update);
+    this.pickers = Array.from(new Set([...this.pickers, ...pickers]));
+  }
+
+  registerToolbar(toolbar: Toolbar) {
+    toolbar.onActiveChange((active) => {
+      if (active !== toolbar || active == null || !active.quill.isEnabled()) {
+        this.tooltip?.hide();
+      }
+    });
   }
 }
 BaseTheme.DEFAULTS = merge({}, Theme.DEFAULTS, {
@@ -193,24 +211,34 @@ BaseTheme.DEFAULTS = merge({}, Theme.DEFAULTS, {
           this.quill.theme.tooltip.edit('formula');
         },
         image() {
-          let fileInput = this.container.querySelector(
+          const container = this.container;
+          if (container == null) return;
+          const active = this.getActive();
+          if (active == null || !active.quill.isEnabled()) return;
+          let fileInput = container.querySelector(
             'input.ql-image[type=file]',
-          );
+          ) as HTMLInputElement | null;
           if (fileInput == null) {
             fileInput = document.createElement('input');
             fileInput.setAttribute('type', 'file');
-            fileInput.setAttribute(
-              'accept',
-              this.quill.uploader.options.mimetypes.join(', '),
-            );
             fileInput.classList.add('ql-image');
+            fileInput.setAttribute('data-ql-image-input', '');
+            container.appendChild(fileInput);
+          }
+          fileInput.setAttribute('data-ql-image-input', '');
+          if (!imageInputHandlers.has(fileInput)) {
             fileInput.addEventListener('change', () => {
-              const range = this.quill.getSelection(true);
-              this.quill.uploader.upload(range, fileInput.files);
+              const active = getToolbarGroup(container)?.getActive();
+              if (active == null || !active.quill.isEnabled()) return;
+              const range = active.quill.getSelection(true);
+              if (range == null || fileInput.files == null) return;
+              active.quill.uploader.upload(range, fileInput.files);
               fileInput.value = '';
             });
-            this.container.appendChild(fileInput);
+            imageInputHandlers.add(fileInput);
           }
+          fileInput.disabled = false;
+          fileInput.accept = active.quill.uploader.getMimetypes().join(', ');
           fileInput.click();
         },
         video() {

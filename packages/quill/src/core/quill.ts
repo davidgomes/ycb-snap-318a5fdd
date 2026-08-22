@@ -335,6 +335,7 @@ class Quill {
   enable(enabled = true) {
     this.scroll.enable(enabled);
     this.container.classList.toggle('ql-disabled', !enabled);
+    this.emitter.emit(Emitter.events.ENABLE_CHANGE, enabled);
   }
 
   focus(options: { preventScroll?: boolean } = {}) {

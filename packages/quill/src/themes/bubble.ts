@@ -120,12 +120,32 @@ class BubbleTheme extends BaseTheme {
   }
 
   extendToolbar(toolbar: Toolbar) {
+    this.registerToolbar(toolbar);
     // @ts-expect-error
     this.tooltip = new BubbleTooltip(this.quill, this.options.bounds);
-    if (toolbar.container != null) {
-      this.tooltip.root.appendChild<HTMLElement>(toolbar.container);
-      this.buildButtons(toolbar.container.querySelectorAll('button'), icons);
-      this.buildPickers(toolbar.container.querySelectorAll('select'), icons);
+    const container = toolbar.container;
+    if (container != null) {
+      toolbar.onActiveChange((active) => {
+        if (
+          active === toolbar ||
+          (active == null && toolbar.quill.root.isConnected)
+        ) {
+          this.tooltip.root.appendChild<HTMLElement>(container);
+        }
+      });
+      toolbar.onControlChange((input) => {
+        if (input.tagName === 'BUTTON') {
+          this.buildButtons([input], icons);
+        } else if (input.tagName === 'SELECT') {
+          this.buildPickers([input as HTMLSelectElement], icons, toolbar);
+        }
+      });
+      const active = toolbar.getActive();
+      if (active == null || active === toolbar) {
+        this.tooltip.root.appendChild<HTMLElement>(container);
+      }
+      this.buildButtons(container.querySelectorAll('button'), icons);
+      this.buildPickers(container.querySelectorAll('select'), icons, toolbar);
     }
   }
 }
