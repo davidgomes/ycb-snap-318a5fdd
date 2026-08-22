@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 
+	envoyroutev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	extensiondynamicmodulev3 "github.com/envoyproxy/go-control-plane/envoy/extensions/dynamic_modules/v3"
 	dynamicmodulesv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/dynamic_modules/v3"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -25,6 +26,8 @@ type TrafficPolicyMergeOpts struct {
 	ExtProc string `json:"extProc,omitempty"`
 
 	Transformation string `json:"transformation,omitempty"`
+
+	ConsistentHash string `json:"consistentHash,omitempty"`
 }
 
 // MergeTrafficPolicies merges two TrafficPolicy IRs, returning a map that contains information
@@ -61,11 +64,49 @@ func MergeTrafficPolicies(
 		mergeURLRewrite,
 		mergeAPIKeyAuth,
 		mergeOAuth,
+		mergeConsistentHash,
 	}
 
 	for _, mergeFunc := range mergeFuncs {
 		mergeFunc(p1, p2, p2Ref, p2MergeOrigins, opts, mergeOrigins, tpOpts)
 	}
+}
+
+func mergeConsistentHash(
+	p1, p2 *TrafficPolicy,
+	p2Ref *ir.AttachedPolicyRef,
+	p2MergeOrigins ir.MergeOrigins,
+	_ policy.MergeOptions,
+	mergeOrigins ir.MergeOrigins,
+	_ TrafficPolicyMergeOpts,
+) {
+	if p2.spec.consistentHash == nil {
+		return
+	}
+	if p2.spec.consistentHash.disable {
+		p1.spec.consistentHash = p2.spec.consistentHash
+		mergeOrigins.SetOne("consistentHash", p2Ref, p2MergeOrigins)
+		return
+	}
+	if p1.spec.consistentHash == nil {
+		p1.spec.consistentHash = &consistentHashIR{}
+	}
+	if p1.spec.consistentHash.disable {
+		return
+	}
+	seen := map[string]bool{}
+	merged := make([]*envoyroutev3.RouteAction_HashPolicy, 0, len(p2.spec.consistentHash.policies)+len(p1.spec.consistentHash.policies))
+	for _, policies := range [][]*envoyroutev3.RouteAction_HashPolicy{p2.spec.consistentHash.policies, p1.spec.consistentHash.policies} {
+		for _, p := range policies {
+			key := hashPolicyKey(p)
+			if !seen[key] {
+				seen[key] = true
+				merged = append(merged, p)
+			}
+		}
+	}
+	p1.spec.consistentHash.policies = merged
+	mergeOrigins.Append("consistentHash", p2Ref, p2MergeOrigins)
 }
 
 func mergeTrafficPolicies(

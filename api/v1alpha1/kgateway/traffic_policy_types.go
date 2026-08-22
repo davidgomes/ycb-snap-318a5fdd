@@ -150,6 +150,75 @@ type TrafficPolicySpec struct {
 	// malicious social engineering.
 	// +optional
 	OAuth2 *OAuth2Policy `json:"oauth2,omitempty"`
+
+	// ConsistentHash configures the route hash policy.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="!has(self.disable) || (!has(self.headers) && !has(self.cookies) && !has(self.queryParameters) && !has(self.filterState) && !has(self.sourceIp))",message="disable cannot be combined with other consistentHash fields"
+	ConsistentHash *ConsistentHash `json:"consistentHash,omitempty"`
+}
+
+type ConsistentHash struct {
+	// Disable suppresses consistent hashing, including inherited policies.
+	// +optional
+	Disable *bool `json:"disable,omitempty"`
+	// +optional
+	Headers []ConsistentHashHeader `json:"headers,omitempty"`
+	// +optional
+	Cookies []ConsistentHashCookie `json:"cookies,omitempty"`
+	// +optional
+	QueryParameters []ConsistentHashQueryParameter `json:"queryParameters,omitempty"`
+	// +optional
+	FilterState []ConsistentHashFilterState `json:"filterState,omitempty"`
+	// +optional
+	SourceIP *ConsistentHashSourceIP `json:"sourceIp,omitempty"`
+}
+
+type ConsistentHashHeader struct {
+	// +required
+	HeaderName string `json:"headerName"`
+	// +optional
+	RegexRewrite *PathRegexRewrite `json:"regexRewrite,omitempty"`
+	// +required
+	Terminal bool `json:"terminal"`
+}
+
+type ConsistentHashCookie struct {
+	// +required
+	Name string `json:"name"`
+	// +required
+	TTL string `json:"ttl"`
+	// +required
+	Path string `json:"path"`
+	// +optional
+	Attributes []ConsistentHashCookieAttribute `json:"attributes,omitempty"`
+	// +required
+	Terminal bool `json:"terminal"`
+}
+
+type ConsistentHashCookieAttribute struct {
+	// +required
+	Name string `json:"name"`
+	// +required
+	Value string `json:"value"`
+}
+
+type ConsistentHashQueryParameter struct {
+	// +required
+	Name string `json:"name"`
+	// +required
+	Terminal bool `json:"terminal"`
+}
+
+type ConsistentHashFilterState struct {
+	// +required
+	Key string `json:"key"`
+	// +required
+	Terminal bool `json:"terminal"`
+}
+
+type ConsistentHashSourceIP struct {
+	// +required
+	Terminal bool `json:"terminal"`
 }
 
 // URLRewrite specifies URL rewrite rules using regular expressions.
