@@ -179,6 +179,11 @@ func TestTypedBindingErrors(t *testing.T) {
 			script: `var x: unknownType`,
 			parts:  []string{"undefined type"},
 		},
+		{
+			name:   "unknown namespaced type",
+			script: `var x: unknownNamespace.unknownType`,
+			parts:  []string{"unknown type"},
+		},
 	}
 
 	for _, test := range tests {

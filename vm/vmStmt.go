@@ -101,6 +101,7 @@ func (runInfo *runInfoStruct) runSingleStmt() {
 		if stmt.TypeData != nil {
 			target = makeType(runInfo, stmt.TypeData)
 			if runInfo.err != nil {
+				runInfo.err = newStringError(stmt, "unknown type: "+runInfo.err.Error())
 				runInfo.rv = nilValue
 				return
 			}
