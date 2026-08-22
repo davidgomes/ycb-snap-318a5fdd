@@ -320,12 +320,10 @@ class RunnableCoalesce(RunnableBindingBase[Input, Output]):  # type: ignore[no-r
     def get_graph(self, config: RunnableConfig | None = None) -> Any:
         return self.bound.get_graph(self._merge_configs(config))
 
-    def _raise_or_return(self, key: Any, *, stream: bool = False) -> Output:
-        result, error, chunks = self.backend.get_joined_value(key)
+    def _raise_or_return(self, key: Any) -> Output:
+        result, error, _chunks = self.backend.get_joined_value(key)
         if error is not None:
             raise error
-        if stream:
-            return cast("Output", chunks or [])
         return cast("Output", result)
 
     def _invoke(
