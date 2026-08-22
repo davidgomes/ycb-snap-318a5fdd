@@ -861,6 +861,18 @@ func (interp *Interpreter) cfg(root *node, sc *scope, importPath, pkgName string
 				}
 			}
 
+			if n.kind == defineStmt && n.embedDoc != nil && n.anc != nil && n.anc.kind == varDecl && n.anc.anc != nil && n.anc.anc.kind == fileStmt {
+				typ := atyp
+				if typ == nil && n.nleft > 0 {
+					typ = n.child[0].typ
+				}
+				if typ != nil {
+					if err = interp.processEmbedDecl(n, typ); err != nil {
+						return
+					}
+				}
+			}
+
 		case incDecStmt:
 			err = check.unaryExpr(n)
 			if err != nil {
@@ -2282,6 +2294,9 @@ func (interp *Interpreter) cfg(root *node, sc *scope, importPath, pkgName string
 					return
 				}
 			}
+			if err = interp.processEmbedDecl(n, n.typ); err != nil {
+				return
+			}
 
 			for _, c := range n.child[:l] {
 				var index int
@@ -2499,7 +2514,11 @@ func genGlobalVars(roots []*node, sc *scope) (*node, error) {
 func getVars(n *node) (vars []*node) {
 	for _, child := range n.child {
 		if child.kind == varDecl {
-			vars = append(vars, child.child...)
+			for _, v := range child.child {
+				if !v.embedded {
+					vars = append(vars, v)
+				}
+			}
 		}
 	}
 	return vars

@@ -154,6 +154,10 @@ func (interp *Interpreter) importSrc(rPath, importPath string, skipTest bool) (s
 		interp.run(n, nil)
 	}
 
+	if err = interp.applyEmbedValues(importPath); err != nil {
+		return "", err
+	}
+
 	// Wire and execute global vars in global scope gs.
 	n, err := genGlobalVars(rootNodes, gs)
 	if err != nil {

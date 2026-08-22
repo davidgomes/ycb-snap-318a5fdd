@@ -163,6 +163,11 @@ func (interp *Interpreter) Execute(p *Program) (res reflect.Value, err error) {
 	// Execute node closures.
 	interp.run(p.root, nil)
 
+	// Apply go:embed values before global variable initialization.
+	if err = interp.applyEmbedValues(p.pkgName); err != nil {
+		return res, err
+	}
+
 	// Wire and execute global vars.
 	n, err := genGlobalVars([]*node{p.root}, interp.scopes[p.pkgName])
 	if err != nil {
