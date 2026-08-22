@@ -1,0 +1,345 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Next - Using declarations > Using declarations (fail) > { using { resource } = value; } 1`] = `
+"SyntaxError [1:8-1:9]: using declarations cannot have destructuring
+> 1 | { using { resource } = value; }
+    |         ^ using declarations cannot have destructuring"
+`;
+
+exports[`Next - Using declarations > Using declarations (fail) > { using resource; } 1`] = `
+"SyntaxError [1:16-1:17]: using declarations must have an initializer
+> 1 | { using resource; }
+    |                 ^ using declarations must have an initializer"
+`;
+
+exports[`Next - Using declarations > Using declarations (fail) > await using resource = value; 1`] = `
+"SyntaxError [1:12-1:20]: await using is only allowed inside async functions or at the top level of modules
+> 1 | await using resource = value;
+    |             ^^^^^^^^ await using is only allowed inside async functions or at the top level of modules"
+`;
+
+exports[`Next - Using declarations > Using declarations (fail) > for (using resource in resources) {} 1`] = `
+"SyntaxError [1:20-1:22]: using declarations are not allowed in for-in
+> 1 | for (using resource in resources) {}
+    |                     ^^ using declarations are not allowed in for-in"
+`;
+
+exports[`Next - Using declarations > Using declarations (fail) > function f() { await using resource = value; } 1`] = `
+"SyntaxError [1:27-1:35]: await using is only allowed inside async functions or at the top level of modules
+> 1 | function f() { await using resource = value; }
+    |                            ^^^^^^^^ await using is only allowed inside async functions or at the top level of modules"
+`;
+
+exports[`Next - Using declarations > Using declarations (fail) > using resource = value; 1`] = `
+"SyntaxError [1:6-1:14]: using declarations are not allowed in the global scope
+> 1 | using resource = value;
+    |       ^^^^^^^^ using declarations are not allowed in the global scope"
+`;
+
+exports[`Next - Using declarations > Using declarations (pass) > { using resource = value; } 1`] = `
+{
+  "body": [
+    {
+      "body": [
+        {
+          "declarations": [
+            {
+              "id": {
+                "name": "resource",
+                "type": "Identifier",
+              },
+              "init": {
+                "name": "value",
+                "type": "Identifier",
+              },
+              "type": "VariableDeclarator",
+            },
+          ],
+          "kind": "using",
+          "type": "VariableDeclaration",
+        },
+      ],
+      "type": "BlockStatement",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - Using declarations > Using declarations (pass) > async function f() { for (await using resource of resources) {} } 1`] = `
+{
+  "body": [
+    {
+      "async": true,
+      "body": {
+        "body": [
+          {
+            "await": false,
+            "body": {
+              "body": [],
+              "type": "BlockStatement",
+            },
+            "left": {
+              "declarations": [
+                {
+                  "id": {
+                    "name": "resource",
+                    "type": "Identifier",
+                  },
+                  "init": null,
+                  "type": "VariableDeclarator",
+                },
+              ],
+              "kind": "await using",
+              "type": "VariableDeclaration",
+            },
+            "right": {
+              "name": "resources",
+              "type": "Identifier",
+            },
+            "type": "ForOfStatement",
+          },
+        ],
+        "type": "BlockStatement",
+      },
+      "generator": false,
+      "id": {
+        "name": "f",
+        "type": "Identifier",
+      },
+      "params": [],
+      "type": "FunctionDeclaration",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - Using declarations > Using declarations (pass) > async function f() { for await (using resource of resources) {} } 1`] = `
+{
+  "body": [
+    {
+      "async": true,
+      "body": {
+        "body": [
+          {
+            "await": true,
+            "body": {
+              "body": [],
+              "type": "BlockStatement",
+            },
+            "left": {
+              "declarations": [
+                {
+                  "id": {
+                    "name": "resource",
+                    "type": "Identifier",
+                  },
+                  "init": null,
+                  "type": "VariableDeclarator",
+                },
+              ],
+              "kind": "using",
+              "type": "VariableDeclaration",
+            },
+            "right": {
+              "name": "resources",
+              "type": "Identifier",
+            },
+            "type": "ForOfStatement",
+          },
+        ],
+        "type": "BlockStatement",
+      },
+      "generator": false,
+      "id": {
+        "name": "f",
+        "type": "Identifier",
+      },
+      "params": [],
+      "type": "FunctionDeclaration",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - Using declarations > Using declarations (pass) > async function f() { using resource = value; await using other = value; } 1`] = `
+{
+  "body": [
+    {
+      "async": true,
+      "body": {
+        "body": [
+          {
+            "declarations": [
+              {
+                "id": {
+                  "name": "resource",
+                  "type": "Identifier",
+                },
+                "init": {
+                  "name": "value",
+                  "type": "Identifier",
+                },
+                "type": "VariableDeclarator",
+              },
+            ],
+            "kind": "using",
+            "type": "VariableDeclaration",
+          },
+          {
+            "declarations": [
+              {
+                "id": {
+                  "name": "other",
+                  "type": "Identifier",
+                },
+                "init": {
+                  "name": "value",
+                  "type": "Identifier",
+                },
+                "type": "VariableDeclarator",
+              },
+            ],
+            "kind": "await using",
+            "type": "VariableDeclaration",
+          },
+        ],
+        "type": "BlockStatement",
+      },
+      "generator": false,
+      "id": {
+        "name": "f",
+        "type": "Identifier",
+      },
+      "params": [],
+      "type": "FunctionDeclaration",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - Using declarations > Using declarations (pass) > await using resource = value; 1`] = `
+{
+  "body": [
+    {
+      "declarations": [
+        {
+          "id": {
+            "name": "resource",
+            "type": "Identifier",
+          },
+          "init": {
+            "name": "value",
+            "type": "Identifier",
+          },
+          "type": "VariableDeclarator",
+        },
+      ],
+      "kind": "await using",
+      "type": "VariableDeclaration",
+    },
+  ],
+  "sourceType": "module",
+  "type": "Program",
+}
+`;
+
+exports[`Next - Using declarations > Using declarations (pass) > for (using resource of resources) {} 1`] = `
+{
+  "body": [
+    {
+      "await": false,
+      "body": {
+        "body": [],
+        "type": "BlockStatement",
+      },
+      "left": {
+        "declarations": [
+          {
+            "id": {
+              "name": "resource",
+              "type": "Identifier",
+            },
+            "init": null,
+            "type": "VariableDeclarator",
+          },
+        ],
+        "kind": "using",
+        "type": "VariableDeclaration",
+      },
+      "right": {
+        "name": "resources",
+        "type": "Identifier",
+      },
+      "type": "ForOfStatement",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - Using declarations > Using declarations (pass) > using
+resource = value; 1`] = `
+{
+  "body": [
+    {
+      "expression": {
+        "name": "using",
+        "type": "Identifier",
+      },
+      "type": "ExpressionStatement",
+    },
+    {
+      "expression": {
+        "left": {
+          "name": "resource",
+          "type": "Identifier",
+        },
+        "operator": "=",
+        "right": {
+          "name": "value",
+          "type": "Identifier",
+        },
+        "type": "AssignmentExpression",
+      },
+      "type": "ExpressionStatement",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - Using declarations > Using declarations (pass) > using resource = value; 1`] = `
+{
+  "body": [
+    {
+      "declarations": [
+        {
+          "id": {
+            "name": "resource",
+            "type": "Identifier",
+          },
+          "init": {
+            "name": "value",
+            "type": "Identifier",
+          },
+          "type": "VariableDeclarator",
+        },
+      ],
+      "kind": "using",
+      "type": "VariableDeclaration",
+    },
+  ],
+  "sourceType": "module",
+  "type": "Program",
+}
+`;

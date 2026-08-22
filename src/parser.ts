@@ -1668,8 +1668,8 @@ function parseLetIdentOrVarDeclarationStatement(
 type ResourceDeclarationKind = 'using' | 'await using';
 
 function nextTokenIsUsingOnSameLine(parser: Parser): boolean {
-  let index = parser.index;
-  const { source } = parser;
+  const { index: parserIndex, source } = parser;
+  let index = parserIndex;
 
   while (index < parser.end) {
     const char = source.charCodeAt(index);
@@ -1685,7 +1685,8 @@ function nextTokenIsUsingOnSameLine(parser: Parser): boolean {
       index += 2;
       while (index < parser.end) {
         const commentChar = source.charCodeAt(index);
-        if (commentChar === 0x0a || commentChar === 0x0d || commentChar === 0x2028 || commentChar === 0x2029) return false;
+        if (commentChar === 0x0a || commentChar === 0x0d || commentChar === 0x2028 || commentChar === 0x2029)
+          return false;
         if (commentChar === 0x2a && source.charCodeAt(index + 1) === 0x2f) {
           index += 2;
           break;
@@ -1845,6 +1846,7 @@ function parseAwaitUsingDeclarationOrExpressionStatement(
     context,
     scope,
     privateScope,
+    origin,
     labels,
     expression,
     Token.EOF,
@@ -1882,7 +1884,15 @@ function parseLexicalDeclaration(
 
   if (!keywordConsumed) nextToken(parser, context);
 
-  const declarations = parseVariableDeclarationList(parser, context, scope, privateScope, kind, origin, declarationKind);
+  const declarations = parseVariableDeclarationList(
+    parser,
+    context,
+    scope,
+    privateScope,
+    kind,
+    origin,
+    declarationKind,
+  );
 
   matchOrInsertSemicolon(parser, context | Context.AllowRegExp);
 
