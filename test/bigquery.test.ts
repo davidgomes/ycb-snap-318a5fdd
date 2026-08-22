@@ -621,7 +621,9 @@ describe('BigQueryFormatter', () => {
           COUNT(*) AS num_items,
           SUM(sales) AS total_sales
           GROUP BY
-            item;
+            item
+        |> ORDER BY
+          item DESC;
       `);
     });
 
