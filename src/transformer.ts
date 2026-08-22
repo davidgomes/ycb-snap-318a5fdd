@@ -144,9 +144,10 @@ function transformError(v: Error, superJson: SuperJSON): any {
 
 function untransformError(v: any, superJson: SuperJSON): Error {
   const isAggregate = Array.isArray(v.errors) && typeof AggregateError !== 'undefined';
+  const errorOptions = 'cause' in v ? { cause: v.cause } : undefined;
   const e: any = isAggregate
-    ? new AggregateError(v.errors, v.message, { cause: v.cause })
-    : new Error(v.message, { cause: v.cause });
+    ? new AggregateError(v.errors, v.message, errorOptions)
+    : new Error(v.message, errorOptions);
   e.name = v.name;
   e.stack = v.stack;
   if ('stackFrames' in v) e.stackFrames = v.stackFrames;
