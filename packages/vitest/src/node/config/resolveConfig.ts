@@ -774,6 +774,17 @@ export function resolveConfig(
   }
   resolved.sequence.groupOrder ??= 0
   resolved.sequence.hooks ??= 'stack'
+  resolved.sequence.sequential ??= true
+  resolved.sequence.maxConcurrency ??= resolved.maxConcurrency
+  resolved.sequence.affinity ??= false
+  resolved.sequence.durationHistory ??= true
+  resolved.sequence.durationSmoothing ??= 0.5
+  resolved.sequence.analytics ??= false
+  resolved.sequence.analyticsPersist ??= false
+  resolved.sequence.durationHistorySize ??= 20
+  resolved.sequence.adaptive ??= false
+  resolved.sequence.duration ??= true
+  resolved.sequence.balance ??= true
   // Set seed if either files or tests are shuffled
   if (resolved.sequence.sequencer === RandomSequencer || resolved.sequence.shuffle) {
     resolved.sequence.seed ??= Date.now()

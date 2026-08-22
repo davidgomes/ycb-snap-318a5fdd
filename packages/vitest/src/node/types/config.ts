@@ -81,6 +81,11 @@ export interface ProjectName {
 
 interface SequenceOptions {
   /**
+   * Controls whether files are executed sequentially.
+   * @default true
+   */
+  sequential?: boolean
+  /**
    * Class that handles sorting and sharding algorithm.
    * If you only need to change sorting, you can extend
    * your custom sequencer from `BaseSequencer` from `vitest/node`.
@@ -140,6 +145,46 @@ interface SequenceOptions {
    * @default 'stack'
    */
   hooks?: SequenceHooks
+  /**
+   * Maximum number of files executed concurrently.
+   */
+  maxConcurrency?: number
+  /**
+   * Prefer files with similar duration when scheduling.
+   */
+  affinity?: boolean
+  /**
+   * Use historical durations to order files.
+   */
+  durationHistory?: boolean
+  /**
+   * Weight used when smoothing historical durations.
+   */
+  durationSmoothing?: number
+  /**
+   * Enable sequence analytics.
+   */
+  analytics?: boolean
+  /**
+   * Persist sequence analytics.
+   */
+  analyticsPersist?: boolean
+  /**
+   * Number of duration samples retained.
+   */
+  durationHistorySize?: number
+  /**
+   * Use adaptive scheduling.
+   */
+  adaptive?: boolean
+  /**
+   * Schedule files by estimated duration.
+   */
+  duration?: boolean
+  /**
+   * Balance work across workers.
+   */
+  balance?: boolean
 }
 
 export type DepsOptimizationOptions = Omit<
@@ -1189,6 +1234,17 @@ export interface ResolvedConfig
     concurrent?: boolean
     seed: number
     groupOrder: number
+    sequential?: boolean
+    maxConcurrency?: number
+    affinity?: boolean
+    durationHistory?: boolean
+    durationSmoothing?: number
+    analytics?: boolean
+    analyticsPersist?: boolean
+    durationHistorySize?: number
+    adaptive?: boolean
+    duration?: boolean
+    balance?: boolean
   }
 
   typecheck: Omit<TypecheckConfig, 'enabled'> & {

@@ -49,6 +49,17 @@ export interface SerializedConfig {
     seed: number
     hooks: SequenceHooks
     setupFiles: SequenceSetupFiles
+    sequential?: boolean
+    maxConcurrency?: number
+    affinity?: boolean
+    durationHistory?: boolean
+    durationSmoothing?: number
+    analytics?: boolean
+    analyticsPersist?: boolean
+    durationHistorySize?: number
+    adaptive?: boolean
+    duration?: boolean
+    balance?: boolean
   }
   deps: {
     web: {
