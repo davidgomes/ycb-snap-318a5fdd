@@ -1,0 +1,4 @@
+Added RFC 5545 timezone interoperability for ``rrule``, ``rruleset``
+and ``rrulestr``: TZID/VALUE support on RDATE, timezone-aware
+serialization, equality, set operations, iCalendar export, and
+VCALENDAR/VTIMEZONE parsing.

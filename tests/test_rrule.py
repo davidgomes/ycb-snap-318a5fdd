@@ -4628,7 +4628,6 @@ def test_generated_aware_dtstart():
 
 @pytest.mark.rrule
 @pytest.mark.rrulestr
-@pytest.mark.xfail(reason="rrulestr loses time zone, gh issue #637")
 @freeze_time(datetime(2018, 3, 6, 5, 36, tzinfo=tz.UTC))
 def test_generated_aware_dtstart_rrulestr():
     rrule_without_dtstart = rrule(freq=HOURLY,
@@ -4912,3 +4911,276 @@ class WeekdayTest(unittest.TestCase):
 
         for repstr, wday in zip(with_n_reprs, with_n_wdays):
             self.assertEqual(repr(wday), repstr)
+
+
+@pytest.mark.rrule
+class RRuleTimezoneInteropTest(unittest.TestCase):
+    def testStrUTCUsesZSuffix(self):
+        rule = rrule(DAILY, count=2,
+                     dtstart=datetime(1997, 9, 2, 9, 0, tzinfo=tz.UTC))
+        self.assertEqual(str(rule),
+                         "DTSTART:19970902T090000Z\n"
+                         "RRULE:FREQ=DAILY;COUNT=2")
+        self.assertEqual(list(rrulestr(str(rule))), list(rule))
+
+    def testStrNonUTCUsesTZID(self):
+        NYC = tz.gettz('America/New_York')
+        rule = rrule(YEARLY, count=2,
+                     dtstart=datetime(1997, 9, 2, 9, 0, tzinfo=NYC))
+        self.assertEqual(str(rule),
+                         "DTSTART;TZID=America/New_York:19970902T090000\n"
+                         "RRULE:FREQ=YEARLY;COUNT=2")
+        self.assertEqual(list(rrulestr(str(rule))), list(rule))
+
+    def testStrUntilUTC(self):
+        rule = rrule(DAILY,
+                     dtstart=datetime(1997, 9, 2, 9, 0, tzinfo=tz.UTC),
+                     until=datetime(1997, 9, 4, 9, 0, tzinfo=tz.UTC))
+        self.assertIn('UNTIL=19970904T090000Z', str(rule))
+        self.assertEqual(list(rrulestr(str(rule))), list(rule))
+
+    def testProperties(self):
+        start = datetime(1997, 9, 2, 9, 0)
+        until = datetime(1997, 9, 10, 9, 0)
+        rule = rrule(WEEKLY, interval=2, dtstart=start, until=until)
+        self.assertEqual(rule.dtstart, start)
+        self.assertEqual(rule.freq, WEEKLY)
+        self.assertEqual(rule.interval, 2)
+        self.assertEqual(rule.until, until)
+
+    def testCountReturnsParameter(self):
+        rule = rrule(DAILY, count=5, dtstart=datetime(1997, 9, 2, 9, 0))
+        self.assertEqual(rule.count(), 5)
+
+    def testEqualityAndHash(self):
+        a = rrule(DAILY, count=3, dtstart=datetime(1997, 9, 2, 9, 0))
+        b = rrule(DAILY, count=3, dtstart=datetime(1997, 9, 2, 9, 0))
+        c = rrule(WEEKLY, count=3, dtstart=datetime(1997, 9, 2, 9, 0))
+        self.assertEqual(a, b)
+        self.assertNotEqual(a, c)
+        self.assertEqual(hash(a), hash(b))
+        self.assertEqual(len({a, b}), 1)
+
+    def testReprEval(self):
+        rule = rrule(WEEKLY, count=3, interval=2, byweekday=MO,
+                     dtstart=datetime(1997, 9, 2, 9, 0))
+        namespace = dict(vars(__import__('dateutil.rrule', fromlist=['*'])))
+        import datetime as datetime_mod
+        namespace['datetime'] = datetime_mod
+        self.assertEqual(eval(repr(rule), namespace), rule)
+        self.assertIn('WEEKLY', repr(rule))
+
+    def testToIcalIncludesVTimezone(self):
+        NYC = tz.gettz('America/New_York')
+        start = datetime(1997, 9, 2, 9, 0, tzinfo=NYC)
+        ical = rrule(YEARLY, count=2, dtstart=start).to_ical()
+        self.assertIn('BEGIN:VCALENDAR', ical)
+        self.assertIn('BEGIN:VEVENT', ical)
+        self.assertIn('BEGIN:VTIMEZONE', ical)
+        self.assertIn('BEGIN:STANDARD', ical)
+        self.assertIn('TZID:America/New_York', ical)
+        self.assertIn('TZOFFSETFROM:-0400', ical)
+        self.assertIn('TZOFFSETTO:-0400', ical)
+        parsed = rrulestr(ical)
+        self.assertEqual(list(parsed), list(rrule(YEARLY, count=2, dtstart=start)))
+
+    def testToIcalUTCHasNoVTimezone(self):
+        ical = rrule(DAILY, count=1,
+                     dtstart=datetime(1997, 9, 2, 9, 0, tzinfo=tz.UTC)).to_ical()
+        self.assertIn('BEGIN:VCALENDAR', ical)
+        self.assertNotIn('BEGIN:VTIMEZONE', ical)
+        self.assertIn('DTSTART:19970902T090000Z', ical)
+
+    def testConflictingTimezoneErrorMessage(self):
+        with self.assertRaises(ValueError) as ctx:
+            rrulestr("DTSTART;TZID=America/New_York:19970902T090000Z\n"
+                     "RRULE:FREQ=YEARLY;COUNT=1\n")
+        self.assertIn('date property specifies multiple timezones',
+                      str(ctx.exception))
+
+
+@pytest.mark.rruleset
+class RRuleSetInteropTest(unittest.TestCase):
+    def _sample_set(self):
+        rrset = rruleset()
+        rrset.rrule(rrule(YEARLY, count=2, byweekday=TU,
+                          dtstart=datetime(1997, 9, 2, 9, 0)))
+        rrset.rdate(datetime(1997, 9, 10, 9, 0))
+        rrset.exrule(rrule(YEARLY, count=1, byweekday=TH,
+                           dtstart=datetime(1997, 9, 2, 9, 0)))
+        rrset.exdate(datetime(1997, 9, 16, 9, 0))
+        return rrset
+
+    def testComponentAccessorsPreserveOrder(self):
+        rrset = rruleset()
+        a = rrule(DAILY, count=1, dtstart=datetime(1997, 9, 2, 9, 0))
+        b = rrule(WEEKLY, count=1, dtstart=datetime(1997, 9, 9, 9, 0))
+        d1 = datetime(1997, 9, 4, 9, 0)
+        d2 = datetime(1997, 9, 5, 9, 0)
+        rrset.rrule(a)
+        rrset.rrule(b)
+        rrset.rdate(d2)
+        rrset.rdate(d1)
+        self.assertEqual(rrset.rrules, (a, b))
+        self.assertEqual(rrset.rdates, (d2, d1))
+
+    def testStrOrderAndPrefixes(self):
+        NYC = tz.gettz('America/New_York')
+        rrset = rruleset()
+        rrset.rrule(rrule(DAILY, count=3,
+                          dtstart=datetime(1997, 9, 2, 9, 0, tzinfo=NYC)))
+        rrset.rdate(datetime(1997, 9, 10, 9, 0, tzinfo=NYC))
+        rrset.exrule(rrule(DAILY, count=1,
+                           dtstart=datetime(1997, 9, 3, 9, 0, tzinfo=NYC)))
+        rrset.exdate(datetime(1997, 9, 4, 9, 0, tzinfo=tz.UTC))
+        text = str(rrset)
+        self.assertEqual(
+            text,
+            "DTSTART;TZID=America/New_York:19970902T090000\n"
+            "RRULE:FREQ=DAILY;COUNT=3\n"
+            "RDATE;TZID=America/New_York:19970910T090000\n"
+            "EXRULE:FREQ=DAILY;COUNT=1\n"
+            "EXDATE:19970904T090000Z")
+
+    def testEqualityOrderIndependentDates(self):
+        a = rruleset()
+        a.rdate(datetime(1997, 9, 4, 9, 0))
+        a.rdate(datetime(1997, 9, 2, 9, 0))
+        b = rruleset()
+        b.rdate(datetime(1997, 9, 2, 9, 0))
+        b.rdate(datetime(1997, 9, 4, 9, 0))
+        self.assertEqual(a, b)
+
+    def testRepr(self):
+        rrset = self._sample_set()
+        text = repr(rrset)
+        self.assertTrue(text.startswith('rruleset()'))
+        self.assertIn('.rrule(', text)
+        self.assertIn('.rdate(', text)
+        self.assertIn('.exrule(', text)
+        self.assertIn('.exdate(', text)
+
+    def testCopy(self):
+        rrset = self._sample_set()
+        copied = rrset.copy()
+        self.assertEqual(copied, rrset)
+        self.assertIsNot(copied, rrset)
+        self.assertIs(copied.rrules[0], rrset.rrules[0])
+        copied.rdate(datetime(1998, 1, 1, 9, 0))
+        self.assertNotEqual(copied, rrset)
+
+    def testUnionAndSubtract(self):
+        left = rruleset()
+        left.rrule(rrule(DAILY, count=5, dtstart=datetime(1997, 9, 2, 9, 0)))
+        right = rruleset()
+        right.rrule(rrule(DAILY, count=2, dtstart=datetime(1997, 9, 3, 9, 0)))
+        right.rdate(datetime(1997, 9, 10, 9, 0))
+
+        combined = left.union(right)
+        self.assertEqual(len(combined.rrules), 2)
+        self.assertEqual(len(combined.rdates), 1)
+
+        subtracted = left.subtract(right)
+        self.assertEqual(len(subtracted.exrules), 1)
+        self.assertEqual(len(subtracted.exdates), 1)
+        self.assertEqual(list(subtracted),
+                         [datetime(1997, 9, 2, 9, 0),
+                          datetime(1997, 9, 5, 9, 0),
+                          datetime(1997, 9, 6, 9, 0)])
+
+        with self.assertRaises(TypeError):
+            left.union(rrule(DAILY, count=1, dtstart=datetime(1997, 9, 2)))
+        with self.assertRaises(TypeError):
+            left.subtract('nope')
+
+    def testFromStr(self):
+        parsed = rruleset.from_str(
+            "DTSTART:19970902T090000\n"
+            "RRULE:FREQ=YEARLY;COUNT=2;BYDAY=TU\n"
+            "RDATE:19970904T090000\n")
+        self.assertIsInstance(parsed, rruleset)
+        self.assertEqual(list(parsed),
+                         [datetime(1997, 9, 2, 9, 0),
+                          datetime(1997, 9, 4, 9, 0),
+                          datetime(1997, 9, 9, 9, 0)])
+
+    def testToIcalMultipleTimezones(self):
+        NYC = tz.gettz('America/New_York')
+        BXL = tz.gettz('Europe/Brussels')
+        rrset = rruleset()
+        rrset.rrule(rrule(DAILY, count=1,
+                          dtstart=datetime(1997, 9, 2, 9, 0, tzinfo=NYC)))
+        rrset.rdate(datetime(1997, 9, 4, 9, 0, tzinfo=BXL))
+        ical = rrset.to_ical()
+        self.assertEqual(ical.count('BEGIN:VTIMEZONE'), 2)
+        self.assertIn('TZID:America/New_York', ical)
+        self.assertIn('TZID:Europe/Brussels', ical)
+
+
+@pytest.mark.rrulestr
+class RRuleStrVCalendarTest(unittest.TestCase):
+    def testRDateTZIDAndValueDate(self):
+        NYC = tz.gettz('America/New_York')
+        parsed = rrulestr(
+            "DTSTART;TZID=America/New_York:19970902T090000\n"
+            "RDATE;TZID=America/New_York:19970904T090000\n"
+            "RDATE;VALUE=DATE:19970909\n"
+            "RDATE;VALUE=DATE-TIME:19970911T090000\n")
+        self.assertEqual(list(parsed), [
+            datetime(1997, 9, 2, 9, 0, tzinfo=NYC),
+            datetime(1997, 9, 4, 9, 0, tzinfo=NYC),
+            datetime(1997, 9, 9, 0, 0),
+            datetime(1997, 9, 11, 9, 0),
+        ])
+
+    def testVCalendarAutoDetectAndUnfold(self):
+        NYC = tz.gettz('America/New_York')
+        ical = (
+            "BEGIN:VCALENDAR\r\n"
+            "BEGIN:VTIMEZONE\r\n"
+            "TZID:America/New_York\r\n"
+            "BEGIN:STANDARD\r\n"
+            "DTSTART:19970902T090000\r\n"
+            "TZOFFSETFROM:-0400\r\n"
+            "TZOFFSETTO:-0400\r\n"
+            "END:STANDARD\r\n"
+            "END:VTIMEZONE\r\n"
+            "BEGIN:VEVENT\r\n"
+            "SUMMARY:Folded\r\n"
+            "  title\r\n"
+            "DTSTART;TZID=America/New_York:19970902T090000\r\n"
+            "RRULE:FREQ=YEARLY;COU\r\n"
+            " NT=2\r\n"
+            "END:VEVENT\r\n"
+            "END:VCALENDAR\r\n")
+        parsed = rrulestr(ical)
+        self.assertEqual(list(parsed), [
+            datetime(1997, 9, 2, 9, 0, tzinfo=NYC),
+            datetime(1998, 9, 2, 9, 0, tzinfo=NYC),
+        ])
+
+    def testVTimezoneOverridesTzids(self):
+        NYC = tz.gettz('America/New_York')
+        BXL = tz.gettz('Europe/Brussels')
+        ical = (
+            "BEGIN:VCALENDAR\n"
+            "BEGIN:VTIMEZONE\n"
+            "TZID:Custom/Zone\n"
+            "BEGIN:STANDARD\n"
+            "DTSTART:19970902T090000\n"
+            "TZOFFSETFROM:-0400\n"
+            "TZOFFSETTO:-0400\n"
+            "END:STANDARD\n"
+            "END:VTIMEZONE\n"
+            "BEGIN:VEVENT\n"
+            "DTSTART;TZID=Custom/Zone:19970902T090000\n"
+            "RRULE:FREQ=YEARLY;COUNT=1\n"
+            "END:VEVENT\n"
+            "END:VCALENDAR\n")
+        parsed = rrulestr(ical, tzids={'Custom/Zone': BXL})
+        # Inline VTIMEZONE wins over the tzids mapping.
+        self.assertNotEqual(parsed._dtstart.tzinfo, BXL)
+        self.assertEqual(parsed._dtstart.replace(tzinfo=None),
+                         datetime(1997, 9, 2, 9, 0))
+        self.assertEqual(parsed._dtstart.utcoffset(),
+                         datetime(1997, 9, 2, 9, 0, tzinfo=NYC).utcoffset())

@@ -15,7 +15,7 @@ from functools import wraps
 # For warning about deprecation of until and count
 from warnings import warn
 
-from six import advance_iterator, integer_types
+from six import advance_iterator, integer_types, string_types
 
 from six.moves import _thread, range
 
@@ -61,6 +61,205 @@ FREQNAMES = ['YEARLY', 'MONTHLY', 'WEEKLY', 'DAILY', 'HOURLY', 'MINUTELY', 'SECO
 # Imported on demand.
 easter = None
 parser = None
+
+
+def _is_utc(tzinfo):
+    """Return True if *tzinfo* represents UTC."""
+    if tzinfo is None:
+        return False
+
+    from dateutil import tz as dateutil_tz
+
+    if isinstance(tzinfo, dateutil_tz.tzutc):
+        return True
+
+    timezone = getattr(datetime, 'timezone', None)
+    if timezone is not None and tzinfo == timezone.utc:
+        return True
+
+    try:
+        probe = datetime.datetime(2000, 1, 1)
+        offset = tzinfo.utcoffset(probe)
+        dst = tzinfo.dst(probe)
+    except Exception:
+        return False
+
+    if offset != datetime.timedelta(0) or dst not in (None, datetime.timedelta(0)):
+        return False
+
+    tzid = _tzid_from_tzinfo(tzinfo)
+    if tzid in ('UTC', 'Etc/UTC', 'UCT', 'Etc/UCT', 'GMT', 'Etc/GMT',
+                'Z', 'Etc/GMT+0', 'Etc/GMT-0', 'GMT+0', 'GMT-0'):
+        return True
+
+    try:
+        name = tzinfo.tzname(None)
+    except Exception:
+        try:
+            name = tzinfo.tzname(probe)
+        except Exception:
+            name = None
+
+    return name in ('UTC', 'GMT', 'Z', 'UCT')
+
+
+def _tzid_from_tzinfo(tzinfo):
+    """Best-effort IANA / RFC 5545 TZID for a tzinfo instance."""
+    if tzinfo is None:
+        return None
+
+    tzid = getattr(tzinfo, '_tzid', None)
+    if tzid:
+        return tzid
+
+    key = getattr(tzinfo, 'key', None)
+    if key:
+        return key
+
+    filename = getattr(tzinfo, '_filename', None)
+    if filename:
+        fname = filename.replace('\\', '/')
+        marker = 'zoneinfo/'
+        if marker in fname:
+            return fname.split(marker)[-1]
+        if filename not in (None,) and not (
+                len(filename) > 0 and filename[0] in '/\\'):
+            return filename
+
+    name = getattr(tzinfo, '_name', None)
+    if name:
+        return name
+
+    try:
+        name = tzinfo.tzname(None)
+        if name:
+            return name
+    except Exception:
+        pass
+
+    return 'UNKNOWN'
+
+
+def _format_dt_value(dt):
+    return dt.strftime('%Y%m%dT%H%M%S')
+
+
+def _format_dt_property(name, dt):
+    """Serialize a DTSTART/RDATE/EXDATE property with TZID or Z."""
+    body = _format_dt_value(dt)
+    if dt.tzinfo is None:
+        return '%s:%s' % (name, body)
+    if _is_utc(dt.tzinfo):
+        return '%s:%sZ' % (name, body)
+    tzid = _tzid_from_tzinfo(dt.tzinfo)
+    return '%s;TZID=%s:%s' % (name, tzid, body)
+
+
+def _format_until(until):
+    """Serialize an UNTIL rule part (Z for UTC, convert other zones to UTC)."""
+    body = _format_dt_value(until)
+    if until.tzinfo is None:
+        return 'UNTIL=' + body
+    if _is_utc(until.tzinfo):
+        return 'UNTIL=' + body + 'Z'
+    from dateutil.tz import UTC
+    return 'UNTIL=' + _format_dt_value(until.astimezone(UTC)) + 'Z'
+
+
+def _format_tzoffset(td):
+    if td is None:
+        td = datetime.timedelta(0)
+    try:
+        total = int(td.total_seconds())
+    except AttributeError:
+        total = td.days * 86400 + td.seconds
+        if td.microseconds and td.microseconds < 0:
+            total -= 1
+    sign = '+' if total >= 0 else '-'
+    total = abs(total)
+    hours, rem = divmod(total, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if seconds:
+        return '%s%02d%02d%02d' % (sign, hours, minutes, seconds)
+    return '%s%02d%02d' % (sign, hours, minutes)
+
+
+def _vtimezone_lines(tzid, dt):
+    offset = _format_tzoffset(dt.utcoffset())
+    return [
+        'BEGIN:VTIMEZONE',
+        'TZID:%s' % tzid,
+        'BEGIN:STANDARD',
+        'DTSTART:%s' % _format_dt_value(dt),
+        'TZOFFSETFROM:%s' % offset,
+        'TZOFFSETTO:%s' % offset,
+        'END:STANDARD',
+        'END:VTIMEZONE',
+    ]
+
+
+def _unique_nonutc_tz(datetimes):
+    """Yield (tzid, dt) for the first occurrence of each non-UTC timezone."""
+    seen = set()
+    for dt in datetimes:
+        if dt is None or getattr(dt, 'tzinfo', None) is None:
+            continue
+        if _is_utc(dt.tzinfo):
+            continue
+        tzid = _tzid_from_tzinfo(dt.tzinfo)
+        if tzid in seen:
+            continue
+        seen.add(tzid)
+        yield tzid, dt
+
+
+def _wrap_ical(property_lines, tz_sources):
+    lines = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//python-dateutil//NONSGML rrule//EN',
+    ]
+    for tzid, dt in _unique_nonutc_tz(tz_sources):
+        lines.extend(_vtimezone_lines(tzid, dt))
+    lines.append('BEGIN:VEVENT')
+    lines.extend(property_lines)
+    lines.append('END:VEVENT')
+    lines.append('END:VCALENDAR')
+    return '\r\n'.join(lines) + '\r\n'
+
+
+def _tzids_with_vtimezones(vtz_map, tzids):
+    """Lookup callable: inline VTIMEZONE definitions take priority."""
+    def lookup(name):
+        if name in vtz_map:
+            return vtz_map[name]
+        uname = name.upper() if isinstance(name, string_types) else name
+        for key, value in vtz_map.items():
+            if key.upper() == uname:
+                return value
+        if tzids is None:
+            from dateutil import tz
+            return tz.gettz(name)
+        if callable(tzids):
+            return tzids(name)
+        getter = getattr(tzids, 'get', None)
+        if getter is None:
+            raise ValueError(
+                'tzids must be a callable, mapping, or None, not %s' % tzids)
+        return getter(name)
+    return lookup
+
+
+def _unfold_ical(s):
+    """RFC 5545 line unfolding (continuation lines start with space or tab)."""
+    raw = s.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    lines = []
+    for line in raw:
+        if line and line[0] in ' \t' and lines:
+            lines[-1] += line[1:]
+        elif line:
+            lines.append(line)
+    return lines
 
 
 class weekday(weekdaybase):
@@ -697,19 +896,89 @@ class rrule(rrulebase):
             self._timeset.sort()
             self._timeset = tuple(self._timeset)
 
-    def __str__(self):
-        """
-        Output a string that would generate this RRULE if passed to rrulestr.
-        This is mostly compatible with RFC5545, except for the
-        dateutil-specific extension BYEASTER.
-        """
+    @property
+    def dtstart(self):
+        return self._dtstart
 
-        output = []
-        h, m, s = [None] * 3
-        if self._dtstart:
-            output.append(self._dtstart.strftime('DTSTART:%Y%m%dT%H%M%S'))
-            h, m, s = self._dtstart.timetuple()[3:6]
+    @property
+    def freq(self):
+        return self._freq
 
+    @property
+    def interval(self):
+        return self._interval
+
+    @property
+    def until(self):
+        return self._until
+
+    def count(self):
+        """Return the COUNT parameter when set; otherwise iterate the series."""
+        if self._count is not None:
+            return self._count
+        return super(rrule, self).count()
+
+    def _comparison_key(self):
+        return (
+            self._freq,
+            self._dtstart,
+            self._interval,
+            self._wkst,
+            self._count,
+            self._until,
+            self._bysetpos,
+            self._bymonth,
+            self._bymonthday,
+            self._bynmonthday,
+            self._byyearday,
+            self._byeaster,
+            self._byweekno,
+            self._byweekday,
+            self._bynweekday,
+            self._byhour,
+            self._byminute,
+            self._bysecond,
+        )
+
+    def __eq__(self, other):
+        if not isinstance(other, rrule):
+            return NotImplemented
+        return self._comparison_key() == other._comparison_key()
+
+    def __ne__(self, other):
+        equal = self.__eq__(other)
+        if equal is NotImplemented:
+            return NotImplemented
+        return not equal
+
+    def __hash__(self):
+        return hash(self._comparison_key())
+
+    def __repr__(self):
+        args = [FREQNAMES[self._freq]]
+        args.append('dtstart=%r' % self._dtstart)
+        if self._interval != 1:
+            args.append('interval=%r' % self._interval)
+        if self._wkst != calendar.firstweekday():
+            args.append('wkst=%r' % weekday(self._wkst))
+        if self._count is not None:
+            args.append('count=%r' % self._count)
+        if self._until is not None:
+            args.append('until=%r' % self._until)
+
+        for key in ('bysetpos', 'bymonth', 'bymonthday', 'byyearday',
+                    'byeaster', 'byweekno', 'byweekday', 'byhour',
+                    'byminute', 'bysecond'):
+            value = self._original_rule.get(key)
+            if value is not None:
+                args.append('%s=%r' % (key, value))
+
+        if self._cache is not None:
+            args.append('cache=True')
+
+        return 'rrule(%s)' % ', '.join(args)
+
+    def _rrule_parts(self):
         parts = ['FREQ=' + FREQNAMES[self._freq]]
         if self._interval != 1:
             parts.append('INTERVAL=' + str(self._interval))
@@ -721,7 +990,7 @@ class rrule(rrulebase):
             parts.append('COUNT=' + str(self._count))
 
         if self._until:
-            parts.append(self._until.strftime('UNTIL=%Y%m%dT%H%M%S'))
+            parts.append(_format_until(self._until))
 
         if self._original_rule.get('byweekday') is not None:
             # The str() method on weekday objects doesn't generate
@@ -755,9 +1024,23 @@ class rrule(rrulebase):
             if value:
                 parts.append(partfmt.format(name=name, vals=(','.join(str(v)
                                                              for v in value))))
+        return parts
 
-        output.append('RRULE:' + ';'.join(parts))
+    def __str__(self):
+        """
+        Output a string that would generate this RRULE if passed to rrulestr.
+        This is mostly compatible with RFC5545, except for the
+        dateutil-specific extension BYEASTER.
+        """
+        output = []
+        if self._dtstart:
+            output.append(_format_dt_property('DTSTART', self._dtstart))
+        output.append('RRULE:' + ';'.join(self._rrule_parts()))
         return '\n'.join(output)
+
+    def to_ical(self):
+        """Serialize this rule as a VCALENDAR/VEVENT document."""
+        return _wrap_ical(str(self).split('\n'), (self._dtstart,))
 
     def replace(self, **kwargs):
         """Return new rrule with same attributes except for those attributes given new
@@ -1353,17 +1636,35 @@ class rruleset(rrulebase):
         self._exrule = []
         self._exdate = []
 
+    @property
+    def rrules(self):
+        return tuple(self._rrule)
+
+    @property
+    def rdates(self):
+        return tuple(self._rdate)
+
+    @property
+    def exrules(self):
+        return tuple(self._exrule)
+
+    @property
+    def exdates(self):
+        return tuple(self._exdate)
+
     @_invalidates_cache
     def rrule(self, rrule):
         """ Include the given :py:class:`rrule` instance in the recurrence set
             generation. """
         self._rrule.append(rrule)
+        return self
 
     @_invalidates_cache
     def rdate(self, rdate):
         """ Include the given :py:class:`datetime` instance in the recurrence
             set generation. """
         self._rdate.append(rdate)
+        return self
 
     @_invalidates_cache
     def exrule(self, exrule):
@@ -1372,6 +1673,7 @@ class rruleset(rrulebase):
             be generated, even if some inclusive rrule or rdate matches them.
         """
         self._exrule.append(exrule)
+        return self
 
     @_invalidates_cache
     def exdate(self, exdate):
@@ -1379,16 +1681,113 @@ class rruleset(rrulebase):
             exclusion list. Dates included that way will not be generated,
             even if some inclusive rrule or rdate matches them. """
         self._exdate.append(exdate)
+        return self
+
+    def __eq__(self, other):
+        if not isinstance(other, rruleset):
+            return NotImplemented
+        return (
+            tuple(self._rrule) == tuple(other._rrule) and
+            tuple(self._exrule) == tuple(other._exrule) and
+            tuple(sorted(self._rdate)) == tuple(sorted(other._rdate)) and
+            tuple(sorted(self._exdate)) == tuple(sorted(other._exdate))
+        )
+
+    def __ne__(self, other):
+        equal = self.__eq__(other)
+        if equal is NotImplemented:
+            return NotImplemented
+        return not equal
+
+    def __repr__(self):
+        lines = ['rruleset(cache=True)' if self._cache is not None
+                 else 'rruleset()']
+        for rr in self._rrule:
+            lines.append('.rrule(%r)' % rr)
+        for rd in self._rdate:
+            lines.append('.rdate(%r)' % rd)
+        for ex in self._exrule:
+            lines.append('.exrule(%r)' % ex)
+        for ed in self._exdate:
+            lines.append('.exdate(%r)' % ed)
+        return '\n'.join(lines)
+
+    def __str__(self):
+        output = []
+        if self._rrule:
+            dtstart = self._rrule[0]._dtstart
+            if dtstart:
+                output.append(_format_dt_property('DTSTART', dtstart))
+            for rr in self._rrule:
+                output.append('RRULE:' + ';'.join(rr._rrule_parts()))
+        for rd in self._rdate:
+            output.append(_format_dt_property('RDATE', rd))
+        for ex in self._exrule:
+            output.append('EXRULE:' + ';'.join(ex._rrule_parts()))
+        for ed in self._exdate:
+            output.append(_format_dt_property('EXDATE', ed))
+        return '\n'.join(output)
+
+    def copy(self):
+        """Return a shallow copy with the same component objects."""
+        other = rruleset(cache=self._cache is not None)
+        other._rrule = list(self._rrule)
+        other._rdate = list(self._rdate)
+        other._exrule = list(self._exrule)
+        other._exdate = list(self._exdate)
+        return other
+
+    def union(self, other):
+        """Combine all components from this set and *other*."""
+        if not isinstance(other, rruleset):
+            raise TypeError('expected rruleset, got %s' % type(other).__name__)
+        combined = self.copy()
+        for rr in other._rrule:
+            combined.rrule(rr)
+        for rd in other._rdate:
+            combined.rdate(rd)
+        for ex in other._exrule:
+            combined.exrule(ex)
+        for ed in other._exdate:
+            combined.exdate(ed)
+        return combined
+
+    def subtract(self, other):
+        """Exclude *other*'s rrules and rdates from this set."""
+        if not isinstance(other, rruleset):
+            raise TypeError('expected rruleset, got %s' % type(other).__name__)
+        result = self.copy()
+        for rr in other._rrule:
+            result.exrule(rr)
+        for rd in other._rdate:
+            result.exdate(rd)
+        return result
+
+    def to_ical(self):
+        """Serialize this set as a VCALENDAR document."""
+        tz_sources = []
+        for rr in self._rrule:
+            tz_sources.append(rr._dtstart)
+        tz_sources.extend(self._rdate)
+        for ex in self._exrule:
+            tz_sources.append(ex._dtstart)
+        tz_sources.extend(self._exdate)
+        return _wrap_ical(str(self).split('\n') if str(self) else [],
+                          tz_sources)
+
+    @classmethod
+    def from_str(cls, s, **kwargs):
+        """Parse *s* as an rruleset via :func:`rrulestr`."""
+        kwargs['forceset'] = True
+        return rrulestr(s, **kwargs)
 
     def _iter(self):
         rlist = []
-        self._rdate.sort()
-        self._genitem(rlist, iter(self._rdate))
+        self._genitem(rlist, iter(sorted(self._rdate)))
         for gen in [iter(x) for x in self._rrule]:
             self._genitem(rlist, gen)
         exlist = []
-        self._exdate.sort()
-        self._genitem(exlist, iter(self._exdate))
+        self._genitem(exlist, iter(sorted(self._exdate)))
         for gen in [iter(x) for x in self._exrule]:
             self._genitem(exlist, gen)
         lastdt = None
@@ -1572,10 +1971,8 @@ class _rrulestr(object):
 
         for parm in parms:
             if parm.startswith("TZID="):
-                try:
-                    tzkey = rule_tzids[parm.split('TZID=')[-1]]
-                except KeyError:
-                    continue
+                raw = parm.split('TZID=', 1)[1]
+                tzkey = rule_tzids.get(raw, raw)
                 if tzids is None:
                     from . import tz
                     tzlookup = tz.gettz
@@ -1607,10 +2004,71 @@ class _rrulestr(object):
                 if date.tzinfo is None:
                     date = date.replace(tzinfo=TZID)
                 else:
-                    raise ValueError('DTSTART/EXDATE specifies multiple timezone')
+                    raise ValueError('date property specifies multiple timezones')
             datevals.append(date)
 
         return datevals
+
+    def _extract_vcalendar(self, s):
+        """Extract VTIMEZONE definitions and the first VEVENT's recurrence
+        properties from a VCALENDAR document.
+        """
+        lines = _unfold_ical(s)
+        vtz_chunks = []
+        vevent_props = []
+        stack = []
+        current_vtz = None
+        in_first_vevent = False
+        seen_vevent = False
+
+        for line in lines:
+            if not line.strip():
+                continue
+            if ':' not in line:
+                continue
+            name, value = line.split(':', 1)
+            name = name.split(';')[0].upper()
+            value_upper = value.upper()
+
+            if name == 'BEGIN':
+                stack.append(value_upper)
+                if value_upper == 'VTIMEZONE':
+                    current_vtz = [line]
+                elif current_vtz is not None:
+                    current_vtz.append(line)
+                elif value_upper == 'VEVENT' and not seen_vevent:
+                    in_first_vevent = True
+                    seen_vevent = True
+                continue
+
+            if name == 'END':
+                if stack:
+                    stack.pop()
+                if value_upper == 'VTIMEZONE' and current_vtz is not None:
+                    current_vtz.append(line)
+                    vtz_chunks.append('\n'.join(current_vtz))
+                    current_vtz = None
+                elif value_upper == 'VEVENT':
+                    in_first_vevent = False
+                elif current_vtz is not None:
+                    current_vtz.append(line)
+                continue
+
+            if current_vtz is not None:
+                current_vtz.append(line)
+            elif in_first_vevent and stack and stack[-1] == 'VEVENT':
+                if name in ('DTSTART', 'RRULE', 'RDATE', 'EXRULE', 'EXDATE'):
+                    vevent_props.append(line)
+
+        vtz_map = {}
+        if vtz_chunks:
+            from dateutil.tz import tzical
+            from six import StringIO
+            parsed = tzical(StringIO('\n'.join(vtz_chunks)))
+            for key in parsed.keys():
+                vtz_map[key] = parsed.get(key)
+
+        return '\n'.join(vevent_props), vtz_map
 
     def _parse_rfc(self, s,
                    dtstart=None,
@@ -1624,6 +2082,13 @@ class _rrulestr(object):
         global parser
         if compatible:
             forceset = True
+            unfold = True
+
+        stripped = s.lstrip()
+        if stripped.upper().startswith('BEGIN:VCALENDAR'):
+            s, vtz_map = self._extract_vcalendar(s)
+            if vtz_map:
+                tzids = _tzids_with_vtimezones(vtz_map, tzids)
             unfold = True
 
         TZID_NAMES = dict(map(
@@ -1675,10 +2140,11 @@ class _rrulestr(object):
                         raise ValueError("unsupported RRULE parm: "+parm)
                     rrulevals.append(value)
                 elif name == "RDATE":
-                    for parm in parms:
-                        if parm != "VALUE=DATE-TIME":
-                            raise ValueError("unsupported RDATE parm: "+parm)
-                    rdatevals.append(value)
+                    rdatevals.extend(
+                        self._parse_date_value(value, parms,
+                                               TZID_NAMES, ignoretz,
+                                               tzids, tzinfos)
+                    )
                 elif name == "EXRULE":
                     for parm in parms:
                         raise ValueError("unsupported EXRULE parm: "+parm)
@@ -1708,10 +2174,7 @@ class _rrulestr(object):
                                                      ignoretz=ignoretz,
                                                      tzinfos=tzinfos))
                 for value in rdatevals:
-                    for datestr in value.split(','):
-                        rset.rdate(parser.parse(datestr,
-                                                ignoretz=ignoretz,
-                                                tzinfos=tzinfos))
+                    rset.rdate(value)
                 for value in exrulevals:
                     rset.exrule(self._parse_rfc_rrule(value, dtstart=dtstart,
                                                       ignoretz=ignoretz,
