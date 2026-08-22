@@ -115,16 +115,15 @@ impl<'input, 'arena> visitor::Visitor<'input>
     }
 
     fn visit_selector(&mut self, selector: &mut Selector<'input>) -> Result<(), Self::Error> {
-        if !selector.has_combinator() {
-            return Ok(());
-        }
-
         let Ok(selector) = selector.to_css_string(PrinterOptions {
             minify: true,
             ..PrinterOptions::default()
         }) else {
             return Ok(());
         };
+        if !selector.has_combinator() && !is_structure_sensitive_selector(&selector) {
+            return Ok(());
+        }
         let Ok(matches) = self.root.select(&selector) else {
             return Ok(());
         };
@@ -151,6 +150,26 @@ impl<'input, 'arena> visitor::Visitor<'input>
 
         Ok(())
     }
+}
+
+fn is_structure_sensitive_selector(selector: &str) -> bool {
+    [
+        ":first-child",
+        ":last-child",
+        ":only-child",
+        ":nth-child",
+        ":nth-last-child",
+        ":first-of-type",
+        ":last-of-type",
+        ":only-of-type",
+        ":nth-of-type",
+        ":nth-last-of-type",
+        ":empty",
+        ":has(",
+        ":root",
+    ]
+    .iter()
+    .any(|pseudo| selector.contains(pseudo))
 }
 
 impl Default for CollapseGroups {
