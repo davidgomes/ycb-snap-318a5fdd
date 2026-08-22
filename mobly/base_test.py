@@ -719,8 +719,10 @@ class BaseTestClass:
     with self._record_signature_lock:
       original_signature = record.signature
       signature = original_signature
+      suffix = 1
       while signature in self._record_signatures:
-        signature = '%s-%s' % (original_signature, len(self._record_signatures))
+        signature = '%s-%s' % (original_signature, suffix)
+        suffix += 1
       self._record_signatures.add(signature)
       record.signature = signature
 
