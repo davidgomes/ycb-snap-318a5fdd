@@ -62,6 +62,21 @@ def slice_addition(the_slice, addend):
     """
     return slice(the_slice.start + addend, the_slice.stop + addend)
 
+def _stencil_index(index, size, mode):
+    if 0 <= index < size:
+        return index
+    if mode == "wrap":
+        return index % size
+    if mode == "nearest":
+        return 0 if index < 0 else size - 1
+    if mode == "reflect":
+        index = -index if index < 0 else 2 * size - 2 - index
+        return index if 0 <= index < size else -1
+    if mode == "symmetric":
+        index = -index - 1 if index < 0 else 2 * size - 1 - index
+        return index if 0 <= index < size else -1
+    return -1
+
 class StencilFunc(object):
     """
     A special type to hold stencil information for the IR.
@@ -230,6 +245,17 @@ class StencilFunc(object):
                             acc_call = ir.Expr.binop(operator.add, stmt_index_var,
                                                      index_var, loc)
                             new_body.append(ir.Assign(acc_call, tmpvar, loc))
+                            if self.mode != "constant":
+                                mode_var = scope.redefine("stencil_mode", loc)
+                                new_body.append(ir.Assign(
+                                    ir.Global("_stencil_index", _stencil_index, loc),
+                                    mode_var, loc))
+                                mode_call = ir.Expr.call(mode_var, [
+                                    tmpvar, ir.Expr.getattr(
+                                        ir.Var(scope, stmt.value.value.name, loc),
+                                        "shape", loc), ir.Const(0, loc),
+                                    ir.Const(self.mode, loc)], (), loc)
+                                new_body.append(ir.Assign(mode_call, tmpvar, loc))
                             new_body.append(ir.Assign(
                                            ir.Expr.getitem(stmt.value.value, tmpvar, loc),
                                            stmt.target, loc))
@@ -513,6 +539,9 @@ class StencilFunc(object):
 
         # Get a list of the standard indexed array names.
         standard_indexed = self.options.get("standard_indexing", [])
+        modes = self.mode if isinstance(self.mode, tuple) else (self.mode,) * the_array.ndim
+        if len(modes) != the_array.ndim:
+            raise NumbaValueError("Mode tuple length must match array dimensionality.")
 
         if first_arg in standard_indexed:
             raise NumbaValueError("The first argument to a stencil kernel must "
@@ -575,6 +604,7 @@ class StencilFunc(object):
         # Get the shape of the first input array.
         shape_name = ir_utils.get_unused_var_name("full_shape", name_var_table)
         func_text += "    {} = {}.shape\n".format(shape_name, first_arg)
+        # Normalize relative indices according to the requested boundary mode.
 
         # Converts cval to a string constant
         def cval_as_str(cval):
@@ -811,17 +841,21 @@ def stencil(func_or_mode='constant', **options):
         func = None
 
     for option in options:
-        if option not in ["cval", "standard_indexing", "neighborhood"]:
+        if option not in ["cval", "standard_indexing", "neighborhood", "mode"]:
             raise NumbaValueError("Unknown stencil option " + option)
 
+    if "mode" in options:
+        mode = options.pop("mode")
     wrapper = _stencil(mode, options)
     if func is not None:
         return wrapper(func)
     return wrapper
 
 def _stencil(mode, options):
-    if mode != 'constant':
-        raise NumbaValueError("Unsupported mode style " + mode)
+    valid_modes = {"constant", "wrap", "nearest", "reflect", "symmetric"}
+    modes = mode if isinstance(mode, tuple) else (mode,)
+    if any(item not in valid_modes for item in modes):
+        raise NumbaValueError("Unsupported mode style " + str(mode))
 
     def decorated(func):
         from numba.core import compiler
