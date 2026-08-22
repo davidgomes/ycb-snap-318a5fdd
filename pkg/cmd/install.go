@@ -308,6 +308,8 @@ func runInstall(args []string, client *action.Install, valueOpts *values.Options
 	}
 
 	client.Namespace = settings.Namespace()
+	client.MergeStrategies = valueOpts.MergeStrategies
+	client.MergeKeys = valueOpts.MergeKeys
 
 	// Create context and prepare the handle of SIGTERM
 	ctx := context.Background()

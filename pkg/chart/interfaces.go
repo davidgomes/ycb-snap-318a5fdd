@@ -36,6 +36,7 @@ type Accessor interface {
 	Values() map[string]any
 	Schema() []byte
 	Deprecated() bool
+	Annotations() map[string]string
 }
 
 type DependencyAccessor interface {

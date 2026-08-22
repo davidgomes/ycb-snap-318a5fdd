@@ -43,11 +43,17 @@ func concatPrefix(a, b string) string {
 //   - A chart has access to all of the variables for it, as well as all of
 //     the values destined for its dependencies.
 func CoalesceValues(chrt chart.Charter, vals map[string]any) (common.Values, error) {
+	return CoalesceValuesWithStrategies(chrt, vals, nil, nil)
+}
+
+// CoalesceValuesWithStrategies coalesces chart and user values, applying CLI
+// merge-strategy overrides (path=value) over chart annotations.
+func CoalesceValuesWithStrategies(chrt chart.Charter, vals map[string]any, mergeStrategies, mergeKeys []string) (common.Values, error) {
 	valsCopy, err := copyValues(vals)
 	if err != nil {
 		return vals, err
 	}
-	return coalesce(log.Printf, chrt, valsCopy, "", false)
+	return coalesce(log.Printf, chrt, valsCopy, "", false, mergeStrategies, mergeKeys)
 }
 
 // MergeValues is used to merge the values in a chart and its subcharts. This
@@ -65,11 +71,16 @@ func CoalesceValues(chrt chart.Charter, vals map[string]any) (common.Values, err
 // logic need to retain them for when Coalescing will happen again later in the
 // business logic.
 func MergeValues(chrt chart.Charter, vals map[string]any) (common.Values, error) {
+	return MergeValuesWithStrategies(chrt, vals, nil, nil)
+}
+
+// MergeValuesWithStrategies is MergeValues with CLI merge-strategy overrides.
+func MergeValuesWithStrategies(chrt chart.Charter, vals map[string]any, mergeStrategies, mergeKeys []string) (common.Values, error) {
 	valsCopy, err := copyValues(vals)
 	if err != nil {
 		return vals, err
 	}
-	return coalesce(log.Printf, chrt, valsCopy, "", true)
+	return coalesce(log.Printf, chrt, valsCopy, "", true, mergeStrategies, mergeKeys)
 }
 
 func copyValues(vals map[string]any) (common.Values, error) {
@@ -96,13 +107,13 @@ type printFn func(format string, v ...any)
 // Note, the merge argument specifies whether this is being used by MergeValues
 // or CoalesceValues. Coalescing removes null values and their keys in some
 // situations while merging keeps the null values.
-func coalesce(printf printFn, ch chart.Charter, dest map[string]any, prefix string, merge bool) (map[string]any, error) {
-	coalesceValues(printf, ch, dest, prefix, merge)
-	return coalesceDeps(printf, ch, dest, prefix, merge)
+func coalesce(printf printFn, ch chart.Charter, dest map[string]any, prefix string, merge bool, mergeStrategies, mergeKeys []string) (map[string]any, error) {
+	coalesceValues(printf, ch, dest, prefix, merge, mergeStrategies, mergeKeys)
+	return coalesceDeps(printf, ch, dest, prefix, merge, mergeStrategies, mergeKeys)
 }
 
 // coalesceDeps coalesces the dependencies of the given chart.
-func coalesceDeps(printf printFn, chrt chart.Charter, dest map[string]any, prefix string, merge bool) (map[string]any, error) {
+func coalesceDeps(printf printFn, chrt chart.Charter, dest map[string]any, prefix string, merge bool, mergeStrategies, mergeKeys []string) (map[string]any, error) {
 	ch, err := chart.NewAccessor(chrt)
 	if err != nil {
 		return dest, err
@@ -122,10 +133,10 @@ func coalesceDeps(printf printFn, chrt chart.Charter, dest map[string]any, prefi
 			dvmap := dv.(map[string]any)
 			subPrefix := concatPrefix(prefix, ch.Name())
 			// Get globals out of dest and merge them into dvmap.
-			coalesceGlobals(printf, dvmap, dest, subPrefix, merge)
+			coalesceGlobals(printf, dvmap, dest, subPrefix, merge, subchart)
 			// Now coalesce the rest of the values.
 			var err error
-			dest[sub.Name()], err = coalesce(printf, subchart, dvmap, subPrefix, merge)
+			dest[sub.Name()], err = coalesce(printf, subchart, dvmap, subPrefix, merge, mergeStrategies, mergeKeys)
 			if err != nil {
 				return dest, err
 			}
@@ -137,7 +148,7 @@ func coalesceDeps(printf printFn, chrt chart.Charter, dest map[string]any, prefi
 // coalesceGlobals copies the globals out of src and merges them into dest.
 //
 // For convenience, returns dest.
-func coalesceGlobals(printf printFn, dest, src map[string]any, prefix string, _ bool) {
+func coalesceGlobals(printf printFn, dest, src map[string]any, prefix string, _ bool, subchart chart.Charter) {
 	var dg, sg map[string]any
 
 	if destglob, ok := dest[common.GlobalKey]; !ok {
@@ -152,6 +163,18 @@ func coalesceGlobals(printf printFn, dest, src map[string]any, prefix string, _ 
 	} else if sg, ok = srcglob.(map[string]any); !ok {
 		printf("warning: skipping globals because source %s is not a table.", common.GlobalKey)
 		return
+	}
+
+	// Apply subchart-declared global.* strategies to the globals maps.
+	if sub, err := chart.NewAccessor(subchart); err == nil {
+		globalStrats := strategiesForPrefix(ExtractMergeStrategies(sub.Annotations()), common.GlobalKey)
+		if len(globalStrats) > 0 {
+			sgCopy, err := copyValues(sg)
+			if err == nil {
+				applyMergeStrategies(sgCopy, dg, globalStrats, true)
+				sg = sgCopy
+			}
+		}
 	}
 
 	// EXPERIMENTAL: In the past, we have disallowed globals to test tables. This
@@ -198,7 +221,7 @@ func copyMap(src map[string]any) map[string]any {
 // coalesceValues builds up a values map for a particular chart.
 //
 // Values in v will override the values in the chart.
-func coalesceValues(printf printFn, c chart.Charter, v map[string]any, prefix string, merge bool) {
+func coalesceValues(printf printFn, c chart.Charter, v map[string]any, prefix string, merge bool, mergeStrategies, mergeKeys []string) {
 	ch, err := chart.NewAccessor(c)
 	if err != nil {
 		return
@@ -229,6 +252,9 @@ func coalesceValues(printf printFn, c chart.Charter, v map[string]any, prefix st
 			vc = ch.Values()
 		}
 	}
+
+	// Pre-merge annotated arrays so existing key-wise coalescing sees combined values.
+	applyMergeStrategies(v, vc, ExtractMergeStrategiesWithOverrides(ch.Annotations(), mergeStrategies, mergeKeys), merge)
 
 	for key, val := range vc {
 		if value, ok := v[key]; ok {
@@ -284,6 +310,13 @@ func childChartMergeTrue(chrt chart.Charter, key string, merge bool) bool {
 //
 // dest is considered authoritative.
 func CoalesceTables(dst, src map[string]any) map[string]any {
+	return coalesceTablesFullKey(log.Printf, dst, src, "", false)
+}
+
+// CoalesceTablesWithStrategies merges src into dest after applying array strategies.
+// dest is authoritative. For append, src elements appear before dest elements.
+func CoalesceTablesWithStrategies(dst, src map[string]any, strategies []MergeStrategy) map[string]any {
+	applyMergeStrategies(dst, src, strategies, false)
 	return coalesceTablesFullKey(log.Printf, dst, src, "", false)
 }
 

@@ -131,6 +131,10 @@ type Upgrade struct {
 	EnableDNS bool
 	// TakeOwnership will skip the check for helm annotations and adopt all existing resources.
 	TakeOwnership bool
+	// MergeStrategies are CLI overrides in path=value format (append or merge).
+	MergeStrategies []string
+	// MergeKeys are CLI overrides in path=value format for key-merge fields.
+	MergeKeys []string
 }
 
 type resultMessage struct {
@@ -265,6 +269,8 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 		}
 
 	}
+
+	applyMergeOverridesToChart(chart, u.MergeStrategies, u.MergeKeys)
 
 	// determine if values will be reused
 	vals, err = u.reuseValues(chart, currentRelease, vals)
@@ -608,6 +614,8 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 		return newVals, nil
 	}
 
+	strategies := upgradeMergeStrategies(chart, u.MergeStrategies, u.MergeKeys)
+
 	// If the ReuseValues flag is set, we always copy the old values over the new config's values.
 	if u.ReuseValues {
 		u.cfg.Logger().Debug("reusing the old release's values")
@@ -618,8 +626,12 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 			return nil, fmt.Errorf("failed to rebuild old values: %w", err)
 		}
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		newVals = util.CoalesceTablesWithStrategies(newVals, current.Config, strategies)
 
+		// Avoid re-applying array strategies when coalescing already-merged old values.
+		for _, s := range strategies {
+			deletePathFromValues(oldVals, s.Path)
+		}
 		chart.Values = oldVals
 
 		return newVals, nil
@@ -629,7 +641,7 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 	if u.ResetThenReuseValues {
 		u.cfg.Logger().Debug("merging values from old release to new values")
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		newVals = util.CoalesceTablesWithStrategies(newVals, current.Config, strategies)
 
 		return newVals, nil
 	}
@@ -659,6 +671,33 @@ func mergeCustomLabels(current, desired map[string]string) map[string]string {
 		}
 	}
 	return labels
+}
+
+func upgradeMergeStrategies(chart *chartv2.Chart, mergeStrategies, mergeKeys []string) []util.MergeStrategy {
+	var annotations map[string]string
+	if chart != nil && chart.Metadata != nil {
+		annotations = chart.Metadata.Annotations
+	}
+	return util.ExtractMergeStrategiesWithOverrides(annotations, mergeStrategies, mergeKeys)
+}
+
+func deletePathFromValues(vals map[string]any, path string) {
+	if vals == nil || path == "" {
+		return
+	}
+	parts := strings.Split(path, ".")
+	cur := vals
+	for i, part := range parts {
+		if i == len(parts)-1 {
+			delete(cur, part)
+			return
+		}
+		next, ok := cur[part].(map[string]any)
+		if !ok {
+			return
+		}
+		cur = next
+	}
 }
 
 func getUpgradeServerSideValue(serverSideOption string, releaseApplyMethod string) (bool, error) {

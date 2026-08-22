@@ -156,6 +156,8 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 					instClient.TakeOwnership = client.TakeOwnership
 					instClient.ForceConflicts = client.ForceConflicts
 					instClient.ServerSideApply = client.ServerSideApply != "false"
+					instClient.MergeStrategies = valueOpts.MergeStrategies
+					instClient.MergeKeys = valueOpts.MergeKeys
 
 					if isReleaseUninstalled(versions) {
 						instClient.Replace = true
@@ -249,6 +251,9 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 				fmt.Fprintf(out, "Release %s has been cancelled.\n", args[0])
 				cancel()
 			}()
+
+			client.MergeStrategies = valueOpts.MergeStrategies
+			client.MergeKeys = valueOpts.MergeKeys
 
 			rel, err := client.RunWithContext(ctx, args[0], ch, vals)
 			if err != nil {

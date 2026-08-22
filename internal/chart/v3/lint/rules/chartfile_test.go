@@ -223,6 +223,44 @@ func TestValidateChartIconURL(t *testing.T) {
 	}
 }
 
+func TestValidateChartMergeStrategies(t *testing.T) {
+	md := &chart.Metadata{
+		Annotations: map[string]string{
+			"helm.sh/merge-strategy/env":     "bogus",
+			"helm.sh/merge-strategy/servers": "merge",
+			"helm.sh/merge-key/orphan":       "id",
+			"helm.sh/merge-strategy/missing": "append",
+			"helm.sh/merge-strategy/name":    "append",
+		},
+	}
+	values := map[string]any{
+		"env":  []any{"a"},
+		"name": "not-an-array",
+	}
+	errs := validateChartMergeStrategies(md, values)
+	var joined strings.Builder
+	for _, err := range errs {
+		joined.WriteString(err.Error())
+		joined.WriteString("\n")
+	}
+	msg := joined.String()
+	if !strings.Contains(msg, "unsupported") || !strings.Contains(msg, "env") {
+		t.Errorf("expected unsupported strategy warning, got %s", msg)
+	}
+	if !strings.Contains(msg, "servers") {
+		t.Errorf("expected merge-without-key warning for servers, got %s", msg)
+	}
+	if !strings.Contains(msg, "orphan") {
+		t.Errorf("expected orphan merge-key warning, got %s", msg)
+	}
+	if !strings.Contains(msg, "not found") || !strings.Contains(msg, "missing") {
+		t.Errorf("expected path not found warning, got %s", msg)
+	}
+	if !strings.Contains(msg, "non-array") || !strings.Contains(msg, "name") {
+		t.Errorf("expected non-array warning, got %s", msg)
+	}
+}
+
 func TestV3Chartfile(t *testing.T) {
 	t.Run("Chart.yaml basic validity issues", func(t *testing.T) {
 		linter := support.Linter{ChartDir: badChartDir}

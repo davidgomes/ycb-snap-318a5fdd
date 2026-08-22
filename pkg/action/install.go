@@ -133,6 +133,10 @@ type Install struct {
 	// Lock to control raceconditions when the process receives a SIGTERM
 	Lock           sync.Mutex
 	goroutineCount atomic.Int32
+	// MergeStrategies are CLI overrides in path=value format (append or merge).
+	MergeStrategies []string
+	// MergeKeys are CLI overrides in path=value format for key-merge fields.
+	MergeKeys []string
 }
 
 // ChartPathOptions captures common options used for controlling chart paths
@@ -286,6 +290,8 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 	default:
 		return nil, errors.New("invalid chart apiVersion")
 	}
+
+	applyMergeOverridesToChart(chrt, i.MergeStrategies, i.MergeKeys)
 
 	if interactWithServer(i.DryRunStrategy) {
 		if err := i.cfg.KubeClient.IsReachable(); err != nil {
@@ -985,4 +991,17 @@ func (c *ChartPathOptions) LocateChart(name string, settings *cli.EnvSettings) (
 		return filename, err
 	}
 	return lname, nil
+}
+
+func applyMergeOverridesToChart(chrt *chart.Chart, mergeStrategies, mergeKeys []string) {
+	if chrt == nil || (len(mergeStrategies) == 0 && len(mergeKeys) == 0) {
+		return
+	}
+	if chrt.Metadata == nil {
+		chrt.Metadata = &chart.Metadata{}
+	}
+	chrt.Metadata.Annotations = util.ApplyMergeStrategyOverrides(chrt.Metadata.Annotations, mergeStrategies, mergeKeys)
+	for _, dep := range chrt.Dependencies() {
+		applyMergeOverridesToChart(dep, mergeStrategies, mergeKeys)
+	}
 }

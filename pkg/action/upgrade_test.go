@@ -339,6 +339,62 @@ func TestUpgradeRelease_ReuseValues(t *testing.T) {
 	})
 }
 
+func TestUpgradeRelease_ReuseValuesMergeStrategies(t *testing.T) {
+	is := assert.New(t)
+	upAction := upgradeAction(t)
+
+	existingValues := map[string]any{
+		"env": []any{"OLD"},
+	}
+	newValues := map[string]any{
+		"env": []any{"NEW"},
+	}
+	rel := releaseStub()
+	rel.Name = "nuketown"
+	rel.Info.Status = common.StatusDeployed
+	rel.Config = existingValues
+	is.NoError(upAction.cfg.Releases.Create(rel))
+
+	upAction.ReuseValues = true
+	ch := buildChart(withValues(map[string]any{"env": []any{"CHART"}}))
+	ch.Metadata.Annotations = map[string]string{
+		"helm.sh/merge-strategy/env": "append",
+	}
+	resi, err := upAction.Run(rel.Name, ch, newValues)
+	is.NoError(err)
+	res, err := releaserToV1Release(resi)
+	is.NoError(err)
+	is.Equal([]any{"OLD", "NEW"}, res.Config["env"])
+}
+
+func TestUpgradeRelease_ResetThenReuseValuesMergeStrategies(t *testing.T) {
+	is := assert.New(t)
+	upAction := upgradeAction(t)
+
+	existingValues := map[string]any{
+		"env": []any{"OLD"},
+	}
+	newValues := map[string]any{
+		"env": []any{"NEW"},
+	}
+	rel := releaseStub()
+	rel.Name = "nuketown"
+	rel.Info.Status = common.StatusDeployed
+	rel.Config = existingValues
+	is.NoError(upAction.cfg.Releases.Create(rel))
+
+	upAction.ResetThenReuseValues = true
+	ch := buildChart(withValues(map[string]any{"env": []any{"CHART"}}))
+	ch.Metadata.Annotations = map[string]string{
+		"helm.sh/merge-strategy/env": "append",
+	}
+	resi, err := upAction.Run(rel.Name, ch, newValues)
+	is.NoError(err)
+	res, err := releaserToV1Release(resi)
+	is.NoError(err)
+	is.Equal([]any{"OLD", "NEW"}, res.Config["env"])
+}
+
 func TestUpgradeRelease_ResetThenReuseValues(t *testing.T) {
 	is := assert.New(t)
 
