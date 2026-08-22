@@ -270,7 +270,7 @@ func Diff(base, target *Document, opts DiffOptions) ([]DiffOperation, error) {
 		return []DiffOperation{{Type: OpAdd, Path: "/", NewValue: t.Copy()}}, nil
 	}
 	if t == nil {
-		return []DiffOperation{{Type: OpRemove, Path: elementPath(b), OldValue: b.Copy(), NewValue: b.Copy()}}, nil
+		return []DiffOperation{{Type: OpRemove, Path: elementPath(b), OldValue: b.Copy()}}, nil
 	}
 	if !sameElementName(b, t) {
 		return []DiffOperation{{Type: OpReplace, Path: elementPath(b), OldValue: b.Copy(), NewValue: t.Copy()}}, nil
@@ -328,7 +328,13 @@ func diffAttrs(base, target *Element, path string, opts DiffOptions, ops *[]Diff
 			tattrs[a.FullKey()] = a
 		}
 	}
-	for name, a := range battrs {
+	bnames := make([]string, 0, len(battrs))
+	for name := range battrs {
+		bnames = append(bnames, name)
+	}
+	sort.Strings(bnames)
+	for _, name := range bnames {
+		a := battrs[name]
 		if _, ok := tattrs[name]; !ok {
 			*ops = append(*ops, DiffOperation{
 				Type: OpUpdateAttr, Path: path, AttrName: name,
@@ -336,7 +342,13 @@ func diffAttrs(base, target *Element, path string, opts DiffOptions, ops *[]Diff
 			})
 		}
 	}
-	for name, a := range tattrs {
+	tnames := make([]string, 0, len(tattrs))
+	for name := range tattrs {
+		tnames = append(tnames, name)
+	}
+	sort.Strings(tnames)
+	for _, name := range tnames {
+		a := tattrs[name]
 		old, ok := battrs[name]
 		if !ok {
 			*ops = append(*ops, DiffOperation{
@@ -393,7 +405,7 @@ func diffPositionChildren(base, target *Element, bchildren, tchildren []*Element
 	for i := len(bchildren) - 1; i >= common; i-- {
 		b := bchildren[i]
 		*ops = append(*ops, DiffOperation{
-			Type: OpRemove, Path: elementPath(b), OldValue: b.Copy(), NewValue: b.Copy(),
+			Type: OpRemove, Path: elementPath(b), OldValue: b.Copy(),
 		})
 	}
 	for i := common; i < len(tchildren); i++ {
@@ -424,7 +436,7 @@ func diffUnorderedChildren(base, target *Element, bchildren, tchildren []*Elemen
 		if !used[i] {
 			*ops = append(*ops, DiffOperation{
 				Type: OpRemove, Path: elementPath(bchildren[i]),
-				OldValue: bchildren[i].Copy(), NewValue: bchildren[i].Copy(),
+				OldValue: bchildren[i].Copy(),
 			})
 		}
 	}
@@ -503,7 +515,7 @@ func diffKeyChildren(base, target *Element, bchildren, tchildren []*Element,
 		if !used[i] {
 			*ops = append(*ops, DiffOperation{
 				Type: OpRemove, Path: elementPath(bchildren[i]),
-				OldValue: bchildren[i].Copy(), NewValue: bchildren[i].Copy(),
+				OldValue: bchildren[i].Copy(),
 			})
 		}
 	}
@@ -535,7 +547,7 @@ func diffHashChildren(base, target *Element, bchildren, tchildren []*Element,
 		if !used[i] {
 			*ops = append(*ops, DiffOperation{
 				Type: OpRemove, Path: elementPath(bchildren[i]),
-				OldValue: bchildren[i].Copy(), NewValue: bchildren[i].Copy(),
+				OldValue: bchildren[i].Copy(),
 			})
 		}
 	}
@@ -623,7 +635,11 @@ func GeneratePatch(ops []DiffOperation) *Document {
 		case OpAdd:
 			appendPatchAdd(root, op.Path, op.AttrName, op.NewValue)
 		case OpRemove:
-			appendPatchRemove(root, op.Path, op.NewValue)
+			value := op.OldValue
+			if value == nil {
+				value = op.NewValue
+			}
+			appendPatchRemove(root, op.Path, value)
 		case OpReplace:
 			appendPatchReplace(root, op.Path, op.NewValue)
 		case OpMove:
