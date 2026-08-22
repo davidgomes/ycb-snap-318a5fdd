@@ -239,9 +239,10 @@ func (g *graphBuilder) output(roots []string) (GraphOutput, error) {
 		var status *bool
 		if !g.e.graphNoStatus {
 			v, err := fingerprint.IsTaskUpToDate(context.Background(), t.task, fingerprint.WithMethod(method), fingerprint.WithTempDir(g.e.TempDir.Fingerprint), fingerprint.WithDry(g.e.Dry), fingerprint.WithLogger(g.e.Logger))
-			if err == nil {
-				status = &v
+			if err != nil {
+				return GraphOutput{}, err
 			}
+			status = &v
 		}
 		deps := make([]string, 0, len(t.deps))
 		for d := range t.deps {
@@ -292,7 +293,10 @@ func detectGraphCycle(tasks map[string]*graphTask) error {
 	}
 	return nil
 }
-func uniqueSorted(v []string) []string { v = slices.Compact(v); sort.Strings(v); return v }
+func uniqueSorted(v []string) []string {
+	sort.Strings(v)
+	return slices.Compact(v)
+}
 
 func depthGroups(nodes map[string]GraphNode) [][]string {
 	// Levels are based on dependency depth, so repeatedly remove leaves.
@@ -303,7 +307,7 @@ func depthGroups(nodes map[string]GraphNode) [][]string {
 			return v
 		}
 		max := 0
-		for d := range nodes[n].Deps {
+		for _, d := range nodes[n].Deps {
 			if x := walk(d) + 1; x > max {
 				max = x
 			}
