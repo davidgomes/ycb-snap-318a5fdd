@@ -9,7 +9,9 @@ import type { Trait } from '../trait/types';
 import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
 import { isModifier } from './modifier';
+import { isPredicateModifier } from './modifiers/predicate';
 import { setChanged } from './modifiers/changed';
+import { flushDeferredPredicateEvaluations } from './utils/reevaluate-predicate';
 import type {
     InstancesFromParameters,
     QueryInstance,
@@ -54,6 +56,8 @@ export function createQueryResult<T extends QueryParameter[]>(
             options: QueryResultOptions = { changeDetection: 'auto' }
         ) {
             const state = Array.from({ length: traits.length });
+            const worldCtx = world[$internal];
+            worldCtx.updateEachDepth++;
 
             // Inline all three permutations of updateEach for performance.
             if (options.changeDetection === 'auto') {
@@ -170,6 +174,11 @@ export function createQueryResult<T extends QueryParameter[]>(
                 }
             }
 
+            worldCtx.updateEachDepth--;
+            if (worldCtx.updateEachDepth === 0) {
+                flushDeferredPredicateEvaluations(world);
+            }
+
             return results;
         },
 
@@ -265,8 +274,9 @@ export function createQueryResult<T extends QueryParameter[]>(
         }
 
         if (isModifier(param)) {
-            // Skip not modifier.
+            // Skip not modifier and predicate modifiers.
             if (param.type === 'not') continue;
+            if (isPredicateModifier(param)) continue;
 
             const modifierTraits = param.traits;
             for (const trait of modifierTraits) {

@@ -3,6 +3,7 @@ import { isRelationPair } from '../../relation/utils/is-relation';
 import type { Relation } from '../../relation/types';
 import type { Trait } from '../../trait/types';
 import { isModifier } from '../modifier';
+import { isPredicateModifier } from '../modifiers/predicate';
 import type { QueryHash, QueryParameter } from '../types';
 
 const sortedIDs = new Float64Array(1024); // Use Float64 for larger IDs with relation encoding
@@ -26,6 +27,8 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
 
             // Combine into a unique hash number
             sortedIDs[cursor++] = relationId * 10000000 + targetId + 5000000;
+        } else if (isPredicateModifier(param)) {
+            sortedIDs[cursor++] = param.id * 10000000 + 3000000;
         } else if (isModifier(param)) {
             const modifierId = param.id;
             const traitIds = param.traitIds;
@@ -33,6 +36,12 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
             for (let i = 0; i < traitIds.length; i++) {
                 const traitId = traitIds[i];
                 sortedIDs[cursor++] = modifierId * 100000 + traitId;
+            }
+
+            if (param.predicates?.length) {
+                for (let j = 0; j < param.predicates.length; j++) {
+                    sortedIDs[cursor++] = param.predicates[j].id * 10000000 + 3000000;
+                }
             }
         } else {
             const traitId = (param as Trait).id;
