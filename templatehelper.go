@@ -3,6 +3,8 @@ package termenv
 import (
 	"fmt"
 	"text/template"
+
+	"github.com/muesli/termenv/ansi"
 )
 
 // TemplateFuncs returns template helpers for the given output.
@@ -105,8 +107,12 @@ var noopTemplateFuncs = template.FuncMap{
 	"Blink":      noStyleFunc,
 	"Reverse":    noStyleFunc,
 	"CrossOut":   noStyleFunc,
-	"Truncate":   noColorFunc,
-	"truncate":   noColorFunc,
+	"Truncate": func(values ...interface{}) string {
+		return ansi.TruncateANSI(values[2].(string), toWidth(values[0]), ansi.TruncateOptions{Tail: values[1].(string)})
+	},
+	"truncate": func(values ...interface{}) string {
+		return ansi.TruncateANSI(values[1].(string), toWidth(values[0]), ansi.TruncateOptions{})
+	},
 }
 
 func noColorFunc(values ...interface{}) string {

@@ -47,7 +47,7 @@ func (t Style) PreserveResets() Style { t.preserveResets = true; return t }
 // Truncate truncates the styled string without splitting escape sequences.
 func (t Style) Truncate(width int, opts TruncateOptions) string {
 	if t.profile == Ascii {
-		return t.string
+		return ansi.TruncateANSI(t.string, width, ansi.TruncateOptions{})
 	}
 	if t.preserveResets {
 		opts.PreserveResets = true
