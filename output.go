@@ -4,6 +4,8 @@ import (
 	"io"
 	"os"
 	"sync"
+
+	"github.com/muesli/termenv/ansi"
 )
 
 // output is the default global output.
@@ -26,13 +28,23 @@ type Output struct {
 	w       io.Writer
 	environ Environ
 
-	assumeTTY bool
-	unsafe    bool
-	cache     bool
-	fgSync    *sync.Once
-	fgColor   Color
-	bgSync    *sync.Once
-	bgColor   Color
+	assumeTTY      bool
+	unsafe         bool
+	cache          bool
+	preserveResets bool
+	fgSync         *sync.Once
+	fgColor        Color
+	bgSync         *sync.Once
+	bgColor        Color
+}
+
+// String returns a new Style inheriting the output defaults.
+func (o Output) String(s ...string) Style {
+	style := o.Profile.String(s...)
+	if o.preserveResets {
+		style = style.PreserveResets()
+	}
+	return style
 }
 
 // Environ is an interface for getting environment variables.
@@ -98,6 +110,23 @@ func WithProfile(profile Profile) OutputOption {
 	return func(o *Output) {
 		o.Profile = profile
 	}
+}
+
+// WithPreserveResets returns an option that preserves enclosing styles across resets.
+func WithPreserveResets(v bool) OutputOption {
+	return func(o *Output) {
+		o.preserveResets = v
+	}
+}
+
+// Truncate truncates s to the given visible width.
+func (o *Output) Truncate(s string, width int, opts ansi.TruncateOptions) string {
+	if o.Profile == Ascii {
+		opts.Tail = ansi.StripANSI(opts.Tail)
+		return ansi.TruncateANSI(ansi.StripANSI(s), width, opts)
+	}
+	opts.PreserveResets = opts.PreserveResets || o.preserveResets
+	return ansi.TruncateANSI(s, width, opts)
 }
 
 // WithColorCache returns a new OutputOption with fore- and background color values

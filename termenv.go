@@ -4,13 +4,38 @@ import (
 	"errors"
 	"os"
 
+	"github.com/muesli/termenv/ansi"
+
 	"github.com/mattn/go-isatty"
 )
+
+// TruncateANSI truncates an ANSI string to the given visible width.
+func TruncateANSI(s string, width int, opts ansi.TruncateOptions) string {
+	return ansi.TruncateANSI(s, width, opts)
+}
+
+// StripANSI removes ANSI control sequences from s.
+func StripANSI(s string) string {
+	return ansi.StripANSI(s)
+}
+
+// ANSIWidth returns the visible Unicode width of s.
+func ANSIWidth(s string) int {
+	return ansi.ANSIWidth(s)
+}
+
+// HasANSI reports whether s contains ANSI control sequences.
+func HasANSI(s string) bool {
+	return ansi.HasANSI(s)
+}
 
 var (
 	// ErrStatusReport gets returned when the terminal can't be queried.
 	ErrStatusReport = errors.New("unable to retrieve status report")
 )
+
+// TruncateOptions controls ANSI truncation.
+type TruncateOptions = ansi.TruncateOptions
 
 const (
 	// Escape character.
