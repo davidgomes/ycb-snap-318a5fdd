@@ -8,9 +8,22 @@ import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
 import { createModifier } from '../modifier';
-import type { Modifier } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
+import { reevaluatePredicateQuery } from '../utils/reevaluate-predicate';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
+import { isPredicateModifier, type PredicateModifier } from './predicate';
+
+function splitTrackingInputs(inputs: (TraitOrRelation | PredicateModifier)[]) {
+    const traits: Trait[] = [];
+    const predicates: PredicateModifier[] = [];
+
+    for (const input of inputs) {
+        if (isPredicateModifier(input)) predicates.push(input);
+        else traits.push(isRelation(input) ? input[$internal].trait : input);
+    }
+
+    return { traits: traits as ExtractTraits<TraitOrRelation[]>, predicates };
+}
 
 export function createChanged() {
     const id = createTrackingId();
@@ -20,13 +33,11 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
-        ...inputs: T
-    ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`changed-${id}`, id, traits);
+    return (...inputs: (TraitOrRelation | PredicateModifier)[]) => {
+        const { traits, predicates } = splitTrackingInputs(inputs);
+        const modifier = createModifier(`changed-${id}`, id, traits);
+        if (predicates.length > 0) modifier.predicates = predicates;
+        return modifier;
     };
 }
 
@@ -78,6 +89,10 @@ export function setChanged(world: World, entity: Entity, trait: Trait) {
     const data = markChanged(world, entity, trait);
     if (!data) return;
     for (const sub of data.changeSubscriptions) sub(entity);
+
+    for (const query of data.predicateQueries) {
+        reevaluatePredicateQuery(world, query, entity);
+    }
 }
 
 export function setPairChanged(world: World, entity: Entity, trait: Trait, target: Entity) {

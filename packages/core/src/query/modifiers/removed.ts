@@ -1,10 +1,22 @@
 import { $internal } from '../../common';
 import { isRelation } from '../../relation/utils/is-relation';
-import type { ExtractTraits, TraitOrRelation } from '../../trait/types';
+import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import { createModifier } from '../modifier';
-import type { Modifier } from '../types';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
+import { isPredicateModifier, type PredicateModifier } from './predicate';
+
+function splitTrackingInputs(inputs: (TraitOrRelation | PredicateModifier)[]) {
+    const traits: Trait[] = [];
+    const predicates: PredicateModifier[] = [];
+
+    for (const input of inputs) {
+        if (isPredicateModifier(input)) predicates.push(input);
+        else traits.push(isRelation(input) ? input[$internal].trait : input);
+    }
+
+    return { traits: traits as ExtractTraits<TraitOrRelation[]>, predicates };
+}
 
 export function createRemoved() {
     const id = createTrackingId();
@@ -14,12 +26,10 @@ export function createRemoved() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
-        ...inputs: T
-    ): Modifier<ExtractTraits<T>, `removed-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`removed-${id}`, id, traits);
+    return (...inputs: (TraitOrRelation | PredicateModifier)[]) => {
+        const { traits, predicates } = splitTrackingInputs(inputs);
+        const modifier = createModifier(`removed-${id}`, id, traits);
+        if (predicates.length > 0) modifier.predicates = predicates;
+        return modifier;
     };
 }
