@@ -177,14 +177,15 @@ export const recordMapWrite = (transaction, parent, key, operation, value = null
   transaction._mapWriteItems ||= new Set()
   const related = transaction._mapWrites.filter(/** @param {MapWrite} previous */ previous =>
     previous.key === write.key && previous.parentId === write.parentId)
-  const current = operation === 'set' && parent?._map?.get(key)
+  const current = parent?._map?.get(key)
   if (
     current &&
     current !== item &&
     !transaction.local &&
     !related.some(/** @param {MapWrite} previous */ previous => previous.item === current) &&
-    item?.origin &&
-    (current.lastId?.client !== item.origin.client || current.lastId?.clock !== item.origin.clock)
+    (operation === 'delete' ||
+      (item?.origin &&
+        (current.lastId?.client !== item.origin.client || current.lastId?.clock !== item.origin.clock)))
   ) {
     related.push(createWrite(current, false, 'set', current.content))
   }
@@ -223,14 +224,63 @@ export const markMapWriteItem = (transaction, item) => {
 
 /**
  * @param {any} transaction
+ * @param {any} item
+ * @param {any} blockSet
+ * @return {any}
+ */
+const resolveBlockParent = (transaction, item, blockSet) => {
+  if (typeof item.parent === 'string') {
+    return transaction.doc.share.get(item.parent) || null
+  }
+  if (item.parent && typeof item.parent === 'object' && typeof item.parent.client !== 'number') {
+    return item.parent
+  }
+  const parentId = item.parent
+  if (!parentId || typeof parentId !== 'object' || typeof parentId.client !== 'number') return null
+  const ranges = blockSet.clients.get(parentId.client)
+  const parentItem = ranges?.refs.find(/** @param {any} candidate */ candidate =>
+    candidate.id.clock <= parentId.clock && parentId.clock < candidate.id.clock + candidate.length)
+  if (parentItem?.content?.type) return parentItem.content.type
+  const structs = transaction.doc.store.clients.get(parentId.client) || []
+  const storedParent = structs.find(/** @param {any} candidate */ candidate =>
+    candidate.id.clock <= parentId.clock && parentId.clock < candidate.id.clock + candidate.length)
+  return storedParent?.content?.type || null
+}
+
+/**
+ * Restore the compact update representation of a map item when its parent and
+ * key can be copied from the item it replaces.
+ *
+ * @param {any} transaction
+ * @param {any} item
+ * @param {any} blockSet
+ */
+const hydrateMapItem = (transaction, item, blockSet) => {
+  if (item.parentSub !== null || !item.origin) return
+  const ranges = blockSet.clients.get(item.origin.client)
+  const originItem = ranges?.refs.find(/** @param {any} candidate */ candidate =>
+    candidate.id.clock <= item.origin.clock && item.origin.clock < candidate.id.clock + candidate.length)
+  const structs = transaction.doc.store.clients.get(item.origin.client) || []
+  const storedOrigin = structs.find(/** @param {any} candidate */ candidate =>
+    candidate.id.clock <= item.origin.clock && item.origin.clock < candidate.id.clock + candidate.length)
+  const source = originItem || storedOrigin
+  if (source?.parentSub !== null && source?.parentSub !== undefined) {
+    item.parent = source.parent
+    item.parentSub = source.parentSub
+  }
+}
+
+/**
+ * @param {any} transaction
  * @param {any} blockSet
  */
 export const recordMapWritesFromBlockSet = (transaction, blockSet) => {
   if (transaction.doc.mapConflictPolicy === 'allow') return
   blockSet.clients.forEach(/** @param {any} range */ range => {
     range.refs.forEach(/** @param {any} item */ item => {
+      hydrateMapItem(transaction, item, blockSet)
       if (item?.constructor?.name === 'Item' && isMapItem(item)) {
-        const write = recordMapWrite(transaction, null, item.parentSub, 'set', item.content, item)
+        const write = recordMapWrite(transaction, resolveBlockParent(transaction, item, blockSet), item.parentSub, 'set', item.content, item)
         if (write) markMapWriteItem(transaction, item)
       }
     })
@@ -246,7 +296,10 @@ export const recordMapDeletesFromSet = (transaction, deleteSet, blockSet) => {
   if (transaction.doc.mapConflictPolicy === 'allow') return
   const candidates = new Map()
   blockSet?.clients.forEach(/** @param {any} range @param {number} client */ (range, client) => {
-    range.refs.forEach(/** @param {any} item */ item => candidates.set(`${client}:${item.id.clock}`, item))
+    range.refs.forEach(/** @param {any} item */ item => {
+      hydrateMapItem(transaction, item, blockSet)
+      candidates.set(`${client}:${item.id.clock}`, item)
+    })
   })
   deleteSet.forEach(/** @param {any} range @param {number} client */ (range, client) => {
     const structs = transaction.doc.store.clients.get(client) || []
@@ -254,6 +307,13 @@ export const recordMapDeletesFromSet = (transaction, deleteSet, blockSet) => {
       const item = candidates.get(`${client}:${clock}`) || structs.find(/** @param {any} struct */ struct =>
         struct.id.clock <= clock && clock < struct.id.clock + struct.length)
       if (item && item.constructor?.name === 'Item' && isMapItem(item)) {
+        const replacedBySet = [...candidates.values()].some(candidate =>
+          candidate.constructor?.name === 'Item' &&
+          isMapItem(candidate) &&
+          candidate.parentSub === item.parentSub &&
+          candidate.origin?.client === item.id.client &&
+          candidate.origin?.clock === item.id.clock)
+        if (replacedBySet) continue
         const write = recordMapWrite(transaction, item.parent, item.parentSub, 'delete', item.content, item)
         if (write) markMapWriteItem(transaction, item)
       }

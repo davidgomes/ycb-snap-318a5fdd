@@ -370,8 +370,8 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
     // remove known items from ss
     ss.exclude(knownState)
     const incomingDeleteSet = readIdSet(structDecoder)
-    recordMapDeletesFromSet(transaction, incomingDeleteSet, ss)
     recordMapWritesFromBlockSet(transaction, ss)
+    recordMapDeletesFromSet(transaction, incomingDeleteSet, ss)
     // console.log('time to read structs: ', performance.now() - start) // @todo remove
     // start = performance.now()
     // console.log('time to merge: ', performance.now() - start) // @todo remove
