@@ -28,6 +28,33 @@ export function createEntity(world: World, ...traits: ConfigurableTrait[]): Enti
     return entity;
 }
 
+export function createEntityWithId(
+    world: World,
+    id: number,
+    ...traits: ConfigurableTrait[]
+): Entity {
+    const ctx = world[$internal];
+    const index = ctx.entityIndex;
+    if (index.sparse[id] !== undefined && index.sparse[id] < index.aliveCount) {
+        throw new Error(`Entity ID is already in use: ${id}`);
+    }
+
+    const entity = (((world.id & 0xf) << 28) | (id & 0xfffff)) as Entity;
+    index.sparse[id] = index.aliveCount;
+    index.dense[index.aliveCount] = entity;
+    index.aliveCount++;
+    index.maxId = Math.max(index.maxId, id + 1);
+
+    for (const query of ctx.notQueries) {
+        const match = query.check(world, entity);
+        if (match) query.add(entity);
+        query.resetTrackingBitmasks(getEntityId(entity));
+    }
+    ctx.entityTraits.set(entity, new Set());
+    addTrait(world, entity, ...traits);
+    return entity;
+}
+
 const cachedSet = new Set<Entity>();
 const cachedQueue = [] as Entity[];
 

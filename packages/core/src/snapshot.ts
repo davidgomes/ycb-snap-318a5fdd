@@ -1,5 +1,5 @@
 import { $internal } from './common';
-import { createEntity, createEntityWithId } from './entity/entity';
+import { createEntityWithId } from './entity/entity';
 import type { Entity } from './entity/types';
 import { getEntityId, packEntity } from './entity/utils/pack-entity';
 import {
@@ -9,7 +9,7 @@ import {
 import type { Relation } from './relation/types';
 import { isRelation } from './relation/utils/is-relation';
 import { getStore } from './trait/trait';
-import type { Trait, TraitRecord } from './trait/types';
+import type { Trait } from './trait/types';
 import { addTrait, hasTrait, removeTrait } from './trait/trait';
 import type { World } from './world';
 
@@ -89,7 +89,9 @@ export function snapshotEntity(
             if (targets.length > 0) {
                 relations[key] = targets.map((target) => {
                     const data = getRelationData(world, entity, value, target);
-                    return data === undefined
+                    return value[$internal].trait[$internal].type === 'tag'
+                        ? { targetId: getEntityId(target) }
+                        : data === undefined
                         ? { targetId: getEntityId(target) }
                         : { targetId: getEntityId(target), data: clone(data as object) };
                 });
@@ -115,7 +117,10 @@ export function snapshotWorld(world: World, registry: TraitRegistry): WorldSnaps
 }
 
 function validateSnapshot(snapshot: EntitySnapshot, registry: TraitRegistry): void {
-    for (const key of Object.keys(snapshot.traits)) requireRegistryValue(registry, key);
+    for (const key of Object.keys(snapshot.traits)) {
+        const value = requireRegistryValue(registry, key);
+        if (isRelation(value)) throw new Error(`Registry key is not a trait: ${key}`);
+    }
     for (const key of Object.keys(snapshot.relations ?? {})) {
         const value = requireRegistryValue(registry, key);
         if (!isRelation(value)) throw new Error(`Registry key is not a relation: ${key}`);
@@ -130,6 +135,13 @@ export function rollbackEntity(
 ): void {
     requireEntity(world, entity);
     validateSnapshot(snapshot, registry);
+    for (const entries of Object.values(snapshot.relations ?? {})) {
+        for (const entry of entries) {
+            if (!world.has(entityForId(world, entry.targetId))) {
+                throw new Error(`Relation target does not exist: ${entry.targetId}`);
+            }
+        }
+    }
 
     for (const [key, trait] of registry.traits) {
         if (!Object.hasOwn(snapshot.traits, key) && hasTrait(world, entity, trait)) {
@@ -157,7 +169,6 @@ export function rollbackEntity(
         const relation = registry.relations.get(key)!;
         for (const entry of entries) {
             const target = entityForId(world, entry.targetId);
-            if (!world.has(target)) throw new Error(`Relation target does not exist: ${entry.targetId}`);
             addTrait(world, entity, relation(target, entry.data ? clone(entry.data) : undefined));
         }
     }

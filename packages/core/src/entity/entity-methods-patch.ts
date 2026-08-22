@@ -5,6 +5,7 @@
 
 import { $internal } from '../common';
 import { setChanged } from '../query/modifiers/changed';
+import { rollbackEntity, snapshotEntity } from '../snapshot';
 import { getFirstRelationTarget, getRelationTargets, hasRelationPair } from '../relation/relation';
 import type { Relation, RelationPair } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
@@ -82,4 +83,18 @@ Number.prototype.isAlive = function (this: Entity) {
     const world = getEntityWorld(this);
     const entityIndex = world[$internal].entityIndex;
     return isEntityAlive(entityIndex, this);
+};
+
+// @ts-expect-error
+Number.prototype.snapshot = function (this: Entity, registry: Parameters<typeof snapshotEntity>[2]) {
+    return snapshotEntity(getEntityWorld(this), this, registry);
+};
+
+// @ts-expect-error
+Number.prototype.rollback = function (
+    this: Entity,
+    registry: Parameters<typeof rollbackEntity>[2],
+    snapshot: Parameters<typeof rollbackEntity>[3]
+) {
+    return rollbackEntity(getEntityWorld(this), this, registry, snapshot);
 };
