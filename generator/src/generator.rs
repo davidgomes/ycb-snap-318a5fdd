@@ -434,6 +434,8 @@ fn generate_expr(expr: OptimizedExpr) -> TokenStream {
                 state.match_range(#start..#end)
             }
         }
+        OptimizedExpr::CharClass(ranges) => generate_char_class(ranges),
+        OptimizedExpr::NegCharClass(ranges) => generate_neg_char_class(ranges),
         OptimizedExpr::Ident(ident) => {
             let ident = format_ident!("r#{}", ident);
             quote! { self::#ident(state) }
@@ -643,6 +645,8 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
                 state.match_range(#start..#end)
             }
         }
+        OptimizedExpr::CharClass(ranges) => generate_char_class(ranges),
+        OptimizedExpr::NegCharClass(ranges) => generate_neg_char_class(ranges),
         OptimizedExpr::Ident(ident) => {
             let ident = format_ident!("r#{}", ident);
             quote! { self::#ident(state) }
@@ -801,6 +805,50 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
                 }
             }
         },
+    }
+}
+
+fn generate_char_class(ranges: Vec<(String, String)>) -> TokenStream {
+    let mut ranges = ranges.into_iter().map(|(start, end)| {
+        let start = start.chars().next().unwrap();
+        let end = end.chars().next().unwrap();
+        quote! {
+            state.match_range(#start..#end)
+        }
+    });
+    let head = ranges.next().expect("Empty character class.");
+    let tail: Vec<_> = ranges.collect();
+
+    quote! {
+        #head
+        #(
+            .or_else(|state| {
+                #tail
+            })
+        )*
+    }
+}
+
+fn generate_neg_char_class(ranges: Vec<(String, String)>) -> TokenStream {
+    let ranges: Vec<_> = ranges
+        .into_iter()
+        .map(|(start, end)| {
+            let start = start.chars().next().unwrap();
+            let end = end.chars().next().unwrap();
+            quote! {
+                #start <= c && c <= #end
+            }
+        })
+        .collect();
+
+    if ranges.is_empty() {
+        quote! {
+            state.match_char_by(|_| true)
+        }
+    } else {
+        quote! {
+            state.match_char_by(|c| !(#(#ranges)||*))
+        }
     }
 }
 
