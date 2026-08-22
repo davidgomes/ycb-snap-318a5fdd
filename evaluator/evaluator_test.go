@@ -1806,3 +1806,115 @@ func TestHashFunctions(t *testing.T) {
 		testStringObject(t, evaluated, tt.expected)
 	}
 }
+
+func TestSteppedIndexExpressions(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected interface{}
+	}{
+		{`[1, 2, 3, 4, 5, 6, 7, 8, 9][1:8:2]`, `[2, 4, 6, 8]`},
+		{`[1, 2, 3, 4, 5][::-1]`, `[5, 4, 3, 2, 1]`},
+		{`[1, 2, 3, 4, 5][4::-1]`, `[5, 4, 3, 2, 1]`},
+		{`[1, 2, 3, 4, 5, 6, 7, 8, 9][99:101:2]`, `[]`},
+		{`"hello"[::2]`, `hlo`},
+		{`"hello"[4::-1]`, `olleh`},
+		{`[1, 2, 3][::0]`, `slice step cannot be 0`},
+		{`[1, 2, 3]["x":2:1]`, `index operator not supported: x on ARRAY`},
+		{`[1, 2, 3][0:2:"x"]`, `index ranges can only be numerical: got "x" (type STRING)`},
+		{`"abc"[0:2:"x"]`, `index ranges can only be numerical: got "x" (type STRING)`},
+	}
+
+	for _, tt := range tests {
+		evaluated := testEval(tt.input)
+		switch expected := tt.expected.(type) {
+		case string:
+			if strings.HasPrefix(expected, "index ") || strings.HasPrefix(expected, "slice ") {
+				if err, ok := evaluated.(*object.Error); ok {
+					logErrorWithPosition(t, err.Message, expected)
+					continue
+				}
+				t.Fatalf("expected error %q, got %T (%+v)", expected, evaluated, evaluated)
+			}
+			if strings.HasPrefix(expected, "[") {
+				result, ok := evaluated.(*object.Array)
+				if !ok {
+					t.Fatalf("expected array, got %T (%+v)", evaluated, evaluated)
+				}
+				if result.Inspect() != expected {
+					t.Fatalf("got=%q, want=%q", result.Inspect(), expected)
+				}
+				continue
+			}
+			testStringObject(t, evaluated, expected)
+		default:
+			t.Fatalf("unsupported expected type %T", expected)
+		}
+	}
+}
+
+func TestSteppedArrayRangeAssignment(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected interface{}
+	}{
+		{`a = [1, 2, 3, 4, 5]; a[1:4:2] = [9, 8]; a`, `[1, 9, 3, 8, 5]`},
+		{`a = [1, 2, 3, 4, 5]; a[1:4:2] = 9; a`, `[1, 9, 3, 9, 5]`},
+		{`a = [1, 2, 3]; a[0:0:1] = []; a`, `[1, 2, 3]`},
+		{`a = [1, 2, 3]; a[0:0:1] = [9]`, `range assignment size mismatch: target=0 value=1`},
+	}
+
+	for _, tt := range tests {
+		evaluated := testEval(tt.input)
+		switch expected := tt.expected.(type) {
+		case string:
+			if strings.HasPrefix(expected, "range assignment") {
+				if err, ok := evaluated.(*object.Error); ok {
+					logErrorWithPosition(t, err.Message, expected)
+					continue
+				}
+				t.Fatalf("expected error %q, got %T (%+v)", expected, evaluated, evaluated)
+			}
+			result, ok := evaluated.(*object.Array)
+			if !ok {
+				t.Fatalf("expected array, got %T (%+v)", evaluated, evaluated)
+			}
+			if result.Inspect() != expected {
+				t.Fatalf("got=%q, want=%q", result.Inspect(), expected)
+			}
+		default:
+			t.Fatalf("unsupported expected type %T", expected)
+		}
+	}
+}
+
+func TestStringRangeAssignment(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected interface{}
+	}{
+		{`s = "abcde"; s[1:4:2] = "XY"; s`, `aXcYe`},
+		{`s = "abcde"; s[1:4:2] = "X"; s`, `aXcXe`},
+		{`s = "abcde"; s[0] = "Z"; s`, `Zbcde`},
+		{`s = "abcde"; s[0] = "ZZ"`, `index assignment expects single-character STRING value, got 2 characters`},
+		{`s = "abcde"; s[1:3] = 1`, `range assignment expects STRING value, got NUMBER`},
+		{`s = "abcde"; s[5:5:1] = "X"`, `range assignment size mismatch: target=0 value=1`},
+		{`s = "abcde"; s[5:5:1] = ""; s`, `abcde`},
+	}
+
+	for _, tt := range tests {
+		evaluated := testEval(tt.input)
+		switch expected := tt.expected.(type) {
+		case string:
+			if strings.HasPrefix(expected, "index assignment") || strings.HasPrefix(expected, "range assignment") {
+				if err, ok := evaluated.(*object.Error); ok {
+					logErrorWithPosition(t, err.Message, expected)
+					continue
+				}
+				t.Fatalf("expected error %q, got %T (%+v)", expected, evaluated, evaluated)
+			}
+			testStringObject(t, evaluated, expected)
+		default:
+			t.Fatalf("unsupported expected type %T", expected)
+		}
+	}
+}

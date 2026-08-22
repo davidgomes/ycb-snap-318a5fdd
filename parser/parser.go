@@ -1000,13 +1000,15 @@ func (p *Parser) ParseArrayLiteral() ast.Expression {
 	return array
 }
 
-// some["thing"] or some[1:10]
+// some["thing"] or some[1:10] or some[1:10:2]
 func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 	exp := &ast.IndexExpression{Token: p.curToken, Left: left}
+	zeroToken := token.Token{Type: token.NUMBER, Position: p.curToken.Position, Literal: "0"}
 
 	if p.peekTokenIs(token.COLON) {
-		exp.Index = &ast.NumberLiteral{Value: 0, Token: token.Token{Type: token.NUMBER, Position: 0, Literal: "0"}}
+		exp.Index = &ast.NumberLiteral{Value: 0, Token: zeroToken}
 		exp.IsRange = true
+		exp.StartOmitted = true
 	} else {
 		p.nextToken()
 		exp.Index = p.parseExpression(LOWEST)
@@ -1016,11 +1018,27 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 		exp.IsRange = true
 		p.nextToken()
 
-		if p.peekTokenIs(token.RBRACKET) {
+		if p.peekTokenIs(token.COLON) {
+			p.nextToken()
+			if !p.peekTokenIs(token.RBRACKET) {
+				p.nextToken()
+				exp.Step = p.parseExpression(LOWEST)
+			}
+			exp.IsStepped = true
+		} else if p.peekTokenIs(token.RBRACKET) {
 			exp.End = nil
 		} else {
 			p.nextToken()
 			exp.End = p.parseExpression(LOWEST)
+
+			if p.peekTokenIs(token.COLON) {
+				p.nextToken()
+				if !p.peekTokenIs(token.RBRACKET) {
+					p.nextToken()
+					exp.Step = p.parseExpression(LOWEST)
+				}
+				exp.IsStepped = true
+			}
 		}
 	}
 

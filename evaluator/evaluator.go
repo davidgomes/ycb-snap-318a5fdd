@@ -434,28 +434,54 @@ func getDecoratedName(decorated ast.Expression) (string, bool) {
 	return "", false
 }
 
-// support index assignment expressions: a[0] = 1, h["a"] = 1
+// support index assignment expressions: a[0] = 1, h["a"] = 1, a[0:2] = [...], s[0] = "x"
 func evalIndexAssignment(iex *ast.IndexExpression, expr object.Object, env *object.Environment) object.Object {
 	leftObj := Eval(iex.Left, env)
-	index := Eval(iex.Index, env)
-	if leftObj.Type() == object.ARRAY_OBJ {
-		arrayObject := leftObj.(*object.Array)
-		idx := index.(*object.Number).Int()
-		elems := arrayObject.Elements
-		if idx < 0 {
-			return newError(iex.Token, "index out of range: %d", idx)
-		}
-		if idx >= len(elems) {
-			// expand the array by appending Null objects
-			for i := len(elems); i <= idx; i++ {
-				elems = append(elems, NULL)
-			}
-			arrayObject.Elements = elems
-		}
-		elems[idx] = expr
-		return NULL
+	if isError(leftObj) {
+		return leftObj
 	}
-	if leftObj.Type() == object.HASH_OBJ {
+	index := Eval(iex.Index, env)
+	if isError(index) {
+		return index
+	}
+	end := object.Object(NULL)
+	if iex.IsRange {
+		end = Eval(iex.End, env)
+		if isError(end) {
+			return end
+		}
+	}
+	step := object.Object(NULL)
+	if iex.IsStepped {
+		if iex.Step != nil {
+			step = Eval(iex.Step, env)
+			if isError(step) {
+				return step
+			}
+		}
+	}
+
+	switch leftObj.Type() {
+	case object.ARRAY_OBJ:
+		if index.Type() != object.NUMBER_OBJ {
+			return newError(iex.Token, "index operator not supported: %s on %s", index.Inspect(), leftObj.Type())
+		}
+		if iex.IsRange {
+			return evalArrayRangeAssignment(iex.Token, leftObj.(*object.Array), index, end, step, iex.StartOmitted, iex.IsStepped, expr)
+		}
+		return evalArrayIndexAssignment(iex.Token, leftObj.(*object.Array), index, expr)
+	case object.STRING_OBJ:
+		if index.Type() != object.NUMBER_OBJ {
+			return newError(iex.Token, "index operator not supported: %s on %s", index.Inspect(), leftObj.Type())
+		}
+		if iex.IsRange {
+			return evalStringRangeAssignment(iex.Token, leftObj.(*object.String), index, end, step, iex.StartOmitted, iex.IsStepped, expr)
+		}
+		return evalStringIndexAssignment(iex.Token, leftObj.(*object.String), index, expr)
+	case object.HASH_OBJ:
+		if iex.IsRange {
+			return newError(iex.Token, "index operator not supported: %s on %s", index.Inspect(), leftObj.Type())
+		}
 		hashObject := leftObj.(*object.Hash)
 		key, ok := index.(object.Hashable)
 		if !ok {
@@ -465,8 +491,184 @@ func evalIndexAssignment(iex *ast.IndexExpression, expr object.Object, env *obje
 		pair := object.HashPair{Key: index, Value: expr}
 		hashObject.Pairs[hashed] = pair
 		return NULL
+	default:
+		return NULL
+	}
+}
+
+func evalArrayIndexAssignment(tok token.Token, arrayObject *object.Array, index, expr object.Object) object.Object {
+	idx := index.(*object.Number).Int()
+	elems := arrayObject.Elements
+	if idx < 0 {
+		return newError(tok, "index out of range: %d", idx)
+	}
+	if idx >= len(elems) {
+		for i := len(elems); i <= idx; i++ {
+			elems = append(elems, NULL)
+		}
+		arrayObject.Elements = elems
+	}
+	elems[idx] = expr
+	return NULL
+}
+
+func evalArrayRangeAssignment(tok token.Token, arrayObject *object.Array, index, end, step object.Object, startOmitted, isStepped bool, expr object.Object) object.Object {
+	var indices []int
+	var errObj object.Object
+
+	if isStepped {
+		indices, errObj = computeSteppedIndices(len(arrayObject.Elements), index, end, step, startOmitted, tok)
+	} else {
+		indices, errObj = computeTwoPartArrayIndices(len(arrayObject.Elements), index, end, tok)
+	}
+	if errObj != nil {
+		return errObj
+	}
+
+	return assignArrayRangeValues(tok, arrayObject, indices, expr)
+}
+
+func computeTwoPartArrayIndices(length int, index, end object.Object, tok token.Token) ([]int, object.Object) {
+	idx := index.(*object.Number).Int()
+	max := length
+
+	if idx < 0 {
+		idx = 0
+	}
+
+	if end != NULL {
+		endIdx, err := numericRangeValue(end, tok)
+		if err != nil {
+			return nil, err
+		}
+		if endIdx < 0 {
+			max = int(math.Max(float64(max+endIdx), 0))
+		} else if endIdx < max {
+			max = endIdx
+		}
+	}
+
+	if idx > max {
+		return []int{}, nil
+	}
+
+	indices := make([]int, max-idx)
+	for i := range indices {
+		indices[i] = idx + i
+	}
+	return indices, nil
+}
+
+func assignArrayRangeValues(tok token.Token, arrayObject *object.Array, indices []int, expr object.Object) object.Object {
+	target := len(indices)
+	if target == 0 {
+		if arr, ok := expr.(*object.Array); ok {
+			if len(arr.Elements) != 0 {
+				return newError(tok, "range assignment size mismatch: target=%d value=%d", target, len(arr.Elements))
+			}
+			return NULL
+		}
+		return NULL
+	}
+
+	if arr, ok := expr.(*object.Array); ok {
+		if len(arr.Elements) != target {
+			return newError(tok, "range assignment size mismatch: target=%d value=%d", target, len(arr.Elements))
+		}
+		for i, idx := range indices {
+			arrayObject.Elements[idx] = arr.Elements[i]
+		}
+		return NULL
+	}
+
+	for _, idx := range indices {
+		arrayObject.Elements[idx] = expr
 	}
 	return NULL
+}
+
+func evalStringIndexAssignment(tok token.Token, stringObject *object.String, index, expr object.Object) object.Object {
+	value, ok := expr.(*object.String)
+	if !ok {
+		return newError(tok, "index assignment expects single-character STRING value, got %s", expr.Type())
+	}
+	runes := []rune(stringObject.Value)
+	replLen := runeCount(value.Value)
+	if replLen != 1 {
+		return newError(tok, "index assignment expects single-character STRING value, got %d characters", replLen)
+	}
+
+	idx := normalizeSingleStringIndex(index.(*object.Number).Int(), len(runes))
+	if idx < 0 || idx >= len(runes) {
+		return newError(tok, "index out of range: %d", index.(*object.Number).Int())
+	}
+
+	replacement := []rune(value.Value)
+	runes[idx] = replacement[0]
+	stringObject.Value = string(runes)
+	return NULL
+}
+
+func evalStringRangeAssignment(tok token.Token, stringObject *object.String, index, end, step object.Object, startOmitted, isStepped bool, expr object.Object) object.Object {
+	value, ok := expr.(*object.String)
+	if !ok {
+		return newError(tok, "range assignment expects STRING value, got %s", expr.Type())
+	}
+
+	runes := []rune(stringObject.Value)
+	var indices []int
+	var errObj object.Object
+
+	if isStepped {
+		indices, errObj = computeSteppedIndices(len(runes), index, end, step, startOmitted, tok)
+	} else {
+		indices, errObj = computeTwoPartStringIndices(len(runes), index, end, tok)
+	}
+	if errObj != nil {
+		return errObj
+	}
+
+	replRunes := []rune(value.Value)
+	target := len(indices)
+	replLen := len(replRunes)
+
+	if target == 0 && replLen > 0 {
+		return newError(tok, "range assignment size mismatch: target=%d value=%d", target, replLen)
+	}
+	if replLen == target || (replLen == 1 && target > 0) {
+		for i, idx := range indices {
+			if replLen == 1 {
+				runes[idx] = replRunes[0]
+			} else {
+				runes[idx] = replRunes[i]
+			}
+		}
+		stringObject.Value = string(runes)
+		return NULL
+	}
+
+	return newError(tok, "range assignment size mismatch: target=%d value=%d", target, replLen)
+}
+
+func computeTwoPartStringIndices(length int, index, end object.Object, tok token.Token) ([]int, object.Object) {
+	return computeTwoPartArrayIndices(length, index, end, tok)
+}
+
+func normalizeSingleStringIndex(idx int, length int) int {
+	if idx < 0 {
+		if absInt(idx) > length {
+			return -1
+		}
+		idx = length + idx
+	}
+	return idx
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // support assignment to hash property: h.a = 1
@@ -1313,65 +1515,77 @@ func evalIndexExpression(node *ast.IndexExpression, env *object.Environment) obj
 	if isError(index) {
 		return index
 	}
-	end := Eval(node.End, env)
-	if isError(end) {
-		return end
+	end := object.Object(NULL)
+	if node.IsRange {
+		end = Eval(node.End, env)
+		if isError(end) {
+			return end
+		}
+	}
+	step := object.Object(NULL)
+	if node.IsStepped {
+		if node.Step != nil {
+			step = Eval(node.Step, env)
+			if isError(step) {
+				return step
+			}
+		}
 	}
 
 	switch {
 	case left.Type() == object.ARRAY_OBJ && index.Type() == object.NUMBER_OBJ:
-		return evalArrayIndexExpression(tok, left, index, end, node.IsRange)
+		return evalArrayIndexExpression(tok, left, index, end, step, node.IsRange, node.IsStepped, node.StartOmitted)
 	case left.Type() == object.HASH_OBJ && index.Type() == object.STRING_OBJ:
 		return evalHashIndexExpression(tok, left, index)
 	case left.Type() == object.STRING_OBJ && index.Type() == object.NUMBER_OBJ:
-		return evalStringIndexExpression(tok, left, index, end, node.IsRange)
+		return evalStringIndexExpression(tok, left, index, end, step, node.IsRange, node.IsStepped, node.StartOmitted)
 	default:
 		return newError(tok, "index operator not supported: %s on %s", index.Inspect(), left.Type())
 	}
 }
 
-func evalStringIndexExpression(tok token.Token, array, index object.Object, end object.Object, isRange bool) object.Object {
-	// TODO this gotta be refactored so that
-	// evalStringIndexExpression and evalArrayIndexExpression
-	// reuse most of their code, now it's a bit messy as
-	// the code is duplicated in both places
+func evalStringIndexExpression(tok token.Token, array, index object.Object, end object.Object, step object.Object, isRange bool, isStepped bool, startOmitted bool) object.Object {
 	stringObject := array.(*object.String)
+	runes := []rune(stringObject.Value)
 	idx := index.(*object.Number).Int()
-	max := len(stringObject.Value) - 1
+	max := len(runes) - 1
 
 	if isRange {
+		if isStepped {
+			indices, errObj := computeSteppedIndices(len(runes), index, end, step, startOmitted, tok)
+			if errObj != nil {
+				return errObj
+			}
+			result := make([]rune, len(indices))
+			for i, ri := range indices {
+				result[i] = runes[ri]
+			}
+			return &object.String{Token: tok, Value: string(result)}
+		}
+
 		max++
-		// A range's minimum value is 0
 		if idx < 0 {
 			idx = 0
 		}
 		endIdx, ok := end.(*object.Number)
 
-		// check if the range end is a number
 		if ok {
-			// if it's lower than zero, then the end is len(x) - end,
-			// else it's the end value itself
 			if endIdx.Int() < 0 {
 				max = int(math.Max(float64(max+endIdx.Int()), 0))
 			} else if endIdx.Int() < max {
 				max = endIdx.Int()
 			}
 		} else if end != NULL {
-			// if the end index is not a number nor null, then we have an error
-			// (null would mean no end, so it's valid)
 			return newError(tok, `index ranges can only be numerical: got "%s" (type %s)`, end.Inspect(), end.Type())
 		}
 
-		// if the start is higher than the end, let's return
-		// a skeleton
 		if idx > max {
 			return &object.String{Token: tok, Value: ""}
 		}
 
-		return &object.String{Token: tok, Value: string(stringObject.Value[idx:max])}
+		return &object.String{Token: tok, Value: string(runes[idx:max])}
 	}
 
-	// Out of bounds? Return an empty string
 	if idx > max {
 		return &object.String{Token: tok, Value: ""}
 	}
@@ -1379,50 +1593,50 @@ func evalStringIndexExpression(tok token.Token, array, index object.Object, end 
 	if idx < 0 {
 		length := max + 1
 
-		// Negative out of bounds? Return an empty string
 		if math.Abs(float64(idx)) > float64(length) {
 			return &object.String{Token: tok, Value: ""}
 		}
 
-		// Our index was negative, so the actual index is length of the string + the index
-		// eg 3 + (-2) = 1
-		// "123"[-2]   = "2"
 		idx = length + idx
 	}
 
-	return &object.String{Token: tok, Value: string(stringObject.Value[idx])}
+	return &object.String{Token: tok, Value: string(runes[idx])}
 }
 
-func evalArrayIndexExpression(tok token.Token, array, index object.Object, end object.Object, isRange bool) object.Object {
+func evalArrayIndexExpression(tok token.Token, array, index object.Object, end object.Object, step object.Object, isRange bool, isStepped bool, startOmitted bool) object.Object {
 	arrayObject := array.(*object.Array)
 	idx := index.(*object.Number).Int()
 	max := len(arrayObject.Elements) - 1
 
 	if isRange {
+		if isStepped {
+			indices, errObj := computeSteppedIndices(len(arrayObject.Elements), index, end, step, startOmitted, tok)
+			if errObj != nil {
+				return errObj
+			}
+			elements := make([]object.Object, len(indices))
+			for i, ri := range indices {
+				elements[i] = arrayObject.Elements[ri]
+			}
+			return &object.Array{Token: tok, Elements: elements}
+		}
+
 		max++
-		// A range's minimum value is 0
 		if idx < 0 {
 			idx = 0
 		}
 		endIdx, ok := end.(*object.Number)
 
-		// check if the range end is a number
 		if ok {
-			// if it's lower than zero, then the end is len(x) - end,
-			// else it's the end value itself
 			if endIdx.Int() < 0 {
 				max = int(math.Max(float64(max+endIdx.Int()), 0))
 			} else if endIdx.Int() < max {
 				max = endIdx.Int()
 			}
 		} else if end != NULL {
-			// if the end index is not a number nor null, then we have an error
-			// (null would mean no end, so it's valid)
 			return newError(tok, `index ranges can only be numerical: got "%s" (type %s)`, end.Inspect(), end.Type())
 		}
 
-		// if the start is higher than the end, let's return
-		// a skeleton
 		if idx > max {
 			return &object.Array{Token: tok, Elements: []object.Object{}}
 		}
@@ -1430,7 +1644,6 @@ func evalArrayIndexExpression(tok token.Token, array, index object.Object, end o
 		return &object.Array{Token: tok, Elements: arrayObject.Elements[idx:max]}
 	}
 
-	// Out of bounds? Return a null element
 	if idx > max {
 		return NULL
 	}
@@ -1438,14 +1651,10 @@ func evalArrayIndexExpression(tok token.Token, array, index object.Object, end o
 	if idx < 0 {
 		length := max + 1
 
-		// Negative out of bounds? Return a null element
 		if math.Abs(float64(idx)) > float64(length) {
 			return NULL
 		}
 
-		// Our index was negative, so the actual index is length of the string + the index
-		// eg 3 + (-2) = 1
-		// [1,2,3][-2] = 2
 		idx = length + idx
 	}
 

@@ -1594,6 +1594,85 @@ func TestParsingIndexRangeWithoutEndExpressions(t *testing.T) {
 	}
 }
 
+func TestParsingSteppedIndexRangeExpressions(t *testing.T) {
+	tests := []struct {
+		input          string
+		expected       string
+		startOmitted   bool
+		start          float64
+		hasStart       bool
+		hasEnd         bool
+		end            float64
+		hasStep        bool
+		step           float64
+	}{
+		{
+			input:    "myArray[99 : 101 : 2]",
+			expected: "(myArray[99:101:2])",
+			hasStart: true,
+			start:    99,
+			hasEnd:   true,
+			end:      101,
+			hasStep:  true,
+			step:     2,
+		},
+		{
+			input:        "myArray[::2]",
+			expected:     "(myArray[::2])",
+			startOmitted: true,
+			hasStep:      true,
+			step:         2,
+		},
+		{
+			input:    "myArray[4::-1]",
+			expected: "(myArray[4::(-1)])",
+			hasStart: true,
+			start:    4,
+			hasStep:  true,
+			step:     -1,
+		},
+	}
+
+	for _, tt := range tests {
+		l := lexer.New(tt.input)
+		p := New(l)
+		program := p.ParseProgram()
+		checkParserErrors(t, p)
+
+		if program.String() != tt.expected {
+			t.Fatalf("program.String()=%q, want %q", program.String(), tt.expected)
+		}
+
+		stmt, ok := program.Statements[0].(*ast.ExpressionStatement)
+		indexExp, ok := stmt.Expression.(*ast.IndexExpression)
+		if !ok {
+			t.Fatalf("exp not *ast.IndexExpression. got=%T", stmt.Expression)
+		}
+
+		if !indexExp.IsRange || !indexExp.IsStepped {
+			t.Fatalf("expected stepped range expression")
+		}
+
+		if indexExp.StartOmitted != tt.startOmitted {
+			t.Fatalf("StartOmitted=%t, want %t", indexExp.StartOmitted, tt.startOmitted)
+		}
+
+		if tt.hasStart {
+			testNumberLiteral(t, indexExp.Index, tt.start)
+		}
+
+		if tt.hasEnd {
+			testNumberLiteral(t, indexExp.End, tt.end)
+		} else if indexExp.End != nil {
+			t.Fatalf("expected nil end, got %T", indexExp.End)
+		}
+
+		if tt.hasStep && tt.step >= 0 {
+			testNumberLiteral(t, indexExp.Step, tt.step)
+		}
+	}
+}
+
 func TestParsingProperty(t *testing.T) {
 	input := "var.prop"
 
