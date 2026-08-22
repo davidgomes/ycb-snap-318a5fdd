@@ -98,6 +98,8 @@ export interface TokenizerOptions {
   paramChars?: IdentChars;
   // Additional multi-character operators to support, in addition to <=, >=, <>, !=
   operators?: string[];
+  // Enables BigQuery-style pipe queries
+  supportsPipe?: boolean;
   // Additional operators for property access, in addition to .
   // Like in table.column
   propertyAccessOperators?: string[];

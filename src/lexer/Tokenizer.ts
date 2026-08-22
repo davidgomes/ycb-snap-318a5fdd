@@ -177,7 +177,10 @@ export default class Tokenizer {
       },
       { type: TokenType.DELIMITER, regex: /[;]/uy },
       { type: TokenType.COMMA, regex: /[,]/y },
-      { type: TokenType.PIPE_OPERATOR, regex: /\|>/uy },
+      {
+        type: TokenType.PIPE_OPERATOR,
+        regex: cfg.supportsPipe ? /\|>/uy : undefined,
+      },
       {
         type: TokenType.OPEN_PAREN,
         regex: regex.parenthesis('open', cfg.extraParens),
