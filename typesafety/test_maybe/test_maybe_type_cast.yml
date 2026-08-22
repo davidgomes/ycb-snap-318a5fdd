@@ -1,0 +1,33 @@
+- case: maybe_correct_cast
+  disable_cache: false
+  main: |
+    from returns.maybe import Maybe
+
+    first: Maybe[ValueError]
+    second: Maybe[Exception] = first
+    reveal_type(second)  # N: Revealed type is "returns.maybe.Maybe[builtins.Exception]"
+
+
+- case: maybe_getattr
+  disable_cache: false
+  main: |
+    from returns.maybe import Maybe
+
+    x: Maybe[int]
+    x.missing  # E: "Maybe[int]" has no attribute "missing"  [attr-defined]
+
+
+- case: maybe_some_constructor
+  disable_cache: false
+  main: |
+    from returns.maybe import Some
+
+    reveal_type(Some(1))  # N: Revealed type is "returns.maybe.Some[builtins.int]"
+
+
+- case: maybe_nothing_const
+  disable_cache: false
+  main: |
+    from returns.maybe import Nothing
+
+    reveal_type(Nothing)  # N: Revealed type is "returns.maybe.Maybe[Never]"

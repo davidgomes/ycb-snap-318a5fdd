@@ -1,0 +1,26 @@
+- case: failure_lash
+  disable_cache: false
+  main: |
+    from returns.result import Failure, Result
+
+    def returns_result(param: int) -> Result[str, Exception]:
+        ...
+
+    first: Result[str, int] = Failure(1)
+    reveal_type(first.lash(returns_result))  # N: Revealed type is "returns.result.Result[builtins.str, builtins.Exception]"
+
+
+- case: failure_alt
+  disable_cache: false
+  main: |
+    from returns.result import Failure
+
+    reveal_type(Failure(1).alt(str))  # N: Revealed type is "returns.result.Result[Any, builtins.str]"
+
+
+- case: failure_failure
+  disable_cache: false
+  main: |
+    from returns.result import Failure
+
+    reveal_type(Failure(1).failure())  # N: Revealed type is "builtins.int"

@@ -1,0 +1,38 @@
+- case: requires_context_future_result_success_cast
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContextFutureResult
+
+    first: RequiresContextFutureResult[object, Exception, str] = RequiresContextFutureResult.from_value(1)
+    reveal_type(first)  # N: Revealed type is "returns.context.requires_context_future_result.RequiresContextFutureResult[builtins.object, builtins.Exception, builtins.str]"
+
+
+- case: requires_context_future_result_failure_cast
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContextFutureResult
+
+    first: RequiresContextFutureResult[object, Exception, str] = RequiresContextFutureResult.from_failure(TypeError())
+    reveal_type(first)  # N: Revealed type is "returns.context.requires_context_future_result.RequiresContextFutureResult[builtins.object, builtins.Exception, builtins.str]"
+
+
+- case: requires_context_future_result_env_cast
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContextFutureResult
+
+    first: RequiresContextFutureResult[object, Exception, object]
+    second: RequiresContextFutureResult[object, Exception, str] = first
+
+    reveal_type(second)  # N: Revealed type is "returns.context.requires_context_future_result.RequiresContextFutureResult[builtins.object, builtins.Exception, builtins.str]"
+
+
+- case: requires_context_future_result_wrong_cast
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContextFutureResult
+
+    first: RequiresContextFutureResult[ValueError, TypeError, IndexError]
+    second: RequiresContextFutureResult[Exception, Exception, Exception] = first
+  out: |
+    main:4: error: Incompatible types in assignment (expression has type "RequiresContextFutureResult[ValueError, TypeError, IndexError]", variable has type "RequiresContextFutureResult[Exception, Exception, Exception]")  [assignment]

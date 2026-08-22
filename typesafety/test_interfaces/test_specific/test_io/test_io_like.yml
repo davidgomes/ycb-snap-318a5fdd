@@ -1,0 +1,89 @@
+- case: io_inheritance_correct
+  disable_cache: false
+  main: |
+    from typing import Callable, TypeVar
+    from returns.interfaces.specific.io import IOLike1
+    from returns.primitives.hkt import SupportsKind1
+    from returns.io import IO
+
+    _ValueType = TypeVar('_ValueType')
+    _NewValueType = TypeVar('_NewValueType')
+
+    class MyClass(
+        SupportsKind1['MyClass', _ValueType],
+        IOLike1[_ValueType],
+    ):
+        def bind_io(
+            self,
+            function: Callable[[_ValueType], IO[_NewValueType]],
+        ) -> MyClass[_NewValueType]:
+            ...
+
+        @classmethod
+        def from_io(
+            self, inner_value: IO[_NewValueType],
+        ) -> MyClass[_NewValueType]:
+            ...
+
+    def test(a: int) -> IO[float]:
+        ...
+
+    x: IO[int]
+    reveal_type(MyClass.from_io(x).bind_io(test))  # N: Revealed type is "main.MyClass[builtins.float]"
+
+
+- case: io_inheritance_missing
+  disable_cache: false
+  main: |
+    from typing import TypeVar, final
+    from returns.interfaces.specific.io import IOLike1
+    from returns.primitives.hkt import SupportsKind1
+
+    _ValueType = TypeVar('_ValueType')
+
+    @final
+    class MyClass(
+        SupportsKind1['MyClass', _ValueType],
+        IOLike1[_ValueType],
+    ):
+        ...
+  out: |
+    main:8: error: Final class main.MyClass has abstract attributes "apply", "bind", "bind_io", "from_io", "from_value", "map"  [misc]
+
+
+- case: io_inheritance_wrong
+  disable_cache: true
+  main: |
+    from typing import Callable, TypeVar
+    from returns.interfaces.specific.io import IOLike1
+    from returns.primitives.hkt import SupportsKind1
+    from returns.io import IO
+
+    _ValueType = TypeVar('_ValueType')
+    _NewValueType = TypeVar('_NewValueType')
+
+    class MyClass(
+        SupportsKind1['MyClass', _ValueType],
+        IOLike1[_ValueType],
+    ):
+        def bind_io(
+            self,
+            function: Callable[[_ValueType], IO[_ValueType]],
+        ) -> MyClass[_ValueType]:
+            ...
+
+        def from_io(
+            self, inner_value: IO[_NewValueType],
+        ) -> MyClass[_NewValueType]:
+            ...
+  out: |
+    main:13: error: Return type "MyClass[_ValueType]" of "bind_io" incompatible with return type "KindN[MyClass[_ValueType], _UpdatedType, Never, Never]" in supertype "returns.interfaces.specific.io.IOLikeN"  [override]
+    main:15: error: Argument 1 of "bind_io" is incompatible with supertype "returns.interfaces.specific.io.IOLikeN"; supertype defines the argument type as "Callable[[_ValueType], IO[_UpdatedType]]"  [override]
+    main:15: note: This violates the Liskov substitution principle
+    main:15: note: See https://mypy.readthedocs.io/en/stable/common_issues.html#incompatible-overrides
+    main:19: error: Signature of "from_io" incompatible with supertype "returns.interfaces.specific.io.IOLikeN"  [override]
+    main:19: note:      Superclass:
+    main:19: note:          @classmethod
+    main:19: note:          def [_UpdatedType] from_io(cls, inner_value: IO[_UpdatedType]) -> KindN[MyClass[_ValueType], _UpdatedType, Never, Never]
+    main:19: note:      Subclass:
+    main:19: note:          def [_NewValueType] from_io(self, inner_value: IO[_NewValueType]) -> MyClass[_NewValueType]

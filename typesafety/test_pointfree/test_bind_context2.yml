@@ -1,0 +1,85 @@
+- case: bind_context2_wrong_env
+  disable_cache: false
+  main: |
+    from returns.pointfree import bind_context2
+    from returns.context import RequiresContext
+
+    def test(arg: float) -> RequiresContext[str, int]:
+        ...
+
+    x: RequiresContext[float, str]
+    bind_context2(test)(x)
+  out: |
+    main:8: error: Argument 1 has incompatible type "RequiresContext[float, str]"; expected "KindN[RequiresContext[Any, Any], float, int, Any]"  [arg-type]
+
+
+- case: bind_context2_wrong_type
+  disable_cache: false
+  main: |
+    from returns.pointfree import bind_context2
+    from returns.context import RequiresContext, RequiresContextResult
+
+    def test(arg: float) -> RequiresContext[str, int]:
+        ...
+
+    x: RequiresContextResult[float, str, int]
+    bind_context2(test)(x)
+  out: |
+    main:8: error: Value of type variable "_Reader2Kind" of function cannot be "RequiresContextResult[Any, Any, Any]"  [type-var]
+    main:8: error: Argument 1 has incompatible type "RequiresContextResult[float, str, int]"; expected "KindN[RequiresContextResult[Any, Any, Any], float, int, Any]"  [arg-type]
+
+
+- case: bind_context2_and_flow
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContext
+    from returns.pointfree import bind_context2
+    from returns.pipeline import flow
+
+    def test(arg: int) -> RequiresContext[float, str]:
+        ...
+
+    def second(arg: float) -> RequiresContext[bool, str]:
+        ...
+
+    r: RequiresContext[int, str]
+    reveal_type(flow(r, bind_context2(test), bind_context2(second)))  # N: Revealed type is "returns.context.requires_context.RequiresContext[builtins.bool, builtins.str]"
+
+
+- case: bind_context2_requires_context
+  disable_cache: false
+  main: |
+    from returns.pointfree import bind_context2
+    from returns.context import RequiresContext, RequiresContextResult
+
+    def test(arg: float) -> RequiresContext[int, str]:
+        ...
+
+    x: RequiresContext[float, str]
+    reveal_type(bind_context2(test)(x))  # N: Revealed type is "returns.context.requires_context.RequiresContext[builtins.int, builtins.str]"
+
+
+- case: bind_context2_custom_type
+  disable_cache: false
+  main: |
+    from typing import TypeVar
+    from returns.interfaces.specific.reader import ReaderBased2
+    from returns.primitives.hkt import SupportsKind2
+    from returns.context import Reader
+    from returns.pointfree import bind_context2
+
+    _EnvType = TypeVar('_EnvType')
+    _ReturnType = TypeVar('_ReturnType')
+    _NewReturnType = TypeVar('_NewReturnType')
+
+    class MyClass(
+        SupportsKind2['MyClass', _ReturnType, _EnvType],
+        ReaderBased2[_ReturnType, _EnvType],
+    ):
+        ...
+
+    def test(a: int) -> Reader[float, str]:
+        ...
+
+    x: MyClass[int, str]
+    reveal_type(bind_context2(test)(x))  # N: Revealed type is "main.MyClass[builtins.float, builtins.str]"

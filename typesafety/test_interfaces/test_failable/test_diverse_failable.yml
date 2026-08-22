@@ -1,0 +1,126 @@
+- case: diverse_failable_inheritance_correct2
+  disable_cache: false
+  main: |
+    from typing import TypeVar
+    from returns.interfaces.failable import DiverseFailable2
+    from returns.primitives.hkt import SupportsKind2
+
+    _FirstType = TypeVar('_FirstType')
+    _SecondType = TypeVar('_SecondType')
+    _UpdatedType = TypeVar('_UpdatedType')
+
+    class MyClass(
+        SupportsKind2['MyClass', _FirstType, _SecondType],
+        DiverseFailable2[_FirstType, _SecondType],
+    ):
+        @classmethod
+        def from_failure(
+            cls,
+            inner_value: _UpdatedType
+        ) -> MyClass[_FirstType, _UpdatedType]:
+            ...
+
+    x: MyClass[str, int]
+    reveal_type(MyClass.from_failure(10))  # N: Revealed type is "main.MyClass[Never, builtins.int]"
+
+
+- case: diverse_failable_inheritance_correct3
+  disable_cache: false
+  main: |
+    from typing import TypeVar
+    from returns.interfaces.failable import DiverseFailable3
+    from returns.primitives.hkt import SupportsKind3
+
+    _FirstType = TypeVar('_FirstType')
+    _SecondType = TypeVar('_SecondType')
+    _ThirdType = TypeVar('_ThirdType')
+    _UpdatedType = TypeVar('_UpdatedType')
+
+    class MyClass(
+        SupportsKind3['MyClass', _FirstType, _SecondType, _ThirdType],
+        DiverseFailable3[_FirstType, _SecondType, _ThirdType],
+    ):
+        @classmethod
+        def from_failure(
+            cls,
+            inner_value: _UpdatedType
+        ) -> MyClass[_FirstType, _UpdatedType, _ThirdType]:
+            ...
+
+    x: MyClass[float, bool, str]
+    reveal_type(MyClass.from_failure(10))  # N: Revealed type is "main.MyClass[Never, builtins.int, Never]"
+
+
+- case: diverse_failable_inheritance_missing
+  disable_cache: false
+  main: |
+    from typing import TypeVar, final
+    from returns.interfaces.failable import DiverseFailable2
+    from returns.primitives.hkt import SupportsKind2
+
+    _FirstType = TypeVar('_FirstType')
+    _SecondType = TypeVar('_SecondType')
+
+    @final
+    class MyClass(
+        SupportsKind2['MyClass', _FirstType, _SecondType],
+        DiverseFailable2[_FirstType, _SecondType],
+    ):
+        ...
+  out: |
+    main:9: error: Final class main.MyClass has abstract attributes "alt", "apply", "bind", "from_failure", "from_value", "lash", "map", "swap"  [misc]
+
+
+- case: diverse_failable_inheritance_wrong2
+  disable_cache: false
+  main: |
+    from typing import TypeVar
+    from returns.interfaces.failable import DiverseFailable2
+    from returns.primitives.hkt import SupportsKind2
+
+    _FirstType = TypeVar('_FirstType')
+    _SecondType = TypeVar('_SecondType')
+
+    class MyClass(
+        SupportsKind2['MyClass', _FirstType, _SecondType],
+        DiverseFailable2[_FirstType, _SecondType],
+    ):
+        @classmethod
+        def from_failure(
+            cls,
+            inner_value: _FirstType
+        ) -> MyClass[_FirstType, _FirstType]:
+            ...
+  out: |
+    main:13: error: Return type "MyClass[_FirstType, _FirstType]" of "from_failure" incompatible with return type "KindN[MyClass[_FirstType, _SecondType], _FirstType, _UpdatedType, Never]" in supertype "returns.interfaces.failable.DiverseFailableN"  [override]
+    main:15: error: Argument 1 of "from_failure" is incompatible with supertype "returns.interfaces.failable.DiverseFailableN"; supertype defines the argument type as "_UpdatedType"  [override]
+    main:15: note: This violates the Liskov substitution principle
+    main:15: note: See https://mypy.readthedocs.io/en/stable/common_issues.html#incompatible-overrides
+
+
+- case: diverse_failable_inheritance_wrong3
+  disable_cache: false
+  main: |
+    from typing import TypeVar
+    from returns.interfaces.failable import DiverseFailable3
+    from returns.primitives.hkt import SupportsKind3
+
+    _FirstType = TypeVar('_FirstType')
+    _SecondType = TypeVar('_SecondType')
+    _ThirdType = TypeVar('_ThirdType')
+
+    class MyClass(
+        SupportsKind3['MyClass', _FirstType, _SecondType, _ThirdType],
+        DiverseFailable3[_FirstType, _SecondType, _ThirdType],
+    ):
+        @classmethod
+        def from_failure(
+            cls,
+            inner_value: _SecondType
+        ) -> MyClass[_FirstType, _FirstType, _FirstType]:
+            ...
+  out: |
+    main:14: error: Return type "MyClass[_FirstType, _FirstType, _FirstType]" of "from_failure" incompatible with return type "KindN[MyClass[_FirstType, _SecondType, _ThirdType], _FirstType, _UpdatedType, _ThirdType]" in supertype "returns.interfaces.failable.DiverseFailableN"  [override]
+    main:16: error: Argument 1 of "from_failure" is incompatible with supertype "returns.interfaces.failable.DiverseFailableN"; supertype defines the argument type as "_UpdatedType"  [override]
+    main:16: note: This violates the Liskov substitution principle
+    main:16: note: See https://mypy.readthedocs.io/en/stable/common_issues.html#incompatible-overrides

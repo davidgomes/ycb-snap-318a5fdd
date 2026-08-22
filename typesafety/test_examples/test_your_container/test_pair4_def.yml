@@ -1,0 +1,19 @@
+- case: test_pair_type
+  disable_cache: false
+  env:
+  - MYPYPATH=./tests/test_examples/test_your_container
+  mypy_config: disallow_subclassing_any = False
+  main: |
+    # Let's import our `Pair` type we defined earlier:
+    from test_pair4 import Pair
+
+    reveal_type(Pair)
+
+    def function(first: int, second: str) -> Pair[float, bool]:
+        ...
+
+    my_pair: Pair[int, str] = Pair.from_paired(1, 'a')
+    reveal_type(my_pair.pair(function))
+  out: |
+    main:4: note: Revealed type is "def [_FirstType, _SecondType] (inner_value: tuple[_FirstType`1, _SecondType`2]) -> test_pair4.Pair[_FirstType`1, _SecondType`2]"
+    main:10: note: Revealed type is "test_pair4.Pair[builtins.float, builtins.bool]"

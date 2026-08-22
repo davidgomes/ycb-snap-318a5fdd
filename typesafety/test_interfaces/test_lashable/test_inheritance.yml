@@ -1,0 +1,123 @@
+- case: lashable_inheritance_correct2
+  disable_cache: false
+  main: |
+    from typing import Callable, TypeVar
+    from returns.interfaces.lashable import Lashable2
+    from returns.primitives.hkt import SupportsKind2, Kind2, dekind
+
+    V = TypeVar('V')
+    E = TypeVar('E')
+    N = TypeVar('N')
+
+    class MyClass(SupportsKind2['MyClass', V, E], Lashable2[V, E]):
+        def __init__(self, value: V, error: E) -> None:
+            self.value = value
+            self.error = error
+
+        def lash(
+            self,
+            function: Callable[[E], Kind2['MyClass', V, N]],
+        ) -> 'MyClass[V, N]':
+            return dekind(function(self.error))
+
+    def test(arg: str) -> MyClass[int, int]:
+        ...
+
+    reveal_type(MyClass(1, '1').lash(test))  # N: Revealed type is "main.MyClass[builtins.int, builtins.int]"
+
+
+- case: lashable_inheritance_correct3
+  disable_cache: false
+  main: |
+    from typing import Callable, TypeVar
+    from returns.interfaces.lashable import Lashable3
+    from returns.primitives.hkt import SupportsKind3, Kind3, dekind
+
+    V = TypeVar('V')
+    T = TypeVar('T')
+    K = TypeVar('K')
+    N = TypeVar('N')
+
+    class MyClass(SupportsKind3['MyClass', V, T, K], Lashable3[V, T, K]):
+        def __init__(self, value: V, other: T, last: K) -> None:
+            self.value = value
+            self.other = other
+            self.last = last
+
+        def lash(
+            self,
+            function: Callable[[T], Kind3['MyClass', V, N, K]],
+        ) -> 'MyClass[V, N, K]':
+            return dekind(function(self.other))
+
+    def test(arg: str) -> MyClass[int, float, bool]:
+        ...
+
+    reveal_type(MyClass(1, 'a', True).lash(test))  # N: Revealed type is "main.MyClass[builtins.int, builtins.float, builtins.bool]"
+
+
+- case: lashable_inheritance_missing
+  disable_cache: false
+  main: |
+    from typing import TypeVar
+    from returns.interfaces.lashable import Lashable2
+    from returns.primitives.hkt import SupportsKind2
+
+    V = TypeVar('V')
+    N = TypeVar('N')
+
+    class MyClass(SupportsKind2['MyClass', V, N], Lashable2[V, N]):
+        ...
+
+    MyClass()
+  out: |
+    main:11: error: Cannot instantiate abstract class "MyClass" with abstract attribute "lash"  [abstract]
+
+
+- case: lashable_inheritance_wrong2
+  disable_cache: false
+  main: |
+    from typing import Callable, TypeVar
+    from returns.interfaces.lashable import Lashable2
+    from returns.primitives.hkt import SupportsKind2, Kind2
+
+    V = TypeVar('V')
+    N = TypeVar('N')
+    E = TypeVar('E')
+
+    class MyClass(SupportsKind2['MyClass', V, E], Lashable2[V, E]):
+        def lash(
+            self,
+            function: Callable[[E], Kind2['MyClass', V, V]],
+        ) -> MyClass[N, E]:
+            ...
+  out: |
+    main:10: error: Return type "MyClass[N, E]" of "lash" incompatible with return type "KindN[MyClass[V, E], V, _UpdatedType, Never]" in supertype "returns.interfaces.lashable.LashableN"  [override]
+    main:12: error: Argument 1 of "lash" is incompatible with supertype "returns.interfaces.lashable.LashableN"; supertype defines the argument type as "Callable[[E], KindN[MyClass[V, E], V, _UpdatedType, Never]]"  [override]
+    main:12: note: This violates the Liskov substitution principle
+    main:12: note: See https://mypy.readthedocs.io/en/stable/common_issues.html#incompatible-overrides
+
+
+- case: lashable_inheritance_wrong3
+  disable_cache: false
+  main: |
+    from typing import Callable, TypeVar
+    from returns.interfaces.lashable import Lashable3
+    from returns.primitives.hkt import SupportsKind3, Kind3
+
+    V = TypeVar('V')
+    N = TypeVar('N')
+    E = TypeVar('E')
+    T = TypeVar('T')
+
+    class MyClass(SupportsKind3['MyClass', V, E, T], Lashable3[V, E, T]):
+        def lash(
+            self,
+            function: Callable[[E], Kind3['MyClass', V, V, V]],
+        ) -> MyClass[N, E, T]:
+            ...
+  out: |
+    main:11: error: Return type "MyClass[N, E, T]" of "lash" incompatible with return type "KindN[MyClass[V, E, T], V, _UpdatedType, T]" in supertype "returns.interfaces.lashable.LashableN"  [override]
+    main:13: error: Argument 1 of "lash" is incompatible with supertype "returns.interfaces.lashable.LashableN"; supertype defines the argument type as "Callable[[E], KindN[MyClass[V, E, T], V, _UpdatedType, T]]"  [override]
+    main:13: note: This violates the Liskov substitution principle
+    main:13: note: See https://mypy.readthedocs.io/en/stable/common_issues.html#incompatible-overrides

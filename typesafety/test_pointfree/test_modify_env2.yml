@@ -1,0 +1,77 @@
+- case: modify_env2_wrong_env
+  disable_cache: false
+  main: |
+    from returns.pointfree import modify_env2
+    from returns.context import RequiresContext
+
+    x: RequiresContext[float, str]
+    modify_env2(int)(x)
+  out: |
+    main:5: error: Argument 1 has incompatible type "RequiresContext[float, str]"; expected "KindN[RequiresContext[Any, Any], float, int, Any]"  [arg-type]
+
+
+- case: modify_env2_wrong_type
+  disable_cache: false
+  main: |
+    from returns.pointfree import modify_env2
+    from returns.context import RequiresContextResult
+
+    x: RequiresContextResult[float, str, int]
+    modify_env2(int)(x)
+  out: |
+    main:5: error: Value of type variable "_Reader2Kind" of function cannot be "RequiresContextResult[Any, Any, Any]"  [type-var]
+    main:5: error: Argument 1 has incompatible type "RequiresContextResult[float, str, int]"; expected "KindN[RequiresContextResult[Any, Any, Any], float, int, Any]"  [arg-type]
+
+
+- case: modify_env2_and_flow
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContext
+    from returns.pointfree import modify_env2, bind
+    from returns.pipeline import flow
+
+    def modify(str) -> int:
+        ...
+
+    def test(arg: int) -> RequiresContext[float, str]:
+        ...
+
+    r: RequiresContext[int, int]
+    reveal_type(flow(r, modify_env2(modify), bind(test)))  # N: Revealed type is "returns.context.requires_context.RequiresContext[builtins.float, builtins.str]"
+
+
+- case: modify_env2_requires_context
+  disable_cache: false
+  main: |
+    from returns.pointfree import modify_env2
+    from returns.context import RequiresContext
+
+    class A: ...
+    def mod(arg: A) -> bool: ...
+
+    x: RequiresContext[float, bool]
+    reveal_type(modify_env2(mod)(x))  # N: Revealed type is "returns.context.requires_context.RequiresContext[builtins.float, main.A]"
+
+
+- case: modify_env2_custom_type
+  disable_cache: false
+  main: |
+    from typing import TypeVar
+    from returns.interfaces.specific.reader import ReaderBased2
+    from returns.primitives.hkt import SupportsKind2
+    from returns.pointfree import modify_env2
+
+    _EnvType = TypeVar('_EnvType')
+    _ReturnType = TypeVar('_ReturnType')
+
+    class MyClass(
+        SupportsKind2['MyClass', _ReturnType, _EnvType],
+        ReaderBased2[_ReturnType, _EnvType],
+    ):
+        ...
+
+    class A: ...
+    def mod(arg: A) -> bool: ...
+
+    x: MyClass[float, bool]
+    reveal_type(modify_env2(mod)(x))  # N: Revealed type is "main.MyClass[builtins.float, main.A]"

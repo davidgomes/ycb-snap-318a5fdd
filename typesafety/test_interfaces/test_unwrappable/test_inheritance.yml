@@ -1,0 +1,72 @@
+- case: unwrappable_correct_inheritance
+  disable_cache: false
+  main: |
+    from returns.primitives.hkt import SupportsKind2
+    from returns.interfaces.unwrappable import Unwrappable
+    from typing import TypeVar
+
+    T = TypeVar('T')
+    N = TypeVar('N')
+
+    class MyOwn(
+        SupportsKind2['MyOwn', T, N],
+        Unwrappable[T, N],
+    ):
+        def __init__(self, value: T, error: N) -> None:
+            ...
+
+        def unwrap(self) -> T:
+            ...
+
+        def failure(self) -> N:
+            ...
+
+    x = MyOwn(1, 'a')
+    reveal_type(x.unwrap())  # N: Revealed type is "builtins.int"
+    reveal_type(x.failure())  # N: Revealed type is "builtins.str"
+
+
+- case: unwrappable_missing_inheritance
+  disable_cache: false
+  main: |
+    from returns.primitives.hkt import SupportsKind2
+    from returns.interfaces.unwrappable import Unwrappable
+    from typing import TypeVar
+
+    T = TypeVar('T')
+    N = TypeVar('N')
+
+    class MyOwn(
+        SupportsKind2['MyOwn', T, N],
+        Unwrappable[T, N],
+    ):
+      ...
+
+    MyOwn()  # E: Cannot instantiate abstract class "MyOwn" with abstract attributes "failure" and "unwrap"  [abstract]
+
+
+- case: unwrappable_wrong_inheritance
+  disable_cache: false
+  main: |
+    from returns.primitives.hkt import SupportsKind2
+    from returns.interfaces.unwrappable import Unwrappable
+    from typing import TypeVar
+
+    T = TypeVar('T')
+    N = TypeVar('N')
+
+    class MyOwn(
+        SupportsKind2['MyOwn', T, N],
+        Unwrappable[T, N],
+    ):
+        def __init__(self, value: T, error: N) -> None:
+            ...
+
+        def unwrap(self) -> int:
+            ...
+
+        def failure(self) -> T:
+            ...
+  out: |
+    main:15: error: Return type "int" of "unwrap" incompatible with return type "T" in supertype "returns.interfaces.unwrappable.Unwrappable"  [override]
+    main:18: error: Return type "T" of "failure" incompatible with return type "N" in supertype "returns.interfaces.unwrappable.Unwrappable"  [override]

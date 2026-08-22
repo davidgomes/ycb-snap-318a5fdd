@@ -1,0 +1,130 @@
+- case: requires_context_call_correct
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContext
+
+    first: RequiresContext[str, int]
+
+    reveal_type(first(1))  # N: Revealed type is "builtins.str"
+
+
+- case: requires_context_getattr
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContext
+
+    x: RequiresContext[int, str]
+    x.missing  # E: "RequiresContext[int, str]" has no attribute "missing"  [attr-defined]
+
+
+- case: requires_context_map_correct
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContext
+
+    first: RequiresContext[str, int]
+
+    reveal_type(first.map(lambda char: float(char)))  # N: Revealed type is "returns.context.requires_context.RequiresContext[builtins.float, builtins.int]"
+
+
+- case: requires_context_apply_correct
+  disable_cache: false
+  main: |
+    from typing import Callable
+    from returns.context import RequiresContext
+
+    first: RequiresContext[str, int]
+    second: RequiresContext[Callable[[str], float], int]
+
+    reveal_type(first.apply(second))  # N: Revealed type is "returns.context.requires_context.RequiresContext[builtins.float, builtins.int]"
+
+
+- case: requires_context_bind_correct
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContext
+
+    first: RequiresContext[str, int]
+
+    def function(arg: str) -> RequiresContext[float, int]:
+        return RequiresContext.from_value(1.5)
+
+    reveal_type(first.bind(function))  # N: Revealed type is "returns.context.requires_context.RequiresContext[builtins.float, builtins.int]"
+
+
+- case: requires_context_bind_context_correct
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContext
+
+    first: RequiresContext[str, int]
+
+    def function(arg: str) -> RequiresContext[float, int]:
+        return RequiresContext.from_value(1.5)
+
+    reveal_type(first.bind_context(function))  # N: Revealed type is "returns.context.requires_context.RequiresContext[builtins.float, builtins.int]"
+
+
+- case: requires_context_modify_env
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContext
+
+    first: RequiresContext[float, int]
+    reveal_type(first.modify_env(int)('1'))  # N: Revealed type is "builtins.float"
+
+
+- case: requires_context_call_wrong
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContext
+
+    first: RequiresContext[str, int]
+    first('a')
+  out: |
+    main:4: error: Argument 1 to "__call__" of "RequiresContext" has incompatible type "str"; expected "int"  [arg-type]
+
+
+- case: requires_context_map_wrong
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContext
+
+    first: RequiresContext[str, int]
+
+    def function(arg: int) -> int:
+        return arg + 1
+
+    first.map(function)
+  out: |
+    main:8: error: Argument 1 to "map" of "RequiresContext" has incompatible type "Callable[[int], int]"; expected "Callable[[str], int]"  [arg-type]
+
+
+- case: requires_context_bind_wrong1
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContext
+
+    first: RequiresContext[str, int]
+
+    def function(arg: float) -> RequiresContext[float, int]:
+        return RequiresContext.from_value(1.5)
+
+    first.bind(function)
+  out: |
+    main:8: error: Argument 1 to "bind" of "RequiresContext" has incompatible type "Callable[[float], RequiresContext[float, int]]"; expected "Callable[[str], KindN[RequiresContext[Any, Any], float, int, Any]]"  [arg-type]
+
+
+- case: requires_context_bind_wrong2
+  disable_cache: false
+  main: |
+    from returns.context import RequiresContext
+
+    first: RequiresContext[str, int]
+
+    def function(arg: str) -> RequiresContext[float, str]:
+        return RequiresContext.from_value(1.5)
+
+    first.bind(function)
+  out: |
+    main:8: error: Argument 1 to "bind" of "RequiresContext" has incompatible type "Callable[[str], RequiresContext[float, str]]"; expected "Callable[[str], KindN[RequiresContext[Any, Any], float, int, Any]]"  [arg-type]

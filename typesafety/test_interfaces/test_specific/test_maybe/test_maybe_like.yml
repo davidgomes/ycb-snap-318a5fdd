@@ -1,0 +1,65 @@
+- case: maybe_like_inheritance_correct
+  disable_cache: false
+  main: |
+    from typing import TypeVar, Callable, Optional
+    from returns.interfaces.specific.maybe import MaybeLike2
+    from returns.primitives.hkt import SupportsKind2
+
+    V = TypeVar('V')
+    N = TypeVar('N')
+
+    class MyClass(SupportsKind2['MyClass', V, None], MaybeLike2[V, None]):
+        def bind_optional(
+            self,
+            function: Callable[[V], Optional[N]],
+        ) -> MyClass[N]:
+            ...
+
+        @classmethod
+        def from_optional(cls, inner_value: Optional[N]) -> MyClass[N]:
+            ...
+
+
+- case: maybe_like_inheritance_missing
+  disable_cache: false
+  main: |
+    from typing import TypeVar, final
+    from returns.interfaces.specific.maybe import MaybeLike2
+    from returns.primitives.hkt import SupportsKind2
+
+    V = TypeVar('V')
+
+    @final
+    class MyClass(SupportsKind2['MyClass', V, None], MaybeLike2[V, None]):
+        ...
+  out: |
+    main:8: error: Final class main.MyClass has abstract attributes "apply", "bind", "bind_optional", "empty", "from_optional", "from_value", "lash", "map"  [misc]
+
+
+- case: maybe_like_inheritance_wrong
+  disable_cache: true
+  main: |
+    from typing import TypeVar, Callable, Optional
+    from returns.interfaces.specific.maybe import MaybeLike2
+    from returns.primitives.hkt import SupportsKind2
+
+    V = TypeVar('V')
+    N = TypeVar('N')
+
+    class MyClass(SupportsKind2['MyClass', V, None], MaybeLike2[V, None]):
+        def bind_optional(
+            self,
+            function: Callable[[V], N],
+        ) -> MyClass[Optional[N]]:
+            ...
+
+        def from_optional(self, inner_value: Optional[N]) -> MyClass[N]:
+            ...
+  out: |
+    main:9: error: Return type "MyClass[N | None]" of "bind_optional" incompatible with return type "KindN[MyClass[V], _UpdatedType, None, Never]" in supertype "returns.interfaces.specific.maybe.MaybeLikeN"  [override]
+    main:15: error: Signature of "from_optional" incompatible with supertype "returns.interfaces.specific.maybe.MaybeLikeN"  [override]
+    main:15: note:      Superclass:
+    main:15: note:          @classmethod
+    main:15: note:          def [_ValueType] from_optional(cls, inner_value: _ValueType | None) -> KindN[MyClass[V], _ValueType, None, Never]
+    main:15: note:      Subclass:
+    main:15: note:          def [N] from_optional(self, inner_value: N | None) -> MyClass[N]
