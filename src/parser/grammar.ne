@@ -113,20 +113,20 @@ standard_expressions_or_clauses -> free_form_sql:* clause:* {%
 %}
 
 pipe_query -> from_clause pipe_clause:+ {%
-  ([from, clauses]) => [from, ...clauses]
+  ([from, clauses]) => {
+    if (from.nameKw.text !== 'FROM') {
+      throw new Error('Pipe queries must start with FROM');
+    }
+    return [from, ...clauses];
+  }
 %}
 
 from_clause -> %RESERVED_CLAUSE free_form_sql:* {%
-  ([nameToken, children]) => {
-    if (nameToken.text !== 'FROM') {
-      throw new Error('Pipe queries must start with FROM');
-    }
-    return {
-      type: NodeType.clause,
-      nameKw: toKeywordNode(nameToken),
-      children,
-    };
-  }
+  ([nameToken, children]) => ({
+    type: NodeType.clause,
+    nameKw: toKeywordNode(nameToken),
+    children,
+  })
 %}
 
 pipe_clause ->
