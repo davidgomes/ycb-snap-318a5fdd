@@ -366,7 +366,7 @@ fn leb_size(mut value: u32) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Config, Engine, Instance, Module, Store};
+    use crate::{Caller, Config, Engine, Instance, Linker, Module, Store};
     use wasmparser::{Parser, Payload};
 
     #[test]
