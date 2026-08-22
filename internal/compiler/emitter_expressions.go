@@ -755,8 +755,11 @@ func (em *emitter) emitSelector(v *ast.Selector, reg int8, dstType reflect.Type)
 		expr := v.Expr
 		typ := em.typ(expr)
 		rcvr := em.emitExpr(expr, typ)
-		// MethodValue reads receiver from general.
-		if kindToType(typ.Kind()) != generalRegister {
+		// MethodValue reads the receiver from a general register. Scriggo
+		// types must be typified even when they already live in general
+		// (for example *T) so the VM can recover the method set.
+		_, isScriggo := typ.(runtime.ScriggoType)
+		if typ.Kind() != reflect.Interface && (isScriggo || kindToType(typ.Kind()) != generalRegister) {
 			oldRcvr := rcvr
 			rcvr = em.fb.newRegister(reflect.Interface)
 			em.fb.emitTypify(false, typ, oldRcvr, rcvr)
@@ -935,8 +938,17 @@ func (em *emitter) emitUnaryOp(expr *ast.UnaryOperator, reg int8, regType reflec
 		case *ast.Identifier:
 			if em.fb.declaredInFunc(operand.Name) {
 				r := em.fb.scopeLookup(operand.Name)
-				em.fb.emitNew(em.types.PointerTo(exprType), reg)
-				em.fb.emitMove(false, -r, reg, regType.Kind())
+				if canEmitDirectly(exprKind, regType.Kind()) {
+					em.fb.emitNew(em.types.PointerTo(exprType), reg)
+					em.fb.emitMove(false, -r, reg, regType.Kind())
+					return
+				}
+				em.fb.enterStack()
+				tmp := em.fb.newRegister(exprKind)
+				em.fb.emitNew(em.types.PointerTo(exprType), tmp)
+				em.fb.emitMove(false, -r, tmp, exprKind)
+				em.changeRegister(false, tmp, reg, exprType, regType)
+				em.fb.exitStack()
 				return
 			}
 			// Address of a non-local variable.

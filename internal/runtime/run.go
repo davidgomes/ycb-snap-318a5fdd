@@ -1111,12 +1111,15 @@ func (vm *VM) run() (Addr, bool) {
 				if !found {
 					panic(runtimeError("type " + p.Sign.String() + " has no method " + method))
 				}
-				if m.Func.IsValid() {
-					if fn, ok := m.Func.Interface().(*Function); ok {
-						vm.setGeneral(c, reflect.ValueOf(&callable{value: bindScriggoMethod(fn, p, vm.env)}))
-						break
-					}
+				if !m.Func.IsValid() {
+					panic(runtimeError("type " + p.Sign.String() + " has no implementation for method " + method))
 				}
+				fn, ok := m.Func.Interface().(*Function)
+				if !ok {
+					panic(runtimeError("type " + p.Sign.String() + " method " + method + " is not a Scriggo function"))
+				}
+				vm.setGeneral(c, reflect.ValueOf(&callable{value: bindScriggoMethod(fn, p, vm.env)}))
+				break
 			}
 			vm.setGeneral(c, reflect.ValueOf(&callable{value: receiver.MethodByName(method)}))
 

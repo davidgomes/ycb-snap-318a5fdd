@@ -91,7 +91,7 @@ func TestMethodAutoAddress(t *testing.T) {
 		type T int
 
 		func (t *T) Inc() {
-			*t++
+			*t = *t + 1
 		}
 
 		func main() {
@@ -136,6 +136,8 @@ func TestMethodExpressions(t *testing.T) {
 		func (t T) Value() int { return int(t) + 1 }
 		func (t *T) Ptr() int  { return int(*t) + 10 }
 
+		func apply(f func(T) int, t T) int { return f(t) }
+
 		func main() {
 			var t T = 3
 			f := T.Value
@@ -150,10 +152,12 @@ func TestMethodExpressions(t *testing.T) {
 			print(" ")
 			h := (*T).Value
 			print(h(&t))
+			print(" ")
+			print(apply(T.Value, t))
 		}
 	`
 	got := runProgram(t, src, nil)
-	const want = "4 4 13 13 4"
+	const want = "4 4 13 13 4 4"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -307,10 +311,13 @@ func TestMethodOnPointerValue(t *testing.T) {
 			t := T(4)
 			p := &t
 			print(p.Value())
+			print(" ")
+			f := p.Value
+			print(f())
 		}
 	`
 	got := runProgram(t, src, nil)
-	if got != "5" {
-		t.Fatalf("got %q, want %q", got, "5")
+	if got != "5 5" {
+		t.Fatalf("got %q, want %q", got, "5 5")
 	}
 }
