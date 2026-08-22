@@ -35,6 +35,17 @@ export interface Logic {
   selector?: Selector
   selectors: Record<string, Selector>
   values: Record<string, any>
+  selectorHealth?: () => {
+    selectors: {
+      [name: string]: {
+        dependencies: string[]
+        dependents: string[]
+        evaluations: number
+        dirtyCause: string | null
+      }
+    }
+    topologicalOrder: string[]
+  }
   events: {
     beforeMount?: () => void
     afterMount?: () => void
@@ -538,6 +549,7 @@ export interface InternalContextOptions {
   detachStrategy: 'dispatch' | 'replace' | 'persist'
   defaultPath: string[]
   disableAsyncActions: boolean
+  atomicSelectors: boolean
   // ...otherOptions
 }
 

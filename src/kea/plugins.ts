@@ -1,5 +1,6 @@
 import { getContext } from './context'
 import { KeaPlugin, PluginEvents } from '../types'
+import { finalizeAtomicLogic, isAtomicSelectorsEnabled } from '../core/atomicSelectors'
 
 const reservedKeys = {
   key: true,
@@ -75,5 +76,8 @@ export function runPlugins<T extends keyof PluginEvents, E extends PluginParamet
     ;(plugins.events[key] as Array<(...args: E) => void>).forEach((pluginFunction) => {
       pluginFunction(...args)
     })
+  }
+  if (key === 'afterBuild' && isAtomicSelectorsEnabled()) {
+    finalizeAtomicLogic(args[0] as any)
   }
 }
