@@ -39,6 +39,17 @@ export type UsageTerm =
      * @since 0.9.0
      */
     readonly hidden?: boolean;
+    /**
+     * Conditional dependency metadata.
+     * @internal
+     */
+    readonly dependsOn?: {
+      readonly option?: string;
+      readonly value?: unknown;
+      readonly anyOf?: readonly unknown[];
+      readonly allOf?: readonly unknown[];
+      readonly required?: boolean;
+    };
   }
   /**
    * An option term, which represents a command-line option that can

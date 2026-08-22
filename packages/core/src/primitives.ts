@@ -130,6 +130,27 @@ export interface OptionOptions {
   readonly hidden?: boolean;
 
   /**
+   * Makes this option conditional on other option values.
+   */
+  readonly dependsOn?: {
+    readonly option?: string;
+    readonly value?: unknown;
+    readonly anyOf?: readonly {
+      readonly option?: string;
+      readonly value?: unknown;
+      readonly anyOf?: readonly unknown[];
+      readonly allOf?: readonly unknown[];
+    }[];
+    readonly allOf?: readonly {
+      readonly option?: string;
+      readonly value?: unknown;
+      readonly anyOf?: readonly unknown[];
+      readonly allOf?: readonly unknown[];
+    }[];
+    readonly required?: boolean;
+  };
+
+  /**
    * Error message customization options.
    * @since 0.5.0
    */
@@ -634,6 +655,38 @@ export function option<M extends Mode, T>(
   }
   const mode: M = (valueParser?.$mode ?? "sync") as M;
   const isAsync = mode === "async";
+  const dependency = options.dependsOn;
+  const dependencySatisfied = (context: ParserContext<unknown>): boolean => {
+    if (!dependency) return true;
+    const state = context.state;
+    const get = (name: string): unknown => {
+      if (!state || typeof state !== "object") return undefined;
+      const record = state as Record<string, unknown>;
+      if (name in record) {
+        const value = record[name];
+        if (value && typeof value === "object" && "success" in value) {
+          return (value as { value?: unknown }).value;
+        }
+        return value;
+      }
+      const term = context.usage.flatMap((u) =>
+        u.type === "option" ? u.names : []
+      ).find((n) => n === name);
+      return term ? record[term] : undefined;
+    };
+    const check = (condition: typeof dependency): boolean => {
+      if (condition.option) {
+        const actual = get(condition.option);
+        return "value" in condition
+          ? actual === condition.value
+          : Boolean(actual);
+      }
+      if (condition.allOf) return condition.allOf.every(check);
+      if (condition.anyOf) return condition.anyOf.some(check);
+      return true;
+    };
+    return check(dependency);
+  };
 
   // Use 'as any' to allow both sync and async returns from parse method
   // The actual mode is set correctly at the end via spread with $mode
@@ -650,6 +703,7 @@ export function option<M extends Mode, T>(
             type: "option",
             names: optionNames,
             ...(options.hidden && { hidden: true }),
+            ...(dependency && { dependsOn: dependency }),
           }],
         }
         : {
@@ -657,6 +711,7 @@ export function option<M extends Mode, T>(
           names: optionNames,
           metavar: valueParser.metavar,
           ...(options.hidden && { hidden: true }),
+          ...(dependency && { dependsOn: dependency }),
         },
     ],
     initialState: valueParser == null
@@ -676,6 +731,15 @@ export function option<M extends Mode, T>(
         ValueParserResult<T | boolean> | undefined
       >,
     ) {
+      if (!dependencySatisfied(context) && dependency?.required) {
+        return {
+          success: false,
+          consumed: 0,
+          error: message`Option ${eOptionName(optionNames[0])} requires option ${
+            eOptionName(dependency.option ?? "")
+          }${"value" in dependency ? ` with value ${String(dependency.value)}` : ""}.`,
+        };
+      }
       if (context.optionsTerminated) {
         return {
           success: false,
@@ -1005,6 +1069,9 @@ export function option<M extends Mode, T>(
       >,
       prefix: string,
     ) {
+      if (!dependencySatisfied(context)) return isAsync
+        ? (async function* () {})()
+        : (function* () {})();
       // For async parsers, use async generator; for sync parsers, use sync generator
       if (isAsync) {
         return suggestOptionAsync(
@@ -1027,7 +1094,7 @@ export function option<M extends Mode, T>(
       _state: DocState<ValueParserResult<T | boolean> | undefined>,
       defaultValue?: T | boolean,
     ) {
-      if (options.hidden) {
+      if (options.hidden || dependency) {
         return { fragments: [], description: options.description };
       }
       const fragments: readonly DocFragment[] = [{

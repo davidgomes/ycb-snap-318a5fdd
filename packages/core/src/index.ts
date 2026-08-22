@@ -5,6 +5,7 @@ export {
   type ParseOptions,
 } from "./annotations.ts";
 export * from "./completion.ts";
+export * from "./conditional.ts";
 export * from "./dependency.ts";
 export * from "./doc.ts";
 export * from "./facade.ts";
