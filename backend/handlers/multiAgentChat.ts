@@ -147,7 +147,8 @@ async function* executeSingleAgent(
   request: ChatRequest,
   command: AgentCommand | null,
   abortController: AbortController,
-  debugMode: boolean
+  debugMode: boolean,
+  delegationPath: string[] = [agentId],
 ): AsyncGenerator<StreamResponse> {
   const provider = globalRegistry.getProviderForAgent(agentId);
   const agentConfig = globalRegistry.getAgent(agentId);
@@ -196,6 +197,67 @@ async function* executeSingleAgent(
       };
     }
     
+    if (response.type === "tool_use") {
+      const toolUseId = response.toolUseId || `${request.requestId}-${agentId}-delegation`;
+
+      yield {
+        type: "claude_json",
+        data: {
+          type: "assistant",
+          content: [{
+            type: "tool_use",
+            id: toolUseId,
+            name: response.toolName,
+            input: response.toolInput,
+          }],
+          model: response.metadata?.model,
+        },
+      };
+
+      if (response.toolName === "delegate_task") {
+        const result = await delegateTask(
+          response.toolInput,
+          toolUseId,
+          request,
+          abortController,
+          debugMode,
+          delegationPath,
+        );
+
+        if (result.circular) {
+          yield { type: "error", error: result.error };
+          return;
+        }
+
+        const toolResult = JSON.stringify({
+          type: "tool_result",
+          is_error: result.isError,
+          content: result.content,
+          tool_use_id: toolUseId,
+        });
+
+        yield {
+          type: "claude_json",
+          data: {
+            type: "tool_result",
+            content: toolResult,
+            tool_use_id: toolUseId,
+          },
+        };
+
+        // The provider receives the result as the next turn in this session.
+        yield* executeSingleAgent(
+          agentId,
+          { ...request, message: toolResult },
+          null,
+          abortController,
+          debugMode,
+          delegationPath,
+        );
+        return;
+      }
+    }
+
     // Also send original response format for compatibility
     if (response.type === "text") {
       yield {
@@ -214,6 +276,90 @@ async function* executeSingleAgent(
       return;
     }
   }
+}
+
+type DelegationResult = {
+  content: string;
+  isError: boolean;
+  circular?: boolean;
+  error?: string;
+};
+
+/**
+ * Run a delegated task and collect only its textual output for the parent.
+ */
+async function delegateTask(
+  input: unknown,
+  toolUseId: string,
+  request: ChatRequest,
+  abortController: AbortController,
+  debugMode: boolean,
+  delegationPath: string[],
+): Promise<DelegationResult> {
+  const task = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const delegatedAgentId = typeof task.agent_id === "string" ? task.agent_id : "";
+  const instructions = typeof task.instructions === "string" ? task.instructions : "";
+
+  if (delegationPath.includes(delegatedAgentId)) {
+    return {
+      content: `Circular delegation detected for agent '${delegatedAgentId}'.`,
+      isError: true,
+      circular: true,
+      error: `Circular delegation detected: ${delegationPath.join(" -> ")} -> ${delegatedAgentId}`,
+    };
+  }
+
+  const provider = globalRegistry.getProviderForAgent(delegatedAgentId);
+  const agentConfig = globalRegistry.getAgent(delegatedAgentId);
+  if (!provider || !agentConfig) {
+    const error = `Agent '${delegatedAgentId}' not found or provider not available`;
+    return {
+      content: error,
+      isError: true,
+    };
+  }
+
+  if (!instructions) {
+    return {
+      content: "Delegated task did not include instructions.",
+      isError: true,
+    };
+  }
+
+  let output = "";
+  let failed = false;
+  for await (const chunk of executeSingleAgent(
+    delegatedAgentId,
+    {
+      ...request,
+      message: instructions,
+      sessionId: undefined,
+      requestId: `${request.requestId}:delegate:${toolUseId}`,
+    },
+    null,
+    abortController,
+    debugMode,
+    [...delegationPath, delegatedAgentId],
+  )) {
+    if (chunk.type === "error") {
+      failed = true;
+      output = chunk.error || "Sub-agent failed without an error message.";
+    } else if (chunk.type === "claude_json") {
+      const data = chunk.data as { type?: string; content?: unknown } | undefined;
+      if (data?.type === "assistant" && typeof data.content === "string") {
+        output += data.content;
+      }
+    }
+  }
+
+  if (failed) {
+    return { content: output, isError: true };
+  }
+
+  return {
+    content: output || "Sub-agent completed without producing textual output.",
+    isError: false,
+  };
 }
 
 /**
