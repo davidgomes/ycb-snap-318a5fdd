@@ -105,6 +105,7 @@ func TestStableList(t *testing.T) {
 		"assignOp",
 		"badCall",
 		"badCond",
+		"brokenDocLink",
 		"builtinShadow",
 		"captLocal",
 		"caseOrder",
