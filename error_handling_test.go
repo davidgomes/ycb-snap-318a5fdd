@@ -13,6 +13,12 @@ func TestErrorHandlingFunctionForm(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 42, got)
 
+	program, err := expr.Compile(`try(1 % 0, 42)`)
+	require.NoError(t, err)
+	got, err = expr.Run(program, nil)
+	require.NoError(t, err)
+	require.Equal(t, 42, got)
+
 	got, err = expr.Eval(`try(1, 1 % 0)`, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, got)
@@ -46,6 +52,12 @@ func TestErrorHandlingBlockForm(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+
+	program, err := expr.Compile(`try { 1 % 0 } catch { 42 }`)
+	require.NoError(t, err)
+	got, err := expr.Run(program, nil)
+	require.NoError(t, err)
+	require.Equal(t, 42, got)
 }
 
 func TestErrorHandlingNilClassification(t *testing.T) {

@@ -9,6 +9,9 @@ import (
 )
 
 func Optimize(node *Node, config *conf.Config) error {
+	if containsTry(node) {
+		return nil
+	}
 	Walk(node, &inArray{})
 	for limit := 1000; limit >= 0; limit-- {
 		fold := &fold{}
@@ -46,6 +49,27 @@ func Optimize(node *Node, config *conf.Config) error {
 	Walk(node, &countAny{})
 	Walk(node, &countThreshold{})
 	return nil
+}
+
+func containsTry(node *Node) bool {
+	finder := &tryFinder{}
+	Walk(node, finder)
+	return finder.found
+}
+
+type tryFinder struct {
+	found bool
+}
+
+func (f *tryFinder) Visit(node *Node) {
+	switch n := (*node).(type) {
+	case *TryNode:
+		f.found = true
+	case *BuiltinNode:
+		if n.Name == "try" {
+			f.found = true
+		}
+	}
 }
 
 var (
