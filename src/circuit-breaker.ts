@@ -1,7 +1,4 @@
-import type {
-  CircuitBreakerOptions,
-  FetchRequest,
-} from "./types.ts";
+import type { CircuitBreakerOptions, FetchRequest } from "./types.ts";
 
 const defaultCircuitBreakerOptions = {
   threshold: 5,
@@ -52,8 +49,7 @@ export function resolveCircuitBreakerConfig(
   return {
     threshold:
       customOptions.threshold ?? defaultCircuitBreakerOptions.threshold,
-    cooldown:
-      customOptions.cooldown ?? defaultCircuitBreakerOptions.cooldown,
+    cooldown: customOptions.cooldown ?? defaultCircuitBreakerOptions.cooldown,
     halfOpenMaxRequests:
       customOptions.halfOpenMaxRequests ??
       defaultCircuitBreakerOptions.halfOpenMaxRequests,
@@ -95,10 +91,7 @@ export function acquireCircuitBreaker(
     registry.set(origin, circuit);
   }
 
-  if (
-    circuit.status === "open" &&
-    now - circuit.openedAt >= config.cooldown
-  ) {
+  if (circuit.status === "open" && now - circuit.openedAt >= config.cooldown) {
     circuit = {
       status: "half-open",
       failureCount: circuit.failureCount,
@@ -118,14 +111,13 @@ export function acquireCircuitBreaker(
     throw new Error(`Circuit breaker is open for ${origin}`);
   }
 
-  const isHalfOpen = circuit.status === "half-open";
-  if (isHalfOpen) {
+  if (circuit.status === "half-open") {
     circuit.halfOpenRequests++;
   }
 
   return {
     origin,
-    isHalfOpen,
+    isHalfOpen: circuit.status === "half-open",
   };
 }
 

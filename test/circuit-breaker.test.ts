@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFetch } from "../src/index.ts";
+import type { FetchOptions } from "../src/types.ts";
 
 const origin = "https://example.test";
 const otherOrigin = "https://other.example.test";
@@ -78,9 +79,9 @@ describe("circuit breaker", () => {
         retry: false,
       })
     ).rejects.toThrow("offline");
-    await expect(
-      child(`${origin}/three`, { retry: false })
-    ).rejects.toThrow("Circuit breaker is open");
+    await expect(child(`${origin}/three`, { retry: false })).rejects.toThrow(
+      "Circuit breaker is open"
+    );
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -151,9 +152,11 @@ describe("circuit breaker", () => {
         halfOpenMaxRequests: 1,
       },
       retry: false,
-    };
+    } satisfies FetchOptions;
 
-    await expect(client(`${origin}/health`, options)).rejects.toThrow("offline");
+    await expect(client(`${origin}/health`, options)).rejects.toThrow(
+      "offline"
+    );
     vi.setSystemTime(100);
 
     const probe = client(`${origin}/health`, options);
@@ -184,7 +187,7 @@ describe("circuit breaker", () => {
         cooldown: 100,
       },
       retry: false,
-    };
+    } satisfies FetchOptions;
 
     await expect(client(`${origin}/health`, options)).rejects.toThrow(
       "offline"
@@ -236,7 +239,7 @@ describe("circuit breaker", () => {
         failureStatusCodes: [500],
       },
       retry: false,
-    };
+    } satisfies FetchOptions;
 
     await expect(client(`${origin}/health`, options)).rejects.toThrow();
     await expect(client(`${origin}/health`, options)).rejects.toThrow();
@@ -248,7 +251,9 @@ describe("circuit breaker", () => {
   });
 
   it("counts listed statuses when response errors are ignored", async () => {
-    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(response(500));
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(response(500));
     const client = createFetch({ fetch });
 
     await expect(
@@ -288,9 +293,9 @@ describe("circuit breaker", () => {
       })
     ).rejects.toThrow("Circuit breaker is open");
 
-    const hookFetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
-      response()
-    );
+    const hookFetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(response());
     const hookClient = createFetch({ fetch: hookFetch });
     await expect(
       hookClient(`${origin}/hook`, {

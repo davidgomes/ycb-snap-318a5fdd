@@ -105,10 +105,14 @@ function createFetchWithCircuitBreakerState(
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         }
         // Timeout
-        return fetchRaw(context.request, {
-          ...context.options,
-          retry: retries - 1,
-        }, logicalRequest);
+        return fetchRaw(
+          context.request,
+          {
+            ...context.options,
+            retry: retries - 1,
+          },
+          logicalRequest
+        );
       }
     }
 
@@ -279,7 +283,9 @@ function createFetchWithCircuitBreakerState(
           (context.options.parseResponse
             ? "json"
             : context.options.responseType) ||
-          detectResponseType(context.response.headers.get("content-type") || "");
+          detectResponseType(
+            context.response.headers.get("content-type") || ""
+          );
 
         switch (responseType) {
           case "json": {
@@ -309,15 +315,14 @@ function createFetchWithCircuitBreakerState(
       }
 
       const circuitBreaker = logicalRequest.circuitBreaker;
-      if (circuitBreaker) {
-        if (
-          isCircuitBreakerFailureStatus(
-            context.response.status,
-            circuitBreaker.config
-          )
-        ) {
-          logicalRequest.outcome = "failure";
-        }
+      if (
+        circuitBreaker &&
+        isCircuitBreakerFailureStatus(
+          context.response.status,
+          circuitBreaker.config
+        )
+      ) {
+        logicalRequest.outcome = "failure";
       }
 
       if (
@@ -392,15 +397,18 @@ function createFetchWithCircuitBreakerState(
   $fetch.native = (...args) => fetch(...args);
 
   $fetch.create = (defaultOptions = {}, customGlobalOptions = {}) =>
-    createFetchWithCircuitBreakerState({
-      ...globalOptions,
-      ...customGlobalOptions,
-      defaults: {
-        ...globalOptions.defaults,
-        ...customGlobalOptions.defaults,
-        ...defaultOptions,
+    createFetchWithCircuitBreakerState(
+      {
+        ...globalOptions,
+        ...customGlobalOptions,
+        defaults: {
+          ...globalOptions.defaults,
+          ...customGlobalOptions.defaults,
+          ...defaultOptions,
+        },
       },
-    }, circuitBreakerRegistry);
+      circuitBreakerRegistry
+    );
 
   return $fetch;
 }
