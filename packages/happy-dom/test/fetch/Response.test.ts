@@ -114,6 +114,29 @@ describe('Response', () => {
 			expect(Buffer.from(arrayBuffer).toString()).toBe('Hello World');
 		});
 
+		it('Rejects body consumption when the window is closed.', async () => {
+			const response = new window.Response(
+				new ReadableStream({
+					start() {
+						window.setTimeout(() => {}, 1000);
+					}
+				})
+			);
+			const bodyPromise = response.text();
+
+			await window.happyDOM.close();
+
+			await expect(bodyPromise).rejects.toMatchObject({ name: 'AbortError' });
+		});
+
+		it('Reads a buffered body after the window is closed.', async () => {
+			const response = new window.Response('Hello World');
+
+			await window.happyDOM.close();
+
+			await expect(response.text()).resolves.toBe('Hello World');
+		});
+
 		it('Supports window.happyDOM?.waitUntilComplete().', async () => {
 			await new Promise((resolve) => {
 				const response = new window.Response(
@@ -328,6 +351,24 @@ describe('Response', () => {
 			const formDataResponse = await response.formData();
 
 			expect(formDataResponse).toEqual(formData);
+		});
+
+		it('Rejects multipart parsing when the window is closed.', async () => {
+			const response = new window.Response(
+				new ReadableStream({
+					start() {
+						window.setTimeout(() => {}, 1000);
+					}
+				}),
+				{
+					headers: { 'Content-Type': 'multipart/form-data; boundary=test' }
+				}
+			);
+			const formDataPromise = response.formData();
+
+			await window.happyDOM.close();
+
+			await expect(formDataPromise).rejects.toMatchObject({ name: 'AbortError' });
 		});
 
 		it('Returns FormData for URLSearchParams object (application/x-www-form-urlencoded)', async () => {

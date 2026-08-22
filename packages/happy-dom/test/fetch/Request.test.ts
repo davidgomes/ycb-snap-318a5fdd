@@ -599,6 +599,23 @@ describe('Request', () => {
 				}, 50);
 			});
 		});
+
+		it('Rejects multipart parsing when the window is closed.', async () => {
+			const request = new window.Request(TEST_URL, {
+				method: 'POST',
+				headers: { 'Content-Type': 'multipart/form-data; boundary=test' },
+				body: new ReadableStream({
+					start() {
+						window.setTimeout(() => {}, 1000);
+					}
+				})
+			});
+			const formDataPromise = request.formData();
+
+			await window.happyDOM.close();
+
+			await expect(formDataPromise).rejects.toMatchObject({ name: 'AbortError' });
+		});
 	});
 
 	describe('buffer()', () => {

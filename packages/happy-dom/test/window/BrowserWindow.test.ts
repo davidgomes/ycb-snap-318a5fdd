@@ -1798,6 +1798,20 @@ describe('BrowserWindow', () => {
 		it('Supports number values.', () => {
 			window.cancelAnimationFrame(<NodeJS.Immediate>(<unknown>-1));
 		});
+
+		it('Clears timers and animation frames when the page is closed.', async () => {
+			let timeoutCalled = false;
+			let animationFrameCalled = false;
+
+			window.setTimeout(() => (timeoutCalled = true), 20);
+			window.requestAnimationFrame(() => (animationFrameCalled = true));
+
+			await browserPage.close();
+			await new Promise((resolve) => setTimeout(resolve, 30));
+
+			expect(timeoutCalled).toBe(false);
+			expect(animationFrameCalled).toBe(false);
+		});
 	});
 
 	describe('matchMedia()', () => {
