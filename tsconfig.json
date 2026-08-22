@@ -1,0 +1,23 @@
+// Development-mode tsconfig, which correctly resolves tests
+{
+  "extends": "./ts/base.tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      // These correspond to the public API imports as defined in `"exports"` in
+      // `package.json`. (This way the tests can run -- and, critically, they
+      // are usable in the editor! -- without having to prebuild the `src`
+      // directory.)
+      "true-myth": [
+        "./src/index.ts"
+      ],
+      "true-myth/*": [
+        "./src/*.ts"
+      ]
+    }
+  },
+  "include": [
+    "src",
+    "test"
+  ]
+}
