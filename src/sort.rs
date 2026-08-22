@@ -38,18 +38,18 @@ fn compare_entries(a: &DirEntry, b: &DirEntry, options: &SortOptions) -> Orderin
     for field in &options.fields {
         let ordering = match field {
             SortField::Path => compare_text(
-                Some(path_bytes(a.path())),
-                Some(path_bytes(b.path())),
+                Some(os_str_bytes(a.path().as_os_str())),
+                Some(os_str_bytes(b.path().as_os_str())),
                 options,
             ),
             SortField::Name => compare_optional_text(
-                a.path().file_name().map(path_bytes),
-                b.path().file_name().map(path_bytes),
+                a.path().file_name().map(os_str_bytes),
+                b.path().file_name().map(os_str_bytes),
                 options,
             ),
             SortField::Extension => compare_optional_text(
-                a.path().extension().map(path_bytes),
-                b.path().extension().map(path_bytes),
+                a.path().extension().map(os_str_bytes),
+                b.path().extension().map(os_str_bytes),
                 options,
             ),
             SortField::Size => {
@@ -75,11 +75,11 @@ fn compare_entries(a: &DirEntry, b: &DirEntry, options: &SortOptions) -> Orderin
             SortField::NameLength => compare_optional(
                 a.path()
                     .file_name()
-                    .map(path_bytes)
+                    .map(os_str_bytes)
                     .map(|bytes| bytes.len()),
                 b.path()
                     .file_name()
-                    .map(path_bytes)
+                    .map(os_str_bytes)
                     .map(|bytes| bytes.len()),
                 options,
             ),
@@ -116,10 +116,14 @@ fn grouping_value(entry: &DirEntry, options: &SortOptions) -> u8 {
 }
 
 fn regular_file_size(entry: &DirEntry) -> Option<u64> {
-    entry
+    if entry
         .file_type()
         .is_some_and(|file_type| file_type.is_file())
-        .then(|| entry.metadata()?.len())
+    {
+        entry.metadata().map(std::fs::Metadata::len)
+    } else {
+        None
+    }
 }
 
 fn entry_type(entry: &DirEntry) -> u8 {
@@ -261,8 +265,8 @@ fn compare_digit_runs(a: &[u8], b: &[u8]) -> Ordering {
         .then_with(|| a_trimmed.cmp(b_trimmed))
 }
 
-fn path_bytes(path: &std::path::Path) -> Cow<'_, [u8]> {
-    filesystem::osstr_to_bytes(path.as_os_str())
+fn os_str_bytes(path: &std::ffi::OsStr) -> Cow<'_, [u8]> {
+    filesystem::osstr_to_bytes(path)
 }
 
 fn random_value(entry: &DirEntry, seed: u64) -> u64 {
