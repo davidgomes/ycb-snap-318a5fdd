@@ -811,6 +811,7 @@ func NewForRange(pos *Position, assignment *Assignment, body []Node, els *Block)
 type Func struct {
 	expression
 	*Position
+	Receiver *Parameter  // receiver, nil for functions and function literals.
 	Ident    *Identifier // name, nil for function literals.
 	Type     *FuncType   // type.
 	Body     *Block      // body.
@@ -821,7 +822,7 @@ type Func struct {
 
 // NewFunc returns a new [Func] node.
 func NewFunc(pos *Position, name *Identifier, typ *FuncType, body *Block, distFree bool, format Format) *Func {
-	return &Func{expression{}, pos, name, typ, body, distFree, nil, format}
+	return &Func{expression: expression{}, Position: pos, Ident: name, Type: typ, Body: body, DistFree: distFree, Format: format}
 }
 
 // String returns the string representation of n.

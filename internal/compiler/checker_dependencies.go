@@ -116,6 +116,9 @@ func (d *deps) analyzeGlobalDeclarationAssignment(n *ast.Assignment) {
 // analyzeGlobalFunc analyzes a global function declaration.
 func (d *deps) analyzeGlobalFunc(n *ast.Func) {
 	scopes := depScopes{map[string]struct{}{}}
+	if n.Receiver != nil && n.Receiver.Ident != nil {
+		scopes = declareLocally(scopes, n.Receiver.Ident.Name)
+	}
 	for _, f := range n.Type.Parameters {
 		if f.Ident != nil {
 			scopes = declareLocally(scopes, f.Ident.Name)
@@ -151,7 +154,9 @@ func analyzeTree(pkg *ast.Package) packageDeclsDeps {
 		case *ast.Const:
 			d.analyzeGlobalConst(n)
 		case *ast.Func:
-			d.analyzeGlobalFunc(n)
+			if n.Receiver == nil {
+				d.analyzeGlobalFunc(n)
+			}
 		case *ast.TypeDeclaration:
 			d.analyzeGlobalTypeDeclaration(n)
 		}
@@ -308,6 +313,9 @@ func (d *deps) nodeDeps(n ast.Node, scopes depScopes) []*ast.Identifier {
 		scopes = exitScope(scopes)
 		return deps
 	case *ast.Func:
+		if n.Receiver != nil && n.Receiver.Ident != nil {
+			scopes = declareLocally(scopes, n.Receiver.Ident.Name)
+		}
 		for _, f := range n.Type.Parameters {
 			if f.Ident != nil {
 				scopes = declareLocally(scopes, f.Ident.Name)

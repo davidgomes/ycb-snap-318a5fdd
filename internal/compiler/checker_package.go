@@ -303,7 +303,7 @@ func sortDeclarations(pkg *ast.Package) error {
 				}
 			}
 			for _, f := range funcs {
-				if f.Ident.Name == d.Name {
+				if f.Receiver == nil && f.Ident.Name == d.Name {
 					newDs = append(newDs, d)
 				}
 			}
@@ -444,7 +444,7 @@ varsLoop:
 					}
 				}
 				for _, f := range funcs {
-					if dep.Name == f.Ident.Name {
+					if f.Receiver == nil && dep.Name == f.Ident.Name {
 						// This dependency has been resolved: move
 						// on checking for next one.
 						found = true
@@ -593,17 +593,21 @@ func checkPackage(compilation *compilation, pkg *ast.Package, path string, impor
 			if f.Body == nil {
 				return tc.errorf(f.Ident.Pos(), "missing function body")
 			}
-			if f.Ident.Name == "init" || f.Ident.Name == "main" {
-				if len(f.Type.Parameters) > 0 || len(f.Type.Result) > 0 {
-					return tc.errorf(f.Ident, "func %s must have no arguments and no return values", f.Ident.Name)
-				}
-			}
 			if f.Type.Macro && len(f.Type.Result) == 0 {
 				tc.makeMacroResultExplicit(f)
 			}
 			// Function type must be checked for every function, including
 			// 'init's functions.
 			funcType := tc.checkType(f.Type).Type
+			if f.Receiver != nil {
+				tc.attachMethod(f)
+				continue
+			}
+			if f.Ident.Name == "init" || f.Ident.Name == "main" {
+				if len(f.Type.Parameters) > 0 || len(f.Type.Result) > 0 {
+					return tc.errorf(f.Ident, "func %s must have no arguments and no return values", f.Ident.Name)
+				}
+			}
 			if f.Ident.Name == "init" || isBlankIdentifier(f.Ident) {
 				// Do not add 'init' and '_' functions to the file/package block.
 				continue

@@ -45,6 +45,19 @@ func (x ptrType) Implements(y reflect.Type) bool {
 	return Implements(x, y)
 }
 
+func (x ptrType) MethodByName(name string) (reflect.Method, bool) {
+	dt, ok := x.elem.(definedType)
+	if !ok {
+		return reflect.Method{}, false
+	}
+	m := dt.methods.lookup(name, true)
+	if m == nil {
+		return reflect.Method{}, false
+	}
+	typ := dt.methods.methodType(x, m, true)
+	return reflectMethod(name, typ, m.Func), true
+}
+
 func (x ptrType) Name() string {
 	return "" // composite types do not have a name.
 }

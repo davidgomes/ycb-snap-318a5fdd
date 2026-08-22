@@ -713,6 +713,24 @@ func (em *emitter) emitSelector(v *ast.Selector, reg int8, dstType reflect.Type)
 
 	ti := em.ti(v)
 
+	if ti != nil && ti.replacement != nil {
+		em.emitExprR(ti.replacement.(ast.Expression), dstType, reg)
+		return
+	}
+	if ti != nil {
+		if ref, ok := ti.value.(*scriggoMethodRef); ok && ref.expr {
+			fn := em.methodFn(ref.node)
+			index := em.fnStore.scriggoFnIndex(fn)
+			tmp := reg
+			if !canEmitDirectly(reflect.Func, dstType.Kind()) {
+				tmp = em.fb.newRegister(reflect.Func)
+			}
+			em.fb.emitLoadFunc(false, index, tmp)
+			em.changeRegister(false, tmp, reg, ti.Type, dstType)
+			return
+		}
+	}
+
 	// Map selector expression.
 	if ti.IsMapSelector() {
 		// Key selector on the empty interface type.

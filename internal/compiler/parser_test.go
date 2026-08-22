@@ -2475,6 +2475,22 @@ func equals(n1, n2 ast.Node, p int) error {
 		if nn1.Format != nn2.Format {
 			return fmt.Errorf("unexpected format %s, expecting %s", nn1.Format, nn2.Format)
 		}
+		if nn1.Receiver == nil && nn2.Receiver != nil {
+			return fmt.Errorf("unexpected receiver, expecting none")
+		}
+		if nn1.Receiver != nil && nn2.Receiver == nil {
+			return fmt.Errorf("unexpected no receiver, expecting receiver")
+		}
+		if nn1.Receiver != nil {
+			err = equals(nn1.Receiver.Ident, nn2.Receiver.Ident, p)
+			if err != nil {
+				return err
+			}
+			err = equals(nn1.Receiver.Type, nn2.Receiver.Type, p)
+			if err != nil {
+				return err
+			}
+		}
 
 	case *ast.Defer:
 		nn2, ok := n2.(*ast.Defer)
@@ -2618,6 +2634,39 @@ func equals(n1, n2 ast.Node, p int) error {
 	}
 
 	return nil
+}
+
+func TestParseMethodDeclarations(t *testing.T) {
+	src := []byte(`
+package main
+type T int
+func (t T) Value() {}
+func (t *T) Ptr() {}
+func (T) Unnamed() {}
+`)
+	tree, err := parseSource(src, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := tree.Nodes[0].(*ast.Package)
+	var methods []*ast.Func
+	for _, decl := range pkg.Declarations {
+		if f, ok := decl.(*ast.Func); ok && f.Receiver != nil {
+			methods = append(methods, f)
+		}
+	}
+	if len(methods) != 3 {
+		t.Fatalf("got %d methods, want 3", len(methods))
+	}
+	if methods[0].Ident.Name != "Value" || methods[0].Receiver.Ident == nil || methods[0].Receiver.Ident.Name != "t" {
+		t.Fatalf("unexpected value method %#v", methods[0])
+	}
+	if _, ok := methods[1].Receiver.Type.(*ast.UnaryOperator); !ok {
+		t.Fatalf("expected pointer receiver, got %#v", methods[1].Receiver.Type)
+	}
+	if methods[2].Receiver.Ident != nil {
+		t.Fatalf("expected unnamed receiver, got %#v", methods[2].Receiver.Ident)
+	}
 }
 
 func TestRooted(t *testing.T) {

@@ -15,30 +15,19 @@ import (
 // implement the runtime.ScriggoType interface.
 
 func wrap(t runtime.ScriggoType, v reflect.Value) reflect.Value {
-	return reflect.ValueOf(emptyInterfaceProxy{
-		value: v,
-		sign:  t,
+	return reflect.ValueOf(runtime.ValueProxy{
+		Value: v,
+		Sign:  t,
 	})
 }
 
-// TODO: currently unwrap always returns an empty interface wrapper. This will
-// change when methods declaration will be implemented in Scriggo.
 func unwrap(x runtime.ScriggoType, v reflect.Value) (reflect.Value, bool) {
-	p, ok := v.Interface().(emptyInterfaceProxy)
-	// Not a proxy.
+	p, ok := runtime.AsValueProxy(v)
 	if !ok {
 		return reflect.Value{}, false
 	}
-	// v is a proxy but it has a different Scriggo type.
-	if p.sign != x {
+	if p.Sign != x {
 		return reflect.Value{}, false
 	}
-	return p.value, true
-}
-
-// emptyInterfaceProxy is a proxy for values of types that have an empty
-// method set.
-type emptyInterfaceProxy struct {
-	value reflect.Value
-	sign  runtime.ScriggoType
+	return p.Value, true
 }

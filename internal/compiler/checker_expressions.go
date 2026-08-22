@@ -2473,6 +2473,21 @@ func (tc *typechecker) checkMethodExpression(t *typeInfo, expr *ast.Selector) *t
 		panic(tc.errorf(expr, "%v undefined (type %s has no method %s)", expr, t, expr.Ident))
 	}
 
+	if m, ok := types.LookupMethod(t.Type, name); ok {
+		declaredPtr := m.PtrRecv
+		exprPtr := t.Type.Kind() == reflect.Ptr
+		if declaredPtr != exprPtr {
+			// (*T).ValueMethod: wrap so the expression takes a pointer.
+			lit := synthesizeMethodExpression(m.Node, expr.Expr, expr.Pos())
+			ti := tc.checkExpr(lit)
+			return &typeInfo{Type: ti.Type, replacement: lit}
+		}
+		return &typeInfo{
+			Type:  m.Type,
+			value: &scriggoMethodRef{node: m.Node, ptrRecv: m.PtrRecv, expr: true},
+		}
+	}
+
 	ti := &typeInfo{Properties: propertyIsNative | propertyHasValue}
 
 	if t.Type.Kind() == reflect.Interface {
@@ -2543,6 +2558,14 @@ func (tc *typechecker) checkMethodValue(t *typeInfo, expr *ast.Selector) (*typeI
 			value:      name,
 			MethodType: methodValueInterface,
 			Properties: propertyIsNative | propertyHasValue,
+		}, true
+	}
+
+	if m, ok := types.LookupMethod(typ, name); ok {
+		return &typeInfo{
+			Type:       m.ValueType,
+			value:      &scriggoMethodRef{node: m.Node, ptrRecv: m.PtrRecv},
+			MethodType: methodValueConcrete,
 		}, true
 	}
 
