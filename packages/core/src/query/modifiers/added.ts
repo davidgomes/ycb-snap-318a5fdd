@@ -5,6 +5,21 @@ import { universe } from '../../universe/universe';
 import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
+import { isPredicateModifier, type PredicateModifier } from './predicate';
+
+function splitTrackingInputs(inputs: (TraitOrRelation | PredicateModifier)[]) {
+    const traits: Trait[] = [];
+    const predicates: PredicateModifier[] = [];
+
+    for (const input of inputs) {
+        if (isPredicateModifier(input)) predicates.push(input);
+        else traits.push(isRelation(input) ? input[$internal].trait : input);
+    }
+
+    return { traits: traits as ExtractTraits<TraitOrRelation[]>, predicates };
+}
+
+import type { Trait } from '../../trait/types';
 
 export function createAdded() {
     const id = createTrackingId();
@@ -14,12 +29,10 @@ export function createAdded() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
-        ...inputs: T
-    ): Modifier<ExtractTraits<T>, `added-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`added-${id}`, id, traits);
+    return (...inputs: (TraitOrRelation | PredicateModifier)[]) => {
+        const { traits, predicates } = splitTrackingInputs(inputs);
+        const modifier = createModifier(`added-${id}`, id, traits);
+        if (predicates.length > 0) modifier.predicates = predicates;
+        return modifier;
     };
 }

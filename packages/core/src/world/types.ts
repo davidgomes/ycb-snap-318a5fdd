@@ -43,6 +43,9 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    updateEachDepth: number;
+    deferredPredicateEvaluations: Set<QueryInstance>;
+    deferredPredicateEntities: Set<Entity>;
 };
 
 export type World = {

@@ -2,6 +2,7 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { setChanged, setPairChanged } from '../query/modifiers/changed';
+import { reevaluatePredicateQuery } from '../query/utils/reevaluate-predicate';
 import { checkQueryTrackingWithRelations } from '../query/utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
 import { getOrderedTraitRelation, isOrderedTrait, setupOrderedTraitSync } from '../relation/ordered';
@@ -104,6 +105,7 @@ export function registerTrait(world: World, trait: Trait) {
         trackingQueries: new Set(),
         notQueries: new Set(),
         relationQueries: new Set(),
+        predicateQueries: new Set(),
         schema: trait.schema,
         changeSubscriptions: new Set(),
         addSubscriptions: new Set(),
@@ -170,6 +172,10 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
 
         // Call add subscriptions after values are set
         for (const sub of data.addSubscriptions) sub(entity);
+
+        for (const query of data.predicateQueries) {
+            reevaluatePredicateQuery(world, query, entity);
+        }
     }
 }
 
@@ -531,4 +537,8 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
 
     // Remove trait from entity internally
     ctx.entityTraits.get(entity)!.delete(trait);
+
+    for (const query of instance.predicateQueries) {
+        reevaluatePredicateQuery(world, query, entity);
+    }
 }
