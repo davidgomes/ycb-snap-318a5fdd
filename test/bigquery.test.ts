@@ -643,6 +643,21 @@ describe('BigQueryFormatter', () => {
         `);
     });
 
+    it('formats pipe-exclusive SET, DROP, and EXTEND clauses', () => {
+      expect(format('FROM source |> SET price = 0 |> DROP obsolete |> EXTEND price + 1 AS next')).toBe(
+        dedent`
+          FROM
+            source
+          |> SET
+            price = 0
+          |> DROP
+            obsolete
+          |> EXTEND
+            price + 1 AS next
+        `
+      );
+    });
+
     it('applies keywordCase to pipe keywords', () => {
       expect(
         format(
