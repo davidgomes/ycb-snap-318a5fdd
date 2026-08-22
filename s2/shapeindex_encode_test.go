@@ -97,7 +97,8 @@ func TestShapeIndexEncodeDecodeEmpty(t *testing.T) {
 
 func TestShapeIndexDecodeRejectsMalformedInput(t *testing.T) {
 	index := NewShapeIndex()
-	index.Add(PointVector(parsePoints("0:0")))
+	pointVector := PointVector(parsePoints("0:0"))
+	index.Add(&pointVector)
 	var encoded bytes.Buffer
 	if err := index.Encode(&encoded); err != nil {
 		t.Fatalf("Encode: %v", err)
