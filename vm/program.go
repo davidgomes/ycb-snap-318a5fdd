@@ -354,6 +354,24 @@ func (program *Program) DisassembleWriter(w io.Writer) {
 		case OpThrow:
 			code("OpThrow")
 
+		case OpEnterTry:
+			constant("OpEnterTry")
+
+		case OpTryOk:
+			code("OpTryOk")
+
+		case OpTryRethrow:
+			code("OpTryRethrow")
+
+		case OpFinallyEnd:
+			code("OpFinallyEnd")
+
+		case OpErrorContains:
+			code("OpErrorContains")
+
+		case OpRetry:
+			code("OpRetry")
+
 		case OpCreate:
 			argument("OpCreate")
 

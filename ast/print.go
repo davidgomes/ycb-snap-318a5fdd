@@ -265,3 +265,38 @@ func (n *PairNode) String() string {
 	}
 	return fmt.Sprintf("(%s): %s", n.Key.String(), n.Value.String())
 }
+
+func (n *TryNode) String() string {
+	var b strings.Builder
+	b.WriteString("try { ")
+	if n.Try != nil {
+		b.WriteString(n.Try.String())
+	}
+	b.WriteString(" }")
+	for _, c := range n.Catches {
+		b.WriteString(" catch")
+		if c.Name != "" {
+			b.WriteByte(' ')
+			b.WriteString(c.Name)
+		}
+		if c.Filter != "" {
+			b.WriteString(" is ")
+			b.WriteString(fmt.Sprintf("%q", c.Filter))
+		}
+		b.WriteString(" { ")
+		if c.Body != nil {
+			b.WriteString(c.Body.String())
+		}
+		b.WriteString(" }")
+	}
+	if n.Finally != nil {
+		b.WriteString(" finally { ")
+		b.WriteString(n.Finally.String())
+		b.WriteString(" }")
+	}
+	return b.String()
+}
+
+func (n *RetryNode) String() string {
+	return "retry"
+}

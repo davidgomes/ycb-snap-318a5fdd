@@ -135,7 +135,7 @@ Use `\x` escapes for arbitrary byte values.
     <tr>
         <td><strong>Conditional</strong></td>
         <td>
-            <code>?:</code> (ternary), <code>??</code> (nil coalescing), <code>if {} else {}</code> (multiline)
+            <code>?:</code> (ternary), <code>??</code> (nil coalescing), <code>if {} else {}</code> (multiline), <code>try/catch/finally</code>
         </td>
     </tr>
     <tr>
@@ -975,6 +975,69 @@ Converts an array of key-value pairs to a map.
 
 ```expr
 fromPairs([["name", "John"], ["age", 30]]) == {"name": "John", "age": 30}
+```
+
+## Error Handling
+
+Runtime errors are recoverable. Use `try` to evaluate a fallback, `try`/`catch`/`finally`
+blocks to handle errors, `throw` to raise a custom error, `retry` to re-run a try body,
+and `errtype` to classify a caught error.
+
+### try(expression, fallback) {#try}
+
+Evaluates `expression` and returns its result. If it raises a runtime error, evaluates
+and returns `fallback`. The fallback is evaluated only on error. Exactly two arguments
+are required.
+
+```expr
+try(int("x"), 0) == 0
+try(1, boom()) == 1
+```
+
+### try / catch / finally {#try-catch}
+
+```expr
+try { int("x") } catch { 0 }
+try { throw("oops") } catch e { string(e) }
+try { [1][9] } catch e is "out of range" { -1 } catch { 0 }
+try { 1 } finally { cleanup() }
+```
+
+`catch <name>` binds the error. `catch <name> is "substring"` handles the error only
+when the message contains that substring; unmatched errors fall through to later
+`catch` clauses or are re-raised. `finally` always runs after try/catch. If the
+`finally` body throws, that error replaces any prior result or error.
+
+### throw(value) {#throw}
+
+Throws a custom error. The message is the string conversion of `value`. Exactly one
+argument is required.
+
+```expr
+throw("denied")
+```
+
+### retry {#retry}
+
+Inside a `catch` block, `retry` re-executes the matching `try` body. At most three
+retries are allowed; a further `retry` raises a distinct exhaustion error. Using
+`retry` outside a `catch` block is a runtime error.
+
+### errtype(err) {#errtype}
+
+Classifies a caught error. Exactly one argument is required. Returns:
+
+- `"index"` for out-of-range or bounds errors
+- `"conversion"` for type-conversion failures
+- `"type"` for type-mismatch or assertion errors
+- `"nil"` for nil pointer or reference errors
+- `"retry"` for retry-exhaustion errors
+- `"custom"` for all other errors, including `throw`
+- `"none"` when the input is `nil`
+
+```expr
+try { [1][9] } catch e { errtype(e) } == "index"
+errtype(nil) == "none"
 ```
 
 ## Miscellaneous Functions

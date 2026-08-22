@@ -229,6 +229,10 @@ func (v *Checker) visit(node ast.Node) Nature {
 		nt = v.mapNode(n)
 	case *ast.PairNode:
 		nt = v.pairNode(n)
+	case *ast.TryNode:
+		nt = v.tryNode(n)
+	case *ast.RetryNode:
+		nt = Nature{}
 	default:
 		panic(fmt.Sprintf("undefined node type (%T)", node))
 	}
@@ -1341,4 +1345,24 @@ func (v *Checker) pairNode(node *ast.PairNode) Nature {
 	v.visit(node.Key)
 	v.visit(node.Value)
 	return v.config.NtCache.NatureOf(nil)
+}
+
+func (v *Checker) tryNode(node *ast.TryNode) Nature {
+	_ = v.visit(node.Try)
+	for i := range node.Catches {
+		cc := &node.Catches[i]
+		if cc.Name != "" {
+			v.varScopes = append(v.varScopes, varScope{cc.Name, Nature{}})
+		}
+		if cc.Body != nil {
+			_ = v.visit(cc.Body)
+		}
+		if cc.Name != "" {
+			v.varScopes = v.varScopes[:len(v.varScopes)-1]
+		}
+	}
+	if node.Finally != nil {
+		_ = v.visit(node.Finally)
+	}
+	return Nature{}
 }

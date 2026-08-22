@@ -10,6 +10,7 @@ import (
 
 var (
 	anyType      = reflect.TypeOf(new(any)).Elem()
+	stringType   = reflect.TypeOf("")
 	integerType  = reflect.TypeOf(0)
 	floatType    = reflect.TypeOf(float64(0))
 	arrayType    = reflect.TypeOf([]any{})

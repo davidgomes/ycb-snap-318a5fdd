@@ -288,6 +288,10 @@ func (c *compiler) compile(node ast.Node) {
 		c.MapNode(n)
 	case *ast.PairNode:
 		c.PairNode(n)
+	case *ast.TryNode:
+		c.TryNode(n)
+	case *ast.RetryNode:
+		c.RetryNode(n)
 	default:
 		panic(fmt.Sprintf("undefined node type (%T)", node))
 	}
@@ -839,6 +843,10 @@ func (c *compiler) CallNode(node *ast.CallNode) {
 
 func (c *compiler) BuiltinNode(node *ast.BuiltinNode) {
 	switch node.Name {
+	case "try":
+		c.compileTryFunc(node)
+		return
+
 	case "all":
 		c.compile(node.Arguments[0])
 		c.derefInNeeded(node.Arguments[0])
@@ -1310,6 +1318,70 @@ func (c *compiler) MapNode(node *ast.MapNode) {
 func (c *compiler) PairNode(node *ast.PairNode) {
 	c.compile(node.Key)
 	c.compile(node.Value)
+}
+
+func (c *compiler) compileTryFunc(node *ast.BuiltinNode) {
+	if len(node.Arguments) != 2 {
+		panic("try() requires exactly 2 arguments")
+	}
+	handler := &TryHandler{Catch: -1, Finally: -1, End: -1}
+	c.emit(OpEnterTry, c.addConstant(handler))
+	c.compile(node.Arguments[0])
+	c.emit(OpTryOk)
+	handler.Catch = len(c.bytecode)
+	c.emit(OpPop) // discard the caught error
+	c.compile(node.Arguments[1])
+	c.emit(OpTryOk)
+	handler.End = len(c.bytecode)
+}
+
+func (c *compiler) TryNode(node *ast.TryNode) {
+	handler := &TryHandler{Catch: -1, Finally: -1, End: -1}
+	c.emit(OpEnterTry, c.addConstant(handler))
+	c.compile(node.Try)
+	c.emit(OpTryOk)
+
+	if len(node.Catches) > 0 {
+		handler.Catch = len(c.bytecode)
+		for _, cc := range node.Catches {
+			var skipFilter int
+			if cc.Filter != "" {
+				c.emitPush(cc.Filter)
+				c.emit(OpErrorContains)
+				skipFilter = c.emit(OpJumpIfFalse, placeholder)
+				c.emit(OpPop) // pop comparison
+			}
+			if cc.Name != "" {
+				index := c.addVariable(cc.Name)
+				c.emit(OpStore, index)
+				c.beginScope(cc.Name, index)
+			} else {
+				c.emit(OpPop)
+			}
+			c.compile(cc.Body)
+			if cc.Name != "" {
+				c.endScope()
+			}
+			c.emit(OpTryOk)
+			if cc.Filter != "" {
+				c.patchJump(skipFilter)
+				c.emit(OpPop) // pop false
+			}
+		}
+		c.emit(OpTryRethrow)
+	}
+
+	if node.Finally != nil {
+		handler.Finally = len(c.bytecode)
+		c.compile(node.Finally)
+		c.emit(OpPop)
+		c.emit(OpFinallyEnd)
+	}
+	handler.End = len(c.bytecode)
+}
+
+func (c *compiler) RetryNode(_ *ast.RetryNode) {
+	c.emit(OpRetry)
 }
 
 func (c *compiler) derefInNeeded(node ast.Node) {

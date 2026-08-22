@@ -163,6 +163,42 @@ var Builtins = []*Function{
 		},
 	},
 	{
+		Name: "try",
+		Validate: func(args []reflect.Type) (reflect.Type, error) {
+			if len(args) != 2 {
+				return anyType, fmt.Errorf("invalid number of arguments for try (expected 2, got %d)", len(args))
+			}
+			return anyType, nil
+		},
+	},
+	{
+		Name: "throw",
+		Func: func(args ...any) (any, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("invalid number of arguments for throw (expected 1, got %d)", len(args))
+			}
+			return nil, runtime.NewCustomError(runtime.ToErrorMessage(args[0]))
+		},
+		Validate: func(args []reflect.Type) (reflect.Type, error) {
+			if len(args) != 1 {
+				return anyType, fmt.Errorf("invalid number of arguments for throw (expected 1, got %d)", len(args))
+			}
+			return anyType, nil
+		},
+	},
+	{
+		Name: "errtype",
+		Fast: func(arg any) any {
+			return runtime.Classify(arg)
+		},
+		Validate: func(args []reflect.Type) (reflect.Type, error) {
+			if len(args) != 1 {
+				return anyType, fmt.Errorf("invalid number of arguments for errtype (expected 1, got %d)", len(args))
+			}
+			return stringType, nil
+		},
+	},
+	{
 		Name: "int",
 		Fast: Int,
 		Validate: func(args []reflect.Type) (reflect.Type, error) {

@@ -249,3 +249,23 @@ type PairNode struct {
 	Key   Node // Key of the pair.
 	Value Node // Value of the pair.
 }
+
+// CatchClause is a single catch arm of a try block.
+type CatchClause struct {
+	Name   string // Optional bound error name.
+	Filter string // If set, catch only when the error message contains this substring.
+	Body   Node
+}
+
+// TryNode represents try { } catch { } finally { }.
+type TryNode struct {
+	base
+	Try     Node
+	Catches []CatchClause
+	Finally Node
+}
+
+// RetryNode represents the retry keyword inside a catch block.
+type RetryNode struct {
+	base
+}

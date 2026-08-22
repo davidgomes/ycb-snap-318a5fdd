@@ -77,6 +77,12 @@ const (
 	OpSetIndex
 	OpPointer
 	OpThrow
+	OpEnterTry
+	OpTryOk
+	OpTryRethrow
+	OpFinallyEnd
+	OpErrorContains
+	OpRetry
 	OpCreate
 	OpGroupBy
 	OpSortBy

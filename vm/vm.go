@@ -49,26 +49,10 @@ type VM struct {
 	scopePool    []Scope // Pre-allocated pool of Scope values; grows as needed but never shrinks
 	scopePoolIdx int     // Current index into scopePool for allocation
 	currScope    *Scope  // Cached pointer to the current scope (optimization)
+	tryStack     []*tryFrame
 }
 
 func (vm *VM) Run(program *Program, env any) (_ any, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			var location file.Location
-			if vm.ip-1 < len(program.locations) {
-				location = program.locations[vm.ip-1]
-			}
-			f := &file.Error{
-				Location: location,
-				Message:  fmt.Sprintf("%v", r),
-			}
-			if err, ok := r.(error); ok {
-				f.Wrap(err)
-			}
-			err = f.Bind(program.source)
-		}
-	}()
-
 	if vm.Stack == nil {
 		vm.Stack = make([]any, 0, 2)
 	} else {
@@ -89,6 +73,35 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 	}
 	vm.memory = 0
 	vm.ip = 0
+	if vm.tryStack != nil {
+		clearSlice(vm.tryStack)
+		vm.tryStack = vm.tryStack[:0]
+	}
+
+	return vm.interpret(program, env)
+}
+
+func (vm *VM) interpret(program *Program, env any) (result any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if vm.handlePanic(r) {
+				result, err = vm.interpret(program, env)
+				return
+			}
+			var location file.Location
+			if vm.ip-1 >= 0 && vm.ip-1 < len(program.locations) {
+				location = program.locations[vm.ip-1]
+			}
+			f := &file.Error{
+				Location: location,
+				Message:  fmt.Sprintf("%v", r),
+			}
+			if e, ok := r.(error); ok {
+				f.Wrap(e)
+			}
+			err = f.Bind(program.source)
+		}
+	}()
 
 	var fnArgsBuf []any
 
@@ -545,7 +558,32 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 			vm.push(vm.currScope.Item())
 
 		case OpThrow:
-			panic(vm.pop().(error))
+			v := vm.pop()
+			if e, ok := v.(error); ok {
+				panic(e)
+			}
+			panic(runtime.NewCustomError(runtime.ToErrorMessage(v)))
+
+		case OpEnterTry:
+			h := program.Constants[arg].(*TryHandler)
+			vm.pushTry(h)
+
+		case OpTryOk:
+			vm.tryOk()
+
+		case OpTryRethrow:
+			vm.tryRethrow()
+
+		case OpFinallyEnd:
+			vm.finallyEnd()
+
+		case OpErrorContains:
+			substr := vm.pop().(string)
+			errVal := vm.current()
+			vm.push(strings.Contains(runtime.ToErrorMessage(errVal), substr))
+
+		case OpRetry:
+			vm.retry()
 
 		case OpCreate:
 			switch arg {

@@ -335,6 +335,53 @@ func (p *Parser) parseVariableDeclaration() Node {
 	}, variableName.Location)
 }
 
+func (p *Parser) parseTryBlock(token Token) Node {
+	p.expect(Bracket, "{")
+	body := p.parseSequenceExpression()
+	p.expect(Bracket, "}")
+
+	var catches []CatchClause
+	for p.current.Is(Identifier, "catch") && p.err == nil {
+		p.next()
+		cc := CatchClause{}
+		if p.current.Is(Identifier) && p.current.Value != "is" && p.current.Value != "finally" {
+			cc.Name = p.current.Value
+			p.next()
+		}
+		if p.current.Is(Identifier, "is") {
+			p.next()
+			if !p.current.Is(String) {
+				p.error("expected string after is")
+			} else {
+				cc.Filter = p.current.Value
+				p.next()
+			}
+		}
+		p.expect(Bracket, "{")
+		cc.Body = p.parseSequenceExpression()
+		p.expect(Bracket, "}")
+		catches = append(catches, cc)
+	}
+
+	var finally Node
+	if p.current.Is(Identifier, "finally") {
+		p.next()
+		p.expect(Bracket, "{")
+		finally = p.parseSequenceExpression()
+		p.expect(Bracket, "}")
+	}
+
+	if len(catches) == 0 && finally == nil {
+		p.error("expected catch or finally after try")
+	}
+
+	return p.createNode(&TryNode{
+		Try:     body,
+		Catches: catches,
+		Finally: finally,
+	}, token.Location)
+}
+
 func (p *Parser) parseConditionalIf() Node {
 	p.next()
 	if p.err != nil {
@@ -472,6 +519,16 @@ func (p *Parser) parseSecondary() Node {
 			}
 			return node
 		default:
+			if token.Value == "try" && p.current.Is(Bracket, "{") {
+				return p.parseTryBlock(token)
+			}
+			if token.Value == "retry" {
+				node = p.createNode(&RetryNode{}, token.Location)
+				if node == nil {
+					return nil
+				}
+				return node
+			}
 			if p.current.Is(Bracket, "(") {
 				node = p.parseCall(token, []Node{}, true)
 			} else {

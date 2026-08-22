@@ -967,6 +967,49 @@ world`},
 				},
 			},
 		},
+		{
+			`try { 1 } catch { 2 }`,
+			&TryNode{
+				Try: &IntegerNode{Value: 1},
+				Catches: []CatchClause{
+					{Body: &IntegerNode{Value: 2}},
+				},
+			},
+		},
+		{
+			`try { 1 } catch e { e }`,
+			&TryNode{
+				Try: &IntegerNode{Value: 1},
+				Catches: []CatchClause{
+					{Name: "e", Body: &IdentifierNode{Value: "e"}},
+				},
+			},
+		},
+		{
+			`try { 1 } catch e is "index" { 2 } catch { 3 } finally { 4 }`,
+			&TryNode{
+				Try: &IntegerNode{Value: 1},
+				Catches: []CatchClause{
+					{Name: "e", Filter: "index", Body: &IntegerNode{Value: 2}},
+					{Body: &IntegerNode{Value: 3}},
+				},
+				Finally: &IntegerNode{Value: 4},
+			},
+		},
+		{
+			`try(1, 2)`,
+			&BuiltinNode{
+				Name: "try",
+				Arguments: []Node{
+					&IntegerNode{Value: 1},
+					&IntegerNode{Value: 2},
+				},
+			},
+		},
+		{
+			`retry`,
+			&RetryNode{},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.input, func(t *testing.T) {

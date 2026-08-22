@@ -85,6 +85,10 @@ func TestPrint(t *testing.T) {
 		{`(-(1+1)) == 2`, `-(1 + 1) == 2`},
 		{`if true { 1 } else { 2 }`, `if true { 1 } else { 2 }`},
 		{`if true { 1 } else if false { 2 } else { 3 }`, `if true { 1 } else if false { 2 } else { 3 }`},
+		{`try { 1 } catch { 2 }`, `try { 1 } catch { 2 }`},
+		{`try { 1 } catch e { e }`, `try { 1 } catch e { e }`},
+		{`try { 1 } catch e is "index" { 2 } finally { 3 }`, `try { 1 } catch e is "index" { 2 } finally { 3 }`},
+		{`retry`, `retry`},
 	}
 
 	for _, tt := range tests {

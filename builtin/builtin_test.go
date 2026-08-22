@@ -219,6 +219,9 @@ func TestBuiltin_works_with_any(t *testing.T) {
 		"get":    {2},
 		"take":   {2},
 		"sortBy": {2},
+		"try":    {2},
+		"throw":  {1},
+		"errtype": {1},
 	}
 
 	for _, b := range builtin.Builtins {
