@@ -1,0 +1,128 @@
+package jobs
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/getarcaneapp/arcane/cli/internal/client"
+	"github.com/getarcaneapp/arcane/cli/internal/cmdutil"
+	"github.com/getarcaneapp/arcane/cli/internal/output"
+	"github.com/getarcaneapp/arcane/cli/internal/types"
+	"github.com/getarcaneapp/arcane/types/base"
+	"github.com/getarcaneapp/arcane/types/jobschedule"
+	"github.com/spf13/cobra"
+)
+
+var jsonOutput bool
+
+// JobsCmd is the parent command for job schedule operations.
+var JobsCmd = &cobra.Command{
+	Use:     "jobs",
+	Aliases: []string{"job"},
+	Short:   "Manage background jobs",
+}
+
+var getCmd = &cobra.Command{
+	Use:          "get",
+	Short:        "Get configured job schedule intervals",
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := client.NewFromConfig()
+		if err != nil {
+			return err
+		}
+
+		resp, err := c.Get(cmd.Context(), types.Endpoints.JobSchedules(c.EnvID()))
+		if err != nil {
+			return fmt.Errorf("failed to get job schedules: %w", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if err := cmdutil.EnsureSuccessStatus(resp); err != nil {
+			return fmt.Errorf("failed to get job schedules: %w", err)
+		}
+
+		var cfg jobschedule.Config
+		if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+			return fmt.Errorf("failed to parse response: %w", err)
+		}
+
+		if jsonOutput {
+			b, err := json.MarshalIndent(cfg, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal JSON: %w", err)
+			}
+			fmt.Println(string(b))
+			return nil
+		}
+
+		output.Header("Job Schedules")
+		output.KeyValue("Environment health interval", cfg.EnvironmentHealthInterval)
+		output.KeyValue("Event cleanup interval", cfg.EventCleanupInterval)
+		return nil
+	},
+}
+
+var (
+	environmentHealthInterval string
+	eventCleanupInterval      string
+)
+
+var updateCmd = &cobra.Command{
+	Use:          "update",
+	Short:        "Update job schedule intervals",
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := client.NewFromConfig()
+		if err != nil {
+			return err
+		}
+
+		var req jobschedule.Update
+		if cmd.Flags().Changed("environment-health-interval") {
+			req.EnvironmentHealthInterval = &environmentHealthInterval
+		}
+		if cmd.Flags().Changed("event-cleanup-interval") {
+			req.EventCleanupInterval = &eventCleanupInterval
+		}
+
+		if req.EnvironmentHealthInterval == nil && req.EventCleanupInterval == nil {
+			return fmt.Errorf("no updates provided (set at least one interval flag)")
+		}
+
+		resp, err := c.Put(cmd.Context(), types.Endpoints.JobSchedules(c.EnvID()), req)
+		if err != nil {
+			return fmt.Errorf("failed to update job schedules: %w", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		var result base.ApiResponse[jobschedule.Config]
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return fmt.Errorf("failed to parse response: %w", err)
+		}
+
+		if jsonOutput {
+			b, err := json.MarshalIndent(result.Data, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal JSON: %w", err)
+			}
+			fmt.Println(string(b))
+			return nil
+		}
+
+		output.Success("Job schedules updated")
+		output.KeyValue("Environment health interval", result.Data.EnvironmentHealthInterval)
+		output.KeyValue("Event cleanup interval", result.Data.EventCleanupInterval)
+		return nil
+	},
+}
+
+func init() {
+	JobsCmd.AddCommand(getCmd)
+	JobsCmd.AddCommand(updateCmd)
+
+	getCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	updateCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+
+	updateCmd.Flags().StringVar(&environmentHealthInterval, "environment-health-interval", "", "Environment health job interval (cron expression)")
+	updateCmd.Flags().StringVar(&eventCleanupInterval, "event-cleanup-interval", "", "Event cleanup job interval (cron expression)")
+}

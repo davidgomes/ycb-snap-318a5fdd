@@ -1,0 +1,39 @@
+export type EnvironmentStatus = 'online' | 'standby' | 'offline' | 'error' | 'pending';
+
+export type Environment = {
+	id: string;
+	name: string;
+	apiUrl: string;
+	status: EnvironmentStatus;
+	enabled: boolean;
+	isEdge: boolean;
+	edgeTransport?: 'grpc' | 'websocket';
+	connected?: boolean;
+	connectedAt?: string;
+	lastHeartbeat?: string;
+	lastPollAt?: string;
+	lastSeen?: string;
+	apiKey?: string;
+};
+
+export interface CreateEnvironmentDTO {
+	apiUrl: string;
+	name: string;
+	bootstrapToken?: string;
+	useApiKey?: boolean;
+	isEdge?: boolean;
+}
+
+export interface UpdateEnvironmentDTO {
+	apiUrl?: string;
+	name?: string;
+	enabled?: boolean;
+	isEdge?: boolean;
+	bootstrapToken?: string;
+	regenerateApiKey?: boolean;
+}
+
+export interface DeploymentSnippets {
+	dockerRun: string;
+	dockerCompose: string;
+}

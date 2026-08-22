@@ -1,0 +1,1005 @@
+<script lang="ts">
+	import type { Project } from '$lib/types/project.type';
+	import * as Tabs from '$lib/components/ui/tabs/index.js';
+	import * as TreeView from '$lib/components/ui/tree-view/index.js';
+	import * as Card from '$lib/components/ui/card';
+	import * as Alert from '$lib/components/ui/alert/index.js';
+	import { ArcaneButton } from '$lib/components/arcane-button/index.js';
+	import { ArrowLeftIcon, ProjectsIcon, LayersIcon, SettingsIcon, FileTextIcon, AlertIcon, GlobeIcon } from '$lib/icons';
+	import { type TabItem } from '$lib/components/tab-bar/index.js';
+	import TabbedPageLayout from '$lib/layouts/tabbed-page-layout.svelte';
+	import ActionButtons from '$lib/components/action-buttons.svelte';
+	import StatusBadge from '$lib/components/badges/status-badge.svelte';
+	import { getStatusVariant } from '$lib/utils/status.utils';
+	import { capitalizeFirstLetter } from '$lib/utils/string.utils';
+	import { invalidateAll } from '$app/navigation';
+	import { toast } from 'svelte-sonner';
+	import { tryCatch } from '$lib/utils/try-catch';
+	import { handleApiResultWithCallbacks } from '$lib/utils/api.util';
+	import { z } from 'zod/v4';
+	import { createForm } from '$lib/utils/form.utils';
+	import { m } from '$lib/paraglide/messages';
+	import { toGitCommitUrl } from '$lib/utils/git';
+	import { toSafeHref } from '$lib/utils/url';
+	import { PersistedState } from 'runed';
+	import EditableName from '../components/EditableName.svelte';
+	import ProjectContainersTable from '../components/ProjectContainersTable.svelte';
+	import CodePanel from '../components/CodePanel.svelte';
+	import ProjectsLogsPanel from '../components/ProjectLogsPanel.svelte';
+	import ResizableSplit from '$lib/components/resizable-split.svelte';
+	import SwitchWithLabel from '$lib/components/form/labeled-switch.svelte';
+	import { IsTablet } from '$lib/hooks/is-tablet.svelte.js';
+	import { untrack } from 'svelte';
+	import { projectService } from '$lib/services/project-service';
+	import { gitOpsSyncService } from '$lib/services/gitops-sync-service';
+	import { environmentStore } from '$lib/stores/environment.store.svelte';
+	import { queryKeys } from '$lib/query/query-keys';
+	import { RefreshIcon } from '$lib/icons';
+	import IconImage from '$lib/components/icon-image.svelte';
+	import { useQueryClient } from '@tanstack/svelte-query';
+
+	let { data } = $props();
+	let projectId = $derived(data.projectId);
+	let project = $state(untrack(() => data.project));
+	const queryClient = useQueryClient();
+	const isTablet = new IsTablet();
+
+	let isLoading = $state({
+		deploying: false,
+		stopping: false,
+		restarting: false,
+		removing: false,
+		importing: false,
+		redeploying: false,
+		destroying: false,
+		pulling: false,
+		saving: false,
+		syncing: false
+	});
+
+	const envId = $derived(environmentStore.selected?.id);
+
+	let originalName = $state(untrack(() => data.editorState.originalName));
+	let originalComposeContent = $state(untrack(() => data.editorState.originalComposeContent));
+	let originalEnvContent = $state(untrack(() => data.editorState.originalEnvContent || ''));
+	let includeFilesState = $state<Record<string, string>>({});
+	let originalIncludeFiles = $state<Record<string, string>>({});
+	const globalVariableMap = $derived.by(() =>
+		Object.fromEntries((data.globalVariables ?? []).map((item) => [item.key, item.value]))
+	);
+
+	const formSchema = z.object({
+		name: z
+			.string()
+			.min(1, m.compose_project_name_required())
+			.regex(/^[a-z0-9_-]+$/i, m.compose_project_name_invalid_with_underscores()),
+		composeContent: z.string().min(1, m.compose_compose_content_required()),
+		envContent: z.string().optional().default('')
+	});
+
+	const initialFormData = untrack(() => ({
+		name: data.editorState.originalName,
+		composeContent: data.editorState.originalComposeContent,
+		envContent: data.editorState.originalEnvContent || ''
+	}));
+
+	const { inputs, ...form } = createForm<typeof formSchema>(formSchema, initialFormData);
+
+	let hasChanges = $derived(
+		$inputs.name.value !== originalName ||
+			$inputs.composeContent.value !== originalComposeContent ||
+			$inputs.envContent.value !== originalEnvContent ||
+			JSON.stringify(includeFilesState) !== JSON.stringify(originalIncludeFiles)
+	);
+
+	let isGitOpsManaged = $derived(!!project?.gitOpsManagedBy);
+	let hasBuildDirective = $derived(!!project?.hasBuildDirective);
+	let canEditName = $derived(
+		!isGitOpsManaged && !isLoading.saving && project?.status !== 'running' && project?.status !== 'partially running'
+	);
+	let canEditCompose = $derived(!isGitOpsManaged);
+	let canEditEnv = true;
+
+	let autoScrollStackLogs = $state(true);
+
+	let selectedTab = $state<'services' | 'compose' | 'logs'>('compose');
+	let composeOpen = $state(true);
+	let envOpen = $state(true);
+	let includeFilesPanelStates = $state<Record<string, boolean>>({});
+	let selectedFile = $state<'compose' | 'env' | string>('compose');
+	let layoutMode = $state<'classic' | 'tree'>('classic');
+	let selectedIncludeTab = $state<string | null>(null);
+	let treePaneWidth = $state(320);
+	let composeSplitWidth = $state<number | null>(null);
+	const minTreePaneWidth = 200;
+	const minEditorPaneWidth = 360;
+	const minComposePaneWidth = 360;
+	const minEnvPaneWidth = 280;
+
+	let composeHasErrors = $state(false);
+	let envHasErrors = $state(false);
+	let includeFilesHasErrors = $state<Record<string, boolean>>({});
+	let composeValidationReady = $state(false);
+	let envValidationReady = $state(false);
+	let includeFilesValidationReady = $state<Record<string, boolean>>({});
+
+	let hasAnyErrors = $derived(
+		!composeValidationReady ||
+			!envValidationReady ||
+			Object.values(includeFilesValidationReady).some((isReady) => !isReady) ||
+			composeHasErrors ||
+			envHasErrors ||
+			Object.values(includeFilesHasErrors).some((hasError) => hasError)
+	);
+
+	let canSave = $derived(hasChanges && !hasAnyErrors);
+
+	const tabItems = $derived<TabItem[]>([
+		{
+			value: 'services',
+			label: m.compose_nav_services(),
+			icon: LayersIcon,
+			badge: project?.serviceCount
+		},
+		{
+			value: 'compose',
+			label: m.common_configuration(),
+			icon: SettingsIcon
+		},
+		{
+			value: 'logs',
+			label: m.compose_nav_logs(),
+			icon: FileTextIcon,
+			disabled: project?.status !== 'running'
+		}
+	]);
+
+	let nameInputRef = $state<HTMLInputElement | null>(null);
+
+	type ComposeUIPrefs = {
+		tab: 'services' | 'compose' | 'logs';
+		composeOpen: boolean;
+		envOpen: boolean;
+		autoScroll: boolean;
+		layoutMode: 'classic' | 'tree';
+		selectedFile?: 'compose' | 'env' | string;
+	};
+
+	const defaultComposeUIPrefs: ComposeUIPrefs = {
+		tab: 'compose',
+		composeOpen: true,
+		envOpen: true,
+		autoScroll: true,
+		layoutMode: 'classic',
+		selectedFile: 'compose'
+	};
+
+	let prefs: PersistedState<ComposeUIPrefs> | null = null;
+	let lastAppliedProjectId = $state<string | null>(null);
+	let lastSeenProjectSignature = $state<string | null>(null);
+	let lastPrefsProjectId = $state<string | null>(null);
+
+	type ApplyProjectMode = 'initialize' | 'saved' | 'refresh';
+
+	function buildProjectSyncSignature(details: Project): string {
+		return JSON.stringify({
+			id: details.id,
+			name: details.name,
+			status: details.status,
+			statusReason: details.statusReason,
+			runningCount: details.runningCount,
+			serviceCount: details.serviceCount,
+			updatedAt: details.updatedAt,
+			composeContent: details.composeContent ?? '',
+			envContent: details.envContent ?? '',
+			includeFiles: (details.includeFiles ?? []).map((file) => ({
+				relativePath: file.relativePath,
+				content: file.content
+			})),
+			runtimeServices: (details.runtimeServices ?? []).map((service) => ({
+				name: service.name,
+				status: service.status,
+				containerId: service.containerId,
+				containerName: service.containerName
+			}))
+		});
+	}
+
+	function buildIncludeFilesMap(details: Project): Record<string, string> {
+		return Object.fromEntries((details.includeFiles ?? []).map((file) => [file.relativePath, file.content]));
+	}
+
+	function syncIncludeFileUiState(details: Project) {
+		const nextPanelStates: Record<string, boolean> = {};
+		const nextErrors: Record<string, boolean> = {};
+		const nextValidationReady: Record<string, boolean> = {};
+
+		for (const file of details.includeFiles ?? []) {
+			nextPanelStates[file.relativePath] = includeFilesPanelStates[file.relativePath] ?? true;
+			nextErrors[file.relativePath] = includeFilesHasErrors[file.relativePath] ?? false;
+			nextValidationReady[file.relativePath] = includeFilesValidationReady[file.relativePath] ?? true;
+		}
+
+		includeFilesPanelStates = nextPanelStates;
+		includeFilesHasErrors = nextErrors;
+		includeFilesValidationReady = nextValidationReady;
+
+		if (selectedIncludeTab && !(selectedIncludeTab in nextPanelStates)) {
+			selectedIncludeTab = null;
+		}
+		if (selectedFile !== 'compose' && selectedFile !== 'env' && !(selectedFile in nextPanelStates)) {
+			selectedFile = 'compose';
+		}
+	}
+
+	function applyProjectDetailsToEditor(details: Project, mode: ApplyProjectMode) {
+		project = details;
+		lastSeenProjectSignature = buildProjectSyncSignature(details);
+		syncIncludeFileUiState(details);
+
+		const nextName = details.name || '';
+		const nextComposeContent = details.composeContent || '';
+		const nextEnvContent = details.envContent || '';
+		const nextIncludeFiles = buildIncludeFilesMap(details);
+		const shouldSyncEditorState = mode === 'initialize' || mode === 'saved' || lastAppliedProjectId !== details.id || !hasChanges;
+
+		if (shouldSyncEditorState) {
+			originalName = nextName;
+			originalComposeContent = nextComposeContent;
+			originalEnvContent = nextEnvContent;
+			originalIncludeFiles = { ...nextIncludeFiles };
+			$inputs.name.value = nextName;
+			$inputs.composeContent.value = nextComposeContent;
+			$inputs.envContent.value = nextEnvContent;
+			includeFilesState = { ...nextIncludeFiles };
+		}
+
+		lastAppliedProjectId = details.id;
+	}
+
+	async function syncProjectQueries(updatedProject: Project) {
+		const currentEnvId = envId ?? (await environmentStore.getCurrentEnvironmentId());
+
+		queryClient.setQueryData(queryKeys.projects.detail(currentEnvId, updatedProject.id), updatedProject);
+		await Promise.all([
+			queryClient.invalidateQueries({ queryKey: ['projects', currentEnvId] }),
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.statusCounts(currentEnvId) })
+		]);
+	}
+
+	$effect(() => {
+		const incomingProject = data.project;
+		if (!incomingProject) return;
+
+		const incomingProjectSignature = buildProjectSyncSignature(incomingProject);
+		const previousSignature = untrack(() => lastSeenProjectSignature);
+		if (incomingProjectSignature === previousSignature) return;
+
+		lastSeenProjectSignature = incomingProjectSignature;
+
+		const projectChanged = untrack(() => lastAppliedProjectId) !== incomingProject.id;
+		if (projectChanged || !hasChanges) {
+			applyProjectDetailsToEditor(incomingProject, projectChanged ? 'initialize' : 'refresh');
+			return;
+		}
+
+		project = incomingProject;
+		syncIncludeFileUiState(incomingProject);
+	});
+
+	$effect(() => {
+		if (!project?.id) return;
+		if (lastPrefsProjectId === project.id) return;
+
+		lastPrefsProjectId = project.id;
+		prefs = new PersistedState<ComposeUIPrefs>(`arcane.compose.ui:${project.id}`, defaultComposeUIPrefs, {
+			storage: 'session',
+			syncTabs: false
+		});
+		const cur = prefs.current ?? {};
+		selectedTab = cur.tab ?? defaultComposeUIPrefs.tab;
+		composeOpen = cur.composeOpen ?? defaultComposeUIPrefs.composeOpen;
+		envOpen = cur.envOpen ?? defaultComposeUIPrefs.envOpen;
+		autoScrollStackLogs = cur.autoScroll ?? defaultComposeUIPrefs.autoScroll;
+		selectedFile = cur.selectedFile ?? defaultComposeUIPrefs.selectedFile ?? 'compose';
+
+		// Auto-detect layout mode based on includeFiles
+		const hasIncludes = project?.includeFiles && project.includeFiles.length > 0;
+		const defaultMode = hasIncludes ? 'tree' : 'classic';
+		layoutMode = cur.layoutMode ?? defaultMode;
+	});
+
+	async function handleSaveChanges() {
+		if (!project || !hasChanges) return;
+		if (hasAnyErrors) {
+			toast.error(m.templates_validation_error());
+			return;
+		}
+
+		const formValues = form.data();
+		const validated = isGitOpsManaged ? formValues : form.validate();
+		if (!validated) return;
+
+		const { name, composeContent, envContent } = validated;
+		const namePayload = isGitOpsManaged ? undefined : name;
+		const composePayload = isGitOpsManaged ? undefined : composeContent;
+
+		handleApiResultWithCallbacks({
+			result: await tryCatch(projectService.updateProject(projectId, namePayload, composePayload, envContent)),
+			message: m.common_save_failed(),
+			setLoadingState: (value) => (isLoading.saving = value),
+			onSuccess: async (updatedProject: Project) => {
+				let savedProject = updatedProject;
+
+				for (const relativePath of Object.keys(includeFilesState)) {
+					if (includeFilesState[relativePath] !== originalIncludeFiles[relativePath]) {
+						const includeResult = await tryCatch(
+							projectService.updateProjectIncludeFile(projectId, relativePath, includeFilesState[relativePath])
+						);
+						if (includeResult.error) {
+							toast.error(includeResult.error.message || m.common_update_failed({ resource: relativePath }));
+							return;
+						}
+						savedProject = includeResult.data;
+					}
+				}
+
+				applyProjectDetailsToEditor(savedProject, 'saved');
+				await syncProjectQueries(savedProject);
+				toast.success(m.common_update_success({ resource: m.project() }));
+			}
+		});
+	}
+
+	function saveNameIfChanged() {
+		if ($inputs.name.value === originalName) return;
+		const validated = form.validate();
+		if (!validated) return;
+		handleSaveChanges();
+	}
+
+	function persistPrefs() {
+		if (!prefs) return;
+		prefs.current = {
+			tab: selectedTab,
+			composeOpen,
+			envOpen,
+			autoScroll: autoScrollStackLogs,
+			layoutMode,
+			selectedFile
+		};
+	}
+
+	$effect(() => {
+		selectedFile;
+		if (layoutMode === 'tree') {
+			persistPrefs();
+		}
+	});
+
+	const allComposeContents = $derived.by(() => {
+		return [$inputs.composeContent.value, ...Object.values(includeFilesState)].filter((value) => value.length > 0);
+	});
+	const codeEditorContext = $derived({
+		envContent: $inputs.envContent.value,
+		composeContents: allComposeContents,
+		globalVariables: globalVariableMap
+	});
+
+	async function refreshProjectDetails() {
+		if (!projectId) return;
+		handleApiResultWithCallbacks({
+			result: await tryCatch(projectService.getProject(projectId)),
+			message: m.common_refresh_failed({ resource: m.project() }),
+			onSuccess: (updatedProject) => {
+				if (hasChanges && lastAppliedProjectId === updatedProject.id) {
+					project = updatedProject;
+					syncIncludeFileUiState(updatedProject);
+					return;
+				}
+
+				applyProjectDetailsToEditor(updatedProject, 'refresh');
+			}
+		});
+	}
+
+	async function handleSyncFromGit() {
+		if (!envId || !project?.gitOpsManagedBy) return;
+		isLoading.syncing = true;
+		handleApiResultWithCallbacks({
+			result: await tryCatch(gitOpsSyncService.performSync(envId, project.gitOpsManagedBy)),
+			message: m.git_sync_failed(),
+			setLoadingState: (value) => (isLoading.syncing = value),
+			onSuccess: async () => {
+				toast.success(m.git_sync_success());
+				await invalidateAll();
+			}
+		});
+	}
+
+	function formatUrlLabel(raw: string): string {
+		const trimmed = raw.trim();
+		if (!trimmed) return raw;
+		try {
+			const parsed = new URL(trimmed);
+			return parsed.host || parsed.hostname || trimmed;
+		} catch {
+			return trimmed;
+		}
+	}
+</script>
+
+{#if project}
+	<TabbedPageLayout
+		backUrl="/projects"
+		backLabel={m.common_back()}
+		{tabItems}
+		{selectedTab}
+		onTabChange={(value: string) => {
+			selectedTab = value as 'services' | 'compose' | 'logs';
+			persistPrefs();
+		}}
+	>
+		{#snippet headerInfo()}
+			<div class="flex min-w-0 items-start gap-3">
+				<IconImage
+					src={project.iconUrl}
+					alt={project.name}
+					fallback={ProjectsIcon}
+					class="size-6"
+					containerClass="size-9 bg-transparent ring-0"
+				/>
+				<div class="min-w-0 flex-1">
+					<div class="flex min-w-0 flex-wrap items-center gap-2">
+						<EditableName
+							bind:value={$inputs.name.value}
+							bind:ref={nameInputRef}
+							variant="inline"
+							error={$inputs.name.error ?? undefined}
+							originalValue={originalName}
+							canEdit={canEditName}
+							onCommit={saveNameIfChanged}
+							class="max-w-[10rem] min-w-0 sm:max-w-[14rem] md:max-w-[18rem] lg:max-w-[22rem]"
+						/>
+						{#if project.status}
+							{@const showTooltip = project.status.toLowerCase() === 'unknown' && project.statusReason}
+							<StatusBadge
+								variant={getStatusVariant(project.status)}
+								text={capitalizeFirstLetter(project.status)}
+								tooltip={showTooltip ? project.statusReason : undefined}
+							/>
+						{/if}
+						{#if project.urls && project.urls.length > 0}
+							<div class="flex min-w-0 flex-wrap items-center gap-2">
+								{#each project.urls as url, i (i)}
+									<a
+										class="ring-offset-background focus-visible:ring-ring bg-background/70 inline-flex min-h-6 max-w-[10rem] min-w-0 items-center gap-1 rounded-lg border border-sky-700/20 px-2 py-0.5 text-[12px] font-semibold shadow-sm transition-colors hover:border-sky-700/40 hover:bg-sky-500/10 hover:shadow-md focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none sm:max-w-[14rem] md:max-w-[18rem] dark:border-sky-400/40 dark:bg-sky-500/20 dark:text-sky-100 dark:hover:border-sky-300/60 dark:hover:bg-sky-500/30"
+										href={toSafeHref(url)}
+										target="_blank"
+										rel="noopener noreferrer"
+										title={url}
+									>
+										<GlobeIcon class="size-3 text-sky-500" />
+										<span class="truncate leading-normal">{formatUrlLabel(url)}</span>
+									</a>
+								{/each}
+							</div>
+						{/if}
+					</div>
+
+					{#if project.lastSyncCommit}
+						{@const commitUrl = project.gitRepositoryURL
+							? toGitCommitUrl(project.gitRepositoryURL, project.lastSyncCommit)
+							: null}
+						<div class="text-muted-foreground mt-1 flex flex-wrap items-center gap-4 text-xs">
+							<div class="flex items-center gap-1.5">
+								<span class="hidden sm:inline">{m.git_sync_commit()}:</span>
+								{#if commitUrl}
+									<a
+										href={commitUrl}
+										target="_blank"
+										class="hover:text-primary sm:bg-muted font-mono transition-colors sm:rounded sm:px-1.5 sm:py-0.5"
+									>
+										{project.lastSyncCommit}
+									</a>
+								{:else}
+									<span class="sm:bg-muted font-mono sm:rounded sm:px-1.5 sm:py-0.5">
+										{project.lastSyncCommit}
+									</span>
+								{/if}
+							</div>
+						</div>
+					{/if}
+				</div>
+			</div>
+		{/snippet}
+
+		{#snippet headerActions()}
+			<div class="flex items-center gap-2">
+				{#if hasChanges && !hasAnyErrors}
+					<ArcaneButton
+						action="save"
+						loading={isLoading.saving}
+						onclick={handleSaveChanges}
+						disabled={!canSave}
+						customLabel={m.common_save()}
+						loadingLabel={m.common_saving()}
+						class="hidden xl:inline-flex"
+					/>
+					<ArcaneButton
+						action="save"
+						size="icon"
+						showLabel={false}
+						loading={isLoading.saving}
+						onclick={handleSaveChanges}
+						disabled={!canSave}
+						customLabel={m.common_save()}
+						loadingLabel={m.common_saving()}
+						class="xl:hidden"
+					/>
+				{/if}
+				<ActionButtons
+					id={project.id}
+					name={project.name}
+					type="project"
+					itemState={project.status}
+					{hasBuildDirective}
+					desktopVariant="adaptive"
+					bind:startLoading={isLoading.deploying}
+					bind:stopLoading={isLoading.stopping}
+					bind:restartLoading={isLoading.restarting}
+					bind:removeLoading={isLoading.removing}
+					bind:redeployLoading={isLoading.redeploying}
+					onActionComplete={() => invalidateAll()}
+					onRefresh={refreshProjectDetails}
+				/>
+			</div>
+		{/snippet}
+
+		{#snippet tabContent()}
+			<Tabs.Content value="services" class="h-full">
+				<ProjectContainersTable services={project.runtimeServices} {projectId} onRefresh={refreshProjectDetails} />
+			</Tabs.Content>
+
+			<Tabs.Content value="compose" class="h-full min-h-0">
+				<div class="flex h-full min-h-0 flex-col">
+					{#if isGitOpsManaged}
+						<Alert.Root variant="default" class="mb-4">
+							<AlertIcon class="size-4" />
+							<div class="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+								<div class="flex-1">
+									<Alert.Title>{m.git_title()} {m.read_only_label()}</Alert.Title>
+									<Alert.Description>
+										{m.git_managed_readonly_alert()}
+										<br />
+										<div class="mt-2 flex flex-col gap-1">
+											{#if project.lastSyncCommit}
+												{@const commitUrl = project.gitRepositoryURL
+													? toGitCommitUrl(project.gitRepositoryURL, project.lastSyncCommit)
+													: null}
+												<div class="flex items-center gap-1.5 font-mono text-xs">
+													<span class="text-muted-foreground">{m.git_sync_commit()}:</span>
+													{#if commitUrl}
+														<a
+															href={commitUrl}
+															target="_blank"
+															class="bg-muted hover:text-primary rounded px-1.5 py-0.5 transition-colors"
+														>
+															{project.lastSyncCommit}
+														</a>
+													{:else}
+														<span class="bg-muted rounded px-1.5 py-0.5">{project.lastSyncCommit}</span>
+													{/if}
+												</div>
+											{/if}
+											<span class="text-muted-foreground text-xs">
+												{m.git_managed_env_note()}
+											</span>
+										</div>
+									</Alert.Description>
+								</div>
+								<ArcaneButton
+									action="base"
+									tone="outline-primary"
+									loading={isLoading.syncing}
+									onclick={handleSyncFromGit}
+									icon={RefreshIcon}
+									customLabel={m.git_sync_from_git()}
+									loadingLabel={m.common_syncing()}
+									class="shrink-0"
+								/>
+							</div>
+						</Alert.Root>
+					{/if}
+					<div class="mb-4 shrink-0">
+						<SwitchWithLabel
+							id="layout-mode-toggle"
+							checked={layoutMode === 'tree'}
+							label={layoutMode === 'tree' ? m.tree_view() : m.classic()}
+							description={m.project_view_description()}
+							onCheckedChange={(checked) => {
+								layoutMode = checked ? 'tree' : 'classic';
+								if (checked) {
+									selectedFile = 'compose';
+									selectedIncludeTab = null;
+								}
+								persistPrefs();
+							}}
+						/>
+					</div>
+
+					<div class="min-h-0 flex-1">
+						{#if layoutMode === 'tree'}
+							{#if isTablet.current}
+								<div class="flex h-full min-h-0 flex-col gap-4">
+									<Card.Root class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+										<Card.Header icon={FileTextIcon} class="shrink-0 items-center">
+											<Card.Title>
+												<h2>{m.project_files()}</h2>
+											</Card.Title>
+										</Card.Header>
+										<Card.Content class="min-h-0 flex-1 overflow-auto p-2">
+											<TreeView.Root class="min-w-max p-2 whitespace-nowrap">
+												<TreeView.File
+													name="compose.yaml"
+													onclick={() => (selectedFile = 'compose')}
+													class={selectedFile === 'compose' ? 'bg-accent' : ''}
+												>
+													{#snippet icon()}
+														<FileTextIcon class="size-4 text-blue-500" />
+													{/snippet}
+												</TreeView.File>
+
+												<TreeView.File
+													name=".env"
+													onclick={() => (selectedFile = 'env')}
+													class={selectedFile === 'env' ? 'bg-accent' : ''}
+												>
+													{#snippet icon()}
+														<FileTextIcon class="size-4 text-green-500" />
+													{/snippet}
+												</TreeView.File>
+
+												{#if project?.includeFiles && project.includeFiles.length > 0}
+													<TreeView.Folder name={m.project_includes()}>
+														{#each project.includeFiles as includeFile (includeFile.relativePath)}
+															<TreeView.File
+																name={includeFile.relativePath}
+																onclick={() => (selectedFile = includeFile.relativePath)}
+																class={selectedFile === includeFile.relativePath ? 'bg-accent' : ''}
+															>
+																{#snippet icon()}
+																	<FileTextIcon class="size-4 text-amber-500" />
+																{/snippet}
+															</TreeView.File>
+														{/each}
+													</TreeView.Folder>
+												{/if}
+											</TreeView.Root>
+										</Card.Content>
+									</Card.Root>
+
+									<div class="flex min-h-0 flex-1 flex-col">
+										{#if selectedFile === 'compose'}
+											<CodePanel
+												bind:open={composeOpen}
+												title="compose.yaml"
+												language="yaml"
+												bind:value={$inputs.composeContent.value}
+												error={$inputs.composeContent.error ?? undefined}
+												readOnly={!canEditCompose}
+												bind:hasErrors={composeHasErrors}
+												bind:validationReady={composeValidationReady}
+												fileId={`project:${projectId}:compose`}
+												originalValue={originalComposeContent}
+												enableDiff={true}
+												editorContext={codeEditorContext}
+											/>
+										{:else if selectedFile === 'env'}
+											<CodePanel
+												bind:open={envOpen}
+												title=".env"
+												language="env"
+												bind:value={$inputs.envContent.value}
+												error={$inputs.envContent.error ?? undefined}
+												readOnly={!canEditEnv}
+												bind:hasErrors={envHasErrors}
+												bind:validationReady={envValidationReady}
+												fileId={`project:${projectId}:env`}
+												originalValue={originalEnvContent}
+												enableDiff={true}
+												editorContext={codeEditorContext}
+											/>
+										{:else}
+											{@const includeFile = project?.includeFiles?.find((f) => f.relativePath === selectedFile)}
+											{#if includeFile}
+												<CodePanel
+													bind:open={includeFilesPanelStates[includeFile.relativePath]}
+													title={includeFile.relativePath}
+													language="yaml"
+													bind:value={includeFilesState[includeFile.relativePath]}
+													bind:hasErrors={includeFilesHasErrors[includeFile.relativePath]}
+													bind:validationReady={includeFilesValidationReady[includeFile.relativePath]}
+													fileId={`project:${projectId}:include:${includeFile.relativePath}`}
+													originalValue={originalIncludeFiles[includeFile.relativePath]}
+													enableDiff={true}
+													editorContext={codeEditorContext}
+												/>
+											{/if}
+										{/if}
+									</div>
+								</div>
+							{:else}
+								<ResizableSplit
+									class="h-full min-h-0 lg:gap-2"
+									firstClass="flex min-h-0 flex-col"
+									secondClass="flex min-h-0 flex-col"
+									bind:size={treePaneWidth}
+									minSize={minTreePaneWidth}
+									minSecondSize={minEditorPaneWidth}
+									defaultRatio={0.3}
+									ariaLabel="Resize project files panel"
+									persistKey={`arcane.compose.split:${project.id}:tree`}
+									onResizeEnd={persistPrefs}
+								>
+									{#snippet first()}
+										<Card.Root class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+											<Card.Header icon={FileTextIcon} class="shrink-0 items-center">
+												<Card.Title>
+													<h2>{m.project_files()}</h2>
+												</Card.Title>
+											</Card.Header>
+											<Card.Content class="min-h-0 flex-1 overflow-auto p-2">
+												<TreeView.Root class="min-w-max p-2 whitespace-nowrap">
+													<TreeView.File
+														name="compose.yaml"
+														onclick={() => (selectedFile = 'compose')}
+														class={selectedFile === 'compose' ? 'bg-accent' : ''}
+													>
+														{#snippet icon()}
+															<FileTextIcon class="size-4 text-blue-500" />
+														{/snippet}
+													</TreeView.File>
+
+													<TreeView.File
+														name=".env"
+														onclick={() => (selectedFile = 'env')}
+														class={selectedFile === 'env' ? 'bg-accent' : ''}
+													>
+														{#snippet icon()}
+															<FileTextIcon class="size-4 text-green-500" />
+														{/snippet}
+													</TreeView.File>
+
+													{#if project?.includeFiles && project.includeFiles.length > 0}
+														<TreeView.Folder name={m.project_includes()}>
+															{#each project.includeFiles as includeFile (includeFile.relativePath)}
+																<TreeView.File
+																	name={includeFile.relativePath}
+																	onclick={() => (selectedFile = includeFile.relativePath)}
+																	class={selectedFile === includeFile.relativePath ? 'bg-accent' : ''}
+																>
+																	{#snippet icon()}
+																		<FileTextIcon class="size-4 text-amber-500" />
+																	{/snippet}
+																</TreeView.File>
+															{/each}
+														</TreeView.Folder>
+													{/if}
+												</TreeView.Root>
+											</Card.Content>
+										</Card.Root>
+									{/snippet}
+
+									{#snippet second()}
+										<div class="flex h-full min-h-0 flex-1 flex-col">
+											{#if selectedFile === 'compose'}
+												<CodePanel
+													bind:open={composeOpen}
+													title="compose.yaml"
+													language="yaml"
+													bind:value={$inputs.composeContent.value}
+													error={$inputs.composeContent.error ?? undefined}
+													readOnly={!canEditCompose}
+													bind:hasErrors={composeHasErrors}
+													bind:validationReady={composeValidationReady}
+													fileId={`project:${projectId}:compose`}
+													originalValue={originalComposeContent}
+													enableDiff={true}
+													editorContext={codeEditorContext}
+												/>
+											{:else if selectedFile === 'env'}
+												<CodePanel
+													bind:open={envOpen}
+													title=".env"
+													language="env"
+													bind:value={$inputs.envContent.value}
+													error={$inputs.envContent.error ?? undefined}
+													readOnly={!canEditEnv}
+													bind:hasErrors={envHasErrors}
+													bind:validationReady={envValidationReady}
+													fileId={`project:${projectId}:env`}
+													originalValue={originalEnvContent}
+													enableDiff={true}
+													editorContext={codeEditorContext}
+												/>
+											{:else}
+												{@const includeFile = project?.includeFiles?.find((f) => f.relativePath === selectedFile)}
+												{#if includeFile}
+													<CodePanel
+														bind:open={includeFilesPanelStates[includeFile.relativePath]}
+														title={includeFile.relativePath}
+														language="yaml"
+														bind:value={includeFilesState[includeFile.relativePath]}
+														bind:hasErrors={includeFilesHasErrors[includeFile.relativePath]}
+														bind:validationReady={includeFilesValidationReady[includeFile.relativePath]}
+														fileId={`project:${projectId}:include:${includeFile.relativePath}`}
+														originalValue={originalIncludeFiles[includeFile.relativePath]}
+														enableDiff={true}
+														editorContext={codeEditorContext}
+													/>
+												{/if}
+											{/if}
+										</div>
+									{/snippet}
+								</ResizableSplit>
+							{/if}
+						{:else}
+							<div class="flex h-full min-h-0 flex-col gap-4">
+								{#if project?.includeFiles && project.includeFiles.length > 0}
+									<div class="border-border bg-card rounded-lg border">
+										<div class="border-border scrollbar-hide flex gap-2 overflow-x-auto border-b p-2">
+											{#each project.includeFiles as includeFile (includeFile.relativePath)}
+												<ArcaneButton
+													action="base"
+													tone={selectedIncludeTab === includeFile.relativePath ? 'outline-primary' : 'ghost'}
+													size="sm"
+													class="shrink-0"
+													onclick={() => {
+														selectedIncludeTab =
+															selectedIncludeTab === includeFile.relativePath ? null : includeFile.relativePath;
+													}}
+													icon={FileTextIcon}
+													customLabel={includeFile.relativePath}
+												/>
+											{/each}
+										</div>
+									</div>
+								{/if}
+
+								{#if selectedIncludeTab}
+									{@const includeFile = project?.includeFiles?.find((f) => f.relativePath === selectedIncludeTab)}
+									{#if includeFile}
+										<CodePanel
+											bind:open={includeFilesPanelStates[includeFile.relativePath]}
+											title={includeFile.relativePath}
+											language="yaml"
+											bind:value={includeFilesState[includeFile.relativePath]}
+											bind:hasErrors={includeFilesHasErrors[includeFile.relativePath]}
+											bind:validationReady={includeFilesValidationReady[includeFile.relativePath]}
+											fileId={`project:${projectId}:include:${includeFile.relativePath}`}
+											originalValue={originalIncludeFiles[includeFile.relativePath]}
+											enableDiff={true}
+											editorContext={codeEditorContext}
+										/>
+									{/if}
+								{:else if isTablet.current}
+									<div class="flex min-h-0 flex-1 flex-col gap-4">
+										<CodePanel
+											bind:open={composeOpen}
+											title="compose.yaml"
+											language="yaml"
+											bind:value={$inputs.composeContent.value}
+											error={$inputs.composeContent.error ?? undefined}
+											readOnly={!canEditCompose}
+											bind:hasErrors={composeHasErrors}
+											bind:validationReady={composeValidationReady}
+											fileId={`project:${projectId}:compose`}
+											originalValue={originalComposeContent}
+											enableDiff={true}
+											editorContext={codeEditorContext}
+										/>
+										<CodePanel
+											bind:open={envOpen}
+											title=".env"
+											language="env"
+											bind:value={$inputs.envContent.value}
+											error={$inputs.envContent.error ?? undefined}
+											readOnly={!canEditEnv}
+											bind:hasErrors={envHasErrors}
+											bind:validationReady={envValidationReady}
+											fileId={`project:${projectId}:env`}
+											originalValue={originalEnvContent}
+											enableDiff={true}
+											editorContext={codeEditorContext}
+										/>
+									</div>
+								{:else}
+									<ResizableSplit
+										class="min-h-0 flex-1 lg:gap-2"
+										firstClass="flex min-h-0 flex-col"
+										secondClass="flex min-h-0 flex-col"
+										bind:size={composeSplitWidth}
+										minSize={minComposePaneWidth}
+										minSecondSize={minEnvPaneWidth}
+										defaultRatio={0.6}
+										ariaLabel="Resize compose and env editors"
+										persistKey={`arcane.compose.split:${project.id}:classic`}
+										onResizeEnd={persistPrefs}
+									>
+										{#snippet first()}
+											<div class="flex min-h-0 flex-1 flex-col">
+												<CodePanel
+													bind:open={composeOpen}
+													title="compose.yaml"
+													language="yaml"
+													bind:value={$inputs.composeContent.value}
+													error={$inputs.composeContent.error ?? undefined}
+													readOnly={!canEditCompose}
+													bind:hasErrors={composeHasErrors}
+													bind:validationReady={composeValidationReady}
+													fileId={`project:${projectId}:compose`}
+													originalValue={originalComposeContent}
+													enableDiff={true}
+													editorContext={codeEditorContext}
+												/>
+											</div>
+										{/snippet}
+
+										{#snippet second()}
+											<div class="flex min-h-0 flex-1 flex-col">
+												<CodePanel
+													bind:open={envOpen}
+													title=".env"
+													language="env"
+													bind:value={$inputs.envContent.value}
+													error={$inputs.envContent.error ?? undefined}
+													readOnly={!canEditEnv}
+													bind:hasErrors={envHasErrors}
+													bind:validationReady={envValidationReady}
+													fileId={`project:${projectId}:env`}
+													originalValue={originalEnvContent}
+													enableDiff={true}
+													editorContext={codeEditorContext}
+												/>
+											</div>
+										{/snippet}
+									</ResizableSplit>
+								{/if}
+							</div>
+						{/if}
+					</div>
+				</div>
+			</Tabs.Content>
+
+			<Tabs.Content value="logs" class="h-full">
+				{#if project.status == 'running'}
+					<ProjectsLogsPanel projectId={project.id} bind:autoScroll={autoScrollStackLogs} />
+				{:else}
+					<div class="text-muted-foreground py-12 text-center">{m.compose_logs_title()} {m.common_disabled()}</div>
+				{/if}
+			</Tabs.Content>
+		{/snippet}
+	</TabbedPageLayout>
+{:else}
+	<div class="flex min-h-screen items-center justify-center">
+		<div class="text-center">
+			<div class="bg-muted/50 mb-6 inline-flex rounded-full p-6">
+				<ProjectsIcon class="text-muted-foreground size-10" />
+			</div>
+			<h2 class="mb-3 text-2xl font-medium">
+				{data.error ? m.common_action_failed() : m.common_not_found_title({ resource: m.project() })}
+			</h2>
+			<p class="text-muted-foreground mb-8 max-w-md text-center">
+				{data.error || m.common_not_found_description({ resource: m.project().toLowerCase() })}
+			</p>
+			<ArcaneButton
+				action="base"
+				tone="outline"
+				href="/projects"
+				icon={ArrowLeftIcon}
+				customLabel={m.common_back_to({ resource: m.projects_title() })}
+			/>
+		</div>
+	</div>
+{/if}

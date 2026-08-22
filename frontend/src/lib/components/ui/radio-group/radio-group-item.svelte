@@ -1,0 +1,26 @@
+<script lang="ts">
+	import { RadioGroup as RadioGroupPrimitive } from 'bits-ui';
+	import { CheckIcon } from '$lib/icons';
+	import { cn, type WithoutChildrenOrChild } from '$lib/utils.js';
+
+	let { ref = $bindable(null), class: className, ...restProps }: WithoutChildrenOrChild<RadioGroupPrimitive.ItemProps> = $props();
+</script>
+
+<RadioGroupPrimitive.Item
+	bind:ref
+	data-slot="radio-group-item"
+	class={cn(
+		'border-input bg-input text-primary focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive aspect-square size-4 shrink-0 rounded-full border shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50',
+		className
+	)}
+	{...restProps}
+>
+	{#snippet children({ checked })}
+		<div data-slot="radio-group-indicator" class="relative flex items-center justify-center">
+			{#if checked}
+				<span class="fill-primary absolute top-1/2 left-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-current"
+				></span>
+			{/if}
+		</div>
+	{/snippet}
+</RadioGroupPrimitive.Item>

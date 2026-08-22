@@ -1,0 +1,17 @@
+FROM gcr.io/distroless/static-debian13
+
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+WORKDIR /app
+
+COPY linux/${TARGETARCH}/${TARGETVARIANT}/arcane ./arcane
+
+ENV ENVIRONMENT=production
+ENV GIN_MODE=release
+ENV PORT=3552
+
+EXPOSE 3552
+VOLUME ["/app/data"]
+
+CMD ["./arcane"]

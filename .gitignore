@@ -1,0 +1,52 @@
+node_modules
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+.svelte-kit
+frontend/.svelte-kit
+frontend/build
+build
+data/
+dist/
+arcane
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+#tests data
+tests/test-results/*
+tests/.report/*
+tests/.auth/
+backend/.bin
+backend/build-errors.log
+frontend/bun.lock
+tests/bun.lock
+tests/package-lock.json
+/.idea/**
+.pnpm-store/**
+.pnpm-store
+.claude/settings.local.json
+.claude/**
+.fast-check
+*.out
+arcane-devcli
+
+
+# btca
+.btca
+
+cli/arcane-cli

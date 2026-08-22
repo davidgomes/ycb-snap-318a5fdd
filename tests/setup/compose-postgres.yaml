@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: arcane_test
+      POSTGRES_USER: arcane
+      POSTGRES_PASSWORD: arcane_test_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U arcane -d arcane_test']
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  arcane:
+    image: arcane:playwright-tests
+    user: root
+    ports:
+      - '3001:3552'
+    environment:
+      - ENVIRONMENT=testing
+      - APP_ENV=test
+      - DATABASE_URL=postgres://arcane:arcane_test_password@postgres:5432/arcane_test?sslmode=disable
+      - ENCRYPTION_KEY=3JDIgolks2tJ9ymm1AdqzlYMWu0DUWyt
+      - JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - arcane_data:/app/data
+      - ./projects:/app/data/projects
+    depends_on:
+      postgres:
+        condition: service_healthy
+    build:
+      args:
+        - BUILD_TAGS=playwright
+      context: ../..
+      dockerfile: docker/Dockerfile
+
+volumes:
+  arcane_data:
+  postgres-data:

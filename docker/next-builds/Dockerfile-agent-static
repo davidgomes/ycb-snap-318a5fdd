@@ -1,0 +1,20 @@
+FROM alpine:3
+
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+WORKDIR /app
+RUN apk add --no-cache ca-certificates tzdata curl
+RUN mkdir -p /app/data
+
+COPY linux/${TARGETARCH}/${TARGETVARIANT}/arcane-agent ./arcane-agent
+
+ENV ENVIRONMENT=production \
+    AGENT_MODE=true \
+    GIN_MODE=release \
+    PORT=3553
+
+EXPOSE 3553
+VOLUME ["/app/data"]
+
+CMD ["./arcane-agent"]

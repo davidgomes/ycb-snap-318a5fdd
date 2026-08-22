@@ -1,0 +1,282 @@
+package services
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/getarcaneapp/arcane/backend/internal/models"
+	dockerutils "github.com/getarcaneapp/arcane/backend/pkg/dockerutil"
+	"github.com/getarcaneapp/arcane/backend/pkg/libarcane"
+	"github.com/getarcaneapp/arcane/backend/pkg/libarcane/timeouts"
+	libupdater "github.com/getarcaneapp/arcane/backend/pkg/libarcane/updater"
+	containertypes "github.com/moby/moby/api/types/container"
+	mounttypes "github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
+)
+
+var (
+	ErrNotRunningInDocker = errors.New("arcane is not running in a Docker container")
+	ErrContainerNotFound  = errors.New("could not find Arcane container")
+	ErrUpgradeInProgress  = errors.New("an upgrade is already in progress")
+	ErrDockerSocketAccess = errors.New("docker socket is not accessible")
+	ArcaneUpgraderImage   = "ghcr.io/getarcaneapp/arcane:latest"
+)
+
+type SystemUpgradeService struct {
+	upgrading       atomic.Bool
+	dockerService   *DockerClientService
+	versionService  *VersionService
+	eventService    *EventService
+	settingsService *SettingsService
+}
+
+func NewSystemUpgradeService(
+	dockerService *DockerClientService,
+	versionService *VersionService,
+	eventService *EventService,
+	settingsService *SettingsService,
+) *SystemUpgradeService {
+	return &SystemUpgradeService{
+		dockerService:   dockerService,
+		versionService:  versionService,
+		eventService:    eventService,
+		settingsService: settingsService,
+	}
+}
+
+// CanUpgrade checks if self-upgrade is possible
+func (s *SystemUpgradeService) CanUpgrade(ctx context.Context) (bool, error) {
+	// Check if running in Docker
+	containerId, err := s.getCurrentContainerID()
+	if err != nil {
+		return false, ErrNotRunningInDocker
+	}
+
+	// Verify we can access Docker
+	_, err = s.dockerService.GetClient(ctx)
+	if err != nil {
+		return false, ErrDockerSocketAccess
+	}
+
+	// Verify we can find our container
+	_, err = s.findArcaneContainer(ctx, containerId)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// TriggerUpgradeViaCLI spawns the upgrade CLI command in a separate container
+// This avoids self-termination issues by running the upgrade from outside
+func (s *SystemUpgradeService) TriggerUpgradeViaCLI(ctx context.Context, user models.User) error {
+	if !s.upgrading.CompareAndSwap(false, true) {
+		return ErrUpgradeInProgress
+	}
+	defer s.upgrading.Store(false)
+
+	// Get current container name
+	containerId, err := s.getCurrentContainerID()
+	if err != nil {
+		return fmt.Errorf("get current container: %w", err)
+	}
+
+	currentContainer, err := s.findArcaneContainer(ctx, containerId)
+	if err != nil {
+		return fmt.Errorf("inspect container: %w", err)
+	}
+
+	containerName := strings.TrimPrefix(currentContainer.Name, "/")
+
+	// Determine binary path based on container type (agent vs main)
+	binaryPath := "/app/arcane"
+	if currentContainer.Config != nil {
+		binaryPath = determineUpgradeBinaryPathInternal(currentContainer.Config.Labels)
+	}
+
+	// Log upgrade event
+	metadata := models.JSON{
+		"action":        "system_upgrade_cli",
+		"containerId":   containerId,
+		"containerName": containerName,
+		"method":        "cli",
+	}
+	if err := s.eventService.LogUserEvent(ctx, models.EventTypeSystemUpgrade, user.ID, user.Username, metadata); err != nil {
+		slog.Warn("Failed to log upgrade event", "error", err)
+	}
+
+	// Use the same image reference as the currently running Arcane container for the upgrader.
+	// This avoids mismatches where a newer/older upgrader CLI expects different behavior.
+	if currentContainer.Config != nil {
+		if img := strings.TrimSpace(currentContainer.Config.Image); img != "" {
+			ArcaneUpgraderImage = img
+		}
+	}
+	slog.Debug("Using upgrader image", "image", ArcaneUpgraderImage)
+
+	slog.Info("Spawning upgrade CLI command", "containerName", containerName, "upgraderImage", ArcaneUpgraderImage)
+
+	// Spawn the upgrade command in a detached container
+	// This will run independently of the current container
+	dockerClient, err := s.dockerService.GetClient(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to connect to Docker: %w", err)
+	}
+
+	// Pull the upgrader image first to ensure it exists
+	slog.Info("Pulling upgrader image", "image", ArcaneUpgraderImage)
+
+	settings := s.settingsService.GetSettingsConfig()
+	pullCtx, pullCancel := timeouts.WithTimeout(ctx, settings.DockerImagePullTimeout.AsInt(), timeouts.DefaultDockerImagePull)
+	defer pullCancel()
+
+	pullReader, err := dockerClient.ImagePull(pullCtx, ArcaneUpgraderImage, client.ImagePullOptions{})
+	if err != nil {
+		if errors.Is(pullCtx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("upgrader image pull timed out for %s (increase DOCKER_IMAGE_PULL_TIMEOUT or setting)", ArcaneUpgraderImage)
+		}
+		return fmt.Errorf("pull upgrader image: %w", err)
+	}
+	// Drain and validate the JSON stream to complete the pull.
+	if err := dockerutils.ConsumeJSONMessageStream(pullReader, nil); err != nil {
+		_ = pullReader.Close()
+		return fmt.Errorf("failed to complete upgrader image pull: %w", err)
+	}
+	if closeErr := pullReader.Close(); closeErr != nil {
+		slog.Warn("Failed to close upgrader image pull reader", "error", closeErr)
+	}
+	slog.Info("Upgrader image pulled successfully", "image", ArcaneUpgraderImage)
+
+	// Try to get the /app/data mount from current container so upgrade logs persist.
+	appDataMount := dockerutils.MountForDestination(currentContainer.Mounts, "/app/data", "/app/data")
+	if appDataMount == nil {
+		slog.Warn("Could not detect /app/data mount; upgrader logs may not persist")
+	} else {
+		slog.Debug("Mounting /app/data into upgrader container", "type", appDataMount.Type, "source", appDataMount.Source)
+	}
+
+	// Create the upgrader container config
+	config := &containertypes.Config{
+		Image: ArcaneUpgraderImage,
+		Cmd:   []string{binaryPath, "upgrade", "--container", containerName},
+		Labels: map[string]string{
+			"com.getarcaneapp.arcane.upgrader": "true",
+			"com.getarcaneapp.arcane":          "true",
+		},
+	}
+
+	mounts := []mounttypes.Mount{
+		{Type: mounttypes.TypeBind, Source: "/var/run/docker.sock", Target: "/var/run/docker.sock"},
+	}
+	if appDataMount != nil {
+		mounts = append(mounts, *appDataMount)
+	}
+
+	keepUpgraderContainer := strings.EqualFold(strings.TrimSpace(os.Getenv("ARCANE_UPGRADE_KEEP_CONTAINER")), "true")
+	if keepUpgraderContainer {
+		slog.Info("Keeping upgrader container after exit (ARCANE_UPGRADE_KEEP_CONTAINER=true)")
+	}
+
+	hostConfig := &containertypes.HostConfig{
+		AutoRemove: !keepUpgraderContainer, // default: clean up after completion
+		Mounts:     mounts,
+	}
+
+	containerName = fmt.Sprintf("%s-upgrader-%d", containerName, time.Now().Unix())
+
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:     config,
+		HostConfig: hostConfig,
+		Name:       containerName,
+	})
+	if err != nil {
+		return fmt.Errorf("create upgrader container: %w", err)
+	}
+
+	// Start the upgrader container - it will run the upgrade and auto-remove
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
+		_, _ = dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
+		return fmt.Errorf("start upgrader container: %w", err)
+	}
+
+	slog.Info("Upgrade container started", "upgraderId", resp.ID[:12], "upgraderName", containerName)
+
+	return nil
+}
+
+func determineUpgradeBinaryPathInternal(labels map[string]string) string {
+	if libupdater.IsArcaneAgentContainer(labels) {
+		return "/app/arcane-agent"
+	}
+
+	return "/app/arcane"
+}
+
+// getCurrentContainerID detects if we're running in Docker and returns container ID
+func (s *SystemUpgradeService) getCurrentContainerID() (string, error) {
+	id, err := dockerutils.GetCurrentContainerID()
+	if err != nil {
+		return "", ErrNotRunningInDocker
+	}
+	return id, nil
+}
+
+// findArcaneContainer finds the container using the ID
+func (s *SystemUpgradeService) findArcaneContainer(ctx context.Context, containerId string) (containertypes.InspectResponse, error) {
+	dockerClient, err := s.dockerService.GetClient(ctx)
+	if err != nil {
+		return containertypes.InspectResponse{}, err
+	}
+
+	// Try to inspect the container directly
+	container, err := libarcane.ContainerInspectWithCompatibility(ctx, dockerClient, containerId, client.ContainerInspectOptions{})
+	if err == nil {
+		return container.Container, nil
+	}
+
+	// Fallback: search for containers with arcane image
+	filter := make(client.Filters)
+	filter = filter.Add("ancestor", "ghcr.io/getarcaneapp/arcane")
+
+	containers, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: filter,
+	})
+	if err != nil {
+		return containertypes.InspectResponse{}, err
+	}
+
+	for _, c := range containers.Items {
+		if strings.HasPrefix(c.ID, containerId) {
+			inspect, inspectErr := libarcane.ContainerInspectWithCompatibility(ctx, dockerClient, c.ID, client.ContainerInspectOptions{})
+			if inspectErr != nil {
+				return containertypes.InspectResponse{}, inspectErr
+			}
+			return inspect.Container, nil
+		}
+	}
+
+	// Try without filter - search all containers
+	allContainers, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{All: true})
+	if err != nil {
+		return containertypes.InspectResponse{}, err
+	}
+
+	for _, c := range allContainers.Items {
+		if strings.HasPrefix(c.ID, containerId) || c.ID == containerId {
+			inspect, inspectErr := libarcane.ContainerInspectWithCompatibility(ctx, dockerClient, c.ID, client.ContainerInspectOptions{})
+			if inspectErr != nil {
+				return containertypes.InspectResponse{}, inspectErr
+			}
+			return inspect.Container, nil
+		}
+	}
+
+	return containertypes.InspectResponse{}, ErrContainerNotFound
+}
