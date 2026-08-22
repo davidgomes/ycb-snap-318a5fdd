@@ -140,12 +140,25 @@ func mergeRulesForChart(accessor chart.Accessor, valuePrefix string, options Mer
 		return nil
 	}
 
-	annotationRules := annotationMergeRules(accessor.Annotations())
+	annotations := accessor.Annotations()
+	rules := annotationMergeRules(annotations)
 	annotationStrategies := make(map[string]string)
 	annotationKeys := make(map[string]string)
-	for path, rule := range annotationRules {
-		annotationStrategies[path] = rule.strategy
-		annotationKeys[path] = rule.key
+	for name, value := range annotations {
+		if strings.HasPrefix(name, MergeStrategyAnnotationPrefix) {
+			path := strings.TrimPrefix(name, MergeStrategyAnnotationPrefix)
+			if validMergePath(path) {
+				strategy := strings.TrimSpace(value)
+				if strategy == MergeStrategyAppend || strategy == MergeStrategyMerge {
+					annotationStrategies[path] = strategy
+				}
+			}
+		} else if strings.HasPrefix(name, MergeKeyAnnotationPrefix) {
+			path := strings.TrimPrefix(name, MergeKeyAnnotationPrefix)
+			if validMergePath(path) && validMergePath(value) {
+				annotationKeys[path] = value
+			}
+		}
 	}
 	strategyOverrides := parseMergeOverrides(options.MergeStrategies)
 	keyOverrides := parseMergeOverrides(options.MergeKeys)
@@ -161,13 +174,23 @@ func mergeRulesForChart(accessor chart.Accessor, valuePrefix string, options Mer
 		}
 	}
 
-	rules := make(map[string]mergeRule, len(annotationStrategies))
+	result := make(map[string]mergeRule, len(rules)+len(annotationStrategies))
 	for path, strategy := range annotationStrategies {
 		rule := mergeRule{strategy: strategy, key: annotationKeys[path]}
+		if annotationStrategy, ok := annotations[MergeStrategyAnnotationPrefix+path]; ok &&
+			strings.TrimSpace(annotationStrategy) == MergeStrategyMerge &&
+			rule.key == "" {
+			rule.strategy = MergeStrategyAppend
+		}
 		if rule.strategy == MergeStrategyMerge && rule.key == "" {
 			rule.strategy = MergeStrategyAppend
 		}
-		rules[path] = rule
+		result[path] = rule
+	}
+	for path, rule := range rules {
+		if _, exists := result[path]; !exists {
+			result[path] = rule
+		}
 	}
 
 	// A command-line strategy can add a strategy to a path not annotated by
@@ -177,15 +200,34 @@ func mergeRulesForChart(accessor chart.Accessor, valuePrefix string, options Mer
 		if !ok || (strategy != MergeStrategyAppend && strategy != MergeStrategyMerge) {
 			continue
 		}
-		if _, exists := rules[localPath]; !exists {
-			rule := mergeRule{strategy: strategy, key: annotationKeys[localPath]}
-			if rule.strategy == MergeStrategyMerge && rule.key == "" {
-				rule.strategy = MergeStrategyAppend
+		rule := result[localPath]
+		rule.strategy = strategy
+		if rule.strategy == MergeStrategyMerge && rule.key == "" {
+			rule.strategy = MergeStrategyAppend
+		}
+		result[localPath] = rule
+	}
+	for path, key := range keyOverrides {
+		localPath, ok := localMergePath(valuePrefix, path)
+		if !ok || !validMergePath(key) {
+			continue
+		}
+		if rule, exists := result[localPath]; exists {
+			rule.key = key
+			if rawStrategy, ok := annotationStrategies[localPath]; ok && rawStrategy == MergeStrategyMerge {
+				rule.strategy = MergeStrategyMerge
 			}
-			rules[localPath] = rule
+			cliPath := localPath
+			if valuePrefix != "" {
+				cliPath = valuePrefix + "." + localPath
+			}
+			if cliStrategy, ok := strategyOverrides[cliPath]; ok && cliStrategy == MergeStrategyMerge {
+				rule.strategy = MergeStrategyMerge
+			}
+			result[localPath] = rule
 		}
 	}
-	return rules
+	return result
 }
 
 func localMergePath(valuePrefix, path string) (string, bool) {
