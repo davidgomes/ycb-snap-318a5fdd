@@ -489,6 +489,10 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
         The transformer for date and datetime columns. By default, we use a
         :class:`~skrub.DatetimeEncoder`.
 
+    duration : transformer, "passthrough" or "drop", default=DurationEncoder instance
+        The transformer for duration columns. By default, we use a
+        :class:`~skrub.DurationEncoder`.
+
     specific_transformers : list of (transformer, list of column names) pairs, \
             default=()
         Override the categories above for the given columns and force using the
@@ -600,6 +604,7 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
 
     - `numeric`: floats, integers, and booleans.
     - `datetime`: datetimes and dates.
+    - `duration`: durations (timedelta / Duration).
     - `low_cardinality`: string and categorical columns with a count
       of unique values smaller than a given threshold (40 by default). Category encoding
       schemes such as one-hot encoding, ordinal encoding etc. are typically appropriate
@@ -1029,8 +1034,20 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
             name_details = None
         return _VisualBlock(
             "parallel",
-            [self.numeric, self.datetime, self.duration, self.low_cardinality, self.high_cardinality],
-            names=["numeric", "datetime", "duration", "low_cardinality", "high_cardinality"],
+            [
+                self.numeric,
+                self.datetime,
+                self.duration,
+                self.low_cardinality,
+                self.high_cardinality,
+            ],
+            names=[
+                "numeric",
+                "datetime",
+                "duration",
+                "low_cardinality",
+                "high_cardinality",
+            ],
             name_details=name_details,
         )
 
