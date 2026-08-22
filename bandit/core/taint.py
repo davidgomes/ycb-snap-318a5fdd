@@ -52,7 +52,9 @@ class TaintAnalyzer:
     def _analyze(self):
         # Assignment order should not make a real data flow disappear. A few
         # fixed-point passes also allow taint to cross nested function calls.
-        passes = max(2, sum(isinstance(n, ast.Assign) for n in ast.walk(self.tree)))
+        passes = max(
+            2, sum(isinstance(n, ast.Assign) for n in ast.walk(self.tree))
+        )
         for _ in range(passes):
             before = len(self.tainted_names)
             for node in ast.walk(self.tree):
@@ -114,7 +116,7 @@ class TaintAnalyzer:
                     self.tainted_names.add(parameter.arg)
             if arguments.vararg and any(
                 self._expr_tainted(argument)
-                for argument in positional[len(parameters) :]
+                for argument in positional[len(parameters):]
             ):
                 self.tainted_names.add(arguments.vararg.arg)
 
@@ -184,7 +186,7 @@ class TaintAnalyzer:
             if len(parts) >= 2 and parts[-2:] == [root, field]:
                 return True
         return any(
-            parts[index : index + 2] == [root, field]
+            parts[index:index + 2] == [root, field]
             for index in range(len(parts) - 1)
             for root, field in (("os", "environ"), ("sys", "argv"))
         )
