@@ -107,6 +107,7 @@ from PIL import Image, ImageChops
 import psd_tools.psd.engine_data as engine_data
 from psd_tools.api import pil_io
 from psd_tools.api.effects import Effects
+from psd_tools.api.blend_range import BlendRanges
 from psd_tools.api.mask import Mask
 from psd_tools.api.protocols import GroupMixinProtocol, LayerProtocol, PSDProtocol
 from psd_tools.api.shape import Origination, Stroke, VectorMask
@@ -244,6 +245,16 @@ class Layer(LayerProtocol):
         :return: int
         """
         return self._record.opacity
+
+    @property
+    def blend_ranges(self) -> BlendRanges:
+        return BlendRanges.from_raw(self._record.blending_ranges)
+
+    @blend_ranges.setter
+    def blend_ranges(self, value: BlendRanges) -> None:
+        if self._psd is not None:
+            self._psd._mark_updated()
+        value.apply_to_raw(self._record.blending_ranges)
 
     @opacity.setter
     def opacity(self, value: int) -> None:
