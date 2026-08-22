@@ -26,6 +26,13 @@ type EnvContextLike = {
     mode: Mode;
 };
 
+type MulticolumnCell = {
+    multicolumn: {
+        span: number;
+        align: string;
+    };
+};
+
 // Data stored in the ParseNode associated with the environment.
 export type AlignSpec = {type: "separator", separator: string} | {
     type: "align";
@@ -114,6 +121,7 @@ function parseArray(
     style: StyleStr,
 ): ParseNode<"array"> {
     parser.gullet.beginGroup();
+    parser.gullet.macros.set("\\@arrayenv", "1");
     if (!singleRow) {
         // \cr is equivalent to \\ without the optional size argument (see below)
         // TODO: provide helpful error when \cr is used outside array environment
@@ -178,6 +186,11 @@ function parseArray(
             mode: parser.mode,
             body: cellBody,
         };
+        if ((cell as AnyParseNode & Partial<MulticolumnCell>).multicolumn) {
+            // The marker is attached by the \multicolumn function below.
+            // Keep the cell as one item in the parse tree; the builders use
+            // the span when laying out the row.
+        }
         if (style) {
             cell = {
                 type: "styling",
@@ -480,6 +493,11 @@ const htmlBuilder: HtmlBuilder<"array"> = function(group, options) {
         for (r = 0; r < nr; ++r) {
             const row = body[r];
             const elem = row[c];
+            const multicolumn = elem &&
+                (elem as AnyParseNode & Partial<MulticolumnCell>).multicolumn;
+            if (multicolumn && c > 0) {
+                continue;
+            }
             if (!elem) {
                 continue;
             }
@@ -558,8 +576,15 @@ const mathmlBuilder: MathMLBuilder<"array"> = function(group, options) {
         const rw = group.body[i];
         const row = [];
         for (let j = 0; j < rw.length; j++) {
-            row.push(new MathNode("mtd",
-                [mml.buildGroup(rw[j], options)]));
+            const cell = rw[j];
+            const multicolumn = (cell as AnyParseNode & Partial<MulticolumnCell>)
+                .multicolumn;
+            const mtd = new MathNode("mtd", [mml.buildGroup(cell, options)]);
+            if (multicolumn) {
+                mtd.setAttribute("columnspan", String(multicolumn.span));
+                mtd.setAttribute("columnalign", alignMap[multicolumn.align].trim());
+            }
+            row.push(mtd);
         }
         if (group.tags && group.tags[i]) {
             row.unshift(glue);
@@ -1112,6 +1137,43 @@ defineEnvironment({
 
 defineMacro("\\nonumber", "\\gdef\\@eqnsw{0}");
 defineMacro("\\notag", "\\nonumber");
+
+defineFunction({
+    type: "text",
+    names: ["\\multicolumn"],
+    props: {
+        numArgs: 3,
+        allowedInMath: true,
+    },
+    handler(context, args) {
+        if (context.parser.gullet.macros.get("\\@arrayenv") !== "1") {
+            throw new ParseError("\\multicolumn valid only within array environments");
+        }
+        const number = args[0];
+        const alignment = args[1];
+        const nText = number.type === "ordgroup" &&
+            number.body.length === 1 && number.body[0].type === "textord"
+            ? number.body[0].text : "";
+        const alignText = alignment.type === "ordgroup"
+            ? alignment.body.map(node => {
+                if (node.type !== "textord" && node.type !== "atom") {
+                    return "";
+                }
+                return node.text;
+            }).join("") : "";
+        const span = Number(nText);
+        if (!/^[1-9]\d*$/.test(nText)) {
+            throw new ParseError("Invalid \\multicolumn span", context.token);
+        }
+        if (!/^\|*[lcr]\|*$/.test(alignText)) {
+            throw new ParseError("Invalid \\multicolumn alignment", context.token);
+        }
+        const align = alignText.replace(/\|/g, "");
+        const cell = args[2] as AnyParseNode & Partial<MulticolumnCell>;
+        cell.multicolumn = {span, align};
+        return cell;
+    },
+});
 
 // Catch \hline outside array environment
 defineFunction({
