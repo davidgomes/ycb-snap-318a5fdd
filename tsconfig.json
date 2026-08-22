@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "lib": ["ES2021", "dom"],
+    "module": "node16",
+    "allowJs": true,
+    "checkJs": true,
+    "declaration": true,
+    "declarationMap": true,
+    "noEmit": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "emitDeclarationOnly": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "moduleResolution": "nodenext",
+    "paths": {
+      "yjs": ["./src/index.js"],
+      "yjs/internals": ["./src/internals.js"],
+      "yjs/testHelper": ["./tests/testHelper.js"]
+    }
+  },
+  "files": ["./global.d.ts"],
+  "include": ["./src/**/*.js", "./tests/**/*.js"],
+  "exclude": ["node_modules", "dist"]
+}
