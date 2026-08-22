@@ -53,13 +53,7 @@ export declare namespace JsonSchema {
 		examples?: readonly t[]
 	}
 
-	type Composition =
-		| Union
-		| OneOf
-		| Intersection
-		| Not
-		| Conditional
-		| ThenElse
+	type Composition = Union | OneOf | Intersection | Not | Conditional | ThenElse
 
 	type NonBooleanBranch =
 		| Constrainable
