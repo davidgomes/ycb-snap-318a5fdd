@@ -4,6 +4,8 @@ import type { TestSequencer } from './types'
 import { slash } from '@vitest/utils/helpers'
 import { relative, resolve } from 'pathe'
 import { hash } from '../hash'
+import { durationEstimate } from './duration-history'
+import { sortByShardAffinity } from './shard-affinity'
 
 export class BaseSequencer implements TestSequencer {
   protected ctx: Vitest
@@ -34,7 +36,9 @@ export class BaseSequencer implements TestSequencer {
   // async so it can be extended by other sequelizers
   public async sort(files: TestSpecification[]): Promise<TestSpecification[]> {
     const cache = this.ctx.cache
-    return [...files].sort((a, b) => {
+    const estimates = new Map<string, number>()
+    const sequence = this.ctx.config.sequence
+    const sorted = [...files].sort((a, b) => {
       // "sequence.groupOrder" is higher priority
       const groupOrderDiff = a.project.config.sequence.groupOrder - b.project.config.sequence.groupOrder
       if (groupOrderDiff !== 0) {
@@ -81,9 +85,14 @@ export class BaseSequencer implements TestSequencer {
         return 1
       }
 
-      // run longer first
-      return bState.duration - aState.duration
+      const estimateA = estimates.get(a.moduleId) ?? durationEstimate(undefined, aState.duration, sequence.durationSmoothing)
+      const estimateB = estimates.get(b.moduleId) ?? durationEstimate(undefined, bState.duration, sequence.durationSmoothing)
+      return estimateB - estimateA
     })
+    if (sequence.affinity) {
+      return sortByShardAffinity(sorted, this.ctx.config.shard?.count ?? 1)
+    }
+    return sorted
   }
 
   // Calculate distributed shard range [start, end] distributed equally
