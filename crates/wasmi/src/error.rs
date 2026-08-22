@@ -158,8 +158,8 @@ impl Error {
     /// Returns `true` if this error represents a Wasm trap.
     pub(crate) fn is_wasm_trap(&self) -> bool {
         matches!(
-            self.as_trap_code(),
-            Some(trap_code) if !matches!(trap_code, TrapCode::OutOfFuel)
+            self.kind(),
+            ErrorKind::TrapCode(trap_code) if !matches!(trap_code, TrapCode::OutOfFuel)
         )
     }
 
