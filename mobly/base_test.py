@@ -718,16 +718,18 @@ class BaseTestClass:
 
     for group, participants in groups.items():
       devices = [participant.device for participant in participants]
-      setup_result, setup_error = self._run_hook(
-          STAGE_NAME_GROUP_SETUP,
-          self.group_setup,
-          args=(devices,),
-          group=group,
-          group_devices=participants,
-          call_on_fail=True,
-      )
-      group_setup_ok = setup_error is None and setup_result is not False
+      setup_result = None
+      setup_error = None
       try:
+        setup_result, setup_error = self._run_hook(
+            STAGE_NAME_GROUP_SETUP,
+            self.group_setup,
+            args=(devices,),
+            group=group,
+            group_devices=participants,
+            call_on_fail=True,
+        )
+        group_setup_ok = setup_error is None and setup_result is not False
         if not group_setup_ok:
           reason = setup_error or signals.TestSkip(
               'group_setup returned False'
@@ -788,13 +790,17 @@ class BaseTestClass:
           'synchronized_step is only available in group_setup, '
           'group_teardown, and test methods.'
       )
-    if timeout == 0:
-      raise signals.TestError(
-          'synchronized_step "%s" timed out immediately.' % name
-      )
     if phase in (STAGE_NAME_GROUP_SETUP, STAGE_NAME_GROUP_TEARDOWN):
+      if timeout == 0:
+        raise signals.TestError(
+            'synchronized_step "%s" timed out immediately.' % name
+        )
       return
     if not getattr(self._execution_local, 'explicit', False):
+      if timeout == 0:
+        raise signals.TestError(
+            'synchronized_step "%s" timed out immediately.' % name
+        )
       return
     group_devices = getattr(self._execution_local, 'group_devices', None)
     if not group_devices:
@@ -806,6 +812,11 @@ class BaseTestClass:
       if barrier is None:
         barrier = threading.Barrier(len(group_devices))
         self._synchronization_barriers[key] = barrier
+    if timeout == 0:
+      self._abort_synchronization_barrier(key, barrier)
+      raise signals.TestError(
+          'synchronized_step "%s" timed out immediately.' % name
+      )
     try:
       barrier.wait(timeout)
     except BaseException as e:
