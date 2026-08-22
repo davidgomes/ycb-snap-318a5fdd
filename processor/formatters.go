@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/csv"
+	"encoding/gob"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -499,8 +501,35 @@ func toOpenMetricsFiles(input chan *FileJob) string {
 // with the express idea of lowering memory usage, see https://github.com/boyter/scc/issues/210 for
 // the background on why this might be needed
 func toCSVStream(input chan *FileJob) string {
-	fmt.Println("Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc")
+	_ = toCSVStreamWriter(input, os.Stdout)
+	return ""
+}
 
+func compareCSVStreamJobs(a, b *FileJob, sortBy string) int {
+	switch sortBy {
+	case "name", "names":
+		return strings.Compare(a.Filename, b.Filename)
+	case "language", "languages", "lang", "langs":
+		return strings.Compare(a.Language, b.Language)
+	case "line", "lines":
+		return cmp.Compare(b.Lines, a.Lines)
+	case "blank", "blanks":
+		return cmp.Compare(b.Blank, a.Blank)
+	case "code", "codes":
+		return cmp.Compare(b.Code, a.Code)
+	case "comment", "comments":
+		return cmp.Compare(b.Comment, a.Comment)
+	case "complexity", "complexitys", "comp":
+		return cmp.Compare(b.Complexity, a.Complexity)
+	case "byte", "bytes":
+		return cmp.Compare(b.Bytes, a.Bytes)
+	default:
+		return strings.Compare(a.Filename, b.Filename)
+	}
+}
+
+func toCSVStreamWriter(input chan *FileJob, output io.Writer) string {
+	_, _ = fmt.Fprintln(output, "Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc")
 	var quoteRegex = regexp.MustCompile("\"")
 
 	for result := range input {
@@ -508,7 +537,7 @@ func toCSVStream(input chan *FileJob) string {
 		var location = "\"" + quoteRegex.ReplaceAllString(result.Location, "\"\"") + "\""
 		var filename = "\"" + quoteRegex.ReplaceAllString(result.Filename, "\"\"") + "\""
 
-		fmt.Printf("%s,%s,%s,%d,%d,%d,%d,%d,%d,%d\n",
+		_, _ = fmt.Fprintf(output, "%s,%s,%s,%d,%d,%d,%d,%d,%d,%d\n",
 			result.Language,
 			location,
 			filename,
@@ -828,6 +857,10 @@ func fileSummarize(input chan *FileJob) string {
 // both to files and to stdout. Not the most efficient way to do it in terms of memory
 // but seeing as the files are just summaries by this point it shouldn't be too bad
 func fileSummarizeMulti(input chan *FileJob) string {
+	if BoundedMemory {
+		return fileSummarizeMultiBounded(input)
+	}
+
 	// collect all the results
 	var results []*FileJob
 	for res := range input {
@@ -893,6 +926,179 @@ func fileSummarizeMulti(input chan *FileJob) string {
 	}
 
 	return str.String()
+}
+
+type boundedMemoryRecord struct {
+	Job *FileJob
+}
+
+func fileSummarizeMultiBounded(input chan *FileJob) string {
+	if err := os.MkdirAll(BoundedMemoryDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "unable to create bounded-memory directory: %s\n", err)
+		return ""
+	}
+
+	spill, err := os.CreateTemp(BoundedMemoryDir, "scc-bounded-memory-*.gob")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "unable to create bounded-memory spill file: %s\n", err)
+		return ""
+	}
+	defer spill.Close()
+
+	encoder := gob.NewEncoder(spill)
+	buffer := make([]*FileJob, 0, BoundedMemoryMaxInMemoryFiles)
+	spills := 0
+	peak := 0
+	writeRecord := func(job *FileJob) error {
+		return encoder.Encode(boundedMemoryRecord{Job: job})
+	}
+
+	for res := range input {
+		if len(buffer) < BoundedMemoryMaxInMemoryFiles {
+			buffer = append(buffer, res)
+			if len(buffer) > peak {
+				peak = len(buffer)
+			}
+			continue
+		}
+		if len(buffer) > 0 {
+			for _, job := range buffer {
+				if err := writeRecord(job); err != nil {
+					fmt.Fprintf(os.Stderr, "unable to write bounded-memory spill file: %s\n", err)
+					return ""
+				}
+			}
+			buffer = buffer[:0]
+		}
+		spills++
+		if err := writeRecord(res); err != nil {
+			fmt.Fprintf(os.Stderr, "unable to write bounded-memory spill file: %s\n", err)
+			return ""
+		}
+	}
+	for _, job := range buffer {
+		if err := writeRecord(job); err != nil {
+			fmt.Fprintf(os.Stderr, "unable to write bounded-memory spill file: %s\n", err)
+			return ""
+		}
+	}
+	if len(buffer) == 0 && spills == 0 {
+		if err := writeRecord(nil); err != nil {
+			fmt.Fprintf(os.Stderr, "unable to write bounded-memory spill file: %s\n", err)
+			return ""
+		}
+	}
+	if err := spill.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "unable to close bounded-memory spill file: %s\n", err)
+		return ""
+	}
+
+	var str strings.Builder
+	for s := range strings.SplitSeq(FormatMulti, ",") {
+		t := strings.SplitN(s, ":", 2)
+		if len(t) != 2 {
+			continue
+		}
+
+		if strings.EqualFold(t[0], "csv-stream") {
+			var destination io.Writer = os.Stdout
+			var file *os.File
+			if t[1] != "stdout" {
+				file, err = os.OpenFile(t[1], os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "%s unable to be written to for format %s: %s\n", t[1], t[0], err)
+					continue
+				}
+				destination = file
+			}
+			jobs := readBoundedMemoryJobs(spill.Name())
+			if SortBy != "" {
+				var sorted []*FileJob
+				for job := range jobs {
+					if job != nil {
+						sorted = append(sorted, job)
+					}
+				}
+				slices.SortStableFunc(sorted, func(a, b *FileJob) int {
+					return compareCSVStreamJobs(a, b, SortBy)
+				})
+				jobs = make(chan *FileJob, len(sorted))
+				for _, job := range sorted {
+					jobs <- job
+				}
+				close(jobs)
+			}
+			_ = toCSVStreamWriter(jobs, destination)
+			if file != nil {
+				_ = file.Close()
+			}
+			continue
+		}
+
+		val := formatMultiValue(readBoundedMemoryJobs(spill.Name()), t[0])
+		if t[1] == "stdout" {
+			str.WriteString(val)
+			str.WriteString("\n")
+		} else if err := os.WriteFile(t[1], []byte(val), 0600); err != nil {
+			fmt.Fprintf(os.Stderr, "%s unable to be written to for format %s: %s\n", t[1], t[0], err)
+		}
+	}
+
+	if BoundedMemoryStats {
+		fmt.Fprintf(os.Stderr, "bounded-memory: spills=%d peak_in_memory_files=%d\n", spills, peak)
+	}
+	return str.String()
+}
+
+func readBoundedMemoryJobs(path string) chan *FileJob {
+	output := make(chan *FileJob)
+	go func() {
+		defer close(output)
+		file, err := os.Open(path)
+		if err != nil {
+			return
+		}
+		defer file.Close()
+		decoder := gob.NewDecoder(file)
+		for {
+			var record boundedMemoryRecord
+			if err := decoder.Decode(&record); err != nil {
+				return
+			}
+			if record.Job != nil {
+				output <- record.Job
+			}
+		}
+	}()
+	return output
+}
+
+func formatMultiValue(input chan *FileJob, format string) string {
+	switch strings.ToLower(format) {
+	case "tabular":
+		return fileSummarizeShort(input)
+	case "wide":
+		return fileSummarizeLong(input)
+	case "json":
+		return toJSON(input)
+	case "json2":
+		return toJSON2(input)
+	case "cloc-yaml", "cloc-yml":
+		return toClocYAML(input)
+	case "csv":
+		return toCSV(input)
+	case "html":
+		return toHtml(input)
+	case "html-table":
+		return toHtmlTable(input)
+	case "sql":
+		return toSql(input)
+	case "sql-insert":
+		return toSqlInsert(input)
+	case "openmetrics":
+		return toOpenMetrics(input)
+	}
+	return ""
 }
 
 func fileSummarizeLong(input chan *FileJob) string {
