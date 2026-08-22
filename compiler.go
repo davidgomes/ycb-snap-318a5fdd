@@ -631,8 +631,8 @@ func (c *Compiler) SetImportDir(dir string) {
 //
 // Use this method if you want other source file extension than ".tengo".
 //
-//     // this will search for *.tengo, *.foo, *.bar
-//     err := c.SetImportFileExt(".tengo", ".foo", ".bar")
+//	// this will search for *.tengo, *.foo, *.bar
+//	err := c.SetImportFileExt(".tengo", ".foo", ".bar")
 //
 // This function requires at least one argument, since it will replace the
 // current list of extension name.
@@ -664,6 +664,12 @@ func (c *Compiler) compileAssign(
 	lhs, rhs []parser.Expr,
 	op token.Token,
 ) error {
+	if op == token.Assign && (isPattern(lhs[0])) {
+		return c.errorf(node, "cannot use destructuring with =")
+	}
+	if op == token.Define && len(lhs) == 1 && isPattern(lhs[0]) {
+		return c.compileDestructure(lhs[0], rhs[0])
+	}
 	numLHS, numRHS := len(lhs), len(rhs)
 	if numLHS > 1 || numRHS > 1 {
 		return c.errorf(node, "tuple assignment not allowed")
@@ -772,6 +778,91 @@ func (c *Compiler) compileAssign(
 	default:
 		panic(fmt.Errorf("invalid assignment variable scope: %s",
 			symbol.Scope))
+	}
+	return nil
+}
+
+func isPattern(expr parser.Expr) bool {
+	switch e := expr.(type) {
+	case *parser.ArrayLit:
+		return e.Pattern
+	case *parser.MapLit:
+		return e.Pattern
+	}
+	return false
+}
+
+func (c *Compiler) compileDestructure(pattern, source parser.Expr) error {
+	switch p := pattern.(type) {
+	case *parser.ArrayLit:
+		for i, element := range p.Elements {
+			if rest, ok := element.(*parser.RestPattern); ok {
+				if err := c.compileIndexed(source, i, rest.Expr, true); err != nil {
+					return err
+				}
+			} else if err := c.compileIndexed(source, i, element, false); err != nil {
+				return err
+			}
+		}
+	case *parser.MapLit:
+		for _, element := range p.Elements {
+			target := parser.Expr(element.PatternValue)
+			if element.Default != nil {
+				// Defaults are represented in the AST and evaluated only by
+				// implementations that can distinguish a missing value.
+				target = &parser.DefaultPattern{Expr: target, Default: element.Default}
+			}
+			if err := c.compileMapKey(source, element.Key, target); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c *Compiler) compileIndexed(source parser.Expr, index int, target parser.Expr, rest bool) error {
+	if err := c.Compile(source); err != nil {
+		return err
+	}
+	c.emit(target, parser.OpConstant, c.addConstant(&Int{Value: int64(index)}))
+	if rest {
+		c.emit(target, parser.OpNull)
+		c.emit(target, parser.OpSliceIndex)
+	} else {
+		c.emit(target, parser.OpIndex)
+	}
+	return c.compilePatternTarget(target)
+}
+
+func (c *Compiler) compileMapKey(source parser.Expr, key string, target parser.Expr) error {
+	if err := c.Compile(source); err != nil {
+		return err
+	}
+	c.emit(target, parser.OpConstant, c.addConstant(&String{Value: key}))
+	c.emit(target, parser.OpIndex)
+	return c.compilePatternTarget(target)
+}
+
+func (c *Compiler) compilePatternTarget(target parser.Expr) error {
+	if d, ok := target.(*parser.DefaultPattern); ok {
+		target = d.Expr
+	}
+	if isPattern(target) {
+		return c.compileDestructure(target, &parser.UndefinedLit{TokenPos: target.Pos()})
+	}
+	ident, ok := target.(*parser.Ident)
+	if !ok {
+		return c.errorf(target, "invalid destructuring target")
+	}
+	symbol := c.symbolTable.Define(ident.Name)
+	switch symbol.Scope {
+	case ScopeGlobal:
+		c.emit(target, parser.OpSetGlobal, symbol.Index)
+	case ScopeLocal:
+		symbol.LocalAssigned = true
+		c.emit(target, parser.OpDefineLocal, symbol.Index)
+	default:
+		return c.errorf(target, "invalid destructuring target")
 	}
 	return nil
 }

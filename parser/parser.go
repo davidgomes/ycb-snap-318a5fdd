@@ -949,6 +949,19 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 	switch p.token {
 	case token.Assign, token.Define: // assignment statement
 		pos, tok := p.pos, p.token
+		if tok == token.Define && len(x) == 1 {
+			switch pattern := x[0].(type) {
+			case *ArrayLit:
+				pattern.Pattern = true
+			case *MapLit:
+				pattern.Pattern = true
+				for _, element := range pattern.Elements {
+					if ident, ok := element.Value.(*Ident); ok {
+						element.PatternValue = ident
+					}
+				}
+			}
+		}
 		p.next()
 		y := p.parseExprList()
 		return &AssignStmt{
@@ -1021,6 +1034,76 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 	return &ExprStmt{Expr: x[0]}
 }
 
+func (p *Parser) parsePattern() Expr {
+	if p.token == token.LBrack {
+		pos := p.expect(token.LBrack)
+		var elems []Expr
+		for p.token != token.RBrack && p.token != token.EOF {
+			if p.token == token.Ellipsis {
+				rp := p.pos
+				p.next()
+				elems = append(elems, &RestPattern{Expr: p.parseIdent(), Pos_: rp})
+				if p.token == token.Comma {
+					p.next()
+					if p.token != token.RBrack {
+						p.error(p.pos, "rest element must be last")
+					}
+				}
+				break
+			}
+			e := p.parsePatternAtom()
+			elems = append(elems, e)
+			if p.token != token.Comma {
+				break
+			}
+			p.next()
+		}
+		r := p.expect(token.RBrack)
+		return &ArrayLit{Elements: elems, LBrack: pos, RBrack: r, Pattern: true}
+	}
+	pos := p.expect(token.LBrace)
+	var elems []*MapElementLit
+	for p.token != token.RBrace && p.token != token.EOF {
+		kpos := p.pos
+		key := p.tokenLit
+		p.expect(token.Ident)
+		var value *Ident
+		if p.token == token.Colon {
+			p.next()
+			value = p.parseIdent()
+		} else {
+			value = &Ident{Name: key, NamePos: kpos}
+		}
+		var def Expr
+		if p.token == token.Assign {
+			p.next()
+			def = p.parseExpr()
+		}
+		elems = append(elems, &MapElementLit{Key: key, KeyPos: kpos,
+			PatternValue: value, Default: def})
+		if p.token != token.Comma {
+			break
+		}
+		p.next()
+	}
+	r := p.expect(token.RBrace)
+	return &MapLit{Elements: elems, LBrace: pos, RBrace: r, Pattern: true}
+}
+
+func (p *Parser) parsePatternAtom() Expr {
+	var e Expr
+	if p.token == token.LBrack || p.token == token.LBrace {
+		e = p.parsePattern()
+	} else {
+		e = p.parseIdent()
+	}
+	if p.token == token.Assign {
+		p.next()
+		return &DefaultPattern{Expr: e, Default: p.parseExpr()}
+	}
+	return e
+}
+
 func (p *Parser) parseExprList() (list []Expr) {
 	if p.trace {
 		defer untracep(tracep(p, "ExpressionList"))
@@ -1052,11 +1135,18 @@ func (p *Parser) parseMapElementLit() *MapElementLit {
 	p.next()
 	colonPos := p.expect(token.Colon)
 	valueExpr := p.parseExpr()
+	var defaultExpr Expr
+	if valueIdent, ok := valueExpr.(*Ident); ok && p.token == token.Assign {
+		p.next()
+		defaultExpr = p.parseExpr()
+		valueExpr = valueIdent
+	}
 	return &MapElementLit{
 		Key:      name,
 		KeyPos:   pos,
 		ColonPos: colonPos,
 		Value:    valueExpr,
+		Default:  defaultExpr,
 	}
 }
 
