@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/liweiyi88/onedump/encryption"
 	"github.com/liweiyi88/onedump/notifier/slack"
 	"github.com/liweiyi88/onedump/storage/dropbox"
 	"github.com/liweiyi88/onedump/storage/gdrive"
@@ -39,7 +40,7 @@ func (dump *Dump) Validate() error {
 	}
 
 	for _, job := range dump.Jobs {
-		err := job.validate()
+		err := job.Validate()
 		if err != nil {
 			errs = errors.Join(errs, err)
 		}
@@ -53,8 +54,9 @@ type Job struct {
 	DBDriver     string   `yaml:"dbdriver"`
 	DBDriverPath string   `yaml:"driverpath"`
 	DBDsn        string   `yaml:"dbdsn"`
-	Gzip         bool     `yaml:"gzip"`
-	Unique       bool     `yaml:"unique"`
+	Gzip         bool              `yaml:"gzip"`
+	Unique       bool              `yaml:"unique"`
+	Encryption   encryption.Config `yaml:"encryption"`
 	SshHost      string   `yaml:"sshhost"`
 	SshUser      string   `yaml:"sshuser"`
 	SshKey       string   `yaml:"sshkey"`
@@ -114,7 +116,7 @@ func NewJob(name, driver, dbDsn string, opts ...Option) *Job {
 	return job
 }
 
-func (job Job) validate() error {
+func (job Job) Validate() error {
 	if strings.TrimSpace(job.Name) == "" {
 		return ErrMissingJobName
 	}
@@ -127,7 +129,15 @@ func (job Job) validate() error {
 		return ErrMissingDBDriver
 	}
 
+	if err := job.Encryption.Validate(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (job Job) Encrypted() bool {
+	return job.Encryption.Enabled
 }
 
 func (job *Job) ViaSsh() bool {
