@@ -125,6 +125,14 @@ func encodedCount(d *decoder, name string, max uint64) int {
 	return int(n)
 }
 
+func readShapeIndexBool(d *decoder) bool {
+	value := d.readUint8()
+	if d.err == nil && value > 1 {
+		d.err = fmt.Errorf("invalid boolean value %d", value)
+	}
+	return value == 1
+}
+
 // Decode restores both the shapes and the already-built spatial cell
 // structure. The receiver is changed only after the complete input is valid.
 func (s *ShapeIndex) Decode(r io.Reader) error {
@@ -152,7 +160,7 @@ func (s *ShapeIndex) Decode(r io.Reader) error {
 	tmp.nextID = int32(nextID)
 	tmp.shapes = make(map[int32]Shape, nextID)
 	for id := uint32(0); id < nextID; id++ {
-		present := d.readBool()
+		present := readShapeIndexBool(d)
 		if d.err != nil {
 			return d.err
 		}
@@ -168,7 +176,7 @@ func (s *ShapeIndex) Decode(r io.Reader) error {
 		}
 		shape := &serializedShape{
 			dimension: dimension,
-			reference: ReferencePoint{Point: readPoint(d), Contained: d.readBool()},
+			reference: ReferencePoint{Point: readPoint(d), Contained: readShapeIndexBool(d)},
 		}
 		edgeCount := encodedCount(d, "shape edges", maxEncodedShapeIndexEdges)
 		shape.edges = make([]Edge, edgeCount)
@@ -212,7 +220,7 @@ func (s *ShapeIndex) Decode(r io.Reader) error {
 		cell := NewShapeIndexCell(shapeCount)
 		for j := range cell.shapes {
 			shapeID := int32(d.readUint32())
-			contains := d.readBool()
+			contains := readShapeIndexBool(d)
 			edgeCount := encodedCount(d, "clipped edges", maxEncodedShapeIndexEdges)
 			if shapeID < 0 || uint32(shapeID) >= nextID || tmp.shapes[shapeID] == nil {
 				return fmt.Errorf("invalid clipped shape ID %d", shapeID)
