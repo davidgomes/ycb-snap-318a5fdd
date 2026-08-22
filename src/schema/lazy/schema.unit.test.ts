@@ -7,12 +7,13 @@ import { JSONSchemer } from '~/schema/actions/jsonSchemer/index.js'
 import { Parser } from '~/schema/actions/parse/index.js'
 import { ZodSchemer } from '~/schema/actions/zodSchemer/index.js'
 import { item, lazy, list, map, string } from '~/schema/index.js'
-import type { MapSchema } from '~/schema/map/index.js'
+
+type RecursiveMapSchema = ReturnType<typeof map>
 
 describe('lazy schema', () => {
   test('resolves once and checks recursive schemas', () => {
     const thunk = vi.fn()
-    const treeSchema: MapSchema = map({
+    const treeSchema: RecursiveMapSchema = map({
       value: string(),
       children: list(lazy(() => treeSchema)).optional()
     })
@@ -26,7 +27,7 @@ describe('lazy schema', () => {
   })
 
   test('parses and formats recursive values', () => {
-    const treeSchema: MapSchema = map({
+    const treeSchema: RecursiveMapSchema = map({
       value: string(),
       children: list(lazy(() => treeSchema)).optional()
     })
@@ -48,7 +49,7 @@ describe('lazy schema', () => {
   })
 
   test('serializes and deserializes recursive DTOs', () => {
-    const treeSchema: MapSchema = map({
+    const treeSchema: RecursiveMapSchema = map({
       value: string(),
       children: list(lazy(() => treeSchema)).optional()
     })
@@ -67,7 +68,7 @@ describe('lazy schema', () => {
   })
 
   test('exports recursive JSON Schema and Zod schemas', () => {
-    const treeSchema: MapSchema = map({
+    const treeSchema: RecursiveMapSchema = map({
       value: string(),
       children: list(lazy(() => treeSchema)).optional()
     })
@@ -86,7 +87,7 @@ describe('lazy schema', () => {
   })
 
   test('finds paths and discriminator schemas through lazy references', () => {
-    const treeSchema: MapSchema = map({
+    const treeSchema: RecursiveMapSchema = map({
       value: string(),
       child: lazy(() => treeSchema).optional()
     })
