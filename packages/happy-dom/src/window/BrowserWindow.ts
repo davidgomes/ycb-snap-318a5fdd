@@ -1419,6 +1419,10 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 						settings.errorCapture === BrowserErrorCaptureEnum.tryAndCatch);
 
 				const id = TIMER.setTimeout(() => {
+					if (this.closed) {
+						zeroDelayTimeout.timeouts = null;
+						return;
+					}
 					// We need to call endTimer() before the callback as the callback might throw an error.
 					this.#browserFrame[PropertySymbol.asyncTaskManager].endTimer(id);
 					const timeouts = zeroDelayTimeout.timeouts!;
@@ -1458,6 +1462,9 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 
 		const id = TIMER.setTimeout(
 			() => {
+				if (this.closed) {
+					return;
+				}
 				// We need to call endTimer() before the callback as the callback might throw an error.
 				this.#browserFrame[PropertySymbol.asyncTaskManager].endTimer(id);
 				if (useTryCatch) {
@@ -1528,6 +1535,10 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 		let iterations = 0;
 		const id = TIMER.setInterval(
 			() => {
+				if (this.closed) {
+					this.clearInterval(id);
+					return;
+				}
 				if (useTryCatch) {
 					let result: any;
 					try {
@@ -1616,6 +1627,9 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 			(!settings.disableErrorCapturing &&
 				settings.errorCapture === BrowserErrorCaptureEnum.tryAndCatch);
 		const id = TIMER.setImmediate(() => {
+			if (this.closed) {
+				return;
+			}
 			// We need to call endImmediate() before the callback as the callback might throw an error.
 			this.#browserFrame[PropertySymbol.asyncTaskManager].endImmediate(id);
 			if (useTryCatch) {
@@ -1902,6 +1916,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 		super[PropertySymbol.destroy]();
 
 		(<boolean>this.closed) = true;
+		this.#zeroDelayTimeout.timeouts = null;
 
 		const mutationObservers = this[PropertySymbol.mutationObservers];
 

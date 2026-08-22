@@ -12,8 +12,9 @@ import DOMExceptionNameEnum from '../exception/DOMExceptionNameEnum.js';
 import MultipartFormDataParser from './multipart/MultipartFormDataParser.js';
 import type BrowserWindow from '../window/BrowserWindow.js';
 import type ICachedResponse from './cache/response/ICachedResponse.js';
-import { Buffer } from 'buffer';
+import type { Buffer } from 'buffer';
 import WindowBrowserContext from '../window/WindowBrowserContext.js';
+import type AsyncTaskManager from '../async-task-manager/AsyncTaskManager.js';
 
 const REDIRECT_STATUS_CODES = [301, 302, 303, 307, 308];
 
@@ -98,44 +99,7 @@ export default class Response implements Response {
 	 * @returns Array buffer.
 	 */
 	public async arrayBuffer(): Promise<ArrayBuffer> {
-		const window = this[PropertySymbol.window];
-
-		if (this.bodyUsed) {
-			throw new window.DOMException(
-				`Body has already been used for "${this.url}".`,
-				DOMExceptionNameEnum.invalidStateError
-			);
-		}
-
-		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
-
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return new ArrayBuffer(0);
-		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
-
-		(<boolean>this.bodyUsed) = true;
-
-		let buffer: Buffer | null = this[PropertySymbol.buffer];
-
-		if (!buffer) {
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
-			});
-
-			try {
-				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-			} catch (error) {
-				asyncTaskManager.endTask(taskID);
-				throw error;
-			}
-
-			asyncTaskManager.endTask(taskID);
-		}
-
-		this.#storeBodyInCache(buffer);
+		const buffer = await this.#readBodyBuffer();
 
 		return <ArrayBuffer>(
 			buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
@@ -160,44 +124,7 @@ export default class Response implements Response {
 	 * @returns Buffer.
 	 */
 	public async buffer(): Promise<Buffer> {
-		const window = this[PropertySymbol.window];
-
-		if (this.bodyUsed) {
-			throw new window.DOMException(
-				`Body has already been used for "${this.url}".`,
-				DOMExceptionNameEnum.invalidStateError
-			);
-		}
-
-		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
-
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return Buffer.alloc(0);
-		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
-
-		(<boolean>this.bodyUsed) = true;
-
-		let buffer: Buffer | null = this[PropertySymbol.buffer];
-
-		if (!buffer) {
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
-			});
-			try {
-				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-			} catch (error) {
-				asyncTaskManager.endTask(taskID);
-				throw error;
-			}
-			asyncTaskManager.endTask(taskID);
-		}
-
-		this.#storeBodyInCache(buffer);
-
-		return buffer;
+		return await this.#readBodyBuffer();
 	}
 
 	/**
@@ -206,43 +133,7 @@ export default class Response implements Response {
 	 * @returns Text.
 	 */
 	public async text(): Promise<string> {
-		const window = this[PropertySymbol.window];
-
-		if (this.bodyUsed) {
-			throw new window.DOMException(
-				`Body has already been used for "${this.url}".`,
-				DOMExceptionNameEnum.invalidStateError
-			);
-		}
-
-		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
-
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return '';
-		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
-
-		(<boolean>this.bodyUsed) = true;
-
-		let buffer: Buffer | null = this[PropertySymbol.buffer];
-
-		if (!buffer) {
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
-			});
-			try {
-				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-			} catch (error) {
-				asyncTaskManager.endTask(taskID);
-				throw error;
-			}
-			asyncTaskManager.endTask(taskID);
-		}
-
-		this.#storeBodyInCache(buffer);
-
+		const buffer = await this.#readBodyBuffer();
 		return new TextDecoder().decode(buffer);
 	}
 
@@ -264,16 +155,13 @@ export default class Response implements Response {
 	public async formData(): Promise<FormData> {
 		const window = this[PropertySymbol.window];
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
-
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return new window.FormData();
-		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
 		const contentType = this.headers.get('Content-Type');
 
-		if (contentType && this.body && /multipart/i.test(contentType)) {
+		if (
+			contentType &&
+			(this.body || this[PropertySymbol.buffer]) &&
+			/multipart/i.test(contentType)
+		) {
 			if (this.bodyUsed) {
 				throw new window.DOMException(
 					`Body has already been used for "${this.url}".`,
@@ -281,11 +169,30 @@ export default class Response implements Response {
 				);
 			}
 
+			if (!browserFrame) {
+				const buffered = this[PropertySymbol.buffer];
+				if (!buffered) {
+					throw FetchBodyUtility.getBodyStreamAbortError(window);
+				}
+
+				(<boolean>this.bodyUsed) = true;
+				const result = await MultipartFormDataParser.streamToFormData(
+					window,
+					{
+						body: FetchBodyUtility.toReadableStream(buffered),
+						[PropertySymbol.error]: null,
+						[PropertySymbol.aborted]: false
+					},
+					contentType
+				);
+				this.#storeBodyInCache(buffered);
+				return result.formData;
+			}
+
 			(<boolean>this.bodyUsed) = true;
 
-			const taskID = browserFrame[PropertySymbol.asyncTaskManager].startTask(() => {
-				this[PropertySymbol.aborted] = true;
-			});
+			const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
+			const taskID = this.#startBodyTask(asyncTaskManager);
 			let formData: FormData;
 			let buffer: Buffer;
 
@@ -293,13 +200,11 @@ export default class Response implements Response {
 				const result = await MultipartFormDataParser.streamToFormData(window, this, contentType);
 				formData = result.formData;
 				buffer = result.buffer;
-			} catch (error) {
+			} finally {
 				asyncTaskManager.endTask(taskID);
-				throw error;
 			}
 
 			this.#storeBodyInCache(buffer);
-			asyncTaskManager.endTask(taskID);
 
 			return formData;
 		}
@@ -344,6 +249,64 @@ export default class Response implements Response {
 		(<string>response.url) = this.url;
 
 		return response;
+	}
+
+	/**
+	 * Reads the response body as a Buffer, including after shutdown when already buffered.
+	 *
+	 * @returns Buffer.
+	 */
+	async #readBodyBuffer(): Promise<Buffer> {
+		const window = this[PropertySymbol.window];
+
+		if (this.bodyUsed) {
+			throw new window.DOMException(
+				`Body has already been used for "${this.url}".`,
+				DOMExceptionNameEnum.invalidStateError
+			);
+		}
+
+		let buffer: Buffer | null = this[PropertySymbol.buffer];
+		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
+
+		if (!buffer && !browserFrame) {
+			throw FetchBodyUtility.getBodyStreamAbortError(window);
+		}
+
+		(<boolean>this.bodyUsed) = true;
+
+		if (!buffer) {
+			const asyncTaskManager = browserFrame![PropertySymbol.asyncTaskManager];
+			const taskID = this.#startBodyTask(asyncTaskManager);
+
+			try {
+				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
+			} finally {
+				asyncTaskManager.endTask(taskID);
+			}
+		}
+
+		this.#storeBodyInCache(buffer);
+
+		return buffer;
+	}
+
+	/**
+	 * Starts an async task that aborts body consumption when the page is shut down.
+	 *
+	 * @param asyncTaskManager Async task manager.
+	 * @returns Task ID.
+	 */
+	#startBodyTask(asyncTaskManager: AsyncTaskManager): number {
+		try {
+			return asyncTaskManager.startTask(() => {
+				this[PropertySymbol.aborted] = true;
+				FetchBodyUtility.abortBodyReader(this);
+			});
+		} catch {
+			this[PropertySymbol.aborted] = true;
+			throw FetchBodyUtility.getBodyStreamAbortError(this[PropertySymbol.window]);
+		}
 	}
 
 	/**

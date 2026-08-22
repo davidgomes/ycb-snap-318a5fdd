@@ -738,6 +738,11 @@ export default class Fetch {
 				this.response.body.cancel(error);
 			}
 		}
+
+		FetchBodyUtility.abortBodyReader(this.request);
+		if (this.response) {
+			FetchBodyUtility.abortBodyReader(this.response);
+		}
 	}
 
 	/**
@@ -1063,6 +1068,11 @@ export default class Fetch {
 			if (!this.response.body.locked) {
 				this.response.body.cancel(error);
 			}
+		}
+
+		FetchBodyUtility.abortBodyReader(this.request);
+		if (this.response) {
+			FetchBodyUtility.abortBodyReader(this.response);
 		}
 
 		if (this.reject) {

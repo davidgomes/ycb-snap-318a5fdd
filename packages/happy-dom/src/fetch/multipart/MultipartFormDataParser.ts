@@ -5,6 +5,7 @@ import MultipartReader from './MultipartReader.js';
 import DOMExceptionNameEnum from '../../exception/DOMExceptionNameEnum.js';
 import { Buffer } from 'buffer';
 import type BrowserWindow from '../../window/BrowserWindow.js';
+import FetchBodyUtility from '../utilities/FetchBodyUtility.js';
 
 /**
  * Multipart form data factory.
@@ -58,26 +59,50 @@ export default class MultipartFormDataParser {
 			);
 		}
 
+		if (requestOrResponse[PropertySymbol.error]) {
+			throw requestOrResponse[PropertySymbol.error];
+		}
+		if (requestOrResponse[PropertySymbol.aborted]) {
+			throw FetchBodyUtility.getBodyStreamAbortError(window);
+		}
+
 		const bodyReader = body.getReader();
+		FetchBodyUtility.attachBodyReader(requestOrResponse, bodyReader);
 		const reader = new MultipartReader(window, match[1] || match[2]);
 		const chunks: any[] = [];
 		let buffer: Buffer;
 		const bytes = 0;
 
-		let readResult = await bodyReader.read();
+		try {
+			let readResult = await bodyReader.read();
 
-		while (!readResult.done) {
+			while (!readResult.done) {
+				if (requestOrResponse[PropertySymbol.error]) {
+					throw requestOrResponse[PropertySymbol.error];
+				}
+				if (requestOrResponse[PropertySymbol.aborted]) {
+					throw FetchBodyUtility.getBodyStreamAbortError(window);
+				}
+				reader.write(readResult.value);
+				readResult = await bodyReader.read();
+			}
+
 			if (requestOrResponse[PropertySymbol.error]) {
 				throw requestOrResponse[PropertySymbol.error];
 			}
 			if (requestOrResponse[PropertySymbol.aborted]) {
-				throw new window.DOMException(
-					'Failed to read response body: The stream was aborted.',
-					DOMExceptionNameEnum.abortError
-				);
+				throw FetchBodyUtility.getBodyStreamAbortError(window);
 			}
-			reader.write(readResult.value);
-			readResult = await bodyReader.read();
+		} catch (error) {
+			if (requestOrResponse[PropertySymbol.error]) {
+				throw requestOrResponse[PropertySymbol.error];
+			}
+			if (requestOrResponse[PropertySymbol.aborted]) {
+				throw FetchBodyUtility.getBodyStreamAbortError(window);
+			}
+			throw error;
+		} finally {
+			FetchBodyUtility.detachBodyReader(requestOrResponse, bodyReader);
 		}
 
 		try {

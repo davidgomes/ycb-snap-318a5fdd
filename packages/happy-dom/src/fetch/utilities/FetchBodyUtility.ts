@@ -12,10 +12,90 @@ import { Buffer } from 'buffer';
 import Stream from 'stream';
 import type BrowserWindow from '../../window/BrowserWindow.js';
 
+const bodyReaders = new WeakMap<object, ReadableStreamDefaultReader<Uint8Array>>();
+
 /**
  * Fetch body utility.
  */
 export default class FetchBodyUtility {
+	/**
+	 * Returns the AbortError used when body consumption is interrupted by shutdown.
+	 *
+	 * @param window Window.
+	 * @returns DOMException.
+	 */
+	public static getBodyStreamAbortError(window: BrowserWindow): DOMException {
+		return new window.DOMException(
+			'Failed to read response body: The stream was aborted.',
+			DOMExceptionNameEnum.abortError
+		);
+	}
+
+	/**
+	 * Cancels an in-flight body reader so pending read() calls settle.
+	 *
+	 * @param requestOrResponse Request or Response.
+	 */
+	public static abortBodyReader(requestOrResponse: object): void {
+		const reader = bodyReaders.get(requestOrResponse);
+		if (!reader) {
+			return;
+		}
+		const result = reader.cancel();
+		if (result && typeof result.catch === 'function') {
+			result.catch(() => {});
+		}
+	}
+
+	/**
+	 * Associates a stream reader with a request or response so shutdown can cancel it.
+	 *
+	 * @param requestOrResponse Request or Response.
+	 * @param reader Reader.
+	 */
+	public static attachBodyReader(
+		requestOrResponse: object,
+		reader: ReadableStreamDefaultReader<Uint8Array>
+	): void {
+		bodyReaders.set(requestOrResponse, reader);
+	}
+
+	/**
+	 * Removes a stream reader association after consumption finishes.
+	 *
+	 * @param requestOrResponse Request or Response.
+	 * @param reader Reader.
+	 */
+	public static detachBodyReader(
+		requestOrResponse: object,
+		reader: ReadableStreamDefaultReader<Uint8Array>
+	): void {
+		if (bodyReaders.get(requestOrResponse) === reader) {
+			bodyReaders.delete(requestOrResponse);
+		}
+	}
+
+	/**
+	 * Throws if body consumption has been aborted or failed.
+	 *
+	 * @param window Window.
+	 * @param requestOrResponse Request or Response.
+	 */
+	static #throwIfBodyInterrupted(
+		window: BrowserWindow,
+		requestOrResponse: {
+			[PropertySymbol.aborted]: boolean;
+			[PropertySymbol.error]: Error | null;
+		}
+	): void {
+		if (requestOrResponse[PropertySymbol.error]) {
+			throw requestOrResponse[PropertySymbol.error];
+		}
+		if (requestOrResponse[PropertySymbol.aborted]) {
+			throw this.getBodyStreamAbortError(window);
+		}
+	}
+
 	/**
 	 * Parses body and returns stream and type.
 	 *
@@ -193,32 +273,31 @@ export default class FetchBodyUtility {
 			return Buffer.alloc(0);
 		}
 
-		if (requestOrResponse[PropertySymbol.error]) {
-			throw requestOrResponse[PropertySymbol.error];
-		}
+		this.#throwIfBodyInterrupted(window, requestOrResponse);
 
 		const reader = body.getReader();
+		bodyReaders.set(requestOrResponse, reader);
 		const chunks = [];
 		let bytes = 0;
 
 		try {
+			this.#throwIfBodyInterrupted(window, requestOrResponse);
 			let readResult = await reader.read();
 			while (!readResult.done) {
-				if (requestOrResponse[PropertySymbol.error]) {
-					throw requestOrResponse[PropertySymbol.error];
-				}
-				if (requestOrResponse[PropertySymbol.aborted]) {
-					throw new window.DOMException(
-						'Failed to read response body: The stream was aborted.',
-						DOMExceptionNameEnum.abortError
-					);
-				}
+				this.#throwIfBodyInterrupted(window, requestOrResponse);
 				const chunk = readResult.value;
 				bytes += chunk.length;
 				chunks.push(chunk);
 				readResult = await reader.read();
 			}
+			this.#throwIfBodyInterrupted(window, requestOrResponse);
 		} catch (error) {
+			if (requestOrResponse[PropertySymbol.error]) {
+				throw requestOrResponse[PropertySymbol.error];
+			}
+			if (requestOrResponse[PropertySymbol.aborted]) {
+				throw this.getBodyStreamAbortError(window);
+			}
 			if (error instanceof DOMException) {
 				throw error;
 			}
@@ -226,6 +305,10 @@ export default class FetchBodyUtility {
 				`Failed to read response body. Error: ${(<Error>error).message}.`,
 				DOMExceptionNameEnum.encodingError
 			);
+		} finally {
+			if (bodyReaders.get(requestOrResponse) === reader) {
+				bodyReaders.delete(requestOrResponse);
+			}
 		}
 
 		try {

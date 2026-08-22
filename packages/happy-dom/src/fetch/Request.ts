@@ -19,6 +19,7 @@ import MultipartFormDataParser from './multipart/MultipartFormDataParser.js';
 import type BrowserWindow from '../window/BrowserWindow.js';
 import WindowBrowserContext from '../window/WindowBrowserContext.js';
 import type { TRequestMode } from './types/TRequestMode.js';
+import type AsyncTaskManager from '../async-task-manager/AsyncTaskManager.js';
 
 /**
  * Fetch request.
@@ -294,33 +295,7 @@ export default class Request implements Request {
 	 * @returns Array buffer.
 	 */
 	public async arrayBuffer(): Promise<ArrayBuffer> {
-		const window = this[PropertySymbol.window];
-
-		if (this[PropertySymbol.bodyUsed]) {
-			throw new window.DOMException(
-				`Body has already been used for "${this.url}".`,
-				DOMExceptionNameEnum.invalidStateError
-			);
-		}
-
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
-		this[PropertySymbol.bodyUsed] = true;
-
-		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
-			this.signal[PropertySymbol.abort]();
-		});
-		let buffer: Buffer;
-
-		try {
-			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-		} catch (error) {
-			asyncTaskManager.endTask(taskID);
-			throw error;
-		}
-
-		asyncTaskManager.endTask(taskID);
+		const buffer = await this.#consumeBody();
 
 		return <ArrayBuffer>(
 			buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
@@ -345,35 +320,7 @@ export default class Request implements Request {
 	 * @returns Buffer.
 	 */
 	public async buffer(): Promise<Buffer> {
-		const window = this[PropertySymbol.window];
-
-		if (this[PropertySymbol.bodyUsed]) {
-			throw new window.DOMException(
-				`Body has already been used for "${this.url}".`,
-				DOMExceptionNameEnum.invalidStateError
-			);
-		}
-
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
-		this[PropertySymbol.bodyUsed] = true;
-
-		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
-			this.signal[PropertySymbol.abort]();
-		});
-		let buffer: Buffer;
-
-		try {
-			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-		} catch (error) {
-			asyncTaskManager.endTask(taskID);
-			throw error;
-		}
-
-		asyncTaskManager.endTask(taskID);
-
-		return buffer;
+		return await this.#consumeBody();
 	}
 
 	/**
@@ -382,34 +329,7 @@ export default class Request implements Request {
 	 * @returns Text.
 	 */
 	public async text(): Promise<string> {
-		const window = this[PropertySymbol.window];
-
-		if (this[PropertySymbol.bodyUsed]) {
-			throw new window.DOMException(
-				`Body has already been used for "${this.url}".`,
-				DOMExceptionNameEnum.invalidStateError
-			);
-		}
-
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
-		this[PropertySymbol.bodyUsed] = true;
-
-		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
-			this.signal[PropertySymbol.abort]();
-		});
-		let buffer: Buffer;
-
-		try {
-			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-		} catch (error) {
-			asyncTaskManager.endTask(taskID);
-			throw error;
-		}
-
-		asyncTaskManager.endTask(taskID);
-
+		const buffer = await this.#consumeBody();
 		return new TextDecoder().decode(buffer);
 	}
 
@@ -430,9 +350,9 @@ export default class Request implements Request {
 	 */
 	public async formData(): Promise<FormData> {
 		const window = this[PropertySymbol.window];
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
 
-		const contentType = this[PropertySymbol.contentType];
+		const contentType = this[PropertySymbol.contentType] || this.headers.get('Content-Type');
 
 		if (this.body && contentType && /multipart/i.test(contentType)) {
 			if (this[PropertySymbol.bodyUsed]) {
@@ -442,23 +362,21 @@ export default class Request implements Request {
 				);
 			}
 
+			if (!asyncTaskManager) {
+				throw FetchBodyUtility.getBodyStreamAbortError(window);
+			}
+
 			this[PropertySymbol.bodyUsed] = true;
 
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
-				this.signal[PropertySymbol.abort]();
-			});
+			const taskID = this.#startBodyTask(asyncTaskManager);
 			let formData: FormData;
 
 			try {
 				const result = await MultipartFormDataParser.streamToFormData(window, this, contentType);
 				formData = result.formData;
-			} catch (error) {
+			} finally {
 				asyncTaskManager.endTask(taskID);
-				throw error;
 			}
-
-			asyncTaskManager.endTask(taskID);
 
 			return formData;
 		}
@@ -487,5 +405,56 @@ export default class Request implements Request {
 	 */
 	public clone(): Request {
 		return new this[PropertySymbol.window].Request(this);
+	}
+
+	/**
+	 * Consumes the request body as a Buffer.
+	 *
+	 * @returns Buffer.
+	 */
+	async #consumeBody(): Promise<Buffer> {
+		const window = this[PropertySymbol.window];
+
+		if (this[PropertySymbol.bodyUsed]) {
+			throw new window.DOMException(
+				`Body has already been used for "${this.url}".`,
+				DOMExceptionNameEnum.invalidStateError
+			);
+		}
+
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+
+		if (!asyncTaskManager) {
+			throw FetchBodyUtility.getBodyStreamAbortError(window);
+		}
+
+		this[PropertySymbol.bodyUsed] = true;
+
+		const taskID = this.#startBodyTask(asyncTaskManager);
+
+		try {
+			return await FetchBodyUtility.consumeBodyStream(window, this);
+		} finally {
+			asyncTaskManager.endTask(taskID);
+		}
+	}
+
+	/**
+	 * Starts an async task that aborts body consumption when the page is shut down.
+	 *
+	 * @param asyncTaskManager Async task manager.
+	 * @returns Task ID.
+	 */
+	#startBodyTask(asyncTaskManager: AsyncTaskManager): number {
+		try {
+			return asyncTaskManager.startTask(() => {
+				this[PropertySymbol.aborted] = true;
+				this.signal[PropertySymbol.abort]();
+				FetchBodyUtility.abortBodyReader(this);
+			});
+		} catch {
+			this[PropertySymbol.aborted] = true;
+			throw FetchBodyUtility.getBodyStreamAbortError(this[PropertySymbol.window]);
+		}
 	}
 }
