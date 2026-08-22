@@ -20,8 +20,8 @@ import type {
   ResolveBooleanSchema,
   ResolveNumberSchema,
   ResolveStringSchema,
-  ResolvedLazySchema,
   ResolvedNullSchema,
+  ResolvedLazySchema,
   ResolvedPrimitiveSchema,
   Schema,
   SetSchema,
@@ -92,8 +92,8 @@ type SchemaTransformedValue<
       | (SCHEMA extends AnySchema ? AnySchemaTransformedValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends LazySchema
           ? ResolvedLazySchema<SCHEMA> extends ItemSchema
-            ? ItemSchemaTransformedValue<ResolvedLazySchema<SCHEMA>>
-            : SchemaTransformedValue<ResolvedLazySchema<SCHEMA>>
+            ? ItemSchemaTransformedValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+            : SchemaTransformedValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
           : never)
       | (SCHEMA extends PrimitiveSchema ? PrimitiveSchemaTransformedValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends SetSchema ? SetSchemaTransformedValue<SCHEMA, OPTIONS> : never)

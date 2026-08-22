@@ -8,7 +8,10 @@ import { getDefaultsDTO } from './utils.js'
 /**
  * @debt feature "handle defaults, links & validators DTOs"
  */
-export const getListSchemaDTO = (schema: ListSchema, context: SchemaDTOContext): ListSchemaDTO => {
+export const getListSchemaDTO = (
+  schema: ListSchema,
+  context: SchemaDTOContext
+): ListSchemaDTO => {
   const defaultsDTO = getDefaultsDTO(schema)
   const { required, hidden, key, savedAs } = schema.props
 

@@ -16,8 +16,8 @@ import type {
   ResolveBooleanSchema,
   ResolveNumberSchema,
   ResolveStringSchema,
-  ResolvedLazySchema,
   ResolvedNullSchema,
+  ResolvedLazySchema,
   Schema,
   SetSchema,
   StringSchema
@@ -89,8 +89,8 @@ type SchemaDecodedValue<
       | (SCHEMA extends AnySchema ? AnySchemaDecodedValue<SCHEMA> : never)
       | (SCHEMA extends LazySchema
           ? ResolvedLazySchema<SCHEMA> extends ItemSchema
-            ? ItemSchemaDecodedValue<ResolvedLazySchema<SCHEMA>>
-            : SchemaDecodedValue<ResolvedLazySchema<SCHEMA>>
+            ? ItemSchemaDecodedValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+            : SchemaDecodedValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
           : never)
       | (SCHEMA extends NullSchema
           ? If<MustBeDefined<SCHEMA>, never, undefined> | ResolvedNullSchema

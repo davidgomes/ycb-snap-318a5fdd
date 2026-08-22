@@ -90,8 +90,8 @@ type SchemaInputValue<
       | (SCHEMA extends AnySchema ? AnySchemaInputValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends LazySchema
           ? ResolvedLazySchema<SCHEMA> extends ItemSchema
-            ? ItemSchemaInputValue<ResolvedLazySchema<SCHEMA>>
-            : SchemaInputValue<ResolvedLazySchema<SCHEMA>>
+            ? ItemSchemaInputValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+            : SchemaInputValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
           : never)
       | (SCHEMA extends PrimitiveSchema ? PrimitiveSchemaInputValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends SetSchema ? SetSchemaInputValue<SCHEMA, OPTIONS> : never)

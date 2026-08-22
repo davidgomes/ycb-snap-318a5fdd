@@ -10,19 +10,16 @@ type MapSchemaDTO = Extract<ISchemaDTO, { type: 'map' }>
 /**
  * @debt feature "handle defaults, links & validators"
  */
-export const fromMapSchemaDTO = (
-  {
-    keyDefault,
-    putDefault,
-    updateDefault,
-    keyLink,
-    putLink,
-    updateLink,
-    attributes,
-    ...props
-  }: MapSchemaDTO,
-  context: FromSchemaDTOContext
-): MapSchema => {
+export const fromMapSchemaDTO = ({
+  keyDefault,
+  putDefault,
+  updateDefault,
+  keyLink,
+  putLink,
+  updateLink,
+  attributes,
+  ...props
+}: MapSchemaDTO, context: FromSchemaDTOContext): MapSchema => {
   keyDefault
   putDefault
   updateDefault

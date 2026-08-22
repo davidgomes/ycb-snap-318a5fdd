@@ -27,8 +27,9 @@ type LazySchemer = <RESOLVED_SCHEMA extends Schema>(
  *
  * @param thunk Function returning the schema to use
  */
-export const lazy: LazySchemer = <RESOLVED_SCHEMA extends Schema>(thunk: () => RESOLVED_SCHEMA) =>
-  new LazySchema_(thunk, {})
+export const lazy: LazySchemer = <RESOLVED_SCHEMA extends Schema>(
+  thunk: () => RESOLVED_SCHEMA
+) => new LazySchema_(thunk, {})
 
 export class LazySchema_<
   RESOLVED_SCHEMA extends Schema = Schema,
@@ -53,7 +54,10 @@ export class LazySchema_<
   key<NEXT_KEY extends boolean = true>(
     nextKey: NEXT_KEY = true as NEXT_KEY
   ): LazySchema_<RESOLVED_SCHEMA, Overwrite<PROPS, { key: NEXT_KEY; required: Always }>> {
-    return new LazySchema_(this.thunk, overwrite(this.props, { key: nextKey, required: 'always' }))
+    return new LazySchema_(
+      this.thunk,
+      overwrite(this.props, { key: nextKey, required: 'always' })
+    )
   }
 
   savedAs<NEXT_SAVED_AS extends string | undefined>(
@@ -65,19 +69,13 @@ export class LazySchema_<
   keyDefault(
     nextKeyDefault: ValueOrGetter<ValidValue<this, { mode: 'key' }>>
   ): LazySchema_<RESOLVED_SCHEMA, Overwrite<PROPS, { keyDefault: unknown }>> {
-    return new LazySchema_(
-      this.thunk,
-      overwrite(this.props, { keyDefault: nextKeyDefault as unknown })
-    )
+    return new LazySchema_(this.thunk, overwrite(this.props, { keyDefault: nextKeyDefault as unknown }))
   }
 
   putDefault(
     nextPutDefault: ValueOrGetter<ValidValue<this>>
   ): LazySchema_<RESOLVED_SCHEMA, Overwrite<PROPS, { putDefault: unknown }>> {
-    return new LazySchema_(
-      this.thunk,
-      overwrite(this.props, { putDefault: nextPutDefault as unknown })
-    )
+    return new LazySchema_(this.thunk, overwrite(this.props, { putDefault: nextPutDefault as unknown }))
   }
 
   updateDefault(
@@ -100,8 +98,14 @@ export class LazySchema_<
   > {
     return ifThenElse(
       this.props.key as PROPS['key'],
-      new LazySchema_(this.thunk, overwrite(this.props, { keyDefault: nextDefault as unknown })),
-      new LazySchema_(this.thunk, overwrite(this.props, { putDefault: nextDefault as unknown }))
+      new LazySchema_(
+        this.thunk,
+        overwrite(this.props, { keyDefault: nextDefault as unknown })
+      ),
+      new LazySchema_(
+        this.thunk,
+        overwrite(this.props, { putDefault: nextDefault as unknown })
+      )
     )
   }
 
@@ -193,14 +197,8 @@ export class LazySchema_<
   > {
     return ifThenElse(
       this.props.key as PROPS['key'],
-      new LazySchema_(
-        this.thunk,
-        overwrite(this.props, { keyValidator: nextValidator as Validator })
-      ),
-      new LazySchema_(
-        this.thunk,
-        overwrite(this.props, { putValidator: nextValidator as Validator })
-      )
+      new LazySchema_(this.thunk, overwrite(this.props, { keyValidator: nextValidator as Validator })),
+      new LazySchema_(this.thunk, overwrite(this.props, { putValidator: nextValidator as Validator }))
     )
   }
 

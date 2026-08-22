@@ -11,20 +11,17 @@ type RecordSchemaDTO = Extract<ISchemaDTO, { type: 'record' }>
 /**
  * @debt feature "handle defaults, links & validators"
  */
-export const fromRecordSchemaDTO = (
-  {
-    keyDefault,
-    putDefault,
-    updateDefault,
-    keyLink,
-    putLink,
-    updateLink,
-    keys,
-    elements,
-    ...props
-  }: RecordSchemaDTO,
-  context: FromSchemaDTOContext
-): RecordSchema => {
+export const fromRecordSchemaDTO = ({
+  keyDefault,
+  putDefault,
+  updateDefault,
+  keyLink,
+  putLink,
+  updateLink,
+  keys,
+  elements,
+  ...props
+}: RecordSchemaDTO, context: FromSchemaDTOContext): RecordSchema => {
   keyDefault
   putDefault
   updateDefault

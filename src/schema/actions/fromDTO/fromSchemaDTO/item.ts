@@ -10,18 +10,15 @@ type ItemSchemaDTO = Extract<ISchemaDTO, { type: 'item' }>
 /**
  * @debt feature "handle defaults, links & validators"
  */
-export const fromItemSchemaDTO = (
-  {
-    keyDefault,
-    putDefault,
-    updateDefault,
-    keyLink,
-    putLink,
-    updateLink,
-    attributes
-  }: ItemSchemaDTO,
-  context: FromSchemaDTOContext
-): ItemSchema => {
+export const fromItemSchemaDTO = ({
+  keyDefault,
+  putDefault,
+  updateDefault,
+  keyLink,
+  putLink,
+  updateLink,
+  attributes
+}: ItemSchemaDTO, context: FromSchemaDTOContext): ItemSchema => {
   keyDefault
   putDefault
   updateDefault
