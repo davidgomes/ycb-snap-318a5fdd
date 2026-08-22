@@ -10,7 +10,7 @@ import sys
 import textwrap
 import traceback
 from contextvars import copy_context
-from typing import TYPE_CHECKING, List, TextIO, Tuple
+from typing import TYPE_CHECKING, List, Sequence, TextIO, Tuple
 
 import click
 from prompt_toolkit import PromptSession

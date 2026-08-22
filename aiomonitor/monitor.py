@@ -271,9 +271,7 @@ class Monitor:
         task_id = str(id(task))
         if isinstance(task, TracedTask):
             coro_repr = _format_coroutine(task._orig_coro).partition(" ")[0]
-            since = _format_timedelta(
-                timedelta(seconds=captured_at - task._started_at)
-            )
+            since = _format_timedelta(timedelta(seconds=captured_at - task._started_at))
         else:
             coro_repr = _format_coroutine(task.get_coro()).partition(" ")[0]
             since = "-"
@@ -327,9 +325,7 @@ class Monitor:
                 chain.append(
                     SnapshotTaskStackInfo(
                         task_repr=current_item.task_repr,
-                        creation_stack=self._copy_stack(
-                            current_item.creation_stack
-                        ),
+                        creation_stack=self._copy_stack(current_item.creation_stack),
                     )
                 )
                 task_ref = self._created_traceback_chains.get(current_task)
@@ -493,9 +489,7 @@ class Monitor:
             formatted_stack_list.append(
                 FormattedStackItem(
                     FormatItemTypes.CONTENT,
-                    textwrap.dedent(
-                        "".join(traceback.format_list(task.task_stack))
-                    ),
+                    textwrap.dedent("".join(traceback.format_list(task.task_stack))),
                 )
             )
         return formatted_stack_list

@@ -251,7 +251,9 @@ async def get_snapshot_list(request: web.Request) -> web.Response:
     ctx: WebUIContext = request.app[ctx_key]
     return web.json_response(
         data={
-            "snapshots": [dataclasses.asdict(item) for item in ctx.monitor.list_snapshots()]
+            "snapshots": [
+                dataclasses.asdict(item) for item in ctx.monitor.list_snapshots()
+            ]
         }
     )
 
@@ -302,8 +304,7 @@ async def get_snapshot_trace(request: web.Request) -> web.Response:
         return web.json_response(
             data={
                 "trace": [
-                    {"type": item.type, "content": item.content}
-                    for item in trace
+                    {"type": item.type, "content": item.content} for item in trace
                 ]
             }
         )
