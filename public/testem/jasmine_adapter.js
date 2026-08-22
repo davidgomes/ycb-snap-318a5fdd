@@ -7,7 +7,7 @@ Testem's adapter for Jasmine. It works by adding a custom reporter.
 
 */
 
-/* globals emit, jasmine */
+/* globals emit, jasmine, Testem */
 /* exported jasmineAdapter */
 'use strict';
 
@@ -19,13 +19,34 @@ function jasmineAdapter() {
     total: 0,
     tests: []
   };
+  var signaledAllResults = false;
+
+  function isAborted() {
+    return typeof Testem !== 'undefined' && Testem.aborted;
+  }
+
+  function emitAllResultsOnce() {
+    if (signaledAllResults) {
+      return;
+    }
+    signaledAllResults = true;
+    emit('all-test-results');
+  }
 
   function JasmineAdapterReporter() {}
   JasmineAdapterReporter.prototype.reportRunnerStarting = function() {
+    if (isAborted()) {
+      emitAllResultsOnce();
+      return;
+    }
     emit('tests-start');
   };
 
   JasmineAdapterReporter.prototype.reportSpecStarting = function(spec) {
+    if (isAborted()) {
+      emitAllResultsOnce();
+      return;
+    }
     var currentTest = {
       name: spec.getFullName()
     };
@@ -33,6 +54,10 @@ function jasmineAdapter() {
   };
 
   JasmineAdapterReporter.prototype.reportSpecResults = function(spec) {
+    if (isAborted()) {
+      emitAllResultsOnce();
+      return;
+    }
     if (spec.results().skipped) {
       return;
     }
@@ -73,10 +98,18 @@ function jasmineAdapter() {
       results.passed++;
     }
 
+    if (isAborted()) {
+      emitAllResultsOnce();
+      return;
+    }
     emit('test-result', test);
   };
   JasmineAdapterReporter.prototype.reportRunnerResults = function() {
-    emit('all-test-results');
+    if (isAborted()) {
+      emitAllResultsOnce();
+      return;
+    }
+    emitAllResultsOnce();
   };
   jasmine.getEnv().addReporter(new JasmineAdapterReporter());
 

@@ -124,6 +124,7 @@ var Testem = {
   emitMessageQueue: [],
   afterTestsQueue: [],
   console: {},
+  aborted: false,
 
   // The maximum depth beyond which decycle will truncate an emitted event
   // object. When undefined, decycle uses its default.
@@ -142,7 +143,11 @@ var Testem = {
     return match ? match[1] : null;
   },
   handleAbortTests: function() {
+    if (this.aborted) {
+      return;
+    }
     this.aborted = true;
+    this.emitMessageQueue = [];
     this.emit('abort-tests');
     this.emit('after-tests-complete');
   },
@@ -239,6 +244,10 @@ var Testem = {
     this._isIframeReady = true;
   },
   drainMessageQueue: function() {
+    if (this.aborted) {
+      this.emitMessageQueue = [];
+      return;
+    }
     while (this.emitMessageQueue.length) {
       var item = this.emitMessageQueue.shift();
       this.emitMessageToIframe(item);
