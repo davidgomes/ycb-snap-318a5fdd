@@ -1621,6 +1621,27 @@ class tube(Timeout, Logger):
 
         raise NotImplementedError()
 
+    def mux(self, **kwargs):
+        """mux(**kwargs) -> TubeMultiplexer
+
+        Wrap this tube in a :class:`~pwnlib.tubes.mux.TubeMultiplexer`.
+
+        All keyword arguments are forwarded to the multiplexer constructor.
+
+        Examples:
+
+            >>> from pwnlib.tubes.mux import TubeMultiplexer, _connected_tubes
+            >>> t1, t2 = _connected_tubes()
+            >>> m = t1.mux(max_channels=4)
+            >>> isinstance(m, TubeMultiplexer)
+            True
+            >>> m.channels
+            {}
+            >>> t1.close(); t2.close()
+        """
+        from pwnlib.tubes.mux import TubeMultiplexer
+        return TubeMultiplexer(self, **kwargs)
+
     def close(self):
         """close()
 
