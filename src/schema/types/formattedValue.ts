@@ -4,6 +4,7 @@ import type {
   BinarySchema,
   BooleanSchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   Never,
@@ -16,6 +17,7 @@ import type {
   ResolveNumberSchema,
   ResolveStringSchema,
   ResolvedNullSchema,
+  ResolvedLazySchema,
   Schema,
   SetSchema,
   StringSchema
@@ -82,6 +84,11 @@ type SchemaFormattedValue<
   ? unknown
   :
       | (SCHEMA extends AnySchema ? AnySchemaFormattedValue<SCHEMA> : never)
+      | (SCHEMA extends LazySchema
+          ? ResolvedLazySchema<SCHEMA> extends ItemSchema
+            ? ItemSchemaFormattedValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+            : SchemaFormattedValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+          : never)
       | (SCHEMA extends NullSchema
           ? If<MustBeDefined<SCHEMA>, never, undefined> | ResolvedNullSchema
           : never)

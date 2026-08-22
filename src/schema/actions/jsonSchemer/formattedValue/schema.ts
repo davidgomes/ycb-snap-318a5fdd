@@ -2,6 +2,7 @@ import type {
   AnyOfSchema,
   AnySchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   PrimitiveSchema,
@@ -29,6 +30,7 @@ export type FormattedValueJSONSchema<SCHEMA extends Schema> = Schema extends SCH
   ? Record<string, unknown>
   :
       | (SCHEMA extends AnySchema ? {} : never)
+      | (SCHEMA extends LazySchema ? { $ref: string } : never)
       | (SCHEMA extends PrimitiveSchema ? FormattedPrimitiveJSONSchema<SCHEMA> : never)
       | (SCHEMA extends SetSchema ? FormattedSetJSONSchema<SCHEMA> : never)
       | (SCHEMA extends ListSchema ? FormattedListJSONSchema<SCHEMA> : never)
@@ -37,31 +39,86 @@ export type FormattedValueJSONSchema<SCHEMA extends Schema> = Schema extends SCH
       | (SCHEMA extends AnyOfSchema ? FormattedAnyOfJSONSchema<SCHEMA> : never)
       | (SCHEMA extends ItemSchema ? FormattedItemJSONSchema<SCHEMA> : never)
 
+export interface JSONSchemaContext {
+  definitions: Record<string, Record<string, unknown>>
+  references: Map<Schema, string>
+}
+
+const createJSONSchemaContext = (): JSONSchemaContext => ({
+  definitions: {},
+  references: new Map()
+})
+
 export const getFormattedValueJSONSchema = <SCHEMA extends Schema>(
-  schema: SCHEMA
+  schema: SCHEMA,
+  context?: JSONSchemaContext
 ): FormattedValueJSONSchema<SCHEMA> => {
   type RESPONSE = FormattedValueJSONSchema<SCHEMA>
 
+  const isRoot = context === undefined
+  const schemaContext = context ?? createJSONSchemaContext()
+  let formattedSchema: RESPONSE
+
   switch (schema.type) {
+    case 'lazy': {
+      const resolvedSchema = resolveLazySchema(schema)
+      let reference = schemaContext.references.get(resolvedSchema)
+
+      if (reference === undefined) {
+        reference = `schema_${schemaContext.references.size}`
+        schemaContext.references.set(resolvedSchema, reference)
+        schemaContext.definitions[reference] = getFormattedValueJSONSchema(
+          resolvedSchema,
+          schemaContext
+        ) as Record<string, unknown>
+      }
+
+      formattedSchema = { $ref: `#/$defs/${reference}` } as RESPONSE
+      break
+    }
     case 'any':
-      return {} as RESPONSE
+      formattedSchema = {} as RESPONSE
+      break
     case 'null':
     case 'boolean':
     case 'number':
     case 'string':
     case 'binary':
-      return getFormattedPrimitiveJSONSchema(schema) as RESPONSE
+      formattedSchema = getFormattedPrimitiveJSONSchema(schema) as RESPONSE
+      break
     case 'set':
-      return getFormattedSetJSONSchema(schema) as RESPONSE
+      formattedSchema = getFormattedSetJSONSchema(schema, schemaContext) as RESPONSE
+      break
     case 'list':
-      return getFormattedListJSONSchema(schema) as RESPONSE
+      formattedSchema = getFormattedListJSONSchema(schema, schemaContext) as RESPONSE
+      break
     case 'map':
-      return getFormattedMapJSONSchema(schema) as RESPONSE
+      formattedSchema = getFormattedMapJSONSchema(schema, schemaContext) as RESPONSE
+      break
     case 'record':
-      return getFormattedRecordJSONSchema(schema) as RESPONSE
+      formattedSchema = getFormattedRecordJSONSchema(schema, schemaContext) as RESPONSE
+      break
     case 'anyOf':
-      return getFormattedAnyOfJSONSchema(schema) as RESPONSE
+      formattedSchema = getFormattedAnyOfJSONSchema(schema, schemaContext) as RESPONSE
+      break
     case 'item':
-      return getFormattedItemJSONSchema(schema) as RESPONSE
+      formattedSchema = getFormattedItemJSONSchema(schema, schemaContext) as RESPONSE
+      break
   }
+
+  if (isRoot && Object.keys(schemaContext.definitions).length > 0) {
+    return { ...formattedSchema, $defs: schemaContext.definitions } as RESPONSE
+  }
+
+  return formattedSchema
+}
+
+const resolveLazySchema = (schema: Extract<Schema, { type: 'lazy' }>): Schema => {
+  let resolvedSchema: Schema = schema.resolve()
+
+  while (resolvedSchema.type === 'lazy') {
+    resolvedSchema = resolvedSchema.resolve()
+  }
+
+  return resolvedSchema
 }

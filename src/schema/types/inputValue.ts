@@ -3,6 +3,7 @@ import type {
   AnyOfSchema,
   AnySchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   Never,
@@ -11,6 +12,7 @@ import type {
   ResolveAnySchema,
   ResolvePrimitiveSchema,
   ResolveStringSchema,
+  ResolvedLazySchema,
   ResolvedPrimitiveSchema,
   Schema,
   SetSchema
@@ -86,6 +88,11 @@ type SchemaInputValue<
   ? unknown
   :
       | (SCHEMA extends AnySchema ? AnySchemaInputValue<SCHEMA, OPTIONS> : never)
+      | (SCHEMA extends LazySchema
+          ? ResolvedLazySchema<SCHEMA> extends ItemSchema
+            ? ItemSchemaInputValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+            : SchemaInputValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+          : never)
       | (SCHEMA extends PrimitiveSchema ? PrimitiveSchemaInputValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends SetSchema ? SetSchemaInputValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends ListSchema ? ListSchemaInputValue<SCHEMA, OPTIONS> : never)

@@ -1,7 +1,7 @@
 import type { ItemSchema } from '~/schema/index.js'
 import { SchemaAction } from '~/schema/index.js'
 
-import { getSchemaDTO } from './getSchemaDTO/index.js'
+import { createSchemaDTOContext, getItemSchemaDTO } from './getSchemaDTO/index.js'
 import type { ItemSchemaDTO } from './types.js'
 
 export class SchemaDTO<SCHEMA extends ItemSchema = ItemSchema>
@@ -12,22 +12,21 @@ export class SchemaDTO<SCHEMA extends ItemSchema = ItemSchema>
 
   type: ItemSchemaDTO['type']
   attributes: ItemSchemaDTO['attributes']
+  $schemaDefs?: ItemSchemaDTO['$schemaDefs']
 
   constructor(schema: SCHEMA) {
     super(schema)
     this.type = 'item'
-    this.attributes = Object.fromEntries(
-      Object.entries(this.schema.attributes).map(([attributeName, attribute]) => [
-        attributeName,
-        getSchemaDTO(attribute)
-      ])
-    ) as ItemSchemaDTO['attributes']
+    const schemaDTO = getItemSchemaDTO(this.schema, createSchemaDTOContext(), true)
+    this.attributes = schemaDTO.attributes
+    this.$schemaDefs = schemaDTO.$schemaDefs
   }
 
   toJSON(): ItemSchemaDTO {
     return {
       type: this.type,
-      attributes: this.attributes
+      attributes: this.attributes,
+      ...(this.$schemaDefs !== undefined ? { $schemaDefs: this.$schemaDefs } : {})
     }
   }
 }

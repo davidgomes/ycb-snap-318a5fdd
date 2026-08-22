@@ -3,6 +3,7 @@ import type { ComputeObject } from '~/types/computeObject.js'
 
 import type { FormattedValueJSONSchema } from './schema.js'
 import { getFormattedValueJSONSchema } from './schema.js'
+import type { JSONSchemaContext } from './schema.js'
 
 export type FormattedAnyOfJSONSchema<SCHEMA extends AnyOfSchema> = ComputeObject<{
   anyOf: MapFormattedValueJSONSchema<SCHEMA['elements']>
@@ -25,9 +26,10 @@ type MapFormattedValueJSONSchema<
     : RESULTS
 
 export const getFormattedAnyOfJSONSchema = <SCHEMA extends AnyOfSchema>(
-  schema: SCHEMA
+  schema: SCHEMA,
+  context: JSONSchemaContext
 ): FormattedAnyOfJSONSchema<SCHEMA> => ({
   anyOf: schema.elements.map(element =>
-    getFormattedValueJSONSchema(element)
+    getFormattedValueJSONSchema(element, context)
   ) as MapFormattedValueJSONSchema<SCHEMA['elements']>
 })

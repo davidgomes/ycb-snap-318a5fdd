@@ -1,5 +1,7 @@
-import type { ISchemaDTO } from '~/schema/actions/dto/index.js'
+import { DynamoDBToolboxError } from '~/errors/index.js'
+import type { ISchemaDTO, SchemaDefinitionDTO } from '~/schema/actions/dto/index.js'
 import type { Schema } from '~/schema/index.js'
+import { lazy } from '~/schema/lazy/index.js'
 
 import { fromAnySchemaDTO } from './any.js'
 import { fromAnyOfSchemaDTO } from './anyOf.js'
@@ -10,7 +12,43 @@ import { fromPrimitiveSchemaDTO } from './primitive.js'
 import { fromRecordSchemaDTO } from './record.js'
 import { fromSetSchemaDTO } from './set.js'
 
-export const fromSchemaDTO = (schemaDTO: ISchemaDTO): Schema => {
+export interface FromSchemaDTOContext {
+  definitions: Record<string, SchemaDefinitionDTO>
+  references: Map<string, Schema>
+}
+
+export const createFromSchemaDTOContext = (
+  definitions: Record<string, SchemaDefinitionDTO> = {}
+): FromSchemaDTOContext => ({
+  definitions,
+  references: new Map()
+})
+
+export const fromSchemaDTO = (
+  schemaDTO: ISchemaDTO,
+  context: FromSchemaDTOContext = createFromSchemaDTOContext()
+): Schema => {
+  if ('$ref' in schemaDTO) {
+    const { $ref } = schemaDTO
+    const definition = context.definitions[$ref]
+
+    if (definition === undefined) {
+      throw new DynamoDBToolboxError('schema.dto.unknownRef', {
+        message: `Unknown schema reference '${$ref}'.`,
+        payload: { ref: $ref }
+      })
+    }
+
+    const existingSchema = context.references.get($ref)
+    if (existingSchema !== undefined) {
+      return existingSchema
+    }
+
+    const reference = lazy(() => fromSchemaDTO(definition, context))
+    context.references.set($ref, reference)
+    return reference
+  }
+
   switch (schemaDTO.type) {
     case 'any':
       return fromAnySchemaDTO(schemaDTO)
@@ -21,16 +59,16 @@ export const fromSchemaDTO = (schemaDTO: ISchemaDTO): Schema => {
     case 'binary':
       return fromPrimitiveSchemaDTO(schemaDTO)
     case 'set':
-      return fromSetSchemaDTO(schemaDTO)
+      return fromSetSchemaDTO(schemaDTO, context)
     case 'list':
-      return fromListSchemaDTO(schemaDTO)
+      return fromListSchemaDTO(schemaDTO, context)
     case 'map':
-      return fromMapSchemaDTO(schemaDTO)
+      return fromMapSchemaDTO(schemaDTO, context)
     case 'record':
-      return fromRecordSchemaDTO(schemaDTO)
+      return fromRecordSchemaDTO(schemaDTO, context)
     case 'anyOf':
-      return fromAnyOfSchemaDTO(schemaDTO)
+      return fromAnyOfSchemaDTO(schemaDTO, context)
     case 'item':
-      return fromItemSchemaDTO(schemaDTO)
+      return fromItemSchemaDTO(schemaDTO, context)
   }
 }

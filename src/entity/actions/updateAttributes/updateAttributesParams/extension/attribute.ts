@@ -59,6 +59,8 @@ export const parseUpdateAttributesExtension: ExtensionParser<UpdateAttributesInp
   }
 
   switch (schema.type) {
+    case 'lazy':
+      return parseUpdateAttributesExtension(schema.resolve(), input, options)
     case 'any':
       return parseAnyExtension(schema, input, options)
     case 'number':

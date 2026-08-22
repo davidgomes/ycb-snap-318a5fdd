@@ -58,6 +58,8 @@ export const parseUpdateExtension: ExtensionParser<UpdateItemInputExtension> = (
   }
 
   switch (schema.type) {
+    case 'lazy':
+      return parseUpdateExtension(schema.resolve(), input, options)
     case 'number':
       return parseNumberExtension(schema, input, options)
     case 'set':

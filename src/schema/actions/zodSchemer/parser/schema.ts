@@ -1,4 +1,4 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import type {
   AnyOfSchema,
@@ -6,6 +6,7 @@ import type {
   BinarySchema,
   BooleanSchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   NullSchema,
@@ -41,6 +42,8 @@ import { getSetZodParser } from './set.js'
 import type { StringZodParser } from './string.js'
 import { getStringZodParser } from './string.js'
 import type { ZodParserOptions } from './types.js'
+import { withValidate } from '../utils.js'
+import { withDefault, withOptional } from './utils.js'
 
 export type ZodParser<
   SCHEMA extends Schema,
@@ -58,6 +61,7 @@ export type SchemaZodParser<
   ? z.ZodTypeAny
   :
       | (SCHEMA extends AnySchema ? AnyZodParser<SCHEMA, OPTIONS> : never)
+      | (SCHEMA extends LazySchema ? z.ZodTypeAny : never)
       | (SCHEMA extends NullSchema ? NullZodParser<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends BooleanSchema ? BooleanZodParser<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends NumberSchema ? NumberZodParser<SCHEMA, OPTIONS> : never)
@@ -76,6 +80,16 @@ export const schemaZodParser = <SCHEMA extends Schema, OPTIONS extends ZodParser
   type ZOD_PARSER = SchemaZodParser<SCHEMA, OPTIONS>
 
   switch (schema.type) {
+    case 'lazy':
+      return withDefault(
+        schema,
+        options,
+        withOptional(
+          schema,
+          options,
+          withValidate(schema, z.lazy(() => schemaZodParser(schema.resolve(), options)))
+        )
+      ) as ZOD_PARSER
     case 'any':
       return anyZodParser(schema, options) as ZOD_PARSER
     case 'null':

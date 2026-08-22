@@ -1,4 +1,4 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import type {
   AnyOfSchema,
@@ -6,6 +6,7 @@ import type {
   BinarySchema,
   BooleanSchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   NullSchema,
@@ -41,6 +42,8 @@ import { getSetZodFormatter } from './set.js'
 import type { StringZodFormatter } from './string.js'
 import { getStringZodFormatter } from './string.js'
 import type { ZodFormatterOptions } from './types.js'
+import { withValidate } from '../utils.js'
+import { withOptional } from './utils.js'
 
 export type ZodFormatter<
   SCHEMA extends Schema,
@@ -58,6 +61,7 @@ export type SchemaZodFormatter<
   ? z.ZodTypeAny
   :
       | (SCHEMA extends AnySchema ? AnyZodFormatter<SCHEMA, OPTIONS> : never)
+      | (SCHEMA extends LazySchema ? z.ZodTypeAny : never)
       | (SCHEMA extends NullSchema ? NullZodFormatter<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends BooleanSchema ? BooleanZodFormatter<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends NumberSchema ? NumberZodFormatter<SCHEMA, OPTIONS> : never)
@@ -76,6 +80,12 @@ export const schemaZodFormatter = <SCHEMA extends Schema, OPTIONS extends ZodFor
   type ZOD_FORMATTER = SchemaZodFormatter<SCHEMA, OPTIONS>
 
   switch (schema.type) {
+    case 'lazy':
+      return withOptional(
+        schema,
+        options,
+        withValidate(schema, z.lazy(() => schemaZodFormatter(schema.resolve(), options)))
+      ) as ZOD_FORMATTER
     case 'any':
       return anyZodFormatter(schema, options) as ZOD_FORMATTER
     case 'null':

@@ -40,6 +40,10 @@ interface SchemaPropsDTO extends SchemaDefaultsDTO, SchemaLinksDTO {
   savedAs?: string
 }
 
+export interface SchemaRefDTO {
+  $ref: string
+}
+
 export type AnySchemaTransformerDTO =
   | CustomTransformerDTO
   | JSONStringifierDTO
@@ -182,20 +186,8 @@ export interface AnyOfSchemaDTO extends SchemaPropsDTO {
 
 export interface ItemSchemaDTO extends SchemaPropsDTO {
   type: 'item'
-  attributes: {
-    [name: string]:
-      | AnySchemaDTO
-      | NullSchemaDTO
-      | BooleanSchemaDTO
-      | NumberSchemaDTO
-      | StringSchemaDTO
-      | BinarySchemaDTO
-      | SetSchemaDTO
-      | ListSchemaDTO
-      | MapSchemaDTO
-      | RecordSchemaDTO
-      | AnyOfSchemaDTO
-  }
+  attributes: { [name: string]: ISchemaDTO }
+  $schemaDefs?: Record<string, SchemaDefinitionDTO>
 }
 
 export type ISchemaDTO =
@@ -211,3 +203,6 @@ export type ISchemaDTO =
   | RecordSchemaDTO
   | AnyOfSchemaDTO
   | ItemSchemaDTO
+  | SchemaRefDTO
+
+export type SchemaDefinitionDTO = Exclude<ISchemaDTO, SchemaRefDTO>

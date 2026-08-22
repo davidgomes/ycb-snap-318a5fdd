@@ -3,6 +3,7 @@ import type { ListSchema } from '~/schema/list/index.js'
 import { list } from '~/schema/list/index.js'
 import type { ListElementSchema } from '~/schema/list/types.js'
 
+import type { FromSchemaDTOContext } from './attribute.js'
 import { fromSchemaDTO } from './attribute.js'
 
 type ListSchemaDTO = Extract<ISchemaDTO, { type: 'list' }>
@@ -19,7 +20,7 @@ export const fromListSchemaDTO = ({
   updateLink,
   elements,
   ...props
-}: ListSchemaDTO): ListSchema => {
+}: ListSchemaDTO, context: FromSchemaDTOContext): ListSchema => {
   keyDefault
   putDefault
   updateDefault
@@ -27,5 +28,5 @@ export const fromListSchemaDTO = ({
   putLink
   updateLink
 
-  return list(fromSchemaDTO(elements) as ListElementSchema, props)
+  return list(fromSchemaDTO(elements, context) as ListElementSchema, props)
 }

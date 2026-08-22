@@ -7,6 +7,7 @@ import type {
   BinarySchema,
   BooleanSchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   Never,
@@ -20,6 +21,7 @@ import type {
   ResolveNumberSchema,
   ResolveStringSchema,
   ResolvedNullSchema,
+  ResolvedLazySchema,
   ResolvedPrimitiveSchema,
   Schema,
   SetSchema,
@@ -88,6 +90,11 @@ type SchemaTransformedValue<
   ? unknown
   :
       | (SCHEMA extends AnySchema ? AnySchemaTransformedValue<SCHEMA, OPTIONS> : never)
+      | (SCHEMA extends LazySchema
+          ? ResolvedLazySchema<SCHEMA> extends ItemSchema
+            ? ItemSchemaTransformedValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+            : SchemaTransformedValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+          : never)
       | (SCHEMA extends PrimitiveSchema ? PrimitiveSchemaTransformedValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends SetSchema ? SetSchemaTransformedValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends ListSchema ? ListSchemaTransformedValue<SCHEMA, OPTIONS> : never)

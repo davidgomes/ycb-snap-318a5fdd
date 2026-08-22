@@ -55,6 +55,8 @@ export function* schemaFormatter<
   }
 
   switch (schema.type) {
+    case 'lazy':
+      return yield* schemaFormatter(schema.resolve(), rawValue, options)
     case 'any':
       return yield* anySchemaFormatter(schema, rawValue, options)
     case 'null':

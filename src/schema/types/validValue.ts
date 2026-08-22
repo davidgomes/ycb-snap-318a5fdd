@@ -3,6 +3,7 @@ import type {
   AnyOfSchema,
   AnySchema,
   ItemSchema,
+  LazySchema,
   ListSchema,
   MapSchema,
   Never,
@@ -10,6 +11,7 @@ import type {
   RecordSchema,
   ResolveAnySchema,
   ResolvePrimitiveSchema,
+  ResolvedLazySchema,
   ResolvedPrimitiveSchema,
   Schema,
   SetSchema
@@ -69,6 +71,11 @@ type SchemaValidValue<
   ? unknown
   :
       | (SCHEMA extends AnySchema ? AnySchemaValidValue<SCHEMA, OPTIONS> : never)
+      | (SCHEMA extends LazySchema
+          ? ResolvedLazySchema<SCHEMA> extends ItemSchema
+            ? ItemSchemaValidValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+            : SchemaValidValue<ResolvedLazySchema<SCHEMA>, OPTIONS>
+          : never)
       | (SCHEMA extends PrimitiveSchema ? PrimitiveSchemaValidValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends SetSchema ? SetSchemaValidValue<SCHEMA, OPTIONS> : never)
       | (SCHEMA extends ListSchema ? ListSchemaValidValue<SCHEMA, OPTIONS> : never)

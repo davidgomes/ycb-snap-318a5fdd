@@ -3,6 +3,7 @@ import type { RecordSchema } from '~/schema/record/index.js'
 import { record } from '~/schema/record/index.js'
 import type { RecordElementSchema, RecordKeySchema } from '~/schema/record/types.js'
 
+import type { FromSchemaDTOContext } from './attribute.js'
 import { fromSchemaDTO } from './attribute.js'
 
 type RecordSchemaDTO = Extract<ISchemaDTO, { type: 'record' }>
@@ -20,7 +21,7 @@ export const fromRecordSchemaDTO = ({
   keys,
   elements,
   ...props
-}: RecordSchemaDTO): RecordSchema => {
+}: RecordSchemaDTO, context: FromSchemaDTOContext): RecordSchema => {
   keyDefault
   putDefault
   updateDefault
@@ -29,8 +30,8 @@ export const fromRecordSchemaDTO = ({
   updateLink
 
   return record(
-    fromSchemaDTO(keys) as RecordKeySchema,
-    fromSchemaDTO(elements) as RecordElementSchema,
+    fromSchemaDTO(keys, context) as RecordKeySchema,
+    fromSchemaDTO(elements, context) as RecordElementSchema,
     props
   )
 }

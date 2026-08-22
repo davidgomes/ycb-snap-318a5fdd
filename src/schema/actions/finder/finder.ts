@@ -26,6 +26,8 @@ export const findSubSchemas = (schema: Schema, path: ArrayPath): SubSchema[] => 
   }
 
   switch (schema.type) {
+    case 'lazy':
+      return findSubSchemas(schema.resolve(), path)
     case 'any': {
       return [
         new SubSchema({

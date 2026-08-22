@@ -3,6 +3,7 @@ import type { ComputeObject } from '~/types/computeObject.js'
 
 import type { FormattedValueJSONSchema } from './schema.js'
 import { getFormattedValueJSONSchema } from './schema.js'
+import type { JSONSchemaContext } from './schema.js'
 
 export type FormattedRecordJSONSchema<SCHEMA extends RecordSchema> = ComputeObject<{
   type: 'object'
@@ -11,9 +12,10 @@ export type FormattedRecordJSONSchema<SCHEMA extends RecordSchema> = ComputeObje
 }>
 
 export const getFormattedRecordJSONSchema = <SCHEMA extends RecordSchema>(
-  schema: SCHEMA
+  schema: SCHEMA,
+  context: JSONSchemaContext
 ): FormattedRecordJSONSchema<SCHEMA> => ({
   type: 'object',
-  propertyNames: getFormattedValueJSONSchema<SCHEMA['keys']>(schema.keys),
-  additionalProperties: getFormattedValueJSONSchema<SCHEMA['elements']>(schema.elements)
+  propertyNames: getFormattedValueJSONSchema<SCHEMA['keys']>(schema.keys, context),
+  additionalProperties: getFormattedValueJSONSchema<SCHEMA['elements']>(schema.elements, context)
 })
