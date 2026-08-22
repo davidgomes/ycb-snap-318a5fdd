@@ -282,6 +282,10 @@ func (c *compiler) compile(node ast.Node) {
 		c.SequenceNode(n)
 	case *ast.ConditionalNode:
 		c.ConditionalNode(n)
+	case *ast.TryNode:
+		c.TryNode(n)
+	case *ast.RetryNode:
+		c.emit(OpRetry)
 	case *ast.ArrayNode:
 		c.ArrayNode(n)
 	case *ast.MapNode:
@@ -838,6 +842,17 @@ func (c *compiler) CallNode(node *ast.CallNode) {
 }
 
 func (c *compiler) BuiltinNode(node *ast.BuiltinNode) {
+	if node.Name == "try" {
+		begin := c.emit(OpTryBegin, placeholder)
+		c.compile(node.Arguments[0])
+		c.emit(OpTryEnd)
+		end := c.emit(OpJump, placeholder)
+		c.patchJump(begin)
+		c.emit(OpPop)
+		c.compile(node.Arguments[1])
+		c.patchJump(end)
+		return
+	}
 	switch node.Name {
 	case "all":
 		c.compile(node.Arguments[0])
@@ -1178,6 +1193,41 @@ func (c *compiler) BuiltinNode(node *ast.BuiltinNode) {
 	}
 
 	panic(fmt.Sprintf("unknown builtin %v", node.Name))
+}
+
+func (c *compiler) TryNode(node *ast.TryNode) {
+	begin := c.emit(OpTryBegin, placeholder)
+	if node.CatchSubstring != "" {
+		c.emit(OpTryFilter, c.addConstant(node.CatchSubstring))
+	}
+	c.compile(node.Try)
+	c.emit(OpTryEnd)
+	success := c.emit(OpJump, placeholder)
+
+	c.patchJump(begin)
+	if node.Catch != nil {
+		if node.CatchName != "" {
+			index := c.addVariable(node.CatchName)
+			c.emit(OpStore, index)
+			c.beginScope(node.CatchName, index)
+			c.compile(node.Catch)
+			c.endScope()
+		} else {
+			c.emit(OpPop)
+			c.compile(node.Catch)
+		}
+		c.emit(OpCatchEnd)
+	} else {
+		finallyStart := len(c.bytecode)
+		c.compile(node.Finally)
+		c.emit(OpThrow)
+		c.arguments[success-1] = finallyStart - success
+		return
+	}
+	c.patchJump(success)
+	if node.Finally != nil {
+		c.compile(node.Finally)
+	}
 }
 
 func (c *compiler) emitCond(body func()) {

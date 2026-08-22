@@ -381,6 +381,21 @@ func (program *Program) DisassembleWriter(w io.Writer) {
 		case OpOr:
 			code("OpOr")
 
+		case OpTryBegin:
+			jump("OpTryBegin")
+
+		case OpTryEnd:
+			code("OpTryEnd")
+
+		case OpCatchEnd:
+			code("OpCatchEnd")
+
+		case OpRetry:
+			code("OpRetry")
+
+		case OpTryFilter:
+			argument("OpTryFilter")
+
 		case OpEnd:
 			code("OpEnd")
 

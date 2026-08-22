@@ -230,6 +230,9 @@ func Float(x any) any {
 }
 
 func String(arg any) any {
+	if err, ok := arg.(error); ok {
+		return err.Error()
+	}
 	return fmt.Sprintf("%v", arg)
 }
 

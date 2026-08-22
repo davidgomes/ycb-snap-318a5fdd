@@ -60,6 +60,15 @@ func Walk(node *Node, v Visitor) {
 		Walk(&n.Cond, v)
 		Walk(&n.Exp1, v)
 		Walk(&n.Exp2, v)
+	case *TryNode:
+		Walk(&n.Try, v)
+		if n.Catch != nil {
+			Walk(&n.Catch, v)
+		}
+		if n.Finally != nil {
+			Walk(&n.Finally, v)
+		}
+	case *RetryNode:
 	case *ArrayNode:
 		for i := range n.Nodes {
 			Walk(&n.Nodes[i], v)

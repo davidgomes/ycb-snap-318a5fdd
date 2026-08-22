@@ -216,6 +216,21 @@ type ConditionalNode struct {
 	Exp2    Node // Expression 2
 }
 
+// TryNode represents try/catch/finally error handling.
+type TryNode struct {
+	base
+	Try            Node
+	Catch          Node
+	CatchName      string
+	CatchSubstring string
+	Finally        Node
+}
+
+// RetryNode re-executes the nearest try body from a catch block.
+type RetryNode struct {
+	base
+}
+
 // VariableDeclaratorNode represents a variable declaration.
 type VariableDeclaratorNode struct {
 	base

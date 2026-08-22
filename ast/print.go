@@ -240,6 +240,26 @@ func (n *ConditionalNode) String() string {
 	return fmt.Sprintf("%s ? %s : %s", cond, exp1, exp2)
 }
 
+func (n *TryNode) String() string {
+	s := fmt.Sprintf("try { %s }", n.Try)
+	if n.Catch != nil {
+		s += " catch"
+		if n.CatchName != "" {
+			s += " " + n.CatchName
+			if n.CatchSubstring != "" {
+				s += fmt.Sprintf(" is %q", n.CatchSubstring)
+			}
+		}
+		s += fmt.Sprintf(" { %s }", n.Catch)
+	}
+	if n.Finally != nil {
+		s += fmt.Sprintf(" finally { %s }", n.Finally)
+	}
+	return s
+}
+
+func (n *RetryNode) String() string { return "retry" }
+
 func (n *ArrayNode) String() string {
 	nodes := make([]string, len(n.Nodes))
 	for i, node := range n.Nodes {

@@ -86,5 +86,10 @@ const (
 	OpBegin
 	OpAnd
 	OpOr
+	OpTryBegin
+	OpTryEnd
+	OpCatchEnd
+	OpRetry
+	OpTryFilter
 	OpEnd // This opcode must be at the end of this list.
 )

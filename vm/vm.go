@@ -49,11 +49,49 @@ type VM struct {
 	scopePool    []Scope // Pre-allocated pool of Scope values; grows as needed but never shrinks
 	scopePoolIdx int     // Current index into scopePool for allocation
 	currScope    *Scope  // Cached pointer to the current scope (optimization)
+	handlers     []exceptionHandler
+	catch        *exceptionHandler
 }
 
-func (vm *VM) Run(program *Program, env any) (_ any, err error) {
+type exceptionHandler struct {
+	target, stack, retryTarget, retries int
+	filter                              string
+}
+
+func (vm *VM) Run(program *Program, env any) (any, error) {
+	vm.handlers = vm.handlers[:0]
+	vm.catch = nil
+	if vm.Stack == nil {
+		vm.Stack = make([]any, 0, 2)
+	} else {
+		clearSlice(vm.Stack)
+		vm.Stack = vm.Stack[:0]
+	}
+	if vm.Scopes != nil {
+		clearSlice(vm.Scopes)
+		vm.Scopes = vm.Scopes[:0]
+	}
+	vm.scopePoolIdx = 0
+	vm.currScope = nil
+	if len(vm.Variables) < program.variables {
+		vm.Variables = make([]any, program.variables)
+	}
+	if vm.MemoryBudget == 0 {
+		vm.MemoryBudget = conf.DefaultMemoryBudget
+	}
+	vm.memory = 0
+	vm.ip = 0
+	return vm.execute(program, env)
+}
+
+func (vm *VM) execute(program *Program, env any) (result any, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			if h := vm.catchError(r); h != nil {
+				vm.ip = h.target
+				result, err = vm.execute(program, env)
+				return
+			}
 			var location file.Location
 			if vm.ip-1 < len(program.locations) {
 				location = program.locations[vm.ip-1]
@@ -68,27 +106,6 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 			err = f.Bind(program.source)
 		}
 	}()
-
-	if vm.Stack == nil {
-		vm.Stack = make([]any, 0, 2)
-	} else {
-		clearSlice(vm.Stack)
-		vm.Stack = vm.Stack[0:0]
-	}
-	if vm.Scopes != nil {
-		clearSlice(vm.Scopes)
-		vm.Scopes = vm.Scopes[0:0]
-	}
-	vm.scopePoolIdx = 0 // Reset pool index for reuse
-	vm.currScope = nil
-	if len(vm.Variables) < program.variables {
-		vm.Variables = make([]any, program.variables)
-	}
-	if vm.MemoryBudget == 0 {
-		vm.MemoryBudget = conf.DefaultMemoryBudget
-	}
-	vm.memory = 0
-	vm.ip = 0
 
 	var fnArgsBuf []any
 
@@ -547,6 +564,36 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 		case OpThrow:
 			panic(vm.pop().(error))
 
+		case OpTryBegin:
+			vm.handlers = append(vm.handlers, exceptionHandler{
+				target: vm.ip + arg, stack: len(vm.Stack), retryTarget: vm.ip,
+			})
+
+		case OpTryFilter:
+			vm.handlers[len(vm.handlers)-1].filter = program.Constants[arg].(string)
+
+		case OpTryEnd:
+			if len(vm.handlers) > 0 {
+				vm.handlers = vm.handlers[:len(vm.handlers)-1]
+			}
+
+		case OpCatchEnd:
+			vm.catch = nil
+
+		case OpRetry:
+			if vm.catch == nil {
+				panic(&runtime.Error{Kind: "custom", Message: "retry used outside catch block"})
+			}
+			vm.catch.retries++
+			if vm.catch.retries > 3 {
+				panic(&runtime.Error{Kind: "retry", Message: "retry limit exhausted"})
+			}
+			h := *vm.catch
+			vm.catch = nil
+			vm.Stack = vm.Stack[:h.stack]
+			vm.handlers = append(vm.handlers, h)
+			vm.ip = h.retryTarget
+
 		case OpCreate:
 			switch arg {
 			case 1:
@@ -665,6 +712,26 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 	}
 
 	return nil, nil
+}
+
+func (vm *VM) catchError(value any) *exceptionHandler {
+	if len(vm.handlers) == 0 {
+		return nil
+	}
+	h := vm.handlers[len(vm.handlers)-1]
+	vm.handlers = vm.handlers[:len(vm.handlers)-1]
+	message := fmt.Sprint(value)
+	if h.filter != "" && !strings.Contains(message, h.filter) {
+		panic(value)
+	}
+	vm.Stack = vm.Stack[:h.stack]
+	if e, ok := value.(error); ok {
+		vm.push(e)
+	} else {
+		vm.push(&runtime.Error{Kind: runtime.ErrorType(value), Message: message})
+	}
+	vm.catch = &h
+	return &h
 }
 
 func (vm *VM) push(value any) {

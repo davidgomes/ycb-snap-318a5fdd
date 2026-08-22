@@ -471,6 +471,20 @@ func (p *Parser) parseSecondary() Node {
 				return nil
 			}
 			return node
+		case "try":
+			if p.current.Is(Bracket, "{") {
+				node = p.parseTry(token)
+				break
+			}
+			if p.current.Is(Bracket, "(") {
+				node = p.parseCall(token, []Node{}, true)
+				break
+			}
+			node = p.createNode(&IdentifierNode{Value: token.Value}, token.Location)
+			break
+		case "retry":
+			node = p.createNode(&RetryNode{}, token.Location)
+			break
 		default:
 			if p.current.Is(Bracket, "(") {
 				node = p.parseCall(token, []Node{}, true)
@@ -548,6 +562,49 @@ func (p *Parser) parseSecondary() Node {
 	}
 
 	return p.parsePostfixExpression(node)
+}
+
+func (p *Parser) parseTry(token Token) Node {
+	p.expect(Bracket, "{")
+	tryNode := p.parseSequenceExpression()
+	p.expect(Bracket, "}")
+
+	var catchNode Node
+	var catchName, catchSubstring string
+	if p.current.Is(Identifier, "catch") {
+		p.next()
+		if p.current.Is(Identifier) && !p.current.Is(Bracket, "{") {
+			catchName = p.current.Value
+			p.next()
+			if p.current.Is(Identifier, "is") {
+				p.next()
+				if p.current.Is(String) {
+					catchSubstring = p.current.Value
+					p.next()
+				} else {
+					p.error("expected string after is")
+				}
+			}
+		}
+		p.expect(Bracket, "{")
+		catchNode = p.parseSequenceExpression()
+		p.expect(Bracket, "}")
+	}
+
+	var finallyNode Node
+	if p.current.Is(Identifier, "finally") {
+		p.next()
+		p.expect(Bracket, "{")
+		finallyNode = p.parseSequenceExpression()
+		p.expect(Bracket, "}")
+	}
+	if catchNode == nil && finallyNode == nil {
+		p.error("try requires catch or finally")
+	}
+	return p.createNode(&TryNode{
+		Try: tryNode, Catch: catchNode, CatchName: catchName,
+		CatchSubstring: catchSubstring, Finally: finallyNode,
+	}, token.Location)
 }
 
 func (p *Parser) toIntegerNode(number int64) Node {

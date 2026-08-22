@@ -56,6 +56,7 @@ type Checker struct {
 	varScopes       []varScope
 	err             *file.Error
 	needsReset      bool
+	catchDepth      int
 }
 
 type predicateScope struct {
@@ -164,6 +165,7 @@ func (v *Checker) reset(config *conf.Config) {
 		v.predicateScopes = v.predicateScopes[:0]
 		v.varScopes = v.varScopes[:0]
 		v.err = nil
+		v.catchDepth = 0
 	}
 	v.needsReset = true
 
@@ -223,6 +225,12 @@ func (v *Checker) visit(node ast.Node) Nature {
 		nt = v.sequenceNode(n)
 	case *ast.ConditionalNode:
 		nt = v.conditionalNode(n)
+	case *ast.TryNode:
+		nt = v.tryNode(n)
+	case *ast.RetryNode:
+		if v.catchDepth == 0 {
+			nt = v.error(n, "retry can only be used inside a catch block")
+		}
 	case *ast.ArrayNode:
 		nt = v.arrayNode(n)
 	case *ast.MapNode:
@@ -233,6 +241,28 @@ func (v *Checker) visit(node ast.Node) Nature {
 		panic(fmt.Sprintf("undefined node type (%T)", node))
 	}
 	node.SetNature(nt)
+	return nt
+}
+
+func (v *Checker) tryNode(node *ast.TryNode) Nature {
+	nt := v.visit(node.Try)
+	if node.Catch != nil {
+		v.catchDepth++
+		if node.CatchName != "" {
+			v.varScopes = append(v.varScopes, varScope{
+				name:   node.CatchName,
+				nature: v.config.NtCache.FromType(reflect.TypeOf((*error)(nil)).Elem()),
+			})
+		}
+		v.visit(node.Catch)
+		v.catchDepth--
+		if node.CatchName != "" {
+			v.varScopes = v.varScopes[:len(v.varScopes)-1]
+		}
+	}
+	if node.Finally != nil {
+		v.visit(node.Finally)
+	}
 	return nt
 }
 

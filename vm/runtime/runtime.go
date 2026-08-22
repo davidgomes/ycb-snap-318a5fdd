@@ -3,13 +3,59 @@ package runtime
 //go:generate sh -c "go run ./helpers > ./helpers[generated].go"
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/expr-lang/expr/internal/deref"
 )
+
+type Error struct {
+	Kind    string
+	Message string
+}
+
+func (e Error) Error() string { return e.Message }
+
+func Throw(value any) error {
+	return &Error{Kind: "custom", Message: fmt.Sprint(value)}
+}
+
+func ErrorType(value any) string {
+	if value == nil {
+		return "none"
+	}
+	if e, ok := value.(Error); ok && e.Kind != "" {
+		return e.Kind
+	}
+	var e *Error
+	if errors.As(asError(value), &e) && e.Kind != "" {
+		return e.Kind
+	}
+	message := fmt.Sprint(value)
+	switch {
+	case strings.Contains(message, "index out of range"), strings.Contains(message, "bounds"):
+		return "index"
+	case strings.Contains(message, "cannot convert"), strings.Contains(message, "invalid operation: int"), strings.Contains(message, "invalid operation: float"), strings.Contains(message, "invalid operation: bool"):
+		return "conversion"
+	case strings.Contains(message, "invalid operation"), strings.Contains(message, "expected"), strings.Contains(message, "assert"):
+		return "type"
+	case strings.Contains(message, "nil"):
+		return "nil"
+	default:
+		return "custom"
+	}
+}
+
+func asError(value any) error {
+	if e, ok := value.(error); ok {
+		return e
+	}
+	return nil
+}
 
 var fieldCache sync.Map
 
