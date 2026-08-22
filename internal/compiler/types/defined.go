@@ -27,6 +27,8 @@ type definedType struct {
 	// represents are identical (every defined type, in Go, is different from
 	// every other type).
 	sign *byte
+
+	methods *methodSet
 }
 
 // DefinedOf returns the defined type with the given name and underlying type.
@@ -36,7 +38,7 @@ func (types *Types) DefinedOf(name string, underlyingType reflect.Type) reflect.
 	if name == "" {
 		panic(internalError("name cannot be empty"))
 	}
-	return definedType{Type: underlyingType, name: name, sign: new(byte)}
+	return definedType{Type: underlyingType, name: name, sign: new(byte), methods: &methodSet{types: types}}
 }
 
 func (x definedType) Name() string {
@@ -55,9 +57,12 @@ func (x definedType) Implements(y reflect.Type) bool {
 	return Implements(x, y)
 }
 
-func (x definedType) MethodByName(string) (reflect.Method, bool) {
-	// TODO.
-	return reflect.Method{}, false
+func (x definedType) MethodByName(name string) (reflect.Method, bool) {
+	m := x.methods.lookup(name, false)
+	if m == nil {
+		return reflect.Method{}, false
+	}
+	return reflectMethod(name, m.Type, m.Func), true
 }
 
 func (x definedType) String() string {

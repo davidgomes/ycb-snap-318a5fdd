@@ -167,7 +167,13 @@ func (vm *VM) run() (Addr, bool) {
 			t := vm.fn.Types[uint8(b)]
 			var ok bool
 			if v.IsValid() {
-				if w, isScriggoType := t.(ScriggoType); isScriggoType {
+				if p, isProxy := AsValueProxy(v); isProxy {
+					if t.Kind() == reflect.Interface {
+						ok = proxyImplements(p.Sign, t)
+					} else if w, isScriggoType := t.(ScriggoType); isScriggoType {
+						v, ok = w.Unwrap(v)
+					}
+				} else if w, isScriggoType := t.(ScriggoType); isScriggoType {
 					v, ok = w.Unwrap(v)
 				} else {
 					if t.Kind() == reflect.Interface {
@@ -219,6 +225,14 @@ func (vm *VM) run() (Addr, bool) {
 					}
 					vm.setString(c, s)
 				default:
+					if t.Kind() == reflect.Interface {
+						if ok {
+							if _, isProxy := AsValueProxy(v); isProxy {
+								vm.setGeneral(c, v)
+								break
+							}
+						}
+					}
 					if w, ok := t.(ScriggoType); ok {
 						t = w.GoType()
 					}
@@ -1092,6 +1106,18 @@ func (vm *VM) run() (Addr, bool) {
 				panic(errNilPointer)
 			}
 			method := vm.stringk(b, true)
+			if p, isProxy := AsValueProxy(receiver); isProxy {
+				m, found := p.Sign.MethodByName(method)
+				if !found {
+					panic(runtimeError("type " + p.Sign.String() + " has no method " + method))
+				}
+				if m.Func.IsValid() {
+					if fn, ok := m.Func.Interface().(*Function); ok {
+						vm.setGeneral(c, reflect.ValueOf(&callable{value: bindScriggoMethod(fn, p, vm.env)}))
+						break
+					}
+				}
+			}
 			vm.setGeneral(c, reflect.ValueOf(&callable{value: receiver.MethodByName(method)}))
 
 		// Move

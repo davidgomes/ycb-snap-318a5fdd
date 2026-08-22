@@ -57,6 +57,29 @@ type ScriggoType interface {
 	GoType() reflect.Type
 }
 
+// ValueProxy boxes a Go value together with the Scriggo type it was typed as.
+// It is stored in interface registers so method values and type assertions can
+// recover the original Scriggo type.
+type ValueProxy struct {
+	Value reflect.Value
+	Sign  ScriggoType
+}
+
+// AsValueProxy reports whether v holds a ValueProxy and returns it.
+func AsValueProxy(v reflect.Value) (ValueProxy, bool) {
+	if !v.IsValid() {
+		return ValueProxy{}, false
+	}
+	if v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return ValueProxy{}, false
+		}
+		v = v.Elem()
+	}
+	p, ok := v.Interface().(ValueProxy)
+	return p, ok
+}
+
 type StackShift [4]int8
 
 type Instruction struct {
@@ -913,7 +936,7 @@ func (c *callable) Value(env *env) reflect.Value {
 	// It is a Scriggo function.
 	fn := c.fn
 	vars := c.vars
-	c.value = reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
+	c.value = reflect.MakeFunc(goFuncType(fn.Type), func(args []reflect.Value) []reflect.Value {
 		nvm := create(env)
 		if fn.Macro {
 			nvm.renderer = newRenderer(&strings.Builder{})
@@ -922,7 +945,7 @@ func (c *callable) Value(env *env) reflect.Value {
 		results := make([]reflect.Value, nOut)
 		var r = [4]int8{1, 1, 1, 1}
 		for i := 0; i < nOut; i++ {
-			typ := fn.Type.Out(i)
+			typ := goTypeOf(fn.Type.Out(i))
 			results[i] = reflect.New(typ).Elem()
 			t := kindToType[typ.Kind()]
 			r[t]++

@@ -1120,6 +1120,14 @@ func (tc *typechecker) checkFunc(node *ast.Func) {
 	tc.scopes.Enter(node)
 	tc.addToAncestors(node)
 
+	if node.Receiver != nil {
+		recvType := tc.checkType(node.Receiver.Type).Type
+		if node.Receiver.Ident != nil && !isBlankIdentifier(node.Receiver.Ident) {
+			tc.scopes.Declare(node.Receiver.Ident.Name, &typeInfo{Type: recvType, Properties: propertyAddressable}, node.Receiver.Ident, nil)
+			tc.scopes.Use(node.Receiver.Ident.Name)
+		}
+	}
+
 	// Adds parameters to the function body scope.
 	t := node.Type.Reflect
 	for i := 0; i < t.NumIn(); i++ {

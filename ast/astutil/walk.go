@@ -147,8 +147,18 @@ func Walk(v Visitor, node ast.Node) {
 		}
 
 	case *ast.Func:
-		for _, child := range n.Body.Nodes {
-			Walk(v, child)
+		if n.Receiver != nil {
+			Walk(v, n.Receiver.Ident)
+			Walk(v, n.Receiver.Type)
+		}
+		if n.Ident != nil {
+			Walk(v, n.Ident)
+		}
+		Walk(v, n.Type)
+		if n.Body != nil {
+			for _, child := range n.Body.Nodes {
+				Walk(v, child)
+			}
 		}
 
 	case *ast.FuncType:
