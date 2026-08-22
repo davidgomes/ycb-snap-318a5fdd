@@ -82,6 +82,12 @@ func TestTypedBindings(t *testing.T) {
 			want:    "value",
 		},
 		{
+			name:    "module binding",
+			script:  `module m { var x: int64 = 10 }; m.x = 20; m.x`,
+			options: &Options{TypedBindings: true},
+			want:    int64(20),
+		},
+		{
 			name:    "blank identifier",
 			script:  `var _: int64 = "value"`,
 			options: &Options{TypedBindings: true},
@@ -121,6 +127,11 @@ func TestTypedBindingErrors(t *testing.T) {
 		{
 			name:   "assignment in child scope",
 			script: `var x: int64 = 10; func(){ x = "value" }()`,
+			parts:  []string{"type error", "x", "string", "int64"},
+		},
+		{
+			name:   "assignment through module",
+			script: `module m { var x: int64 = 10 }; m.x = "value"`,
 			parts:  []string{"type error", "x", "string", "int64"},
 		},
 		{

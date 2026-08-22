@@ -44,6 +44,17 @@ func (runInfo *runInfoStruct) invokeLetExpr() {
 		}
 
 		if env, ok := runInfo.rv.Interface().(*env.Env); ok {
+			if runInfo.options.TypedBindings && expr.Name != "_" {
+				if target, ok := env.GetValueConstraint(expr.Name); ok {
+					value, runInfo.err = typedBindingValue(expr.Name, value, target)
+					if runInfo.err != nil {
+						runInfo.err = newError(expr, runInfo.err)
+						runInfo.rv = nilValue
+						return
+					}
+					runInfo.rv = value
+				}
+			}
 			runInfo.err = env.SetValue(expr.Name, value)
 			if runInfo.err != nil {
 				runInfo.err = newError(expr, runInfo.err)
