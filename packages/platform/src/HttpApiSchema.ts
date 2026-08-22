@@ -64,6 +64,14 @@ export const AnnotationParam: unique symbol = Symbol.for(
  * @since 1.0.0
  * @category annotations
  */
+export const AnnotationSSE: unique symbol = Symbol.for(
+  "@effect/platform/HttpApiSchema/AnnotationSSE"
+)
+
+/**
+ * @since 1.0.0
+ * @category annotations
+ */
 export const extractAnnotations = (ast: AST.Annotations): AST.Annotations => {
   const result: Record<symbol, unknown> = {}
   if (AnnotationStatus in ast) {
@@ -83,6 +91,9 @@ export const extractAnnotations = (ast: AST.Annotations): AST.Annotations => {
   }
   if (AnnotationMultipartStream in ast) {
     result[AnnotationMultipartStream] = ast[AnnotationMultipartStream]
+  }
+  if (AnnotationSSE in ast) {
+    result[AnnotationSSE] = ast[AnnotationSSE]
   }
   return result
 }
@@ -145,6 +156,12 @@ export const getParam = (ast: AST.AST | Schema.PropertySignature.AST): string | 
   const annotations = ast._tag === "PropertySignatureTransformation" ? ast.to.annotations : ast.annotations
   return (annotations[AnnotationParam] as any)?.name as string | undefined
 }
+
+/**
+ * @since 1.0.0
+ * @category annotations
+ */
+export const getSSE = (ast: AST.AST): boolean => getAnnotation<boolean>(ast, AnnotationSSE) ?? false
 
 /**
  * @since 1.0.0
@@ -483,6 +500,9 @@ const defaultContentType = (encoding: Encoding["kind"]) => {
     case "Text": {
       return "text/plain"
     }
+    case "Sse": {
+      return "text/event-stream"
+    }
   }
 }
 
@@ -491,7 +511,7 @@ const defaultContentType = (encoding: Encoding["kind"]) => {
  * @category encoding
  */
 export interface Encoding {
-  readonly kind: "Json" | "UrlParams" | "Uint8Array" | "Text"
+  readonly kind: "Json" | "UrlParams" | "Uint8Array" | "Text" | "Sse"
   readonly contentType: string
 }
 
@@ -510,6 +530,7 @@ export declare namespace Encoding {
     : Kind extends "Uint8Array" ?
       [A["Encoded"]] extends [Uint8Array] ? {} : `'Uint8Array' kind can only be encoded to 'Uint8Array'`
     : Kind extends "Text" ? [A["Encoded"]] extends [string] ? {} : `'Text' kind can only be encoded to 'string'`
+    : Kind extends "Sse" ? {}
     : never
 }
 
@@ -565,6 +586,15 @@ export const Text = (options?: {
 export const Uint8Array = (options?: {
   readonly contentType?: string
 }): typeof Schema.Uint8ArrayFromSelf => withEncoding(Schema.Uint8ArrayFromSelf, { kind: "Uint8Array", ...options })
+
+/**
+ * @since 1.0.0
+ * @category encoding
+ */
+export const withSSE = <A extends Schema.Schema.Any>(self: A): A =>
+  withEncoding(self, { kind: "Sse", contentType: "text/event-stream" }).annotations({
+    [AnnotationSSE]: true
+  }) as any
 
 const astCache = globalValue(
   "@effect/platform/HttpApiSchema/astCache",

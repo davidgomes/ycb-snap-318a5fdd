@@ -96,6 +96,11 @@ export * as HttpApiSchema from "./HttpApiSchema.js"
 /**
  * @since 1.0.0
  */
+export * as HttpApiSSE from "./HttpApiSSE.js"
+
+/**
+ * @since 1.0.0
+ */
 export * as HttpApiSecurity from "./HttpApiSecurity.js"
 
 /**

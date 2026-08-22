@@ -619,6 +619,7 @@ export type OpenApiSpecContentType =
   | "application/x-www-form-urlencoded"
   | "multipart/form-data"
   | "text/plain"
+  | "text/event-stream"
 
 /**
  * @category models

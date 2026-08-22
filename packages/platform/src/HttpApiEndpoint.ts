@@ -37,6 +37,13 @@ export type TypeId = typeof TypeId
 export const isHttpApiEndpoint = (u: unknown): u is HttpApiEndpoint<any, any, any> => Predicate.hasProperty(u, TypeId)
 
 /**
+ * @since 1.0.0
+ * @category guards
+ */
+export const isSSE = (u: unknown): u is HttpApiEndpoint.AnyWithProps =>
+  isHttpApiEndpoint(u) && (u as unknown as HttpApiEndpoint.AnyWithProps).isSse === true
+
+/**
  * Represents a path segment. A path segment is a string that represents a
  * segment of a URL path.
  *
@@ -68,6 +75,7 @@ export interface HttpApiEndpoint<
   readonly name: Name
   readonly path: PathSegment
   readonly method: Method
+  readonly isSse: boolean
   readonly pathSchema: Option.Option<Schema.Schema<Path, unknown, R>>
   readonly urlParamsSchema: Option.Option<Schema.Schema<UrlParams, unknown, R>>
   readonly payloadSchema: Option.Option<Schema.Schema<Payload, unknown, R>>
@@ -495,7 +503,21 @@ export declare namespace HttpApiEndpoint {
    */
   export type Handler<Endpoint extends Any, E, R> = (
     request: Types.Simplify<Request<Endpoint>>
-  ) => Effect<Success<Endpoint> | HttpServerResponse, Error<Endpoint> | E, R>
+  ) => Effect<
+    | Success<Endpoint>
+    | (Endpoint extends { readonly isSse: true } ? Stream.Stream<Success<Endpoint>> : never)
+    | HttpServerResponse,
+    Error<Endpoint> | E,
+    R
+  >
+
+  /**
+   * @since 1.0.0
+   * @category models
+   */
+  export type HandlerStream<Endpoint extends Any, E, R> = (
+    request: Types.Simplify<Request<Endpoint>>
+  ) => Stream.Stream<Success<Endpoint>, Error<Endpoint> | E, R>
 
   /**
    * @since 1.0.0
@@ -516,6 +538,16 @@ export declare namespace HttpApiEndpoint {
    * @category models
    */
   export type ExcludeName<Endpoints extends Any, Name extends string> = Exclude<Endpoints, { readonly name: Name }>
+
+  /**
+   * @since 1.0.0
+   * @category models
+   */
+  export type HandlerStreamWithName<Endpoints extends Any, Name extends string, E, R> = HandlerStream<
+    WithName<Endpoints, Name>,
+    E,
+    R
+  >
 
   /**
    * @since 1.0.0
@@ -850,6 +882,7 @@ const makeProto = <
   readonly errorSchema: Schema.Schema<Error, unknown, RE>
   readonly annotations: Context.Context<never>
   readonly middlewares: ReadonlySet<HttpApiMiddleware.TagClassAny>
+  readonly isSse: boolean
 }): HttpApiEndpoint<Name, Method, Path, Payload, Headers, Success, Error, R, RE> =>
   Object.assign(Object.create(Proto), options)
 
@@ -857,7 +890,7 @@ const makeProto = <
  * @since 1.0.0
  * @category constructors
  */
-export const make = <Method extends HttpMethod>(method: Method): {
+export const make = <Method extends HttpMethod>(method: Method, isSse = false): {
   <const Name extends string>(name: Name): HttpApiEndpoint.Constructor<Name, Method>
   <const Name extends string>(name: Name, path: PathSegment): HttpApiEndpoint<Name, Method>
 } =>
@@ -874,7 +907,8 @@ export const make = <Method extends HttpMethod>(method: Method): {
         successSchema: HttpApiSchema.NoContent as any,
         errorSchema: Schema.Never as any,
         annotations: Context.empty(),
-        middlewares: new Set()
+        middlewares: new Set(),
+        isSse
       })
     }
     return (
@@ -906,10 +940,23 @@ export const make = <Method extends HttpMethod>(method: Method): {
         successSchema: HttpApiSchema.NoContent as any,
         errorSchema: Schema.Never as any,
         annotations: Context.empty(),
-        middlewares: new Set()
+        middlewares: new Set(),
+        isSse
       })
     }
   }) as any
+
+/**
+ * @since 1.0.0
+ * @category constructors
+ */
+export const sse: {
+  <const Name extends string>(name: Name): HttpApiEndpoint.Constructor<Name, "GET">
+  <const Name extends string>(
+    name: Name,
+    path: PathSegment
+  ): HttpApiEndpoint<Name, "GET">
+} = make("GET", true)
 
 /**
  * @since 1.0.0

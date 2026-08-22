@@ -10,12 +10,14 @@ import * as ParseResult from "effect/ParseResult"
 import type * as Predicate from "effect/Predicate"
 import * as Schema from "effect/Schema"
 import type * as AST from "effect/SchemaAST"
+import type * as Stream from "effect/Stream"
 import type { Simplify } from "effect/Types"
 import * as HttpApi from "./HttpApi.js"
 import type { HttpApiEndpoint } from "./HttpApiEndpoint.js"
 import type { HttpApiGroup } from "./HttpApiGroup.js"
 import type * as HttpApiMiddleware from "./HttpApiMiddleware.js"
 import * as HttpApiSchema from "./HttpApiSchema.js"
+import * as HttpApiSSE from "./HttpApiSSE.js"
 import * as HttpBody from "./HttpBody.js"
 import * as HttpClient from "./HttpClient.js"
 import * as HttpClientError from "./HttpClientError.js"
@@ -80,7 +82,26 @@ export declare namespace Client {
       infer _R,
       infer _RE
     >
-  ] ? <WithResponse extends boolean = false>(
+  ] ? Endpoint extends { readonly isSse: true } ? <WithResponse extends boolean = false>(
+        request: Simplify<HttpApiEndpoint.ClientRequest<_Path, _UrlParams, _Payload, _Headers, WithResponse>>
+      ) => Effect.Effect<
+        WithResponse extends true ? [
+            Stream.Stream<
+              _Success,
+              _Error | GroupError | E | HttpClientError.HttpClientError | ParseResult.ParseError,
+              R
+            >,
+            HttpClientResponse.HttpClientResponse
+          ]
+          : Stream.Stream<
+            _Success,
+            _Error | GroupError | E | HttpClientError.HttpClientError | ParseResult.ParseError,
+            R
+          >,
+        _Error | GroupError | E | HttpClientError.HttpClientError | ParseResult.ParseError,
+        R
+      > :
+    <WithResponse extends boolean = false>(
       request: Simplify<HttpApiEndpoint.ClientRequest<_Path, _UrlParams, _Payload, _Headers, WithResponse>>
     ) => Effect.Effect<
       WithResponse extends true ? [_Success, HttpClientResponse.HttpClientResponse] : _Success,
@@ -172,7 +193,9 @@ const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Any, ApiEr
           decodeMap[status] = (response) => Effect.flatMap(decode(response), Effect.fail)
         })
         successes.forEach(({ ast }, status) => {
-          decodeMap[status] = ast._tag === "None" ? responseAsVoid : schemaToResponse(ast.value)
+          decodeMap[status] = ast._tag === "None" || endpoint.isSse
+            ? responseAsVoid
+            : schemaToResponse(ast.value)
         })
         const encodePath = endpoint.pathSchema.pipe(
           Option.map(Schema.encodeUnknown)
@@ -229,6 +252,13 @@ const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Any, ApiEr
             )
           }
           const response = yield* httpClient.execute(httpRequest)
+          if (endpoint.isSse) {
+            yield* (options.transformResponse === undefined
+              ? decodeResponse(response)
+              : options.transformResponse(decodeResponse(response)))
+            const stream = HttpApiSSE.toStream(response, HttpApiSSE.makeUnionEventDecoder(endpoint.successSchema))
+            return request?.withResponse === true ? [stream, response] : stream
+          }
           const value = yield* (options.transformResponse === undefined
             ? decodeResponse(response)
             : options.transformResponse(decodeResponse(response)))
@@ -497,6 +527,9 @@ const schemaFromArrayBuffer = (
     case "Text": {
       return Schema.compose(StringFromArrayBuffer, schema)
     }
+    case "Sse": {
+      return Schema.compose(StringFromArrayBuffer, schema)
+    }
   }
 }
 
@@ -568,6 +601,11 @@ const bodyFromPayload = (ast: AST.AST) => {
               return ParseResult.fail(new ParseResult.Type(ast, toI, "Expected a Uint8Array"))
             }
             return ParseResult.succeed(HttpBody.uint8Array(toI, encoding.contentType))
+          }
+          case "Sse": {
+            return ParseResult.fail(
+              new ParseResult.Forbidden(ast, toI, "SSE payloads cannot be encoded as request bodies")
+            )
           }
         }
       }

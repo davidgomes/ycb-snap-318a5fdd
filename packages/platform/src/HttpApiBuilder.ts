@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect"
 import * as Encoding from "effect/Encoding"
 import * as Fiber from "effect/Fiber"
 import { constFalse, identity } from "effect/Function"
+import { hasProperty } from "effect/Predicate"
 import { globalValue } from "effect/GlobalValue"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
@@ -19,6 +20,7 @@ import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
 import type * as AST from "effect/SchemaAST"
 import type { Scope } from "effect/Scope"
+import * as Stream from "effect/Stream"
 import type { Covariant, NoInfer } from "effect/Types"
 import { unify } from "effect/Unify"
 import type { Cookie } from "./Cookies.js"
@@ -30,6 +32,7 @@ import type * as HttpApiGroup from "./HttpApiGroup.js"
 import * as HttpApiMiddleware from "./HttpApiMiddleware.js"
 import * as HttpApiSchema from "./HttpApiSchema.js"
 import type * as HttpApiSecurity from "./HttpApiSecurity.js"
+import * as HttpApiSSE from "./HttpApiSSE.js"
 import * as HttpApp from "./HttpApp.js"
 import * as HttpMethod from "./HttpMethod.js"
 import * as HttpMiddleware from "./HttpMiddleware.js"
@@ -276,6 +279,28 @@ export interface Handlers<
     >,
     HttpApiEndpoint.HttpApiEndpoint.ExcludeName<Endpoints, Name>
   >
+
+  /**
+   * Add a streaming handler for an SSE `HttpApiEndpoint`.
+   */
+  handleStream<Name extends HttpApiEndpoint.HttpApiEndpoint.Name<Endpoints>, R1>(
+    name: Name,
+    handler: HttpApiEndpoint.HttpApiEndpoint.HandlerStreamWithName<Endpoints, Name, E, R1>,
+    options?: { readonly uninterruptible?: boolean | undefined } | undefined
+  ): Handlers<
+    E,
+    Provides,
+    | R
+    | Exclude<
+      HttpApiEndpoint.HttpApiEndpoint.ExcludeProvided<
+        Endpoints,
+        Name,
+        R1 | HttpApiEndpoint.HttpApiEndpoint.ContextWithName<Endpoints, Name>
+      >,
+      Provides
+    >,
+    HttpApiEndpoint.HttpApiEndpoint.ExcludeName<Endpoints, Name>
+  >
 }
 
 /**
@@ -303,8 +328,11 @@ export declare namespace Handlers {
    */
   export type Item<E, R> = {
     readonly endpoint: HttpApiEndpoint.HttpApiEndpoint.Any
-    readonly handler: HttpApiEndpoint.HttpApiEndpoint.Handler<any, E, R>
+    readonly handler:
+      | HttpApiEndpoint.HttpApiEndpoint.Handler<any, E, R>
+      | HttpApiEndpoint.HttpApiEndpoint.HandlerStream<any, E, R>
     readonly withFullRequest: boolean
+    readonly isStreamHandler: boolean
     readonly uninterruptible: boolean
   }
 
@@ -409,6 +437,25 @@ const HandlersProto = {
         endpoint,
         handler,
         withFullRequest: false,
+        isStreamHandler: false,
+        uninterruptible: options?.uninterruptible ?? false
+      }) as any
+    })
+  },
+  handleStream(
+    this: Handlers<any, any, any, HttpApiEndpoint.HttpApiEndpoint.Any>,
+    name: string,
+    handler: HttpApiEndpoint.HttpApiEndpoint.HandlerStream<any, any, any>,
+    options?: { readonly uninterruptible?: boolean | undefined } | undefined
+  ) {
+    const endpoint = this.group.endpoints[name]
+    return makeHandlers({
+      group: this.group,
+      handlers: Chunk.append(this.handlers, {
+        endpoint,
+        handler,
+        withFullRequest: false,
+        isStreamHandler: true,
         uninterruptible: options?.uninterruptible ?? false
       }) as any
     })
@@ -426,6 +473,7 @@ const HandlersProto = {
         endpoint,
         handler,
         withFullRequest: true,
+        isStreamHandler: false,
         uninterruptible: options?.uninterruptible ?? false
       }) as any
     })
@@ -493,12 +541,17 @@ export const group = <
           item.endpoint,
           middleware,
           function(request) {
+            const result = item.isStreamHandler
+              ? Effect.succeed((item.handler as HttpApiEndpoint.HttpApiEndpoint.HandlerStream<any, any, any>)(request))
+              : (item.handler as HttpApiEndpoint.HttpApiEndpoint.Handler<any, any, any>)(request)
+            const effect = Effect.isEffect(result) ? result : Effect.succeed(result)
             return Effect.mapInputContext(
-              item.handler(request),
+              effect,
               (input) => Context.merge(context, input)
             )
           },
           item.withFullRequest,
+          item.isStreamHandler,
           item.uninterruptible
         ))
       }
@@ -540,6 +593,9 @@ export const handler = <
 > => f
 
 // internal
+
+const isStream = (u: unknown): u is Stream.Stream<unknown, unknown, unknown> =>
+  hasProperty(u, Stream.StreamTypeId)
 
 const requestPayload = (
   request: HttpServerRequest.HttpServerRequest,
@@ -646,9 +702,12 @@ const handlerToRoute = (
   middleware: MiddlewareMap,
   handler: HttpApiEndpoint.HttpApiEndpoint.Handler<any, any, any>,
   isFullRequest: boolean,
+  isStreamHandler: boolean,
   uninterruptible: boolean
 ): HttpRouter.Route<any, any> => {
   const endpoint = endpoint_ as HttpApiEndpoint.HttpApiEndpoint.AnyWithProps
+  const isSse = endpoint.isSse
+  const sseEncoder = isSse ? HttpApiSSE.makeUnionEventEncoder(endpoint.successSchema) : undefined
   const isMultipartStream = endpoint.payloadSchema.pipe(
     Option.map(({ ast }) => HttpApiSchema.getMultipartStream(ast) !== undefined),
     Option.getOrElse(constFalse)
@@ -696,7 +755,17 @@ const handlerToRoute = (
           request.urlParams = yield* Schema.decodeUnknown(schema)(normalizeUrlParams(urlParams, schema.ast))
         }
         const response = yield* handler(request)
-        return HttpServerResponse.isServerResponse(response) ? response : yield* encodeSuccess(response)
+        if (HttpServerResponse.isServerResponse(response)) {
+          return response
+        }
+        if (isSse && isStream(response) && sseEncoder !== undefined) {
+          return yield* HttpApiSSE.toResponse(
+            Stream.provideContext(response as any, context) as any,
+            sseEncoder,
+            { status: HttpApiSchema.getStatusSuccess(endpoint.successSchema) }
+          )
+        }
+        return yield* encodeSuccess(response)
       }).pipe(
         Effect.catchIf(ParseResult.isParseError, HttpApiDecodeError.refailParseError)
       )
@@ -824,6 +893,9 @@ const toResponseSchema = (getStatus: (ast: AST.AST) => number) => {
           status,
           contentType: encoding.contentType
         }))
+      }
+      case "Sse": {
+        return ParseResult.fail(new ParseResult.Forbidden(ast, data, "SSE responses must be encoded as streams"))
       }
     }
   }
