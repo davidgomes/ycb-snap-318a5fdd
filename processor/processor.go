@@ -124,6 +124,9 @@ var Dryness = false
 // SortBy sets which column output in formatter should be sorted by
 var SortBy = ""
 
+// SortByExplicitlySet is true when the user supplied --sort on the command line.
+var SortByExplicitlySet = false
+
 // Exclude is a regular expression which is used to exclude files from being processed
 var Exclude = []string{}
 
@@ -586,6 +589,8 @@ func Process() {
 	if len(DirFilePaths) == 0 {
 		DirFilePaths = append(DirFilePaths, ".")
 	}
+
+	setupBoundedMemory()
 
 	filePaths := []string{}
 	dirPaths := []string{}
