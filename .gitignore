@@ -1,0 +1,19 @@
+# Dependencies and Node-related
+node_modules
+npm-debug.log
+examples/babel/package-lock.json
+
+# Code Coverage
+coverage
+
+# Build
+dist
+lib
+
+# IDE
+.vscode/
+.idea/
+
+# System
+.DS_Store
+.log

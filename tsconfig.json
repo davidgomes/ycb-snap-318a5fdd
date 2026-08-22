@@ -1,0 +1,22 @@
+{
+  "exclude": ["node_modules", "lib"],
+  "compileOnSave": false,
+  "compilerOptions": {
+    "outDir": "./lib",
+    "strict": true,
+    "strictNullChecks": true,
+    "experimentalDecorators": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "target": "ES2021",
+    "esModuleInterop": true,
+    "lib": ["ES2021"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "importHelpers": false,
+    "sourceMap": true,
+    "declaration": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}
