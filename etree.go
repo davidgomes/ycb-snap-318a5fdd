@@ -228,6 +228,7 @@ type Document struct {
 	Element
 	ReadSettings  ReadSettings
 	WriteSettings WriteSettings
+	Metadata      map[string]string
 }
 
 // An Element represents an XML element, its attributes, and its child tokens.
@@ -307,10 +308,18 @@ func NewDocumentWithRoot(e *Element) *Document {
 
 // Copy returns a recursive, deep copy of the document.
 func (d *Document) Copy() *Document {
+	var meta map[string]string
+	if d.Metadata != nil {
+		meta = make(map[string]string, len(d.Metadata))
+		for k, v := range d.Metadata {
+			meta[k] = v
+		}
+	}
 	return &Document{
 		Element:       *(d.Element.dup(nil).(*Element)),
 		ReadSettings:  d.ReadSettings.dup(),
 		WriteSettings: d.WriteSettings.dup(),
+		Metadata:      meta,
 	}
 }
 
