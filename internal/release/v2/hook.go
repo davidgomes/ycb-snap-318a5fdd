@@ -89,6 +89,7 @@ type Hook struct {
 	LastRun HookExecution `json:"last_run"`
 	// Weight indicates the sort order for execution among similar Hook type
 	Weight int `json:"weight,omitempty"`
+	Order  int `json:"-"`
 	// DeletePolicies are the policies that indicate when to delete the hook
 	DeletePolicies []HookDeletePolicy `json:"delete_policies,omitempty"`
 	// OutputLogPolicies defines whether we should copy hook logs back to main process
