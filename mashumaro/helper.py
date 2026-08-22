@@ -36,6 +36,9 @@ def field_options(
     ] = None,
     serialization_strategy: Optional[SerializationStrategy] = None,
     alias: Optional[str] = None,
+    flatten: bool = False,
+    flatten_prefix: Union[str, bool, None] = None,
+    flatten_rename: Optional[dict[str, str]] = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     return {
@@ -43,6 +46,9 @@ def field_options(
         "deserialize": deserialize,
         "serialization_strategy": serialization_strategy,
         "alias": alias,
+        "flatten": flatten,
+        "flatten_prefix": flatten_prefix,
+        "flatten_rename": flatten_rename,
         **kwargs,
     }
 

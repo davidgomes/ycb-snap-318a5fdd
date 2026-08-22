@@ -875,6 +875,8 @@ class CodeBuilder:
                 packer, alias, could_be_none = self._get_field_packer(
                     fname, ftype, config, force_value
                 )
+                if self.metadatas.get(fname, {}).get("flatten"):
+                    self._validate_flatten(fname, ftype)
                 packers[fname] = packer
                 if alias:
                     aliases[fname] = alias
@@ -886,6 +888,10 @@ class CodeBuilder:
                 nontrivial_nullable_fields
                 or nullable_fields
                 and (omit_none or omit_none_feature)
+                or any(
+                    self.metadatas.get(name, {}).get("flatten")
+                    for name in packers
+                )
                 or by_alias_feature
                 and aliases
                 or omit_default
@@ -1039,6 +1045,23 @@ class CodeBuilder:
         by_alias_feature: bool,
         packed_value: str,
     ) -> None:
+        metadata = self.metadatas.get(fname, {})
+        if metadata.get("flatten"):
+            prefix = metadata.get("flatten_prefix")
+            rename = metadata.get("flatten_rename")
+            if prefix is True:
+                prefix = f"{fname}_"
+            if prefix:
+                self.add_line(
+                    f"kwargs.update({{f'{prefix}{{k}}': v for k, v in {packed_value}.items()}})"
+                )
+            elif rename:
+                self.add_line(
+                    f"kwargs.update({{{rename!r}.get(k, k): v for k, v in {packed_value}.items()}})"
+                )
+            else:
+                self.add_line(f"kwargs.update({packed_value})")
+            return
         if by_alias_feature and alias is not None:
             with self.indent("if by_alias:"):
                 self.add_line(f"kwargs['{alias}'] = {packed_value}")
@@ -1183,6 +1206,46 @@ class CodeBuilder:
         )
         return packer, alias, could_be_none
 
+    def _validate_flatten(self, fname: str, ftype: typing.Any) -> None:
+        real_type = ftype
+        if is_optional(ftype, self.get_field_resolved_type_params(fname)):
+            real_type = next(
+                t for t in get_args(ftype) if t is not NoneType
+            )
+        if not isinstance(real_type, type) or not is_dataclass(real_type):
+            raise TypeError(f"Flattened field '{fname}' must be a dataclass")
+        metadata = self.metadatas.get(fname, {})
+        if metadata.get("flatten_prefix") and metadata.get("flatten_rename"):
+            raise ValueError(
+                f"Flattened field '{fname}' cannot use both flatten_prefix and flatten_rename"
+            )
+        rename = metadata.get("flatten_rename")
+        if rename is not None:
+            if not isinstance(rename, dict) or len(rename) != len(set(rename)):
+                raise ValueError(f"Invalid flatten_rename for field '{fname}'")
+            child_names = set(get_type_annotations(real_type))
+            if any(not isinstance(k, str) or k not in child_names for k in rename):
+                raise ValueError(f"Invalid flatten_rename for field '{fname}'")
+            if any(not isinstance(v, str) or not v for v in rename.values()):
+                raise ValueError(f"Invalid flatten_rename for field '{fname}'")
+        keys = set()
+        child_builder = CodeBuilder(real_type)
+        child_types = child_builder.get_field_types(include_extras=True)
+        for child_name, child_type in child_types.items():
+            child_metadata = child_builder.metadatas.get(child_name, {})
+            child_alias = child_builder._CodeBuilder__get_field_alias(
+                child_name, child_type, child_metadata, child_builder.get_config()
+            )
+            child_keys = {child_name}
+            if child_alias:
+                child_keys.add(child_alias)
+            target = rename.get(child_name, child_name) if rename else child_name
+            if metadata.get("flatten_prefix"):
+                target = f"{metadata['flatten_prefix'] if metadata['flatten_prefix'] is not True else fname + '_'}{target}"
+            if target in keys or any(k in keys for k in child_keys):
+                raise ValueError(f"Flattened field '{fname}' has colliding keys")
+            keys.add(target)
+
     @staticmethod
     def __get_field_alias(
         fname: str,
@@ -1321,10 +1384,42 @@ class FieldUnpackerCodeBlockBuilder:
             )
             or default is None
         )
+        if metadata.get("flatten"):
+            real_type = ftype
+            if is_optional(
+                ftype, self.parent.get_field_resolved_type_params(fname)
+            ):
+                real_type = next(t for t in get_args(ftype) if t is not NoneType)
+            child_builder = CodeBuilder(real_type)
+            child_types = child_builder.get_field_types(include_extras=True)
+            rename = metadata.get("flatten_rename") or {}
+            prefix = metadata.get("flatten_prefix")
+            if prefix is True:
+                prefix = f"{fname}_"
+            pairs = []
+            for child_name, child_type in child_types.items():
+                child_metadata = child_builder.metadatas.get(child_name, {})
+                child_alias = child_builder._CodeBuilder__get_field_alias(
+                    child_name,
+                    child_type,
+                    child_metadata,
+                    child_builder.get_config(),
+                )
+                key = rename.get(child_name, child_name)
+                if prefix:
+                    key = f"{prefix}{key}"
+                pairs.append((key, child_alias or child_name))
+            self.add_line(
+                f"value = {{dst: d[src] for src, dst in {pairs!r} if src in d}} or None"
+            )
+            # The regular unpacker consumes the synthesized nested mapping.
+            expression = "value"
+        else:
+            expression = "value"
         unpacked_value = UnpackerRegistry.get(
             ValueSpec(
                 type=ftype,
-                expression="value",
+                expression=expression,
                 builder=self.parent,
                 field_ctx=FieldContext(
                     name=fname,
@@ -1333,7 +1428,9 @@ class FieldUnpackerCodeBlockBuilder:
                 could_be_none=False if could_be_none else True,
             )
         )
-        if self.parent.get_config().allow_deserialization_not_by_alias:
+        if metadata.get("flatten"):
+            packed_value = "value"
+        elif self.parent.get_config().allow_deserialization_not_by_alias:
             if unpacked_value != "value":
                 self.add_line(f"value = d.get('{alias}', MISSING)")
                 with self.indent("if value is MISSING:"):
