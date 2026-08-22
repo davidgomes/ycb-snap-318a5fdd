@@ -177,6 +177,8 @@ class RichLog(ScrollView, can_focus=True):
             while deferred_renders:
                 deferred_render = deferred_renders.popleft()
                 self.write(*deferred_render)
+        elif self._size_known:
+            self._rerender_entries()
 
     def _rerender_entries(self) -> None:
         """Re-render entries whose width depends on the current widget size."""
