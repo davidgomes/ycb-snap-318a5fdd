@@ -209,7 +209,7 @@ func (e *Element) DeepEqual(other *Element) bool {
 		found := false
 		for i, b := range other.Attr {
 			if !used[i] && a.Space == b.Space && a.Key == b.Key &&
-				a.Value == b.Value && a.NamespaceURI() == b.NamespaceURI() {
+				a.Value == b.Value && attrNamespaceURI(a) == attrNamespaceURI(b) {
 				used[i], found = true, true
 				break
 			}
@@ -224,6 +224,13 @@ func (e *Element) DeepEqual(other *Element) bool {
 		}
 	}
 	return true
+}
+
+func attrNamespaceURI(a Attr) string {
+	if a.element == nil {
+		return ""
+	}
+	return a.NamespaceURI()
 }
 
 func ElementsDeepEqual(a, b *Element) bool { return a.DeepEqual(b) }
@@ -633,7 +640,7 @@ func GeneratePatch(ops []DiffOperation) *Document {
 					add.CreateText(value)
 				}
 			} else if op.NewValue == nil {
-				appendPatchRemove(root, joinAttrPath(op.Path, op.AttrName), nil)
+				appendPatchRemove(root, joinAttrPath(op.Path, op.AttrName), op.OldValue)
 			} else {
 				appendPatchReplace(root, joinAttrPath(op.Path, op.AttrName), op.NewValue)
 			}

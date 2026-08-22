@@ -61,6 +61,46 @@ func TestKeyIdentityPairsDifferentTags(t *testing.T) {
 	}
 }
 
+func TestMergeAndReversePatch(t *testing.T) {
+	base := newDocumentFromString(t, `<root><item id="1">base</item></root>`)
+	ours := newDocumentFromString(t, `<root><item id="1">ours</item></root>`)
+	theirs := newDocumentFromString(t, `<root><item id="1">theirs</item></root>`)
+
+	merged, conflicts, err := Merge3Way(base, ours, theirs, DefaultMergeOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conflicts) != 1 || conflicts[0].Type != ConflictBothModified ||
+		merged.Root().SelectElement("item").Text() != "base" {
+		t.Fatalf("unexpected unresolved merge: %#v, %s", conflicts, mustWrite(merged))
+	}
+
+	opts := DefaultMergeOptions()
+	opts.AutoResolve = true
+	merged, conflicts, err = Merge3Way(base, ours, theirs, opts)
+	if err != nil || len(conflicts) != 1 || !conflicts[0].Resolved ||
+		merged.Root().SelectElement("item").Text() != "ours" {
+		t.Fatalf("unexpected resolved merge: %#v, %s, %v", conflicts, mustWrite(merged), err)
+	}
+
+	ops, err := Diff(base, ours, DefaultDiffOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reverse, err := ReversePatch(GeneratePatch(ops))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPatch(ours, reverse); err != nil {
+		t.Fatal(err)
+	}
+	// Text replacement patches retain their target value when reversed because
+	// XML patch-ops has no standard old-value slot.
+	if ours.Root().SelectElement("item").Text() != "ours" {
+		t.Fatal("reverse patch changed the wrong node")
+	}
+}
+
 func mustWrite(d *Document) string {
 	s, _ := d.WriteToString()
 	return s
