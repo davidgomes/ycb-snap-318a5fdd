@@ -55,6 +55,27 @@ func (s *IndexSuite) TestIndexRemove() {
 	s.ErrorIs(err, ErrEntryNotFound)
 }
 
+func (s *IndexSuite) TestIndexRemoveAll() {
+	idx := &Index{
+		Entries: []*Entry{
+			{Name: "foo", Stage: AncestorMode},
+			{Name: "foo", Stage: OurMode},
+			{Name: "foo", Stage: TheirMode},
+			{Name: "bar", Stage: 0},
+		},
+	}
+
+	e, err := idx.RemoveAll("foo")
+	s.NoError(err)
+	s.Equal("foo", e.Name)
+	s.Len(idx.Entries, 1)
+	s.Equal("bar", idx.Entries[0].Name)
+
+	e, err = idx.RemoveAll("foo")
+	s.Nil(e)
+	s.ErrorIs(err, ErrEntryNotFound)
+}
+
 func (s *IndexSuite) TestIndexGlob() {
 	idx := &Index{
 		Entries: []*Entry{

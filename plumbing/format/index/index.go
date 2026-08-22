@@ -94,6 +94,28 @@ func (i *Index) Remove(path string) (*Entry, error) {
 	return nil, ErrEntryNotFound
 }
 
+// RemoveAll removes every entry that matches the given path, including
+// unmerged stages 1/2/3, and returns the first deleted entry.
+func (i *Index) RemoveAll(path string) (*Entry, error) {
+	path = filepath.ToSlash(path)
+	var first *Entry
+	dst := i.Entries[:0]
+	for _, e := range i.Entries {
+		if e.Name == path {
+			if first == nil {
+				first = e
+			}
+			continue
+		}
+		dst = append(dst, e)
+	}
+	i.Entries = dst
+	if first == nil {
+		return nil, ErrEntryNotFound
+	}
+	return first, nil
+}
+
 // Glob returns the all entries matching pattern or nil if there is no matching
 // entry. The syntax of patterns is the same as in filepath.Glob.
 func (i *Index) Glob(pattern string) (matches []*Entry, err error) {

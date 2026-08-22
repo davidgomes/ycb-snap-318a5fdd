@@ -462,7 +462,7 @@ func (w *Worktree) AddGlob(pattern string) error {
 // the file added is different from the index.
 // if s status is nil will skip the status check and update the index anyway
 func (w *Worktree) doAddFile(idx *index.Index, s Status, path string, ignorePattern []gitignore.Pattern) (added bool, h plumbing.Hash, err error) {
-	if s != nil && s.File(path).Worktree == Unmodified {
+	if s != nil && s.File(path).Worktree == Unmodified && !indexHasConflictStages(idx, path) {
 		return false, h, nil
 	}
 	if len(ignorePattern) > 0 {
@@ -567,6 +567,13 @@ func (w *Worktree) fillEncodedObjectFromSymlink(dst io.Writer, path string, _ os
 }
 
 func (w *Worktree) addOrUpdateFileToIndex(idx *index.Index, filename string, h plumbing.Hash) error {
+	if indexHasConflictStages(idx, filename) {
+		if _, err := idx.RemoveAll(filename); err != nil && !errors.Is(err, index.ErrEntryNotFound) {
+			return err
+		}
+		return w.doAddFileToIndex(idx, filename, h)
+	}
+
 	e, err := idx.Entry(filename)
 	if err != nil && !errors.Is(err, index.ErrEntryNotFound) {
 		return err
@@ -577,6 +584,16 @@ func (w *Worktree) addOrUpdateFileToIndex(idx *index.Index, filename string, h p
 	}
 
 	return w.doUpdateFileToIndex(e, filename, h)
+}
+
+func indexHasConflictStages(idx *index.Index, filename string) bool {
+	filename = filepath.ToSlash(filename)
+	for _, e := range idx.Entries {
+		if e.Name == filename && e.Stage != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *Worktree) doAddFileToIndex(idx *index.Index, filename string, h plumbing.Hash) error {
@@ -684,7 +701,7 @@ func (w *Worktree) doRemoveFile(idx *index.Index, path string) (plumbing.Hash, e
 }
 
 func (w *Worktree) deleteFromIndex(idx *index.Index, path string) (plumbing.Hash, error) {
-	e, err := idx.Remove(path)
+	e, err := idx.RemoveAll(path)
 	if err != nil {
 		return plumbing.ZeroHash, err
 	}
