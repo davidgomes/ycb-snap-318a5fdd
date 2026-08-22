@@ -1,0 +1,3 @@
+from tests_helpers import pretty_typehint_test_id
+
+pytest_make_parametrize_id = pretty_typehint_test_id

@@ -1,0 +1,22 @@
+-r test_extra_new.txt
+-r _bench-orchestrate.txt
+-r doc.txt
+
+pre-commit==4.0.1
+
+mypy[faster-cache]==1.14.0
+
+vulture==2.10
+
+ruff==0.9.1
+
+radon==6.0.1
+dlint==0.14.1
+
+astpath[xpath]==0.9.1
+
+# flake8-docstrings
+# pycodestyle
+# darglint
+
+# https://github.com/tonybaloney/pycharm-security

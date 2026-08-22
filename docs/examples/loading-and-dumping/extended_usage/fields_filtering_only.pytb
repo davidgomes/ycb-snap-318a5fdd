@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  ...
+adaptix.ProviderNotFoundError: Cannot produce loader for type <class '__main__.User'>
+  × Cannot create loader for model. Cannot fetch `InputNameLayout`
+  │ Location: ‹User›
+  ╰──▷ Required fields ['password_hash'] are skipped

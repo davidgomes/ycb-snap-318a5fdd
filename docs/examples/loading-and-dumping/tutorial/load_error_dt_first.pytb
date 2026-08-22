@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  ...
+adaptix.load_error.TypeLoadError: expected_type=<class 'int'>, input_value='Fahrenheit 451'
+Exception was caused at ['price']

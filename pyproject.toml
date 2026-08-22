@@ -1,0 +1,222 @@
+[build-system]
+requires = ['setuptools==75.6.0']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'adaptix'
+version = '3.0.0b11'
+description = 'An extremely flexible and configurable data model conversion library'
+readme = 'README.md'
+requires-python = '>=3.9'
+dependencies = [
+    'exceptiongroup>=1.1.3; python_version<"3.11"',
+]
+
+classifiers = [
+    'Development Status :: 3 - Alpha',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Programming Language :: Python :: 3.13',
+    'Programming Language :: Python :: Implementation :: CPython',
+    'Programming Language :: Python :: Implementation :: PyPy',
+    'Operating System :: OS Independent',
+    'Intended Audience :: Developers',
+    'Intended Audience :: Information Technology',
+    'Intended Audience :: System Administrators',
+    'License :: OSI Approved :: Apache Software License',
+    'Typing :: Typed',
+    'Topic :: Software Development :: Libraries :: Python Modules',
+    'Topic :: Internet',
+]
+
+[project.optional-dependencies]
+attrs = ['attrs >= 21.3.0']
+attrs-strict = ['attrs >= 21.3.0, <= 24.2.0']
+sqlalchemy = ['sqlalchemy >= 2.0.0']
+sqlalchemy-strict = ['sqlalchemy >= 2.0.0, <= 2.0.40']
+pydantic = ['pydantic >= 2.0.0']
+pydantic-strict = ['pydantic >= 2.0.0, <= 2.11.3']
+msgspec = ['msgspec >= 0.18.5']
+msgspec-strict = ['msgspec >= 0.18.5, <= 0.19.0']
+
+[project.urls]
+'Homepage' = 'https://github.com/reagento/adaptix'
+'Bug Tracker' = 'https://github.com/reagento/adaptix/issues'
+'Documentation' = 'https://adaptix.readthedocs.io/en/latest/'
+'Changelog' = 'https://adaptix.readthedocs.io/en/latest/reference/changelog.html'
+'Source' = 'https://github.com/reagento/adaptix/'
+'Download' = 'https://github.com/reagento/adaptix/#files'
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+adaptix = ['py.typed']
+
+[[project.authors]]
+name = 'A. Tikhonov'
+email = '17@itishka.org'
+
+#   ┌             ┐
+#   │   TESTING   │
+#   └             ┘
+
+[tool.pytest.ini_options]
+python_classes = 'WeDoNotUseClassTestCase'
+python_files = [
+  'test_*.py',
+  '*_test.py',
+  'bench_[!nexus]*.py',
+  'tests/tests_helpers/tests_helpers/*.py',
+  'local_helpers.py',
+]
+testpaths = ['tests', 'examples']
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+include = ["src/**"]
+
+[tool.coverage.report]
+exclude_also = [
+    "^\\s*\\.\\.\\.\\s*(:?#.*)?$",
+]
+
+#   ┌             ┐
+#   │   LINTING   │
+#   └             ┘
+
+[tool.mypy]
+ignore_missing_imports = true
+
+show_error_codes = true
+warn_unused_configs = true
+no_implicit_optional = true
+
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+disallow_subclassing_any = true
+# disallow_any_generics = true # maybe turn on in the future
+local_partial_types = true
+
+
+[tool.isort]
+multi_line_output = 3
+line_length = 120
+include_trailing_comma = true
+combine_as_imports = true
+remove_redundant_aliases = true
+
+
+[tool.vulture]
+min_confidence = 60
+ignore_decorators = ['@_aspect_storage.add', '@overload', '@abstractmethod']
+
+
+[tool.ruff]
+line-length = 120
+output-format = "concise"
+
+[tool.ruff.lint]
+
+allowed-confusables = ['×', '‹', '›']
+
+select = ['ALL']
+fixable = [
+  'Q000',
+  'Q001',
+  'COM812',
+  'D400',
+  'PT001',
+  'RUF023',
+  'RUF022',
+]
+ignore = [
+  # Rules that should be turned on in the near future
+  'D',
+  'N818',
+  'B904',
+  'FIX002',
+  'RUF012',
+
+  # Rules emitting false alerts
+  'N804',
+  'B008',
+  'BLE001',
+  'RUF009',
+  'PD011',
+
+  # Rules that are not applicable in the project for now
+  'TID252',
+  'D104',
+  'ANN',
+  'SLF001',
+  'ARG',
+  'D100',
+  'PLR0913',
+  'TC002',
+
+  # Strange and obscure rules that will never be turned on
+  'FA100',
+  'TRY003',
+  'TRY201',
+  'EM',
+  'PERF203',
+  'TC001',
+  'TD002',
+  'PTH201',
+  'RSE102',
+  'TC003',
+  'PYI025',
+
+  # Rules conflictin with other tools
+  'I001',
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ['F401']
+
+"test_*" = ['S101', 'PLR2004', 'PLC0105', 'N806', 'FA102', 'UP035', 'UP006', 'E501']
+"tests/*/local_helpers.py" = ['S101', 'PLR2004', 'PLC0105', 'N806', 'FA102']
+"tests/*/data_*.py" = ['F821']
+"tests/tests_helpers/*" = ['INP001', 'S101']
+
+"docs/examples/*" = [
+  # test ignores
+  'S101', 'PLR2004', 'PLC0105', 'N806', 'PT017', 'SIM105', 'FA102',
+  # unique ignores
+  'SLOT000', 'S106', 'DTZ001'
+]
+
+"scripts/*" = ['INP001']
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
+
+[tool.ruff.lint.flake8-pytest-style]
+parametrize-names-type = "list"
+
+
+#   ┌             ┐
+#   │    OTHER    │
+#   └             ┘
+
+
+[tool.towncrier]
+package = 'adaptix'
+filename = 'docs/changelog/changelog_body.rst'
+template = 'docs/changelog/template.rst.jinja2'
+issue_format = '`#{issue} <https://github.com/reagento/adaptix/issues/{issue}>`__'
+directory = 'docs/changelog/fragments'
+
+type = [
+  { name = "Features",         directory = "feature",     showcontent = true },
+  { name = "Breaking Changes", directory = "breaking",    showcontent = true },
+  { name = "Deprecations",     directory = "deprecation", showcontent = true },
+  { name = "Bug Fixes",        directory = "bugfix",      showcontent = true },
+  { name = "Other",            directory = "other",       showcontent = true },
+]

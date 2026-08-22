@@ -1,0 +1,14 @@
++ Exception Group Traceback (most recent call last):
+|   ...
+| adaptix.load_error.AggregateLoadError: while loading model <class '__main__.Book'> (2 sub-exceptions)
++-+---------------- 1 ----------------
+  | Traceback (most recent call last):
+  |   ...
+  | adaptix.load_error.TypeLoadError: expected_type=<class 'int'>, input_value='Fahrenheit 451'
+  | Exception was caused at ['price']
+  +---------------- 2 ----------------
+  | Traceback (most recent call last):
+  |   ...
+  | adaptix.load_error.TypeLoadError: expected_type=<class 'str'>, input_value=100
+  | Exception was caused at ['title']
+  +------------------------------------
