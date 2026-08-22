@@ -110,6 +110,64 @@ url = "https://example.com"
 	}
 }
 
+func TestAlertPolicyInheritance(t *testing.T) {
+	configContent := `
+[global]
+[global.alert_policy]
+consecutive_failures = 3
+consecutive_recoveries = 2
+cooldown_seconds = 60
+latency_threshold_ms = 500
+latency_breach_count = 2
+ssl_expiry_threshold_days = 14
+
+[[targets]]
+url = "https://example.com"
+name = "Inherited"
+
+[[targets]]
+url = "https://override.example"
+name = "Override"
+[targets.alert_policy]
+consecutive_failures = 5
+`
+
+	tmpFile, err := os.CreateTemp("", "test-alert-policy-*.toml")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer func() {
+		if err := os.Remove(tmpFile.Name()); err != nil {
+			t.Logf("Failed to remove temp file: %v", err)
+		}
+	}()
+
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatalf("Failed to close temp file: %v", err)
+	}
+
+	cfg, err := LoadConfig(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	inherited := cfg.Targets[0].AlertPolicy
+	if inherited.ConsecutiveFailures != 3 || inherited.CooldownSeconds != 60 || inherited.LatencyThresholdMs != 500 {
+		t.Fatalf("expected global alert policy on first target, got %+v", inherited)
+	}
+
+	overridden := cfg.Targets[1].AlertPolicy
+	if overridden.ConsecutiveFailures != 5 {
+		t.Fatalf("expected override consecutive_failures=5, got %d", overridden.ConsecutiveFailures)
+	}
+	if overridden.CooldownSeconds != 60 {
+		t.Fatalf("expected inherited cooldown, got %d", overridden.CooldownSeconds)
+	}
+}
+
 func TestTargetGetMethods(t *testing.T) {
 	target := Target{
 		RefreshInterval: 30,

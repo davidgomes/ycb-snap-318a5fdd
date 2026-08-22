@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Owloops/updo/alerts"
 	"github.com/Owloops/updo/config"
 	"github.com/Owloops/updo/net"
 	"github.com/Owloops/updo/stats"
@@ -26,6 +27,17 @@ func NewOutputManager(targets []config.Target) *OutputManager {
 		sslExpiry:    make(map[string]int),
 		sslCollected: make(map[string]bool),
 	}
+}
+
+func formatAlertFields(decision alerts.Decision) string {
+	state := decision.State
+	if state == "" {
+		state = alerts.StateHealthy
+	}
+	if decision.Event != alerts.EventNone {
+		return fmt.Sprintf("alert=%s event=%s", state, decision.Event)
+	}
+	return fmt.Sprintf("alert=%s", state)
 }
 
 func (m *OutputManager) PrintHeader() {
@@ -84,23 +96,27 @@ func (m *OutputManager) PrintResult(result TargetResult) {
 		regionInfo = fmt.Sprintf(" [%s]", result.Region)
 	}
 
+	alertInfo := formatAlertFields(result.AlertDecision)
+
 	if m.isSingle {
-		fmt.Printf("Response%s%s: seq=%d time=%dms %s uptime=%.1f%%\n",
+		fmt.Printf("Response%s%s: seq=%d time=%dms %s uptime=%.1f%% %s\n",
 			ipInfo,
 			regionInfo,
 			result.Sequence,
 			result.Result.ResponseTime.Milliseconds(),
 			statusInfo,
-			result.Stats.UptimePercent)
+			result.Stats.UptimePercent,
+			alertInfo)
 	} else {
-		fmt.Printf("%s response%s%s: seq=%d time=%dms %s uptime=%.1f%%\n",
+		fmt.Printf("%s response%s%s: seq=%d time=%dms %s uptime=%.1f%% %s\n",
 			result.Target.Name,
 			ipInfo,
 			regionInfo,
 			result.Sequence,
 			result.Result.ResponseTime.Milliseconds(),
 			statusInfo,
-			result.Stats.UptimePercent)
+			result.Stats.UptimePercent,
+			alertInfo)
 	}
 }
 

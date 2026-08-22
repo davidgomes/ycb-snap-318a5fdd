@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/Owloops/updo/alerts"
 )
 
 func TestSendWebhook(t *testing.T) {
@@ -213,6 +215,74 @@ func TestHandleWebhookAlert(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHandleWebhookDecision(t *testing.T) {
+	var received WebhookPayload
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	decision := alerts.Decision{
+		Event:                 alerts.EventTargetDown,
+		State:                 alerts.StateDown,
+		PreviousState:         alerts.StateHealthy,
+		Reason:                "target failed 1 consecutive check(s)",
+		ConsecutiveFailures:   1,
+		SSLDaysRemaining:      -1,
+	}
+
+	if err := HandleWebhookDecision(server.URL, client, decision, "Site", "https://example.com", 10*time.Millisecond, 500, "down", "us-east-1"); err != nil {
+		t.Fatalf("HandleWebhookDecision: %v", err)
+	}
+	if !called {
+		t.Fatal("expected webhook send")
+	}
+	if received.Event != "target_down" || received.State != "down" || received.Region != "us-east-1" {
+		t.Fatalf("payload: %+v", received)
+	}
+
+	called = false
+	decision.Event = alerts.EventNone
+	if err := HandleWebhookDecision(server.URL, client, decision, "Site", "https://example.com", 10*time.Millisecond, 200, "", ""); err != nil {
+		t.Fatalf("none: %v", err)
+	}
+	if called {
+		t.Fatal("EventNone must not send")
+	}
+
+	decision.Event = alerts.EventTargetDown
+	decision.Suppressed = true
+	if err := HandleWebhookDecision(server.URL, client, decision, "Site", "https://example.com", 10*time.Millisecond, 500, "down", ""); err != nil {
+		t.Fatalf("suppressed: %v", err)
+	}
+	if called {
+		t.Fatal("suppressed must not send")
+	}
+}
+
+func TestHandleWebhookDecisionWithHeaders(t *testing.T) {
+	var gotHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Token")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	decision := alerts.Decision{Event: alerts.EventTargetRecovered, State: alerts.StateHealthy, PreviousState: alerts.StateDown, Reason: "recovered"}
+	if err := HandleWebhookDecisionWithHeaders(server.URL, []string{"X-Token: secret"}, decision, "Site", "https://example.com", time.Millisecond, 200, "", ""); err != nil {
+		t.Fatalf("headers: %v", err)
+	}
+	if gotHeader != "secret" {
+		t.Fatalf("expected custom header, got %q", gotHeader)
 	}
 }
 
