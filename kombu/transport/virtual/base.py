@@ -1309,17 +1309,25 @@ class Transport(base.Transport):
         if self.state.is_single_active_consumer(queue):
             record = next((
                 item for item in records
-                if item['is_active'] and not item['channel'].closed
+                if item['is_active']
+                and not item['channel'].closed
+                and item['channel'].qos.can_consume()
             ), None)
             if record is None:
-                return
+                self._put(queue, message)
+                raise Empty()
             record['delivery_callback'](message)
             return
 
         for record in records:
-            if not record['channel'].closed and record['channel'].qos.can_consume():
+            if (
+                not record['channel'].closed
+                and record['channel'].qos.can_consume()
+            ):
                 record['delivery_callback'](message)
                 return
+        self._put(queue, message)
+        raise Empty()
 
     def _reject_inbound_message(self, raw_message):
         for channel in self.channels:
