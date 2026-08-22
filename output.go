@@ -4,6 +4,8 @@ import (
 	"io"
 	"os"
 	"sync"
+
+	"github.com/muesli/termenv/ansi"
 )
 
 // output is the default global output.
@@ -26,13 +28,32 @@ type Output struct {
 	w       io.Writer
 	environ Environ
 
-	assumeTTY bool
-	unsafe    bool
-	cache     bool
-	fgSync    *sync.Once
-	fgColor   Color
-	bgSync    *sync.Once
-	bgColor   Color
+	assumeTTY      bool
+	unsafe         bool
+	cache          bool
+	fgSync         *sync.Once
+	fgColor        Color
+	bgSync         *sync.Once
+	bgColor        Color
+	preserveResets bool
+}
+
+func WithPreserveResets(v bool) OutputOption { return func(o *Output) { o.preserveResets = v } }
+
+func (o Output) String(s ...string) Style {
+	t := o.Profile.String(s...)
+	if o.preserveResets {
+		t = t.PreserveResets()
+	}
+	return t
+}
+
+func (o Output) Truncate(s string, width int, opts TruncateOptions) string {
+	if o.Profile == Ascii {
+		return ansi.TruncateANSI(s, width, ansi.TruncateOptions{Tail: opts.Tail})
+	}
+	opts.PreserveResets = opts.PreserveResets || o.preserveResets
+	return ansi.TruncateANSI(s, width, ansi.TruncateOptions{Tail: opts.Tail, PreserveResets: opts.PreserveResets})
 }
 
 // Environ is an interface for getting environment variables.

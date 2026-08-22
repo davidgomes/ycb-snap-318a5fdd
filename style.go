@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/muesli/termenv/ansi"
 	"github.com/rivo/uniseg"
 )
 
@@ -24,7 +25,8 @@ const (
 type Style struct {
 	profile Profile
 	string
-	styles []string
+	styles         []string
+	preserveResets bool
 }
 
 // String returns a new Style.
@@ -37,6 +39,20 @@ func String(s ...string) Style {
 
 func (t Style) String() string {
 	return t.Styled(t.string)
+}
+
+// PreserveResets reopens this style after embedded resets.
+func (t Style) PreserveResets() Style { t.preserveResets = true; return t }
+
+// Truncate truncates the styled string without splitting escape sequences.
+func (t Style) Truncate(width int, opts TruncateOptions) string {
+	if t.profile == Ascii {
+		return t.string
+	}
+	if t.preserveResets {
+		opts.PreserveResets = true
+	}
+	return ansi.TruncateANSI(t.Styled(t.string), width, ansi.TruncateOptions{Tail: opts.Tail, PreserveResets: opts.PreserveResets})
 }
 
 // Styled renders s with all applied styles.
