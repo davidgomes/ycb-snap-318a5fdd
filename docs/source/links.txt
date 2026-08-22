@@ -1,0 +1,97 @@
+.. This (-*- rst -*-) format file contains commonly used link targets
+   and name substitutions.  It may be included in many files,
+   therefore it should only contain link targets and name
+   substitutions.  Try grepping for "^\.\. _" to find plausible
+   candidates for this list.  
+
+   NOTE: this file must have an extension *opposite* to that of the main reST
+   files in the manuals, so that we can include it with ".. include::"
+   directives, but without triggering warnings from Sphinx for not being listed
+   in any toctree.  Since IPython uses .txt for the main files, this one will
+   use .rst.
+   
+   NOTE: reST targets are
+   __not_case_sensitive__, so only one target definition is needed for
+   ipython, IPython, etc.
+
+   NOTE: Some of these were taken from the nipy links compendium.
+
+.. Main IPython links
+.. _ipython: https://ipython.org
+.. _`ipython manual`: https://ipython.org/documentation.html
+.. _ipython_github: https://github.com/ipython/ipython/
+.. _nbviewer: https://nbviewer.org
+
+.. _ZeroMQ: https://zeromq.org
+
+.. Documentation tools and related links
+.. _graphviz: https://www.graphviz.org
+.. _Sphinx: https://www.sphinx-doc.org
+.. _`Sphinx reST`: https://www.sphinx-doc.org/en/master/usage/restructuredtext/basics.html
+.. _sampledoc: https://matplotlib.org/sampledoc
+.. _reST: https://docutils.sourceforge.io/rst.html
+.. _docutils: https://docutils.sourceforge.io
+.. _lyx: https://www.lyx.org
+.. _pep8: https://peps.python.org/pep-0008/
+
+.. Licenses
+.. _GPL: https://www.gnu.org/licenses/gpl.html
+.. _BSD: https://opensource.org/licenses/BSD-3-Clause
+.. _LGPL: https://www.gnu.org/copyleft/lesser.html
+
+.. Other python projects
+.. _numpy: https://numpy.org
+.. _scipy: https://www.scipy.org
+.. _scipy_conference: https://conference.scipy.org
+.. _matplotlib: https://matplotlib.org
+.. _pythonxy: https://python-xy.github.io/
+.. _ETS: https://docs.enthought.com/ets/
+.. _EPD: https://www.enthought.com/products/epd/
+.. _python: https://www.python.org
+.. _mayavi: https://docs.enthought.com/mayavi/mayavi/
+.. _sympy: https://www.sympy.org
+.. _sage: https://www.sagemath.org
+.. _pydy: https://www.pydy.org
+.. _vpython: https://vpython.org
+.. _cython: https://cython.org
+.. _software carpentry: https://software-carpentry.org
+
+.. Not so python scientific computing tools
+.. _matlab: https://www.mathworks.com
+.. _VTK: https://vtk.org
+
+.. Other organizations
+.. _enthought: https://www.enthought.com
+.. _kitware: https://www.kitware.com
+.. _netlib: https://netlib.org
+
+.. Other tools and projects
+.. _indefero: https://www.indefero.net
+.. _git: https://git-scm.com
+.. _github: https://github.com
+.. _Markdown: https://daringfireball.net/projects/markdown/syntax
+
+.. _Running Code in the IPython Notebook: notebook_p1_
+.. _notebook_p1: https://nbviewer.org/urls/raw.github.com/ipython/ipython/1.x/examples/notebooks/Part%25201%2520-%2520Running%2520Code.ipynb
+
+.. _Basic Output: notebook_p2_
+.. _notebook_p2: https://nbviewer.org/urls/raw.github.com/ipython/ipython/1.x/examples/notebooks/Part%202%20-%20Basic%20Output.ipynb
+
+.. _Plotting with Matplotlib: notebook_p3_
+.. _notebook_p3: https://nbviewer.org/urls/raw.github.com/ipython/ipython/1.x/examples/notebooks/Part%203%20-%20Plotting%20with%20Matplotlib.ipynb
+
+.. _Markdown Cells: notebook_p4_
+.. _notebook_p4: https://nbviewer.org/urls/raw.github.com/ipython/ipython/1.x/examples/notebooks/Part%204%20-%20Markdown%20Cells.ipynb
+
+.. _Rich Display System: notebook_p5_
+.. _notebook_p5: https://nbviewer.org/urls/raw.github.com/ipython/ipython/1.x/examples/notebooks/Part%205%20-%20Rich%20Display%20System.ipynb
+
+.. _notebook_custom_display: https://nbviewer.org/urls/raw.github.com/ipython/ipython/1.x/examples/notebooks/Custom%20Display%20Logic.ipynb
+
+.. _Frontend/Kernel Model: notebook_two_proc_
+.. _notebook_two_proc: https://nbviewer.org/urls/raw.github.com/ipython/ipython/1.x/examples/notebooks/Frontend-Kernel%20Model.ipynb
+
+.. _Cell magics: notebook_cell_magics_
+.. _notebook_cell_magics: https://nbviewer.org/urls/raw.github.com/ipython/ipython/1.x/examples/notebooks/Cell%20Magics.ipynb
+
+
