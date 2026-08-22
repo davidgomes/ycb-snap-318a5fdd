@@ -324,8 +324,8 @@ const layoutGrid = (node: DOMElement): void => {
 					}
 				: findPlacement(
 						cells,
-						item.row?.start ?? (!item.column ? cursor.row : undefined),
-						item.column?.start ?? (!item.row ? cursor.column : undefined),
+						item.row?.start ?? (item.column ? undefined : cursor.row),
+						item.column?.start ?? (item.row ? undefined : cursor.column),
 						rowSpan,
 						columnSpan,
 						columns.length,
