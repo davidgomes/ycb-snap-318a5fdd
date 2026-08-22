@@ -29,6 +29,12 @@ export type DOMElement = {
 	attributes: Record<string, DOMNodeAttribute>;
 	childNodes: DOMNode[];
 	internal_transform?: OutputTransformer;
+	internal_grid?: {
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	};
 
 	internal_accessibility?: {
 		role?:

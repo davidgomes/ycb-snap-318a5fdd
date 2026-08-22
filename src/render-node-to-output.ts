@@ -126,8 +126,10 @@ const renderNodeToOutput = (
 		}
 
 		// Left and top positions in Yoga are relative to their parent node
-		const x = offsetX + yogaNode.getComputedLeft();
-		const y = offsetY + yogaNode.getComputedTop();
+		const x = offsetX + (node.internal_grid?.x ?? yogaNode.getComputedLeft());
+		const y = offsetY + (node.internal_grid?.y ?? yogaNode.getComputedTop());
+		const width = node.internal_grid?.width ?? yogaNode.getComputedWidth();
+		const height = node.internal_grid?.height ?? yogaNode.getComputedHeight();
 
 		// Transformers are functions that transform final text output of each component
 		// See Output class for logic that applies transformers
@@ -174,9 +176,7 @@ const renderNodeToOutput = (
 					: undefined;
 
 				const x2 = clipHorizontally
-					? x +
-						yogaNode.getComputedWidth() -
-						yogaNode.getComputedBorder(Yoga.EDGE_RIGHT)
+					? x + width - yogaNode.getComputedBorder(Yoga.EDGE_RIGHT)
 					: undefined;
 
 				const y1 = clipVertically
@@ -184,9 +184,7 @@ const renderNodeToOutput = (
 					: undefined;
 
 				const y2 = clipVertically
-					? y +
-						yogaNode.getComputedHeight() -
-						yogaNode.getComputedBorder(Yoga.EDGE_BOTTOM)
+					? y + height - yogaNode.getComputedBorder(Yoga.EDGE_BOTTOM)
 					: undefined;
 
 				output.clip({x1, x2, y1, y2});

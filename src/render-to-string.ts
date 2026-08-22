@@ -1,7 +1,7 @@
 import type {ReactNode} from 'react';
 import Yoga from 'yoga-layout';
-import {applyGridLayouts} from './grid.js';
 import {LegacyRoot} from 'react-reconciler/constants.js';
+import {applyGridLayouts} from './grid.js';
 import reconciler from './reconciler.js';
 import renderer from './renderer.js';
 import {createNode, type DOMElement} from './dom.js';
