@@ -23,6 +23,7 @@ import (
 %type<exprs> exprs
 %type<expr> expr
 %type<expr_idents> expr_idents
+%type<params> params
 %type<type_data> type_data
 %type<type_data_struct> type_data_struct
 %type<slice_count> slice_count
@@ -61,6 +62,7 @@ import (
 	exprs                  []ast.Expr
 	expr                   ast.Expr
 	expr_idents            []string
+	params                 []ast.Param
 	type_data              *ast.TypeStruct
 	type_data_struct       *ast.TypeStruct
 	slice_count            int
@@ -481,23 +483,25 @@ expr :
 		$$ = &ast.NilCoalescingOpExpr{LHS: $1, RHS: $3}
 		$$.SetPosition($1.Position())
 	}
-	| FUNC '(' expr_idents ')' '{' compstmt '}'
+	| FUNC '(' params ')' '{' compstmt '}'
 	{
 		$$ = &ast.FuncExpr{Params: $3, Stmt: $6}
 		$$.SetPosition($1.Position())
 	}
-	| FUNC '(' expr_idents VARARG ')' '{' compstmt '}'
+	| FUNC '(' params VARARG ')' '{' compstmt '}'
 	{
+		if len($3) > 0 && $3[len($3)-1].Default != nil { yylex.Error("invalid default argument declaration") }
 		$$ = &ast.FuncExpr{Params: $3, Stmt: $7, VarArg: true}
 		$$.SetPosition($1.Position())
 	}
-	| FUNC IDENT '(' expr_idents ')' '{' compstmt '}'
+	| FUNC IDENT '(' params ')' '{' compstmt '}'
 	{
 		$$ = &ast.FuncExpr{Name: $2.Lit, Params: $4, Stmt: $7}
 		$$.SetPosition($1.Position())
 	}
-	| FUNC IDENT '(' expr_idents VARARG ')' '{' compstmt '}'
+	| FUNC IDENT '(' params VARARG ')' '{' compstmt '}'
 	{
+		if len($4) > 0 && $4[len($4)-1].Default != nil { yylex.Error("invalid default argument declaration") }
 		$$ = &ast.FuncExpr{Name: $2.Lit, Params: $4, Stmt: $8, VarArg: true}
 		$$.SetPosition($1.Position())
 	}
@@ -641,6 +645,31 @@ expr_idents :
 			yylex.Error("syntax error: unexpected ','")
 		}
 		$$ = append($1, $4.Lit)
+	}
+
+params :
+	{
+		$$ = []ast.Param{}
+	}
+	| IDENT
+	{
+		$$ = []ast.Param{{Name: $1.Lit}}
+	}
+	| IDENT '=' expr
+	{
+		$$ = []ast.Param{{Name: $1.Lit, Default: $3}}
+	}
+	| params ',' opt_newlines IDENT
+	{
+		if len($1) == 0 { yylex.Error("syntax error: unexpected ','") }
+		$$ = append($1, ast.Param{Name: $4.Lit})
+		for i := range $$[:len($$)-1] {
+			if $$[i].Default != nil { yylex.Error("invalid default argument declaration"); break }
+		}
+	}
+	| params ',' opt_newlines IDENT '=' expr
+	{
+		$$ = append($1, ast.Param{Name: $4.Lit, Default: $6})
 	}
 
 type_data :

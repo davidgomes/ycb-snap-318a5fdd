@@ -134,8 +134,14 @@ type FuncExpr struct {
 	ExprImpl
 	Name   string
 	Stmt   Stmt
-	Params []string
+	Params []Param
 	VarArg bool
+}
+
+// Param describes a function parameter and its optional default expression.
+type Param struct {
+	Name    string
+	Default Expr
 }
 
 // LetsExpr provide multiple expression of let.

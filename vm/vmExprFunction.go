@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sync"
 
 	"github.com/mattn/anko/ast"
 )
+
+var vmFunctionDefaults sync.Map
 
 // funcExpr creates a function that reflect Call can use.
 // When called, it will run runVMFunction, to run the function statements
@@ -39,18 +42,26 @@ func (runInfo *runInfoStruct) funcExpr() {
 		// add Params to newEnv, except last Params
 		for i := 0; i < len(funcExpr.Params)-1; i++ {
 			runInfo.rv = in[i+1].Interface().(reflect.Value)
-			runInfo.env.DefineValue(funcExpr.Params[i], runInfo.rv)
+			if !runInfo.rv.IsValid() {
+				runInfo.expr = funcExpr.Params[i].Default
+				runInfo.invokeExpr()
+			}
+			runInfo.env.DefineValue(funcExpr.Params[i].Name, runInfo.rv)
 		}
 		// add last Params to newEnv
 		if len(funcExpr.Params) > 0 {
 			if funcExpr.VarArg {
 				// function is variadic, add last Params to newEnv without convert to Interface and then reflect.Value
 				runInfo.rv = in[len(funcExpr.Params)]
-				runInfo.env.DefineValue(funcExpr.Params[len(funcExpr.Params)-1], runInfo.rv)
+				runInfo.env.DefineValue(funcExpr.Params[len(funcExpr.Params)-1].Name, runInfo.rv)
 			} else {
 				// function is not variadic, add last Params to newEnv
 				runInfo.rv = in[len(funcExpr.Params)].Interface().(reflect.Value)
-				runInfo.env.DefineValue(funcExpr.Params[len(funcExpr.Params)-1], runInfo.rv)
+				if !runInfo.rv.IsValid() {
+					runInfo.expr = funcExpr.Params[len(funcExpr.Params)-1].Default
+					runInfo.invokeExpr()
+				}
+				runInfo.env.DefineValue(funcExpr.Params[len(funcExpr.Params)-1].Name, runInfo.rv)
 			}
 		}
 
@@ -71,6 +82,11 @@ func (runInfo *runInfoStruct) funcExpr() {
 
 	// make the reflect.Value function that calls runVMFunction
 	runInfo.rv = reflect.MakeFunc(funcType, runVMFunction)
+	if len(funcExpr.Params) > 0 {
+		defaults := make([]ast.Expr, len(funcExpr.Params))
+		for i, p := range funcExpr.Params { defaults[i] = p.Default }
+		vmFunctionDefaults.Store(runInfo.rv.Pointer(), defaults)
+	}
 
 	// if function name is not empty, define it in the env
 	if funcExpr.Name != "" {
@@ -136,7 +152,7 @@ func (runInfo *runInfoStruct) callExpr() {
 	// check if this is a runVMFunction type
 	isRunVMFunction := checkIfRunVMFunction(fType)
 	// create/convert the args to the function
-	args, useCallSlice = runInfo.makeCallArgs(fType, isRunVMFunction, callExpr)
+	args, useCallSlice = runInfo.makeCallArgs(f, fType, isRunVMFunction, callExpr)
 	if runInfo.err != nil {
 		return
 	}
@@ -209,7 +225,7 @@ func checkIfRunVMFunction(rt reflect.Type) bool {
 
 // makeCallArgs creates the arguments reflect.Value slice for the four different kinds of functions.
 // Also returns true if CallSlice should be used on the arguments, or false if Call should be used.
-func (runInfo *runInfoStruct) makeCallArgs(rt reflect.Type, isRunVMFunction bool, callExpr *ast.CallExpr) ([]reflect.Value, bool) {
+func (runInfo *runInfoStruct) makeCallArgs(f reflect.Value, rt reflect.Type, isRunVMFunction bool, callExpr *ast.CallExpr) ([]reflect.Value, bool) {
 	// number of arguments
 	numInReal := rt.NumIn()
 	numIn := numInReal
@@ -228,6 +244,27 @@ func (runInfo *runInfoStruct) makeCallArgs(rt reflect.Type, isRunVMFunction bool
 
 	// number of expressions
 	numExprs := len(callExpr.SubExprs)
+	if isRunVMFunction && !rt.IsVariadic() && numExprs < numIn {
+		value, _ := vmFunctionDefaults.Load(f.Pointer())
+		defaults, _ := value.([]ast.Expr)
+		if len(defaults) == numIn && defaults[numExprs] != nil {
+			args := []reflect.Value{reflect.ValueOf(runInfo.ctx)}
+			for i := 0; i < numExprs; i++ {
+				runInfo.expr = callExpr.SubExprs[i]
+				runInfo.invokeExpr()
+				if runInfo.err != nil { return nil, false }
+				args = append(args, reflect.ValueOf(runInfo.rv))
+			}
+			for i := numExprs; i < numIn; i++ {
+				if defaults[i] == nil {
+					runInfo.err = newStringError(callExpr, "function wants "+fmt.Sprint(numIn)+" arguments but received "+fmt.Sprint(numExprs))
+					return nil, false
+				}
+				args = append(args, reflect.ValueOf(reflect.Value{}))
+			}
+			return args, false
+		}
+	}
 	// checks to short circuit wrong number of arguments
 	if (!rt.IsVariadic() && !callExpr.VarArg && numIn != numExprs) ||
 		(rt.IsVariadic() && callExpr.VarArg && (numIn < numExprs || numIn > numExprs+1)) ||
