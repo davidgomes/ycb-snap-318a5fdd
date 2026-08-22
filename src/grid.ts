@@ -215,8 +215,10 @@ const getTrackSizes = (
 				.filter(index => index >= 0);
 			const extraSize = Math.max(0, intrinsic - currentSize);
 
-			for (const index of autoTracks) {
-				sizes[index]! += extraSize / autoTracks.length;
+			if (autoTracks.length > 0) {
+				for (const index of autoTracks) {
+					sizes[index]! += extraSize / autoTracks.length;
+				}
 			}
 		}
 	}
@@ -322,8 +324,8 @@ const layoutGrid = (node: DOMElement): void => {
 					}
 				: findPlacement(
 						cells,
-						item.row?.start,
-						item.column?.start,
+						item.row?.start ?? (!item.column ? cursor.row : undefined),
+						item.column?.start ?? (!item.row ? cursor.column : undefined),
 						rowSpan,
 						columnSpan,
 						columns.length,
@@ -339,7 +341,7 @@ const layoutGrid = (node: DOMElement): void => {
 		);
 		placements.push(result);
 
-		if (!item.row && !item.column) {
+		if (!item.row) {
 			cursor.row = result.row;
 			cursor.column = result.column + columnSpan;
 			if (cursor.column >= columns.length) {
