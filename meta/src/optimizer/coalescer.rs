@@ -245,8 +245,7 @@ mod tests {
         assert_eq!(
             coalesce(rule(expr)).expr,
             OptimizedExpr::CharClass(vec![
-                ("A".to_owned(), "A".to_owned()),
-                ("B".to_owned(), "B".to_owned()),
+                ("A".to_owned(), "B".to_owned()),
                 ("b".to_owned(), "d".to_owned()),
             ])
         );

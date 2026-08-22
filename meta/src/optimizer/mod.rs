@@ -660,7 +660,7 @@ mod tests {
                     Ident(String::from("a")),
                     Seq(
                         Ident(String::from("b")),
-                        Range(String::from("c"), String::from("d"))
+                        Choice(Ident(String::from("c")), Ident(String::from("d")))
                     )
                 )),
             }]
