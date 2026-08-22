@@ -22,6 +22,7 @@ export interface ToolbarProps {
 
 class Toolbar extends Module<ToolbarProps> {
   static DEFAULTS: ToolbarProps;
+  static shared = new WeakMap<HTMLElement, Set<Toolbar>>();
 
   container?: HTMLElement | null;
   controls: [string, HTMLElement][];
@@ -45,6 +46,23 @@ class Toolbar extends Module<ToolbarProps> {
       return;
     }
     this.container.classList.add('ql-toolbar');
+    let toolbars = Toolbar.shared.get(this.container);
+    if (toolbars == null) {
+      toolbars = new Set();
+      Toolbar.shared.set(this.container, toolbars);
+      const observer = new MutationObserver(() => {
+        this.container?.querySelectorAll('button, select').forEach((input) => {
+          if (!(input as HTMLElement).dataset.qlToolbarBound) {
+            (input as HTMLElement).dataset.qlToolbarBound = 'true';
+            // @ts-expect-error
+            this.attach(input);
+          }
+        });
+      });
+      observer.observe(this.container, { childList: true, subtree: true });
+    }
+    toolbars.add(this);
+    this.active = false;
     this.controls = [];
     this.handlers = {};
     if (this.options.handlers) {
@@ -57,15 +75,37 @@ class Toolbar extends Module<ToolbarProps> {
     }
     Array.from(this.container.querySelectorAll('button, select')).forEach(
       (input) => {
-        // @ts-expect-error
-        this.attach(input);
+        if (!(input as HTMLElement).dataset.qlToolbarBound) {
+          (input as HTMLElement).dataset.qlToolbarBound = 'true';
+          // @ts-expect-error
+          this.attach(input);
+        }
       },
     );
     this.quill.on(Quill.events.EDITOR_CHANGE, () => {
       const [range] = this.quill.selection.getRange(); // quill.getSelection triggers update
-      this.update(range);
+      if (this.quill.hasFocus() || range != null) {
+        toolbars!.forEach((toolbar) => {
+          toolbar.active = toolbar === this;
+        });
+        toolbars!.forEach((toolbar) => {
+          toolbar.update(toolbar === this ? range : null);
+          toolbar.quill.emitter.emit('toolbar-active');
+        });
+      }
+    });
+    quill.root.addEventListener('focus', () => {
+      toolbars!.forEach((toolbar) => {
+        toolbar.active = toolbar === this;
+      });
+      toolbars!.forEach((toolbar) =>
+        toolbar.update(toolbar === this ? quill.selection.getRange()[0] : null),
+      );
+      toolbars!.forEach((toolbar) => toolbar.quill.emitter.emit('toolbar-active'));
     });
   }
+
+  active: boolean;
 
   addHandler(format: string, handler: Handler) {
     this.handlers[format] = handler;
@@ -89,6 +129,18 @@ class Toolbar extends Module<ToolbarProps> {
     }
     const eventName = input.tagName === 'SELECT' ? 'change' : 'click';
     input.addEventListener(eventName, (e) => {
+      const toolbars = Toolbar.shared.get(this.container!);
+      const active = Array.from(toolbars || []).find((toolbar) => toolbar.active);
+      if (active == null || !active.quill.scroll.isEnabled()) return;
+      active.handle(input, e);
+    });
+    this.controls.push([format, input]);
+  }
+
+  private handle(input: HTMLElement, e: Event) {
+    const format = Array.from(input.classList)
+      .find((className) => className.indexOf('ql-') === 0)!
+      .slice('ql-'.length);
       let value;
       if (input.tagName === 'SELECT') {
         // @ts-expect-error
@@ -109,7 +161,6 @@ class Toolbar extends Module<ToolbarProps> {
         }
         e.preventDefault();
       }
-      this.quill.focus();
       const [range] = this.quill.selection.getRange();
       if (this.handlers[format] != null) {
         this.handlers[format].call(this, value);
@@ -132,14 +183,14 @@ class Toolbar extends Module<ToolbarProps> {
         this.quill.format(format, value, Quill.sources.USER);
       }
       this.update(range);
-    });
-    this.controls.push([format, input]);
   }
 
   update(range: Range | null) {
     const formats = range == null ? {} : this.quill.getFormat(range);
+    const disabled = !this.quill.scroll.isEnabled();
     this.controls.forEach((pair) => {
       const [format, input] = pair;
+      input.toggleAttribute('disabled', disabled);
       if (input.tagName === 'SELECT') {
         let option: HTMLOptionElement | null = null;
         if (range == null) {

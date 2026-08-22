@@ -13,6 +13,7 @@ import type History from '../modules/history.js';
 import type Keyboard from '../modules/keyboard.js';
 import type Uploader from '../modules/uploader.js';
 import type Selection from '../core/selection.js';
+import Toolbar from '../modules/toolbar.js';
 
 const ALIGNS = [false, 'center', 'right', 'justify'];
 
@@ -59,6 +60,7 @@ const FONTS = [false, 'serif', 'monospace'];
 const HEADERS = ['1', '2', '3', false];
 
 const SIZES = ['small', false, 'large', 'huge'];
+const pickerMap = new WeakMap<HTMLSelectElement, Picker>();
 
 class BaseTheme extends Theme {
   pickers: Picker[];
@@ -142,12 +144,17 @@ class BaseTheme extends Theme {
     icons: Record<string, string | Record<string, string>>,
   ) {
     this.pickers = Array.from(selects).map((select) => {
+      const existing = pickerMap.get(select);
+      if (existing != null) return existing;
+      let picker: Picker;
       if (select.classList.contains('ql-align')) {
         if (select.querySelector('option') == null) {
           fillSelect(select, ALIGNS);
         }
         if (typeof icons.align === 'object') {
-          return new IconPicker(select, icons.align);
+          picker = new IconPicker(select, icons.align);
+          pickerMap.set(select, picker);
+          return picker;
         }
       }
       if (
@@ -164,7 +171,9 @@ class BaseTheme extends Theme {
             format === 'background' ? '#ffffff' : '#000000',
           );
         }
-        return new ColorPicker(select, icons[format] as string);
+        picker = new ColorPicker(select, icons[format] as string);
+        pickerMap.set(select, picker);
+        return picker;
       }
       if (select.querySelector('option') == null) {
         if (select.classList.contains('ql-font')) {
@@ -175,7 +184,9 @@ class BaseTheme extends Theme {
           fillSelect(select, SIZES);
         }
       }
-      return new Picker(select);
+      picker = new Picker(select);
+      pickerMap.set(select, picker);
+      return picker;
     });
     const update = () => {
       this.pickers.forEach((picker) => {
@@ -183,6 +194,7 @@ class BaseTheme extends Theme {
       });
     };
     this.quill.on(Emitter.events.EDITOR_CHANGE, update);
+    this.quill.on('toolbar-active', update);
   }
 }
 BaseTheme.DEFAULTS = merge({}, Theme.DEFAULTS, {
@@ -205,8 +217,10 @@ BaseTheme.DEFAULTS = merge({}, Theme.DEFAULTS, {
             );
             fileInput.classList.add('ql-image');
             fileInput.addEventListener('change', () => {
-              const range = this.quill.getSelection(true);
-              this.quill.uploader.upload(range, fileInput.files);
+              const toolbar = Toolbar.getActive(this.container);
+              if (toolbar == null || !toolbar.quill.scroll.isEnabled()) return;
+              const range = toolbar.quill.getSelection(true);
+              toolbar.quill.uploader.upload(range, fileInput.files);
               fileInput.value = '';
             });
             this.container.appendChild(fileInput);
