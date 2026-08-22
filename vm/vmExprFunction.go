@@ -246,6 +246,8 @@ func (runInfo *runInfoStruct) makeCallArgs(rt reflect.Type, isRunVMFunction bool
 		if fn, ok := functionDefaults.Load(callExpr.Func.Pointer()); ok {
 			defaults := fn.(*ast.FuncExpr).Defaults
 			if numExprs < len(defaults) {
+				outerEnv := runInfo.env
+				defer func() { runInfo.env = outerEnv }()
 				temp := runInfo.env.NewEnv()
 				for i, expr := range callExpr.SubExprs {
 					runInfo.expr = expr
@@ -262,7 +264,7 @@ func (runInfo *runInfoStruct) makeCallArgs(rt reflect.Type, isRunVMFunction bool
 					if runInfo.err != nil {
 						return nil, false
 					}
-					callExpr.SubExprs = append(callExpr.SubExprs, defaults[i])
+					callExpr.SubExprs = append(callExpr.SubExprs, &ast.LiteralExpr{Literal: runInfo.rv})
 					temp.DefineValue(fn.(*ast.FuncExpr).Params[i], runInfo.rv)
 				}
 				runInfo.env = temp
