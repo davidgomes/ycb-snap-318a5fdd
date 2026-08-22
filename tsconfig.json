@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "noImplicitAny": true,
+    "allowJs": true,
+    "target": "es2019",
+    "lib": ["esnext"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "alwaysStrict": true,
+    "skipLibCheck": true,
+    "noUnusedParameters": false,
+    "noUnusedLocals": false,
+    "strict": true,
+    "strictNullChecks": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "noImplicitOverride": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "sourceMap": false,
+    "declaration": false,
+    "baseUrl": "src",
+    "experimentalDecorators": true,
+    "inlineSourceMap": false,
+    "noFallthroughCasesInSwitch": true /* Report errors for fallthrough cases in switch statement. */,
+    "traceResolution": false /* Report module resolution log messages. */,
+    "listEmittedFiles": false /* Print names of generated files part of the compilation. */,
+    "listFiles": false /* Print names of files part of the compilation. */,
+    "pretty": true /* Stylize errors and messages using color and context. */,
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "~/*": ["*"]
+    }
+  },
+  "compileOnSave": false,
+  "exclude": ["node_modules", "dist", "docs", "vitest.config.ts", "coverage"],
+  "ts-node": {
+    "require": ["tsconfig-paths/register"]
+  }
+}

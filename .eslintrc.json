@@ -1,0 +1,44 @@
+{
+  "env": {
+    "es6": true,
+    "node": true
+  },
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended",
+    "plugin:prettier/recommended",
+    "prettier"
+  ],
+  "plugins": ["@typescript-eslint", "prefer-arrow", "unused-imports", "prettier", "import"],
+  "parser": "@typescript-eslint/parser",
+  "root": true,
+  "parserOptions": {
+    "ecmaVersion": 2018,
+    "sourceType": "module"
+  },
+  "rules": {
+    "import/extensions": ["error", "always"],
+    "prettier/prettier": "error",
+    "linebreak-style": ["error", "unix"],
+    "quotes": [
+      "error",
+      "single",
+      {
+        "allowTemplateLiterals": true,
+        "avoidEscape": true
+      }
+    ],
+    "semi": ["error", "never"],
+    // TODO: remove this rule when all the code is fully migrated to TS, atm it just produces a lot of noise
+    "@typescript-eslint/ban-ts-comment": "off",
+    // TODO: remove this rule when all the code is fully migrated to TS, atm it just produces a lot of noise
+    "@typescript-eslint/no-explicit-any": "off",
+    "@typescript-eslint/ban-types": "off",
+    "@typescript-eslint/no-non-null-assertion": "warn",
+    "@typescript-eslint/consistent-type-imports": "error"
+  },
+  "globals": {
+    "expect": true,
+    "it": true
+  }
+}
