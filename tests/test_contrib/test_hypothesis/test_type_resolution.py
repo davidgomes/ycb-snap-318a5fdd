@@ -32,11 +32,13 @@ from returns.maybe import Maybe
 from returns.pipeline import is_successful
 from returns.primitives.laws import Lawful
 from returns.result import Result, ResultE
+from returns.validated import Validated
 from test_hypothesis.test_laws import test_custom_type_applicative
 
 _all_containers: Sequence[type[Lawful]] = (
     Maybe,
     Result,
+    Validated,
     IO,
     IOResult,
     Future,

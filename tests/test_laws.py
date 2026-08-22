@@ -9,9 +9,11 @@ from returns.future import Future, FutureResult
 from returns.io import IO, IOResult
 from returns.maybe import Maybe
 from returns.result import Result
+from returns.validated import Validated
 
 check_all_laws(Maybe)
 check_all_laws(Result)
+check_all_laws(Validated)
 
 check_all_laws(IO)
 check_all_laws(IOResult)
