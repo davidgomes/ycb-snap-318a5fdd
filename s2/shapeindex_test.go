@@ -15,11 +15,128 @@
 package s2
 
 import (
+	"bytes"
+	"reflect"
 	"testing"
 
 	"github.com/golang/geo/r3"
 	"github.com/golang/geo/s1"
 )
+
+func TestShapeIndexEncodeDecode(t *testing.T) {
+	points := parsePoints("0:0, 0:1, 1:0")
+	polygon := PolygonFromLoops([]*Loop{LoopFromPoints(points)})
+	pointVector := PointVector(parsePoints("2:0, 3:0"))
+	shapes := []Shape{
+		&Polyline{points[0], points[1], points[2]},
+		&pointVector,
+		LaxPolylineFromPoints(points),
+		LaxPolygonFromPoints([][]Point{points, {}, {points[0]}}),
+		polygon,
+		LoopFromPoints(points),
+		LaxLoopFromPoints(points),
+		&Polygon{},
+		LaxPolygonFromPoints([][]Point{{}}), // A full, zero-edge shape.
+	}
+
+	index := NewShapeIndex()
+	for _, shape := range shapes {
+		index.Add(shape)
+	}
+
+	var encoded bytes.Buffer
+	if err := index.Encode(&encoded); err != nil {
+		t.Fatalf("ShapeIndex.Encode() failed: %v", err)
+	}
+	if encoded.Len() == 0 {
+		t.Fatal("ShapeIndex.Encode() returned an empty stream")
+	}
+	if index.IsFresh() == false {
+		t.Fatal("ShapeIndex should be fresh after encoding")
+	}
+
+	decoded := NewShapeIndex()
+	if err := decoded.Decode(bytes.NewReader(encoded.Bytes())); err != nil {
+		t.Fatalf("ShapeIndex.Decode() failed: %v", err)
+	}
+	if !decoded.IsFresh() {
+		t.Fatal("decoded ShapeIndex should be fresh")
+	}
+	if got, want := decoded.nextID, index.nextID; got != want {
+		t.Fatalf("decoded nextID = %d, want %d", got, want)
+	}
+	if got, want := len(decoded.cells), len(index.cells); got != want {
+		t.Fatalf("decoded cell count = %d, want %d", got, want)
+	}
+
+	for id, shape := range index.shapes {
+		decodedShape := decoded.shapes[id]
+		if reflect.TypeOf(decodedShape) != reflect.TypeOf(shape) {
+			t.Errorf("decoded shape %d has type %T, want %T", id, decodedShape, shape)
+		}
+		if got, want := decodedShape.NumEdges(), shape.NumEdges(); got != want {
+			t.Errorf("decoded shape %d has %d edges, want %d", id, got, want)
+		}
+		if got, want := decodedShape.NumChains(), shape.NumChains(); got != want {
+			t.Errorf("decoded shape %d has %d chains, want %d", id, got, want)
+		}
+		for edgeID := 0; edgeID < shape.NumEdges(); edgeID++ {
+			got, want := decodedShape.Edge(edgeID), shape.Edge(edgeID)
+			if !got.V0.ApproxEqual(want.V0) || !got.V1.ApproxEqual(want.V1) {
+				t.Errorf("decoded shape %d edge %d = %v, want %v", id, edgeID, got, want)
+			}
+		}
+	}
+
+	for i, id := range index.cells {
+		if got := decoded.cells[i]; got != id {
+			t.Fatalf("decoded cell %d = %v, want %v", i, got, id)
+		}
+		wantCell := index.cellMap[id]
+		gotCell := decoded.cellMap[id]
+		if len(gotCell.shapes) != len(wantCell.shapes) {
+			t.Fatalf("decoded cell %v has %d clipped shapes, want %d", id, len(gotCell.shapes), len(wantCell.shapes))
+		}
+		for j, want := range wantCell.shapes {
+			got := gotCell.shapes[j]
+			if got.shapeID != want.shapeID || got.containsCenter != want.containsCenter ||
+				!reflect.DeepEqual(got.edges, want.edges) {
+				t.Errorf("decoded cell %v clipped shape %d = %+v, want %+v", id, j, got, want)
+			}
+		}
+	}
+}
+
+func TestShapeIndexDecodeMalformed(t *testing.T) {
+	var encoded bytes.Buffer
+	if err := NewShapeIndex().Encode(&encoded); err != nil {
+		t.Fatalf("ShapeIndex.Encode() failed: %v", err)
+	}
+	data := encoded.Bytes()
+
+	for size := 0; size < len(data); size++ {
+		if err := new(ShapeIndex).Decode(bytes.NewReader(data[:size])); err == nil {
+			t.Errorf("Decode() accepted truncated stream of %d bytes", size)
+		}
+	}
+
+	corrupted := append([]byte(nil), data...)
+	corrupted[1] ^= 0xff
+	if err := new(ShapeIndex).Decode(bytes.NewReader(corrupted)); err == nil {
+		t.Error("Decode() accepted corrupted stream")
+	}
+
+	var oversized bytes.Buffer
+	e := &encoder{w: &oversized}
+	e.writeUint8(shapeIndexEncodingVersion)
+	e.writeUint32(shapeIndexEncodingMagic)
+	e.writeUvarint(0)
+	e.writeUvarint(10)
+	e.writeUvarint(maxEncodedShapeIndexShapes + 1)
+	if err := new(ShapeIndex).Decode(bytes.NewReader(oversized.Bytes())); err == nil {
+		t.Error("Decode() accepted an oversized allocation request")
+	}
+}
 
 func TestShapeIndexBasics(t *testing.T) {
 	index := NewShapeIndex()
