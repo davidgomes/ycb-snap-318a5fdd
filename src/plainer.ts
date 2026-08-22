@@ -272,6 +272,21 @@ export const walker = (
     }
   });
 
+  if (
+    transformationResult &&
+    typeof transformationResult.type === 'string' &&
+    transformationResult.type.startsWith('Error')
+  ) {
+    const processor = superJson.errorClassRegistry.getProcessor(
+      transformedValue.name
+    );
+    if (processor) {
+      const processed = processor(transformedValue);
+      Object.keys(transformedValue).forEach(key => delete transformedValue[key]);
+      Object.assign(transformedValue, processed);
+    }
+  }
+
   const result: Result = isEmptyObject(innerAnnotations)
     ? {
         transformedValue,
