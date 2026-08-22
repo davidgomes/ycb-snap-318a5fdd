@@ -720,11 +720,14 @@ describe('Response', () => {
 	describe('body consumption during shutdown', () => {
 		it('Rejects with AbortError when happyDOM.close() interrupts a body read.', async () => {
 			const response = new window.Response(createHangingStream());
-			const textPromise = response.text();
+			const textPromise = response.text().then(
+				() => null,
+				(caught) => caught
+			);
 
 			await window.happyDOM.close();
 
-			const error = await textPromise.catch((caught) => caught);
+			const error = await textPromise;
 			expect(error).toBeInstanceOf(window.DOMException);
 			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 		});
@@ -733,12 +736,15 @@ describe('Response', () => {
 			const browser = new Browser();
 			const page = browser.newPage();
 			const response = new page.mainFrame.window.Response(createHangingStream());
-			const textPromise = response.text();
+			const textPromise = response.text().then(
+				() => null,
+				(caught) => caught
+			);
 
 			await page.close();
 
-			const error = await textPromise.catch((caught) => caught);
-			expect(error).toBeInstanceOf(page.mainFrame.window.DOMException || window.DOMException);
+			const error = await textPromise;
+			expect(error).toBeInstanceOf(DOMException);
 			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 		});
 
@@ -746,11 +752,14 @@ describe('Response', () => {
 			const browser = new Browser();
 			const page = browser.newPage();
 			const response = new page.mainFrame.window.Response(createHangingStream());
-			const textPromise = response.text();
+			const textPromise = response.text().then(
+				() => null,
+				(caught) => caught
+			);
 
 			await browser.close();
 
-			const error = await textPromise.catch((caught) => caught);
+			const error = await textPromise;
 			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 		});
 
@@ -759,11 +768,14 @@ describe('Response', () => {
 			const page = browser.newPage();
 			const oldWindow = page.mainFrame.window;
 			const response = new oldWindow.Response(createHangingStream());
-			const textPromise = response.text();
+			const textPromise = response.text().then(
+				() => null,
+				(caught) => caught
+			);
 
 			await page.mainFrame.goto('about:blank');
 
-			const error = await textPromise.catch((caught) => caught);
+			const error = await textPromise;
 			expect(error).toBeInstanceOf(oldWindow.DOMException);
 			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 
@@ -774,11 +786,14 @@ describe('Response', () => {
 			const response = new window.Response(createHangingStream(), {
 				headers: { 'Content-Type': 'multipart/form-data; boundary=----HappyDOM' }
 			});
-			const formDataPromise = response.formData();
+			const formDataPromise = response.formData().then(
+				() => null,
+				(caught) => caught
+			);
 
 			await window.happyDOM.close();
 
-			const error = await formDataPromise.catch((caught) => caught);
+			const error = await formDataPromise;
 			expect(error).toBeInstanceOf(window.DOMException);
 			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 		});

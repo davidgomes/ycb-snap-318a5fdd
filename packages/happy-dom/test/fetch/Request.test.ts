@@ -923,11 +923,14 @@ describe('Request', () => {
 				method: 'POST',
 				body: createHangingStream()
 			});
-			const textPromise = request.text();
+			const textPromise = request.text().then(
+				() => null,
+				(caught) => caught
+			);
 
 			await window.happyDOM.close();
 
-			const error = await textPromise.catch((caught) => caught);
+			const error = await textPromise;
 			expect(error).toBeInstanceOf(window.DOMException);
 			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 		});
@@ -939,11 +942,14 @@ describe('Request', () => {
 				method: 'POST',
 				body: createHangingStream()
 			});
-			const textPromise = request.text();
+			const textPromise = request.text().then(
+				() => null,
+				(caught) => caught
+			);
 
 			await page.close();
 
-			const error = await textPromise.catch((caught) => caught);
+			const error = await textPromise;
 			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 		});
 
@@ -954,11 +960,14 @@ describe('Request', () => {
 				method: 'POST',
 				body: createHangingStream()
 			});
-			const textPromise = request.text();
+			const textPromise = request.text().then(
+				() => null,
+				(caught) => caught
+			);
 
 			await browser.close();
 
-			const error = await textPromise.catch((caught) => caught);
+			const error = await textPromise;
 			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 		});
 
@@ -970,11 +979,14 @@ describe('Request', () => {
 				method: 'POST',
 				body: createHangingStream()
 			});
-			const textPromise = request.text();
+			const textPromise = request.text().then(
+				() => null,
+				(caught) => caught
+			);
 
 			await page.mainFrame.goto('about:blank');
 
-			const error = await textPromise.catch((caught) => caught);
+			const error = await textPromise;
 			expect(error).toBeInstanceOf(oldWindow.DOMException);
 			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 
@@ -987,11 +999,14 @@ describe('Request', () => {
 				body: createHangingStream(),
 				headers: { 'Content-Type': 'multipart/form-data; boundary=----HappyDOM' }
 			});
-			const formDataPromise = request.formData();
+			const formDataPromise = request.formData().then(
+				() => null,
+				(caught) => caught
+			);
 
 			await window.happyDOM.close();
 
-			const error = await formDataPromise.catch((caught) => caught);
+			const error = await formDataPromise;
 			expect(error).toBeInstanceOf(window.DOMException);
 			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 		});

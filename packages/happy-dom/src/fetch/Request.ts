@@ -352,7 +352,7 @@ export default class Request implements Request {
 		const window = this[PropertySymbol.window];
 		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
 
-		const contentType = this[PropertySymbol.contentType];
+		const contentType = this[PropertySymbol.contentType] || this.headers.get('Content-Type');
 
 		if (this.body && contentType && /multipart/i.test(contentType)) {
 			if (this[PropertySymbol.bodyUsed]) {
@@ -483,7 +483,17 @@ export default class Request implements Request {
 
 		this[PropertySymbol.aborted] = true;
 		this[PropertySymbol.error] = error;
-		this[PropertySymbol.bodyStreamReader]?.abort(error);
-		this.signal[PropertySymbol.abort]();
+
+		try {
+			this[PropertySymbol.bodyStreamReader]?.abort(error);
+		} catch {
+			// Ignore errors triggered while cancelling a locked stream.
+		}
+
+		try {
+			this.signal[PropertySymbol.abort]();
+		} catch {
+			// Ignore errors triggered while aborting the request signal.
+		}
 	}
 }

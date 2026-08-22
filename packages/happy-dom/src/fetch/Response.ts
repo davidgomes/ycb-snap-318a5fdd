@@ -333,7 +333,12 @@ export default class Response implements Response {
 
 		this[PropertySymbol.aborted] = true;
 		this[PropertySymbol.error] = error;
-		this[PropertySymbol.bodyStreamReader]?.abort(error);
+
+		try {
+			this[PropertySymbol.bodyStreamReader]?.abort(error);
+		} catch {
+			// Ignore errors triggered while cancelling a locked stream.
+		}
 	}
 
 	/**

@@ -211,7 +211,7 @@ export default class FetchBodyUtility {
 		}
 
 		const reader = body.getReader();
-		const chunks = [];
+		const chunks: any[] = [];
 		let bytes = 0;
 
 		try {
