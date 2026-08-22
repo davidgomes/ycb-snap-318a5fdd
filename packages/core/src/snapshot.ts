@@ -1,5 +1,5 @@
 import { $internal } from './common';
-import { createEntity, destroyEntity } from './entity/entity';
+import { createEntityWithId, destroyEntity } from './entity/entity';
 import type { Entity } from './entity/types';
 import { getEntityId, packEntity } from './entity/utils/pack-entity';
 import { getRelationData, getRelationTargets } from './relation/relation';
@@ -118,14 +118,16 @@ export function rollbackEntity(world: World, entity: Entity, registry: TraitRegi
 
 export function rollbackWorld(world: World, registry: TraitRegistry, checkpoint: WorldSnapshot) {
     if (!checkpoint || !Array.isArray(checkpoint.entities)) throw new Error('Invalid world snapshot');
-    for (const snapshot of checkpoint.entities) for (const key of Object.keys(snapshot.traits)) resolve(registry, key);
+    for (const snapshot of checkpoint.entities) {
+        for (const key of Object.keys(snapshot.traits)) resolve(registry, key);
+        for (const key of Object.keys(snapshot.relations ?? {})) if (!registry.relations.has(key)) resolve(registry, key);
+    }
     for (const snapshot of checkpoint.entities) for (const targets of Object.values(snapshot.relations ?? {}))
         for (const target of targets) if (!checkpoint.entities.some((item) => item.id === target.targetId)) throw new Error(`Dangling relation target: ${target.targetId}`);
     world.reset();
     for (const entity of [...world.entities]) if (entity !== world[$internal].worldEntity) destroyEntity(world, entity);
     for (const snapshot of checkpoint.entities) {
-        const entity = createEntity(world);
-        (world[$internal].entityIndex.dense[world[$internal].entityIndex.aliveCount - 1] as number) = packEntity(world.id, 0, snapshot.id);
+        const entity = createEntityWithId(world, snapshot.id);
         rollbackEntity(world, entity, registry, snapshot);
     }
 }

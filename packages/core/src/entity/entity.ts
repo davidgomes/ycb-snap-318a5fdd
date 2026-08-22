@@ -28,6 +28,14 @@ export function createEntity(world: World, ...traits: ConfigurableTrait[]): Enti
     return entity;
 }
 
+export function createEntityWithId(world: World, id: number, ...traits: ConfigurableTrait[]): Entity {
+    const ctx = world[$internal];
+    const entity = allocateEntity(ctx.entityIndex, id);
+    ctx.entityTraits.set(entity, new Set());
+    addTrait(world, entity, ...traits);
+    return entity;
+}
+
 const cachedSet = new Set<Entity>();
 const cachedQueue = [] as Entity[];
 
