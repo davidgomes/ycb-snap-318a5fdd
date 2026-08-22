@@ -16,8 +16,8 @@ import type {
   ResolveBooleanSchema,
   ResolveNumberSchema,
   ResolveStringSchema,
-  ResolvedNullSchema,
   ResolvedLazySchema,
+  ResolvedNullSchema,
   Schema,
   SetSchema,
   StringSchema
