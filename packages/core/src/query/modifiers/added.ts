@@ -15,7 +15,7 @@ export function createAdded() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends (TraitOrRelation | Modifier)[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `added-${number}`> => {
         if (inputs.length === 1 && isPredicate(inputs[0])) {
@@ -27,7 +27,7 @@ export function createAdded() {
         }
         const traits = inputs.map((input) =>
             isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
+        ) as unknown as ExtractTraits<T>;
         return createModifier(`added-${id}`, id, traits);
     };
 }

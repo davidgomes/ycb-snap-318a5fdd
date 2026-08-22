@@ -15,7 +15,7 @@ export function createRemoved() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends (TraitOrRelation | Modifier)[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `removed-${number}`> => {
         if (inputs.length === 1 && isPredicate(inputs[0])) {
@@ -27,7 +27,7 @@ export function createRemoved() {
         }
         const traits = inputs.map((input) =>
             isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
+        ) as unknown as ExtractTraits<T>;
         return createModifier(`removed-${id}`, id, traits);
     };
 }
