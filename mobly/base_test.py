@@ -1169,7 +1169,10 @@ class BaseTestClass:
     self._execution_context.device_id = participants[0][1]
     self._execution_context.hook_name = name
     try:
-      return getattr(self, name)(devices)
+      result = getattr(self, name)(devices)
+      if expects.recorder.has_error:
+        return False
+      return result
     finally:
       self._execution_context.phase = None
 
