@@ -1,0 +1,71 @@
+[package]
+name = "oxvg_ast"
+version = "0.0.5"
+edition = "2021"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "../../readme.md"
+keywords = ["xml", "ast", "selectors", "css", "svg"]
+description = "Trait representation for concrete ASTs"
+
+[lints]
+workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["visitor", "serialize"]
+clap = ["dep:clap"]
+# Includes a parser that uses xml5ever
+markup5ever = [
+  "parse",
+  "oxvg_collections/markup5ever",
+  "dep:string_cache",
+  "dep:tendril",
+  "dep:xml5ever",
+]
+parse = ["oxvg_collections/parse"]
+# Includes a parser that uses roxmltree
+roxmltree = ["parse", "dep:roxmltree"]
+# Includes serialization for elements
+serialize = ["dep:oxvg_serialize", "oxvg_collections/serialize"]
+# Includes CSS selection for elements
+selectors = [
+  "serialize",
+  "dep:selectors",
+  "dep:precomputed-hash",
+  "dep:servo_arc",
+]
+# Include source-spans for nodes and attributes
+range = ["dep:bytecount"]
+# Includes a visitor trait for building visitors
+visitor = ["dep:bitflags"]
+
+[dependencies]
+oxvg_collections = { workspace = true }
+oxvg_path = { workspace = true }
+oxvg_serialize = { workspace = true, optional = true }
+
+bitflags = { workspace = true, optional = true }
+bytecount = { workspace = true, optional = true }
+cfg-if = { workspace = true }
+clap = { workspace = true, optional = true }
+cssparser = { workspace = true }
+derive_more = { workspace = true, features = ["debug"] }
+derive-where = { workspace = true }
+itertools = { workspace = true }
+lightningcss = { workspace = true }
+log = { workspace = true }
+paste = { workspace = true }
+precomputed-hash = { workspace = true, optional = true }
+roxmltree = { workspace = true, optional = true }
+# ensure track_alloc_size for wasm compat
+servo_arc = { version = "0.4", features = [
+  "track_alloc_size",
+], optional = true }
+selectors = { workspace = true, optional = true }
+smallvec = { workspace = true }
+string_cache = { workspace = true, optional = true }
+tendril = { workspace = true, optional = true }
+typed-arena = { workspace = true }
+xml5ever = { workspace = true, optional = true }
