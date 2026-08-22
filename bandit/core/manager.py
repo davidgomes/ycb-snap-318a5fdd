@@ -604,21 +604,38 @@ def _parse_nosec_directives(lines, comments, data):
                 for line in range(start, lineno):
                     result[line] = combine(result.get(line), active)
         elif kind == "-begin":
-            regions.append((lineno + 1, tests))
+            indent = len(lines[lineno - 1]) - len(lines[lineno - 1].lstrip())
+            regions.append((lineno + 1, tests, indent))
         elif kind == "-next-line" and tests is not None:
             pending.append((lineno, tests))
         elif not kind:
             result[lineno] = tests
 
-    for start, tests in regions:
-        for line in range(start, len(lines) + 1):
+    for start, tests, indent in regions:
+        end = len(lines) + 1
+        if indent:
+            for line in range(start, len(lines) + 1):
+                current = lines[line - 1]
+                if current.strip() and len(current) - len(current.lstrip()) < indent:
+                    end = line
+                    break
+        for line in range(start, end):
             result[line] = combine(result.get(line), tests)
     try:
         tree = ast.parse(data)
         nodes = sorted((n for n in ast.walk(tree) if hasattr(n, "lineno")),
                        key=lambda n: n.lineno)
+        def code_line(line):
+            stripped = lines[line - 1].strip()
+            return stripped and stripped not in {
+                "(", ")", "[", "]", "{", "}", ";", "..."
+            }
         for directive, tests in pending:
-            target = next((n for n in nodes if n.lineno > directive), None)
+            target = next(
+                (n for n in nodes
+                 if n.lineno > directive and code_line(n.lineno)),
+                None,
+            )
             if target:
                 for line in range(target.lineno, getattr(target, "end_lineno", target.lineno) + 1):
                     result[line] = combine(result.get(line), tests)
