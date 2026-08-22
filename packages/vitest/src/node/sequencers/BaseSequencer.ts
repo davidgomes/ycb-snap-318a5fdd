@@ -4,11 +4,12 @@ import type { TestSequencer } from './types'
 import { slash } from '@vitest/utils/helpers'
 import { relative, resolve } from 'pathe'
 import { hash } from '../hash'
-import { durationEstimate } from './duration-history'
+import { createDurationHistory, durationEstimate, recordDuration } from './duration-history'
 import { sortByShardAffinity } from './shard-affinity'
 
 export class BaseSequencer implements TestSequencer {
   protected ctx: Vitest
+  private history = createDurationHistory()
 
   constructor(ctx: Vitest) {
     this.ctx = ctx
@@ -36,7 +37,6 @@ export class BaseSequencer implements TestSequencer {
   // async so it can be extended by other sequelizers
   public async sort(files: TestSpecification[]): Promise<TestSpecification[]> {
     const cache = this.ctx.cache
-    const estimates = new Map<string, number>()
     const sequence = this.ctx.config.sequence
     const sorted = [...files].sort((a, b) => {
       // "sequence.groupOrder" is higher priority
@@ -85,14 +85,27 @@ export class BaseSequencer implements TestSequencer {
         return 1
       }
 
-      const estimateA = estimates.get(a.moduleId) ?? durationEstimate(undefined, aState.duration, sequence.durationSmoothing)
-      const estimateB = estimates.get(b.moduleId) ?? durationEstimate(undefined, bState.duration, sequence.durationSmoothing)
+      const keyA = `${a.project.name}:${relative(this.ctx.config.root, a.moduleId)}`
+      const keyB = `${b.project.name}:${relative(this.ctx.config.root, b.moduleId)}`
+      const estimateA = sequence.durationHistory
+        ? durationEstimate(this.history[keyA], aState.duration, sequence.durationSmoothing)
+        : aState.duration
+      const estimateB = sequence.durationHistory
+        ? durationEstimate(this.history[keyB], bState.duration, sequence.durationSmoothing)
+        : bState.duration
       return estimateB - estimateA
     })
-    if (sequence.affinity) {
-      return sortByShardAffinity(sorted, this.ctx.config.shard?.count ?? 1)
+    return sequence.affinity ? sortByShardAffinity(sorted, this.ctx.config.shard?.count ?? 1) : sorted
+  }
+
+  public recordFileDurations(files: TestSpecification[]): void {
+    const sequence = this.ctx.config.sequence
+    if (!sequence.durationHistory) return
+    for (const spec of files) {
+      const key = `${spec.project.name}:${relative(this.ctx.config.root, spec.moduleId)}`
+      const result = this.ctx.cache.getFileTestResults(key)
+      if (result) recordDuration(this.history, key, result.duration, sequence.durationHistorySize)
     }
-    return sorted
   }
 
   // Calculate distributed shard range [start, end] distributed equally

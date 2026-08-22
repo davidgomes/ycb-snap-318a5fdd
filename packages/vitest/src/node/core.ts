@@ -38,6 +38,7 @@ import { createFetchModuleFunction } from './environments/fetchModule'
 import { ServerModuleRunner } from './environments/serverRunner'
 import { FilesNotFoundError } from './errors'
 import { Logger } from './logger'
+import { BaseSequencer } from './sequencers/BaseSequencer'
 import { collectModuleDurationsDiagnostic, collectSourceModulesLocations } from './module-diagnostic'
 import { VitestPackageInstaller } from './packageInstaller'
 import { createPool } from './pool'
@@ -940,6 +941,11 @@ export class Vitest {
           }
         }
         finally {
+          const Sequencer = this.config.sequence.sequencer
+          const sequencer = new Sequencer(this)
+          if ('recordFileDurations' in sequencer) {
+            ;(sequencer as BaseSequencer).recordFileDurations(specs)
+          }
           const coverage = await this.coverageProvider?.generateCoverage({ allTestsRun })
 
           const errors = this.state.getUnhandledErrors()
