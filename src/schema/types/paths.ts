@@ -30,7 +30,9 @@ export type Paths<SCHEMA extends Schema = Schema> = string &
 export type SchemaPaths<SCHEMA extends Schema, SCHEMA_PATH extends string = ''> =
   | (SCHEMA extends AnySchema ? AnySchemaPaths<SCHEMA_PATH> : never)
   | (SCHEMA extends LazySchema
-      ? SchemaPaths<ResolveLazySchema<SCHEMA>, SCHEMA_PATH>
+      ? Schema extends ResolveLazySchema<SCHEMA>
+        ? string
+        : SchemaPaths<ResolveLazySchema<SCHEMA>, SCHEMA_PATH>
       : never)
   | (SCHEMA extends ListSchema ? ListSchemaPaths<SCHEMA, SCHEMA_PATH> : never)
   | (SCHEMA extends MapSchema ? MapSchemaPaths<SCHEMA, SCHEMA_PATH> : never)
