@@ -1,0 +1,930 @@
+import * as t from 'node:assert/strict';
+import { outdent } from 'outdent';
+import { describe, it } from 'vitest';
+import { parseSource } from '../../../src/parser';
+import { fail, pass } from '../../test-utils';
+
+describe('Expressions - Async arrow', () => {
+  for (const arg of [
+    '(a, b, (c, d) => 0)',
+    '(a, b) => 0, (c, d) => 1',
+    '(a, b => {}, a => a + 1)',
+    '((a, b) => {}, (a => a + 1))',
+    '({}) => {}',
+    '(a, {}) => {}',
+    '({}, a) => {}',
+    '([]) => {}',
+    '(a, []) => {}',
+    '([], a) => {}',
+    '(a = b) => {}',
+    '(a = b, c) => {}',
+    '(a, b = c) => {}',
+    '({a}) => {}',
+    '(x = 9) => {}',
+    '(x, y = 9) => {}',
+    'x => private = 1',
+    'x => public = 1',
+    'x => yield = 1',
+    '(x, y = 9, z) => {}',
+    '(x, y = 9, z = 8) => {}',
+    '(...a) => {}',
+    '(x, ...a) => {}',
+    '(x = 9, ...a) => {}',
+    '(x, y = 9, ...a) => {}',
+    '(x, y = 9, {b}, z = 8, ...a) => {}',
+    '({a} = {}) => {}',
+    '([x] = []) => {}',
+    '({a = 42}) => {}',
+    '([x = 0]) => {}',
+    '(a, (a, (b, c) => 0))',
+    '() => {}',
+    '() => { return 42 }',
+    'x => { return x; }',
+    '(x) => { return x; }',
+    '(x, y) => { return x + y; }',
+    '(x, y, z) => { return x + y + z; }',
+    '(x, y) => { x.a = y; }',
+    '() => 42',
+    'x => x',
+    'x => x * x',
+    '(x) => x',
+    '(x) => x * x',
+    '(x, y) => x + y',
+    '(x, y, z) => x, y, z',
+    '(x, y) => x.a = y',
+    "() => ({'value': 42})",
+    'x => (interface) = 1',
+    'x => (let) = 1',
+    'x => y => x + y',
+    '(x, y) => (u, v) => x*u + y*v',
+    '(x, y) => z => z * (x + y)',
+    'x => (y, z) => z * (x + y)',
+    '([a]) => [0]',
+    '([a,b])=>0',
+    '({})=>0',
+    '(eval) => eval',
+    'eval => eval',
+    'arguments => arguments',
+    '(x) => { return x }',
+    '(...x) => { return x.length; }',
+    '(() => 1)(), 1',
+    '(a => a + 1)(1), 2',
+    '(() => { return 3; })(), 3',
+    '(a => { return a + 3; })(1), 4',
+    '() => f1({x: 1})',
+    '() => f10({x: 6}, 2)',
+    'x => (arguments) = 1',
+    '((a, b) => a + b)(1, 4), 5',
+    '((a, b) => { return a + b; })(1, 5), 6',
+  ]) {
+    it(`async ${arg}`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`async ${arg}`);
+      });
+    });
+
+    it(`async ${arg}`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`async ${arg}`, { lexical: true });
+      });
+    });
+
+    it(`async ${arg}`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`async ${arg}`, { webcompat: true });
+      });
+    });
+
+    it(`bar, async ${arg};`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`bar, async ${arg};`);
+      });
+    });
+
+    it(`bar ? async (${arg}) : baz;`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`bar ? async (${arg}) : baz;`);
+      });
+    });
+
+    it(`bar ? baz : async  (${arg});`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`bar ? baz : async  (${arg});`);
+      });
+    });
+
+    it(`async ${arg}, bar;`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`async ${arg}, bar;`);
+      });
+    });
+
+    it(`async ${arg}, bar;`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`async ${arg}, bar;`, { next: true });
+      });
+    });
+  }
+
+  fail('Expressions - Async arrow (fail)', [
+    'function *a() { async yield => foo }',
+    'async yield x => zoo',
+    'async foo bar => zoo',
+    'async ()c++=>{};',
+    'async a?c:d=>{}=>{};',
+    'async(...a)`template-head${c}`=>{}',
+    'async(...a)?c:d=>{}=>{};',
+    { code: 'interface => {}', options: { sourceType: 'module' } },
+    'async (...a)?c:d=>{}=>{}',
+    'async (...a)[1]=>{};',
+    'async (a,...b)`template-head${c}`=>{}',
+    'async (a,...b)`${c}template-tail`=>{};',
+    'async (a,...b)`${c}template-tail`=>{}',
+    'async (a,...b)[c]=>{};',
+    'async 32 => {}',
+    'async x => (await) = 1',
+    'async x => (break) = 1',
+    'async x => (case) = 1',
+    'async x => (catch) = 1',
+    'async x => (in) = 1',
+    'async (32) => {}',
+    'async (a, 32) => {}',
+    'async if => {}',
+    'async (if) => {}',
+    'async (a, if) => {}',
+    'async a + b => {}',
+    'async (a + b) => {}',
+    'async (a + b, c) => {}',
+    'async (a, b - c) => {}',
+    'async "a" => {}',
+    'async ("a") => {}',
+    'async ("a", b) => {}',
+    'async (a, "b") => {}',
+    'async -a => {}',
+    'async (-a) => {}',
+    'async (-a, b) => {}',
+    'async (a, -b) => {}',
+    'async {} => {}',
+    'async a++ => {}',
+    'async (a++) => {}',
+    'async (a++, b) => {}',
+    'async (a, b++) => {}',
+    'async [] => {}',
+    'async ({...[a, b]}) => x',
+    'async ({...{a, b}}) => x',
+    'async (foo ? bar : baz) => {}',
+    'async (a, foo ? bar : baz) => {}',
+    'async (foo ? bar : baz, a) => {}',
+    'async (a.b, c) => {}',
+    'async (c, a.b) => {}',
+    "async (a['b'], c) => {}",
+    "async (c, a['b']) => {}",
+    'async (...a = b) => b',
+    "async () => {'value': 42}",
+    { code: 'async enum => 1;', options: { impliedStrict: true } },
+    { code: 'var af = package => 1;', options: { impliedStrict: true } },
+    { code: 'var af = arguments => 1;', options: { impliedStrict: true } },
+    // ['async eval => 1;', Context.Strict],
+    'async left = (aSize.width/2) - ()',
+    'async (10) => 0;',
+    'async "use strict"; (a) => 00;',
+    'async ("a", b) => {}',
+    'async (a, "b") => {}',
+    'async ([...[ x ] = []] = []) => {};',
+    'async ([...{ x }, y]) => {};',
+    'async ([...{ x }, y]) => {};',
+    'async 1 + ()',
+    'async ((x)) => a',
+    'async (c, a.b) => {}',
+    "async (a['b'], c) => {}",
+    "async (c, a['b']) => {}",
+    'async (...a = b) => b',
+    'async (...rest - a) => b',
+    'async (a, ...b - 10) => b',
+    'async {y=z} => d',
+    'async {y=z}',
+    'async (..a, ...b) => c',
+    'async ([0])=>0;',
+    'async ({0})=>0;',
+    'async ({a:b[0]}) => x',
+    'async ([{x: y.z}] = a) => b',
+    'async ([{x: y.z} = a]) => b',
+    'async ({x: y.z} = a) => b',
+    'async ([{x: y.z}]) => b',
+    'async ([{x: y.z}] = a) => b',
+    'async ([{"foo": y.z} = a]) => b',
+    'async ({"foo": y.z} = a) => b',
+    'async ([{"foo": y.z}]) => b',
+    'async ([x.y]=z) => z',
+    'async ) => {}',
+    'async (()) => 0',
+    'async ((x)) => 0',
+    'async ((x, y)) => 0',
+    'async  ...x => x;',
+    { code: 'async yield => 1;', options: { impliedStrict: true } },
+    { code: 'async (yield) => 1;', options: { impliedStrict: true } },
+    'async ([{x: y.z}]) => b',
+    'async ([{x: y.z}] = a) => b',
+    'async ([{x: y.z}] = a) => b',
+    'async ([{x: y.z} = a]) => b',
+    'async(foo = super()) => {}',
+    'async(x = await) => {  }',
+    'async (x = 1) => {"use strict"}',
+    'async(await) => {  }',
+    'async(foo) => { super() };',
+    'async(foo) => { super.prop };',
+    String.raw`\u0061sync () => {}`,
+    '(async (...a,) => {}',
+    'a + async () => {}',
+    'async() => { (a = await/r/g) => {} };',
+    'async ((x, y)) => 0',
+    'async(...x,b) => x',
+    'async(...x,) => x',
+    'a = (b = await/r/g) => {}) => {}',
+    'async(a = (b = await/r/g) => {}) => {}',
+    '(a = async(b = await/r/g) => {}) => {}',
+    { code: '(...await) => {}', options: { sourceType: 'module' } },
+    'async(...await) => {}',
+    { code: '(a, ...await) => {}', options: { sourceType: 'module' } },
+    'async(a, ...await) => {}',
+    '(a = async(...await) => {}) => {}',
+    { code: '(a = (...await) => {}) => {}', options: { sourceType: 'module' } },
+    '(a = async(...await) => {}) => {}',
+    'async(a = (...await) => {}) => {}',
+    'async(a = async(...await) => {}) => {}',
+    { code: '(a = (b, ...await) => {}) => {}', options: { sourceType: 'module' } },
+    '(a = async(b, ...await) => {}) => {}',
+    'async(a = (b, ...await) => {}) => {}',
+    'async(a = async(b, ...await) => {}) => {}',
+    'async(a = async(b = await/r/g) => {}) => {}',
+    'async(foo) => { super.prop };',
+    'async(foo = super()) => {}',
+    'async (foo = super.foo) => { }',
+    'async (x) => {}a',
+    'async (x) => {} 1',
+    'async (x) => {} a()',
+    'async (x) => {} + 2',
+    'async (x) => {} / 1',
+    'async (()) => 0',
+    'async (async ()  => a)  => a',
+    'async("foo".bar) => x',
+    'async("foo".bar) => x',
+    'async(async() () => {})(async() () => {})(y)(n)(c)',
+    'async(,)',
+    'async (,) => b;',
+    'async 1 => b;',
+    'async 1 => ;',
+    'async ({x: {x: y}.length})  => {}',
+    'async ({x: x + y})  => {}',
+    'async ({x: void x})  => {}',
+    'async ({x: this})  => {}',
+    'async ({x: function(){}})  => {}',
+    'async ({x: async ()=>x})  => {}',
+    'async => ;',
+    'async (1) => {}',
+    'async (1) => {}()',
+    'async() => await',
+    '(async function foo4() { } => 1)',
+    '(async function() { } foo5 => 1)',
+    '(async function() { } () => 1)',
+    '(async function() { } => 1)',
+    'async(...a,) => b',
+    'async(...a, b) => b',
+    // ['async (a = b => await (0)) => {}', Context.Strict | Context.Module],
+    'async(...a,) => b',
+    'async(...a, b) => b',
+    "var asyncFn = async () => var await = 'test';",
+    'async(...a = b) => b',
+    'async (...x = []) => {}',
+    'async(...a = b) => b',
+    "var asyncFn = async await => await + 'test';",
+    'function* g() { async yield => X }',
+    'function* g() { async (yield) => X }',
+    'function* g() { async ({yield}) => X }',
+    'async function a(k = await 3) {}',
+    'async function a() { async function b([k = await 3]) {} }',
+    'async function a() { async function b({k = [await 3]}) {} }',
+    'var f = async() => ((async(x = await 1) => x)();',
+    'async() => ((async(x = await 1) => x)();',
+    'async (await) => 1',
+    'async (...await) => 1',
+    'async ({await}) => 1',
+    'async ({a: await}) => 1',
+    'async ([await]) => 1',
+    'async ([...await]) => 1',
+    'f = async ((x)) => x',
+    'async (b = {await}) => 1',
+    'async (b = [...await]) => 1',
+    'async (b = [await]) => 1',
+    'async (b = {a: await}) => 1',
+    'async (b = class await {}) => 1',
+    'async (b = (await) => {}) => 1',
+    'async (await, b = async()) => 2',
+    'async (await, b = async () => {}) => 1',
+    '({async foo() { var await }})',
+    '({async foo(await) { }})',
+    '({async foo() { return {await} }})',
+    'async().foo13 () => 1',
+    'async().foo10 => 1',
+    'async(...a, b) => b',
+    'async x => const = 1',
+    'async x => do = 1',
+    'async x => else = 1',
+    'async x => for = 1',
+    'async x => function = 1',
+    'function* a(){ async (yield) => {}; }',
+    'f(async\n()=>c)',
+    'let f = a + b + async()=>d',
+    'f = async\nfunction g(){await x}',
+    'f = async\ng => await g',
+    'f = async\n(g) => g',
+    'async (a, ...b, ...c) => {}',
+    'async\n(a, b) => {}',
+    'new async() => {}',
+    '({ async\nf(){} })',
+    'async ((a)) => {}',
+    '({ async get a(){} })',
+    'async a => {} ()',
+    'with({}) async function f(){};',
+    'function* a(){ async yield => {}; }',
+    'function* a(){ async (yield) => {}; }',
+    'async await => 0',
+    '(class { async get a(){} })',
+    'async function x({await}) { return 1 }',
+    'async function f() { return {await}; }',
+    'async function f() { return {await = 0} = {}; }',
+    'async (a = (await) => {}) => {}',
+    'async (a = await => {}) => {}',
+    'x = async \n () => x, y',
+    'async \n () => {}',
+    'async () \n => {}',
+    'async \n () \n => {}',
+    'async x \n => x',
+    'async \n x \n => x',
+    'async x \n => x',
+    'async \n (x) => x',
+    'async foo ? bar : baz => {}',
+    'async (x) \n => x',
+    'async (await, b = async () => {}) => 1',
+    'break async \n () => x',
+    'async await => {}',
+    { code: 'async ({await}) => 1', options: { sourceType: 'module' } },
+    'async \n => async',
+    '(async \n => async)',
+    'async function f() { f = await => 42; }',
+    'async function f() { f = (await) => 42; }',
+    'async function f() { f = (await, a) => 42; }',
+    'async function f() { f = (...await) => 42; }',
+    'async function f() { e = (await); }',
+    'async function f() { e = (await, f); }',
+    'async function f() { e = (await = 42) }',
+    'async function f() { e = [await];  }',
+    'async function f() { e = {await}; }',
+    'async function f() { function await() {} }',
+    'async function f() { O = { async [await](a, a) {} } }',
+    'async function f() { [ await ] = 1; }',
+    'async function f() { { await } = 1; }',
+    'async function f() { await = 1; }',
+    'async (a, ...b, ...c) => {}',
+    'async ((a)) => {}',
+    '({ async get a(){} })',
+    'async a => {} ()',
+    'a + async b => {}',
+    'function* a(){ async (yield) => {}; }',
+    'function* a(){ async yield => {}; }',
+    'x[async \n () => x];',
+    'x(async \n () => x);',
+    'async (...a,) => {}',
+    'async(...a, b) => b',
+    'async (...a,) => {}',
+    'async(async() () => {})(async() () => {})(async() () => {})(async() () => {})(async() () => {})',
+    'async (...a,) => {}',
+    'async(...a,) => b',
+    'async(...a, b) => b',
+    'async(...a,) => b',
+    'async(...a, b) => b',
+    'async(...a = b) => b',
+    'async (...x = []) => {}',
+    'async().foo10 => 1',
+    '(...a, b) => { let a; }',
+    '(async()["foo18"] => 1)',
+    'async (1) => {}()',
+    'async (1) => {}',
+    //['async (x) => {}  ? a : b', Context.None],
+    'async ((x, y), z) => 0',
+    'async ((x, y, z)) => 0',
+    'async(foo = super()) => {}',
+    'async(foo) => { super.prop };',
+    'async() => { (a = await/r/g) => {} };',
+    '"use strict"; async(x = await) => {  }',
+    '([x].foo) => x',
+    'async ([x].foo) => x',
+    "asyncFn = async await => await + 'test';",
+    '(async function foo3() { } () => 1)',
+    '(async function foo4() { } => 1)',
+    '(async function() { } foo5 => 1)',
+    '(async function() { } () => 1)',
+    //['(async(a, ...b) => x)', Context.None],
+    '(async(a, ...(b)) => x)',
+    '(async((a), ...(b)) => x)',
+    '(async.foo6 => 1)',
+    '(async.foo7 foo8 => 1)',
+    '(async.foo9 () => 1)',
+    '(async().foo10 => 1)',
+    '(async`foo22` => 1)',
+    '(async`foo23` foo24 => 1)',
+    '(async`foo25` () => 1)',
+    '(async`foo26`.bar27 => 1)',
+    '(async`foo28`.bar29 foo30 => 1)',
+    '(async`foo31`.bar32 () => 1)',
+    '(async["foo15"] foo16 => 1)',
+    '(async().foo13 () => 1)',
+    '(async["foo14"] => 1)',
+    '(async["foo15"] foo16 => 1)',
+    '(async["foo17"] () => 1)',
+    '(async()["foo18"] => 1)',
+    '(async()["foo19"] foo20 => 1)',
+    '"(async()["foo21"] () => 1)',
+    '(async`foo28`.bar29 foo30 => 1)',
+    '(async`foo31`.bar32 () => 1)',
+    '(async["foo15"] foo16 => 1)',
+    '(async().foo13 () => 1)',
+    'let f = async\n(g) => g',
+    'let f = async\n(g) => g',
+    'var aaf = async\n(x, y) => { };',
+    'async (a, b = await 1) => {}',
+    'async () => { await => { }; }',
+    'async (a, b = await 1) => {}',
+    'function () { a = async await => { } }',
+    'async await => { }',
+    'async (a, await) => { }',
+    'async \n () => {}',
+    'async () \n => {}',
+    'async \n () \n => {}',
+    'async (x) \n => x',
+    'async \n (x) \n => x',
+    'var x = async \n () => x, y',
+    'x={x: async \n () => x}',
+    '[async \n () => x]',
+    'x(async \n () => x)',
+    '(async (...x = []) => {});',
+    'function f(x = async \n () => x){}',
+    'for (async \n () => x;;) x',
+    'for (;async \n () => x;) x',
+    'for (x of async \n () => x) x',
+    'try {} catch(e = async \n () => x) {}',
+    'if (x) async \n () => x else y',
+    'class x extends async \n () => x {}',
+    '({async get foo() { }})',
+    '({async set foo(value) { }})',
+    'with (async \n () => x) {}',
+    'async (a, async (1) => 0)',
+    'async (a, async (async (a) => 0) => 0)',
+    '(a, async (a) => 0) => 0',
+    'async(a = await x) => x',
+    'async (var x) => {};',
+    'async (x, y)[7] => {}',
+    'a.x => {};',
+    'async(a = await/r/g) => {}',
+    'async (x = (x) += await f) => {}',
+    'var x = 1 y => y',
+    'async(a, 1) => x',
+    'async(1, a) => x',
+    'function* g() { async yield => X }',
+    'async () => {1} ? a : b',
+    '() => {1} ? a : b',
+    'function* g() { async (yield) => X }',
+    'function* g() { async ([yield]) => X }',
+    'function* g() { async ({yield}) => X }',
+    "'use strict'; async X => yield",
+    "'use strict'; async yield => X",
+    "'use strict'; async (yield) => X",
+    '(async((a), ...(b) = xxx) => x)',
+    '(async((a), ...[b] = xxx) => x)',
+    '(async((a), ...{b} = xxx) => x)',
+    '(async(a, ...b = y) => x)',
+    '(async(...b = y, d) => x)',
+    '(async(...b = y, ...d) => x)',
+    '(async((a), ...{b} = xxx))',
+    'async a => await',
+    'async a => await await',
+    'async a => async function()',
+    'async a => async function',
+    'async a => async b',
+    'async [a, b] => 1',
+    'async [a] => 1',
+    'async {a} => 1',
+    'async {a: b} => 1',
+    'async (a=await 1) => 1',
+    'async ([a=await 1]) => 1',
+    'async ({a=await 1}) => 1',
+    'async(1,2,3) => x',
+    '(async (x) => {}) /= 1',
+    'async ({a=await}) => 1',
+    'async ([a=await]) => 1',
+    'async (a=await) => 1',
+    'async ({await}) => 1',
+    'async ([await]) => 1',
+    'async (await) => 1',
+    'async await => 1',
+    '(async(...a, ...b) => x)',
+    'async (/foo/) => bar',
+    'async({a = 1}, {b = 2} = {}, {c = 3} = {})',
+  ]);
+
+  for (const arg of [
+    'async(async(async(async(async(async())))))',
+    'async()(async() => {})',
+    'async(a)(s)(y)(n)(c)',
+    'x[async () => x]',
+    '({async foo() { }})',
+    '({async() { }})',
+    'async () => {}',
+    'async () => { return 42 }',
+    '(async x => y)',
+    '(async (x, z) => y)',
+    '({x: async (y,w) => z})',
+    'async({x = yield}) => 1; ',
+    'async (icefapper = bad) => {  }',
+    'async ({a: b = c})',
+    'async ({a = b}) => a',
+    'async (a, b) => a',
+    'async () => a',
+    'asyncFn = async({ foo = 1 }) => foo;',
+    'asyncFn = async({ foo = 1 } = {}) => foo;',
+    'foo = ({ async = true }) => {};',
+    'foo = async ({ async: bar }) => { await baz; };',
+    'async ({}) => 0',
+    'async(a,)',
+    'async()()',
+    'var x = async (a, b) => await a + b;',
+    'var x = async a => await a;',
+    'var x = async => async + 1;',
+    'var x = async (a => a + 1);',
+    'var x = async(x)',
+    'var x = async (a, b) => await a + b;',
+    'var x = async (a, b, c, d, e, f, g) => await a + await b + c + d + e + f + g;',
+    'async (a,) => b;',
+    '[async(x,y) => z]',
+    '[async x => z]',
+    'id = async x => x, square = async (y) => { y * y }',
+    'f(a, async b => await b)',
+    'async (x, y) => { x * y }',
+    'async (x, y) => y',
+    'async a => { await a }',
+    'async (y) => y',
+    'async (x, ...y) => x',
+    'async (x,y,) => x',
+    'async ({a = b}) => a',
+    '(async (x) => {}) + 1',
+    '(async (x) => {}) / 1',
+    'async a => a',
+    'async function foo(a = async () => await b) {}',
+    '({async: 1})',
+    'async yield => 1',
+    'f(a, async (b, c) => await [b, c], d)',
+    'f(a, async (b, c) => await [b, c], d)',
+    'async()',
+    'async(a, b)',
+    'async(...a, ...b)',
+    '({ ...async () => { }})',
+    '(async x => y)',
+    '(async (x, z) => y)',
+    '({x: async (y,w) => z})',
+    'async({x = yield}) => 1;',
+    'async () => 42',
+    'async(yield) => b',
+    'async(foo, yield) => b',
+    'async (yield) => {  };',
+    'async (foo, bar, yield) => {  };',
+    'f(a, async(x, y) => await [x, y], b)',
+    'const foo = ({ async = true }) => {};',
+    'const foo = async ({ async: bar }) => { await baz; };',
+    'async ({}) => 0',
+    'async()()',
+    'async (a,) => b;',
+    '[async(x,y) => z]',
+    '[async x => z]',
+    'id = async x => x, square = async (y) => { y * y }',
+    'f(a, async b => await b)',
+    'async (x, y) => { x * y }',
+    'async (x, y) => y',
+    outdent`
+      async function test(){
+        const someVar = null;
+        const done = async foo => {}
+      }
+    `,
+    outdent`
+      const a = {
+        foo: () => {
+        },
+        bar: async event => {
+        }
+      }
+      async function test(a = {
+        foo: () => {
+        },
+        bar: async event => {
+        }
+      }) {
+        const someVar = null;
+        const done1 = async foo => {
+          const a = {
+            foo: () => {
+            },
+            bar: async event => {
+            }
+          }
+        }
+        async function test(){
+          const someVar = null;
+          const done2 = async foo => {}
+          const finished = async foo => {}
+        }
+      }
+    `,
+    outdent`
+      async function test() {
+        const someVar = null;
+        const done1 = async foo => {}
+        async function test(){
+          const someVar = null;
+          const done2 = async foo => {}
+          const finished = async foo => {}
+        }
+      }
+    `,
+    outdent`
+      async function test(){
+        const someVar = null;
+        x = 123 / 1 - 3;
+        const done1 = async foo => {
+          x = 123 / 1 - 3;
+          nchanged = null;
+          async (foo) => {}
+        }
+        async function test(){
+          const someVar = null;
+          const done = async foo => {
+            nchanged = null;
+            const finished = async foo => {}
+          }
+          const finished = async foo => {}
+        }
+      }
+    `,
+    outdent`
+      const done1 = async foo => {}
+      const someVar = null;
+      const done2 = async foo => {}
+    `,
+    outdent`
+      someVar = null;
+      someVar = 123;
+      someVar = 'nchanged';
+      async foo => {}
+    `,
+    'const done3 = async foo => { const done = async foo => { const done5 = async foo => {}} }',
+    outdent`
+      x in nchanged;
+      const done4 = async foo => {}
+    `,
+    'async (y) => y',
+    'async (x, ...y) => x',
+    'async (x,y,) => x',
+    'async ({a = b}) => a',
+    '(async ({a = b}) => a)',
+    'async ({a = b}) => a(async ({a = b}) => a)',
+    'async ({a = b / 2}) => a',
+    'async() => { try {} finally { return "promise-finally-return (func-expr)";  } }',
+    'async() => { try { return new Promise(function() {}); } finally { return "promise-finally-return (arrow)"; } }',
+    'async() => { try { return "early-return (arrow)"; } finally { return await resolveLater("await-finally-return (arrow)"); }}',
+    'async ({a = (({b = {a = c} = { a: 0x1234 }}) => 1)({})}, c) => 1;',
+    'async ({a = (async ({b = {a = c} = { a: 0x1234 }}) => 1)({})}, c) => a;',
+    '(async() => {}).prototype',
+    '(async() => {}).hasOwnProperty("prototype")',
+    'async function x(a) { await 1; }',
+    'async function x(a, b, ...c) { await 1; }',
+    '(async(a) => await 1).length',
+    '(async(a, b, ...c) => await 1).length',
+    '(async(a, b = 2) => await 1).length',
+    '({ async f(a, b, ...c) { await 1; } }).f.length',
+    '({ async f(a, b = 2) { await 1; } }).f.length',
+    '({ async f(a) { await 1; } }).f.length',
+    '(new AsyncFunction("a", "await 1")).length',
+    '(new AsyncFunction("a", "b = 2", "await 1")).length',
+    '(new AsyncFunction("a", "b = 2", "await 1", async)).length',
+    '(async x => { return x }).toString()',
+    '() => ({ async f() { return "test4"; } }).f()',
+    '() => ({ async f() { return "test4"; } }).f()',
+    'async a => a',
+    'async a => a',
+    'async a => a',
+    'async a => a',
+    'async a => a',
+    'async function foo(a = async () => await b) {}',
+    '({async: 1})',
+    'async yield => 1',
+    'f(a, async (b, c) => await [b, c], d)',
+    'f(a, async (b, c) => await [b, c], d)',
+    'async()',
+    'async(a, b)',
+    'async(...a, ...b)',
+    '({ ...async () => { }})',
+    '(async x => y)',
+    '(async (x, z) => y)',
+    '({x: async (y,w) => z})',
+    'async({x = yield}) => 1; ',
+    'async (icefapper = bad) => {  }',
+    'async ({a: b = c})',
+    'async ({a = b}) => a',
+    'async (a, b) => a',
+    'async () => a',
+    'async (a, ...b) => 0',
+    'async a => {}',
+    'async () => {}',
+    '(async a => {})()',
+    'a, async () => b, c',
+    '({ async a(){} })',
+    'async(a) => x',
+    '({ async get(){} })',
+    'async function a() { await 0; }',
+    '(async function a() { await 0; })',
+    'async () => await 0',
+    '({ async a(){ await 0; } })',
+    'async;\n(a, b) => 0',
+    'async\nfunction a(){}',
+    'new async()',
+    'async()``',
+    'async ((a))',
+    'async function a(){}(0)',
+    '(async function a(){}(0))',
+    '(async function() { (await y); })',
+    'async function a(){}',
+    '(async function a(){})',
+    '({ async })',
+    'async("foo".bar);',
+    'var asyncFn = async({ foo = 1 }) => foo;',
+    'var asyncFn = async({ foo = 1 } = {}) => foo;',
+    'async (async) => 1',
+    'async ([a]) => 1',
+    'async ([a, b]) => 1',
+    'async ({a}) => 1',
+    'async ({a, b}) => 1',
+    'async a => async b => c',
+    'async a => async function() {}',
+    'async a => async function b() {}',
+    'async a => await 1',
+    'async a => await await 1',
+    'async a => await await await 1',
+    'async X => yield',
+    'async yield => X',
+    'async yield => yield',
+    'async X => {yield}',
+    'async yield => {X}',
+    'async yield => {yield}',
+    'function* g() { async X => yield }',
+    'async ([a])',
+    'async ([a, b])',
+    'async ({a})',
+    'async ({a = 1}) => {};',
+    'async ({a = 1}, {b = 2}) => {};',
+    'async ({a = 1}, {b = 2}, {c = 3}) => {};',
+    'async ({a = 1} = {}, {b = 2}, {c = 3}) => {};',
+    'async ({a = 1} = {}, {b = 2} = {}, {c = 3}) => {};',
+    'async ({a = 1} = {}, {b = 2} = {}, {c = 3} = {}) => {};',
+    'async ({a, b})',
+    'a ? async () => {1} : b',
+    'a ? b : async () => {1}',
+    'async ([{a = 0}]) => {};',
+    'async ([...[{a = 0}]]) => {};',
+    'async (a, (a, (b, c) => 0))',
+    'async (a, (a) => 0)',
+    'async (a, async (a) => 0)',
+    'async (a, async (a = b => 0) => 0)',
+    'async ({x}, [y], z) => x',
+    'async ({x = 30}, [y], z) => x;',
+    'async  (x = 20) => x;',
+    'async ([x] = 20, y) => x;',
+    'async ([x = 20] = 20) => x;',
+    'async ([x = 25]) => x => x => ({x} = {});',
+    'foo(async ({x}, [y], z) => x)',
+    'foo(async ({x = 30}, [y], z) => x)',
+    'foo(async foo => x)',
+    'foo(async foo => x => (x = 20) => (x = 20) => x)',
+    'foo(async foo => x => x => x => x)',
+    'var f = cond ? async x=> x : async x=>2',
+    'async () => await (5)',
+    'async (a, b, c, d, e, f) => { return "" + a + b + c + d + e + f; };',
+    'async x => () => x;',
+    'async x => x => x;',
+    'async (x, y, z) => x + y + z;',
+    'async x => () => x;',
+    'async (x, y) => { return x + y; };',
+    'async () => { return () => { return this; } };',
+    'async x => { return () => x; }',
+    'async ({})[x => x]',
+    'async () => () => 0',
+    'async () => x => (a, b, c) => 0',
+    'async y => () => (a) => 0',
+    'async () => (("๏บบ"))',
+    String.raw`() => ("\u{20ac}")`,
+    '() => (() => (123))',
+    'async() => a = ({});',
+    'async () => a = (() => b = (123))',
+    'async() => a = (async() => b = ("str"));',
+    'async () => true ? 1 : (0)',
+    'async () => true ? 1 : ("๏บบ")',
+    'async() => true ? 1 : (() => false ? 1 : (0))',
+    'async (argMath139 = (/a/ instanceof ((typeof Boolean == "function" ) ? Boolean : Object)),argMath140,argMath141) => {  return await ("valueOf" in i32);  }',
+    'async x => { return x => x; }',
+    'async (a = b => await (0)) => {}',
+    '(async(a, b, ...c) => await 1)',
+    '() => (async(foo, { a = NaN }) => foo + a)("1", { a: "0" })',
+    '() => (async(foo, { a = "0" }) => foo + a)("2", { a: undefined })',
+    outdent`
+      async x => {}
+      async (x) =>  {}
+    `,
+    outdent`
+      async (x) =>  {}
+      async x => {}
+    `,
+    'var f = cond ? x=>{x.foo } : x=>x + x + x + x + x + x + (x =>x)',
+  ]) {
+    it(`${arg};`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`${arg};`);
+      });
+    });
+
+    it(`${arg};`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`${arg};`, { lexical: true });
+      });
+    });
+
+    it(`${arg};`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`${arg};`, { webcompat: true, lexical: true });
+      });
+    });
+
+    it(`${arg};`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`${arg};`, { webcompat: true });
+      });
+    });
+
+    it(`${arg};`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`${arg};`, { next: true });
+      });
+    });
+
+    it(`function foo() { ${arg}}`, () => {
+      t.doesNotThrow(() => {
+        parseSource(`function foo() { ${arg}}`, { webcompat: true });
+      });
+    });
+  }
+  pass('Expressions - Async arrow', [
+    { code: 'async (a = async () => { await 1; }) => {}', options: { ranges: true } },
+    { code: 'async (() => 1)(), 1', options: { ranges: true } },
+    { code: 'async x => delete ("x"[(await x)])', options: { ranges: true, loc: true } },
+    {
+      code: outdent`
+        (async () => {})
+        (async () => {})
+        (async () => {})
+        (async () => {})
+        (async () => {})
+      `,
+      options: { ranges: true },
+    },
+    '(async x =>x)',
+    { code: 'x + (async y => x)', options: { ranges: true } },
+    { code: 'var f = cond ? x=>{x.foo } : x=>x + x + x + x + x + x + (async x =>x)', options: { ranges: true } },
+    { code: '[async(x,y) => z]', options: { ranges: true } },
+    { code: '[async x => z]', options: { ranges: true } },
+    { code: 'f(a, async b => await b)', options: { ranges: true } },
+    { code: '({x: async (y,w) => z})', options: { ranges: true } },
+    { code: 'async (a, b) => 0, (c, d) => 1', options: { ranges: true } },
+    { code: '(async({x = yield}) => 1);', options: { ranges: true } },
+    { code: 'async (b = {await: a}) => 1', options: { ranges: true } },
+    '({async foo () \n {}})',
+    { code: '(async (a = b) => {  })', options: { ranges: true } },
+    { code: 'async ({a: b = c})', options: { ranges: true } },
+    '(async ({await: a}) => 1)',
+    'id = async x => x, square = async (y) => {}',
+    '(async a => {})()',
+    { code: 'new async()', options: { ranges: true } },
+    { code: 'async ((a))', options: { ranges: true } },
+    '(async function a(){}(0))',
+    '(async a => b => c)',
+    { code: 'f(async ()=>c)', options: { ranges: true } },
+    { code: 'a => a => a => async a => a', options: { ranges: true } },
+    { code: 'f(a, async (b, c) => await [b, c], d)', options: { ranges: true } },
+  ]);
+});

@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "alwaysStrict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "noImplicitReturns": true,
+    "noImplicitThis": true,
+    "noUnusedParameters": true,
+    "outDir": "dist",
+    "preserveConstEnums": false,
+    "preserveWatchOutput": true,
+    "pretty": true,
+    "removeComments": true,
+    "sourceMap": true,
+    "strict": true,
+    "stripInternal": true,
+    "target": "esnext",
+    "resolveJsonModule": true,
+    "types": ["node", "./types/test262-parser-runner.d.ts"],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "module": "esnext"
+  },
+  "include": ["src", "test"]
+}

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+src/token.ts
+src/chars.ts
+src/lexer/charClassifier.ts
+src/unicode.ts
+package-lock.json
+CHANGELOG.md
