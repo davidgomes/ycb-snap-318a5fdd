@@ -6,7 +6,7 @@ use lightningcss::{
     selector::Selector,
     traits::ToCss,
     vendor_prefix::VendorPrefix,
-    visitor::{self, VisitTypes},
+    visitor::{self, Visit, VisitTypes},
 };
 use oxvg_ast::{
     element::{Element, HashableElement},
