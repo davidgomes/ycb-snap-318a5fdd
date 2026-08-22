@@ -42,6 +42,15 @@ contextualize(() => {
 		attest(t.allows(3)).equals(true)
 	})
 
+	it("then/else without if are valid no-ops", () => {
+		const t = jsonSchemaToType({
+			then: { const: 1 },
+			else: { const: 2 }
+		})
+		attest(t.allows("anything")).equals(true)
+		attest(t.allows({ value: false })).equals(true)
+	})
+
 	it("applies to non-object values", () => {
 		const t = jsonSchemaToType({
 			if: { const: 5 },

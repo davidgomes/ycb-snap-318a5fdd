@@ -14,7 +14,10 @@ const applyBranch = (schema: Type, data: unknown, ctx: Traversal): boolean => {
 export const parseConditionalJsonSchema = (
 	jsonSchema: JsonSchema
 ): Type | undefined => {
-	if (!("if" in jsonSchema)) return undefined
+	if (!("if" in jsonSchema)) {
+		if ("then" in jsonSchema || "else" in jsonSchema) return type.unknown
+		return undefined
+	}
 
 	const ifSchema = jsonSchemaToType(jsonSchema.if as JsonSchemaOrBoolean)
 
