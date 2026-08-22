@@ -604,7 +604,11 @@ export class CrudService<T extends CrudEntity> {
       let result: FindResponseDto<T>;
       if (opts.limit) {
         const requestedLimit = opts.limit;
-        const findOpts = { ...opts, limit: requestedLimit + 1, cursor: undefined };
+        const findOpts = {
+          ...opts,
+          limit: requestedLimit + 1,
+          cursor: undefined,
+        };
         const res = await em.findAndCount(this.entity, query, findOpts as any);
         const hasNextPage = res[0].length > requestedLimit;
         result = {
@@ -652,7 +656,10 @@ export class CrudService<T extends CrudEntity> {
     return entries;
   }
 
-  private decodeCursor(cursor: string, sort: { field: string; direction: string }[]) {
+  private decodeCursor(
+    cursor: string,
+    sort: { field: string; direction: string }[],
+  ) {
     let data: any;
     try {
       data = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
@@ -704,11 +711,9 @@ export class CrudService<T extends CrudEntity> {
     if (field === this.crudConfig.id_field) {
       return this.dbAdapter.checkId(value);
     }
-    const property = this.entityManager
-      .getMetadata()
-      .get(this.entity.name)
+    const property = this.entityManager.getMetadata().get(this.entity.name)
       .properties[field];
-    if (property?.type === Date && typeof value === 'string') {
+    if (property?.type === 'Date' && typeof value === 'string') {
       return new Date(value);
     }
     return value;
@@ -720,7 +725,7 @@ export class CrudService<T extends CrudEntity> {
   ) {
     const data: Record<string, any> = { __sort: '' };
     for (const item of sort) {
-      data[item.field] = entity?.[item.field];
+      data[item.field] = (entity as any)?.[item.field];
     }
     data.__sort = sort
       .map((item) => `${item.field}:${item.direction}`)
