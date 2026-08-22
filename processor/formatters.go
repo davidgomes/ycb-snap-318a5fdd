@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -499,7 +500,11 @@ func toOpenMetricsFiles(input chan *FileJob) string {
 // with the express idea of lowering memory usage, see https://github.com/boyter/scc/issues/210 for
 // the background on why this might be needed
 func toCSVStream(input chan *FileJob) string {
-	fmt.Println("Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc")
+	return toCSVStreamWriter(input, os.Stdout)
+}
+
+func toCSVStreamWriter(input chan *FileJob, out io.Writer) string {
+	_, _ = fmt.Fprintln(out, "Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc")
 
 	var quoteRegex = regexp.MustCompile("\"")
 
@@ -508,7 +513,7 @@ func toCSVStream(input chan *FileJob) string {
 		var location = "\"" + quoteRegex.ReplaceAllString(result.Location, "\"\"") + "\""
 		var filename = "\"" + quoteRegex.ReplaceAllString(result.Filename, "\"\"") + "\""
 
-		fmt.Printf("%s,%s,%s,%d,%d,%d,%d,%d,%d,%d\n",
+		_, _ = fmt.Fprintf(out, "%s,%s,%s,%d,%d,%d,%d,%d,%d,%d\n",
 			result.Language,
 			location,
 			filename,
@@ -828,6 +833,9 @@ func fileSummarize(input chan *FileJob) string {
 // both to files and to stdout. Not the most efficient way to do it in terms of memory
 // but seeing as the files are just summaries by this point it shouldn't be too bad
 func fileSummarizeMulti(input chan *FileJob) string {
+	if BoundedMemory {
+		return fileSummarizeMultiBounded(input)
+	}
 	// collect all the results
 	var results []*FileJob
 	for res := range input {
@@ -892,6 +900,157 @@ func fileSummarizeMulti(input chan *FileJob) string {
 		}
 	}
 
+	return str.String()
+}
+
+type boundedMemoryRecord struct {
+	Language, Location, Filename                   string
+	Lines, Code, Comment, Blank, Complexity, Bytes int64
+	Uloc                                           int
+}
+
+func boundedRecord(r *FileJob) boundedMemoryRecord {
+	return boundedMemoryRecord{r.Language, r.Location, r.Filename, r.Lines, r.Code, r.Comment, r.Blank, r.Complexity, r.Bytes, r.Uloc}
+}
+
+func (r boundedMemoryRecord) fileJob() *FileJob {
+	return &FileJob{Language: r.Language, Location: r.Location, Filename: r.Filename, Lines: r.Lines, Code: r.Code, Comment: r.Comment, Blank: r.Blank, Complexity: r.Complexity, Bytes: r.Bytes, Uloc: r.Uloc}
+}
+
+func boundedSpillFile() (*os.File, error) {
+	return os.CreateTemp(BoundedMemoryDir, "scc-bounded-memory-")
+}
+
+func writeBoundedRecord(w io.Writer, r boundedMemoryRecord) error {
+	_, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+		r.Language, strings.ReplaceAll(strings.ReplaceAll(r.Location, `\`, `\\`), "\t", `\t`),
+		strings.ReplaceAll(strings.ReplaceAll(r.Filename, `\`, `\\`), "\t", `\t`),
+		r.Lines, r.Code, r.Comment, r.Blank, r.Complexity, r.Bytes, r.Uloc)
+	return err
+}
+
+func readBoundedRecords(path string) ([]*FileJob, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []*FileJob
+	for _, line := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) != 10 {
+			continue
+		}
+		r := boundedMemoryRecord{Language: f[0], Location: strings.ReplaceAll(strings.ReplaceAll(f[1], `\t`, "\t"), `\\`, `\`), Filename: strings.ReplaceAll(strings.ReplaceAll(f[2], `\t`, "\t"), `\\`, `\`)}
+		var vals [7]int64
+		for i := range vals {
+			vals[i], _ = strconv.ParseInt(f[i+3], 10, 64)
+		}
+		r.Lines, r.Code, r.Comment, r.Blank, r.Complexity, r.Bytes = vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]
+		r.Uloc = int(vals[6])
+		out = append(out, r.fileJob())
+	}
+	return out, nil
+}
+
+func fileSummarizeMultiBounded(input chan *FileJob) string {
+	var held []boundedMemoryRecord
+	var spill *os.File
+	spills := 0
+	peak := 0
+	for res := range input {
+		if len(held) < BoundedMemoryMaxInMemoryFiles {
+			held = append(held, boundedRecord(res))
+			if len(held) > peak {
+				peak = len(held)
+			}
+			continue
+		}
+		if spill == nil {
+			var err error
+			spill, err = boundedSpillFile()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				break
+			}
+		}
+		_ = writeBoundedRecord(spill, boundedRecord(res))
+		spills++
+	}
+	if spill != nil {
+		_ = spill.Close()
+	}
+
+	all := make([]*FileJob, 0, len(held)+spills)
+	for _, r := range held {
+		all = append(all, r.fileJob())
+	}
+	if spill != nil {
+		r, err := readBoundedRecords(spill.Name())
+		if err == nil {
+			all = append(all, r...)
+		}
+	}
+	if BoundedMemoryStats {
+		fmt.Fprintf(os.Stderr, "bounded-memory: spills=%d peak_in_memory_files=%d\n", spills, peak)
+	}
+	return formatMultiResults(all)
+}
+
+func formatMultiResults(results []*FileJob) string {
+	var str strings.Builder
+	for s := range strings.SplitSeq(FormatMulti, ",") {
+		t := strings.SplitN(s, ":", 2)
+		if len(t) != 2 {
+			continue
+		}
+		i := make(chan *FileJob, len(results))
+		for _, r := range results {
+			i <- r
+		}
+		close(i)
+		var val string
+		switch strings.ToLower(t[0]) {
+		case "tabular":
+			val = fileSummarizeShort(i)
+		case "wide":
+			val = fileSummarizeLong(i)
+		case "json":
+			val = toJSON(i)
+		case "json2":
+			val = toJSON2(i)
+		case "cloc-yaml", "cloc-yml":
+			val = toClocYAML(i)
+		case "csv":
+			val = toCSV(i)
+		case "csv-stream":
+			if t[1] == "stdout" {
+				val = toCSVStream(i)
+			} else {
+				f, err := os.Create(t[1])
+				if err == nil {
+					_ = toCSVStreamWriter(i, f)
+					_ = f.Close()
+				}
+			}
+			continue
+		case "html":
+			val = toHtml(i)
+		case "html-table":
+			val = toHtmlTable(i)
+		case "sql":
+			val = toSql(i)
+		case "sql-insert":
+			val = toSqlInsert(i)
+		case "openmetrics":
+			val = toOpenMetrics(i)
+		}
+		if t[1] == "stdout" {
+			str.WriteString(val)
+			str.WriteString("\n")
+		} else {
+			_ = os.WriteFile(t[1], []byte(val), 0600)
+		}
+	}
 	return str.String()
 }
 

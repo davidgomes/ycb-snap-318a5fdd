@@ -136,6 +136,11 @@ var Format = ""
 // FormatMulti is a rule for defining multiple output formats
 var FormatMulti = ""
 
+var BoundedMemory = false
+var BoundedMemoryDir = ""
+var BoundedMemoryMaxInMemoryFiles = 0
+var BoundedMemoryStats = false
+
 // SQLProject is used to store the name for the SQL insert formats but is optional
 var SQLProject = ""
 
@@ -581,6 +586,25 @@ func Process() {
 
 	ProcessConstants()
 	processFlags()
+
+	if BoundedMemory {
+		if FormatMulti == "" {
+			fmt.Fprintln(os.Stderr, "--bounded-memory requires --format-multi")
+			return
+		}
+		if BoundedMemoryDir == "" {
+			fmt.Fprintln(os.Stderr, "--bounded-memory-dir is required when --bounded-memory is enabled")
+			return
+		}
+		if BoundedMemoryMaxInMemoryFiles <= 0 {
+			fmt.Fprintln(os.Stderr, "--bounded-memory-max-in-memory-files must be greater than zero")
+			return
+		}
+		if err := os.MkdirAll(BoundedMemoryDir, 0755); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return
+		}
+	}
 
 	// Clean up any invalid arguments before setting everything up
 	if len(DirFilePaths) == 0 {
