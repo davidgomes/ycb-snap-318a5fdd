@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Context } from "hono";
 import { handleMultiAgentChatRequest } from "../../handlers/multiAgentChat.ts";
+import { executeWithDelegation } from "../../handlers/delegation.ts";
 import { globalRegistry } from "../../providers/registry.ts";
 import { globalImageHandler } from "../../utils/imageHandling.ts";
 import type { ChatRequest } from "../../../shared/types.ts";
@@ -17,6 +18,10 @@ vi.mock("../../utils/imageHandling.ts", () => ({
   globalImageHandler: {
     captureScreenshot: vi.fn(),
   },
+}));
+
+vi.mock("../../handlers/delegation.ts", () => ({
+  executeWithDelegation: vi.fn(),
 }));
 
 // Mock provider for testing
@@ -258,12 +263,11 @@ describe("handleMultiAgentChatRequest", () => {
     
     vi.mocked(mockContext.req!.json).mockResolvedValue(chatRequest);
     
-    // Mock orchestrator agent
     const orchestratorAgent = {
       id: "orchestrator",
       name: "Orchestrator",
       description: "Orchestrates multi-agent workflows",
-      provider: "claude-code",
+      provider: "anthropic",
       isOrchestrator: true,
     };
     
@@ -271,17 +275,16 @@ describe("handleMultiAgentChatRequest", () => {
       if (agentId === "orchestrator") return orchestratorAgent;
       return mockAgent;
     });
-    
-    // Mock orchestrator provider response
-    const orchestratorResponses = [
-      { type: "text" as const, content: "I'll coordinate between agent1 and agent2..." },
-      { type: "done" as const },
-    ];
-    
-    vi.mocked(mockProvider.executeChat).mockImplementation(async function* () {
-      for (const response of orchestratorResponses) {
-        yield response;
-      }
+
+    vi.mocked(executeWithDelegation).mockImplementation(async function* () {
+      yield {
+        type: "claude_json",
+        data: {
+          type: "assistant",
+          content: "I'll coordinate between agent1 and agent2...",
+        },
+      };
+      yield { type: "done" };
     });
     
     await handleMultiAgentChatRequest(
@@ -289,8 +292,12 @@ describe("handleMultiAgentChatRequest", () => {
       requestAbortControllers
     );
     
-    // Should have called the orchestrator
-    expect(mockProvider.executeChat).toHaveBeenCalled();
+    expect(executeWithDelegation).toHaveBeenCalledWith(
+      "orchestrator",
+      chatRequest,
+      expect.any(AbortController),
+      true,
+    );
   });
   
   it("should handle provider errors gracefully", async () => {

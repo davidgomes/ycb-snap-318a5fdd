@@ -8,6 +8,7 @@ import type {
   ChatRoomMessage,
   AgentCommand 
 } from "../providers/types.ts";
+import { executeWithDelegation } from "./delegation.ts";
 
 /**
  * Parse structured commands from chat messages
@@ -290,23 +291,27 @@ async function* executeOrchestration(
   abortController: AbortController,
   debugMode: boolean
 ): AsyncGenerator<StreamResponse> {
-  // For now, delegate to orchestrator agent
   const orchestratorAgent = globalRegistry.getAgent("orchestrator");
-  
-  if (orchestratorAgent) {
-    yield* executeSingleAgent(
-      "orchestrator",
-      request,
-      command,
-      abortController,
-      debugMode
-    );
-  } else {
+
+  if (!orchestratorAgent) {
     yield {
       type: "error",
       error: "Orchestrator agent not available for multi-agent coordination",
     };
+    return;
   }
+
+  if (command?.command === "capture_screen") {
+    yield* handleScreenCapture("orchestrator", request, command, abortController, debugMode);
+    return;
+  }
+
+  yield* executeWithDelegation(
+    "orchestrator",
+    request,
+    abortController,
+    debugMode,
+  );
 }
 
 /**
