@@ -47,6 +47,7 @@ from .types import (
     Snapshot,
     SnapshotSummary,
     SnapshotTask,
+    SnapshotTaskStackInfo,
     TerminatedTaskInfo,
 )
 from .utils import (
@@ -317,13 +318,20 @@ class Monitor:
         }
         for task in all_tasks:
             task_item = tasks[str(id(task))]
-            chain: List[SnapshotTask] = []
+            chain: List[SnapshotTaskStackInfo] = []
             current_task: Optional[asyncio.Task[Any]] = task
             while current_task is not None:
                 current_item = tasks.get(str(id(current_task)))
                 if current_item is None:
                     break
-                chain.append(current_item)
+                chain.append(
+                    SnapshotTaskStackInfo(
+                        task_repr=current_item.task_repr,
+                        creation_stack=self._copy_stack(
+                            current_item.creation_stack
+                        ),
+                    )
+                )
                 task_ref = self._created_traceback_chains.get(current_task)
                 current_task = task_ref() if task_ref is not None else None
             task_item.creation_chain = tuple(chain)
@@ -423,7 +431,7 @@ class Monitor:
         task = snapshot.tasks[task_id_]
         depth = 0
         formatted_stack_list = []
-        prev_task: Optional[SnapshotTask] = None
+        prev_task: Optional[SnapshotTaskStackInfo] = None
         for chain_task in reversed(task.creation_chain):
             if depth == 0:
                 formatted_stack_list.append(

@@ -41,6 +41,12 @@ class FormattedStackItem(NamedTuple):
 
 
 @dataclass
+class SnapshotTaskStackInfo:
+    task_repr: str
+    creation_stack: Optional[List[traceback.FrameSummary]]
+
+
+@dataclass
 class SnapshotTask:
     task_id: str
     state: str
@@ -51,7 +57,7 @@ class SnapshotTask:
     task_repr: str
     creation_stack: Optional[List[traceback.FrameSummary]]
     task_stack: List[traceback.FrameSummary]
-    creation_chain: Sequence["SnapshotTask"]
+    creation_chain: Sequence[SnapshotTaskStackInfo]
 
 
 @dataclass
