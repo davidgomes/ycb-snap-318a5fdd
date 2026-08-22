@@ -11,11 +11,12 @@ import type {
 } from '../trait/types';
 import type { SparseSet } from '../utils/sparse-set';
 import type { World } from '../world';
+import type { PredicateModifier } from './modifiers/predicate';
 import { $modifier } from './modifier';
 import { $parameters, $queryRef } from './symbols';
 
 export type QueryModifier = (...components: Trait[]) => Modifier;
-export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier>;
+export type QueryParameter = Trait | RelationPair | PredicateModifier | ReturnType<QueryModifier>;
 export type QuerySubscriber = (entity: Entity) => void;
 export type QueryUnsubscriber = () => void;
 
@@ -65,7 +66,9 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
               : First extends Modifier
                 ? IsNotModifier<First> extends true
                     ? []
-                    : InstancesFromParameters<UnwrapModifierData<First>>
+                    : IsPredicateModifier<First> extends true
+                      ? []
+                      : InstancesFromParameters<UnwrapModifierData<First>>
                 : []),
           ...(Rest extends QueryParameter[] ? InstancesFromParameters<Rest> : []),
       ]
@@ -73,6 +76,13 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
 
 export type IsNotModifier<T> =
     T extends Modifier<Trait[], infer TType> ? (TType extends 'not' ? true : false) : false;
+
+export type IsPredicateModifier<T> =
+    T extends Modifier<Trait[], infer TType>
+        ? TType extends `predicate-${number}`
+            ? true
+            : false
+        : false;
 
 export type QueryHash = string;
 
@@ -93,10 +103,27 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    predicates?: PredicateModifier[];
+};
+
+export type PredicateTrackingType = 'add' | 'remove' | 'change';
+
+export type PredicateTrackingEntry = {
+    type: PredicateTrackingType;
+    modifier: PredicateModifier;
+    trackingId: number;
+};
+
+export type QueryPredicates = {
+    required: PredicateModifier[];
+    not: PredicateModifier[];
+    or: PredicateModifier[];
+    orNot: PredicateModifier[];
+    tracking: PredicateTrackingEntry[];
 };
 
 /** Parameter types that can be passed to Or modifier */
-export type OrParameter = Trait | Modifier;
+export type OrParameter = Trait | Modifier | PredicateModifier;
 
 /** Or modifier that can contain both traits and nested modifiers */
 export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
@@ -165,6 +192,10 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     removeSubscriptions: Set<QuerySubscriber>;
     /** Relation pairs for target-specific queries */
     relationFilters?: RelationPair[];
+    /** Value-based predicate filters */
+    predicates: QueryPredicates;
+    /** Previous predicate match state indexed by [trackingId][entityId] */
+    predicateSnapshots: Map<number, boolean[]>;
     run: (world: World, params: QueryParameter[]) => QueryResult<T>;
     add: (entity: Entity) => void;
     remove: (world: World, entity: Entity) => void;

@@ -3,6 +3,7 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import { checkAllPredicateTracking } from './check-query';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -140,6 +141,10 @@ export function checkQueryTracking(
     // If we have OR groups, at least one must match
     if (hasOrGroup && !anyOrMatched) {
         return false;
+    }
+
+    if (query.predicates.tracking.length > 0) {
+        if (!checkAllPredicateTracking(world, query, entity)) return false;
     }
 
     return true;

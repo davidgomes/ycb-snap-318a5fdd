@@ -93,6 +93,8 @@ export interface TraitInstance<T extends Trait = Trait, S extends Schema = Extra
     notQueries: Set<QueryInstance>;
     /** Queries that filter by this relation (only for relation traits) */
     relationQueries: Set<QueryInstance>;
+    /** Queries with predicates that depend on this trait's data */
+    predicateQueries: Set<QueryInstance>;
     schema: S;
     changeSubscriptions: Set<(entity: Entity, target?: Entity) => void>;
     addSubscriptions: Set<(entity: Entity, target?: Entity) => void>;

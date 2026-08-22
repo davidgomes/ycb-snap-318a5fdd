@@ -73,6 +73,9 @@ export function createWorld(
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
+            updateEachDepth: 0,
+            deferredPredicateEvaluations: new Set(),
+            deferredPredicateEntities: new Set(),
         } as WorldInternal,
 
         traits: new Set<Trait>(),

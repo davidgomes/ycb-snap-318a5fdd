@@ -1,6 +1,7 @@
 import type { Trait } from '../../trait/types';
 import type { Modifier, OrModifier, OrParameter } from '../types';
 import { $modifier, createModifier } from '../modifier';
+import { isPredicateModifier } from './predicate';
 
 export const Or = <T extends OrParameter[]>(...params: T): OrModifier<T> => {
     // Separate traits from nested modifiers
@@ -8,7 +9,7 @@ export const Or = <T extends OrParameter[]>(...params: T): OrModifier<T> => {
     const modifiers: Modifier[] = [];
 
     for (const param of params) {
-        if ((param as Modifier)[$modifier]) {
+        if ((param as Modifier)[$modifier] || isPredicateModifier(param)) {
             modifiers.push(param as Modifier);
         } else {
             traits.push(param as Trait);
