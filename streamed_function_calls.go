@@ -43,7 +43,8 @@ func (a *streamedFunctionCallAccumulator) addFunctionCall(call *FunctionCall) er
 		a.calls = make(map[string]*streamedFunctionCallState)
 	}
 
-	state, ok := a.calls[call.ID]
+	key := streamedFunctionCallKey(call)
+	state, ok := a.calls[key]
 	if !ok {
 		state = &streamedFunctionCallState{
 			args:             cloneJSONMap(call.Args),
@@ -52,22 +53,22 @@ func (a *streamedFunctionCallAccumulator) addFunctionCall(call *FunctionCall) er
 		if state.args == nil {
 			state.args = make(map[string]any)
 		}
-		a.calls[call.ID] = state
+		a.calls[key] = state
 	} else if call.Args != nil {
 		if err := mergeStreamedJSONMap(state.args, call.Args, "$"); err != nil {
-			return fmt.Errorf("accumulate function call %q arguments: %w", call.ID, err)
+			return fmt.Errorf("accumulate function call %q arguments: %w", key, err)
 		}
 	}
 
 	for _, partial := range call.PartialArgs {
 		if err := state.addPartialArg(partial); err != nil {
-			return fmt.Errorf("accumulate function call %q arguments: %w", call.ID, err)
+			return fmt.Errorf("accumulate function call %q arguments: %w", key, err)
 		}
 	}
 
 	call.Args = cloneJSONMap(state.args)
 	if !streamedWillContinue(call.WillContinue) {
-		delete(a.calls, call.ID)
+		delete(a.calls, key)
 	}
 	return nil
 }
@@ -130,6 +131,16 @@ func streamedPartialArgValue(partial *PartialArg) any {
 
 func streamedWillContinue(value *bool) bool {
 	return value != nil && *value
+}
+
+func streamedFunctionCallKey(call *FunctionCall) string {
+	if call.ID != "" {
+		return "id:" + call.ID
+	}
+	if call.Name != "" {
+		return "name:" + call.Name
+	}
+	return "anonymous"
 }
 
 func parseStreamedJSONPath(path string) ([]streamedJSONPathToken, error) {
@@ -461,14 +472,15 @@ func mergeStreamedFunctionCallContents(contents []*Content) ([]*Content, bool) {
 				return contents, false
 			}
 			call := cloneCompletedFunctionCall(part.FunctionCall)
-			if index, ok := active[call.ID]; ok {
+			key := streamedFunctionCallKey(call)
+			if index, ok := active[key]; ok {
 				calls[index] = call
 			} else {
-				active[call.ID] = len(calls)
+				active[key] = len(calls)
 				calls = append(calls, call)
 			}
 			if !streamedWillContinue(part.FunctionCall.WillContinue) {
-				delete(active, call.ID)
+				delete(active, key)
 			}
 		}
 	}
