@@ -25,7 +25,7 @@ const createTreeSchema = (): MapSchema_ => {
       lazy(() => treeSchema),
       { required: 'never' }
     )
-  })
+  }, {})
   return treeSchema
 }
 
@@ -81,7 +81,7 @@ describe('lazy schema', () => {
     const treeSchema = createTreeSchema()
     treeSchema.check()
 
-    const jsonSchema = treeSchema.build(JSONSchemer).formattedValueSchema() as {
+    const jsonSchema = treeSchema.build(JSONSchemer).formattedValueSchema() as unknown as {
       $defs: Record<string, unknown>
       properties: { children: { items: { $ref: string } } }
     }
@@ -97,7 +97,7 @@ describe('lazy schema', () => {
     const treeSchema: MapSchema_ = new MapSchema_({
       value: new StringSchema({}),
       child: lazy(() => treeSchema).optional()
-    })
+    }, {})
     treeSchema.check()
 
     expect(treeSchema.build(Finder).search('child.value')).toHaveLength(1)
