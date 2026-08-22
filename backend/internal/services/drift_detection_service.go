@@ -231,7 +231,7 @@ func (s *DriftDetectionService) addDrift(ctx context.Context, b *models.Environm
 	case "low":
 		snapshot.LowDrifts++
 	}
-	if _, ok := existing[key]; ok {
+	if record, ok := existing[key]; ok && record.Status != "resolved" {
 		return
 	}
 	r := models.DriftRecord{BaselineID: b.ID, EnvironmentID: b.EnvironmentID, ContainerName: name, DriftType: typ, Field: field, ExpectedValue: expected, ActualValue: actual, Severity: severity, Status: "detected", DetectedAt: time.Now()}
