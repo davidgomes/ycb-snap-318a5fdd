@@ -217,7 +217,24 @@ const (
 	ExtraChecksumOf = "ChecksumOf"
 	ExtraBuilder    = "Builder"
 	ExtranDynLink   = "DynamicallyLinked"
+	ExtraPublishAttempts = "publish_attempts"
 )
+
+// Publish attempt statuses recorded under ExtraPublishAttempts.
+const (
+	PublishAttemptSuccess = "success"
+	PublishAttemptFailure = "failure"
+)
+
+// PublishAttempt is one try to publish an artifact to a destination.
+type PublishAttempt struct {
+	Publisher string `json:"publisher"`
+	Instance  string `json:"instance"`
+	Target    string `json:"target"`
+	Attempt   int    `json:"attempt"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
 
 // Extras represents the extra fields in an artifact.
 type Extras map[string]any
@@ -298,6 +315,35 @@ func MustExtra[T any](a Artifact, key string) T {
 		panic(fmt.Errorf("extra: %s: %w", key, err))
 	}
 	return t
+}
+
+var publishAttemptsMu sync.Mutex
+
+// RecordPublishAttempt appends a publish attempt and sorts extra.publish_attempts
+// by publisher, instance, target, then attempt.
+func (a *Artifact) RecordPublishAttempt(p PublishAttempt) {
+	publishAttemptsMu.Lock()
+	defer publishAttemptsMu.Unlock()
+	if a.Extra == nil {
+		a.Extra = make(Extras)
+	}
+	list := ExtraOr(*a, ExtraPublishAttempts, []PublishAttempt{})
+	list = append(list, p)
+	slices.SortFunc(list, comparePublishAttempts)
+	a.Extra[ExtraPublishAttempts] = list
+}
+
+func comparePublishAttempts(a, b PublishAttempt) int {
+	if c := strings.Compare(a.Publisher, b.Publisher); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.Instance, b.Instance); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.Target, b.Target); c != 0 {
+		return c
+	}
+	return a.Attempt - b.Attempt
 }
 
 // ExtraOr returns the Extra field with the given key or the or value specified

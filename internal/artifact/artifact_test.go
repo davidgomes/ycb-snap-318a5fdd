@@ -492,6 +492,21 @@ func TestInvalidAlgorithm(t *testing.T) {
 	require.Empty(t, sum)
 }
 
+func TestRecordPublishAttemptSort(t *testing.T) {
+	a := &Artifact{}
+	a.RecordPublishAttempt(PublishAttempt{Publisher: "upload", Instance: "b", Target: "u", Attempt: 2, Status: PublishAttemptSuccess})
+	a.RecordPublishAttempt(PublishAttempt{Publisher: "blob", Instance: "s3://x", Target: "p", Attempt: 1, Status: PublishAttemptFailure, Error: "x"})
+	a.RecordPublishAttempt(PublishAttempt{Publisher: "upload", Instance: "b", Target: "u", Attempt: 1, Status: PublishAttemptFailure, Error: "e"})
+	a.RecordPublishAttempt(PublishAttempt{Publisher: "artifactory", Instance: "a", Target: "t", Attempt: 1, Status: PublishAttemptSuccess})
+	got := ExtraOr(*a, ExtraPublishAttempts, []PublishAttempt{})
+	require.Equal(t, []PublishAttempt{
+		{Publisher: "artifactory", Instance: "a", Target: "t", Attempt: 1, Status: PublishAttemptSuccess},
+		{Publisher: "blob", Instance: "s3://x", Target: "p", Attempt: 1, Status: PublishAttemptFailure, Error: "x"},
+		{Publisher: "upload", Instance: "b", Target: "u", Attempt: 1, Status: PublishAttemptFailure, Error: "e"},
+		{Publisher: "upload", Instance: "b", Target: "u", Attempt: 2, Status: PublishAttemptSuccess},
+	}, got)
+}
+
 func TestExtra(t *testing.T) {
 	a := Artifact{
 		Extra: map[string]any{

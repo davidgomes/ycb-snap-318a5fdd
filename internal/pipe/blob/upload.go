@@ -1,6 +1,7 @@
 package blob
 
 import (
+	stdctx "context"
 	"errors"
 	"fmt"
 	"io"
@@ -125,19 +126,21 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 		}
 	}
 
-	if err := up.Open(ctx, bucketURL); err != nil {
+	if err := retryBlobOp(ctx, conf.Retry, func() error {
+		return up.Open(ctx, bucketURL)
+	}); err != nil {
 		return handleError(err, bucketURL)
 	}
 	defer up.Close()
 
+	instance := instanceFromBucketURL(bucketURL)
+
 	g := semerrgroup.New(ctx.Parallelism)
-	for _, artifact := range artifactList(ctx, conf) {
+	for _, art := range artifactList(ctx, conf) {
 		g.Go(func() error {
 			// TODO: replace this with ?prefix=folder on the bucket url
-			dataFile := artifact.Path
-			uploadFile := path.Join(dir, artifact.Name)
-
-			return uploadData(ctx, conf, up, dataFile, uploadFile, bucketURL)
+			uploadFile := path.Join(dir, art.Name)
+			return uploadData(ctx, conf, up, art, art.Path, uploadFile, instance, bucketURL)
 		})
 	}
 
@@ -146,13 +149,26 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 		return err
 	}
 	for name, fullpath := range files {
+		art := &artifact.Artifact{
+			Name: name,
+			Path: fullpath,
+			Type: artifact.UploadableFile,
+		}
+		ctx.Artifacts.Add(art)
 		g.Go(func() error {
-			uploadFile := path.Join(dir, name)
-			return uploadData(ctx, conf, up, fullpath, uploadFile, bucketURL)
+			uploadFile := path.Join(dir, art.Name)
+			return uploadData(ctx, conf, up, art, fullpath, uploadFile, instance, bucketURL)
 		})
 	}
 
 	return g.Wait()
+}
+
+func instanceFromBucketURL(bucketURL string) string {
+	if i := strings.Index(bucketURL, "?"); i >= 0 {
+		return bucketURL[:i]
+	}
+	return bucketURL
 }
 
 func artifactList(ctx *context.Context, conf config.Blob) []*artifact.Artifact {
@@ -182,16 +198,103 @@ func artifactList(ctx *context.Context, conf config.Blob) []*artifact.Artifact {
 	)).List()
 }
 
-func uploadData(ctx *context.Context, conf config.Blob, up uploader, dataFile, uploadFile, bucketURL string) error {
+func uploadData(ctx *context.Context, conf config.Blob, up uploader, art *artifact.Artifact, dataFile, uploadFile, instance, bucketURL string) error {
 	data, err := getData(ctx, conf, dataFile)
 	if err != nil {
 		return err
 	}
 
-	if err := up.Upload(ctx, uploadFile, data); err != nil {
-		return handleError(err, bucketURL)
+	attempts := conf.Retry.MaxAttempts()
+	var lastErr error
+	for n := uint(1); n <= attempts; n++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		lastErr = up.Upload(ctx, uploadFile, data)
+		if lastErr == nil {
+			art.RecordPublishAttempt(artifact.PublishAttempt{
+				Publisher: "blob",
+				Instance:  instance,
+				Target:    uploadFile,
+				Attempt:   int(n),
+				Status:    artifact.PublishAttemptSuccess,
+			})
+			return nil
+		}
+
+		art.RecordPublishAttempt(artifact.PublishAttempt{
+			Publisher: "blob",
+			Instance:  instance,
+			Target:    uploadFile,
+			Attempt:   int(n),
+			Status:    artifact.PublishAttemptFailure,
+			Error:     lastErr.Error(),
+		})
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if n == attempts || !isTransientBlobErr(lastErr) {
+			return handleError(lastErr, bucketURL)
+		}
+		if err := conf.Retry.Sleep(ctx, n, 0); err != nil {
+			return err
+		}
+	}
+	if lastErr != nil {
+		return handleError(lastErr, bucketURL)
 	}
 	return nil
+}
+
+func retryBlobOp(ctx *context.Context, cfg config.Retry, fn func() error) error {
+	attempts := cfg.MaxAttempts()
+	var err error
+	for n := uint(1); n <= attempts; n++ {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		err = fn()
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if n == attempts || !isTransientBlobErr(err) {
+			return err
+		}
+		if serr := cfg.Sleep(ctx, n, 0); serr != nil {
+			return serr
+		}
+	}
+	return err
+}
+
+type timeoutError interface {
+	Timeout() bool
+}
+
+type temporaryError interface {
+	Temporary() bool
+}
+
+func isTransientBlobErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, stdctx.Canceled) || errors.Is(err, stdctx.DeadlineExceeded) {
+		return false
+	}
+	var te timeoutError
+	if errors.As(err, &te) && te.Timeout() {
+		return true
+	}
+	var tmp temporaryError
+	if errors.As(err, &tmp) && tmp.Temporary() {
+		return true
+	}
+	return false
 }
 
 // errorContains check if error contains specific string.

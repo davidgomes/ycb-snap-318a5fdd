@@ -4,6 +4,7 @@ package http
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	h "net/http"
@@ -265,11 +266,13 @@ func uploadWithFilter(ctx *context.Context, upload *config.Upload, filter artifa
 	}
 
 	for name, path := range extraFiles {
-		artifacts = append(artifacts, &artifact.Artifact{
+		art := &artifact.Artifact{
 			Name: name,
 			Path: path,
 			Type: artifact.UploadableFile,
-		})
+		}
+		ctx.Artifacts.Add(art)
+		artifacts = append(artifacts, art)
 	}
 
 	if !upload.ExtraFilesOnly {
@@ -290,7 +293,7 @@ func uploadWithFilter(ctx *context.Context, upload *config.Upload, filter artifa
 }
 
 // uploadAsset uploads file to target and logs all actions.
-func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact.Artifact, kind string, check ResponseChecker) error {
+func uploadAsset(ctx *context.Context, upload *config.Upload, art *artifact.Artifact, kind string, check ResponseChecker) error {
 	// username and secret are optional since the server may not support/need
 	// basic authentication always
 	username, err := getUsername(ctx, upload, kind)
@@ -303,17 +306,10 @@ func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact
 	}
 
 	// Generate the target url
-	targetURL, err := tmpl.New(ctx).WithArtifact(artifact).Apply(upload.Target)
+	targetURL, err := tmpl.New(ctx).WithArtifact(art).Apply(upload.Target)
 	if err != nil {
 		return fmt.Errorf("%s: %s: error while building target URL: %w", upload.Name, kind, err)
 	}
-
-	// Handle the artifact
-	asset, err := assetOpen(kind, artifact)
-	if err != nil {
-		return err
-	}
-	defer asset.ReadCloser.Close()
 
 	// target url need to contain the artifact name unless the custom
 	// artifact name is used
@@ -321,19 +317,90 @@ func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact
 		if !strings.HasSuffix(targetURL, "/") {
 			targetURL += "/"
 		}
-		targetURL += artifact.Name
+		targetURL += art.Name
 	}
 	log.Debugf("generated target url: %s", targetURL)
 
 	headers := make(map[string]string, len(upload.CustomHeaders))
 	for name, value := range upload.CustomHeaders {
-		resolvedValue, err := tmpl.New(ctx).WithArtifact(artifact).Apply(value)
+		resolvedValue, err := tmpl.New(ctx).WithArtifact(art).Apply(value)
 		if err != nil {
 			return fmt.Errorf("%s: %s: failed to resolve custom_headers template: %w", upload.Name, kind, err)
 		}
 		headers[name] = resolvedValue
 	}
-	if upload.ChecksumHeader != "" {
+
+	log.WithField("instance", upload.Name).
+		WithField("mode", upload.Mode).
+		WithField("file", art.Name).
+		Info("uploading")
+
+	attempts := upload.Retry.MaxAttempts()
+	var lastErr error
+	for n := uint(1); n <= attempts; n++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		lastErr = uploadAssetOnce(ctx, upload, art, kind, targetURL, username, secret, headers, check)
+		if lastErr == nil {
+			art.RecordPublishAttempt(artifact.PublishAttempt{
+				Publisher: kind,
+				Instance:  upload.Name,
+				Target:    targetURL,
+				Attempt:   int(n),
+				Status:    artifact.PublishAttemptSuccess,
+			})
+			return nil
+		}
+
+		art.RecordPublishAttempt(artifact.PublishAttempt{
+			Publisher: kind,
+			Instance:  upload.Name,
+			Target:    targetURL,
+			Attempt:   int(n),
+			Status:    artifact.PublishAttemptFailure,
+			Error:     lastErr.Error(),
+		})
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		var he *httpRetryError
+		retryable := errors.As(lastErr, &he) && he.retryable()
+		if n == attempts || !retryable {
+			return uploadFailedErr(upload.Name, kind, lastErr)
+		}
+		if err := upload.Retry.Sleep(ctx, n, retryAfterFrom(lastErr)); err != nil {
+			return err
+		}
+	}
+	if lastErr != nil {
+		return uploadFailedErr(upload.Name, kind, lastErr)
+	}
+	return nil
+}
+
+func uploadFailedErr(name, kind string, err error) error {
+	if err == nil {
+		return nil
+	}
+	prefix := kind + ": upload failed:"
+	if strings.HasPrefix(err.Error(), prefix) {
+		return err
+	}
+	return fmt.Errorf("%s: %s: upload failed: %w", name, kind, err)
+}
+
+func uploadAssetOnce(ctx *context.Context, upload *config.Upload, artifact *artifact.Artifact, kind, targetURL, username, secret string, headers map[string]string, check ResponseChecker) error {
+	asset, err := assetOpen(kind, artifact)
+	if err != nil {
+		return err
+	}
+	defer asset.ReadCloser.Close()
+
+	if upload.ChecksumHeader != "" && headers[upload.ChecksumHeader] == "" {
 		sum, err := artifact.Checksum("sha256")
 		if err != nil {
 			return err
@@ -341,20 +408,13 @@ func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact
 		headers[upload.ChecksumHeader] = sum
 	}
 
-	log.WithField("instance", upload.Name).
-		WithField("mode", upload.Mode).
-		WithField("file", artifact.Name).
-		Info("uploading")
-
 	res, err := uploadAssetToServer(ctx, upload, targetURL, username, secret, headers, asset, check)
-	if err != nil {
-		return fmt.Errorf("%s: %s: upload failed: %w", upload.Name, kind, err)
+	if res != nil {
+		if cerr := res.Body.Close(); cerr != nil {
+			log.WithError(cerr).Warn("failed to close response body")
+		}
 	}
-	if err := res.Body.Close(); err != nil {
-		log.WithError(err).Warn("failed to close response body")
-	}
-
-	return nil
+	return err
 }
 
 // uploadAssetToServer uploads the asset file to target.
@@ -433,7 +493,7 @@ func executeHTTPRequest(ctx *context.Context, upload *config.Upload, req *h.Requ
 			return nil, ctx.Err()
 		default:
 		}
-		return nil, err
+		return nil, wrapHTTPError(nil, err, true)
 	}
 
 	defer resp.Body.Close()
@@ -442,7 +502,7 @@ func executeHTTPRequest(ctx *context.Context, upload *config.Upload, req *h.Requ
 	if err != nil {
 		// even though there was an error, we still return the response
 		// in case the caller wants to inspect it further
-		return resp, err
+		return resp, wrapHTTPError(resp, err, false)
 	}
 
 	return resp, err
