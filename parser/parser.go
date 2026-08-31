@@ -539,7 +539,20 @@ func (p *Parser) parseArrayLit() Expr {
 
 	var elements []Expr
 	for p.token != token.RBrack && p.token != token.EOF {
-		elements = append(elements, p.parseExpr())
+		rest := false
+		if p.token == token.Ellipsis {
+			rest = true
+			p.next()
+		}
+		value := p.parseExpr()
+		if p.token == token.Assign {
+			p.next()
+			value = &DefaultExpr{Expr: value, Default: p.parseExpr()}
+		}
+		if rest {
+			value = &RestExpr{Expr: value}
+		}
+		elements = append(elements, value)
 
 		if !p.expectComma(token.RBrack, "array element") {
 			break
@@ -548,6 +561,11 @@ func (p *Parser) parseArrayLit() Expr {
 
 	p.exprLevel--
 	rbrack := p.expect(token.RBrack)
+	for i, e := range elements {
+		if _, ok := e.(*RestExpr); ok && i != len(elements)-1 {
+			p.error(e.Pos(), "rest element must be last")
+		}
+	}
 	return &ArrayLit{
 		Elements: elements,
 		LBrack:   lbrack,
@@ -1070,6 +1088,10 @@ func (p *Parser) parseMapLit() *MapLit {
 
 	var elements []*MapElementLit
 	for p.token != token.RBrace && p.token != token.EOF {
+		if p.token == token.Ellipsis {
+			p.error(p.pos, "map rest patterns are not supported")
+			p.next()
+		}
 		elements = append(elements, p.parseMapElementLit())
 
 		if !p.expectComma(token.RBrace, "map element") {

@@ -19,6 +19,21 @@ type ArrayLit struct {
 	RBrack   Pos
 }
 
+// DefaultExpr and RestExpr are only meaningful inside destructuring patterns.
+type DefaultExpr struct{ Expr, Default Expr }
+
+func (e *DefaultExpr) exprNode()      {}
+func (e *DefaultExpr) Pos() Pos       { return e.Expr.Pos() }
+func (e *DefaultExpr) End() Pos       { return e.Default.End() }
+func (e *DefaultExpr) String() string { return e.Expr.String() + " = " + e.Default.String() }
+
+type RestExpr struct{ Expr Expr }
+
+func (e *RestExpr) exprNode()      {}
+func (e *RestExpr) Pos() Pos       { return e.Expr.Pos() - 3 }
+func (e *RestExpr) End() Pos       { return e.Expr.End() }
+func (e *RestExpr) String() string { return "..." + e.Expr.String() }
+
 func (e *ArrayLit) exprNode() {}
 
 // Pos returns the position of first character belonging to the node.
