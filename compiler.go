@@ -308,6 +308,18 @@ func (c *Compiler) Compile(node parser.Node) error {
 			}
 		}
 	case *parser.AssignStmt:
+		// Composite expressions are also valid assignment patterns.  Expand
+		// them here instead of adding VM instructions: this keeps the bytecode
+		// format compatible with older embedders and makes nested patterns
+		// behave exactly like ordinary indexing.
+		if len(node.LHS) == 1 && len(node.RHS) == 1 {
+			if _, ok := node.LHS[0].(*parser.ArrayLit); ok {
+				return c.compileDestructure(node, node.LHS[0], node.RHS[0], node.Token)
+			}
+			if _, ok := node.LHS[0].(*parser.MapLit); ok {
+				return c.compileDestructure(node, node.LHS[0], node.RHS[0], node.Token)
+			}
+		}
 		err := c.compileAssign(node, node.LHS, node.RHS, node.Token)
 		if err != nil {
 			return err
@@ -631,8 +643,8 @@ func (c *Compiler) SetImportDir(dir string) {
 //
 // Use this method if you want other source file extension than ".tengo".
 //
-//     // this will search for *.tengo, *.foo, *.bar
-//     err := c.SetImportFileExt(".tengo", ".foo", ".bar")
+//	// this will search for *.tengo, *.foo, *.bar
+//	err := c.SetImportFileExt(".tengo", ".foo", ".bar")
 //
 // This function requires at least one argument, since it will replace the
 // current list of extension name.
@@ -774,6 +786,93 @@ func (c *Compiler) compileAssign(
 			symbol.Scope))
 	}
 	return nil
+}
+
+// compileDestructure lowers an array/map pattern to indexed assignments.
+// Undefined values intentionally retain Tengo's normal semantics; callers can
+// use `x == undefined ? default : x` until default-pattern syntax is added.
+func (c *Compiler) compileDestructure(node parser.Node, pattern, rhs parser.Expr, op token.Token) error {
+	tmp := c.symbolTable.Define("__tengo_destructure_tmp")
+	if err := c.Compile(rhs); err != nil {
+		return err
+	}
+	if tmp.Scope == ScopeGlobal {
+		c.emit(node, parser.OpSetGlobal, tmp.Index)
+	} else {
+		c.emit(node, parser.OpDefineLocal, tmp.Index)
+	}
+	var walk func(parser.Expr, func() error) error
+	assign := func(p parser.Expr, value func() error) error {
+		id, ok := p.(*parser.Ident)
+		if !ok || id.Name == "_" {
+			return nil
+		}
+		if err := value(); err != nil {
+			return err
+		}
+		symbol, _, exists := c.symbolTable.Resolve(id.Name, false)
+		if op == token.Define {
+			if exists {
+				return c.errorf(id, "'%s' redeclared in this block", id.Name)
+			}
+			symbol = c.symbolTable.Define(id.Name)
+		} else if !exists {
+			return c.errorf(id, "unresolved reference '%s'", id.Name)
+		}
+		switch symbol.Scope {
+		case ScopeGlobal:
+			c.emit(node, parser.OpSetGlobal, symbol.Index)
+		case ScopeLocal:
+			c.emit(node, parser.OpDefineLocal, symbol.Index)
+			symbol.LocalAssigned = true
+		case ScopeFree:
+			c.emit(node, parser.OpSetFree, symbol.Index)
+		}
+		return nil
+	}
+	walk = func(p parser.Expr, value func() error) error {
+		switch x := p.(type) {
+		case *parser.Ident:
+			return assign(x, value)
+		case *parser.ArrayLit:
+			for i, e := range x.Elements {
+				i := i
+				if err := walk(e, func() error {
+					if err := value(); err != nil {
+						return err
+					}
+					c.emit(node, parser.OpConstant, c.addConstant(&Int{Value: int64(i)}))
+					c.emit(node, parser.OpIndex)
+					return nil
+				}); err != nil {
+					return err
+				}
+			}
+		case *parser.MapLit:
+			for _, e := range x.Elements {
+				e := e
+				if err := walk(e.Value, func() error {
+					if err := value(); err != nil {
+						return err
+					}
+					c.emit(node, parser.OpConstant, c.addConstant(&String{Value: e.Key}))
+					c.emit(node, parser.OpIndex)
+					return nil
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	return walk(pattern, func() error {
+		if tmp.Scope == ScopeGlobal {
+			c.emit(node, parser.OpGetGlobal, tmp.Index)
+		} else {
+			c.emit(node, parser.OpGetLocal, tmp.Index)
+		}
+		return nil
+	})
 }
 
 func (c *Compiler) compileLogical(node *parser.BinaryExpr) error {
