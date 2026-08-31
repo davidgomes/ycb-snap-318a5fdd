@@ -792,6 +792,9 @@ func (c *Compiler) compileAssign(
 // Undefined values intentionally retain Tengo's normal semantics; callers can
 // use `x == undefined ? default : x` until default-pattern syntax is added.
 func (c *Compiler) compileDestructure(node parser.Node, pattern, rhs parser.Expr, op token.Token) error {
+	if op == token.Assign {
+		return c.errorf(node, "cannot use destructuring with =")
+	}
 	tmp := c.symbolTable.Define("__tengo_destructure_tmp")
 	if err := c.Compile(rhs); err != nil {
 		return err
@@ -832,11 +835,55 @@ func (c *Compiler) compileDestructure(node parser.Node, pattern, rhs parser.Expr
 	}
 	walk = func(p parser.Expr, value func() error) error {
 		switch x := p.(type) {
+		case *parser.DefaultExpr:
+			tmpValue := c.symbolTable.Define("__tengo_destructure_default")
+			if err := value(); err != nil {
+				return err
+			}
+			if tmpValue.Scope == ScopeGlobal {
+				c.emit(node, parser.OpSetGlobal, tmpValue.Index)
+			} else {
+				c.emit(node, parser.OpDefineLocal, tmpValue.Index)
+			}
+			if tmpValue.Scope == ScopeGlobal {
+				c.emit(node, parser.OpGetGlobal, tmpValue.Index)
+			} else {
+				c.emit(node, parser.OpGetLocal, tmpValue.Index)
+			}
+			c.emit(node, parser.OpNull)
+			c.emit(node, parser.OpEqual)
+			jump := c.emit(node, parser.OpJumpFalsy, 0)
+			if err := c.Compile(x.Default); err != nil {
+				return err
+			}
+			end := c.emit(node, parser.OpJump, 0)
+			c.changeOperand(jump, len(c.currentInstructions()))
+			if tmpValue.Scope == ScopeGlobal {
+				c.emit(node, parser.OpGetGlobal, tmpValue.Index)
+			} else {
+				c.emit(node, parser.OpGetLocal, tmpValue.Index)
+			}
+			c.changeOperand(end, len(c.currentInstructions()))
+			return assign(x, func() error { return nil })
 		case *parser.Ident:
 			return assign(x, value)
 		case *parser.ArrayLit:
 			for i, e := range x.Elements {
 				i := i
+				if rest, ok := e.(*parser.RestExpr); ok {
+					if err := assign(rest.Expr, func() error {
+						if err := value(); err != nil {
+							return err
+						}
+						c.emit(node, parser.OpConstant, c.addConstant(&Int{Value: int64(i)}))
+						c.emit(node, parser.OpNull)
+						c.emit(node, parser.OpSliceIndex)
+						return nil
+					}); err != nil {
+						return err
+					}
+					continue
+				}
 				if err := walk(e, func() error {
 					if err := value(); err != nil {
 						return err
