@@ -664,6 +664,7 @@ func (p *Parser) parseIdentList() *IdentList {
 	}
 
 	var params []*Ident
+	var patterns []Expr
 	lparen := p.expect(token.LParen)
 	isVarArgs := false
 	if p.token != token.RParen {
@@ -672,23 +673,36 @@ func (p *Parser) parseIdentList() *IdentList {
 			p.next()
 		}
 
-		params = append(params, p.parseIdent())
+		param := p.parseExpr()
+		patterns = append(patterns, param)
+		if id, ok := param.(*Ident); ok {
+			params = append(params, id)
+		} else {
+			params = append(params, &Ident{Name: fmt.Sprintf("__tengo_param_%d", len(params)), NamePos: param.Pos()})
+		}
 		for !isVarArgs && p.token == token.Comma {
 			p.next()
 			if p.token == token.Ellipsis {
 				isVarArgs = true
 				p.next()
 			}
-			params = append(params, p.parseIdent())
+			param := p.parseExpr()
+			patterns = append(patterns, param)
+			if id, ok := param.(*Ident); ok {
+				params = append(params, id)
+			} else {
+				params = append(params, &Ident{Name: fmt.Sprintf("__tengo_param_%d", len(params)), NamePos: param.Pos()})
+			}
 		}
 	}
 
 	rparen := p.expect(token.RParen)
 	return &IdentList{
-		LParen:  lparen,
-		RParen:  rparen,
-		VarArgs: isVarArgs,
-		List:    params,
+		LParen:   lparen,
+		RParen:   rparen,
+		VarArgs:  isVarArgs,
+		List:     params,
+		Patterns: patterns,
 	}
 }
 

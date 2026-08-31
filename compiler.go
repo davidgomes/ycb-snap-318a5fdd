@@ -407,6 +407,17 @@ func (c *Compiler) Compile(node parser.Node) error {
 			// function arguments is not assigned directly.
 			s.LocalAssigned = true
 		}
+		if len(node.Type.Params.Patterns) > 0 {
+			for i, pattern := range node.Type.Params.Patterns {
+				if _, ok := pattern.(*parser.Ident); ok {
+					continue
+				}
+				source := node.Type.Params.List[i]
+				if err := c.compileDestructure(node, pattern, source, token.Define); err != nil {
+					return err
+				}
+			}
+		}
 
 		if err := c.Compile(node.Body); err != nil {
 			return err

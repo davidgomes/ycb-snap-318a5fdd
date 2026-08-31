@@ -20,10 +20,11 @@ type Node interface {
 
 // IdentList represents a list of identifiers.
 type IdentList struct {
-	LParen  Pos
-	VarArgs bool
-	List    []*Ident
-	RParen  Pos
+	LParen   Pos
+	VarArgs  bool
+	List     []*Ident
+	Patterns []Expr
+	RParen   Pos
 }
 
 // Pos returns the position of first character belonging to the node.
