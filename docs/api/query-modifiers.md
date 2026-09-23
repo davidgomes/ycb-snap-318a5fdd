@@ -43,6 +43,9 @@ const newPositions = world.query(Added(Position))
 // Track entities that added a ChildOf relation
 const newChildren = world.query(Added(ChildOf))
 
+// Track entities that added a ChildOf relation to a specific parent
+const newChildrenOfParent = world.query(Added(ChildOf(parent)))
+
 // Track entities where BOTH Position AND Velocity were added
 const fullyAdded = world.query(Added(Position, Velocity))
 
@@ -69,6 +72,9 @@ const stoppedEntities = world.query(Removed(Velocity))
 // Track entities that removed a ChildOf relation
 const orphaned = world.query(Removed(ChildOf))
 
+// Track entities that removed a ChildOf relation to any target
+const leftAParent = world.query(Removed(ChildOf('*')))
+
 // Track entities where BOTH Position AND Velocity were removed
 const fullyRemoved = world.query(Removed(Position, Velocity))
 
@@ -94,6 +100,9 @@ const movedEntities = world.query(Changed(Position))
 
 // Track entities whose ChildOf relation data has changed
 const updatedChildren = world.query(Changed(ChildOf))
+
+// Track entities whose ChildOf(parent) relation data has changed
+const updatedChildrenOfParent = world.query(Changed(ChildOf(parent)))
 
 // Track entities where BOTH Position AND Velocity have changed
 const fullyUpdated = world.query(Changed(Position, Velocity))

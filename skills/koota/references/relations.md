@@ -7,7 +7,7 @@ Relations build graphs between entities. Use for hierarchies, inventories, targe
 - [Core Concepts](#core-concepts)
 - [Basic Syntax](#basic-syntax)
 - [Building Graphs](#building-graphs) - Hierarchies, inventories, targeting, neighbors
-- [Querying Relations](#querying-relations) - Specific targets, wildcards, combined queries
+- [Querying Relations](#querying-relations) - Specific targets, wildcards, combined queries, tracking per target
 - [Traversing Graphs](#traversing-graphs) - Recursive traversal, building trees, finding ancestors
 - [Ordered Relations](#ordered-relations) - Maintaining order (experimental)
 - [Removing Relations](#removing-relations)
@@ -146,6 +146,21 @@ const threats = world.query(IsEnemy, Targeting(player))
 
 // Children of parent that also have Position
 const positionedChildren = world.query(ChildOf(parent), Position)
+```
+
+### Tracking changes per target
+
+Tracking modifiers accept pairs to react to a specific target or any target. See [queries.md](queries.md#tracking-modifiers) for the full semantics.
+
+```typescript
+const Added = createAdded()
+const Removed = createRemoved()
+
+// Children that joined this parent since the last run
+const newChildren = world.query(Added(ChildOf(parent)))
+
+// Entities that lost any ChildOf target since the last run
+const leftAParent = world.query(Removed(ChildOf('*')))
 ```
 
 ## Traversing Graphs

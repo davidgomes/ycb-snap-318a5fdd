@@ -364,14 +364,37 @@ const orphaned = world.query(Removed(ChildOf))
 const updated = world.query(Changed(ChildOf))
 ```
 
-> 👉 **Note**<br>
-> Tracking modifiers do not accept pairs directly such as `Changed(ChildOf(parent))`. Instead, pass the base relation to the modifier and add the pair as a separate query parameter to filter by target.
+Tracking modifiers also accept **relation pairs** to track events per target. `ChildOf(parent)` tracks a specific target, while `ChildOf('*')` tracks any target. Unlike tracking the base relation, pairs detect every target that is added or removed, not only the first addition and last removal. Replacing the target of an exclusive relation counts as a removal of the old target and an addition of the new one.
 
 ```js
 const parent = world.spawn()
 
-// Filter changed entities by a specific target
-const changedChildren = world.query(Changed(ChildOf), ChildOf(parent))
+// Track entities that added ChildOf(parent), even if they already had other ChildOf targets
+const adopted = world.query(Added(ChildOf(parent)))
+
+// Track entities that removed any ChildOf target
+const leftAParent = world.query(Removed(ChildOf('*')))
+
+// Track entities whose ChildOf(parent) data changed
+const changedChildren = world.query(Changed(ChildOf(parent)))
+
+// Manually flag a pair as changed
+child.changed(ChildOf(parent))
+```
+
+Within an observation window, opposite events on the same target cancel. Removing a pair cancels its pending addition or change, and adding a pair cancels its pending removal. When a pair-tracked relation with a store is read with `readEach` or `updateEach`, the data for the tracked target is returned.
+
+```js
+world.query(Changed(ChildOf(parent))).readEach(([childOf]) => {
+  console.log(childOf.priority) // The priority of the ChildOf(parent) pair
+})
+```
+
+The base relation can also be passed to the modifier and combined with a pair as a separate query parameter to filter by target.
+
+```js
+// Changed ChildOf data for any target, on entities that are children of parent
+const changedChildrenOfParent = world.query(Changed(ChildOf), ChildOf(parent))
 ```
 
 #### Relation events
@@ -448,6 +471,9 @@ const newPositions = world.query(Added(Position))
 // Track entities that added a ChildOf relation
 const newChildren = world.query(Added(ChildOf))
 
+// Track entities that added a ChildOf relation to a specific parent
+const newChildrenOfParent = world.query(Added(ChildOf(parent)))
+
 // Track entities where BOTH Position AND Velocity were added
 const fullyAdded = world.query(Added(Position, Velocity))
 
@@ -474,6 +500,9 @@ const stoppedEntities = world.query(Removed(Velocity))
 // Track entities that removed a ChildOf relation
 const orphaned = world.query(Removed(ChildOf))
 
+// Track entities that removed a ChildOf relation to any target
+const leftAParent = world.query(Removed(ChildOf('*')))
+
 // Track entities where BOTH Position AND Velocity were removed
 const fullyRemoved = world.query(Removed(Position, Velocity))
 
@@ -499,6 +528,9 @@ const movedEntities = world.query(Changed(Position))
 
 // Track entities whose ChildOf relation data has changed
 const updatedChildren = world.query(Changed(ChildOf))
+
+// Track entities whose ChildOf(parent) relation data has changed
+const updatedChildrenOfParent = world.query(Changed(ChildOf(parent)))
 
 // Track entities where BOTH Position AND Velocity have changed
 const fullyUpdated = world.query(Changed(Position, Velocity))

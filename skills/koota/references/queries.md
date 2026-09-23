@@ -95,6 +95,27 @@ const movedEntities = world.query(Changed(Position))
 const updatedChildren = world.query(Changed(ChildOf))
 ```
 
+**Relation pairs** - Track events per target. `ChildOf(parent)` tracks a specific target, `ChildOf('*')` tracks any target:
+
+```typescript
+// Added ChildOf(parent), even if the entity already had other ChildOf targets
+const adopted = world.query(Added(ChildOf(parent)))
+
+// Removed any ChildOf target, even if other targets remain
+const leftAParent = world.query(Removed(ChildOf('*')))
+
+// ChildOf(parent) data changed, readEach/updateEach return that pair's data
+world.query(Changed(ChildOf(parent))).readEach(([childOf]) => {})
+
+// Manually flag a pair as changed
+child.changed(ChildOf(parent))
+```
+
+- Pairs detect every target added or removed, not only the first addition and last removal like the base relation
+- Replacing an exclusive relation's target is a removal of the old target and an addition of the new one
+- Opposite events on the same target cancel within an observation window: removing a pair cancels its pending addition or change, adding it cancels its pending removal
+- Destroying an entity is a removal of all its pairs
+
 **Logical AND (default):**
 
 When multiple traits are passed to a tracking modifier, it uses logical AND. Only entities where **all** specified traits match the condition are returned:
@@ -131,7 +152,7 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 
 - Create instances at module scope, not inside functions
 - Tracking resets after each query execution
-- Changed only tracks `set()` calls and `entity.changed()` signals
+- Changed only tracks `set()` calls and `entity.changed()` signals (`entity.changed()` accepts traits and relation pairs)
 
 ## Caching queries
 
