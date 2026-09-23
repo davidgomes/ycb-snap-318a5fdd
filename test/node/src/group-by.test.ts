@@ -286,5 +286,169 @@ for (const dialect of DIALECTS) {
 
       expect(result).to.eql([{ first_name: 'Arnold' }])
     })
+
+    if (dialect === 'postgres' || dialect === 'mssql') {
+      it('group by column and rollup with grouping function', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select((eb) => [
+            'gender',
+            'first_name',
+            eb.fn.grouping('first_name').as('first_name_grouping'),
+            eb.fn.countAll<number>().as('count'),
+          ])
+          .groupBy('gender')
+          .groupByRollup('first_name')
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select "gender", "first_name", grouping("first_name") as "first_name_grouping", count(*) as "count" from "person" group by "gender", rollup("first_name")',
+            parameters: [],
+          },
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'select "gender", "first_name", grouping("first_name") as "first_name_grouping", count(*) as "count" from "person" group by "gender", rollup("first_name")',
+            parameters: [],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        const result = await query.execute()
+
+        expect(
+          result.map((row) => ({ ...row, count: Number(row.count) })),
+        ).to.have.deep.members([
+          {
+            gender: 'female',
+            first_name: 'Jennifer',
+            first_name_grouping: 0,
+            count: 1,
+          },
+          {
+            gender: 'female',
+            first_name: null,
+            first_name_grouping: 1,
+            count: 1,
+          },
+          {
+            gender: 'male',
+            first_name: 'Arnold',
+            first_name_grouping: 0,
+            count: 1,
+          },
+          {
+            gender: 'male',
+            first_name: 'Sylvester',
+            first_name_grouping: 0,
+            count: 1,
+          },
+          {
+            gender: 'male',
+            first_name: null,
+            first_name_grouping: 1,
+            count: 2,
+          },
+        ])
+      })
+
+      it('group by cube', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select((eb) => [
+            'gender',
+            'first_name',
+            eb.fn.countAll<number>().as('count'),
+          ])
+          .groupByCube('gender', 'first_name')
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select "gender", "first_name", count(*) as "count" from "person" group by cube("gender", "first_name")',
+            parameters: [],
+          },
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'select "gender", "first_name", count(*) as "count" from "person" group by cube("gender", "first_name")',
+            parameters: [],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        const result = await query.execute()
+
+        // (gender, first_name): 3, (gender): 2, (first_name): 3, (): 1
+        expect(result).to.have.length(9)
+        expect(
+          result.map((row) => ({ ...row, count: Number(row.count) })),
+        ).to.deep.include({ gender: null, first_name: null, count: 3 })
+      })
+
+      it('group by grouping sets', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select((eb) => [
+            'gender',
+            'first_name',
+            'last_name',
+            eb.fn.countAll<number>().as('count'),
+          ])
+          .groupByGroupingSets(['gender'], ['first_name', 'last_name'], [])
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select "gender", "first_name", "last_name", count(*) as "count" from "person" group by grouping sets(("gender"), ("first_name", "last_name"), ())',
+            parameters: [],
+          },
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'select "gender", "first_name", "last_name", count(*) as "count" from "person" group by grouping sets(("gender"), ("first_name", "last_name"), ())',
+            parameters: [],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        const result = await query.execute()
+
+        // (gender): 2, (first_name, last_name): 3, (): 1
+        expect(result).to.have.length(6)
+        expect(
+          result.map((row) => ({ ...row, count: Number(row.count) })),
+        ).to.deep.include({
+          gender: 'male',
+          first_name: null,
+          last_name: null,
+          count: 2,
+        })
+      })
+    }
+
+    it('should compose grouping elements with group by items', () => {
+      const query = ctx.db
+        .selectFrom('person')
+        .select('gender')
+        .groupByCube('first_name', 'last_name')
+        .groupBy('gender')
+        .groupByRollup('marital_status', 'children')
+        .groupByGroupingSets(['id'], ['first_name', 'id'])
+
+      testSql(query, dialect, {
+        postgres: {
+          sql: 'select "gender" from "person" group by cube("first_name", "last_name"), "gender", rollup("marital_status", "children"), grouping sets(("id"), ("first_name", "id"))',
+          parameters: [],
+        },
+        mysql: {
+          sql: 'select `gender` from `person` group by cube(`first_name`, `last_name`), `gender`, rollup(`marital_status`, `children`), grouping sets((`id`), (`first_name`, `id`))',
+          parameters: [],
+        },
+        mssql: {
+          sql: 'select "gender" from "person" group by cube("first_name", "last_name"), "gender", rollup("marital_status", "children"), grouping sets(("id"), ("first_name", "id"))',
+          parameters: [],
+        },
+        sqlite: {
+          sql: 'select "gender" from "person" group by cube("first_name", "last_name"), "gender", rollup("marital_status", "children"), grouping sets(("id"), ("first_name", "id"))',
+          parameters: [],
+        },
+      })
+    })
   })
 }
