@@ -12,6 +12,7 @@ import (
 
 	"github.com/liweiyi88/onedump/config"
 	"github.com/liweiyi88/onedump/dumper"
+	"github.com/liweiyi88/onedump/encryption"
 	"github.com/liweiyi88/onedump/fileutil"
 	"github.com/liweiyi88/onedump/jobresult"
 	"github.com/liweiyi88/onedump/storage"
@@ -29,7 +30,8 @@ func NewJobHandler(job *config.Job) *JobHandler {
 }
 
 // Pipe readers, writer and closers for fanout the same writer.
-func storageReadWriteCloser(count int, compress bool) ([]io.Reader, io.Writer, io.Closer) {
+// When encryptor is not nil, the (optionally compressed) output is encrypted before it reaches the pipe.
+func storageReadWriteCloser(count int, compress bool, encryptor *encryption.Encryptor) ([]io.Reader, io.Writer, io.Closer) {
 	var prs []io.Reader
 	var pws []io.Writer
 	var pcs []io.Closer
@@ -38,16 +40,28 @@ func storageReadWriteCloser(count int, compress bool) ([]io.Reader, io.Writer, i
 
 		prs = append(prs, pr)
 
+		var dst io.Writer = pw
+		var ew io.WriteCloser
+		if encryptor != nil {
+			ew = encryptor.EncryptWriter(pw)
+			dst = ew
+		}
+
 		if compress {
-			gw := gzip.NewWriter(pw)
+			gw := gzip.NewWriter(dst)
 			pws = append(pws, gw)
 			pcs = append(pcs, gw)
 		} else {
-			pws = append(pws, pw)
+			pws = append(pws, dst)
 		}
 
-		// This following append method must not be moved before pcs = append(pcs, gw) if compress is in use as the closer won't be able to close properly.
-		// Thus, we put this line here and do not move it to other place.
+		// The closers must be appended in the order of gzip writer, encrypt writer and then pipe writer,
+		// as each writer flushes into the next one on close and the pipe must only be closed after all of them.
+		// Thus, we put these lines here and do not move them to other place.
+		if ew != nil {
+			pcs = append(pcs, ew)
+		}
+
 		pcs = append(pcs, pw)
 	}
 
@@ -57,6 +71,12 @@ func storageReadWriteCloser(count int, compress bool) ([]io.Reader, io.Writer, i
 // Save database dump to different storages.
 func (handler *JobHandler) save() error {
 	job := handler.Job
+
+	encryptor, err := handler.getEncryptor()
+	if err != nil {
+		return err
+	}
+
 	storages := handler.getStorages()
 
 	numberOfStorages := len(storages)
@@ -71,7 +91,7 @@ func (handler *JobHandler) save() error {
 
 	if numberOfStorages > 0 {
 		// Use pipe to pass content from the database dump to different writer.
-		readers, writer, closer := storageReadWriteCloser(numberOfStorages, job.Gzip)
+		readers, writer, closer := storageReadWriteCloser(numberOfStorages, job.Gzip, encryptor)
 
 		var dumpWg sync.WaitGroup
 		dumpWg.Add(1)
@@ -100,7 +120,7 @@ func (handler *JobHandler) save() error {
 				defer readWg.Done()
 
 				pathGenerator := func(filename string) string {
-					return fileutil.EnsureFileName(filename, job.Gzip, false, job.Unique)
+					return fileutil.EnsureFileName(filename, job.Gzip, job.Encrypted(), job.Unique)
 				}
 
 				e := storage.Save(readers[i], pathGenerator)
@@ -149,6 +169,28 @@ func (handler *JobHandler) getStorages() []storage.Storage {
 	}
 
 	return storages
+}
+
+// Get the encryptor when encryption is enabled, nil otherwise.
+// The key is loaded here, before the dump starts, so a missing or invalid key fails the job before any storage is written.
+func (handler *JobHandler) getEncryptor() (*encryption.Encryptor, error) {
+	job := handler.Job
+
+	if !job.Encrypted() {
+		return nil, nil
+	}
+
+	key, err := encryption.LoadKey(job.Encryption)
+	if err != nil {
+		return nil, fmt.Errorf("could not load encryption key: %w", err)
+	}
+
+	encryptor, err := encryption.NewEncryptor(key)
+	if err != nil {
+		return nil, fmt.Errorf("could not create encryptor: %w", err)
+	}
+
+	return encryptor, nil
 }
 
 // Get the database dumper.
