@@ -1,15 +1,22 @@
 package handler
 
 import (
+	"bytes"
+	"compress/gzip"
+	"crypto/rand"
 	"errors"
+	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
 
 	"github.com/liweiyi88/onedump/config"
 	"github.com/liweiyi88/onedump/dumper"
+	"github.com/liweiyi88/onedump/encryption"
 	"github.com/liweiyi88/onedump/fileutil"
 	"github.com/liweiyi88/onedump/storage/dropbox"
 	"github.com/liweiyi88/onedump/storage/gdrive"
@@ -153,11 +160,14 @@ func TestGetStorages(t *testing.T) {
 }
 
 func TestEnsureFileSuffix(t *testing.T) {
-	gzip := fileutil.EnsureFileSuffix("test.sql", true)
+	gzip := fileutil.EnsureFileSuffix("test.sql", true, false)
 	assert.Equal(t, "test.sql.gz", gzip)
 
-	sql := fileutil.EnsureFileSuffix("test.sql.gz", true)
+	sql := fileutil.EnsureFileSuffix("test.sql.gz", true, false)
 	assert.Equal(t, "test.sql.gz", sql)
+
+	enc := fileutil.EnsureFileSuffix("test.sql", true, true)
+	assert.Equal(t, "test.sql.gz.enc", enc)
 }
 
 func TestGetDumper(t *testing.T) {
@@ -186,4 +196,77 @@ func TestGetDumper(t *testing.T) {
 	if _, ok := r.(*dumper.PgDump); !ok {
 		t.Errorf("expect ssh dumper, but got type: %T", r)
 	}
+}
+
+func TestStorageReadWriteCloserWithEncryption(t *testing.T) {
+	assert := assert.New(t)
+
+	key := make([]byte, encryption.KeySize)
+	_, err := rand.Read(key)
+	assert.NoError(err)
+
+	encryptor, err := encryption.NewEncryptor(key)
+	assert.NoError(err)
+
+	data := bytes.Repeat([]byte("onedump encrypted dump\n"), 10000)
+
+	readers, writer, closer := storageReadWriteCloser(2, true, encryptor)
+
+	go func() {
+		_, err := writer.Write(data)
+		assert.NoError(err)
+		assert.NoError(closer.Close())
+	}()
+
+	var wg sync.WaitGroup
+	outputs := make([][]byte, len(readers))
+	for i, r := range readers {
+		wg.Add(1)
+		go func(i int, r io.Reader) {
+			defer wg.Done()
+			out, err := io.ReadAll(r)
+			assert.NoError(err)
+			outputs[i] = out
+		}(i, r)
+	}
+	wg.Wait()
+
+	assert.NotEqual(outputs[0], outputs[1])
+
+	for _, out := range outputs {
+		dr, err := encryption.DecryptReader(bytes.NewReader(out), key)
+		assert.NoError(err)
+
+		gr, err := gzip.NewReader(dr)
+		assert.NoError(err)
+
+		plain, err := io.ReadAll(gr)
+		assert.NoError(err)
+		assert.Equal(data, plain)
+	}
+}
+
+func TestSaveFailsFastOnMissingEncryptionKey(t *testing.T) {
+	encryptionConfig := encryption.Config{
+		Enabled:   true,
+		KeySource: "env",
+		KeyEnvVar: "ONEDUMP_TEST_MISSING_ENCRYPTION_KEY",
+	}
+
+	withoutStorage := config.NewJob("no-storage", "mysql", testDBDsn)
+	withoutStorage.Encryption = encryptionConfig
+
+	withStorage := config.NewJob("with-storage", "mysql", testDBDsn)
+	withStorage.Encryption = encryptionConfig
+	dumpFile := filepath.Join(t.TempDir(), "dump.sql")
+	withStorage.Storage.Local = []*local.Local{{Path: dumpFile}}
+
+	for _, job := range []*config.Job{withoutStorage, withStorage} {
+		result := NewJobHandler(job).Do()
+		assert.Error(t, result.Error)
+		assert.ErrorContains(t, result.Error, "encryption key")
+	}
+
+	_, err := os.Stat(dumpFile)
+	assert.True(t, errors.Is(err, os.ErrNotExist))
 }
