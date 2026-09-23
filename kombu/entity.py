@@ -569,8 +569,13 @@ class Queue(MaybeChannelBound):
         ('message_ttl', float),
         ('max_length', int),
         ('max_length_bytes', int),
-        ('max_priority', int)
+        ('max_priority', int),
+        ('dead_letter_exchange', None),
+        ('dead_letter_routing_key', None),
     )
+
+    dead_letter_exchange = None
+    dead_letter_routing_key = None
 
     def __init__(self, name='', exchange=None, routing_key='',
                  channel=None, bindings=None, on_declared=None,
@@ -651,6 +656,8 @@ class Queue(MaybeChannelBound):
             max_length=self.max_length,
             max_length_bytes=self.max_length_bytes,
             max_priority=self.max_priority,
+            dead_letter_exchange=self.dead_letter_exchange,
+            dead_letter_routing_key=self.dead_letter_routing_key,
         )
         ret = channel.queue_declare(
             queue=self.name,
@@ -832,6 +839,52 @@ class Queue(MaybeChannelBound):
             expiring_queue = False
         return not expiring_queue and not self.auto_delete
 
+    @property
+    def effective_dead_letter_exchange(self):
+        """Dead-letter exchange from the attribute or queue arguments."""
+        if self.dead_letter_exchange:
+            return self.dead_letter_exchange
+        arguments = self.queue_arguments or {}
+        return arguments.get('x-dead-letter-exchange')
+
+    @property
+    def has_dead_letter_exchange(self):
+        """True when a dead-letter exchange is configured."""
+        return bool(self.effective_dead_letter_exchange)
+
+    @property
+    def effective_dead_letter_routing_key(self):
+        """Dead-letter routing key, falling back to this queue's key."""
+        if self.dead_letter_routing_key:
+            return self.dead_letter_routing_key
+        arguments = self.queue_arguments or {}
+        configured = arguments.get('x-dead-letter-routing-key')
+        if configured:
+            return configured
+        return self.routing_key
+
+    @property
+    def effective_message_ttl(self):
+        """Message TTL in seconds, or ``None`` when unset."""
+        if self.message_ttl is not None:
+            return float(self.message_ttl)
+        arguments = self.queue_arguments or {}
+        ttl_ms = arguments.get('x-message-ttl')
+        if ttl_ms is None:
+            return None
+        return float(ttl_ms) / 1000.0
+
+    @classmethod
+    def with_dead_letter(cls, name, dead_letter_exchange,
+                         dead_letter_routing_key=None, **kwargs):
+        """Create a queue that dead-letters to `dead_letter_exchange`."""
+        return cls(
+            name,
+            dead_letter_exchange=dead_letter_exchange,
+            dead_letter_routing_key=dead_letter_routing_key,
+            **kwargs,
+        )
+
     @classmethod
     def from_dict(cls, queue, **options):
         binding_key = options.get('binding_key') or options.get('routing_key')
@@ -875,7 +928,11 @@ class Queue(MaybeChannelBound):
                      queue_arguments=q_arguments,
                      binding_arguments=b_arguments,
                      consumer_arguments=c_arguments,
-                     bindings=bindings)
+                     bindings=bindings,
+                     dead_letter_exchange=options.get('dead_letter_exchange'),
+                     dead_letter_routing_key=options.get(
+                         'dead_letter_routing_key'),
+                     )
 
     def as_dict(self, recurse=False):
         res = super().as_dict(recurse)

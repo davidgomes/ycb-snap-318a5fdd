@@ -227,6 +227,36 @@ class test_Queue:
         queue = Queue(name='queue_name')
         assert queue.exchange == Exchange('')
 
+    def test_dead_letter_helpers(self) -> None:
+        queue = Queue.with_dead_letter(
+            'src', 'dlx', dead_letter_routing_key='dead', routing_key='rk',
+        )
+        assert queue.has_dead_letter_exchange
+        assert queue.effective_dead_letter_exchange == 'dlx'
+        assert queue.effective_dead_letter_routing_key == 'dead'
+        assert queue.effective_message_ttl is None
+
+        from_args = Queue(
+            'src', routing_key='rk',
+            queue_arguments={
+                'x-dead-letter-exchange': 'dlx',
+                'x-message-ttl': 2500,
+            },
+        )
+        assert from_args.has_dead_letter_exchange
+        assert from_args.effective_dead_letter_exchange == 'dlx'
+        assert from_args.effective_dead_letter_routing_key == 'rk'
+        assert from_args.effective_message_ttl == 2.5
+
+        restored = Queue.from_dict('src', dead_letter_exchange='dlx',
+                                    dead_letter_routing_key='gone',
+                                    routing_key='rk')
+        assert restored.dead_letter_exchange == 'dlx'
+        assert restored.dead_letter_routing_key == 'gone'
+        assert Queue('t', message_ttl=4).effective_message_ttl == 4.0
+
+        assert not Queue('plain').has_dead_letter_exchange
+
     def test_hash(self) -> None:
         assert hash(Queue('a')) == hash(Queue('a'))
         assert hash(Queue('a')) != hash(Queue('b'))
