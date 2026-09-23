@@ -10,6 +10,7 @@ import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
 import { isModifier } from './modifier';
 import { setChanged } from './modifiers/changed';
+import { flushDeferredPredicates, isPredicate, observeIteratedDependencies } from './predicate';
 import type {
     InstancesFromParameters,
     QueryInstance,
@@ -54,8 +55,12 @@ export function createQueryResult<T extends QueryParameter[]>(
             options: QueryResultOptions = { changeDetection: 'auto' }
         ) {
             const state = Array.from({ length: traits.length });
+            const ctx = world[$internal];
+            // Predicate membership stays stable until this iteration finishes.
+            ctx.predicateDeferDepth++;
 
             // Inline all three permutations of updateEach for performance.
+            try {
             if (options.changeDetection === 'auto') {
                 const changedPairs: [Entity, Trait][] = [];
                 const atomicSnapshots: any[] = [];
@@ -104,6 +109,8 @@ export function createQueryResult<T extends QueryParameter[]>(
                         const store = stores[index];
                         ctx.fastSet(eid, store, state[index]);
                     }
+
+                    observeIteratedDependencies(world, entity, traits);
                 }
 
                 // Trigger change events for each entity that was modified.
@@ -144,6 +151,8 @@ export function createQueryResult<T extends QueryParameter[]>(
                         // Collect changed traits.
                         if (changed) changedPairs.push([entity, trait] as const);
                     }
+
+                    observeIteratedDependencies(world, entity, traits);
                 }
 
                 // Trigger change events for each entity that was modified.
@@ -167,7 +176,13 @@ export function createQueryResult<T extends QueryParameter[]>(
                         const ctx = trait[$internal];
                         ctx.fastSet(eid, stores[j], state[j]);
                     }
+
+                    observeIteratedDependencies(world, entity, traits);
                 }
+            }
+            } finally {
+                ctx.predicateDeferDepth--;
+                if (ctx.predicateDeferDepth === 0) flushDeferredPredicates(world);
             }
 
             return results;
@@ -252,6 +267,9 @@ export function createQueryResult<T extends QueryParameter[]>(
     for (let i = 0; i < params.length; i++) {
         const param = params[i];
 
+        // Predicates contribute no callback data.
+        if (isPredicate(param)) continue;
+
         // Handle relation pairs
         if (isRelationPair(param)) {
             const pairCtx = param[$internal];
@@ -304,13 +322,6 @@ const relationOnlyMethods = {
         }
         return this;
     },
-    updateEach(this: QueryResult<any>, callback: any) {
-        // No traits to update, just iterate entities
-        for (let i = 0; i < this.length; i++) {
-            callback([], this[i], i);
-        }
-        return this;
-    },
     useStores(this: QueryResult<any>, callback: any) {
         // No stores, call with empty array
         callback([], this);
@@ -327,11 +338,24 @@ const relationOnlyMethods = {
  * Skips store/trait setup since we only need to iterate entities.
  */
 export function createRelationOnlyQueryResult<T extends QueryParameter[]>(
+    world: World,
     entities: Entity[]
 ): QueryResult<T> {
     const results = Object.assign(entities, {
         readEach: relationOnlyMethods.readEach,
-        updateEach: relationOnlyMethods.updateEach,
+        updateEach(callback: (state: never[], entity: Entity, index: number) => void) {
+            const ctx = world[$internal];
+            ctx.predicateDeferDepth++;
+            try {
+                for (let i = 0; i < entities.length; i++) {
+                    callback([], entities[i], i);
+                }
+            } finally {
+                ctx.predicateDeferDepth--;
+                if (ctx.predicateDeferDepth === 0) flushDeferredPredicates(world);
+            }
+            return results;
+        },
         useStores: relationOnlyMethods.useStores,
         select: relationOnlyMethods.select,
         sort(

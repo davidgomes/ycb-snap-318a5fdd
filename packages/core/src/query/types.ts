@@ -12,10 +12,28 @@ import type {
 import type { SparseSet } from '../utils/sparse-set';
 import type { World } from '../world';
 import { $modifier } from './modifier';
-import { $parameters, $queryRef } from './symbols';
+import { $parameters, $predicate, $queryRef } from './symbols';
+
+export type Predicate<T extends readonly Trait[] = readonly Trait[]> = {
+    readonly [$predicate]: true;
+    readonly id: number;
+    readonly dependencies: T;
+    readonly fn: (data: readonly unknown[]) => boolean;
+};
+
+export type PredicateTrackingGroup = {
+    logic: 'and' | 'or';
+    type: 'add' | 'remove' | 'change';
+    id: number;
+    predicates: Predicate[];
+    /** Predicate truth committed the last time this query ran, per predicate. */
+    committed: SparseSet[];
+    /** Entities satisfying this group's event since that commit, per predicate. */
+    events: SparseSet[];
+};
 
 export type QueryModifier = (...components: Trait[]) => Modifier;
-export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier>;
+export type QueryParameter = Trait | RelationPair | Modifier | Predicate;
 export type QuerySubscriber = (entity: Entity) => void;
 export type QueryUnsubscriber = () => void;
 
@@ -42,11 +60,13 @@ type UnwrapModifierData<T> = T extends Modifier<infer C> ? C : never;
 
 export type StoresFromParameters<T extends QueryParameter[]> = T extends [infer First, ...infer Rest]
     ? [
-          ...(First extends Trait
-              ? [ExtractStore<First>]
-              : First extends Modifier
-                ? StoresFromParameters<UnwrapModifierData<First>>
-                : []),
+          ...(First extends Predicate
+              ? []
+              : First extends Trait
+                ? [ExtractStore<First>]
+                : First extends Modifier
+                  ? StoresFromParameters<UnwrapModifierData<First>>
+                  : []),
           ...(Rest extends QueryParameter[] ? StoresFromParameters<Rest> : []),
       ]
     : [];
@@ -56,17 +76,19 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
     ...infer Rest,
 ]
     ? [
-          ...(First extends Trait
-              ? IsTag<First> extends false
-                  ? ExtractSchema<First> extends AoSFactory
-                      ? [ReturnType<ExtractSchema<First>>]
-                      : [TraitRecord<First>]
-                  : []
-              : First extends Modifier
-                ? IsNotModifier<First> extends true
-                    ? []
-                    : InstancesFromParameters<UnwrapModifierData<First>>
-                : []),
+          ...(First extends Predicate
+              ? []
+              : First extends Trait
+                ? IsTag<First> extends false
+                    ? ExtractSchema<First> extends AoSFactory
+                        ? [ReturnType<ExtractSchema<First>>]
+                        : [TraitRecord<First>]
+                    : []
+                : First extends Modifier
+                  ? IsNotModifier<First> extends true
+                      ? []
+                      : InstancesFromParameters<UnwrapModifierData<First>>
+                  : []),
           ...(Rest extends QueryParameter[] ? InstancesFromParameters<Rest> : []),
       ]
     : [];
@@ -93,10 +115,12 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /** Value predicates carried by Not, Or, or tracking modifiers. */
+    predicates?: Predicate[];
 };
 
 /** Parameter types that can be passed to Or modifier */
-export type OrParameter = Trait | Modifier;
+export type OrParameter = Trait | Modifier | Predicate;
 
 /** Or modifier that can contain both traits and nested modifiers */
 export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
@@ -165,6 +189,14 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     removeSubscriptions: Set<QuerySubscriber>;
     /** Relation pairs for target-specific queries */
     relationFilters?: RelationPair[];
+    /** Predicates that must be true. */
+    requiredPredicates: Predicate[];
+    /** Predicates that must be false (missing dependencies count as false). */
+    forbiddenPredicates: Predicate[];
+    /** Predicates combined with static Or traits. */
+    orPredicates: Predicate[];
+    /** Added / Removed / Changed tracking over predicate truth. */
+    predicateTracking: PredicateTrackingGroup[];
     run: (world: World, params: QueryParameter[]) => QueryResult<T>;
     add: (entity: Entity) => void;
     remove: (world: World, entity: Entity) => void;
@@ -180,3 +212,10 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
 };
 
 export type EventType = 'add' | 'remove' | 'change';
+
+/** Per-world match cache for one predicate. */
+export type PredicateRuntime = {
+    predicate: Predicate;
+    matches: SparseSet;
+    queries: Set<QueryInstance>;
+};

@@ -55,6 +55,31 @@ world.query(Or(IsPlayer, IsEnemy))
 world.query(Position, Not(Velocity), Or(IsPlayer, IsEnemy))
 ```
 
+## Predicates
+
+`createPredicate(dependencies, fn)` keeps entities whose dependency trait values pass `fn`. `fn` receives one array of dependency data in dependency order. Each call returns a distinct predicate. Tag traits and relations throw.
+
+The predicate is false when any dependency is missing or `fn` returns a falsy value. `entity.set` and `entity.add` on a dependency re-evaluate it. Writes during `updateEach` re-evaluate after the iteration. Predicates add no callback arguments.
+
+```typescript
+import { createPredicate, Not, Or, createAdded, createRemoved, createChanged } from 'koota'
+
+const alive = createPredicate([Health], ([health]) => health.hp > 0)
+
+world.query(alive)
+world.query(Not(alive))
+world.query(Or(IsPlayer, alive))
+
+const Added = createAdded()
+const Removed = createRemoved()
+const Changed = createChanged()
+
+world.query(Added(alive)) // true now, and not in the previous result
+world.query(Removed(alive)) // transitioned to false
+world.query(Changed(alive)) // any truthiness transition
+world.query(ChildOf(parent), alive) // composes with relation pairs
+```
+
 ## Tracking modifiers
 
 Track structural and data changes. Each tracking modifier must be created as a unique instance.

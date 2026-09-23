@@ -2,6 +2,7 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { setChanged, setPairChanged } from '../query/modifiers/changed';
+import { observeTraitDependencies } from '../query/predicate';
 import { checkQueryTrackingWithRelations } from '../query/utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
 import { getOrderedTraitRelation, isOrderedTrait, setupOrderedTraitSync } from '../relation/ordered';
@@ -108,6 +109,7 @@ export function registerTrait(world: World, trait: Trait) {
         changeSubscriptions: new Set(),
         addSubscriptions: new Set(),
         removeSubscriptions: new Set(),
+        dependentPredicates: new Set(),
     };
 
     // Add trait to the world.
@@ -167,6 +169,9 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
         } else if (params) {
             setTrait(world, entity, trait, params, false);
         }
+
+        // Values are initialized, so predicate results can be trusted.
+        observeTraitDependencies(world, entity, trait);
 
         // Call add subscriptions after values are set
         for (const sub of data.addSubscriptions) sub(entity);
@@ -418,7 +423,8 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
     value instanceof Function && (value = value(ctx.get(index, store)));
 
     ctx.set(index, store, value);
-    triggerChanged && setChanged(world, entity, trait);
+    if (triggerChanged) setChanged(world, entity, trait);
+    else observeTraitDependencies(world, entity, trait);
 }
 
 /**
@@ -531,4 +537,6 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
 
     // Remove trait from entity internally
     ctx.entityTraits.get(entity)!.delete(trait);
+
+    observeTraitDependencies(world, entity, trait);
 }

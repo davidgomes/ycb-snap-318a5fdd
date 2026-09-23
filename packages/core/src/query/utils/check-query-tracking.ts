@@ -3,6 +3,13 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import {
+    orPredicatesMatch,
+    predicateAndTrackingOk,
+    predicateOrTracking,
+    queryUsesPredicates,
+    staticPredicateFiltersMatch,
+} from './check-predicates';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -37,6 +44,9 @@ export function checkQueryTracking(
     if (traitInstancesAll.length === 0) return false;
 
     // 1. Check static constraints (required/forbidden/or)
+    let hasOrGroup = false;
+    let anyOrMatched = false;
+
     for (let i = 0; i < generationsLen; i++) {
         const generationId = generations[i];
         const bitmask = staticBitmasks[i];
@@ -56,15 +66,17 @@ export function checkQueryTracking(
         // Check required traits
         if (required && (entityMask & required) !== required) return false;
 
-        // Check Or traits
-        if (or !== 0 && (entityMask & or) === 0) return false;
+        // Static Or traits can be satisfied later by Or(predicate) or predicate tracking.
+        if (or !== 0 && (entityMask & or) !== 0) {
+            hasOrGroup = true;
+            anyOrMatched = true;
+        } else if (or !== 0) {
+            hasOrGroup = true;
+        }
     }
 
     // 2. Process tracking groups - update trackers and check cross-event invalidation
     // Also track OR group state to avoid second loop when possible
-    let hasOrGroup = false;
-    let anyOrMatched = false;
-
     for (let i = 0; i < trackingGroupsLen; i++) {
         const group = trackingGroups[i];
         const groupType = group.type;
@@ -77,14 +89,18 @@ export function checkQueryTracking(
             // Cross-event invalidation:
             // - Remove event invalidates Added/Changed tracking
             // - Add event invalidates Removed/Changed tracking
-            if (eventType === 'remove') {
-                if (groupType === 'add' || groupType === 'change') return false;
-            } else if (eventType === 'add') {
-                if (groupType === 'remove' || groupType === 'change') return false;
-            }
+            // AND groups fail the query. OR groups drop only the conflicting bit
+            // so another Or clause can still match.
+            const conflicts =
+                (eventType === 'remove' && (groupType === 'add' || groupType === 'change')) ||
+                (eventType === 'add' && (groupType === 'remove' || groupType === 'change'));
 
-            // Update tracker if event type matches group type
-            if (groupType === eventType) {
+            if (conflicts) {
+                if (groupLogic === 'and') return false;
+                const conflictTrackers = group.trackers;
+                const conflictArr = conflictTrackers[eventGenerationId];
+                if (conflictArr) conflictArr[eid] = (conflictArr[eid] | 0) & ~eventBitflag;
+            } else if (groupType === eventType) {
                 // For change events, verify entity still has the trait
                 if (eventType === 'change') {
                     const genMasks = entityMasks[eventGenerationId];
@@ -134,6 +150,20 @@ export function checkQueryTracking(
                     return false;
                 }
             }
+        }
+    }
+
+    if (queryUsesPredicates(query)) {
+        if (!staticPredicateFiltersMatch(world, query, entity)) return false;
+        if (!predicateAndTrackingOk(query, entity)) return false;
+        const predicateOr = predicateOrTracking(query, entity);
+        if (predicateOr.hasOr) {
+            hasOrGroup = true;
+            if (predicateOr.anyOr) anyOrMatched = true;
+        }
+        if (query.orPredicates.length > 0) {
+            hasOrGroup = true;
+            if (!anyOrMatched && orPredicatesMatch(world, query, entity)) anyOrMatched = true;
         }
     }
 

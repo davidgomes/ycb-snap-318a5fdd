@@ -3,6 +3,7 @@ import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import type { World } from '../../world';
 import type { QueryInstance } from '../types';
+import { matchPredicateFilters, queryUsesPredicates } from './check-predicates';
 
 /**
  * Check if an entity matches a non-tracking query.
@@ -29,8 +30,14 @@ export function checkQuery(world: World, query: QueryInstance, entity: Entity): 
         if (!forbidden && !required && !or) return false;
         if (forbidden && (entityMask & forbidden) !== 0) return false;
         if (required && (entityMask & required) !== required) return false;
-        if (or !== 0 && (entityMask & or) === 0) return false;
+        // Predicate Or is combined with trait Or after the bitmask pass.
+        const predicateCanSatisfyOr =
+            query.orPredicates.length > 0 ||
+            query.predicateTracking.some((group) => group.logic === 'or');
+        if (!predicateCanSatisfyOr && or !== 0 && (entityMask & or) === 0) return false;
     }
+
+    if (queryUsesPredicates(query) && !matchPredicateFilters(world, query, entity)) return false;
 
     return true;
 }

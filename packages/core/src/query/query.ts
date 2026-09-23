@@ -1,5 +1,6 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
+import { getAliveEntities } from '../entity/utils/entity-index';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { hasRelationPair } from '../relation/relation';
 import type { Relation } from '../relation/types';
@@ -11,6 +12,15 @@ import { universe } from '../universe/universe';
 import { SparseSet } from '../utils/sparse-set';
 import type { World } from '../world';
 import { getTrackingType, isModifier, isOrWithModifiers, isTrackingModifier } from './modifier';
+import {
+    commitPredicateTracking,
+    isPredicate,
+    linkForbiddenPredicate,
+    linkOrPredicate,
+    linkRequiredPredicate,
+    registerPredicateTracking,
+    seedPredicateTracking,
+} from './predicate';
 import { createQueryResult } from './query-result';
 import { $queryRef } from './symbols';
 import {
@@ -20,10 +30,18 @@ import {
     type QueryInstance,
     type QueryParameter,
     type QueryResult,
+    type PredicateTrackingGroup,
     type QuerySubscriber,
     type TrackingGroup,
 } from './types';
 import { checkQuery } from './utils/check-query';
+import {
+    orPredicatesMatch,
+    predicateAndTrackingOk,
+    predicateOrTracking,
+    staticOrTraitsMatch,
+    staticPredicateFiltersMatch,
+} from './utils/check-predicates';
 import { checkQueryTracking } from './utils/check-query-tracking';
 import { checkQueryWithRelations } from './utils/check-query-with-relations';
 import { createQueryHash } from './utils/create-query-hash';
@@ -44,11 +62,13 @@ export function runQuery<T extends QueryParameter[]>(
     // Clear so it can accumulate again.
     if (query.isTracking) {
         query.entities.clear();
-        // PERF: Use indexed loop instead of for...of
+        // PERF: Use indexed loop instead of for-of
         const len = entities.length;
         for (let i = 0; i < len; i++) {
             query.resetTrackingBitmasks(entities[i]);
         }
+        commitPredicateTracking(world, query, entities);
+        reseedOrPredicateMembers(world, query);
     }
 
     return createQueryResult(world, entities, query, params);
@@ -194,6 +214,10 @@ export function createQueryInstance<T extends QueryParameter[]>(
         addSubscriptions: new Set<QuerySubscriber>(),
         removeSubscriptions: new Set<QuerySubscriber>(),
         relationFilters: [],
+        requiredPredicates: [],
+        forbiddenPredicates: [],
+        orPredicates: [],
+        predicateTracking: [],
 
         run: (world: World, params: QueryParameter[]) => runQuery(world, query, params),
         add: (entity: Entity) => addEntityToQuery(query, entity),
@@ -213,6 +237,7 @@ export function createQueryInstance<T extends QueryParameter[]>(
 
     // Map for grouping tracking modifiers by (type, id, logic)
     const trackingGroupsMap = new Map<string, TrackingGroup>();
+    const predicateTrackingGroups = new Map<string, PredicateTrackingGroup>();
 
     // Process all parameters
     for (let i = 0; i < parameters.length; i++) {
@@ -233,6 +258,11 @@ export function createQueryInstance<T extends QueryParameter[]>(
             continue;
         }
 
+        if (isPredicate(parameter)) {
+            linkRequiredPredicate(world, query, parameter);
+            continue;
+        }
+
         if (isModifier(parameter)) {
             const traits = parameter.traits;
 
@@ -246,23 +276,55 @@ export function createQueryInstance<T extends QueryParameter[]>(
                 query.traitInstances.forbidden.push(
                     ...traits.map((t) => getTraitInstance(ctx.traitInstances, t)!)
                 );
+                const predicates = parameter.predicates;
+                if (predicates) {
+                    for (let j = 0; j < predicates.length; j++) {
+                        linkForbiddenPredicate(world, query, predicates[j]);
+                    }
+                }
             } else if (parameter.type === 'or') {
                 // Handle regular traits in Or
                 query.traitInstances.or.push(
                     ...traits.map((t) => getTraitInstance(ctx.traitInstances, t)!)
                 );
 
+                const predicates = parameter.predicates;
+                if (predicates) {
+                    for (let j = 0; j < predicates.length; j++) {
+                        linkOrPredicate(world, query, predicates[j]);
+                    }
+                }
+
                 // Handle nested tracking modifiers in Or
                 if (isOrWithModifiers(parameter)) {
                     for (const nestedModifier of parameter.modifiers) {
                         if (isTrackingModifier(nestedModifier)) {
-                            processTrackingModifier(world, query, nestedModifier, 'or', ctx, trackingGroupsMap);
+                            if (nestedModifier.traits.length > 0) {
+                                processTrackingModifier(
+                                    world,
+                                    query,
+                                    nestedModifier,
+                                    'or',
+                                    ctx,
+                                    trackingGroupsMap
+                                );
+                            }
+                            registerPredicateTracking(
+                                world,
+                                query,
+                                nestedModifier,
+                                'or',
+                                predicateTrackingGroups
+                            );
                         }
                     }
                 }
             } else if (isTrackingModifier(parameter)) {
                 // Top-level tracking modifiers use AND logic
-                processTrackingModifier(world, query, parameter, 'and', ctx, trackingGroupsMap);
+                if (parameter.traits.length > 0) {
+                    processTrackingModifier(world, query, parameter, 'and', ctx, trackingGroupsMap);
+                }
+                registerPredicateTracking(world, query, parameter, 'and', predicateTrackingGroups);
             }
         } else {
             // Regular trait
@@ -342,6 +404,9 @@ export function createQueryInstance<T extends QueryParameter[]>(
             }
         }
     }
+
+    // Entities already satisfying Added(predicate) count as absent from the previous result.
+    seedPredicateTracking(world, query);
 
     // Populate query with initial matching entities
     if (query.trackingGroups.length > 0) {
@@ -437,7 +502,108 @@ export function createQueryInstance<T extends QueryParameter[]>(
         }
     }
 
+    refinePredicatePopulation(world, query);
+
     return query;
+}
+
+/**
+ * Trait tracking is populated from bitmask snapshots. Predicate filters are applied
+ * afterwards so Not / Or / Added(predicate) compose with that set.
+ */
+function refinePredicatePopulation(world: World, query: QueryInstance) {
+    if (
+        query.requiredPredicates.length === 0 &&
+        query.forbiddenPredicates.length === 0 &&
+        query.orPredicates.length === 0 &&
+        query.predicateTracking.length === 0
+    ) {
+        return;
+    }
+
+    const hasAndTraitGroup = query.trackingGroups.some((group) => group.logic === 'and');
+    const hasOrTraitGroup = query.trackingGroups.some((group) => group.logic === 'or');
+    const hasPredicateOrTracking = query.predicateTracking.some((group) => group.logic === 'or');
+    const hasOrPredicate = query.orPredicates.length > 0;
+    const hasStaticOr = query.traitInstances.or.length > 0;
+    const hasOrClause = hasOrTraitGroup || hasPredicateOrTracking || hasOrPredicate || hasStaticOr;
+
+    const current = query.entities.dense.slice();
+    for (let i = 0; i < current.length; i++) {
+        const entity = current[i] as Entity;
+        if (!staticPredicateFiltersMatch(world, query, entity) || !predicateAndTrackingOk(query, entity)) {
+            query.remove(world, entity);
+            continue;
+        }
+
+        // Top-level And tracking plus an Or clause: the Or is an additional filter.
+        // A pure Or(Added(trait), predicate) keeps entities that already matched a trait clause.
+        if (!hasAndTraitGroup || !hasOrClause) continue;
+        if (orClauseMatches(world, query, entity)) continue;
+        query.remove(world, entity);
+    }
+
+    // Trait-tracking init does not see predicate-only Or clauses.
+    if (hasAndTraitGroup || (!hasPredicateOrTracking && !hasOrPredicate)) return;
+
+    const alive = getAliveEntities(world[$internal].entityIndex);
+    for (let i = 0; i < alive.length; i++) {
+        const entity = alive[i];
+        if (query.entities.has(entity)) continue;
+        if (!staticPredicateFiltersMatch(world, query, entity)) continue;
+        if (!predicateAndTrackingOk(query, entity)) continue;
+        if (!orClauseMatches(world, query, entity)) continue;
+
+        const filters = query.relationFilters;
+        if (filters && filters.length > 0) {
+            let relationsMatch = true;
+            for (let j = 0; j < filters.length; j++) {
+                if (!hasRelationPair(world, entity, filters[j])) {
+                    relationsMatch = false;
+                    break;
+                }
+            }
+            if (!relationsMatch) continue;
+        }
+
+        query.add(entity);
+    }
+}
+
+/**
+ * Tracking queries drop their entity list after each read.
+ * Plain Or(predicate) clauses are not one-shot, so they are put back
+ * for the next read when they are not AND-ed with a tracking group.
+ */
+function reseedOrPredicateMembers(world: World, query: QueryInstance) {
+    if (query.orPredicates.length === 0) return;
+    if (query.trackingGroups.some((group) => group.logic === 'and')) return;
+    if (query.predicateTracking.some((group) => group.logic === 'and')) return;
+
+    const alive = getAliveEntities(world[$internal].entityIndex);
+    const filters = query.relationFilters;
+    const hasFilters = !!filters && filters.length > 0;
+
+    for (let i = 0; i < alive.length; i++) {
+        const entity = alive[i];
+        if (query.entities.has(entity)) continue;
+        const match = hasFilters
+            ? checkQueryWithRelations(world, query, entity)
+            : query.check(world, entity);
+        // The tracking read cleared the list without emitting removals.
+        // Put steady Or(predicate) matches back without a second add event.
+        if (match) {
+            query.toRemove.remove(entity);
+            query.entities.add(entity);
+        }
+    }
+}
+
+function orClauseMatches(world: World, query: QueryInstance, entity: Entity): boolean {
+    if (staticOrTraitsMatch(world, query, entity)) return true;
+    if (orPredicatesMatch(world, query, entity)) return true;
+    if (predicateOrTracking(query, entity).anyOr) return true;
+    return false;
 }
 
 let queryId = 0;

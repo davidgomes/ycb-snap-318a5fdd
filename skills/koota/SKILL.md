@@ -200,6 +200,11 @@ const player = world.queryFirst(IsPlayer, Position)
 // Filter with modifiers
 world.query(Position, Not(Velocity)) // Has Position but not Velocity
 world.query(Or(IsPlayer, IsEnemy)) // Has either trait
+
+// Filter by trait values. Import createPredicate from 'koota'.
+// The predicate adds no callback arguments.
+const alive = createPredicate([Health], ([health]) => health.hp > 0)
+world.query(alive)
 ```
 
 Prefer `updateEach`/`readEach` over `for...of` + `entity.get()` for data-bearing queries. `readEach` still gives you the entity as the second argument.

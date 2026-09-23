@@ -3,6 +3,7 @@ import type { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
 import type {
+    PredicateRuntime,
     Query,
     QueryInstance,
     QueryParameter,
@@ -43,6 +44,17 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    /** Per-predicate match caches, keyed by predicate id. */
+    predicateRuntimes: Map<number, PredicateRuntime>;
+    /**
+     * Depth of nested updateEach / readEach iterations. Predicate
+     * re-evaluation is deferred until this returns to zero so membership
+     * cannot change under an active iteration.
+     */
+    predicateDeferDepth: number;
+    /** Entity+predicate pairs queued while an iteration is in progress. */
+    deferredPredicateKeys: Set<string>;
+    deferredPredicateWork: Array<{ entityId: number; predicateId: number }>;
 };
 
 export type World = {

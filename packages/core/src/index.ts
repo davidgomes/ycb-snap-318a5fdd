@@ -10,11 +10,13 @@ export { Or } from './query/modifiers/or';
 export { createRemoved } from './query/modifiers/removed';
 export { $modifier } from './query/modifier';
 export { createQuery, IsExcluded } from './query/query';
+export { createPredicate } from './query/predicate';
 export type {
     EventType,
     InstancesFromParameters,
     IsNotModifier,
     Modifier,
+    Predicate,
     Query,
     QueryModifier,
     QueryParameter,

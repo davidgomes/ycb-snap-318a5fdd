@@ -1,6 +1,6 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
-import type { QueryInstance } from '../query/types';
+import type { Predicate, QueryInstance } from '../query/types';
 import type { Relation, RelationPair } from '../relation/types';
 import type { AoSFactory, Schema, Store, StoreType } from '../storage';
 
@@ -97,6 +97,8 @@ export interface TraitInstance<T extends Trait = Trait, S extends Schema = Extra
     changeSubscriptions: Set<(entity: Entity, target?: Entity) => void>;
     addSubscriptions: Set<(entity: Entity, target?: Entity) => void>;
     removeSubscriptions: Set<(entity: Entity, target?: Entity) => void>;
+    /** Predicates re-evaluated when this trait is added, removed, or set. */
+    dependentPredicates: Set<Predicate>;
     /**
      * Only for relation traits.
      * For exclusive: relationTargets[eid] = targetId (number)

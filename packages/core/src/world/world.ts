@@ -73,6 +73,10 @@ export function createWorld(
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
+            predicateRuntimes: new Map(),
+            predicateDeferDepth: 0,
+            deferredPredicateKeys: new Set(),
+            deferredPredicateWork: [],
         } as WorldInternal,
 
         traits: new Set<Trait>(),
@@ -173,6 +177,10 @@ export function createWorld(
             ctx.dirtyMasks.clear();
             ctx.changedMasks.clear();
             ctx.trackedTraits.clear();
+            ctx.predicateRuntimes.clear();
+            ctx.predicateDeferDepth = 0;
+            ctx.deferredPredicateKeys.clear();
+            ctx.deferredPredicateWork.length = 0;
 
             // Create new world entity.
             ctx.worldEntity = createEntity(world, IsExcluded);
@@ -220,7 +228,7 @@ export function createWorld(
                             relation as Relation<Trait>,
                             target as Entity
                         );
-                        return createRelationOnlyQueryResult(entities.slice() as Entity[]);
+                        return createRelationOnlyQueryResult(world, entities.slice() as Entity[]);
                     }
                 }
 
