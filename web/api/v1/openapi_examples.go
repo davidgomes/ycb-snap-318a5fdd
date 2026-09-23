@@ -867,6 +867,36 @@ func statusTSDBBlocksResponseExamples() *orderedmap.Map[string, *base.Example] {
 	return examples
 }
 
+// statusReloadResponseExamples returns examples for /status/reload response.
+func statusReloadResponseExamples() *orderedmap.Map[string, *base.Example] {
+	examples := orderedmap.New[string, *base.Example]()
+
+	examples.Set("rolledBack", &base.Example{
+		Summary: "Failed reload that was rolled back",
+		Value: createYAMLNode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"last_reload_id":         "2026-01-02T13:37:00.000Z",
+				"last_reload_successful": false,
+				"error_category":         "apply_error",
+				"error_message":          "reloader \"rules\" failed to apply the new configuration; rolled back to the last known-good configuration",
+				"applied_reloaders":      []string{"db_storage", "remote_storage", "web_handler"},
+				"rollback_attempted":     true,
+				"rollback_successful":    true,
+				"failed_reloader":        "rules",
+				"reloader_timings_ms": map[string]any{
+					"db_storage":     0.01,
+					"remote_storage": 0.02,
+					"web_handler":    0.01,
+					"rules":          1.5,
+				},
+			},
+		}),
+	})
+
+	return examples
+}
+
 // statusWALReplayResponseExamples returns examples for /status/walreplay response.
 func statusWALReplayResponseExamples() *orderedmap.Map[string, *base.Example] {
 	examples := orderedmap.New[string, *base.Example]()

@@ -1953,6 +1953,54 @@ paths:
                                         error: TSDB not ready
                                         errorType: internal
                                         status: error
+    /status/reload:
+        get:
+            tags:
+                - status
+            summary: Get the outcome of the most recent configuration reload attempt
+            operationId: get-status-reload
+            responses:
+                "200":
+                    description: Reload status retrieved successfully.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/StatusReloadOutputBody'
+                            examples:
+                                rolledBack:
+                                    summary: Failed reload that was rolled back
+                                    value:
+                                        data:
+                                            applied_reloaders:
+                                                - db_storage
+                                                - remote_storage
+                                                - web_handler
+                                            error_category: apply_error
+                                            error_message: reloader "rules" failed to apply the new configuration; rolled back to the last known-good configuration
+                                            failed_reloader: rules
+                                            last_reload_id: "2026-01-02T13:37:00.000Z"
+                                            last_reload_successful: false
+                                            reloader_timings_ms:
+                                                db_storage: 0.01
+                                                remote_storage: 0.02
+                                                rules: 1.5
+                                                web_handler: 0.01
+                                            rollback_attempted: true
+                                            rollback_successful: true
+                                        status: success
+                default:
+                    description: Error retrieving reload status.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                            examples:
+                                tsdbNotReady:
+                                    summary: TSDB not ready
+                                    value:
+                                        error: TSDB not ready
+                                        errorType: internal
+                                        status: error
     /status/tsdb:
         get:
             tags:
@@ -4030,6 +4078,86 @@ components:
                 - data
             additionalProperties: false
             description: Response body for status flags endpoint.
+        StatusReloadData:
+            type: object
+            properties:
+                last_reload_id:
+                    type: string
+                    description: RFC3339 start time of the reload attempt, empty if no attempt was recorded.
+                last_reload_successful:
+                    type: boolean
+                    description: Whether the reload attempt succeeded.
+                error_category:
+                    type: string
+                    enum:
+                        - none
+                        - load_error
+                        - apply_error
+                        - rollback_error
+                    description: Category of the reload failure.
+                error_message:
+                    type: string
+                    description: Error message of the failed reload attempt.
+                applied_reloaders:
+                    type: array
+                    items:
+                        type: string
+                    description: Components that applied the new configuration.
+                rollback_attempted:
+                    type: boolean
+                    description: Whether a rollback to the last known-good configuration was attempted.
+                rollback_successful:
+                    type: boolean
+                    description: Whether the rollback succeeded.
+                failed_reloader:
+                    type: string
+                    description: Component that failed to apply the new configuration.
+                reloader_timings_ms:
+                    type: object
+                    additionalProperties:
+                        type: number
+                        format: double
+                        description: Duration in milliseconds.
+                    description: Time in milliseconds taken by each component.
+            required:
+                - last_reload_id
+                - last_reload_successful
+                - error_category
+                - error_message
+                - applied_reloaders
+                - rollback_attempted
+                - rollback_successful
+                - failed_reloader
+                - reloader_timings_ms
+            additionalProperties: false
+            description: Outcome of the most recent configuration reload attempt.
+        StatusReloadOutputBody:
+            type: object
+            properties:
+                status:
+                    type: string
+                    enum:
+                        - success
+                        - error
+                    description: Response status.
+                    example: success
+                data:
+                    $ref: '#/components/schemas/StatusReloadData'
+                warnings:
+                    type: array
+                    items:
+                        type: string
+                    description: Only set if there were warnings while executing the request. There will still be data in the data field.
+                infos:
+                    type: array
+                    items:
+                        type: string
+                    description: Only set if there were info-level annotations while executing the request.
+            required:
+                - status
+                - data
+            additionalProperties: false
+            description: Response body for status reload endpoint.
         HeadStats:
             type: object
             properties:
