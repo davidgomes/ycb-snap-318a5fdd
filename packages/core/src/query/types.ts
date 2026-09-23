@@ -46,10 +46,10 @@ export type StoresFromParameters<T extends QueryParameter[]> = T extends [infer 
           ...(First extends Aspect<infer U>
               ? [StoresFromParameters<U>]
               : First extends Trait
-              ? [ExtractStore<First>]
-              : First extends Modifier
-                ? StoresFromParameters<UnwrapModifierData<First>>
-                : []),
+                ? [ExtractStore<First>]
+                : First extends Modifier
+                  ? StoresFromParameters<UnwrapModifierData<First>>
+                  : []),
           ...(Rest extends QueryParameter[] ? StoresFromParameters<Rest> : []),
       ]
     : [];
@@ -62,16 +62,16 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
           ...(First extends Aspect
               ? [AspectRecord<First>]
               : First extends Trait
-              ? IsTag<First> extends false
-                  ? ExtractSchema<First> extends AoSFactory
-                      ? [ReturnType<ExtractSchema<First>>]
-                      : [TraitRecord<First>]
-                  : []
-              : First extends Modifier
-                ? IsNotModifier<First> extends true
-                    ? []
-                    : InstancesFromParameters<UnwrapModifierData<First>>
-                : []),
+                ? IsTag<First> extends false
+                    ? ExtractSchema<First> extends AoSFactory
+                        ? [ReturnType<ExtractSchema<First>>]
+                        : [TraitRecord<First>]
+                    : []
+                : First extends Modifier
+                  ? IsNotModifier<First> extends true
+                      ? []
+                      : InstancesFromParameters<UnwrapModifierData<First>>
+                  : []),
           ...(Rest extends QueryParameter[] ? InstancesFromParameters<Rest> : []),
       ]
     : [];
@@ -95,7 +95,10 @@ export type Query<T extends QueryParameter[] = QueryParameter[]> = {
 /** Inputs a modifier can wrap. Aspects are expanded to their constituents during query creation. */
 export type ModifierInput = Trait | Aspect;
 
-export type Modifier<TTrait extends ModifierInput[] = ModifierInput[], TType extends string = string> = {
+export type Modifier<
+    TTrait extends ModifierInput[] = ModifierInput[],
+    TType extends string = string,
+> = {
     [$modifier]: true;
     type: TType;
     id: number;

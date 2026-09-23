@@ -101,7 +101,7 @@ export function updateAspectTrackers(
             trackerArr = [];
             trackers[eventGenerationId] = trackerArr;
         }
-        trackerArr[eid] = (trackerArr[eid] | 0) | eventBitflag;
+        trackerArr[eid] = trackerArr[eid] | 0 | eventBitflag;
     } else if (clear) {
         for (let genId = 0; genId < trackers.length; genId++) {
             const trackerArr = trackers[genId];

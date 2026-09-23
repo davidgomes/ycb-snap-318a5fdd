@@ -356,7 +356,8 @@ function updateEachWithAspects(
                         constituentStores[k],
                         state[j]
                     );
-                    if (changed && constituentDetected[k]) changedPairs.push([entity, constituents[k]]);
+                    if (changed && constituentDetected[k])
+                        changedPairs.push([entity, constituents[k]]);
                 }
                 continue;
             }

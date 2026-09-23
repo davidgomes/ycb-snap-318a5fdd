@@ -6,11 +6,7 @@ export const $modifier = Symbol('modifier');
 export function createModifier<
     TTrait extends ModifierInput[] = ModifierInput[],
     TType extends string = string,
->(
-    type: TType,
-    id: number,
-    traits: TTrait
-): Modifier<TTrait, TType> {
+>(type: TType, id: number, traits: TTrait): Modifier<TTrait, TType> {
     return {
         [$modifier]: true,
         type,
