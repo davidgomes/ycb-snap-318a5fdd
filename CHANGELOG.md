@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- Added `phase`, `modifiers`, `base_key`, `shifted_key`, and `base_layout_key` to `Key` events, with `is_press`, `is_repeat`, `is_release`, `shift`, `alt`, `ctrl`, `super`, `hyper`, and `meta` properties
+- Added support for Kitty keyboard protocol event types, alternate keys, and associated text
+- Added `examples/kitty_keyboard_protocol.py`
+
+### Changed
+
+- Shift with a printable key in the Kitty keyboard protocol is reported as the shifted character (e.g. `A` rather than `shift+a`)
+- Legacy ESC-prefixed enter, space, backspace, and ctrl+letter keys now include alt (e.g. `alt+enter`)
+- Key release events are not printable
+
 ### [7.5.0] - 2026-01-29
 
 - The DataTable row cursor will extend to the full width if there is excess space https://github.com/Textualize/textual/pull/6345
