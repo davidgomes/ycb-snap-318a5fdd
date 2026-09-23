@@ -250,12 +250,15 @@ class _Target:
         owner_key: Key | None,
         context: str,
         indices: list[int],
+        parent: tuple[Container, AbstractTable | None] | None,
     ) -> None:
         self.container = container
         self.owner = owner
         self.owner_key = owner_key
         self.context = context
         self.indices = indices
+        # The container holding ``owner``, with its own owner.
+        self.parent = parent
 
     @property
     def key(self) -> Key:
@@ -276,16 +279,14 @@ def _child_context(context: str, key: Key, item: Item) -> str:
 
 def _resolve(doc: Container, key_path: str) -> _Target:
     parts = _parse_key_path(key_path)
-    candidates: list[tuple[Container, AbstractTable | None, Key | None, str]] = [
-        (doc, None, None, _DOC)
-    ]
-    matches: list[tuple[Container, AbstractTable | None, Key | None, str, int]] = []
+    candidates = [(doc, None, None, _DOC, None)]
+    matches = []
 
     for depth, part in enumerate(parts):
         matches = [
-            (container, owner, owner_key, context, i)
-            for container, owner, owner_key, context in candidates
-            for i, (k, _) in enumerate(container.body)
+            (*candidate, i)
+            for candidate in candidates
+            for i, (k, _) in enumerate(candidate[0].body)
             if k is not None and k.key == part
         ]
         if not matches:
@@ -295,21 +296,23 @@ def _resolve(doc: Container, key_path: str) -> _Target:
             break
 
         candidates = []
-        for container, _, _, context, i in matches:
+        for container, owner, _, context, _, i in matches:
             k, v = container.body[i]
             if not isinstance(v, (Table, InlineTable)):
                 raise ConversionError(
                     key_path, f'"{".".join(parts[: depth + 1])}" is not a table'
                 )
-            candidates.append((v.value, v, k, _child_context(context, k, v)))
+            candidates.append(
+                (v.value, v, k, _child_context(context, k, v), (container, owner))
+            )
 
     if len({id(m[0]) for m in matches}) > 1:
-        raise ConversionError(
-            key_path, "the table is split across several containers"
-        )
+        raise ConversionError(key_path, "the table is split across several containers")
 
-    container, owner, owner_key, context, _ = matches[0]
-    return _Target(container, owner, owner_key, context, [m[4] for m in matches])
+    container, owner, owner_key, context, parent, _ = matches[0]
+    return _Target(
+        container, owner, owner_key, context, [m[-1] for m in matches], parent
+    )
 
 
 def _reindex(container: Container, owner: AbstractTable | None) -> None:
@@ -349,22 +352,62 @@ def _previous_item(container: Container, pos: int) -> Item | None:
     return prev[1] if prev else None
 
 
+def _separate_next_table(container: Container, pos: int) -> None:
+    """Keep a blank line before the header table following ``pos``."""
+    for k, v in container.body[pos:]:
+        if isinstance(v, Null):
+            continue
+        if isinstance(v, AoT) and v.body:
+            v = v.body[0]
+        if isinstance(v, Table) and not k.is_dotted() and "\n" not in v.trivia.indent:
+            v.trivia.indent = "\n" + v.trivia.indent
+        return
+
+
 def _replace_values(
-    target: _Target, entries: list[tuple[SingleKey | None, Item]]
+    target: _Target, entries: list[tuple[SingleKey | None, Item]], key_path: str
 ) -> None:
     """Replace the target entries with value entries (key/value pairs,
     dotted keys or comments)."""
-    container = target.container
+    container, owner = target.container, target.owner
+    dest, dest_owner = container, owner
+    unsuper = (
+        target.context == _TABLE
+        and isinstance(owner, Table)
+        and owner.is_super_table()
+        and not target.owner_key.is_dotted()
+    )
+    if unsuper and target.parent is not None:
+        # The owner is an implicit piece of a table defined elsewhere,
+        # so giving it values would define that table a second time.
+        siblings = [
+            (k, v)
+            for k, v in target.parent[0].body
+            if k is not None and k.key == target.owner_key.key and v is not owner
+        ]
+        if siblings:
+            headers = [
+                v
+                for k, v in siblings
+                if isinstance(v, Table) and not k.is_dotted() and not v.is_super_table()
+            ]
+            if len(headers) != 1:
+                raise ConversionError(
+                    key_path, f'"{target.owner_key.key}" is already defined elsewhere'
+                )
+            dest, dest_owner = headers[0].value, headers[0]
+            unsuper = False
+
     was_values = all(_is_value_entry(*container.body[i]) for i in target.indices)
     for i in target.indices:
         container._body[i] = (None, Null())
 
-    if target.context in (_DOC, _TABLE) and not was_values:
-        pos = container._get_last_index_before_table()
+    if dest is not container or (target.context in (_DOC, _TABLE) and not was_values):
+        pos = dest._get_last_index_before_table()
     else:
         pos = target.indices[0]
 
-    prev = _previous_item(container, pos)
+    prev = _previous_item(dest, pos)
     if (
         target.context != _INLINE
         and prev is not None
@@ -373,18 +416,23 @@ def _replace_values(
     ):
         prev.trivia.trail += "\n"
 
-    container._body[pos:pos] = entries
-    _reindex(container, target.owner)
+    dest._body[pos:pos] = entries
+    if target.context in (_DOC, _TABLE):
+        _separate_next_table(dest, pos + len(entries))
+    _reindex(dest, dest_owner)
 
-    owner = target.owner
+    if dest is not container:
+        _reindex(container, owner)
+        if not any(k is not None for k, _ in container.body):
+            parent, parent_owner = target.parent
+            for i, (_, v) in enumerate(parent.body):
+                if v is owner:
+                    parent._body[i] = (None, Null())
+            _reindex(parent, parent_owner)
+
     if isinstance(owner, InlineTable):
         _normalize_inline(owner)
-    elif (
-        target.context == _TABLE
-        and isinstance(owner, Table)
-        and owner._is_super_table
-        and not target.owner_key.is_dotted()
-    ):
+    elif unsuper:
         owner._is_super_table = False
 
 
@@ -400,6 +448,7 @@ def _insert_table(
         table.trivia.indent = "\n"
 
     container._body.insert(pos, (key, table))
+    _separate_next_table(container, pos + 1)
     _reindex(container, owner)
 
 
@@ -435,7 +484,7 @@ def to_inline_table(key_path: str, doc: Container) -> Container:
         raise ConversionError(key_path, "unsupported dotted-key layout")
 
     value = _inline_value(node, inline)
-    _replace_values(target, [(_fresh_key(target.key), value)])
+    _replace_values(target, [(_fresh_key(target.key), value)], key_path)
     return doc
 
 
@@ -523,7 +572,7 @@ def to_dotted_keys(
     if inline and not isinstance(target.owner, InlineTable) and len(entries) > 1:
         raise ConversionError(key_path, "unsupported dotted-key layout")
 
-    _replace_values(target, entries)
+    _replace_values(target, entries, key_path)
     return doc
 
 
