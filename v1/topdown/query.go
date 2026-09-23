@@ -63,6 +63,7 @@ type Query struct {
 	tracingOpts                 tracing.Options
 	virtualCache                VirtualCache
 	baseCache                   BaseCache
+	ruleProfile                 RuleProfileRecorder
 }
 
 // Builtin represents a built-in function that queries can call.
@@ -325,6 +326,13 @@ func (q *Query) WithBaseCache(bc BaseCache) *Query {
 	return q
 }
 
+// WithRuleProfile records rule entry and success counts during evaluation.
+// A nil recorder disables profiling.
+func (q *Query) WithRuleProfile(r RuleProfileRecorder) *Query {
+	q.ruleProfile = r
+	return q
+}
+
 // WithNondeterministicBuiltins causes non-deterministic builtins to be evalued
 // during partial evaluation. This is needed to pull in external data, or validate
 // a JWT, during PE, so that the result informs what queries are returned.
@@ -414,6 +422,7 @@ func (q *Query) PartialRun(ctx context.Context) (partials []ast.Body, support []
 		builtinErrors: &builtinErrors{},
 		printHook:     q.printHook,
 		strictObjects: q.strictObjects,
+		ruleProfile:   q.ruleProfile,
 	}
 
 	if len(q.disableInlining) > 0 {
@@ -602,6 +611,7 @@ func (q *Query) Iter(ctx context.Context, iter func(QueryResult) error) error {
 		tracingOpts:                 q.tracingOpts,
 		strictObjects:               q.strictObjects,
 		roundTripper:                q.roundTripper,
+		ruleProfile:                 q.ruleProfile,
 	}
 	e.caller = e
 	q.metrics.Timer(metrics.RegoQueryEval).Start()

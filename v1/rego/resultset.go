@@ -30,6 +30,9 @@ func (v Vars) WithoutWildcards() Vars {
 type Result struct {
 	Expressions []*ExpressionValue `json:"expressions"`
 	Bindings    Vars               `json:"bindings,omitempty"`
+	// Profile is set when rule profiling is enabled for the evaluation.
+	// It is nil when profiling is disabled.
+	Profile *EvalProfile `json:"profile,omitempty"`
 }
 
 func newResult() Result {

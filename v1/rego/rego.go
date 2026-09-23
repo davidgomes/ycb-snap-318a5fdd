@@ -125,6 +125,7 @@ type EvalContext struct {
 	baseCache                   topdown.BaseCache
 	tracing                     tracing.Options
 	externalCancel              topdown.Cancel // Note(philip): If non-nil, the cancellation is handled outside of this package.
+	ruleProfile                 bool
 }
 
 func (e *EvalContext) RawInput() *any {
@@ -448,6 +449,7 @@ func (pq preparedQuery) newEvalContext(ctx context.Context, options []EvalOption
 		capabilities:             pq.r.capabilities,
 		strictBuiltinErrors:      pq.r.strictBuiltinErrors,
 		tracing:                  pq.r.distributedTracingOpts,
+		ruleProfile:              pq.r.ruleProfile,
 	}
 
 	for _, o := range options {
@@ -660,6 +662,7 @@ type Rego struct {
 	generateJSON                func(*ast.Term, *EvalContext) (any, error)
 	printHook                   print.Hook
 	enablePrintStatements       bool
+	ruleProfile                 bool
 	distributedTracingOpts      tracing.Options
 	strict                      bool
 	targetPrepState             TargetPluginEval
@@ -1461,6 +1464,7 @@ func (r *Rego) Eval(ctx context.Context) (ResultSet, error) {
 		EvalInterQueryBuiltinCache(r.interQueryBuiltinCache),
 		EvalInterQueryBuiltinValueCache(r.interQueryBuiltinValueCache),
 		EvalSeed(r.seed),
+		EvalRuleProfile(r.ruleProfile),
 	}
 
 	if r.ndBuiltinCache != nil {
@@ -2273,6 +2277,8 @@ func (r *Rego) eval(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
 		WithVirtualCache(ectx.virtualCache).
 		WithBaseCache(ectx.baseCache)
 
+	q, profile := applyRuleProfile(q, ectx)
+
 	if !ectx.time.IsZero() {
 		q = q.WithTime(ectx.time)
 	}
@@ -2327,6 +2333,12 @@ func (r *Rego) eval(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
 
 	if len(rs) == 0 {
 		return nil, nil
+	}
+
+	if profile != nil {
+		for i := range rs {
+			rs[i].Profile = profile
+		}
 	}
 
 	return rs, nil
