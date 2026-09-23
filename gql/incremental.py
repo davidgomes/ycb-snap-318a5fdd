@@ -79,11 +79,18 @@ class IncrementalExecutionResult(ExecutionResult):
     def __eq__(self, other: object) -> bool:
         if isinstance(other, dict):
             return (
-                super().__eq__(other)
+                other.get("data") == self.data
+                and (other.get("errors") or None) == (self.errors or None)
+                and (other.get("extensions") or None) == (self.extensions or None)
                 and other.get("hasNext", self.has_next) == self.has_next
             )
         if isinstance(other, IncrementalExecutionResult):
-            return super().__eq__(other) and other.has_next == self.has_next
+            return (
+                other.data == self.data
+                and other.errors == self.errors
+                and other.extensions == self.extensions
+                and other.has_next == self.has_next
+            )
         return super().__eq__(other)
 
 
@@ -248,5 +255,9 @@ class IncrementalResultAccumulator:
         if start > len(target):
             target.extend([None] * (start - len(target)))
 
-        end = start + len(items)
-        target[start:end] = copy.deepcopy(items)
+        for offset, item in enumerate(items):
+            index = start + offset
+            if index < len(target):
+                target[index] = _merge_values(target[index], item)
+            else:
+                target.append(copy.deepcopy(item))

@@ -778,6 +778,29 @@ def test_incremental_accumulator_top_level_data_in_subsequent_payload():
     assert result.data == {"hero": {"id": "2001", "name": "R2-D2"}}
 
 
+def test_incremental_accumulator_stream_items_at_existing_index():
+
+    accumulator = IncrementalResultAccumulator()
+
+    accumulator.add(
+        IncrementalExecutionResult(data={"friends": [{"id": "1000"}, "Leia"]})
+    )
+    result = accumulator.add(
+        IncrementalExecutionResult(
+            incremental=[
+                {
+                    "items": [{"name": "Luke"}, "Han", {"name": "Chewie"}],
+                    "path": ["friends", 0],
+                }
+            ]
+        )
+    )
+
+    assert result.data == {
+        "friends": [{"id": "1000", "name": "Luke"}, "Han", {"name": "Chewie"}]
+    }
+
+
 def test_incremental_accumulator_stream_path_without_index():
 
     accumulator = IncrementalResultAccumulator()
