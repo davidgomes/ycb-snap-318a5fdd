@@ -5,6 +5,15 @@ from __future__ import annotations
 from enum import Enum
 
 
+class DaemonAction(Enum):
+    START = "start"
+    STOP = "stop"
+    STATUS = "status"
+    LOGS = "logs"
+    STATS = "stats"
+    RESTART = "restart"
+
+
 class MediaType(Enum):
     EPISODE = "episode"
     MOVIE = "movie"

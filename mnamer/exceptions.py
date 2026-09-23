@@ -19,3 +19,7 @@ class MnamerNetworkException(MnamerException):
 
 class MnamerNotFoundException(MnamerException):
     """Raised when a lookup or search works as expected yet yields no results."""
+
+
+class MnamerDaemonException(MnamerException):
+    """Raised when daemon options or its watch configuration are invalid."""
