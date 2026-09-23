@@ -987,6 +987,51 @@ func() {
 				intObject(0),
 				intObject(1))))
 
+	expectCompile(t, `[a, b = 5] := [1]`,
+		bytecode(
+			concatInsts(
+				tengo.MakeInstruction(parser.OpConstant, 0),
+				tengo.MakeInstruction(parser.OpArray, 1),
+				tengo.MakeInstruction(parser.OpDestructArray),
+				tengo.MakeInstruction(parser.OpConstant, 1),
+				tengo.MakeInstruction(parser.OpDestructElem, 16),
+				tengo.MakeInstruction(parser.OpNull),
+				tengo.MakeInstruction(parser.OpSetGlobal, 0),
+				tengo.MakeInstruction(parser.OpConstant, 0),
+				tengo.MakeInstruction(parser.OpDestructElem, 30),
+				tengo.MakeInstruction(parser.OpConstant, 2),
+				tengo.MakeInstruction(parser.OpSetGlobal, 1),
+				tengo.MakeInstruction(parser.OpPop),
+				tengo.MakeInstruction(parser.OpSuspend)),
+			objectsArray(
+				intObject(1),
+				intObject(0),
+				intObject(5))))
+
+	expectCompile(t, `func({a}, [...b]) { return a }`,
+		bytecode(
+			concatInsts(
+				tengo.MakeInstruction(parser.OpConstant, 1),
+				tengo.MakeInstruction(parser.OpPop),
+				tengo.MakeInstruction(parser.OpSuspend)),
+			objectsArray(
+				stringObject("a"),
+				compiledFunction(4, 2,
+					tengo.MakeInstruction(parser.OpGetLocal, 0),
+					tengo.MakeInstruction(parser.OpDestructMap),
+					tengo.MakeInstruction(parser.OpConstant, 0),
+					tengo.MakeInstruction(parser.OpDestructElem, 12),
+					tengo.MakeInstruction(parser.OpNull),
+					tengo.MakeInstruction(parser.OpDefineLocal, 2),
+					tengo.MakeInstruction(parser.OpPop),
+					tengo.MakeInstruction(parser.OpGetLocal, 1),
+					tengo.MakeInstruction(parser.OpDestructArray),
+					tengo.MakeInstruction(parser.OpDestructRest, 0),
+					tengo.MakeInstruction(parser.OpDefineLocal, 3),
+					tengo.MakeInstruction(parser.OpPop),
+					tengo.MakeInstruction(parser.OpGetLocal, 2),
+					tengo.MakeInstruction(parser.OpReturn, 1)))))
+
 	// unknown module name
 	expectCompileError(t, `import("user1")`, "module 'user1' not found")
 
@@ -1031,6 +1076,16 @@ func TestCompilerErrorReport(t *testing.T) {
 		"not allowed with selector")
 	expectCompileError(t, `a:=1; a:=3`,
 		"Compile Error: 'a' redeclared in this block\n\tat test:1:7")
+	expectCompileError(t, `[a, b] = [1, 2]`,
+		"Compile Error: cannot use destructuring with =\n\tat test:1:1")
+	expectCompileError(t, `a := 1; {a} = {a: 2}`,
+		"Compile Error: cannot use destructuring with =\n\tat test:1:9")
+	expectCompileError(t, `[a, ...b, c] := [1]`,
+		"Compile Error: rest element must be last\n\tat test:1:5")
+	expectCompileError(t, `func([[...a, b]]) {}`,
+		"Compile Error: rest element must be last\n\tat test:1:8")
+	expectCompileError(t, `[a, {b: a}] := [1, {}]`,
+		"Compile Error: 'a' redeclared in this block\n\tat test:1:9")
 
 	expectCompileError(t, `return 5`,
 		"Compile Error: return not allowed outside function\n\tat test:1:1")

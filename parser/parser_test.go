@@ -791,6 +791,104 @@ func TestParseVariadicFunctionWithArgs(t *testing.T) {
 	expectParseError(t, "a = func(...args, invalid) { return args }")
 }
 
+func TestParseDestructuring(t *testing.T) {
+	expectParse(t, "[a, b = 1, ...c] := x", func(p pfn) []Stmt {
+		return stmts(
+			assignStmt(
+				exprs(arrayPattern(p(1, 1), p(1, 16),
+					ident("a", p(1, 2)),
+					defaultPattern(ident("b", p(1, 5)), p(1, 7),
+						intLit(1, p(1, 9))),
+					restElement(p(1, 12), ident("c", p(1, 15))))),
+				exprs(ident("x", p(1, 21))),
+				token.Define,
+				p(1, 18)))
+	})
+
+	expectParse(t, "{k, l: m = 2, n: [o]} := y", func(p pfn) []Stmt {
+		return stmts(
+			assignStmt(
+				exprs(mapPattern(p(1, 1), p(1, 21),
+					mapPatternElement("k", p(1, 2), NoPos,
+						ident("k", p(1, 2))),
+					mapPatternElement("l", p(1, 5), p(1, 6),
+						defaultPattern(ident("m", p(1, 8)), p(1, 10),
+							intLit(2, p(1, 12)))),
+					mapPatternElement("n", p(1, 15), p(1, 16),
+						arrayPattern(p(1, 18), p(1, 20),
+							ident("o", p(1, 19)))))),
+				exprs(ident("y", p(1, 26))),
+				token.Define,
+				p(1, 23)))
+	})
+
+	expectParse(t, "[a] = b", func(p pfn) []Stmt {
+		return stmts(
+			assignStmt(
+				exprs(arrayPattern(p(1, 1), p(1, 3), ident("a", p(1, 2)))),
+				exprs(ident("b", p(1, 7))),
+				token.Assign,
+				p(1, 5)))
+	})
+
+	expectParse(t, "f := func(a, [b], {c}) {}", func(p pfn) []Stmt {
+		params := identList(p(1, 10), p(1, 22), false,
+			ident("a", p(1, 11)),
+			ident("_", p(1, 14)),
+			ident("_", p(1, 19)))
+		params.Patterns = exprs(
+			nil,
+			arrayPattern(p(1, 14), p(1, 16), ident("b", p(1, 15))),
+			mapPattern(p(1, 19), p(1, 21),
+				mapPatternElement("c", p(1, 20), NoPos,
+					ident("c", p(1, 20)))))
+		return stmts(
+			assignStmt(
+				exprs(ident("f", p(1, 1))),
+				exprs(funcLit(funcType(params, p(1, 6)),
+					blockStmt(p(1, 24), p(1, 25)))),
+				token.Define,
+				p(1, 3)))
+	})
+
+	expectParseString(t, "[a, b] := c", "[a, b] := c")
+	expectParseString(t, "[a, [b, c = 1], ...d] := e",
+		"[a, [b, c = 1], ...d] := e")
+	expectParseString(t, "{a, b: c, d: {e} = f} := g",
+		"{a, b: c, d: {e} = f} := g")
+	expectParseString(t, "[a = 1 + 2] = b", "[a = (1 + 2)] = b")
+	expectParseString(t, "[] := a", "[] := a")
+	expectParseString(t, "{} := a", "{} := a")
+	expectParseString(t, "[...a, b] := c", "[...a, b] := c")
+	expectParseString(t, "{\n\ta,\n\tb: [c]\n} := d", "{a, b: [c]} := d")
+	expectParseString(t, "if [a] := b; a {}", "if [a] := b; a {}")
+	expectParseString(t, "f := func([a, ...b], {c = 1}) { return a }",
+		"f := func([a, ...b], {c = 1}) {return a}")
+
+	// literal syntax is unchanged
+	expectParseString(t, "[a, b]", "[a, b]")
+	expectParseString(t, "{a: b}", "{a: b}")
+	expectParseString(t, "[a, b][0] = c", "[a, b][0] = c")
+	expectParseString(t, "{a: b}.a = c", "{a: b}.a = c")
+	expectParseString(t, "[a] == b", "([a] == b)")
+	expectParseString(t, "a := [b, c]", "a := [b, c]")
+	expectParseError(t, "a := [b = 1]")
+	expectParseError(t, "a := {b}")
+	expectParseError(t, "a := [...b]")
+
+	expectParseError(t, "{...a} := b")
+	expectParseError(t, "{a, ...b} := c")
+	expectParseError(t, "[a, 1] := b")
+	expectParseError(t, "[a.b] := c")
+	expectParseError(t, "{a: 1} := b")
+	expectParseError(t, `{"a"} := b`)
+	expectParseError(t, "[...a = 1] := b")
+	expectParseError(t, "[...[a]] := b")
+	expectParseError(t, "[a, b,] := c")
+	expectParseError(t, "f := func(...[a]) {}")
+	expectParseError(t, "f := func([a, 1]) {}")
+}
+
 func TestParseIf(t *testing.T) {
 	expectParse(t, "if a == 5 {}", func(p pfn) []Stmt {
 		return stmts(
@@ -1925,6 +2023,36 @@ func mapLit(
 	return &MapLit{LBrace: lbrace, RBrace: rbrace, Elements: list}
 }
 
+func arrayPattern(lbracket, rbracket Pos, list ...Expr) *ArrayPattern {
+	return &ArrayPattern{LBrack: lbracket, RBrack: rbracket, Elements: list}
+}
+
+func mapPatternElement(
+	key string,
+	keyPos Pos,
+	colonPos Pos,
+	value Expr,
+) *MapPatternElement {
+	return &MapPatternElement{
+		Key: key, KeyPos: keyPos, ColonPos: colonPos, Value: value,
+	}
+}
+
+func mapPattern(
+	lbrace, rbrace Pos,
+	list ...*MapPatternElement,
+) *MapPattern {
+	return &MapPattern{LBrace: lbrace, RBrace: rbrace, Elements: list}
+}
+
+func defaultPattern(target Expr, assignPos Pos, value Expr) *DefaultPattern {
+	return &DefaultPattern{Target: target, AssignPos: assignPos, Default: value}
+}
+
+func restElement(pos Pos, name *Ident) *RestElement {
+	return &RestElement{EllipsisPos: pos, Name: name}
+}
+
 func funcLit(funcType *FuncType, body *BlockStmt) *FuncLit {
 	return &FuncLit{Type: funcType, Body: body}
 }
@@ -2106,6 +2234,39 @@ func equalExpr(t *testing.T, expected, actual Expr) {
 			actual.(*MapLit).RBrace)
 		equalMapElements(t, expected.Elements,
 			actual.(*MapLit).Elements)
+	case *ArrayPattern:
+		require.Equal(t, expected.LBrack,
+			actual.(*ArrayPattern).LBrack)
+		require.Equal(t, expected.RBrack,
+			actual.(*ArrayPattern).RBrack)
+		equalExprs(t, expected.Elements,
+			actual.(*ArrayPattern).Elements)
+	case *MapPattern:
+		require.Equal(t, expected.LBrace,
+			actual.(*MapPattern).LBrace)
+		require.Equal(t, expected.RBrace,
+			actual.(*MapPattern).RBrace)
+		require.Equal(t, len(expected.Elements),
+			len(actual.(*MapPattern).Elements))
+		for i, e := range expected.Elements {
+			a := actual.(*MapPattern).Elements[i]
+			require.Equal(t, e.Key, a.Key)
+			require.Equal(t, e.KeyPos, a.KeyPos)
+			require.Equal(t, e.ColonPos, a.ColonPos)
+			equalExpr(t, e.Value, a.Value)
+		}
+	case *DefaultPattern:
+		equalExpr(t, expected.Target,
+			actual.(*DefaultPattern).Target)
+		require.Equal(t, expected.AssignPos,
+			actual.(*DefaultPattern).AssignPos)
+		equalExpr(t, expected.Default,
+			actual.(*DefaultPattern).Default)
+	case *RestElement:
+		require.Equal(t, expected.EllipsisPos,
+			actual.(*RestElement).EllipsisPos)
+		equalExpr(t, expected.Name,
+			actual.(*RestElement).Name)
 	case *BinaryExpr:
 		equalExpr(t, expected.LHS,
 			actual.(*BinaryExpr).LHS)
@@ -2204,6 +2365,7 @@ func equalFuncType(t *testing.T, expected, actual *FuncType) {
 	require.Equal(t, expected.Params.LParen, actual.Params.LParen)
 	require.Equal(t, expected.Params.RParen, actual.Params.RParen)
 	equalIdents(t, expected.Params.List, actual.Params.List)
+	equalExprs(t, expected.Params.Patterns, actual.Params.Patterns)
 }
 
 func equalIdents(t *testing.T, expected, actual []*Ident) {
