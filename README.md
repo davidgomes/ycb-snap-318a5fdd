@@ -629,6 +629,35 @@ world.query(Position, Velocity).useStores(([position, velocity], entities) => {
 })
 ```
 
+### Snapshots and rollback
+
+Entity and world state can be captured as plain, serializable snapshots and restored later. Snapshots use string keys from a trait registry so they stay stable across sessions.
+
+```js
+import { createTraitRegistry, diffWorldSnapshots } from 'koota'
+
+// Every trait or relation that will be snapshotted must be registered
+const registry = createTraitRegistry(
+  ['position', Position],
+  ['isPlayer', IsPlayer],
+  ['childOf', ChildOf]
+)
+
+// Entity snapshots: { id, traits, relations? }
+const snapshot = entity.snapshot(registry)
+// { id: 1, traits: { position: { x: 0, y: 0 }, isPlayer: true }, relations: { childOf: [{ targetId: 0 }] } }
+entity.rollback(registry, snapshot)
+
+// World checkpoints: { entities: EntitySnapshot[] }
+const checkpoint = world.snapshot(registry)
+world.rollback(registry, checkpoint) // Replaces all entities, reusing the checkpoint IDs
+
+// Compare snapshots
+diffWorldSnapshots(checkpoint, world.snapshot(registry)) // { added, removed, changed }
+```
+
+Tags are stored as `true` and data is deep copied. Snapshotting an entity with an unregistered trait or relation throws. The standalone functions `snapshotEntity`, `snapshotWorld`, `rollbackEntity`, `rollbackWorld` and `diffEntitySnapshots` are also exported.
+
 ### Query tips for the curious
 
 Performance and readability are often a tradeoff. The standard patterns are plenty fast, but if you are interested in diving deeper here are some quick tips.

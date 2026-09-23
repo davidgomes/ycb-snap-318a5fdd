@@ -5,15 +5,22 @@ import type { ConfigurableTrait } from '../trait/types';
 import { universe } from '../universe/universe';
 import type { World } from '../world';
 import type { Entity } from './types';
-import { allocateEntity, releaseEntity } from './utils/entity-index';
+import { allocateEntity, allocateEntityWithId, releaseEntity } from './utils/entity-index';
 import { getEntityId, getEntityWorldId } from './utils/pack-entity';
 
 // Ensure entity methods are patched.
 import './entity-methods-patch';
 
 export function createEntity(world: World, ...traits: ConfigurableTrait[]): Entity {
+    return initEntity(world, allocateEntity(world[$internal].entityIndex), traits);
+}
+
+export function createEntityWithId(world: World, id: number): Entity {
+    return initEntity(world, allocateEntityWithId(world[$internal].entityIndex, id), []);
+}
+
+function initEntity(world: World, entity: Entity, traits: ConfigurableTrait[]): Entity {
     const ctx = world[$internal];
-    const entity = allocateEntity(ctx.entityIndex);
 
     for (const query of ctx.notQueries) {
         const match = query.check(world, entity);

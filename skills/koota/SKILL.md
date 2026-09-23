@@ -227,3 +227,7 @@ For component patterns (App, Startup, Renderer, view sync, input), see [referenc
 Systems query the world and update entities. Run them via frameloop (continuous) or event handlers (discrete).
 
 For systems, frameloop, event-driven patterns, and time management, see [references/runtime.md](references/runtime.md).
+
+## Snapshots
+
+Capture and restore entity or world state with a trait registry (`createTraitRegistry`, `entity.snapshot`, `world.rollback`, `diffWorldSnapshots`). See [references/snapshots.md](references/snapshots.md).
