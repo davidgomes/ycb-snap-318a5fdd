@@ -285,6 +285,42 @@ Show detailed information about a task.
 task build --summary
 ```
 
+#### `--graph`
+
+Print the dependency graph for the given tasks. Dependencies come from `deps`
+and from commands that call another task. When no task name is given, Task uses
+the `default` task.
+
+```bash
+task --graph build
+task --graph --format dot build
+task --graph --format text build
+```
+
+`--format` selects the output format:
+
+- `json` (default) — a single object with `roots`, `nodes`, `edges`,
+  `depth_groups`, and `longest_path`
+- `dot` — a Graphviz digraph named `tasks`, with edges pointing from a task to
+  its dependencies. Up-to-date tasks use `style=dashed`
+- `text` — an indented tree, two spaces per level. A dependency that was
+  already printed is shown again with a `(repeated)` suffix and its subtree is
+  not expanded
+
+`--reverse` inverts the graph. It shows every task in the Taskfile that depends
+on the given task. Depth groups and the longest path are calculated on that
+inverted graph.
+
+```bash
+task --graph --reverse build
+```
+
+`--no-status` skips up-to-date checks. JSON nodes then omit `up_to_date`, and
+DOT output does not use a dashed style.
+
+Namespaced tasks from included Taskfiles are shown with their fully qualified
+names. `for` loops produce one edge per iteration.
+
 #### `--json`
 
 Output task information in JSON format (use with `--list` or `--list-all`).

@@ -206,3 +206,16 @@ func (err *TaskNotAllowedVarsError) Error() string {
 func (err *TaskNotAllowedVarsError) Code() int {
 	return CodeTaskNotAllowedVars
 }
+
+// TaskDependencyCycleError is returned when tasks depend on each other in a cycle.
+type TaskDependencyCycleError struct {
+	Cycle []string
+}
+
+func (err *TaskDependencyCycleError) Error() string {
+	return fmt.Sprintf("task: task dependency cycle detected: %s", strings.Join(err.Cycle, " -> "))
+}
+
+func (err *TaskDependencyCycleError) Code() int {
+	return CodeTaskDependencyCycle
+}
