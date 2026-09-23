@@ -1342,6 +1342,16 @@ class tube(Timeout, Logger):
         self.connect_input(other)
         self.connect_output(other)
 
+    def mux(self, **kwargs):
+        """mux(**kwargs) -> TubeMultiplexer
+
+        Wraps this tube in a :class:`pwnlib.tubes.mux.TubeMultiplexer`,
+        forwarding all keyword arguments to its constructor.  The remote end
+        must also be multiplexed.
+        """
+        from pwnlib.tubes.mux import TubeMultiplexer
+        return TubeMultiplexer(self, **kwargs)
+
     def spawn_process(self, *args, **kwargs):
         """Spawns a new process having this tube as stdin, stdout and stderr.
 

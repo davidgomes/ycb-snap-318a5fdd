@@ -33,6 +33,61 @@ class Buffer(object):
         self.data = [] # Buffer
         self.size = 0  # Length
         self.buffer_fill_size = buffer_fill_size
+        self._high_water = None
+        self._low_water = None
+
+    def set_watermarks(self, high=None, low=None):
+        """set_watermarks(high=None, low=None)
+
+        Sets the high and low water marks of the buffer.  Passing :const:`None`
+        for either value unsets it.
+
+        Arguments:
+            high(int): Size at or above which the buffer is considered full.
+            low(int): Size at or below which the buffer is considered drained.
+
+        Example:
+
+            >>> b = Buffer()
+            >>> b.over_high_water, b.under_low_water
+            (False, False)
+            >>> b.set_watermarks(high=8, low=2)
+            >>> b.high_water, b.low_water
+            (8, 2)
+            >>> b.under_low_water
+            True
+            >>> b.add(b'A' * 8)
+            >>> b.over_high_water, b.under_low_water
+            (True, False)
+            >>> b.set_watermarks(high=2, low=8)
+            Traceback (most recent call last):
+            ...
+            ValueError: low water mark (8) must not exceed high water mark (2)
+        """
+        if high is not None and low is not None and low > high:
+            raise ValueError('low water mark (%d) must not exceed high water mark (%d)' % (low, high))
+        self._high_water = high
+        self._low_water = low
+
+    @property
+    def high_water(self):
+        """High water mark, or :const:`None` if unset."""
+        return self._high_water
+
+    @property
+    def low_water(self):
+        """Low water mark, or :const:`None` if unset."""
+        return self._low_water
+
+    @property
+    def over_high_water(self):
+        """True if the buffer size is at or above the high water mark."""
+        return self._high_water is not None and self.size >= self._high_water
+
+    @property
+    def under_low_water(self):
+        """True if the buffer size is at or below the low water mark."""
+        return self._low_water is not None and self.size <= self._low_water
 
     def __len__(self):
         """
