@@ -123,9 +123,17 @@ class BubbleTheme extends BaseTheme {
     // @ts-expect-error
     this.tooltip = new BubbleTooltip(this.quill, this.options.bounds);
     if (toolbar.container != null) {
-      this.tooltip.root.appendChild<HTMLElement>(toolbar.container);
-      this.buildButtons(toolbar.container.querySelectorAll('button'), icons);
-      this.buildPickers(toolbar.container.querySelectorAll('select'), icons);
+      const { container } = toolbar;
+      if (toolbar.group.active === toolbar) {
+        this.tooltip.root.appendChild<HTMLElement>(container);
+      }
+      this.quill.on(Emitter.events.TOOLBAR_ACTIVE_CHANGE, (active: boolean) => {
+        if (active) {
+          this.tooltip.root.appendChild<HTMLElement>(container);
+        }
+      });
+      this.buildButtons(container.querySelectorAll('button'), icons);
+      this.buildPickers(container.querySelectorAll('select'), icons);
     }
   }
 }
