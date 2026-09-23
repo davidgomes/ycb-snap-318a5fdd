@@ -15,6 +15,7 @@ from ._check_input import CheckInputDataFrame
 from ._clean_categories import CleanCategories
 from ._clean_null_strings import CleanNullStrings
 from ._datetime_encoder import DatetimeEncoder
+from ._duration_encoder import DurationEncoder
 from ._drop_uninformative import DropUninformative
 from ._select_cols import Drop
 from ._single_column_transformer import SingleColumnTransformer
@@ -44,6 +45,7 @@ LOW_CARDINALITY_TRANSFORMER = OneHotEncoder(
     drop="if_binary",
 )
 DATETIME_TRANSFORMER = DatetimeEncoder()
+DURATION_TRANSFORMER = DurationEncoder()
 NUMERIC_TRANSFORMER = PassThrough()
 
 
@@ -487,6 +489,10 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
         The transformer for date and datetime columns. By default, we use a
         :class:`~skrub.DatetimeEncoder`.
 
+    duration : transformer, "passthrough" or "drop", default=DurationEncoder instance
+        The transformer for duration (timedelta) columns. By default, we use a
+        :class:`~skrub.DurationEncoder`.
+
     specific_transformers : list of (transformer, list of column names) pairs, \
             default=()
         Override the categories above for the given columns and force using the
@@ -791,6 +797,7 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
         high_cardinality=HIGH_CARDINALITY_TRANSFORMER,
         numeric=NUMERIC_TRANSFORMER,
         datetime=DATETIME_TRANSFORMER,
+        duration=DURATION_TRANSFORMER,
         specific_transformers=(),
         drop_null_fraction=1.0,
         drop_if_constant=False,
@@ -808,6 +815,7 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
         )
         self.numeric = _utils.clone_if_default(numeric, NUMERIC_TRANSFORMER)
         self.datetime = _utils.clone_if_default(datetime, DATETIME_TRANSFORMER)
+        self.duration = _utils.clone_if_default(duration, DURATION_TRANSFORMER)
         self.specific_transformers = specific_transformers
         self.n_jobs = n_jobs
         self.drop_null_fraction = drop_null_fraction
@@ -940,6 +948,7 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
         for name, selector in [
             ("numeric", s.numeric()),
             ("datetime", s.any_date()),
+            ("duration", s.duration()),
             (
                 "low_cardinality",
                 s.cardinality_below(self.cardinality_threshold),

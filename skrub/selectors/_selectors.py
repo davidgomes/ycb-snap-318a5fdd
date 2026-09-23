@@ -12,6 +12,7 @@ __all__ = [
     "integer",
     "float",
     "any_date",
+    "duration",
     "categorical",
     "string",
     "boolean",
@@ -328,6 +329,22 @@ def any_date():
 
     """
     return Filter(sbd.is_any_date, name="any_date")
+
+
+def duration():
+    """
+    Select columns that have a Duration (timedelta) data type.
+
+    Examples
+    --------
+    >>> from skrub import selectors as s
+    >>> import pandas as pd
+    >>> df = pd.DataFrame(dict(d=pd.to_timedelta(["1 day"]), x=[1]))
+    >>> s.select(df, s.duration())
+           d
+    0 1 days
+    """
+    return Filter(sbd.is_duration, name="duration")
 
 
 def categorical():
