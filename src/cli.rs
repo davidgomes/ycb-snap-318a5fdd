@@ -28,6 +28,10 @@ use crate::filter::SizeFilter;
     args_override_self = true,
     group(ArgGroup::new("execs").args(&["exec", "exec_batch", "list_details"]).conflicts_with_all(&[
             "max_results", "quiet", "max_one_result"])),
+    group(ArgGroup::new("sorting").multiple(true).args(&[
+            "sort", "reverse", "dirs_first", "files_first", "sort_case_sensitive",
+            "sort_missing_last", "sort_natural", "sort_seed"]).conflicts_with_all(&[
+            "exec", "exec_batch", "list_details"])),
 )]
 pub struct Opts {
     /// Include hidden directories and files in the search results (default:
@@ -566,6 +570,106 @@ pub struct Opts {
     )]
     max_one_result: bool,
 
+    /// Sort the search results by the given field. This option can be specified
+    /// multiple times: keys are applied from left to right, and later keys break
+    /// ties of earlier ones. Entries that are still tied are ordered by their path,
+    /// so the output is always deterministic. Sorting requires all results to be
+    /// collected before anything is printed. If '--max-results' is given, the
+    /// limit is applied after sorting.
+    ///
+    /// Text comparisons ('path', 'name', 'extension') are case-insensitive by
+    /// default. Values that are not available for an entry (e.g. the extension of
+    /// 'Makefile', or the size of a directory) sort before all present values,
+    /// unless '--sort-missing-last' is given.
+    #[arg(
+        long,
+        value_name = "field",
+        value_enum,
+        action = ArgAction::Append,
+        help = "Sort results by the given field (can be repeated)",
+        long_help
+    )]
+    pub sort: Vec<SortField>,
+
+    /// Reverse the final sorted order. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Reverse the sort order",
+        long_help
+    )]
+    pub reverse: bool,
+
+    /// List directories before all other entries, then order each group by the
+    /// '--sort' keys. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        conflicts_with = "files_first",
+        hide_short_help = true,
+        help = "Sort directories before other entries",
+        long_help
+    )]
+    pub dirs_first: bool,
+
+    /// List regular files before all other entries, then order each group by the
+    /// '--sort' keys. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        conflicts_with = "dirs_first",
+        hide_short_help = true,
+        help = "Sort regular files before other entries",
+        long_help
+    )]
+    pub files_first: bool,
+
+    /// Compare text fields case-sensitively when sorting. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Use case-sensitive text comparisons when sorting",
+        long_help
+    )]
+    pub sort_case_sensitive: bool,
+
+    /// Place entries with a missing value for a sort key (e.g. no extension, no
+    /// size, unavailable timestamp) after entries that have one. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Sort entries with missing values last",
+        long_help
+    )]
+    pub sort_missing_last: bool,
+
+    /// Use natural order for the 'path', 'name' and 'extension' sort fields:
+    /// runs of digits are compared by their numeric value, so that 'file9' comes
+    /// before 'file10'. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Compare embedded numbers numerically when sorting",
+        long_help
+    )]
+    pub sort_natural: bool,
+
+    /// Seed for '--sort random'. Using the same seed produces the same order.
+    /// By default, a seed derived from the current time is used. Requires '--sort'.
+    #[arg(
+        long,
+        value_name = "seed",
+        requires = "sort",
+        hide_short_help = true,
+        help = "Seed for '--sort random'",
+        long_help
+    )]
+    pub sort_seed: Option<u64>,
+
     /// When the flag is present, the program does not print anything and will
     /// return with an exit code of 0 if there is at least one match. Otherwise, the
     /// exit code will be 1.
@@ -797,6 +901,34 @@ pub enum FileType {
     Socket,
     #[value(alias = "p")]
     Pipe,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
+pub enum SortField {
+    /// full path of the entry
+    Path,
+    /// file or directory name
+    Name,
+    /// file extension
+    Extension,
+    /// size of regular files
+    Size,
+    /// modification time
+    Modified,
+    /// creation time
+    Created,
+    /// last access time
+    Accessed,
+    /// depth below the search root
+    Depth,
+    /// entry type: directory, symlink, regular file, other
+    Type,
+    /// number of characters in the name
+    NameLength,
+    /// number of characters in the path
+    PathLength,
+    /// pseudo-random order (see '--sort-seed')
+    Random,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]

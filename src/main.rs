@@ -11,6 +11,7 @@ mod fmt;
 mod hyperlink;
 mod output;
 mod regex_helper;
+mod sort;
 mod walk;
 
 use std::env;
@@ -33,6 +34,7 @@ use crate::filetypes::FileTypes;
 use crate::filter::OwnerFilter;
 use crate::filter::TimeFilter;
 use crate::regex_helper::{pattern_has_uppercase_char, pattern_matches_strings_with_leading_dot};
+use crate::sort::{Grouping, SortConfig};
 
 // We use jemalloc for performance reasons, see https://github.com/sharkdp/fd/pull/481
 // FIXME: re-enable jemalloc on macOS, see comment in Cargo.toml file for more infos
@@ -325,6 +327,7 @@ fn construct_config(mut opts: Opts, pattern_regexps: &[String]) -> Result<Config
         path_separator,
         actual_path_separator,
         max_results: opts.max_results(),
+        sort: extract_sort_config(&mut opts),
         strip_cwd_prefix: opts.strip_cwd_prefix(|| !(opts.null_separator || has_command)),
         ignore_contain: opts.ignore_contain,
     })
@@ -429,6 +432,36 @@ fn determine_ls_command(colored_output: bool) -> Result<Vec<&'static str>> {
         ));
     };
     Ok(cmd)
+}
+
+fn extract_sort_config(opts: &mut Opts) -> Option<SortConfig> {
+    if opts.sort.is_empty() {
+        return None;
+    }
+
+    let grouping = if opts.dirs_first {
+        Some(Grouping::DirsFirst)
+    } else if opts.files_first {
+        Some(Grouping::FilesFirst)
+    } else {
+        None
+    };
+    let seed = opts.sort_seed.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64)
+            ^ u64::from(std::process::id())
+    });
+
+    Some(SortConfig {
+        keys: std::mem::take(&mut opts.sort),
+        reverse: opts.reverse,
+        grouping,
+        case_sensitive: opts.sort_case_sensitive,
+        missing_last: opts.sort_missing_last,
+        natural: opts.sort_natural,
+        seed,
+    })
 }
 
 fn extract_time_constraints(opts: &Opts) -> Result<Vec<TimeFilter>> {

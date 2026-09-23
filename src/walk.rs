@@ -22,6 +22,7 @@ use crate::exec;
 use crate::exit_codes::{ExitCode, merge_exitcodes};
 use crate::filesystem;
 use crate::output;
+use crate::sort;
 
 /// The receiver thread can either be buffering results or directly streaming to the console.
 #[derive(PartialEq)]
@@ -146,11 +147,13 @@ struct ReceiverBuffer<'a, W> {
     buffer: Vec<DirEntry>,
     /// Result count.
     num_results: usize,
+    /// The search paths.
+    roots: &'a [PathBuf],
 }
 
 impl<'a, W: Write> ReceiverBuffer<'a, W> {
     /// Create a new receiver buffer.
-    fn new(state: &'a WorkerState, rx: Receiver<Batch>, stdout: W) -> Self {
+    fn new(state: &'a WorkerState, rx: Receiver<Batch>, stdout: W, roots: &'a [PathBuf]) -> Self {
         let config = &state.config;
         let quit_flag = state.quit_flag.as_ref();
         let interrupt_flag = state.interrupt_flag.as_ref();
@@ -167,6 +170,7 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
             deadline,
             buffer: Vec::with_capacity(MAX_BUFFER_LENGTH),
             num_results: 0,
+            roots,
         }
     }
 
@@ -183,11 +187,12 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
     /// Receive the next worker result.
     fn recv(&self) -> Result<Batch, RecvTimeoutError> {
         match self.mode {
-            ReceiverMode::Buffering => {
+            ReceiverMode::Buffering if self.config.sort.is_none() => {
                 // Wait at most until we should switch to streaming
                 self.rx.recv_deadline(self.deadline)
             }
-            ReceiverMode::Streaming => {
+            // Sorted output is only printed once all results have been received
+            ReceiverMode::Buffering | ReceiverMode::Streaming => {
                 // Wait however long it takes for a result
                 Ok(self.rx.recv()?)
             }
@@ -208,7 +213,9 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                             match self.mode {
                                 ReceiverMode::Buffering => {
                                     self.buffer.push(dir_entry);
-                                    if self.buffer.len() > MAX_BUFFER_LENGTH {
+                                    if self.config.sort.is_none()
+                                        && self.buffer.len() > MAX_BUFFER_LENGTH
+                                    {
                                         self.stream()?;
                                     }
                                 }
@@ -218,7 +225,8 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                             }
 
                             self.num_results += 1;
-                            if let Some(max_results) = self.config.max_results
+                            if self.config.sort.is_none()
+                                && let Some(max_results) = self.config.max_results
                                 && self.num_results >= max_results
                             {
                                 return self.stop();
@@ -281,7 +289,15 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
     /// Stop looping.
     fn stop(&mut self) -> Result<(), ExitCode> {
         if self.mode == ReceiverMode::Buffering {
-            self.buffer.sort();
+            if let Some(sort) = &self.config.sort {
+                let buffer = mem::take(&mut self.buffer);
+                self.buffer = sort::sort_entries(buffer, sort, self.config, self.roots);
+                if let Some(max_results) = self.config.max_results {
+                    self.buffer.truncate(max_results);
+                }
+            } else {
+                self.buffer.sort();
+            }
             self.stream()?;
         }
 
@@ -405,7 +421,7 @@ impl WorkerState {
 
     /// Run the receiver work, either on this thread or a pool of background
     /// threads (for --exec).
-    fn receive(&self, rx: Receiver<Batch>) -> ExitCode {
+    fn receive(&self, rx: Receiver<Batch>, paths: &[PathBuf]) -> ExitCode {
         let config = &self.config;
 
         // This will be set to `Some` if the `--exec` argument was supplied.
@@ -435,7 +451,7 @@ impl WorkerState {
             let stdout = io::stdout().lock();
             let stdout = io::BufWriter::new(stdout);
 
-            ReceiverBuffer::new(self, rx, stdout).process()
+            ReceiverBuffer::new(self, rx, stdout, paths).process()
         }
     }
 
@@ -660,7 +676,7 @@ impl WorkerState {
 
         let exit_code = thread::scope(|scope| {
             // Spawn the receiver thread(s)
-            let receiver = scope.spawn(|| self.receive(rx));
+            let receiver = scope.spawn(|| self.receive(rx, paths));
 
             // Spawn the sender threads.
             self.spawn_senders(walker, tx);
