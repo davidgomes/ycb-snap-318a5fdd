@@ -57,7 +57,9 @@ describe('Snapshots', () => {
 
     describe('createTraitRegistry', () => {
         it('should accept traits and relations', () => {
-            expect(() => createTraitRegistry(['Position', Position], ['ChildOf', ChildOf])).not.toThrow();
+            expect(() =>
+                createTraitRegistry(['Position', Position], ['ChildOf', ChildOf])
+            ).not.toThrow();
             expect(() => createTraitRegistry()).not.toThrow();
         });
 
@@ -87,7 +89,10 @@ describe('Snapshots', () => {
             const entity = world.spawn(Position({ x: 1, y: 2 }), IsPlayer);
             const snapshot = snapshotEntity(world, entity, registry);
 
-            expect(snapshot).toEqual({ id: entity, traits: { Position: { x: 1, y: 2 }, IsPlayer: true } });
+            expect(snapshot).toEqual({
+                id: entity,
+                traits: { Position: { x: 1, y: 2 }, IsPlayer: true },
+            });
             expect(snapshot).not.toHaveProperty('relations');
 
             entity.set(Position, { x: 10 });
@@ -209,7 +214,12 @@ describe('Snapshots', () => {
             const a = world.spawn();
             const b = world.spawn();
             const c = world.spawn();
-            const entity = world.spawn(ChildOf(a), ChildOf(b), Contains(a, { amount: 1 }), Targeting(a));
+            const entity = world.spawn(
+                ChildOf(a),
+                ChildOf(b),
+                Contains(a, { amount: 1 }),
+                Targeting(a)
+            );
             const snapshot = snapshotEntity(world, entity, registry);
 
             entity.remove(ChildOf(a));
@@ -412,7 +422,10 @@ describe('Snapshots', () => {
 
             expect(snapshotWorld(other, registry)).toEqual(checkpoint);
             expect(other.query(IsEnemy)).toHaveLength(0);
-            expect(other.query(ChildOf('*'))[0].targetFor(ChildOf)!.get(Position)).toEqual({ x: 1, y: 0 });
+            expect(other.query(ChildOf('*'))[0].targetFor(ChildOf)!.get(Position)).toEqual({
+                x: 1,
+                y: 0,
+            });
             other.destroy();
         });
 
@@ -480,12 +493,12 @@ describe('Snapshots', () => {
             expect(() => rollbackWorld(world, registry, {})).toThrow(Error);
 
             const duplicate = { id: 1, traits: {} };
-            expect(() => rollbackWorld(world, registry, { entities: [duplicate, duplicate] })).toThrow(
-                Error
-            );
-            expect(() => rollbackWorld(world, registry, { entities: [{ id: 0, traits: {} }] })).toThrow(
-                Error
-            );
+            expect(() =>
+                rollbackWorld(world, registry, { entities: [duplicate, duplicate] })
+            ).toThrow(Error);
+            expect(() =>
+                rollbackWorld(world, registry, { entities: [{ id: 0, traits: {} }] })
+            ).toThrow(Error);
         });
 
         it('should be available as a world method', () => {
@@ -507,7 +520,13 @@ describe('Snapshots', () => {
             };
             const b: EntitySnapshot = {
                 id: 1,
-                traits: { Position: { x: 1 }, IsPlayer: true, Health: { hp: 1 }, IsEnemy: true, Armor: {} },
+                traits: {
+                    Position: { x: 1 },
+                    IsPlayer: true,
+                    Health: { hp: 1 },
+                    IsEnemy: true,
+                    Armor: {},
+                },
             };
 
             expect(diffEntitySnapshots(a, b)).toEqual({
@@ -609,7 +628,11 @@ describe('Snapshots', () => {
                 ],
             };
 
-            expect(diffWorldSnapshots(before, after)).toEqual({ added: [], removed: [], changed: [] });
+            expect(diffWorldSnapshots(before, after)).toEqual({
+                added: [],
+                removed: [],
+                changed: [],
+            });
         });
 
         it('should detect relation changes', () => {
@@ -632,10 +655,16 @@ describe('Snapshots', () => {
         });
 
         it('should treat empty relations as no relations', () => {
-            const before: WorldSnapshot = { entities: [{ id: 1, traits: { IsPlayer: true }, relations: {} }] };
+            const before: WorldSnapshot = {
+                entities: [{ id: 1, traits: { IsPlayer: true }, relations: {} }],
+            };
             const after: WorldSnapshot = { entities: [{ id: 1, traits: { IsPlayer: true } }] };
 
-            expect(diffWorldSnapshots(before, after)).toEqual({ added: [], removed: [], changed: [] });
+            expect(diffWorldSnapshots(before, after)).toEqual({
+                added: [],
+                removed: [],
+                changed: [],
+            });
         });
 
         it('should diff live world snapshots', () => {

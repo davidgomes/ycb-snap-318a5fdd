@@ -8,7 +8,8 @@ import type {
 } from './types';
 
 export function diffEntitySnapshots(a: EntitySnapshot, b: EntitySnapshot): EntitySnapshotDiff {
-    if (a == null || b == null) throw new Error('Koota: diffEntitySnapshots requires two entity snapshots.');
+    if (a == null || b == null)
+        throw new Error('Koota: diffEntitySnapshots requires two entity snapshots.');
 
     const before = a.traits ?? {};
     const after = b.traits ?? {};
@@ -34,7 +35,9 @@ export function diffEntitySnapshots(a: EntitySnapshot, b: EntitySnapshot): Entit
 
 export function diffWorldSnapshots(before: WorldSnapshot, after: WorldSnapshot): WorldSnapshotDiff {
     if (!Array.isArray(before?.entities) || !Array.isArray(after?.entities)) {
-        throw new Error('Koota: diffWorldSnapshots requires two world snapshots with an entities array.');
+        throw new Error(
+            'Koota: diffWorldSnapshots requires two world snapshots with an entities array.'
+        );
     }
 
     const beforeById = new Map(before.entities.map((snapshot) => [snapshot.id, snapshot]));

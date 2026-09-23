@@ -92,6 +92,10 @@ Number.prototype.snapshot = function (this: Entity, registry: TraitRegistry) {
 };
 
 // @ts-expect-error
-Number.prototype.rollback = function (this: Entity, registry: TraitRegistry, snapshot: EntitySnapshot) {
+Number.prototype.rollback = function (
+    this: Entity,
+    registry: TraitRegistry,
+    snapshot: EntitySnapshot
+) {
     return rollbackEntity(getEntityWorld(this), this, registry, snapshot);
 };

@@ -46,7 +46,11 @@ function getRegistry(registry: TraitRegistry) {
     return ctx;
 }
 
-export function snapshotEntity(world: World, entity: Entity, registry: TraitRegistry): EntitySnapshot {
+export function snapshotEntity(
+    world: World,
+    entity: Entity,
+    registry: TraitRegistry
+): EntitySnapshot {
     if (!world.has(entity)) throw new Error('Koota: Cannot snapshot an entity that does not exist.');
 
     const { keys } = getRegistry(registry);
@@ -134,7 +138,11 @@ export function rollbackEntity(
     restoreOrderedTraits(world, entity, resolved);
 }
 
-export function rollbackWorld(world: World, registry: TraitRegistry, checkpoint: WorldSnapshot): void {
+export function rollbackWorld(
+    world: World,
+    registry: TraitRegistry,
+    checkpoint: WorldSnapshot
+): void {
     if (!Array.isArray(checkpoint?.entities)) {
         throw new Error('Koota: A world checkpoint must have an entities array.');
     }
@@ -164,7 +172,9 @@ export function rollbackWorld(world: World, registry: TraitRegistry, checkpoint:
         for (const targets of relations.values()) {
             for (const { targetId } of targets) {
                 if (!ids.has(targetId)) {
-                    throw new Error(`Koota: Relation target ${targetId} does not exist in checkpoint.`);
+                    throw new Error(
+                        `Koota: Relation target ${targetId} does not exist in checkpoint.`
+                    );
                 }
             }
         }
@@ -193,7 +203,8 @@ function resolveSnapshot(registry: TraitRegistry, snapshot: EntitySnapshot): Res
     const traits = new Map<Trait, object | true>();
     for (const key of Object.keys(snapshot.traits)) {
         const trait = entries.get(key);
-        if (!trait || isRelation(trait)) throw new Error(`Koota: Unknown trait key "${key}" in snapshot.`);
+        if (!trait || isRelation(trait))
+            throw new Error(`Koota: Unknown trait key "${key}" in snapshot.`);
         traits.set(trait, snapshot.traits[key]);
     }
 
@@ -261,7 +272,10 @@ function applySnapshot(world: World, entity: Entity, snapshot: ResolvedSnapshot)
             if (!hasRelationToTarget(world, relation, entity, target)) {
                 const params = hasData ? (deepClone(data) as Record<string, unknown>) : undefined;
                 addTrait(world, entity, relation(target, params));
-            } else if (hasData && !shallowEqual(getRelationData(world, entity, relation, target), data)) {
+            } else if (
+                hasData &&
+                !shallowEqual(getRelationData(world, entity, relation, target), data)
+            ) {
                 setTrait(world, entity, relation(target), deepClone(data));
             }
         }
@@ -277,7 +291,9 @@ function restoreOrderedTraits(world: World, entity: Entity, snapshot: ResolvedSn
 
         // The list must contain exactly the entities related to this one, so only
         // the snapshot's order is applied and unknown members are kept at the end.
-        const members = new Set(getEntitiesWithRelationTo(world, getOrderedTraitRelation(trait), entity));
+        const members = new Set(
+            getEntitiesWithRelationTo(world, getOrderedTraitRelation(trait), entity)
+        );
         const order = new Set<Entity>();
         for (const id of value) {
             const member = fromSnapshotId(world, id);
