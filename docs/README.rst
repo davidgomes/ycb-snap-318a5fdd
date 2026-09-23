@@ -517,6 +517,12 @@ Here is an overview of all supported configurations (for now):
             generate_reproducible:  # [bool] -> set this to true to generate reproducible results
             seed:   # [int] -> the seed number is optional. A seed will be set up for you if you didn't provide any
 
+        features:   # raw feature selection, persisted to model_results/feature_schema.joblib and applied on evaluate/predict
+            include:    # [str, list of str] -> raw columns to use as features, in this order (default: all non-target columns)
+            exclude:    # [str, list of str] -> raw columns to remove from the features
+            drop_constant: true     # [bool] -> drop columns that hold a single value in the training data
+            drop_duplicate: true    # [bool] -> keep only the first of identical columns; later ones are recorded as aliases
+
         split:  # split options
             test_size: 0.2  #[float] -> 0.2 means 20% for the test data, so 80% are automatically for training
             shuffle: true   # [bool] -> whether to shuffle the data before/while splitting
