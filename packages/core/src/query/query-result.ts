@@ -1,3 +1,6 @@
+import { batchAspectChanges } from '../aspect/utils/change-batch';
+import { isAspect } from '../aspect/utils/is-aspect';
+import type { Aspect } from '../aspect/types';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -12,6 +15,7 @@ import { isModifier } from './modifier';
 import { setChanged } from './modifiers/changed';
 import type {
     InstancesFromParameters,
+    ModifierMember,
     QueryInstance,
     QueryParameter,
     QueryResult,
@@ -27,14 +31,18 @@ export function createQueryResult<T extends QueryParameter[]>(
 ): QueryResult<T> {
     const traits: Trait[] = [];
     const stores: Store<any>[] = [];
+    const layout: QueryLayout = { slots: [], hasAspects: false };
 
-    getQueryStores(params, traits, stores, world);
+    getQueryStores(params, traits, stores, world, layout);
 
     const results = Object.assign(entities, {
         readEach(
             callback: (state: InstancesFromParameters<T>, entity: Entity, index: number) => void
         ) {
             const state = Array.from({ length: traits.length }) as InstancesFromParameters<T>;
+            const output = layout.hasAspects
+                ? (Array.from({ length: layout.slots.length }) as InstancesFromParameters<T>)
+                : state;
 
             for (let i = 0; i < entities.length; i++) {
                 const entity = entities[i];
@@ -42,8 +50,9 @@ export function createQueryResult<T extends QueryParameter[]>(
 
                 // Create snapshots without atomic tracking
                 createSnapshots(eid, traits, stores, state);
+                if (layout.hasAspects) composeOutput(layout, state, output);
 
-                callback(state, entity, i);
+                callback(output, entity, i);
             }
 
             return results;
@@ -54,6 +63,7 @@ export function createQueryResult<T extends QueryParameter[]>(
             options: QueryResultOptions = { changeDetection: 'auto' }
         ) {
             const state = Array.from({ length: traits.length });
+            const output = layout.hasAspects ? Array.from({ length: layout.slots.length }) : state;
 
             // Inline all three permutations of updateEach for performance.
             if (options.changeDetection === 'auto') {
@@ -69,7 +79,9 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const eid = getEntityId(entity);
 
                     createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    if (layout.hasAspects) composeOutput(layout, state, output);
+                    callback(output as unknown as InstancesFromParameters<T>, entity, i);
+                    if (layout.hasAspects) distributeOutput(layout, output, state);
 
                     // Skip if the entity has been destroyed.
                     if (!world.has(entity)) continue;
@@ -107,10 +119,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                 }
 
                 // Trigger change events for each entity that was modified.
-                for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
-                }
+                triggerChanged(world, changedPairs);
             } else if (options.changeDetection === 'always') {
                 const changedPairs: [Entity, Trait][] = [];
                 const atomicSnapshots: any[] = [];
@@ -120,7 +129,9 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const eid = getEntityId(entity);
 
                     createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    if (layout.hasAspects) composeOutput(layout, state, output);
+                    callback(output as unknown as InstancesFromParameters<T>, entity, i);
+                    if (layout.hasAspects) distributeOutput(layout, output, state);
 
                     // Skip if the entity has been destroyed.
                     if (!world.has(entity)) continue;
@@ -147,16 +158,15 @@ export function createQueryResult<T extends QueryParameter[]>(
                 }
 
                 // Trigger change events for each entity that was modified.
-                for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
-                }
+                triggerChanged(world, changedPairs);
             } else if (options.changeDetection === 'never') {
                 for (let i = 0; i < entities.length; i++) {
                     const entity = entities[i];
                     const eid = getEntityId(entity);
                     createSnapshots(eid, traits, stores, state);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    if (layout.hasAspects) composeOutput(layout, state, output);
+                    callback(output as unknown as InstancesFromParameters<T>, entity, i);
+                    if (layout.hasAspects) distributeOutput(layout, output, state);
 
                     // Skip if the entity has been destroyed.
                     if (!world.has(entity)) continue;
@@ -181,7 +191,9 @@ export function createQueryResult<T extends QueryParameter[]>(
         select<U extends QueryParameter[]>(...params: U): QueryResult<U> {
             traits.length = 0;
             stores.length = 0;
-            getQueryStores(params, traits, stores, world);
+            layout.slots.length = 0;
+            layout.hasAspects = false;
+            getQueryStores(params, traits, stores, world, layout);
             return results as unknown as QueryResult<U>;
         },
 
@@ -194,6 +206,63 @@ export function createQueryResult<T extends QueryParameter[]>(
     });
 
     return results;
+}
+
+/**
+ * Maps each slot of the state passed to query callbacks to the flat trait state.
+ * A number is the index of a trait, an aspect slot merges several traits into one object.
+ */
+type AspectSlot = { aspect: Aspect<any>; indices: number[]; fields: string[][] };
+type QueryLayout = { slots: (number | AspectSlot)[]; hasAspects: boolean };
+
+function triggerChanged(world: World, changedPairs: [Entity, Trait][]) {
+    if (changedPairs.length === 0) return;
+    // Batch so aspect change subscribers fire once per entity.
+    batchAspectChanges(() => {
+        for (let i = 0; i < changedPairs.length; i++) {
+            const [entity, trait] = changedPairs[i];
+            setChanged(world, entity, trait);
+        }
+    });
+}
+
+/* @inline */ function composeOutput(layout: QueryLayout, state: any[], output: any[]) {
+    const slots = layout.slots;
+    for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+        if (typeof slot === 'number') {
+            output[i] = state[slot];
+            continue;
+        }
+
+        const merged: Record<string, any> = {};
+        const { indices, fields } = slot;
+        for (let j = 0; j < indices.length; j++) {
+            const record = state[indices[j]];
+            const keys = fields[j];
+            for (let k = 0; k < keys.length; k++) merged[keys[k]] = record[keys[k]];
+        }
+        output[i] = merged;
+    }
+}
+
+/* @inline */ function distributeOutput(layout: QueryLayout, output: any[], state: any[]) {
+    const slots = layout.slots;
+    for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+        if (typeof slot === 'number') {
+            state[slot] = output[i];
+            continue;
+        }
+
+        const merged = output[i];
+        const { indices, fields } = slot;
+        for (let j = 0; j < indices.length; j++) {
+            const record = state[indices[j]];
+            const keys = fields[j];
+            for (let k = 0; k < keys.length; k++) record[keys[k]] = merged[keys[k]];
+        }
+    }
 }
 
 /* @inline */ function getTrackedTraits(
@@ -247,20 +316,49 @@ export function createQueryResult<T extends QueryParameter[]>(
     params: T,
     traits: Trait[],
     stores: Store<any>[],
-    world: World
+    world: World,
+    layout?: QueryLayout
 ) {
+    const pushTrait = (trait: Trait) => {
+        if (trait[$internal].type === 'tag') return; // Skip tags
+        layout?.slots.push(traits.length);
+        traits.push(trait);
+        stores.push(getStore(world, trait));
+    };
+
+    const pushAspect = (aspect: Aspect<any>) => {
+        const { traits: aspectTraits, fields, dataIndices } = aspect[$internal];
+        if (dataIndices.length === 0) return; // Skip aspects made of tags only
+
+        const slot: AspectSlot = { aspect, indices: [], fields: [] };
+        for (const index of dataIndices) {
+            const trait = aspectTraits[index];
+            slot.indices.push(traits.length);
+            slot.fields.push(fields[index]);
+            traits.push(trait);
+            stores.push(getStore(world, trait));
+        }
+
+        if (layout) {
+            layout.slots.push(slot);
+            layout.hasAspects = true;
+        }
+    };
+
     for (let i = 0; i < params.length; i++) {
         const param = params[i];
+
+        if (isAspect(param)) {
+            pushAspect(param);
+            continue;
+        }
 
         // Handle relation pairs
         if (isRelationPair(param)) {
             const pairCtx = param[$internal];
             const relation = pairCtx.relation as Relation<Trait>;
             const baseTrait = relation[$internal].trait;
-            if (baseTrait[$internal].type !== 'tag') {
-                traits.push(baseTrait);
-                stores.push(getStore(world, baseTrait));
-            }
+            pushTrait(baseTrait);
             continue;
         }
 
@@ -268,17 +366,13 @@ export function createQueryResult<T extends QueryParameter[]>(
             // Skip not modifier.
             if (param.type === 'not') continue;
 
-            const modifierTraits = param.traits;
-            for (const trait of modifierTraits) {
-                if (trait[$internal].type === 'tag') continue; // Skip tags
-                traits.push(trait);
-                stores.push(getStore(world, trait));
+            const members: readonly ModifierMember[] = param.members ?? param.traits;
+            for (const member of members) {
+                if (isAspect(member)) pushAspect(member);
+                else pushTrait(member);
             }
         } else {
-            const trait = param as Trait;
-            if (trait[$internal].type === 'tag') continue; // Skip tags
-            traits.push(trait);
-            stores.push(getStore(world, trait));
+            pushTrait(param as Trait);
         }
     }
 }

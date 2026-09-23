@@ -3,6 +3,9 @@
 // and the convenience of using methods. Type guards are used to ensure
 // that the methods are only called on entities.
 
+import { getAspect, hasAspect, markAspectChanged, setAspect } from '../aspect/aspect';
+import type { Aspect } from '../aspect/types';
+import { isAspect } from '../aspect/utils/is-aspect';
 import { $internal } from '../common';
 import { setChanged } from '../query/modifiers/changed';
 import { getFirstRelationTarget, getRelationTargets, hasRelationPair } from '../relation/relation';
@@ -21,14 +24,15 @@ Number.prototype.add = function (this: Entity, ...traits: ConfigurableTrait[]) {
 };
 
 // @ts-expect-error
-Number.prototype.remove = function (this: Entity, ...traits: (Trait | RelationPair)[]) {
+Number.prototype.remove = function (this: Entity, ...traits: (Trait | RelationPair | Aspect)[]) {
     return removeTrait(getEntityWorld(this), this, ...traits);
 };
 
 // @ts-expect-error
-Number.prototype.has = function (this: Entity, trait: Trait | RelationPair) {
+Number.prototype.has = function (this: Entity, trait: Trait | RelationPair | Aspect) {
     const world = getEntityWorld(this);
     if (isRelationPair(trait)) return hasRelationPair(world, this, trait);
+    if (isAspect(trait)) return hasAspect(world, this, trait);
     return /* @inline @pure */ hasTrait(world, this, trait);
 };
 
@@ -38,22 +42,25 @@ Number.prototype.destroy = function (this: Entity) {
 };
 
 // @ts-expect-error
-Number.prototype.changed = function (this: Entity, trait: Trait) {
+Number.prototype.changed = function (this: Entity, trait: Trait | Aspect) {
+    if (isAspect(trait)) return markAspectChanged(getEntityWorld(this), this, trait);
     return setChanged(getEntityWorld(this), this, trait);
 };
 
 // @ts-expect-error
-Number.prototype.get = function (this: Entity, trait: Trait | RelationPair) {
+Number.prototype.get = function (this: Entity, trait: Trait | RelationPair | Aspect) {
+    if (isAspect(trait)) return getAspect(getEntityWorld(this), this, trait);
     return getTrait(getEntityWorld(this), this, trait);
 };
 
 // @ts-expect-error
 Number.prototype.set = function (
     this: Entity,
-    trait: Trait | RelationPair,
+    trait: Trait | RelationPair | Aspect,
     value: any,
     triggerChanged = true
 ) {
+    if (isAspect(trait)) return setAspect(getEntityWorld(this), this, trait, value, triggerChanged);
     setTrait(getEntityWorld(this), this, trait, value, triggerChanged);
 };
 

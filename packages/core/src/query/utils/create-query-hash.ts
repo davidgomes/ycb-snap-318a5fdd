@@ -1,3 +1,4 @@
+import { isAspect } from '../../aspect/utils/is-aspect';
 import { $internal } from '../../common';
 import { isRelationPair } from '../../relation/utils/is-relation';
 import type { Relation } from '../../relation/types';
@@ -34,6 +35,14 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
                 const traitId = traitIds[i];
                 sortedIDs[cursor++] = modifierId * 100000 + traitId;
             }
+
+            // Aspects are encoded as negative numbers so they never collide with traits.
+            const aspects = param.aspects;
+            for (let i = 0; aspects && i < aspects.length; i++) {
+                sortedIDs[cursor++] = -(modifierId * 100000 + aspects[i].id + 1);
+            }
+        } else if (isAspect(param)) {
+            sortedIDs[cursor++] = -(param.id + 1);
         } else {
             const traitId = (param as Trait).id;
             sortedIDs[cursor++] = traitId;

@@ -3,6 +3,7 @@ import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import type { World } from '../../world';
 import type { QueryInstance } from '../types';
+import { checkAspectConstraints } from './check-aspect';
 
 /**
  * Check if an entity matches a non-tracking query.
@@ -26,10 +27,18 @@ export function checkQuery(world: World, query: QueryInstance, entity: Entity): 
         const or = bitmask.or;
         const entityMask = ctx.entityMasks[generationId]?.[eid] || 0;
 
-        if (!forbidden && !required && !or) return false;
+        if (!forbidden && !required && !or) {
+            // Generations can hold only aspect constraint traits, which are checked below.
+            if (query.aspectConstraints.length > 0) continue;
+            return false;
+        }
         if (forbidden && (entityMask & forbidden) !== 0) return false;
         if (required && (entityMask & required) !== required) return false;
         if (or !== 0 && (entityMask & or) === 0) return false;
+    }
+
+    if (query.aspectConstraints.length > 0) {
+        return checkAspectConstraints(query, ctx.entityMasks, eid);
     }
 
     return true;

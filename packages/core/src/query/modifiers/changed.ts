@@ -1,3 +1,4 @@
+import type { Aspect } from '../../aspect/types';
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
@@ -20,7 +21,7 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends (TraitOrRelation | Aspect<any>)[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
         const traits = inputs.map((input) =>

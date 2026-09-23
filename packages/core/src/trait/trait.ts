@@ -1,3 +1,5 @@
+import type { Aspect } from '../aspect/types';
+import { isAspect } from '../aspect/utils/is-aspect';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -149,6 +151,11 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
             trait = config as Trait;
         }
 
+        if (isAspect(trait)) {
+            addAspect(world, entity, trait, params);
+            continue;
+        }
+
         // Add the trait to the entity
         const data = addTraitToEntity(world, entity, trait);
         if (!data) continue; // Already had the trait
@@ -170,6 +177,46 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
 
         // Call add subscriptions after values are set
         for (const sub of data.addSubscriptions) sub(entity);
+    }
+}
+
+/**
+ * Add the constituents of an aspect the entity does not have yet,
+ * distributing initial values to the constituent that owns each field.
+ */
+function addAspect(
+    world: World,
+    entity: Entity,
+    aspect: Aspect,
+    params: Record<string, any> | undefined
+) {
+    const { traits, fields } = aspect[$internal];
+
+    for (let i = 0; i < traits.length; i++) {
+        const trait = traits[i];
+        if (hasTrait(world, entity, trait)) continue;
+
+        const keys = fields[i];
+        let partial: Record<string, any> | undefined;
+
+        if (params) {
+            for (let k = 0; k < keys.length; k++) {
+                const key = keys[k];
+                if (!(key in params)) continue;
+                partial ??= {};
+                partial[key] = params[key];
+            }
+        }
+
+        if (!partial) {
+            addTrait(world, entity, trait);
+        } else if (trait[$internal].type === 'aos') {
+            // AoS params replace the record, so merge the fields onto a fresh default record.
+            const record = Object.assign((trait.schema as () => object)(), partial);
+            addTrait(world, entity, [trait, record] as ConfigurableTrait);
+        } else {
+            addTrait(world, entity, [trait, partial] as ConfigurableTrait);
+        }
     }
 }
 
@@ -224,12 +271,21 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
     for (const sub of instance.addSubscriptions) sub(entity, target);
 }
 
-export function removeTrait(world: World, entity: Entity, ...traits: (Trait | RelationPair)[]) {
+export function removeTrait(
+    world: World,
+    entity: Entity,
+    ...traits: (Trait | RelationPair | Aspect)[]
+) {
     for (let i = 0; i < traits.length; i++) {
         const trait = traits[i];
 
         if (isRelationPair(trait)) {
             removeRelationPair(world, entity, trait);
+            continue;
+        }
+
+        if (isAspect(trait)) {
+            removeTrait(world, entity, ...trait[$internal].traits);
             continue;
         }
 

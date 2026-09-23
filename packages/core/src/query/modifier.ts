@@ -1,21 +1,32 @@
+import { isAspect } from '../aspect/utils/is-aspect';
+import type { Aspect } from '../aspect/types';
 import { Brand } from '../common';
 import { Trait } from '../trait/types';
-import { EventType, Modifier, OrModifier, QueryParameter } from './types';
+import { EventType, Modifier, ModifierMember, OrModifier, QueryParameter } from './types';
 
 export const $modifier = Symbol('modifier');
 
-export function createModifier<TTrait extends Trait[] = Trait[], TType extends string = string>(
-    type: TType,
-    id: number,
-    traits: TTrait
-): Modifier<TTrait, TType> {
+export function createModifier<
+    TTrait extends ModifierMember[] = Trait[],
+    TType extends string = string,
+>(type: TType, id: number, members: TTrait): Modifier<TTrait, TType> {
+    const traits: Trait[] = [];
+    const aspects: Aspect<any>[] = [];
+
+    for (const member of members) {
+        if (isAspect(member)) aspects.push(member);
+        else traits.push(member);
+    }
+
     return {
         [$modifier]: true,
         type,
         id,
         traits,
         traitIds: traits.map((trait) => trait.id),
-    } as const;
+        aspects,
+        members,
+    } as unknown as Modifier<TTrait, TType>;
 }
 
 export /* @inline @pure */ function isModifier(param: QueryParameter): param is Modifier {

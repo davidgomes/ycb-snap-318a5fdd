@@ -1,3 +1,4 @@
+import type { Aspect } from '../../aspect/types';
 import { $internal } from '../../common';
 import { isRelation } from '../../relation/utils/is-relation';
 import type { ExtractTraits, TraitOrRelation } from '../../trait/types';
@@ -14,7 +15,7 @@ export function createAdded() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends (TraitOrRelation | Aspect<any>)[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `added-${number}`> => {
         const traits = inputs.map((input) =>

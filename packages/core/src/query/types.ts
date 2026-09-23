@@ -1,3 +1,4 @@
+import type { Aspect, AspectRecord, IsTagAspect } from '../aspect/types';
 import type { Entity } from '../entity/types';
 import type { RelationPair } from '../relation/types';
 import { AoSFactory } from '../storage';
@@ -14,8 +15,8 @@ import type { World } from '../world';
 import { $modifier } from './modifier';
 import { $parameters, $queryRef } from './symbols';
 
-export type QueryModifier = (...components: Trait[]) => Modifier;
-export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier>;
+export type QueryModifier = (...components: (Trait | Aspect<any>)[]) => Modifier<any>;
+export type QueryParameter = Trait | RelationPair | Aspect<any> | ReturnType<QueryModifier>;
 export type QuerySubscriber = (entity: Entity) => void;
 export type QueryUnsubscriber = () => void;
 
@@ -42,7 +43,9 @@ type UnwrapModifierData<T> = T extends Modifier<infer C> ? C : never;
 
 export type StoresFromParameters<T extends QueryParameter[]> = T extends [infer First, ...infer Rest]
     ? [
-          ...(First extends Trait
+          ...(First extends Aspect<infer C>
+              ? StoresFromParameters<C>
+              : First extends Trait
               ? [ExtractStore<First>]
               : First extends Modifier
                 ? StoresFromParameters<UnwrapModifierData<First>>
@@ -56,7 +59,11 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
     ...infer Rest,
 ]
     ? [
-          ...(First extends Trait
+          ...(First extends Aspect<any>
+              ? IsTagAspect<First> extends true
+                  ? []
+                  : [AspectRecord<First>]
+              : First extends Trait
               ? IsTag<First> extends false
                   ? ExtractSchema<First> extends AoSFactory
                       ? [ReturnType<ExtractSchema<First>>]
@@ -72,7 +79,7 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
     : [];
 
 export type IsNotModifier<T> =
-    T extends Modifier<Trait[], infer TType> ? (TType extends 'not' ? true : false) : false;
+    T extends Modifier<any, infer TType> ? (TType extends 'not' ? true : false) : false;
 
 export type QueryHash = string;
 
@@ -87,28 +94,35 @@ export type Query<T extends QueryParameter[] = QueryParameter[]> = {
     readonly [$parameters]: T;
 };
 
-export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = string> = {
+export type ModifierMember = Trait | Aspect<any>;
+
+export type Modifier<TTrait extends ModifierMember[] = Trait[], TType extends string = string> = {
     [$modifier]: true;
     type: TType;
     id: number;
-    traits: TTrait;
+    /** Plain traits passed to the modifier (aspects are kept in `aspects`) */
+    traits: TTrait extends Trait[] ? TTrait : Trait[];
     traitIds: number[];
+    /** Aspects passed to the modifier */
+    aspects: Aspect<any>[];
+    /** All traits and aspects in the order they were passed */
+    members: TTrait;
 };
 
 /** Parameter types that can be passed to Or modifier */
-export type OrParameter = Trait | Modifier;
+export type OrParameter = Trait | Aspect<any> | Modifier<any>;
 
 /** Or modifier that can contain both traits and nested modifiers */
 export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
     ExtractTraitsFromOrParams<T>,
     'or'
 > & {
-    modifiers: Modifier[];
+    modifiers: Modifier<any>[];
 };
 
-/** Extract traits from Or parameters (filters out modifiers) */
+/** Extract traits and aspects from Or parameters (filters out modifiers) */
 type ExtractTraitsFromOrParams<T extends OrParameter[]> = T extends [infer First, ...infer Rest]
-    ? First extends Trait
+    ? First extends ModifierMember
         ? Rest extends OrParameter[]
             ? [First, ...ExtractTraitsFromOrParams<Rest>]
             : [First]
@@ -122,8 +136,14 @@ type ExtractTraitsFromOrParams<T extends OrParameter[]> = T extends [infer First
  * Replaces the old separate tracking arrays and OrTrackingGroup.
  */
 export type TrackingGroup = {
-    /** Whether all traits must match (and) or any trait can match (or) */
-    logic: 'and' | 'or';
+    /**
+     * and: all traits must match.
+     * or: pooled with every other `or` group, at least one trait across the pool must match.
+     * any: at least one trait of this group must match.
+     */
+    logic: 'and' | 'or' | 'any';
+    /** When true, the bitmasks describe an aspect and events only count on complete transitions */
+    isAspect: boolean;
     /** The type of tracking event */
     type: 'add' | 'remove' | 'change';
     /** Tracking modifier ID for snapshot/mask lookups */
@@ -155,6 +175,8 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     }[];
     /** Unified tracking groups with explicit AND/OR logic */
     trackingGroups: TrackingGroup[];
+    /** Static constraints that need aspect completeness checks (Not/Or with aspects) */
+    aspectConstraints: AspectConstraint[];
     generations: number[];
     entities: SparseSet;
     isTracking: boolean;
@@ -180,3 +202,14 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
 };
 
 export type EventType = 'add' | 'remove' | 'change';
+
+/**
+ * Bitmasks indexed by generationId.
+ * - not: fails when any aspect is complete.
+ * - or: passes when any trait is present or any aspect is complete.
+ */
+export type AspectConstraint = {
+    type: 'not' | 'or';
+    traitBitmasks: number[];
+    aspectBitmasks: number[][];
+};

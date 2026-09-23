@@ -2,7 +2,8 @@ import { $internal } from '../../common';
 import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
-import { EventType, QueryInstance } from '../types';
+import { EventType, QueryInstance, TrackingGroup } from '../types';
+import { checkAspectConstraints, isAspectComplete } from './check-aspect';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -60,6 +61,10 @@ export function checkQueryTracking(
         if (or !== 0 && (entityMask & or) === 0) return false;
     }
 
+    if (query.aspectConstraints.length > 0 && !checkAspectConstraints(query, entityMasks, eid)) {
+        return false;
+    }
+
     // 2. Process tracking groups - update trackers and check cross-event invalidation
     // Also track OR group state to avoid second loop when possible
     let hasOrGroup = false;
@@ -77,10 +82,13 @@ export function checkQueryTracking(
             // Cross-event invalidation:
             // - Remove event invalidates Added/Changed tracking
             // - Add event invalidates Removed/Changed tracking
-            if (eventType === 'remove') {
-                if (groupType === 'add' || groupType === 'change') return false;
-            } else if (eventType === 'add') {
-                if (groupType === 'remove' || groupType === 'change') return false;
+            if (
+                (eventType === 'remove' && (groupType === 'add' || groupType === 'change')) ||
+                (eventType === 'add' && (groupType === 'remove' || groupType === 'change'))
+            ) {
+                // Aspect groups track transitions, so an invalidated transition must not linger.
+                if (group.isAspect) clearGroupTracker(group, eid);
+                return false;
             }
 
             // Update tracker if event type matches group type
@@ -92,14 +100,24 @@ export function checkQueryTracking(
                     if (!(entityMask & eventBitflag)) return false;
                 }
 
-                // PERF: Cache tracker array reference before mutation
-                const groupTrackers = group.trackers;
-                let trackerArr = groupTrackers[eventGenerationId];
-                if (!trackerArr) {
-                    trackerArr = [];
-                    groupTrackers[eventGenerationId] = trackerArr;
+                // Aspect groups only count events that complete (add), break (remove)
+                // or happen while complete (change).
+                const counts = !group.isAspect
+                    ? true
+                    : eventType === 'remove'
+                      ? wasAspectComplete(entityMasks, eid, groupBitmasks, eventGenerationId, eventBitflag)
+                      : isAspectComplete(entityMasks, eid, groupBitmasks);
+
+                if (counts) {
+                    // PERF: Cache tracker array reference before mutation
+                    const groupTrackers = group.trackers;
+                    let trackerArr = groupTrackers[eventGenerationId];
+                    if (!trackerArr) {
+                        trackerArr = [];
+                        groupTrackers[eventGenerationId] = trackerArr;
+                    }
+                    trackerArr[eid] = (trackerArr[eid] | 0) | eventBitflag;
                 }
-                trackerArr[eid] = (trackerArr[eid] | 0) | eventBitflag;
             }
         }
 
@@ -121,6 +139,22 @@ export function checkQueryTracking(
                     }
                 }
             }
+        } else if (groupLogic === 'any') {
+            // ANY group: at least one trait of this group must be tracked
+            const groupTrackers = group.trackers;
+            const bitmaskLen = groupBitmasks.length;
+            let anyMatched = false;
+            for (let genId = 0; genId < bitmaskLen; genId++) {
+                const mask = groupBitmasks[genId];
+                if (!mask) continue;
+                const trackerArr = groupTrackers[genId];
+                const tracker = trackerArr ? (trackerArr[eid] | 0) : 0;
+                if (tracker & mask) {
+                    anyMatched = true;
+                    break;
+                }
+            }
+            if (!anyMatched) return false;
         } else {
             // AND group: all traits must be tracked
             const groupTrackers = group.trackers;
@@ -142,5 +176,32 @@ export function checkQueryTracking(
         return false;
     }
 
+    return true;
+}
+
+function clearGroupTracker(group: TrackingGroup, eid: number) {
+    const trackers = group.trackers;
+    for (let genId = 0; genId < trackers.length; genId++) {
+        const trackerArr = trackers[genId];
+        if (trackerArr) trackerArr[eid] = 0;
+    }
+}
+
+/** Check if the entity had the whole aspect right before the removed trait was taken away. */
+function wasAspectComplete(
+    entityMasks: number[][],
+    eid: number,
+    bitmasks: (number | undefined)[],
+    removedGenerationId: number,
+    removedBitflag: number
+): boolean {
+    for (let genId = 0; genId < bitmasks.length; genId++) {
+        const mask = bitmasks[genId];
+        if (!mask) continue;
+        const genMasks = entityMasks[genId];
+        let entityMask = genMasks ? genMasks[eid] | 0 : 0;
+        if (genId === removedGenerationId) entityMask |= removedBitflag;
+        if ((entityMask & mask) !== mask) return false;
+    }
     return true;
 }
