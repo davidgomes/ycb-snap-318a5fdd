@@ -336,6 +336,11 @@ class Compositor(object):
         shape *= shape_mask
         alpha *= shape_mask * opacity_mask * opacity_const
 
+        blend_if = self._get_blend_if(layer, color, knockout)
+        if blend_if is not None:
+            shape = shape * blend_if
+            alpha = alpha * blend_if
+
         # TODO: Tag.BLEND_INTERIOR_ELEMENTS controls how inner effects apply.
 
         # TODO: Apply before effects
@@ -549,6 +554,16 @@ class Compositor(object):
         assert shape is not None
         assert opacity is not None
         return shape, opacity
+
+    def _get_blend_if(
+        self, layer: Layer, color: np.ndarray, knockout: bool
+    ) -> np.ndarray | None:
+        """Get the blend-if visibility weight, or None when ranges are default."""
+        blend_ranges = layer.blend_ranges
+        if blend_ranges.is_default:
+            return None
+        backdrop = self._color_0 if knockout else self._color
+        return blend_ranges.compute_visibility(color, backdrop)
 
     def _get_const(self, layer: Layer) -> tuple[float, float]:
         """Get constant attributes."""
