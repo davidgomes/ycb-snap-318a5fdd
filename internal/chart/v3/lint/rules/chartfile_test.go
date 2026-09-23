@@ -29,9 +29,10 @@ import (
 )
 
 const (
-	badChartNameDir    = "testdata/badchartname"
-	badChartDir        = "testdata/badchartfile"
-	anotherBadChartDir = "testdata/anotherbadchartfile"
+	badChartNameDir       = "testdata/badchartname"
+	badChartDir           = "testdata/badchartfile"
+	anotherBadChartDir    = "testdata/anotherbadchartfile"
+	badMergeStrategiesDir = "testdata/badmergestrategies"
 )
 
 var (
@@ -273,6 +274,76 @@ func TestV3Chartfile(t *testing.T) {
 
 		if !strings.Contains(msgs[2].Err.Error(), "appVersion should be of type string") {
 			t.Errorf("Unexpected message 2: %s", msgs[2].Err)
+		}
+	})
+}
+
+func TestChartfileMergeStrategyAnnotationWarnings(t *testing.T) {
+	t.Run("invalid merge strategy annotations", func(t *testing.T) {
+		linter := support.Linter{ChartDir: badMergeStrategiesDir}
+		Chartfile(&linter)
+
+		expected := []string{
+			`merge key for path "orphan" has no matching "helm.sh/merge-strategy/orphan" annotation`,
+			`merge strategy path "config" resolves to a non-array value`,
+			`merge strategy "merge" for path "containers" requires a merge key`,
+			`merge strategy path "missing" not found in chart default values`,
+			`merge strategy "prepend" for path "ports" is unsupported`,
+		}
+		if len(linter.Messages) != len(expected) {
+			t.Fatalf("Expected %d messages, got %d: %v", len(expected), len(linter.Messages), linter.Messages)
+		}
+		for i, msg := range linter.Messages {
+			if msg.Severity != support.WarningSev {
+				t.Errorf("Expected message %d to be a warning, got severity %d", i, msg.Severity)
+			}
+			if !strings.Contains(msg.Err.Error(), expected[i]) {
+				t.Errorf("Unexpected message %d: %s", i, msg.Err)
+			}
+		}
+	})
+
+	writeChart := func(t *testing.T, chartYaml, valuesYaml string) string {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), []byte(chartYaml), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if valuesYaml != "" {
+			if err := os.WriteFile(filepath.Join(dir, "values.yaml"), []byte(valuesYaml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+	chartYaml := `apiVersion: v3
+name: mergestrategies
+version: 0.1.0
+icon: http://riverrun.io
+annotations:
+  helm.sh/merge-strategy/env: append
+  helm.sh/merge-strategy/spec.containers: merge
+  helm.sh/merge-key/spec.containers: metadata.name
+`
+
+	t.Run("valid merge strategy annotations", func(t *testing.T) {
+		linter := support.Linter{ChartDir: writeChart(t, chartYaml, "env: []\nspec:\n  containers: []\n")}
+		Chartfile(&linter)
+		if len(linter.Messages) != 0 {
+			t.Errorf("Expected no messages, got %v", linter.Messages)
+		}
+	})
+
+	t.Run("merge strategy paths without values.yaml", func(t *testing.T) {
+		linter := support.Linter{ChartDir: writeChart(t, chartYaml, "")}
+		Chartfile(&linter)
+		if len(linter.Messages) != 2 {
+			t.Fatalf("Expected 2 messages, got %v", linter.Messages)
+		}
+		for _, msg := range linter.Messages {
+			if !strings.Contains(msg.Err.Error(), "not found") {
+				t.Errorf("Unexpected message: %s", msg.Err)
+			}
 		}
 	})
 }

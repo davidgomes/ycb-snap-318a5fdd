@@ -1,0 +1,12 @@
+apiVersion: v3
+name: badmergestrategies
+description: chart with invalid merge strategy annotations
+version: 0.1.0
+icon: http://riverrun.io
+annotations:
+  helm.sh/merge-strategy/items: append
+  helm.sh/merge-strategy/containers: merge
+  helm.sh/merge-strategy/ports: prepend
+  helm.sh/merge-strategy/missing: append
+  helm.sh/merge-strategy/config: append
+  helm.sh/merge-key/orphan: name

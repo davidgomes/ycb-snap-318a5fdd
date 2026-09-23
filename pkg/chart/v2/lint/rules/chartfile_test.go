@@ -29,9 +29,10 @@ import (
 )
 
 const (
-	badChartNameDir    = "testdata/badchartname"
-	badChartDir        = "testdata/badchartfile"
-	anotherBadChartDir = "testdata/anotherbadchartfile"
+	badChartNameDir       = "testdata/badchartname"
+	badChartDir           = "testdata/badchartfile"
+	anotherBadChartDir    = "testdata/anotherbadchartfile"
+	badMergeStrategiesDir = "testdata/badmergestrategies"
 )
 
 var (
