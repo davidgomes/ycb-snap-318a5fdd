@@ -32,6 +32,15 @@ jobs:
     -----BEGIN OPENSSH PRIVATE KEY-----
     b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAACFwAAAAdzc2gtcn...
     -----END OPENSSH PRIVATE KEY----- #required when connect via ssh, be careful with the indentation.
+  encryption: #optional, encrypts the dump with AES-256-GCM and appends .enc to the file name (after .gz).
+    enabled: true
+    # keysource is one of env, file, literal or derive (case-insensitive). Only set the fields of the chosen source.
+    keysource: env
+    keyenvvar: ONEDUMP_ENCRYPTION_KEY # env: name of the env var holding a base64 encoded 32-byte key
+    # keyfile: /etc/onedump/key       # file: path to a file holding a base64 encoded 32-byte key
+    # key: <base64 32-byte key>       # literal: base64 encoded 32-byte key inline
+    # passphrase: <passphrase>        # derive: passphrase to derive the key from
+    # salt: <base64 salt>             # derive: base64 encoded salt, at least 16 bytes
   storage:
     local: # save dump file to local dirs
       - path: /Users/jack/Desktop/dbbackup.sql
