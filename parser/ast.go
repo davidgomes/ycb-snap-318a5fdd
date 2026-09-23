@@ -24,6 +24,11 @@ type IdentList struct {
 	VarArgs bool
 	List    []*Ident
 	RParen  Pos
+
+	// Patterns holds the destructuring pattern for each parameter in List,
+	// or nil for plain identifier parameters. Patterns is nil if no
+	// parameter uses destructuring.
+	Patterns []Expr
 }
 
 // Pos returns the position of first character belonging to the node.
@@ -59,10 +64,14 @@ func (n *IdentList) NumFields() int {
 func (n *IdentList) String() string {
 	var list []string
 	for i, e := range n.List {
+		s := e.String()
+		if i < len(n.Patterns) && n.Patterns[i] != nil {
+			s = n.Patterns[i].String()
+		}
 		if n.VarArgs && i == len(n.List)-1 {
-			list = append(list, "..."+e.String())
+			list = append(list, "..."+s)
 		} else {
-			list = append(list, e.String())
+			list = append(list, s)
 		}
 	}
 	return "(" + strings.Join(list, ", ") + ")"

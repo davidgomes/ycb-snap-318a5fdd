@@ -867,6 +867,43 @@ func (v *VM) run() {
 			val := iterator.(Iterator).Value()
 			v.stack[v.sp] = val
 			v.sp++
+		case parser.OpDestructIndex:
+			v.ip++
+			flags := int(v.curInsts[v.ip])
+			key := v.stack[v.sp-1]
+			src := v.stack[v.sp-2]
+			v.sp -= 2
+			val, exists, err := destructIndex(src, key,
+				flags&parser.DestructMap != 0)
+			if err != nil {
+				v.err = err
+				return
+			}
+			v.stack[v.sp] = val
+			v.sp++
+			if flags&parser.DestructHasDefault != 0 {
+				if exists {
+					v.stack[v.sp] = TrueValue
+				} else {
+					v.stack[v.sp] = FalseValue
+				}
+				v.sp++
+			}
+		case parser.OpDestructRest:
+			v.ip += 2
+			start := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
+			elements, err := destructRest(v.stack[v.sp-1], start)
+			if err != nil {
+				v.err = err
+				return
+			}
+			var arr Object = &Array{Value: elements}
+			v.allocs--
+			if v.allocs == 0 {
+				v.err = ErrObjectAllocLimit
+				return
+			}
+			v.stack[v.sp-1] = arr
 		case parser.OpSuspend:
 			return
 		default:
@@ -908,4 +945,59 @@ func indexAssign(dst, src Object, selectors []Object) error {
 		return err
 	}
 	return nil
+}
+
+func destructIndex(
+	src, key Object,
+	isMap bool,
+) (val Object, exists bool, err error) {
+	if isMap {
+		var kv map[string]Object
+		switch src := src.(type) {
+		case *Map:
+			kv = src.Value
+		case *ImmutableMap:
+			kv = src.Value
+		default:
+			return nil, false, fmt.Errorf("cannot destructure %s as map",
+				src.TypeName())
+		}
+		val, exists = kv[key.(*String).Value]
+	} else {
+		var elements []Object
+		switch src := src.(type) {
+		case *Array:
+			elements = src.Value
+		case *ImmutableArray:
+			elements = src.Value
+		default:
+			return nil, false, fmt.Errorf("cannot destructure %s as array",
+				src.TypeName())
+		}
+		idx := key.(*Int).Value
+		if idx < int64(len(elements)) {
+			val, exists = elements[idx], true
+		}
+	}
+	if val == nil {
+		val = UndefinedValue
+	}
+	return val, exists, nil
+}
+
+func destructRest(src Object, start int) ([]Object, error) {
+	var elements []Object
+	switch src := src.(type) {
+	case *Array:
+		elements = src.Value
+	case *ImmutableArray:
+		elements = src.Value
+	default:
+		return nil, fmt.Errorf("cannot destructure %s as array",
+			src.TypeName())
+	}
+	if start >= len(elements) {
+		return []Object{}, nil
+	}
+	return append([]Object{}, elements[start:]...), nil
 }

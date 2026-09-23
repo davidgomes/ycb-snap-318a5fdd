@@ -104,6 +104,7 @@ type Parser struct {
 	trace     bool
 	indent    int
 	traceOut  io.Writer
+	covers    map[Node]bool // pattern-only syntax not yet converted
 }
 
 // NewParser creates a Parser.
@@ -144,6 +145,7 @@ func (p *Parser) ParseFile() (file *File, err error) {
 
 	stmts := p.parseStmtList()
 	p.expect(token.EOF)
+	p.reportCovers()
 	if p.errors.Len() > 0 {
 		return nil, p.errors.Err()
 	}
@@ -539,7 +541,15 @@ func (p *Parser) parseArrayLit() Expr {
 
 	var elements []Expr
 	for p.token != token.RBrack && p.token != token.EOF {
-		elements = append(elements, p.parseExpr())
+		if p.token == token.Ellipsis {
+			pos := p.pos
+			p.next()
+			x := &coverRest{Ellipsis: pos, Target: p.parseExpr()}
+			p.addCover(x)
+			elements = append(elements, x)
+		} else {
+			elements = append(elements, p.parseElementDefault(p.parseExpr()))
+		}
 
 		if !p.expectComma(token.RBrack, "array element") {
 			break
@@ -646,31 +656,55 @@ func (p *Parser) parseIdentList() *IdentList {
 	}
 
 	var params []*Ident
-	lparen := p.expect(token.LParen)
+	var patterns []Expr
+	hasPattern := false
 	isVarArgs := false
+	parseParam := func() {
+		var pattern Expr
+		switch {
+		case !isVarArgs && p.token == token.LBrack:
+			pattern = p.toPattern(p.parseArrayLit())
+		case !isVarArgs && p.token == token.LBrace:
+			pattern = p.toPattern(p.parseMapLit())
+		}
+		if pattern != nil {
+			hasPattern = true
+			params = append(params,
+				&Ident{Name: ":pattern", NamePos: pattern.Pos()})
+		} else {
+			params = append(params, p.parseIdent())
+		}
+		patterns = append(patterns, pattern)
+	}
+
+	lparen := p.expect(token.LParen)
 	if p.token != token.RParen {
 		if p.token == token.Ellipsis {
 			isVarArgs = true
 			p.next()
 		}
 
-		params = append(params, p.parseIdent())
+		parseParam()
 		for !isVarArgs && p.token == token.Comma {
 			p.next()
 			if p.token == token.Ellipsis {
 				isVarArgs = true
 				p.next()
 			}
-			params = append(params, p.parseIdent())
+			parseParam()
 		}
+	}
+	if !hasPattern {
+		patterns = nil
 	}
 
 	rparen := p.expect(token.RParen)
 	return &IdentList{
-		LParen:  lparen,
-		RParen:  rparen,
-		VarArgs: isVarArgs,
-		List:    params,
+		LParen:   lparen,
+		RParen:   rparen,
+		VarArgs:  isVarArgs,
+		List:     params,
+		Patterns: patterns,
 	}
 }
 
@@ -950,6 +984,9 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 	case token.Assign, token.Define: // assignment statement
 		pos, tok := p.pos, p.token
 		p.next()
+		if len(x) == 1 {
+			x[0] = p.toPattern(x[0])
+		}
 		y := p.parseExprList()
 		return &AssignStmt{
 			LHS:      x,
@@ -1040,8 +1077,16 @@ func (p *Parser) parseMapElementLit() *MapElementLit {
 	}
 
 	pos := p.pos
+	if p.token == token.Ellipsis {
+		p.next()
+		rest := &coverRest{Ellipsis: pos, Target: p.parseExpr()}
+		p.addCover(rest)
+		return &MapElementLit{KeyPos: pos, Value: rest}
+	}
+
 	name := "_"
-	if p.token == token.Ident {
+	isIdent := p.token == token.Ident
+	if isIdent {
 		name = p.tokenLit
 	} else if p.token == token.String {
 		v, _ := strconv.Unquote(p.tokenLit)
@@ -1050,14 +1095,105 @@ func (p *Parser) parseMapElementLit() *MapElementLit {
 		p.errorExpected(pos, "map key")
 	}
 	p.next()
+
+	// shorthand pattern element: {x} or {x = default}
+	if isIdent && (p.token == token.Comma || p.token == token.RBrace ||
+		p.token == token.Assign ||
+		(p.token == token.Semicolon && p.tokenLit == "\n")) {
+		elt := &MapElementLit{
+			Key:    name,
+			KeyPos: pos,
+			Value: p.parseElementDefault(
+				&Ident{Name: name, NamePos: pos}),
+		}
+		p.addCover(elt)
+		return elt
+	}
+
 	colonPos := p.expect(token.Colon)
-	valueExpr := p.parseExpr()
+	valueExpr := p.parseElementDefault(p.parseExpr())
 	return &MapElementLit{
 		Key:      name,
 		KeyPos:   pos,
 		ColonPos: colonPos,
 		Value:    valueExpr,
 	}
+}
+
+// parseElementDefault parses an optional "= default" following an array or
+// map literal element, which is only valid in destructuring patterns.
+func (p *Parser) parseElementDefault(x Expr) Expr {
+	if p.token != token.Assign {
+		return x
+	}
+	pos := p.pos
+	p.next()
+	d := &coverDefault{Target: x, AssignPos: pos, Default: p.parseExpr()}
+	p.addCover(d)
+	return d
+}
+
+func (p *Parser) addCover(n Node) {
+	if p.covers == nil {
+		p.covers = make(map[Node]bool)
+	}
+	p.covers[n] = true
+}
+
+// reportCovers reports pattern-only syntax that was never converted into a
+// destructuring pattern.
+func (p *Parser) reportCovers() {
+	var positions []int
+	for n := range p.covers {
+		positions = append(positions, int(n.Pos()))
+	}
+	sort.Ints(positions)
+	for _, pos := range positions {
+		p.error(Pos(pos),
+			"destructuring syntax is only allowed in ':=' patterns and function parameters")
+	}
+}
+
+// toPattern converts an array or map literal into a destructuring pattern.
+// Other expressions are returned as-is; the compiler reports invalid
+// targets.
+func (p *Parser) toPattern(x Expr) Expr {
+	switch x := x.(type) {
+	case *ArrayLit:
+		pat := &ArrayPattern{LBrack: x.LBrack, RBrack: x.RBrack}
+		for _, el := range x.Elements {
+			pat.Elements = append(pat.Elements, p.toPatternElement(el))
+		}
+		return pat
+	case *MapLit:
+		pat := &MapPattern{LBrace: x.LBrace, RBrace: x.RBrace}
+		for _, el := range x.Elements {
+			delete(p.covers, el)
+			pe := p.toPatternElement(el.Value)
+			if !pe.Ellipsis.IsValid() {
+				pe.Key, pe.KeyPos = el.Key, el.KeyPos
+			}
+			pat.Elements = append(pat.Elements, pe)
+		}
+		return pat
+	}
+	return x
+}
+
+func (p *Parser) toPatternElement(x Expr) *PatternElement {
+	el := &PatternElement{}
+	switch c := x.(type) {
+	case *coverRest:
+		delete(p.covers, c)
+		el.Ellipsis = c.Ellipsis
+		x = c.Target
+	case *coverDefault:
+		delete(p.covers, c)
+		el.AssignPos, el.Default = c.AssignPos, c.Default
+		x = c.Target
+	}
+	el.Target = p.toPattern(x)
+	return el
 }
 
 func (p *Parser) parseMapLit() *MapLit {

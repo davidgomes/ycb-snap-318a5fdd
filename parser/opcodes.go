@@ -47,6 +47,14 @@ const (
 	OpIteratorValue               // Iterator value
 	OpBinaryOp                    // Binary operation
 	OpSuspend                     // Suspend VM
+	OpDestructIndex               // Destructuring element lookup
+	OpDestructRest                // Destructuring rest elements
+)
+
+// Flags for the OpDestructIndex operand.
+const (
+	DestructHasDefault = 1 << iota // push an "exists" bool after the value
+	DestructMap                    // source is destructured as a map
 )
 
 // OpcodeNames are string representation of opcodes.
@@ -93,6 +101,8 @@ var OpcodeNames = [...]string{
 	OpIteratorValue: "ITVAL",
 	OpBinaryOp:      "BINARYOP",
 	OpSuspend:       "SUSPEND",
+	OpDestructIndex: "DSTIDX",
+	OpDestructRest:  "DSTREST",
 }
 
 // OpcodeOperands is the number of operands.
@@ -139,6 +149,8 @@ var OpcodeOperands = [...][]int{
 	OpIteratorValue: {},
 	OpBinaryOp:      {1},
 	OpSuspend:       {},
+	OpDestructIndex: {1},
+	OpDestructRest:  {2},
 }
 
 // ReadOperands reads operands from the bytecode.

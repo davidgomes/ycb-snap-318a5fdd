@@ -389,11 +389,25 @@ func (c *Compiler) Compile(node parser.Node) error {
 	case *parser.FuncLit:
 		c.enterScope()
 
-		for _, p := range node.Type.Params.List {
+		params := make([]*Symbol, len(node.Type.Params.List))
+		for i, p := range node.Type.Params.List {
 			s := c.symbolTable.Define(p.Name)
 
 			// function arguments is not assigned directly.
 			s.LocalAssigned = true
+			params[i] = s
+		}
+
+		for i, pattern := range node.Type.Params.Patterns {
+			if pattern == nil {
+				continue
+			}
+			if err := c.validatePattern(pattern); err != nil {
+				return err
+			}
+			if err := c.compilePattern(pattern, params[i]); err != nil {
+				return err
+			}
 		}
 
 		if err := c.Compile(node.Body); err != nil {
@@ -669,6 +683,14 @@ func (c *Compiler) compileAssign(
 		return c.errorf(node, "tuple assignment not allowed")
 	}
 
+	switch lhs[0].(type) {
+	case *parser.ArrayPattern, *parser.MapPattern:
+		if op == token.Define {
+			return c.compileDestructuring(node, lhs[0], rhs[0])
+		}
+		return c.errorf(node, "cannot use destructuring with =; use := instead")
+	}
+
 	// resolve and compile left-hand side
 	ident, selectors := resolveAssignLHS(lhs[0])
 	numSel := len(selectors)
@@ -774,6 +796,153 @@ func (c *Compiler) compileAssign(
 			symbol.Scope))
 	}
 	return nil
+}
+
+func (c *Compiler) compileDestructuring(
+	node parser.Node,
+	pattern, rhs parser.Expr,
+) error {
+	if err := c.validatePattern(pattern); err != nil {
+		return err
+	}
+	if err := c.Compile(rhs); err != nil {
+		return err
+	}
+	return c.bindPatternTarget(node, pattern)
+}
+
+func (c *Compiler) validatePattern(pattern parser.Expr) error {
+	switch pattern := pattern.(type) {
+	case *parser.ArrayPattern:
+		for i, el := range pattern.Elements {
+			if el.Ellipsis.IsValid() {
+				if i != len(pattern.Elements)-1 {
+					return c.errorf(el, "rest element must be last")
+				}
+				if _, ok := el.Target.(*parser.Ident); !ok {
+					return c.errorf(el, "rest element must be an identifier")
+				}
+				continue
+			}
+			if err := c.validatePattern(el.Target); err != nil {
+				return err
+			}
+		}
+	case *parser.MapPattern:
+		for _, el := range pattern.Elements {
+			if el.Ellipsis.IsValid() {
+				return c.errorf(el,
+					"rest element is not supported in map patterns")
+			}
+			if len(el.Key) > MaxStringLen {
+				return c.error(el, ErrStringLimit)
+			}
+			if err := c.validatePattern(el.Target); err != nil {
+				return err
+			}
+		}
+	case *parser.Ident:
+	default:
+		return c.errorf(pattern, "invalid destructuring target: %s",
+			pattern.String())
+	}
+	return nil
+}
+
+// compilePattern binds the elements of the pattern from the value stored in
+// src. The pattern must be validated beforehand.
+func (c *Compiler) compilePattern(pattern parser.Expr, src *Symbol) error {
+	var elements []*parser.PatternElement
+	flags := 0
+	switch pattern := pattern.(type) {
+	case *parser.ArrayPattern:
+		elements = pattern.Elements
+	case *parser.MapPattern:
+		elements = pattern.Elements
+		flags |= parser.DestructMap
+	}
+
+	for i, el := range elements {
+		c.emitGetSymbol(el, src)
+		if el.Ellipsis.IsValid() {
+			c.emit(el, parser.OpDestructRest, i)
+			if err := c.bindPatternTarget(el, el.Target); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if flags&parser.DestructMap != 0 {
+			c.emit(el, parser.OpConstant,
+				c.addConstant(&String{Value: el.Key}))
+		} else {
+			c.emit(el, parser.OpConstant,
+				c.addConstant(&Int{Value: int64(i)}))
+		}
+
+		if el.Default == nil {
+			c.emit(el, parser.OpDestructIndex, flags)
+		} else {
+			// defaults are evaluated only if the element does not exist
+			c.emit(el, parser.OpDestructIndex,
+				flags|parser.DestructHasDefault)
+			jumpMissing := c.emit(el, parser.OpJumpFalsy, 0)
+			jumpEnd := c.emit(el, parser.OpJump, 0)
+			c.changeOperand(jumpMissing, len(c.currentInstructions()))
+			c.emit(el, parser.OpPop)
+			if err := c.Compile(el.Default); err != nil {
+				return err
+			}
+			c.changeOperand(jumpEnd, len(c.currentInstructions()))
+		}
+
+		if err := c.bindPatternTarget(el, el.Target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// bindPatternTarget pops the value on top of the stack and binds it to the
+// target, which is either an identifier or a nested pattern.
+func (c *Compiler) bindPatternTarget(
+	node parser.Node,
+	target parser.Expr,
+) error {
+	ident, ok := target.(*parser.Ident)
+	if !ok {
+		src := c.symbolTable.Define(":destructure")
+		c.emitDefineSymbol(node, src)
+		return c.compilePattern(target, src)
+	}
+
+	if ident.Name == "_" {
+		c.emit(ident, parser.OpPop)
+		return nil
+	}
+	if _, depth, exists := c.symbolTable.Resolve(ident.Name, false); exists &&
+		depth == 0 {
+		return c.errorf(ident, "'%s' redeclared in this block", ident.Name)
+	}
+	c.emitDefineSymbol(ident, c.symbolTable.Define(ident.Name))
+	return nil
+}
+
+func (c *Compiler) emitDefineSymbol(node parser.Node, symbol *Symbol) {
+	if symbol.Scope == ScopeGlobal {
+		c.emit(node, parser.OpSetGlobal, symbol.Index)
+		return
+	}
+	c.emit(node, parser.OpDefineLocal, symbol.Index)
+	symbol.LocalAssigned = true
+}
+
+func (c *Compiler) emitGetSymbol(node parser.Node, symbol *Symbol) {
+	if symbol.Scope == ScopeGlobal {
+		c.emit(node, parser.OpGetGlobal, symbol.Index)
+	} else {
+		c.emit(node, parser.OpGetLocal, symbol.Index)
+	}
 }
 
 func (c *Compiler) compileLogical(node *parser.BinaryExpr) error {
