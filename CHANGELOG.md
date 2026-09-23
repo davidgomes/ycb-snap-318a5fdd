@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- Added `phase`, `modifiers`, `base_key`, `shifted_key`, and `base_layout_key` to `events.Key`, with `is_press`, `is_repeat`, `is_release`, `shift`, `alt`, `ctrl`, `super`, `hyper`, and `meta` properties
+- Kitty keyboard protocol event types, alternate keys, and associated text are now parsed
+- Added `examples/kitty_keyboard_protocol.py`
+
 ### [7.5.0] - 2026-01-29
 
 - The DataTable row cursor will extend to the full width if there is excess space https://github.com/Textualize/textual/pull/6345
