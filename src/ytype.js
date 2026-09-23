@@ -19,6 +19,7 @@ import {
   getItemCleanStart,
   noAttributionsManager,
   transact,
+  checkLocalMapWrite,
   ContentDoc, UpdateEncoderV1, UpdateEncoderV2, Doc, Snapshot, Transaction, EventHandler, YEvent, Item, createAttributionFromAttributionItems, AbstractAttributionManager // eslint-disable-line
 } from './internals.js'
 
@@ -1739,6 +1740,7 @@ export const typeListDelete = (transaction, parent, index, length) => {
  */
 export const typeMapDelete = (transaction, parent, key) => {
   const c = parent._map.get(key)
+  checkLocalMapWrite(transaction, parent, key, 'delete')
   if (c !== undefined) {
     c.delete(transaction)
   }
@@ -1754,6 +1756,7 @@ export const typeMapDelete = (transaction, parent, key) => {
  * @function
  */
 export const typeMapSet = (transaction, parent, key, value) => {
+  checkLocalMapWrite(transaction, parent, key, 'set', value)
   const left = parent._map.get(key) || null
   const doc = transaction.doc
   const ownClientId = doc.clientID

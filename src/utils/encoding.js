@@ -37,7 +37,8 @@ import {
   createIdSet,
   BlockSet, IdSet, IdSetDecoderV2, Doc, Transaction, GC, Item, StructStore, // eslint-disable-line
   createID,
-  IdRange
+  IdRange,
+  checkUpdateMapConflicts
 } from '../internals.js'
 
 import * as encoding from 'lib0/encoding'
@@ -452,6 +453,7 @@ export const readUpdate = (decoder, ydoc, transactionOrigin) => readUpdateV2(dec
  * @function
  */
 export const applyUpdateV2 = (ydoc, update, transactionOrigin, YDecoder = UpdateDecoderV2) => {
+  checkUpdateMapConflicts(ydoc, update, YDecoder)
   const decoder = decoding.createDecoder(update)
   readUpdateV2(decoder, ydoc, transactionOrigin, new YDecoder(decoder))
 }
