@@ -80,6 +80,13 @@ export default class MultipartFormDataParser {
 			readResult = await bodyReader.read();
 		}
 
+		if (requestOrResponse[PropertySymbol.aborted]) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
+
 		try {
 			buffer =
 				typeof chunks[0] === 'string' ? Buffer.from(chunks.join('')) : Buffer.concat(chunks, bytes);

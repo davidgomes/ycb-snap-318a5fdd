@@ -12,6 +12,7 @@ import File from '../../src/file/File.js';
 import FormData from '../../src/form-data/FormData.js';
 import type Document from '../../src/nodes/document/Document.js';
 import Window from '../../src/window/Window.js';
+import Browser from '../../src/browser/Browser.js';
 import * as PropertySymbol from '../../src/PropertySymbol.js';
 import { ReadableStream } from 'stream/web';
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
@@ -707,6 +708,109 @@ describe('Response', () => {
 			expect(response.statusText).toBe('OK');
 			expect(response.headers.get('Content-Type')).toBe('test');
 			expect(await response.json()).toEqual(data);
+		});
+	});
+
+	describe('Shutdown', () => {
+		const createStalledStream = (): ReadableStream =>
+			new ReadableStream({
+				start(controller) {
+					controller.enqueue(Buffer.from('partial'));
+				}
+			});
+
+		const captureError = (promise: Promise<unknown>): Promise<Error | null> =>
+			promise.then(
+				() => null,
+				(error) => error
+			);
+
+		const expectAbortError = async (promise: Promise<Error | null>): Promise<void> => {
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error?.name).toBe(DOMExceptionNameEnum.abortError);
+		};
+
+		for (const method of <const>['text', 'arrayBuffer', 'buffer', 'blob', 'json']) {
+			it(`Rejects ${method}() with an AbortError when interrupted by happyDOM.close().`, async () => {
+				const response = new window.Response(createStalledStream());
+				const promise = captureError(response[method]());
+				await window.happyDOM.close();
+				await expectAbortError(promise);
+			});
+		}
+
+		it('Rejects text() with an AbortError when the stream ends after happyDOM.close().', async () => {
+			let streamController: ReadableStreamDefaultController | null = null;
+			const response = new window.Response(
+				new ReadableStream({
+					start(controller) {
+						streamController = controller;
+					}
+				})
+			);
+			const promise = captureError(response.text());
+			const closePromise = window.happyDOM.close();
+			streamController!.enqueue(Buffer.from('late'));
+			streamController!.close();
+			await closePromise;
+			await expectAbortError(promise);
+		});
+
+		it('Rejects multipart formData() with an AbortError when interrupted by happyDOM.close().', async () => {
+			const response = new window.Response(createStalledStream(), {
+				headers: { 'Content-Type': 'multipart/form-data; boundary=test' }
+			});
+			const promise = captureError(response.formData());
+			await window.happyDOM.close();
+			await expectAbortError(promise);
+		});
+
+		it('Rejects text() with an AbortError when reading an unbuffered stream after happyDOM.close().', async () => {
+			const response = new window.Response(createStalledStream());
+			await window.happyDOM.close();
+			await expectAbortError(captureError(response.text()));
+		});
+
+		it('Keeps fully buffered bodies readable after happyDOM.close().', async () => {
+			const formData = new window.FormData();
+			formData.append('key', 'value');
+			const textResponse = new window.Response('test');
+			const jsonResponse = new window.Response('{"key":"value"}');
+			const formDataResponse = new window.Response(formData);
+			await window.happyDOM.close();
+			expect(await textResponse.text()).toBe('test');
+			expect(await jsonResponse.json()).toEqual({ key: 'value' });
+			expect((await formDataResponse.formData()).get('key')).toBe('value');
+		});
+
+		it('Rejects text() with an AbortError when interrupted by page.close().', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const response = new page.mainFrame.window.Response(createStalledStream());
+			const promise = captureError(response.text());
+			await page.close();
+			await expectAbortError(promise);
+			await browser.close();
+		});
+
+		it('Rejects text() with an AbortError when interrupted by browser.close().', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const response = new page.mainFrame.window.Response(createStalledStream());
+			const promise = captureError(response.text());
+			await browser.close();
+			await expectAbortError(promise);
+		});
+
+		it('Rejects text() with an AbortError when interrupted by a navigation.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const response = new page.mainFrame.window.Response(createStalledStream());
+			const promise = captureError(response.text());
+			await page.goto('about:blank');
+			await expectAbortError(promise);
+			await browser.close();
 		});
 	});
 });

@@ -11,6 +11,7 @@ import type { TResponseBody } from '../types/TResponseBody.js';
 import { Buffer } from 'buffer';
 import Stream from 'stream';
 import type BrowserWindow from '../../window/BrowserWindow.js';
+import type AsyncTaskManager from '../../async-task-manager/AsyncTaskManager.js';
 
 /**
  * Fetch body utility.
@@ -167,6 +168,64 @@ export default class FetchBodyUtility {
 	}
 
 	/**
+	 * Runs a body read as an async task.
+	 *
+	 * The read is rejected with an "AbortError" if the async task manager is missing (the window has been closed), or if it is aborted or destroyed before the read has completed.
+	 *
+	 * @param window Window.
+	 * @param asyncTaskManager Async task manager.
+	 * @param requestOrResponse Request or Response.
+	 * @param read Read function.
+	 * @param [onAbort] Called when the read is aborted.
+	 * @returns Result of the read.
+	 */
+	public static async readAsAsyncTask<T>(
+		window: BrowserWindow,
+		asyncTaskManager: AsyncTaskManager | null,
+		requestOrResponse: { [PropertySymbol.aborted]: boolean },
+		read: () => Promise<T>,
+		onAbort?: () => void
+	): Promise<T> {
+		const createAbortError = (): DOMException =>
+			new window.DOMException(
+				'Failed to read body: The operation was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+
+		if (!asyncTaskManager) {
+			requestOrResponse[PropertySymbol.aborted] = true;
+			throw createAbortError();
+		}
+
+		let rejectAbort: (error: Error) => void = () => {};
+		const abortPromise = new Promise<never>((_resolve, reject) => (rejectAbort = reject));
+		abortPromise.catch(() => {});
+
+		let taskID: number;
+
+		try {
+			taskID = asyncTaskManager.startTask(() => {
+				requestOrResponse[PropertySymbol.aborted] = true;
+				if (onAbort) {
+					onAbort();
+				}
+				rejectAbort(createAbortError());
+			});
+		} catch {
+			throw createAbortError();
+		}
+
+		const readPromise = read();
+		readPromise.catch(() => {});
+
+		try {
+			return await Promise.race([readPromise, abortPromise]);
+		} finally {
+			asyncTaskManager.endTask(taskID);
+		}
+	}
+
+	/**
 	 * Consume and convert an entire Body to a Buffer.
 	 *
 	 * Based on:
@@ -217,6 +276,12 @@ export default class FetchBodyUtility {
 				bytes += chunk.length;
 				chunks.push(chunk);
 				readResult = await reader.read();
+			}
+			if (requestOrResponse[PropertySymbol.aborted]) {
+				throw new window.DOMException(
+					'Failed to read response body: The stream was aborted.',
+					DOMExceptionNameEnum.abortError
+				);
 			}
 		} catch (error) {
 			if (error instanceof DOMException) {

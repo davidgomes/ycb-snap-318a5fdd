@@ -1,6 +1,6 @@
 import Window from '../../src/window/Window.js';
 import type Document from '../../src/nodes/document/Document.js';
-import Request from '../../src/fetch/Request.js';
+import type Request from '../../src/fetch/Request.js';
 import URL from '../../src/url/URL.js';
 import Headers from '../../src/fetch/Headers.js';
 import AbortSignal from '../../src/fetch/AbortSignal.js';
@@ -907,6 +907,57 @@ describe('Request', () => {
 			expect(clone.credentials).toBe('include');
 			expect(clone.referrer).toBe('https://example.com/path/');
 			expect(await clone.text()).toBe('Hello world');
+		});
+	});
+
+	describe('Shutdown', () => {
+		const createStalledRequest = (contentType?: string): Request => {
+			const request = new window.Request(TEST_URL, {
+				method: 'POST',
+				body: new ReadableStream({
+					start(controller) {
+						controller.enqueue(Buffer.from('partial'));
+					}
+				})
+			});
+			if (contentType) {
+				request[PropertySymbol.contentType] = contentType;
+			}
+			return request;
+		};
+
+		const captureError = (promise: Promise<unknown>): Promise<Error | null> =>
+			promise.then(
+				() => null,
+				(error) => error
+			);
+
+		for (const method of <const>['text', 'arrayBuffer', 'buffer', 'blob', 'json']) {
+			it(`Rejects ${method}() with an AbortError when interrupted by happyDOM.close().`, async () => {
+				const promise = captureError(createStalledRequest()[method]());
+				await window.happyDOM.close();
+				const error = await promise;
+				expect(error).toBeInstanceOf(DOMException);
+				expect(error?.name).toBe(DOMExceptionNameEnum.abortError);
+			});
+		}
+
+		it('Rejects multipart formData() with an AbortError when interrupted by happyDOM.close().', async () => {
+			const promise = captureError(
+				createStalledRequest('multipart/form-data; boundary=test').formData()
+			);
+			await window.happyDOM.close();
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error?.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Rejects text() with an AbortError when reading after happyDOM.close().', async () => {
+			const request = createStalledRequest();
+			await window.happyDOM.close();
+			const error = await captureError(request.text());
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error?.name).toBe(DOMExceptionNameEnum.abortError);
 		});
 	});
 });
