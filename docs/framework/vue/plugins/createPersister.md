@@ -41,6 +41,8 @@ bun add @tanstack/query-persist-client-core
 
 This way, you do not need to store whole `QueryClient`, but choose what is worth to be persisted in your application. Each query is lazily restored (when the Query is first used) and persisted (after each run of the `queryFn`), so it does not need to be throttled. `staleTime` is also respected after restoring the Query, so if data is considered `stale`, it will be refetched immediately after restoring. If data is `fresh`, the `queryFn` will not run.
 
+A restored Query gets back its whole persisted state, not only its data. Errors, failure counts, `dataUpdatedAt` / `errorUpdatedAt`, invalidation and infinite query `pageParams` are kept, so for example a Query that was persisted after a failed background refetch is restored with `isRefetchError: true`.
+
 Garbage collecting a Query from memory **does not** affect the persisted data. That means Queries can be kept in memory for a shorter period of time to be more **memory efficient**. If they are used the next time, they will just be restored from the persistent storage again.
 
 ```tsx
@@ -65,6 +67,25 @@ const queryClient = new QueryClient({
 ### Adapted defaults
 
 The `createPersister` plugin technically wraps the `queryFn`, so it doesn't restore if the `queryFn` doesn't run. In that way, it acts as a caching layer between the Query and the network. Thus, the `networkMode` defaults to `'offlineFirst'` when a persister is used, so that restoring from the persistent storage can also happen even if there is no network connection.
+
+### Custom persisters
+
+If you write your own `persister` function, return `createPersisterRestoreResult({ data, state })` to signal that you restored a snapshot instead of fetching. The Query then adopts `state` (with `fetchStatus: 'idle'`) instead of treating `data` as a new successful fetch, and the `QueryCache` `onSuccess` / `onSettled` callbacks are not called. Fields missing from `state` fall back to what a successful fetch of `data` would produce.
+
+```tsx
+import { createPersisterRestoreResult } from '@tanstack/vue-query'
+
+const persister = async (queryFn, context, query) => {
+  const snapshot = await readSnapshot(query.queryHash)
+  if (snapshot) {
+    return createPersisterRestoreResult({
+      data: snapshot.data,
+      state: snapshot,
+    })
+  }
+  return queryFn(context)
+}
+```
 
 ## Additional utilities
 
@@ -112,6 +133,8 @@ For example `Object.entries(localStorage)` for `localStorage` or `entries` from 
 
 This function can be used to restore queries that are currently stored by persister.  
 For example when your app is starting up in offline mode, or you want all or only specific data from previous session to be immediately available without intermediate `loading` state.
+
+Restored queries get back their whole persisted state. If a Query already exists in the cache, its data and its error are merged independently: the side with the newer `dataUpdatedAt` provides the data, and the side with the newer `errorUpdatedAt` provides the error.
 
 The filter object supports the following properties:
 
