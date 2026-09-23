@@ -114,11 +114,8 @@ export type TraitOrRelation = Trait | Relation<Trait>;
  * Extracts the underlying Trait from a TraitOrRelation (Relations contain a Trait).
  * Predicates are backed by a tag trait.
  */
-export type ExtractTrait<T> = T extends Relation<infer TTrait>
-    ? TTrait
-    : T extends Predicate
-      ? TagTrait
-      : T;
+export type ExtractTrait<T> =
+    T extends Relation<infer TTrait> ? TTrait : T extends Predicate ? TagTrait : T;
 
 /** Maps a tuple of TraitOrRelation to their underlying Traits */
 export type ExtractTraits<T extends (TraitOrRelation | Predicate)[]> = {

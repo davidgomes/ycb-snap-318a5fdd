@@ -33,7 +33,11 @@ export function createPredicate<T extends Trait[]>(
     }
 
     for (const dependency of dependencies) {
-        if (isRelation(dependency) || isRelationPair(dependency) || dependency?.[$internal]?.relation) {
+        if (
+            isRelation(dependency) ||
+            isRelationPair(dependency) ||
+            dependency?.[$internal]?.relation
+        ) {
             throw new Error('Koota: Relations cannot be predicate dependencies.');
         }
         if (typeof dependency !== 'function' || !dependency[$internal]) {
