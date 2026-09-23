@@ -2,6 +2,7 @@ package astwalk
 
 import (
 	"go/ast"
+	"go/doc/comment"
 )
 
 // DocCommentVisitor visits every doc-comment.
@@ -9,6 +10,19 @@ import (
 // Also does not visit package doc-comment (file-level doc-comments).
 type DocCommentVisitor interface {
 	VisitDocComment(*ast.CommentGroup)
+}
+
+// DocLinkVisitor visits every bracket-notation symbol link found in doc-comments:
+// links to symbols, methods and fields of the current or an imported package,
+// as well as links to packages.
+// The same doc-comments as for DocCommentVisitor are visited.
+//
+// Links are not resolved: link.ImportPath holds the package qualifier
+// as written in the comment (a local package name or a full import path).
+// The node argument is the documented declaration (or field).
+type DocLinkVisitor interface {
+	walkerEvents
+	VisitDocLink(link *comment.DocLink, node ast.Node)
 }
 
 // FuncDeclVisitor visits every top-level function declaration.
