@@ -15,6 +15,9 @@ import {
   type Message,
   message,
   optionName as eOptionName,
+  optionNames as eOptionNames,
+  text,
+  value as eValue,
   values,
 } from "./message.ts";
 import type {
@@ -63,6 +66,9 @@ import {
   extractArgumentMetavars,
   extractCommandNames,
   extractOptionNames,
+  type OptionDependency,
+  type OptionDependencyConditionLike,
+  type OptionName,
   type Usage,
   type UsageTerm,
 } from "./usage.ts";
@@ -2085,6 +2091,7 @@ function* suggestObjectSync<
   context: ParserContext<{ readonly [K in keyof T]: unknown }>,
   prefix: string,
   parserPairs: [string | symbol, Parser<"sync", unknown, unknown>][],
+  hiddenTerms: ReadonlySet<UsageTerm>,
 ): Generator<Suggestion> {
   // Build dependency registry from all parsed fields
   const registry = context.dependencyRegistry instanceof DependencyRegistry
@@ -2098,6 +2105,7 @@ function* suggestObjectSync<
 
   // Create context with dependency registry for child parsers
   const contextWithRegistry = { ...context, dependencyRegistry: registry };
+  const hiddenNames = getOptionNames(hiddenTerms);
 
   // Check if the last token in the buffer is an option that requires a value.
   // If so, only suggest values for that specific option parser, not all parsers.
@@ -2109,6 +2117,7 @@ function* suggestObjectSync<
     // Find if any parser has this token as an option requiring a value
     for (const [field, parser] of parserPairs) {
       if (isOptionRequiringValue(parser.usage, lastToken)) {
+        if (hiddenNames.has(lastToken)) return;
         // Only get suggestions from the parser that owns this option
         const fieldState =
           (context.state && typeof context.state === "object" &&
@@ -2128,6 +2137,7 @@ function* suggestObjectSync<
   // Default behavior: try getting suggestions from each parser
   const suggestions: Suggestion[] = [];
   for (const [field, parser] of parserPairs) {
+    if (isUsageHiddenByDependency(parser.usage, hiddenTerms)) continue;
     const fieldState = (context.state && typeof context.state === "object" &&
         field in context.state)
       ? (context.state as Record<string | symbol, unknown>)[field]
@@ -2138,7 +2148,9 @@ function* suggestObjectSync<
       state: fieldState,
     }, prefix);
 
-    suggestions.push(...fieldSuggestions);
+    for (const s of fieldSuggestions) {
+      if (!isSuggestionOfHiddenOption(s, hiddenNames)) suggestions.push(s);
+    }
   }
 
   yield* deduplicateSuggestions(suggestions);
@@ -2154,6 +2166,7 @@ async function* suggestObjectAsync<
   context: ParserContext<{ readonly [K in keyof T]: unknown }>,
   prefix: string,
   parserPairs: readonly [string | symbol, Parser<Mode, unknown, unknown>][],
+  hiddenTerms: ReadonlySet<UsageTerm>,
 ): AsyncGenerator<Suggestion> {
   // Build dependency registry from all parsed fields
   const registry = context.dependencyRegistry instanceof DependencyRegistry
@@ -2167,6 +2180,7 @@ async function* suggestObjectAsync<
 
   // Create context with dependency registry for child parsers
   const contextWithRegistry = { ...context, dependencyRegistry: registry };
+  const hiddenNames = getOptionNames(hiddenTerms);
 
   // Check if the last token in the buffer is an option that requires a value.
   if (context.buffer.length > 0) {
@@ -2175,6 +2189,7 @@ async function* suggestObjectAsync<
     // Find if any parser has this token as an option requiring a value
     for (const [field, parser] of parserPairs) {
       if (isOptionRequiringValue(parser.usage, lastToken)) {
+        if (hiddenNames.has(lastToken)) return;
         // Only get suggestions from the parser that owns this option
         const fieldState =
           (context.state && typeof context.state === "object" &&
@@ -2197,6 +2212,7 @@ async function* suggestObjectAsync<
   // Default behavior: try getting suggestions from each parser
   const suggestions: Suggestion[] = [];
   for (const [field, parser] of parserPairs) {
+    if (isUsageHiddenByDependency(parser.usage, hiddenTerms)) continue;
     const fieldState = (context.state && typeof context.state === "object" &&
         field in context.state)
       ? (context.state as Record<string | symbol, unknown>)[field]
@@ -2209,7 +2225,7 @@ async function* suggestObjectAsync<
 
     // Handle both sync and async suggestions
     for await (const s of fieldSuggestions as AsyncIterable<Suggestion>) {
-      suggestions.push(s);
+      if (!isSuggestionOfHiddenOption(s, hiddenNames)) suggestions.push(s);
     }
   }
 
@@ -2479,6 +2495,476 @@ async function resolveDeferredParseStatesAsync<
 }
 
 /**
+ * An option with a {@link OptionDependency} that an {@link object} parser
+ * evaluates.
+ */
+interface DependentOption {
+  readonly field: string | symbol;
+  readonly term: UsageTerm;
+  readonly names: readonly OptionName[];
+  readonly dependsOn: OptionDependency;
+}
+
+/**
+ * The outcome of evaluating an option dependency:
+ *
+ * - `"satisfied"`: The dependency holds.
+ * - `"missing"`: The dependency does not hold because the referenced options
+ *   were not given (or do not exist).
+ * - `"conflict"`: The dependency does not hold even though the referenced
+ *   options were explicitly given.
+ */
+type DependencyOutcome = "satisfied" | "missing" | "conflict";
+
+interface DependeeValue {
+  readonly provided: boolean;
+  readonly hasValue: boolean;
+  readonly value?: unknown;
+}
+
+type DependeeLookup = (option: string) => DependeeValue | undefined;
+
+/**
+ * For each option usage term with a dependency, the usages of the
+ * {@link object} parsers that evaluate it.  An object parser skips
+ * the dependencies that a nested object parser already evaluates.
+ */
+const dependentOptionOwners = new WeakMap<UsageTerm, Usage[]>();
+
+function* iterateUsageTerms(usage: Usage): Generator<UsageTerm> {
+  for (const term of usage) {
+    yield term;
+    if (term.type === "optional" || term.type === "multiple") {
+      yield* iterateUsageTerms(term.terms);
+    } else if (term.type === "exclusive") {
+      for (const branch of term.terms) yield* iterateUsageTerms(branch);
+    }
+  }
+}
+
+function isTruthyDependeeValue(value: unknown): boolean {
+  return Array.isArray(value) ? value.length > 0 : Boolean(value);
+}
+
+function combineAllOutcomes(
+  outcomes: readonly DependencyOutcome[],
+): DependencyOutcome {
+  if (outcomes.includes("conflict")) return "conflict";
+  if (outcomes.includes("missing")) return "missing";
+  return "satisfied";
+}
+
+function combineAnyOutcomes(
+  outcomes: readonly DependencyOutcome[],
+): DependencyOutcome {
+  if (outcomes.includes("satisfied")) return "satisfied";
+  if (outcomes.length > 0 && outcomes.every((o) => o === "conflict")) {
+    return "conflict";
+  }
+  return "missing";
+}
+
+function evaluateSingleDependency(
+  option: string,
+  expected: unknown,
+  lookup: DependeeLookup,
+): DependencyOutcome {
+  const dependee = lookup(option);
+  if (dependee == null) return "missing";
+  if (
+    dependee.hasValue &&
+    (expected === undefined
+      ? isTruthyDependeeValue(dependee.value)
+      : dependee.value === expected)
+  ) {
+    return "satisfied";
+  }
+  return dependee.provided ? "conflict" : "missing";
+}
+
+function evaluateOptionDependency(
+  condition: OptionDependencyConditionLike,
+  lookup: DependeeLookup,
+): DependencyOutcome {
+  if (typeof condition === "string") {
+    return evaluateSingleDependency(condition, undefined, lookup);
+  }
+  const outcomes: DependencyOutcome[] = [];
+  if ("option" in condition && typeof condition.option === "string") {
+    outcomes.push(
+      evaluateSingleDependency(condition.option, condition.value, lookup),
+    );
+  }
+  if ("allOf" in condition && condition.allOf != null) {
+    outcomes.push(combineAllOutcomes(
+      condition.allOf.map((c) => evaluateOptionDependency(c, lookup)),
+    ));
+  }
+  if ("anyOf" in condition && condition.anyOf != null) {
+    outcomes.push(combineAnyOutcomes(
+      condition.anyOf.map((c) => evaluateOptionDependency(c, lookup)),
+    ));
+  }
+  return combineAllOutcomes(outcomes);
+}
+
+interface DependencyClause {
+  readonly message: Message;
+  readonly disjunction: boolean;
+}
+
+function joinMessages(
+  messages: readonly Message[],
+  separator: string,
+): Message {
+  return messages.flatMap((m, i) => i > 0 ? [text(separator), ...m] : m);
+}
+
+function joinDependencyClauses(clauses: readonly DependencyClause[]): Message {
+  return joinMessages(
+    clauses.map((c) =>
+      c.disjunction && clauses.length > 1
+        ? [text("("), ...c.message, text(")")]
+        : c.message
+    ),
+    " and ",
+  );
+}
+
+/**
+ * Describes the clauses (joined by "and") of a dependency.  When
+ * `lookup` is given, only the clauses that are not satisfied are described.
+ */
+function describeOptionDependency(
+  condition: OptionDependencyConditionLike,
+  getDependeeName: (option: string) => string,
+  lookup?: DependeeLookup,
+): DependencyClause[] {
+  const describeSingle = (option: string, expected: unknown): Message =>
+    expected === undefined
+      ? message`option ${eOptionName(getDependeeName(option))}`
+      : message`option ${eOptionName(getDependeeName(option))} to be ${
+        eValue(typeof expected === "string" ? expected : String(expected))
+      }`;
+  const isSatisfied = (c: OptionDependencyConditionLike): boolean =>
+    lookup != null && evaluateOptionDependency(c, lookup) === "satisfied";
+  if (typeof condition === "string") {
+    return [{
+      message: describeSingle(condition, undefined),
+      disjunction: false,
+    }];
+  }
+  const clauses: DependencyClause[] = [];
+  if (
+    "option" in condition && typeof condition.option === "string" &&
+    !isSatisfied({ option: condition.option, value: condition.value })
+  ) {
+    clauses.push({
+      message: describeSingle(condition.option, condition.value),
+      disjunction: false,
+    });
+  }
+  if ("allOf" in condition && condition.allOf != null) {
+    for (const child of condition.allOf) {
+      if (isSatisfied(child)) continue;
+      clauses.push(...describeOptionDependency(child, getDependeeName, lookup));
+    }
+  }
+  if (
+    "anyOf" in condition && condition.anyOf != null &&
+    condition.anyOf.length > 0 && !isSatisfied({ anyOf: condition.anyOf })
+  ) {
+    const alternatives = condition.anyOf.map((child) =>
+      joinDependencyClauses(describeOptionDependency(child, getDependeeName))
+    );
+    clauses.push({
+      message: joinMessages(alternatives, " or "),
+      disjunction: alternatives.length > 1,
+    });
+  }
+  return clauses;
+}
+
+/**
+ * Reads the value of a parser state without completing `undefined` states.
+ */
+function readDependeeStateValue(
+  parser: Parser<Mode, unknown, unknown>,
+  state: unknown,
+): Omit<DependeeValue, "provided"> {
+  if (state === undefined) return { hasValue: false };
+  if (parser.$mode === "sync") {
+    try {
+      const result = (parser as Parser<"sync", unknown, unknown>).complete(
+        state,
+      );
+      return result.success
+        ? { hasValue: true, value: result.value }
+        : { hasValue: false };
+    } catch {
+      return { hasValue: false };
+    }
+  }
+  return readStructuralStateValue(state);
+}
+
+/**
+ * Reads the value of a parser state by its structure, for async parsers whose
+ * `complete()` cannot be awaited.  Handles plain {@link ValueParserResult}s
+ * as well as states wrapped by modifiers like `optional()`.
+ */
+function readStructuralStateValue(
+  state: unknown,
+): Omit<DependeeValue, "provided"> {
+  if (state == null || isPendingDependencySourceState(state)) {
+    return { hasValue: false };
+  }
+  if (isDependencySourceState(state)) {
+    return readStructuralStateValue(state.result);
+  }
+  if (isDeferredParseState(state)) {
+    return readStructuralStateValue(state.preliminaryResult);
+  }
+  if (Array.isArray(state)) {
+    return state.length === 1
+      ? readStructuralStateValue(state[0])
+      : { hasValue: false };
+  }
+  if (typeof state === "object" && "success" in state && state.success) {
+    return "value" in state
+      ? { hasValue: true, value: state.value }
+      : { hasValue: false };
+  }
+  return { hasValue: false };
+}
+
+interface OptionDependencyEvaluator {
+  /**
+   * Checks the dependencies of the options that were provided.
+   * @param state The object parser state.
+   * @param results The completion results of all fields.
+   * @returns An error message if a dependency is violated.
+   */
+  validate(
+    state: unknown,
+    results: ReadonlyMap<string | symbol, ValueParserResult<unknown>>,
+  ): Message | undefined;
+
+  /**
+   * Gets the usage terms of the options that should be hidden from help and
+   * completion suggestions because their non-required dependency does not
+   * hold.
+   * @param state The object parser state, if available.
+   */
+  getHiddenTerms(state: unknown): ReadonlySet<UsageTerm>;
+}
+
+/**
+ * Creates an evaluator for the option dependencies directly declared in
+ * the fields of an {@link object} parser.
+ * @param fields The fields of the object parser, in declaration order.
+ * @param usage The usage of the object parser.
+ * @returns The evaluator, or `undefined` if no field has option dependencies.
+ */
+function createOptionDependencyEvaluator(
+  fields:
+    readonly (readonly [string | symbol, Parser<Mode, unknown, unknown>])[],
+  usage: Usage,
+): OptionDependencyEvaluator | undefined {
+  const dependents: DependentOption[] = [];
+  for (const [field, parser] of fields) {
+    const fieldTerms = new Set(iterateUsageTerms(parser.usage));
+    for (const term of fieldTerms) {
+      if (term.type !== "option" || term.dependsOn == null) continue;
+      const owners = dependentOptionOwners.get(term) ?? [];
+      const ownedByNestedObject = owners.some((ownerUsage) =>
+        ownerUsage.length > 0 && ownerUsage.every((t) => fieldTerms.has(t))
+      );
+      if (ownedByNestedObject) continue;
+      dependents.push({
+        field,
+        term,
+        names: term.names,
+        dependsOn: term.dependsOn,
+      });
+    }
+  }
+  if (dependents.length < 1) return undefined;
+  for (const { term } of dependents) {
+    const owners = dependentOptionOwners.get(term);
+    if (owners == null) dependentOptionOwners.set(term, [usage]);
+    else owners.push(usage);
+  }
+
+  const fieldParsers = new Map(fields);
+  const optionFields = new Map<string, string | symbol>();
+  for (const [field, parser] of fields) {
+    for (const term of iterateUsageTerms(parser.usage)) {
+      if (term.type !== "option") continue;
+      for (const name of term.names) {
+        if (!optionFields.has(name)) optionFields.set(name, field);
+      }
+    }
+  }
+
+  const resolveField = (option: string): string | symbol | undefined =>
+    fieldParsers.has(option) ? option : optionFields.get(option);
+
+  const getFieldState = (
+    state: unknown,
+    field: string | symbol,
+    parser: Parser<Mode, unknown, unknown>,
+  ): unknown =>
+    state != null && typeof state === "object" && field in state
+      ? (state as Record<string | symbol, unknown>)[field]
+      : parser.initialState;
+
+  const isProvided = (state: unknown, field: string | symbol): boolean => {
+    const parser = fieldParsers.get(field);
+    return parser != null &&
+      getFieldState(state, field, parser) !== parser.initialState;
+  };
+
+  const getDependeeName = (option: string): string => {
+    if (optionFields.has(option)) return option;
+    const parser = fieldParsers.get(option);
+    if (parser != null) {
+      for (const term of iterateUsageTerms(parser.usage)) {
+        if (term.type === "option" && term.names.length > 0) {
+          return term.names.find((n) => n.startsWith("--")) ?? term.names[0];
+        } else if (term.type === "argument") {
+          return term.metavar;
+        }
+      }
+    }
+    return option;
+  };
+
+  return {
+    validate(state, results) {
+      const lookup: DependeeLookup = (option) => {
+        const field = resolveField(option);
+        if (field === undefined) return undefined;
+        const result = results.get(field);
+        return result?.success
+          ? {
+            provided: isProvided(state, field),
+            hasValue: true,
+            value: result.value,
+          }
+          : { provided: isProvided(state, field), hasValue: false };
+      };
+      for (const dependent of dependents) {
+        if (!isProvided(state, dependent.field)) continue;
+        const outcome = evaluateOptionDependency(dependent.dependsOn, lookup);
+        if (outcome === "satisfied") continue;
+        if (dependent.dependsOn.required !== true && outcome !== "conflict") {
+          continue;
+        }
+        const clauses = describeOptionDependency(
+          dependent.dependsOn,
+          getDependeeName,
+          lookup,
+        );
+        return clauses.length > 0
+          ? message`Option ${eOptionNames(dependent.names)} requires ${
+            joinDependencyClauses(clauses)
+          }.`
+          : message`Option ${
+            eOptionNames(dependent.names)
+          } cannot be used because its dependency can never be satisfied.`;
+      }
+      return undefined;
+    },
+    getHiddenTerms(state) {
+      const cache = new Map<string | symbol, DependeeValue>();
+      const lookup: DependeeLookup = (option) => {
+        const field = resolveField(option);
+        if (field === undefined) return undefined;
+        const parser = fieldParsers.get(field);
+        if (parser == null) return undefined;
+        let dependee = cache.get(field);
+        if (dependee == null) {
+          const fieldState = getFieldState(state, field, parser);
+          dependee = {
+            provided: fieldState !== parser.initialState,
+            ...readDependeeStateValue(parser, fieldState),
+          };
+          cache.set(field, dependee);
+        }
+        return dependee;
+      };
+      const hidden = new Set<UsageTerm>();
+      for (const dependent of dependents) {
+        if (dependent.dependsOn.required === true) continue;
+        if (
+          evaluateOptionDependency(dependent.dependsOn, lookup) !== "satisfied"
+        ) {
+          hidden.add(dependent.term);
+        }
+      }
+      return hidden;
+    },
+  };
+}
+
+function getOptionNames(terms: ReadonlySet<UsageTerm>): Set<string> {
+  const names = new Set<string>();
+  for (const term of terms) {
+    if (term.type === "option") {
+      for (const name of term.names) names.add(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * Checks if every leaf term of a field's usage is hidden by its dependency.
+ */
+function isUsageHiddenByDependency(
+  usage: Usage,
+  hiddenTerms: ReadonlySet<UsageTerm>,
+): boolean {
+  if (hiddenTerms.size < 1) return false;
+  let leaves = 0;
+  for (const term of iterateUsageTerms(usage)) {
+    if (
+      term.type === "optional" || term.type === "multiple" ||
+      term.type === "exclusive"
+    ) {
+      continue;
+    }
+    if (!hiddenTerms.has(term)) return false;
+    leaves++;
+  }
+  return leaves > 0;
+}
+
+function isSuggestionOfHiddenOption(
+  suggestion: Suggestion,
+  hiddenNames: ReadonlySet<string>,
+): boolean {
+  if (suggestion.kind !== "literal") return false;
+  for (const name of hiddenNames) {
+    if (
+      suggestion.text === name || suggestion.text.startsWith(`${name}=`) ||
+      suggestion.text.startsWith(`${name}:`)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isDocEntryOfHiddenOption(
+  entry: DocEntry,
+  hiddenNames: ReadonlySet<string>,
+): boolean {
+  return entry.term.type === "option" &&
+    entry.term.names.some((name) => hiddenNames.has(name));
+}
+
+/**
  * Creates a parser that combines multiple parsers into a single object parser.
  * Each parser in the object is applied to parse different parts of the input,
  * and the results are combined into an object with the same structure.
@@ -2647,6 +3133,13 @@ export function object<
       ),
     );
   }
+
+  const usage: Usage = parserPairs.flatMap(([_, p]) => p.usage);
+  const dependencyEvaluator = createOptionDependencyEvaluator(
+    parserKeys.map((k) => [k as string | symbol, parsers[k]] as const),
+    usage,
+  );
+  const noHiddenTerms: ReadonlySet<UsageTerm> = new Set();
 
   // Analyze context once for error message generation
   const noMatchContext = analyzeNoMatchContext(
@@ -2879,7 +3372,7 @@ export function object<
     $valueType: [],
     $stateType: [],
     priority: Math.max(...parserKeys.map((k) => parsers[k].priority)),
-    usage: parserPairs.flatMap(([_, p]) => p.usage),
+    usage,
     initialState: initialState as {
       readonly [K in keyof T]: T[K]["$stateType"][number] extends (infer U3)
         ? U3
@@ -2973,6 +3466,14 @@ export function object<
           const result: { [K in keyof T]: T[K]["$valueType"][number] } =
             // deno-lint-ignore no-explicit-any
             {} as any;
+          // When there are option dependencies, all fields are completed
+          // before reporting errors so that dependency violations take
+          // precedence over the errors they cause (e.g., a missing dependee).
+          const fieldResults = new Map<
+            string | symbol,
+            ValueParserResult<unknown>
+          >();
+          let firstError: Message | undefined;
           for (const field of parserKeys) {
             const fieldKey = field as string | symbol;
             const fieldResolvedState =
@@ -2985,25 +3486,28 @@ export function object<
 
             // If this field was pre-completed in Phase 1 and is a DependencySourceState,
             // extract the value directly since complete() was already called.
-            if (
-              isDependencySourceState(fieldResolvedState) &&
-              preCompletedKeys.has(fieldKey)
-            ) {
-              const depResult = fieldResolvedState.result;
-              if (depResult.success) {
-                (result as Record<string | symbol, unknown>)[fieldKey] =
-                  depResult.value;
-              } else {
-                return { success: false as const, error: depResult.error };
-              }
-              continue;
-            }
-
-            const valueResult = fieldParser.complete(fieldResolvedState);
+            const valueResult = isDependencySourceState(fieldResolvedState) &&
+                preCompletedKeys.has(fieldKey)
+              ? fieldResolvedState.result
+              : fieldParser.complete(fieldResolvedState);
             if (valueResult.success) {
               (result as Record<string | symbol, unknown>)[fieldKey] =
                 valueResult.value;
-            } else return { success: false as const, error: valueResult.error };
+            } else if (dependencyEvaluator == null) {
+              return { success: false as const, error: valueResult.error };
+            } else {
+              firstError ??= valueResult.error;
+            }
+            fieldResults.set(fieldKey, valueResult);
+          }
+          const dependencyError = dependencyEvaluator?.validate(
+            state,
+            fieldResults,
+          );
+          if (dependencyError != null) {
+            return { success: false as const, error: dependencyError };
+          } else if (firstError != null) {
+            return { success: false as const, error: firstError };
           }
           return { success: true as const, value: result };
         },
@@ -3077,6 +3581,11 @@ export function object<
           const result: { [K in keyof T]: T[K]["$valueType"][number] } =
             // deno-lint-ignore no-explicit-any
             {} as any;
+          const fieldResults = new Map<
+            string | symbol,
+            ValueParserResult<unknown>
+          >();
+          let firstError: Message | undefined;
           for (const field of parserKeys) {
             const fieldKey = field as string | symbol;
             const fieldResolvedState =
@@ -3085,25 +3594,28 @@ export function object<
 
             // If this field was pre-completed in Phase 1 and is a DependencySourceState,
             // extract the value directly since complete() was already called.
-            if (
-              isDependencySourceState(fieldResolvedState) &&
-              preCompletedKeys.has(fieldKey)
-            ) {
-              const depResult = fieldResolvedState.result;
-              if (depResult.success) {
-                (result as Record<string | symbol, unknown>)[fieldKey] =
-                  depResult.value;
-              } else {
-                return { success: false as const, error: depResult.error };
-              }
-              continue;
-            }
-
-            const valueResult = await fieldParser.complete(fieldResolvedState);
+            const valueResult = isDependencySourceState(fieldResolvedState) &&
+                preCompletedKeys.has(fieldKey)
+              ? fieldResolvedState.result
+              : await fieldParser.complete(fieldResolvedState);
             if (valueResult.success) {
               (result as Record<string | symbol, unknown>)[fieldKey] =
                 valueResult.value;
-            } else return { success: false as const, error: valueResult.error };
+            } else if (dependencyEvaluator == null) {
+              return { success: false as const, error: valueResult.error };
+            } else {
+              firstError ??= valueResult.error;
+            }
+            fieldResults.set(fieldKey, valueResult);
+          }
+          const dependencyError = dependencyEvaluator?.validate(
+            state,
+            fieldResults,
+          );
+          if (dependencyError != null) {
+            return { success: false as const, error: dependencyError };
+          } else if (firstError != null) {
+            return { success: false as const, error: firstError };
           }
           return { success: true as const, value: result };
         },
@@ -3113,6 +3625,8 @@ export function object<
       context: ParserContext<{ readonly [K in keyof T]: unknown }>,
       prefix: string,
     ) {
+      const hiddenTerms = dependencyEvaluator?.getHiddenTerms(context.state) ??
+        noHiddenTerms;
       return dispatchIterableByMode(
         combinedMode,
         () => {
@@ -3120,13 +3634,19 @@ export function object<
             string | symbol,
             Parser<"sync", unknown, unknown>,
           ][];
-          return suggestObjectSync(context, prefix, syncParserPairs);
+          return suggestObjectSync(
+            context,
+            prefix,
+            syncParserPairs,
+            hiddenTerms,
+          );
         },
         () =>
           suggestObjectAsync(
             context,
             prefix,
             parserPairs as [string | symbol, Parser<Mode, unknown, unknown>][],
+            hiddenTerms,
           ),
       );
     },
@@ -3134,18 +3654,32 @@ export function object<
       state: DocState<{ readonly [K in keyof T]: unknown }>,
       defaultValue?: { readonly [K in keyof T]: unknown },
     ) {
+      const hiddenNames = getOptionNames(
+        dependencyEvaluator?.getHiddenTerms(
+          state.kind === "available" ? state.state : undefined,
+        ) ?? noHiddenTerms,
+      );
+      const isVisible = (entry: DocEntry) =>
+        !isDocEntryOfHiddenOption(entry, hiddenNames);
       const fragments = parserPairs.flatMap(([field, p]) => {
         const fieldState: DocState<unknown> = state.kind === "unavailable"
           ? { kind: "unavailable" }
           : { kind: "available", state: state.state[field] };
         return p.getDocFragments(fieldState, defaultValue?.[field]).fragments;
       });
-      const entries: DocEntry[] = fragments.filter((d) => d.type === "entry");
+      const entries: DocEntry[] = fragments
+        .filter((d) => d.type === "entry")
+        .filter(isVisible);
       const sections: DocSection[] = [];
       for (const fragment of fragments) {
         if (fragment.type !== "section") continue;
         if (fragment.title == null) {
-          entries.push(...fragment.entries);
+          entries.push(...fragment.entries.filter(isVisible));
+        } else if (hiddenNames.size > 0) {
+          sections.push({
+            ...fragment,
+            entries: fragment.entries.filter(isVisible),
+          });
         } else {
           sections.push(fragment);
         }
