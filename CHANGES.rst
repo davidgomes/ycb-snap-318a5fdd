@@ -36,6 +36,13 @@ New Features
 - :func:`selectors.has_nulls` now takes a ``proportion`` parameter, which allows
   selecting columns that have a fraction of null values above the given threshold.
   :pr:`1881` by :user:`Gabriela Gómez Jiménez <gabrielapgomezji>`.
+- The new :class:`DurationEncoder` extracts numeric features (total seconds, days,
+  remaining hours, minutes, …, log of the total seconds and optional cyclical
+  time-of-day features) from duration columns (``timedelta64`` in pandas,
+  ``Duration`` in polars), with optional handling of negative durations and
+  feature scaling. :class:`TableVectorizer` gains a ``duration`` parameter,
+  which defaults to a :class:`DurationEncoder`, and the new selector
+  :func:`selectors.duration` selects duration columns.
 
 Changes
 -------
@@ -68,6 +75,10 @@ Changes
 - The configuration parameter "use_table_report" has been removed from the skrub
   configuration. Use :meth:`patch_display` instead.
   :pr:`1973` by :user:`Riccardo Cappuzzo<rcap107>`.
+- :class:`ToFloat` and ``ToStr`` now reject duration columns. As a result, the
+  :class:`Cleaner` leaves duration columns unchanged and the
+  :class:`TableVectorizer` sends them to its ``duration`` transformer instead of
+  treating them as numeric columns.
 
 Bug Fixes
 --------
