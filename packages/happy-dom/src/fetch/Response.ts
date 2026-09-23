@@ -109,30 +109,35 @@ export default class Response implements Response {
 
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
 
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return new ArrayBuffer(0);
-		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
-
 		(<boolean>this.bodyUsed) = true;
 
 		let buffer: Buffer | null = this[PropertySymbol.buffer];
 
+		// No browser frame means that the browser is being torn down.
+		// Fully buffered bodies stay readable. An in-progress stream read is aborted.
+		if (!buffer && !browserFrame) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
+
+		const asyncTaskManager = browserFrame?.[PropertySymbol.asyncTaskManager];
+
 		if (!buffer) {
-			const taskID = asyncTaskManager.startTask(() => {
+			const taskID = asyncTaskManager!.startTask(() => {
 				this[PropertySymbol.aborted] = true;
+				FetchBodyUtility.abortBodyRead(window, this);
 			});
 
 			try {
 				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
 			} catch (error) {
-				asyncTaskManager.endTask(taskID);
+				asyncTaskManager!.endTask(taskID);
 				throw error;
 			}
 
-			asyncTaskManager.endTask(taskID);
+			asyncTaskManager!.endTask(taskID);
 		}
 
 		this.#storeBodyInCache(buffer);
@@ -171,28 +176,33 @@ export default class Response implements Response {
 
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
 
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return Buffer.alloc(0);
-		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
-
 		(<boolean>this.bodyUsed) = true;
 
 		let buffer: Buffer | null = this[PropertySymbol.buffer];
 
+		// No browser frame means that the browser is being torn down.
+		// Fully buffered bodies stay readable. An in-progress stream read is aborted.
+		if (!buffer && !browserFrame) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
+
+		const asyncTaskManager = browserFrame?.[PropertySymbol.asyncTaskManager];
+
 		if (!buffer) {
-			const taskID = asyncTaskManager.startTask(() => {
+			const taskID = asyncTaskManager!.startTask(() => {
 				this[PropertySymbol.aborted] = true;
+				FetchBodyUtility.abortBodyRead(window, this);
 			});
 			try {
 				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
 			} catch (error) {
-				asyncTaskManager.endTask(taskID);
+				asyncTaskManager!.endTask(taskID);
 				throw error;
 			}
-			asyncTaskManager.endTask(taskID);
+			asyncTaskManager!.endTask(taskID);
 		}
 
 		this.#storeBodyInCache(buffer);
@@ -217,28 +227,33 @@ export default class Response implements Response {
 
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
 
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return '';
-		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
-
 		(<boolean>this.bodyUsed) = true;
 
 		let buffer: Buffer | null = this[PropertySymbol.buffer];
 
+		// No browser frame means that the browser is being torn down.
+		// Fully buffered bodies stay readable. An in-progress stream read is aborted.
+		if (!buffer && !browserFrame) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
+
+		const asyncTaskManager = browserFrame?.[PropertySymbol.asyncTaskManager];
+
 		if (!buffer) {
-			const taskID = asyncTaskManager.startTask(() => {
+			const taskID = asyncTaskManager!.startTask(() => {
 				this[PropertySymbol.aborted] = true;
+				FetchBodyUtility.abortBodyRead(window, this);
 			});
 			try {
 				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
 			} catch (error) {
-				asyncTaskManager.endTask(taskID);
+				asyncTaskManager!.endTask(taskID);
 				throw error;
 			}
-			asyncTaskManager.endTask(taskID);
+			asyncTaskManager!.endTask(taskID);
 		}
 
 		this.#storeBodyInCache(buffer);
@@ -264,13 +279,6 @@ export default class Response implements Response {
 	public async formData(): Promise<FormData> {
 		const window = this[PropertySymbol.window];
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
-
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return new window.FormData();
-		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
 		const contentType = this.headers.get('Content-Type');
 
 		if (contentType && this.body && /multipart/i.test(contentType)) {
@@ -283,8 +291,17 @@ export default class Response implements Response {
 
 			(<boolean>this.bodyUsed) = true;
 
-			const taskID = browserFrame[PropertySymbol.asyncTaskManager].startTask(() => {
+			if (!browserFrame && !this[PropertySymbol.buffer]) {
+				throw new window.DOMException(
+					'Failed to read response body: The stream was aborted.',
+					DOMExceptionNameEnum.abortError
+				);
+			}
+
+			const asyncTaskManager = browserFrame?.[PropertySymbol.asyncTaskManager];
+			const taskID = asyncTaskManager?.startTask(() => {
 				this[PropertySymbol.aborted] = true;
+				FetchBodyUtility.abortBodyRead(window, this);
 			});
 			let formData: FormData;
 			let buffer: Buffer;
@@ -294,12 +311,16 @@ export default class Response implements Response {
 				formData = result.formData;
 				buffer = result.buffer;
 			} catch (error) {
-				asyncTaskManager.endTask(taskID);
+				if (taskID !== undefined && asyncTaskManager) {
+					asyncTaskManager.endTask(taskID);
+				}
 				throw error;
 			}
 
 			this.#storeBodyInCache(buffer);
-			asyncTaskManager.endTask(taskID);
+			if (taskID !== undefined && asyncTaskManager) {
+				asyncTaskManager.endTask(taskID);
+			}
 
 			return formData;
 		}

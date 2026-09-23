@@ -11,11 +11,46 @@ import type { TResponseBody } from '../types/TResponseBody.js';
 import { Buffer } from 'buffer';
 import Stream from 'stream';
 import type BrowserWindow from '../../window/BrowserWindow.js';
+import BodyReadRegistry from './BodyReadRegistry.js';
 
 /**
  * Fetch body utility.
  */
 export default class FetchBodyUtility {
+	/**
+	 * Cancels an in-flight body read started for a request or response.
+	 *
+	 * @param window Window.
+	 * @param requestOrResponse Request or response.
+	 */
+	public static abortBodyRead(window: BrowserWindow, requestOrResponse: object): void {
+		BodyReadRegistry.abort(window, requestOrResponse);
+	}
+
+	/**
+	 * Returns an AbortError when body consumption was interrupted.
+	 *
+	 * @param window Window.
+	 * @param error Caught error.
+	 * @param aborted True when consumption was aborted.
+	 * @returns Error to throw, or null when the original error should be wrapped by the caller.
+	 */
+	private static getAbortException(
+		window: BrowserWindow,
+		error: unknown,
+		aborted: boolean
+	): DOMException | null {
+		if (error instanceof DOMException && error.name === DOMExceptionNameEnum.abortError) {
+			return error;
+		}
+		if (aborted) {
+			return new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
+		return null;
+	}
 	/**
 	 * Parses body and returns stream and type.
 	 *
@@ -197,7 +232,15 @@ export default class FetchBodyUtility {
 			throw requestOrResponse[PropertySymbol.error];
 		}
 
+		if (requestOrResponse[PropertySymbol.aborted]) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
+
 		const reader = body.getReader();
+		BodyReadRegistry.track(requestOrResponse, reader);
 		const chunks = [];
 		let bytes = 0;
 
@@ -218,7 +261,24 @@ export default class FetchBodyUtility {
 				chunks.push(chunk);
 				readResult = await reader.read();
 			}
+			if (requestOrResponse[PropertySymbol.error]) {
+				throw requestOrResponse[PropertySymbol.error];
+			}
+			if (requestOrResponse[PropertySymbol.aborted]) {
+				throw new window.DOMException(
+					'Failed to read response body: The stream was aborted.',
+					DOMExceptionNameEnum.abortError
+				);
+			}
 		} catch (error) {
+			const abortException = this.getAbortException(
+				window,
+				error,
+				requestOrResponse[PropertySymbol.aborted]
+			);
+			if (abortException) {
+				throw abortException;
+			}
 			if (error instanceof DOMException) {
 				throw error;
 			}
@@ -226,6 +286,8 @@ export default class FetchBodyUtility {
 				`Failed to read response body. Error: ${(<Error>error).message}.`,
 				DOMExceptionNameEnum.encodingError
 			);
+		} finally {
+			BodyReadRegistry.untrack(requestOrResponse);
 		}
 
 		try {

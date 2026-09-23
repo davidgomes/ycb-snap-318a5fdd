@@ -5,6 +5,7 @@ import AsyncTaskManagerDebugError from './AsyncTaskManagerDebugError.js';
 const TIMER = {
 	setTimeout: globalThis.setTimeout.bind(globalThis),
 	clearTimeout: globalThis.clearTimeout.bind(globalThis),
+	clearInterval: globalThis.clearInterval.bind(globalThis),
 	clearImmediate: globalThis.clearImmediate.bind(globalThis)
 };
 
@@ -325,6 +326,7 @@ export default class AsyncTaskManager {
 
 		for (const timer of runningTimers) {
 			TIMER.clearTimeout(timer);
+			TIMER.clearInterval(timer);
 		}
 
 		for (const key of Object.keys(runningTasks)) {

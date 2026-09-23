@@ -1943,6 +1943,11 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 			this.history[PropertySymbol.destroy]();
 		}
 
+		const zeroDelayTimeout = this.#zeroDelayTimeout;
+		if (zeroDelayTimeout.timeouts) {
+			zeroDelayTimeout.timeouts = null;
+		}
+
 		this[PropertySymbol.modules].json.clear();
 		this[PropertySymbol.modules].css.clear();
 		this[PropertySymbol.modules].esm.clear();

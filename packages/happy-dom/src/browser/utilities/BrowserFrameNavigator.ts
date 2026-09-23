@@ -173,6 +173,13 @@ export default class BrowserFrameNavigator {
 			frame.window.document[PropertySymbol.referrer] = referrer;
 		}
 
+		// Discarded page state must stop timers, animation frames, and in-flight body reads
+		// immediately. Child frames are destroyed afterwards, then the previous window.
+		previousAsyncTaskManager.abort();
+		for (const childFrame of frame.childFrames) {
+			childFrame.abort();
+		}
+
 		// Destroy child frames and Window
 		const destroyTaskID = frame[PropertySymbol.asyncTaskManager].startTask();
 		const destroyWindowAndAsyncTaskManager = (): void => {
