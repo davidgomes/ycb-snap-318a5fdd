@@ -16,6 +16,9 @@ import {
 } from './is.js';
 import { findArr } from './util.js';
 import SuperJSON from './index.js';
+import { sanitizeMessage } from './error-sanitizer.js';
+import { processStackFrames, processStackString } from './error-stack.js';
+import type { NormalizedErrorStackOptions } from './error-options.js';
 
 export type PrimitiveTypeAnnotation = 'number' | 'undefined' | 'bigint';
 
@@ -26,7 +29,182 @@ type ClassTypeAnnotation = ['class', string];
 type SymbolTypeAnnotation = ['symbol', string];
 type CustomTypeAnnotation = ['custom', string];
 
-type SimpleTypeAnnotation = LeafTypeAnnotation | 'map' | 'set' | 'Error';
+type SimpleTypeAnnotation =
+  | LeafTypeAnnotation
+  | 'map'
+  | 'set'
+  | 'Error'
+  | 'Error/stack'
+  | 'Error/frames';
+
+const errorCauseDepths = new WeakMap<object, number>();
+
+export function getErrorCauseDepth(superJson: object): number {
+  return errorCauseDepths.get(superJson) ?? 0;
+}
+
+export function adjustErrorCauseDepth(superJson: object, delta: number): void {
+  errorCauseDepths.set(superJson, getErrorCauseDepth(superJson) + delta);
+}
+
+function matchesClassFilter(
+  error: { name?: string },
+  classFilter: string[] | undefined
+): boolean {
+  if (!classFilter || classFilter.length === 0) {
+    return true;
+  }
+  return classFilter.includes(error.name ?? '');
+}
+
+function stackPropAllowed(superJson: SuperJSON, prop: string): boolean {
+  return superJson.allowedErrorProps.includes(prop);
+}
+
+function maybeSanitizeMessage(
+  error: Error,
+  options: NormalizedErrorStackOptions
+): string {
+  if (!options.sanitizeMessage || typeof error.message !== 'string') {
+    return error.message;
+  }
+  if (!matchesClassFilter(error, options.classFilter)) {
+    return error.message;
+  }
+  return sanitizeMessage(error.message);
+}
+
+function shouldIncludeCause(error: Error, superJson: SuperJSON): boolean {
+  const options = superJson.errorStack;
+  if (!options) {
+    return 'cause' in error;
+  }
+
+  const cause = (error as { cause?: unknown }).cause;
+  if (!isError(cause)) {
+    return false;
+  }
+  if (options.includeCauses === 'direct') {
+    return getErrorCauseDepth(superJson) === 0;
+  }
+  if (options.includeCauses === 'deep') {
+    return getErrorCauseDepth(superJson) < options.maxCauseDepth;
+  }
+  return false;
+}
+
+function serializeError(
+  error: Error,
+  superJson: SuperJSON,
+  variant: 'default' | 'string' | 'frames'
+): Record<string, unknown> {
+  const options = superJson.errorStack;
+
+  if (!options) {
+    const baseError: Record<string, unknown> = {
+      name: error.name,
+      message: error.message,
+    };
+
+    if ('cause' in error) {
+      baseError.cause = (error as { cause?: unknown }).cause;
+    }
+
+    superJson.allowedErrorProps.forEach(prop => {
+      baseError[prop] = (error as any)[prop];
+    });
+
+    return baseError;
+  }
+
+  const baseError: Record<string, unknown> = {
+    name: error.name,
+    message: maybeSanitizeMessage(error, options),
+  };
+
+  if (shouldIncludeCause(error, superJson)) {
+    baseError.cause = (error as { cause?: unknown }).cause;
+  }
+
+  superJson.allowedErrorProps.forEach(prop => {
+    if (
+      prop === 'stack' ||
+      prop === 'stackFrames' ||
+      prop === 'cause' ||
+      prop === 'message' ||
+      prop === 'name'
+    ) {
+      return;
+    }
+    baseError[prop] = (error as any)[prop];
+  });
+
+  if (typeof AggregateError !== 'undefined' && error instanceof AggregateError) {
+    baseError.errors = error.errors;
+  }
+
+  const allowStack = stackPropAllowed(superJson, 'stack');
+  const allowFrames = stackPropAllowed(superJson, 'stackFrames');
+
+  if (
+    variant === 'string' &&
+    allowStack &&
+    typeof error.stack === 'string'
+  ) {
+    baseError.stack = processStackString(error.stack, options);
+  } else if (
+    variant === 'frames' &&
+    allowFrames &&
+    typeof error.stack === 'string'
+  ) {
+    baseError.stackFrames = processStackFrames(error.stack, options);
+  } else if (variant === 'default' && options.mode !== 'off') {
+    if (allowStack && error.stack !== undefined) {
+      baseError.stack = error.stack;
+    }
+    const rawFrames = (error as { stackFrames?: unknown }).stackFrames;
+    if (allowFrames && rawFrames !== undefined) {
+      baseError.stackFrames = rawFrames;
+    }
+  }
+
+  return baseError;
+}
+
+function untransformError(v: any, superJson: SuperJSON): Error {
+  const error =
+    v?.name === 'AggregateError' && Array.isArray(v.errors)
+      ? new AggregateError(v.errors, v.message, { cause: v.cause })
+      : new Error(v.message, { cause: v.cause });
+
+  error.name = v.name;
+  error.stack = v.stack;
+
+  if (v.stackFrames !== undefined) {
+    (error as { stackFrames?: unknown }).stackFrames = v.stackFrames;
+  }
+
+  superJson.allowedErrorProps.forEach(prop => {
+    (error as any)[prop] = v[prop];
+  });
+
+  return error;
+}
+
+function errorRuleIsApplicable(
+  mode: 'string' | 'frames'
+): (value: unknown, superJson: SuperJSON) => value is Error {
+  return (value, superJson): value is Error => {
+    if (!isError(value)) {
+      return false;
+    }
+    const options = superJson.errorStack;
+    if (!options || options.mode !== mode) {
+      return false;
+    }
+    return matchesClassFilter(value, options.classFilter);
+  };
+}
 
 type CompositeTypeAnnotation =
   | TypedArrayAnnotation
@@ -79,35 +257,22 @@ const simpleRules = [
   ),
 
   simpleTransformation(
+    errorRuleIsApplicable('string'),
+    'Error/stack',
+    (v, superJson) => serializeError(v, superJson, 'string'),
+    untransformError
+  ),
+  simpleTransformation(
+    errorRuleIsApplicable('frames'),
+    'Error/frames',
+    (v, superJson) => serializeError(v, superJson, 'frames'),
+    untransformError
+  ),
+  simpleTransformation(
     isError,
     'Error',
-    (v, superJson) => {
-      const baseError: any = {
-        name: v.name,
-        message: v.message,
-      };
-
-      if ('cause' in v) {
-        baseError.cause = v.cause;
-      }
-
-      superJson.allowedErrorProps.forEach(prop => {
-        baseError[prop] = (v as any)[prop];
-      });
-
-      return baseError;
-    },
-    (v, superJson) => {
-      const e = new Error(v.message, { cause: v.cause });
-      e.name = v.name;
-      e.stack = v.stack;
-
-      superJson.allowedErrorProps.forEach(prop => {
-        (e as any)[prop] = v[prop];
-      });
-
-      return e;
-    }
+    (v, superJson) => serializeError(v, superJson, 'default'),
+    untransformError
   ),
 
   simpleTransformation(

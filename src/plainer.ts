@@ -9,6 +9,7 @@ import {
 } from './is.js';
 import { escapeKey, stringifyPath } from './pathstringifier.js';
 import {
+  adjustErrorCauseDepth,
   isInstanceOfRegisteredClass,
   transformValue,
   TypeAnnotation,
@@ -251,15 +252,27 @@ export const walker = (
       );
     }
 
-    const recursiveResult = walker(
-      value,
-      identities,
-      superJson,
-      dedupe,
-      [...path, index],
-      [...objectsInThisPath, object],
-      seenObjects
-    );
+    const trackCauseDepth = index === 'cause' && isError(object);
+    if (trackCauseDepth) {
+      adjustErrorCauseDepth(superJson, 1);
+    }
+
+    let recursiveResult: Result;
+    try {
+      recursiveResult = walker(
+        value,
+        identities,
+        superJson,
+        dedupe,
+        [...path, index],
+        [...objectsInThisPath, object],
+        seenObjects
+      );
+    } finally {
+      if (trackCauseDepth) {
+        adjustErrorCauseDepth(superJson, -1);
+      }
+    }
 
     transformedValue[index] = recursiveResult.transformedValue;
 
@@ -285,6 +298,13 @@ export const walker = (
           ? [transformationResult.type, innerAnnotations]
           : innerAnnotations,
       };
+  if (isError(object) && typeof object.name === 'string') {
+    const processor = superJson.errorClassRegistry.getProcessor(object.name);
+    if (processor) {
+      result.transformedValue = processor(result.transformedValue);
+    }
+  }
+
   if (!primitive) {
     seenObjects.set(object, result);
   }
