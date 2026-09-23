@@ -285,6 +285,19 @@ Show detailed information about a task.
 task build --summary
 ```
 
+#### `--graph`
+
+Print the dependency graph of the given tasks. With no task names, the default
+task is used. `--format` selects `json` (the default), `dot`, or `text`.
+`--reverse` inverts the graph so it shows every task that depends on the given
+tasks. `--no-status` omits fingerprint status from JSON and DOT output.
+
+```bash
+task --graph build
+task --graph --format dot build
+task --graph --format text --reverse build
+```
+
 #### `--json`
 
 Output task information in JSON format (use with `--list` or `--list-all`).

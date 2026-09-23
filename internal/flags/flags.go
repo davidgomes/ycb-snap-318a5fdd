@@ -51,6 +51,9 @@ var (
 	List                bool
 	ListAll             bool
 	ListJson            bool
+	Graph               bool
+	GraphFormat         string
+	GraphReverse        bool
 	TaskSort            string
 	Status              bool
 	NoStatus            bool
@@ -126,6 +129,9 @@ func init() {
 	pflag.BoolVarP(&List, "list", "l", false, "Lists tasks with description of current Taskfile.")
 	pflag.BoolVarP(&ListAll, "list-all", "a", false, "Lists tasks with or without a description.")
 	pflag.BoolVarP(&ListJson, "json", "j", false, "Formats task list as JSON.")
+	pflag.BoolVar(&Graph, "graph", false, "Prints the dependency graph of the given tasks.")
+	pflag.StringVar(&GraphFormat, "format", "", "Graph output format: [json|dot|text]. Defaults to json.")
+	pflag.BoolVar(&GraphReverse, "reverse", false, "Inverts the graph to show every task that depends on the given tasks.")
 	pflag.StringVar(&TaskSort, "sort", "", "Changes the order of the tasks when listed. [default|alphanumeric|none].")
 	pflag.BoolVar(&Status, "status", false, "Exits with non-zero exit code if any of the given tasks is not up-to-date.")
 	pflag.BoolVar(&NoStatus, "no-status", false, "Ignore status when listing tasks as JSON")
@@ -234,8 +240,24 @@ func Validate() error {
 		return errors.New("task: --json only applies to --list or --list-all")
 	}
 
-	if NoStatus && !ListJson {
-		return errors.New("task: --no-status only applies to --json with --list or --list-all")
+	if Graph && (List || ListAll) {
+		return errors.New("task: cannot use --graph and --list at the same time")
+	}
+
+	if GraphFormat != "" && !Graph {
+		return errors.New("task: --format only applies to --graph")
+	}
+
+	if Graph && GraphFormat != "" && GraphFormat != "json" && GraphFormat != "dot" && GraphFormat != "text" {
+		return errors.New("task: --format must be one of json, dot, or text")
+	}
+
+	if GraphReverse && !Graph {
+		return errors.New("task: --reverse only applies to --graph")
+	}
+
+	if NoStatus && !ListJson && !Graph {
+		return errors.New("task: --no-status only applies to --json with --list or --list-all, or to --graph")
 	}
 
 	if Nested && !ListJson {
@@ -308,6 +330,9 @@ func (o *flagsOption) ApplyToExecutor(e *task.Executor) {
 		task.WithTaskSorter(sorter),
 		task.WithVersionCheck(true),
 		task.WithFailfast(Failfast),
+		task.WithGraphFormat(GraphFormat),
+		task.WithGraphReverse(GraphReverse),
+		task.WithGraphNoStatus(NoStatus),
 	)
 }
 
