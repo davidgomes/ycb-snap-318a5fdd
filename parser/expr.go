@@ -572,7 +572,8 @@ func (e *PatternElement) String() string {
 		return "..." + e.Target.String()
 	}
 	s := e.Target.String()
-	if e.KeyPos.IsValid() {
+	if ident, ok := e.Target.(*Ident); e.KeyPos.IsValid() &&
+		(!ok || ident.Name != e.Key) {
 		s = e.Key + ": " + s
 	}
 	if e.Default != nil {

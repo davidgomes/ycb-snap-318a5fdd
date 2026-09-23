@@ -919,6 +919,7 @@ func (v *VM) run() {
 				kv = m.Value
 			case *ImmutableMap:
 				kv = m.Value
+			case *Undefined:
 			default:
 				v.err = fmt.Errorf("cannot destructure %s as map",
 					m.TypeName())
@@ -955,6 +956,8 @@ func destructuringArray(o Object) ([]Object, bool) {
 		return arr.Value, true
 	case *ImmutableArray:
 		return arr.Value, true
+	case *Undefined:
+		return nil, true
 	}
 	return nil, false
 }
