@@ -867,6 +867,55 @@ func (v *VM) run() {
 			val := iterator.(Iterator).Value()
 			v.stack[v.sp] = val
 			v.sp++
+		case parser.OpDestructArray:
+			switch src := v.stack[v.sp-1].(type) {
+			case *Array, *ImmutableArray, *Undefined:
+			default:
+				v.err = fmt.Errorf("not an array: %s", src.TypeName())
+				return
+			}
+		case parser.OpDestructMap:
+			switch src := v.stack[v.sp-1].(type) {
+			case *Map, *ImmutableMap, *Undefined:
+			default:
+				v.err = fmt.Errorf("not a map: %s", src.TypeName())
+				return
+			}
+		case parser.OpDestructElem:
+			v.ip += 4
+			key := v.stack[v.sp-1]
+			v.sp--
+			if val, ok := destructElem(v.stack[v.sp-1], key); ok {
+				v.stack[v.sp] = val
+				v.sp++
+				pos := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8 | int(v.curInsts[v.ip-2])<<16 | int(v.curInsts[v.ip-3])<<24
+				v.ip = pos - 1
+			}
+		case parser.OpDestructRest:
+			v.ip += 2
+			start := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
+
+			var elements []Object
+			switch src := v.stack[v.sp-1].(type) {
+			case *Array:
+				elements = src.Value
+			case *ImmutableArray:
+				elements = src.Value
+			}
+			var rest []Object
+			if start < len(elements) {
+				rest = make([]Object, len(elements)-start)
+				copy(rest, elements[start:])
+			}
+
+			var arr Object = &Array{Value: rest}
+			v.allocs--
+			if v.allocs == 0 {
+				v.err = ErrObjectAllocLimit
+				return
+			}
+			v.stack[v.sp] = arr
+			v.sp++
 		case parser.OpSuspend:
 			return
 		default:
@@ -879,6 +928,31 @@ func (v *VM) run() {
 // IsStackEmpty tests if the stack is empty or not.
 func (v *VM) IsStackEmpty() bool {
 	return v.sp == 0
+}
+
+// destructElem returns the element of an array or map destructuring source
+// and whether it exists. Elements holding undefined exist.
+func destructElem(src, key Object) (Object, bool) {
+	var elements []Object
+	switch src := src.(type) {
+	case *Array:
+		elements = src.Value
+	case *ImmutableArray:
+		elements = src.Value
+	case *Map:
+		val, ok := src.Value[key.(*String).Value]
+		return val, ok
+	case *ImmutableMap:
+		val, ok := src.Value[key.(*String).Value]
+		return val, ok
+	default:
+		return nil, false
+	}
+	idx := key.(*Int).Value
+	if idx < 0 || idx >= int64(len(elements)) {
+		return nil, false
+	}
+	return elements[idx], true
 }
 
 func indexAssign(dst, src Object, selectors []Object) error {

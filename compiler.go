@@ -389,11 +389,26 @@ func (c *Compiler) Compile(node parser.Node) error {
 	case *parser.FuncLit:
 		c.enterScope()
 
-		for _, p := range node.Type.Params.List {
-			s := c.symbolTable.Define(p.Name)
+		params := node.Type.Params
+		for i, p := range params.List {
+			name := p.Name
+			if params.Patterns != nil && params.Patterns[i] != nil {
+				// ":" makes the argument unreachable from user code.
+				name = ":param"
+			}
+			s := c.symbolTable.Define(name)
 
 			// function arguments is not assigned directly.
 			s.LocalAssigned = true
+		}
+		for i, pattern := range params.Patterns {
+			if pattern == nil {
+				continue
+			}
+			c.emit(pattern, parser.OpGetLocal, i)
+			if err := c.compileDestructure(pattern); err != nil {
+				return err
+			}
 		}
 
 		if err := c.Compile(node.Body); err != nil {
@@ -669,6 +684,18 @@ func (c *Compiler) compileAssign(
 		return c.errorf(node, "tuple assignment not allowed")
 	}
 
+	switch lhs[0].(type) {
+	case *parser.ArrayPattern, *parser.MapPattern:
+		if op != token.Define {
+			return c.errorf(node, "cannot use destructuring with %s",
+				op.String())
+		}
+		if err := c.Compile(rhs[0]); err != nil {
+			return err
+		}
+		return c.compileDestructure(lhs[0])
+	}
+
 	// resolve and compile left-hand side
 	ident, selectors := resolveAssignLHS(lhs[0])
 	numSel := len(selectors)
@@ -774,6 +801,89 @@ func (c *Compiler) compileAssign(
 			symbol.Scope))
 	}
 	return nil
+}
+
+// compileDestructure binds the value on top of the stack to the destructuring
+// target, defining a new symbol for each identifier it contains. The value is
+// consumed.
+func (c *Compiler) compileDestructure(target parser.Expr) error {
+	switch target := target.(type) {
+	case *parser.Ident:
+		if target.Name == "_" {
+			c.emit(target, parser.OpPop)
+			return nil
+		}
+		_, depth, exists := c.symbolTable.Resolve(target.Name, false)
+		if exists && depth == 0 {
+			return c.errorf(target, "'%s' redeclared in this block",
+				target.Name)
+		}
+		symbol := c.symbolTable.Define(target.Name)
+		if symbol.Scope == ScopeGlobal {
+			c.emit(target, parser.OpSetGlobal, symbol.Index)
+		} else {
+			c.emit(target, parser.OpDefineLocal, symbol.Index)
+			symbol.LocalAssigned = true
+		}
+		return nil
+	case *parser.ArrayPattern:
+		c.emit(target, parser.OpDestructArray)
+		for i, elem := range target.Elements {
+			if rest, ok := elem.(*parser.RestElement); ok {
+				if i != len(target.Elements)-1 {
+					return c.errorf(rest, "rest element must be last")
+				}
+				c.emit(rest, parser.OpDestructRest, i)
+				if err := c.compileDestructure(rest.Name); err != nil {
+					return err
+				}
+				continue
+			}
+			c.emit(elem, parser.OpConstant,
+				c.addConstant(&Int{Value: int64(i)}))
+			if err := c.compileDestructureElem(elem); err != nil {
+				return err
+			}
+		}
+	case *parser.MapPattern:
+		c.emit(target, parser.OpDestructMap)
+		for _, elem := range target.Elements {
+			if len(elem.Key) > MaxStringLen {
+				return c.error(elem, ErrStringLimit)
+			}
+			c.emit(elem, parser.OpConstant,
+				c.addConstant(&String{Value: elem.Key}))
+			if err := c.compileDestructureElem(elem.Value); err != nil {
+				return err
+			}
+		}
+	default:
+		return c.errorf(target, "invalid destructuring target")
+	}
+	c.emit(target, parser.OpPop)
+	return nil
+}
+
+// compileDestructureElem binds the element for the key on top of the stack
+// from the destructuring source below it, evaluating the default value only if
+// the element does not exist.
+func (c *Compiler) compileDestructureElem(elem parser.Expr) error {
+	target := elem
+	var defaultValue parser.Expr
+	if d, ok := elem.(*parser.DefaultPattern); ok {
+		target, defaultValue = d.Target, d.Default
+	}
+
+	jumpPos := c.emit(elem, parser.OpDestructElem, 0)
+	if defaultValue != nil {
+		if err := c.Compile(defaultValue); err != nil {
+			return err
+		}
+	} else {
+		c.emit(elem, parser.OpNull)
+	}
+	c.changeOperand(jumpPos, len(c.currentInstructions()))
+	return c.compileDestructure(target)
 }
 
 func (c *Compiler) compileLogical(node *parser.BinaryExpr) error {
@@ -1199,7 +1309,7 @@ func (c *Compiler) optimizeFunc(node parser.Node) {
 		func(pos int, opcode parser.Opcode, operands []int) bool {
 			switch opcode {
 			case parser.OpJump, parser.OpJumpFalsy,
-				parser.OpAndJump, parser.OpOrJump:
+				parser.OpAndJump, parser.OpOrJump, parser.OpDestructElem:
 				dsts[operands[0]] = true
 			}
 			return true
@@ -1240,7 +1350,7 @@ func (c *Compiler) optimizeFunc(node parser.Node) {
 		func(pos int, opcode parser.Opcode, operands []int) bool {
 			switch opcode {
 			case parser.OpJump, parser.OpJumpFalsy, parser.OpAndJump,
-				parser.OpOrJump:
+				parser.OpOrJump, parser.OpDestructElem:
 				newDst, ok := posMap[operands[0]]
 				if ok {
 					copy(newInsts[pos:],
