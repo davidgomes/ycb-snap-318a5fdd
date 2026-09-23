@@ -253,6 +253,43 @@ export class Parser {
   }
 
   /**
+   * Runs `callback`, which may scan ahead, then restores the lexer state.
+   * Tokens and comments scanned inside `callback` are not reported.
+   */
+  lookAhead<T>(callback: () => T): T {
+    const { options } = this;
+    const { onToken, onComment } = options;
+    const state = {
+      token: this.token,
+      flags: this.flags,
+      index: this.index,
+      line: this.line,
+      column: this.column,
+      startIndex: this.startIndex,
+      startLine: this.startLine,
+      startColumn: this.startColumn,
+      tokenIndex: this.tokenIndex,
+      tokenLine: this.tokenLine,
+      tokenColumn: this.tokenColumn,
+      tokenValue: this.tokenValue,
+      tokenRaw: this.tokenRaw,
+      tokenRegExp: this.tokenRegExp,
+      currentChar: this.currentChar,
+    };
+
+    options.onToken = undefined;
+    options.onComment = undefined;
+
+    try {
+      return callback();
+    } finally {
+      Object.assign(this, state);
+      options.onToken = onToken;
+      options.onComment = onComment;
+    }
+  }
+
+  /**
    * Throws an error
    *
    * @export
