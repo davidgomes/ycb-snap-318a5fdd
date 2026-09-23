@@ -1,6 +1,6 @@
-import { $internal } from '../../common';
-import { isRelation } from '../../relation/utils/is-relation';
-import type { ExtractTraits, TraitOrRelation } from '../../trait/types';
+import { splitModifierInputs } from '../../aspect/split-modifier-inputs';
+import type { Aspect, NormalizeModifierSources } from '../../aspect/types';
+import type { Trait, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
@@ -14,12 +14,10 @@ export function createRemoved() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends readonly (TraitOrRelation | Aspect)[]>(
         ...inputs: T
-    ): Modifier<ExtractTraits<T>, `removed-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`removed-${id}`, id, traits);
+    ): Modifier<Trait[], `removed-${number}`, NormalizeModifierSources<T>> => {
+        const { traits, sources } = splitModifierInputs(inputs);
+        return createModifier(`removed-${id}`, id, traits, sources as NormalizeModifierSources<T>);
     };
 }

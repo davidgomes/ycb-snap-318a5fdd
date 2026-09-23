@@ -39,6 +39,9 @@ export type {
     RelationPair,
     RelationTarget,
 } from './relation/types';
+export { createAspect } from './aspect/create-aspect';
+export { isAspect } from './aspect/is-aspect';
+export type { Aspect, AspectRecord } from './aspect/types';
 export { getStore, trait } from './trait/trait';
 export type {
     ConfigurableTrait,

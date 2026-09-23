@@ -14,7 +14,7 @@ Complete guide to querying entities in Koota.
 
 ## Basic queries
 
-Queries fetch entities that share specific traits (archetypes).
+Queries fetch entities that share specific traits (archetypes). An aspect parameter requires every constituent trait and yields one merged column. See [aspects.md](aspects.md).
 
 ```typescript
 // Returns QueryResult (Entity[] with extra methods)

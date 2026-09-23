@@ -1,3 +1,6 @@
+import { isAspect } from '../aspect/is-aspect';
+import type { Aspect } from '../aspect/types';
+import { notifyTraitAdded, notifyTraitRemoving } from '../aspect/watchers';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -91,6 +94,25 @@ function createTrait<S extends Schema>(schema: S = tagSchema as S): Trait<Norm<S
 
 export const trait = createTrait;
 
+type AddAspectHandler = (
+    world: World,
+    entity: Entity,
+    aspect: Aspect,
+    params?: Record<string, unknown>
+) => void;
+type RemoveAspectHandler = (world: World, entity: Entity, aspect: Aspect) => void;
+
+let addAspectHandler: AddAspectHandler | null = null;
+let removeAspectHandler: RemoveAspectHandler | null = null;
+
+export function setAddAspectHandler(handler: AddAspectHandler) {
+    addAspectHandler = handler;
+}
+
+export function setRemoveAspectHandler(handler: RemoveAspectHandler) {
+    removeAspectHandler = handler;
+}
+
 export function registerTrait(world: World, trait: Trait) {
     const ctx = world[$internal];
     const traitCtx = trait[$internal];
@@ -129,7 +151,11 @@ function getOrderedTrait(world: World, entity: Entity, trait: OrderedRelation): 
     return new OrderedList(world, entity, relation, trait);
 }
 
-export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTrait[]) {
+export function addTrait(
+    world: World,
+    entity: Entity,
+    ...traits: (ConfigurableTrait | Aspect | [Aspect, Record<string, unknown>])[]
+) {
     for (let i = 0; i < traits.length; i++) {
         const config = traits[i];
 
@@ -139,11 +165,20 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
             continue;
         }
 
+        if (isAspect(config)) {
+            addAspectHandler?.(world, entity, config);
+            continue;
+        }
+
         // Get trait and params for regular traits
         let trait: Trait;
         let params: Record<string, any> | undefined;
 
         if (Array.isArray(config)) {
+            if (isAspect(config[0])) {
+                addAspectHandler?.(world, entity, config[0], config[1]);
+                continue;
+            }
             [trait, params] = config as [Trait, Record<string, any>];
         } else {
             trait = config as Trait;
@@ -170,6 +205,7 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
 
         // Call add subscriptions after values are set
         for (const sub of data.addSubscriptions) sub(entity);
+        notifyTraitAdded(world, entity, trait);
     }
 }
 
@@ -224,12 +260,21 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
     for (const sub of instance.addSubscriptions) sub(entity, target);
 }
 
-export function removeTrait(world: World, entity: Entity, ...traits: (Trait | RelationPair)[]) {
+export function removeTrait(
+    world: World,
+    entity: Entity,
+    ...traits: (Trait | RelationPair | Aspect)[]
+) {
     for (let i = 0; i < traits.length; i++) {
         const trait = traits[i];
 
         if (isRelationPair(trait)) {
             removeRelationPair(world, entity, trait);
+            continue;
+        }
+
+        if (isAspect(trait)) {
+            removeAspectHandler?.(world, entity, trait);
             continue;
         }
 
@@ -248,6 +293,8 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
             }
             removeAllRelationTargets(world, traitCtx.relation, entity);
         } else {
+            // Drop aspect completeness while every constituent is still present.
+            notifyTraitRemoving(world, entity, trait);
             // Regular trait: emit generic remove
             const instance = getTraitInstance(world[$internal].traitInstances, trait);
             if (instance) {

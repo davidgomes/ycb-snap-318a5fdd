@@ -1,6 +1,6 @@
 ---
 name: koota
-description: Real-time ECS state management for TypeScript and React. Use when the user mentions koota, ECS, entities, traits, queries, or building data-oriented applications.
+description: Real-time ECS state management for TypeScript and React. Use when the user mentions koota, ECS, entities, traits, aspects, queries, or building data-oriented applications.
 ---
 
 # Koota ECS
@@ -12,6 +12,7 @@ Koota manages state using entities with composable traits.
 - **Entity** - A unique identifier pointing to data defined by traits. Spawned from a world.
 - **Trait** - A reusable data definition. Can be schema-based (SoA), callback-based (AoS), or a tag.
 - **Relation** - A directional connection between entities to build graphs.
+- **Aspect** - A named group of traits with one `has`/`get`/`set`/`add`/`remove` surface and one query column.
 - **World** - The context for all entities and their data (traits).
 - **Archetype** - A unique combination of traits that entities share.
 - **Query** - Fetches entities matching an archetype. The primary way to batch update state.
@@ -119,6 +120,28 @@ const target = entity.targetFor(Targeting) // Entity | undefined
 ```
 
 For detailed patterns, traversal, ordered relations, and anti-patterns, see [references/relations.md](references/relations.md).
+
+## Aspects
+
+Group traits that systems always handle together. Constituent field names must not overlap. Relations are rejected. Tags are allowed. Nested aspects flatten.
+
+```typescript
+import { createAspect } from 'koota'
+
+const Combat = createAspect(Health, Shield, IsDead)
+
+const hero = world.spawn(Combat({ hp: 8, sp: 3 }))
+hero.get(Combat) // { hp: 8, sp: 3 }
+hero.set(Combat, { hp: 4 }) // writes onto Health and marks Health changed
+
+world.query(Combat, Not(IsFrozen)).updateEach(([combat]) => {
+  combat.hp -= 1
+})
+```
+
+`has` is true only when every constituent is present. `get` returns one merged object, or `undefined` if any constituent is missing. `add` adds only missing constituents. `remove` removes all of them. Query modifiers and `onAdd` / `onRemove` / `onChange` follow completeness: all constituents present, or any constituent changed while they are.
+
+See [references/aspects.md](references/aspects.md).
 
 ## Basic usage
 

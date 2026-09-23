@@ -1,3 +1,4 @@
+import { ASPECT_HASH_BIAS, isAspect } from '../../aspect/is-aspect';
 import { $internal } from '../../common';
 import { isRelationPair } from '../../relation/utils/is-relation';
 import type { Relation } from '../../relation/types';
@@ -14,7 +15,9 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
     for (let i = 0; i < parameters.length; i++) {
         const param = parameters[i];
 
-        if (isRelationPair(param)) {
+        if (isAspect(param)) {
+            sortedIDs[cursor++] = ASPECT_HASH_BIAS + param.id;
+        } else if (isRelationPair(param)) {
             // Encode relation pair as: (relationTraitId * 1000000) + targetId
             // This ensures unique hashes for different relation/target combinations
             const pairCtx = param[$internal];

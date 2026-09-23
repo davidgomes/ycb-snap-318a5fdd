@@ -1,3 +1,4 @@
+import type { Aspect, AspectRecord } from '../aspect/types';
 import type { Entity } from '../entity/types';
 import type { RelationPair } from '../relation/types';
 import { AoSFactory } from '../storage';
@@ -14,8 +15,14 @@ import type { World } from '../world';
 import { $modifier } from './modifier';
 import { $parameters, $queryRef } from './symbols';
 
-export type QueryModifier = (...components: Trait[]) => Modifier;
-export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier>;
+export type QueryModifier = (
+    ...components: (Trait | Aspect)[]
+) => Modifier<Trait[], string, readonly (Trait | Aspect)[]>;
+export type QueryParameter =
+    | Trait
+    | Aspect
+    | RelationPair
+    | Modifier<Trait[], string, readonly (Trait | Aspect)[]>;
 export type QuerySubscriber = (entity: Entity) => void;
 export type QueryUnsubscriber = () => void;
 
@@ -38,15 +45,19 @@ export type QueryResult<T extends QueryParameter[] = QueryParameter[]> = readonl
     sort(callback?: (a: Entity, b: Entity) => number): QueryResult<T>;
 };
 
-type UnwrapModifierData<T> = T extends Modifier<infer C> ? C : never;
+type ModifierColumnSources<T> = T extends Modifier<any, any, infer Sources> ? Sources : never;
 
 export type StoresFromParameters<T extends QueryParameter[]> = T extends [infer First, ...infer Rest]
     ? [
-          ...(First extends Trait
-              ? [ExtractStore<First>]
-              : First extends Modifier
-                ? StoresFromParameters<UnwrapModifierData<First>>
-                : []),
+          ...(First extends Aspect
+              ? []
+              : First extends Trait
+                ? [ExtractStore<First>]
+                : First extends Modifier
+                  ? ModifierColumnSources<First> extends readonly QueryParameter[]
+                      ? StoresFromParameters<[...ModifierColumnSources<First>]>
+                      : []
+                  : []),
           ...(Rest extends QueryParameter[] ? StoresFromParameters<Rest> : []),
       ]
     : [];
@@ -56,23 +67,27 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
     ...infer Rest,
 ]
     ? [
-          ...(First extends Trait
-              ? IsTag<First> extends false
-                  ? ExtractSchema<First> extends AoSFactory
-                      ? [ReturnType<ExtractSchema<First>>]
-                      : [TraitRecord<First>]
-                  : []
-              : First extends Modifier
-                ? IsNotModifier<First> extends true
-                    ? []
-                    : InstancesFromParameters<UnwrapModifierData<First>>
-                : []),
+          ...(First extends Aspect<infer Traits>
+              ? [AspectRecord<Traits>]
+              : First extends Trait
+                ? IsTag<First> extends false
+                    ? ExtractSchema<First> extends AoSFactory
+                        ? [ReturnType<ExtractSchema<First>>]
+                        : [TraitRecord<First>]
+                    : []
+                : First extends Modifier
+                  ? IsNotModifier<First> extends true
+                      ? []
+                      : ModifierColumnSources<First> extends readonly QueryParameter[]
+                        ? InstancesFromParameters<[...ModifierColumnSources<First>]>
+                        : []
+                  : []),
           ...(Rest extends QueryParameter[] ? InstancesFromParameters<Rest> : []),
       ]
     : [];
 
 export type IsNotModifier<T> =
-    T extends Modifier<Trait[], infer TType> ? (TType extends 'not' ? true : false) : false;
+    T extends Modifier<any, infer TType, any> ? (TType extends 'not' ? true : false) : false;
 
 export type QueryHash = string;
 
@@ -87,24 +102,46 @@ export type Query<T extends QueryParameter[] = QueryParameter[]> = {
     readonly [$parameters]: T;
 };
 
-export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = string> = {
+export type Modifier<
+    TTrait extends Trait[] = Trait[],
+    TType extends string = string,
+    TSource extends readonly (Trait | Aspect)[] = TTrait,
+> = {
     [$modifier]: true;
     type: TType;
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /** Data columns in parameter order. Aspects stay intact; bitmask traits may be rewritten. */
+    sources: TSource;
 };
 
 /** Parameter types that can be passed to Or modifier */
-export type OrParameter = Trait | Modifier;
+export type OrParameter = Trait | Aspect | Modifier;
 
 /** Or modifier that can contain both traits and nested modifiers */
 export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
     ExtractTraitsFromOrParams<T>,
-    'or'
+    'or',
+    ExtractSourcesFromOrParams<T>
 > & {
     modifiers: Modifier[];
 };
+
+/** Data columns from Or parameters. Modifiers are excluded; aspects stay intact. */
+type ExtractSourcesFromOrParams<T extends OrParameter[]> = T extends [infer First, ...infer Rest]
+    ? First extends Modifier
+        ? Rest extends OrParameter[]
+            ? ExtractSourcesFromOrParams<Rest>
+            : []
+        : First extends Trait | Aspect
+          ? Rest extends OrParameter[]
+              ? [First, ...ExtractSourcesFromOrParams<Rest>]
+              : [First]
+          : Rest extends OrParameter[]
+            ? ExtractSourcesFromOrParams<Rest>
+            : []
+    : [];
 
 /** Extract traits from Or parameters (filters out modifiers) */
 type ExtractTraitsFromOrParams<T extends OrParameter[]> = T extends [infer First, ...infer Rest]

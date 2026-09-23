@@ -1,4 +1,5 @@
 import { ActionInstance } from '../actions/types';
+import type { Aspect, AspectInit, GetValue, SetValue } from '../aspect/types';
 import type { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
@@ -10,18 +11,10 @@ import type {
     QueryUnsubscriber,
 } from '../query/types';
 import type { Relation, RelationPair } from '../relation/types';
-import type {
-    ConfigurableTrait,
-    ExtractSchema,
-    SetTraitCallback,
-    Trait,
-    TraitInstance,
-    TraitRecord,
-    TraitValue,
-} from '../trait/types';
+import type { ConfigurableTrait, Trait, TraitInstance } from '../trait/types';
 
 export type WorldOptions = {
-    traits?: ConfigurableTrait[];
+    traits?: (ConfigurableTrait | Aspect | AspectInit)[];
     lazy?: boolean;
 };
 
@@ -42,6 +35,8 @@ export type WorldInternal = {
     changedMasks: Map<number, number[][]>;
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
+    /** Refcount of aspect onChange subscriptions keyed by constituent trait id. */
+    aspectTrackCounts: number[];
     resetSubscriptions: Set<(world: World) => void>;
 };
 
@@ -51,15 +46,15 @@ export type World = {
     readonly entities: Entity[];
     readonly traits: Set<Trait>;
     [$internal]: WorldInternal;
-    init(...traits: ConfigurableTrait[]): void;
-    spawn(...traits: ConfigurableTrait[]): Entity;
+    init(...traits: (ConfigurableTrait | Aspect | AspectInit)[]): void;
+    spawn(...traits: (ConfigurableTrait | Aspect | AspectInit)[]): Entity;
     has(entity: Entity): boolean;
-    has(trait: Trait): boolean;
-    has(target: Entity | Trait): boolean;
-    add(...traits: ConfigurableTrait[]): void;
-    remove(...traits: Trait[]): void;
-    get<T extends Trait>(trait: T): TraitRecord<ExtractSchema<T>> | undefined;
-    set<T extends Trait>(trait: T, value: TraitValue<ExtractSchema<T>> | SetTraitCallback<T>): void;
+    has(trait: Trait | Aspect): boolean;
+    has(target: Entity | Trait | Aspect): boolean;
+    add(...traits: (ConfigurableTrait | Aspect | AspectInit)[]): void;
+    remove(...traits: (Trait | Aspect)[]): void;
+    get<T extends Trait | Aspect>(trait: T): GetValue<T>;
+    set<T extends Trait | Aspect>(trait: T, value: SetValue<T>): void;
     destroy(): void;
     reset(): void;
     query<T extends QueryParameter[]>(key: Query<T>): QueryResult<T>;
@@ -82,6 +77,7 @@ export type World = {
         parameters: T,
         callback: (entity: Entity) => void
     ): QueryUnsubscriber;
+    onAdd(aspect: Aspect, callback: (entity: Entity) => void): QueryUnsubscriber;
     onAdd<T extends Trait>(trait: T, callback: (entity: Entity) => void): QueryUnsubscriber;
     onAdd<T extends Trait>(
         relation: Relation<T>,
@@ -92,9 +88,10 @@ export type World = {
         callback: (entity: Entity, target: Entity) => void
     ): QueryUnsubscriber;
     onAdd(
-        input: Trait | Relation<Trait> | RelationPair,
+        input: Trait | Aspect | Relation<Trait> | RelationPair,
         callback: (entity: Entity, target?: Entity) => void
     ): QueryUnsubscriber;
+    onRemove(aspect: Aspect, callback: (entity: Entity) => void): QueryUnsubscriber;
     onRemove<T extends Trait>(trait: T, callback: (entity: Entity) => void): QueryUnsubscriber;
     onRemove<T extends Trait>(
         relation: Relation<T>,
@@ -105,9 +102,10 @@ export type World = {
         callback: (entity: Entity, target: Entity) => void
     ): QueryUnsubscriber;
     onRemove(
-        input: Trait | Relation<Trait> | RelationPair,
+        input: Trait | Aspect | Relation<Trait> | RelationPair,
         callback: (entity: Entity, target?: Entity) => void
     ): QueryUnsubscriber;
+    onChange(aspect: Aspect, callback: (entity: Entity) => void): QueryUnsubscriber;
     onChange<T extends Trait>(trait: T, callback: (entity: Entity) => void): QueryUnsubscriber;
     onChange<T extends Trait>(
         relation: Relation<T>,
@@ -118,7 +116,7 @@ export type World = {
         callback: (entity: Entity, target: Entity) => void
     ): QueryUnsubscriber;
     onChange(
-        input: Trait | Relation<Trait> | RelationPair,
+        input: Trait | Aspect | Relation<Trait> | RelationPair,
         callback: (entity: Entity, target?: Entity) => void
     ): QueryUnsubscriber;
 };

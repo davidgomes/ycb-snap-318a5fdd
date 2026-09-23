@@ -1,3 +1,5 @@
+import { ensureAspect } from '../aspect/create-aspect';
+import { isAspect } from '../aspect/is-aspect';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -167,6 +169,30 @@ function processTrackingModifier(
     query.isTracking = true;
 }
 
+function ensureModifierAspects(world: World, modifier: Modifier) {
+    const sources = modifier.sources;
+    if (sources) {
+        for (let i = 0; i < sources.length; i++) {
+            const source = sources[i];
+            if (isAspect(source)) ensureAspect(world, source);
+        }
+    }
+    if (isOrWithModifiers(modifier)) {
+        for (const nested of modifier.modifiers) ensureModifierAspects(world, nested);
+    }
+}
+
+function ensureParameterAspects(world: World, parameters: QueryParameter[]) {
+    for (let i = 0; i < parameters.length; i++) {
+        const parameter = parameters[i];
+        if (isAspect(parameter)) {
+            ensureAspect(world, parameter);
+        } else if (isModifier(parameter)) {
+            ensureModifierAspects(world, parameter);
+        }
+    }
+}
+
 export function createQueryInstance<T extends QueryParameter[]>(
     world: World,
     parameters: T
@@ -211,6 +237,9 @@ export function createQueryInstance<T extends QueryParameter[]>(
 
     const ctx = world[$internal];
 
+    // Repair aspect completeness bits before the initial entity scan.
+    ensureParameterAspects(world, parameters);
+
     // Map for grouping tracking modifiers by (type, id, logic)
     const trackingGroupsMap = new Map<string, TrackingGroup>();
 
@@ -230,6 +259,15 @@ export function createQueryInstance<T extends QueryParameter[]>(
             query.traitInstances.required.push(getTraitInstance(ctx.traitInstances, baseTrait)!);
             query.traits.push(baseTrait);
 
+            continue;
+        }
+
+        if (isAspect(parameter)) {
+            const completeness = parameter[$internal].completeness;
+            if (!hasTraitInstance(ctx.traitInstances, completeness))
+                registerTrait(world, completeness);
+            query.traitInstances.required.push(getTraitInstance(ctx.traitInstances, completeness)!);
+            query.traits.push(completeness);
             continue;
         }
 
@@ -256,7 +294,14 @@ export function createQueryInstance<T extends QueryParameter[]>(
                 if (isOrWithModifiers(parameter)) {
                     for (const nestedModifier of parameter.modifiers) {
                         if (isTrackingModifier(nestedModifier)) {
-                            processTrackingModifier(world, query, nestedModifier, 'or', ctx, trackingGroupsMap);
+                            processTrackingModifier(
+                                world,
+                                query,
+                                nestedModifier,
+                                'or',
+                                ctx,
+                                trackingGroupsMap
+                            );
                         }
                     }
                 }

@@ -1,6 +1,7 @@
 import { $internal } from '../common';
 import { getEntitiesWithRelationTo, getRelationTargets } from '../relation/relation';
 import { addTrait, cleanupRelationTarget, removeTrait } from '../trait/trait';
+import type { Aspect, AspectInit } from '../aspect/types';
 import type { ConfigurableTrait } from '../trait/types';
 import { universe } from '../universe/universe';
 import type { World } from '../world';
@@ -11,7 +12,10 @@ import { getEntityId, getEntityWorldId } from './utils/pack-entity';
 // Ensure entity methods are patched.
 import './entity-methods-patch';
 
-export function createEntity(world: World, ...traits: ConfigurableTrait[]): Entity {
+export function createEntity(
+    world: World,
+    ...traits: (ConfigurableTrait | Aspect | AspectInit)[]
+): Entity {
     const ctx = world[$internal];
     const entity = allocateEntity(ctx.entityIndex);
 

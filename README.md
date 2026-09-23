@@ -66,6 +66,32 @@ world.query(Position, Velocity).readEach(([position, velocity]) => {
 })
 ```
 
+### Group traits with aspects
+
+`createAspect` treats two or more traits as one unit. Field names must be unique, relations are rejected, and tag traits are allowed. Nested aspects flatten to their traits.
+
+```js
+import { createAspect } from 'koota'
+
+const Health = trait({ hp: 10 })
+const Shield = trait({ sp: 5 })
+const IsDead = trait()
+const Combat = createAspect(Health, Shield, IsDead)
+
+const hero = world.spawn(Combat({ hp: 8, sp: 3 }))
+hero.has(Combat) // true only when every constituent is present
+hero.get(Combat) // { hp: 8, sp: 3 }
+hero.set(Combat, { hp: 4 }) // writes hp onto Health
+
+world.query(Combat).updateEach(([combat]) => {
+  combat.hp -= 1
+})
+```
+
+`has`, `get`, `set`, `add`, and `remove` operate on the whole group. `add` installs only the constituents the entity is missing and splits initial values by field. `set` writes each field to its owning trait and runs that trait's change detection. A query parameter requires every constituent. `readEach` yields one merged object and `updateEach` writes it back to the constituent stores.
+
+Aspects work with `Not`, `Or`, `Added`, `Removed`, and `Changed`. `Not(Combat)` matches entities missing at least one constituent. `Added` matches the transition to all-present and `Removed` matches the transition away from it. `Changed` matches when any constituent's data changes. `onAdd` fires on the transition to complete, `onRemove` on the reverse, and `onChange` when any constituent changes while every constituent is present. Each `createAspect` call returns a distinct aspect.
+
 ### Use in your React components
 
 Traits can be used reactively inside of React components.

@@ -3,12 +3,15 @@
 // and the convenience of using methods. Type guards are used to ensure
 // that the methods are only called on entities.
 
+import { getAspect, hasAspect, setAspect } from '../aspect/create-aspect';
+import { isAspect } from '../aspect/is-aspect';
 import { $internal } from '../common';
 import { setChanged } from '../query/modifiers/changed';
 import { getFirstRelationTarget, getRelationTargets, hasRelationPair } from '../relation/relation';
 import type { Relation, RelationPair } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
 import { addTrait, getTrait, hasTrait, removeTrait, setTrait } from '../trait/trait';
+import type { Aspect } from '../aspect/types';
 import type { ConfigurableTrait, Trait } from '../trait/types';
 import { destroyEntity, getEntityWorld } from './entity';
 import type { Entity } from './types';
@@ -16,19 +19,23 @@ import { isEntityAlive } from './utils/entity-index';
 import { getEntityGeneration, getEntityId } from './utils/pack-entity';
 
 // @ts-expect-error
-Number.prototype.add = function (this: Entity, ...traits: ConfigurableTrait[]) {
+Number.prototype.add = function (
+    this: Entity,
+    ...traits: (ConfigurableTrait | Aspect | [Aspect, Record<string, unknown>])[]
+) {
     return addTrait(getEntityWorld(this), this, ...traits);
 };
 
 // @ts-expect-error
-Number.prototype.remove = function (this: Entity, ...traits: (Trait | RelationPair)[]) {
+Number.prototype.remove = function (this: Entity, ...traits: (Trait | RelationPair | Aspect)[]) {
     return removeTrait(getEntityWorld(this), this, ...traits);
 };
 
 // @ts-expect-error
-Number.prototype.has = function (this: Entity, trait: Trait | RelationPair) {
+Number.prototype.has = function (this: Entity, trait: Trait | RelationPair | Aspect) {
     const world = getEntityWorld(this);
     if (isRelationPair(trait)) return hasRelationPair(world, this, trait);
+    if (isAspect(trait)) return hasAspect(world, this, trait);
     return /* @inline @pure */ hasTrait(world, this, trait);
 };
 
@@ -43,18 +50,25 @@ Number.prototype.changed = function (this: Entity, trait: Trait) {
 };
 
 // @ts-expect-error
-Number.prototype.get = function (this: Entity, trait: Trait | RelationPair) {
-    return getTrait(getEntityWorld(this), this, trait);
+Number.prototype.get = function (this: Entity, trait: Trait | RelationPair | Aspect) {
+    const world = getEntityWorld(this);
+    if (isAspect(trait)) return getAspect(world, this, trait);
+    return getTrait(world, this, trait);
 };
 
 // @ts-expect-error
 Number.prototype.set = function (
     this: Entity,
-    trait: Trait | RelationPair,
+    trait: Trait | RelationPair | Aspect,
     value: any,
     triggerChanged = true
 ) {
-    setTrait(getEntityWorld(this), this, trait, value, triggerChanged);
+    const world = getEntityWorld(this);
+    if (isAspect(trait)) {
+        setAspect(world, this, trait, value, triggerChanged);
+        return;
+    }
+    setTrait(world, this, trait, value, triggerChanged);
 };
 
 //@ts-expect-error
