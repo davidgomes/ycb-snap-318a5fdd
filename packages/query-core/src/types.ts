@@ -3,7 +3,7 @@
 import type { QueryClient } from './queryClient'
 import type { DehydrateOptions, HydrateOptions } from './hydration'
 import type { MutationState } from './mutation'
-import type { FetchDirection, Query, QueryBehavior } from './query'
+import type { FetchDirection, Query, QueryBehavior, QueryState } from './query'
 import type { RetryDelayValue, RetryValue } from './retryer'
 import type { QueryFilters, QueryTypeFilter, SkipToken } from './utils'
 import type { QueryCache } from './queryCache'
@@ -119,6 +119,23 @@ export type Enabled<
   | boolean
   | ((query: Query<TQueryFnData, TError, TData, TQueryKey>) => boolean)
 
+/**
+ * Marker returned from a `persister` to adopt a cached query snapshot
+ * instead of recording a fresh successful fetch.
+ */
+export interface PersisterRestoreResult<
+  TData = unknown,
+  TError = DefaultError,
+> {
+  data: TData
+  state: Partial<QueryState<TData, TError>>
+}
+
+type PersisterFnReturn<T> =
+  | T
+  | PersisterRestoreResult
+  | Promise<T | PersisterRestoreResult>
+
 export type QueryPersister<
   T = unknown,
   TQueryKey extends QueryKey = QueryKey,
@@ -128,12 +145,12 @@ export type QueryPersister<
       queryFn: QueryFunction<T, TQueryKey, never>,
       context: QueryFunctionContext<TQueryKey>,
       query: Query,
-    ) => T | Promise<T>
+    ) => PersisterFnReturn<T>
   : (
       queryFn: QueryFunction<T, TQueryKey, TPageParam>,
       context: QueryFunctionContext<TQueryKey>,
       query: Query,
-    ) => T | Promise<T>
+    ) => PersisterFnReturn<T>
 
 export type QueryFunctionContext<
   TQueryKey extends QueryKey = QueryKey,

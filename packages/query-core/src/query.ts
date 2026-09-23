@@ -8,6 +8,12 @@ import {
   timeUntilStale,
 } from './utils'
 import { notifyManager } from './notifyManager'
+import {
+  isInitialQueryState,
+  isPersisterRestoreResult,
+  mergeRestoredQueryState,
+  normalizeRestoredQueryState,
+} from './persister'
 import { CancelledError, canFetch, createRetryer } from './retryer'
 import { Removable } from './removable'
 import type { QueryCache } from './queryCache'
@@ -28,6 +34,13 @@ import type {
 } from './types'
 import type { QueryObserver } from './queryObserver'
 import type { Retryer } from './retryer'
+
+class PersistedRestoreRejection extends Error {
+  constructor(cause: unknown) {
+    super('Persisted query restored', { cause })
+    this.name = 'PersistedRestoreRejection'
+  }
+}
 
 // TYPES
 
@@ -246,6 +259,33 @@ export class Query<
     setStateOptions?: SetStateOptions,
   ): void {
     this.#dispatch({ type: 'setState', state, setStateOptions })
+  }
+
+  /**
+   * Adopt a persisted snapshot. Data freshness and error freshness are merged
+   * independently when this query already has state. Ongoing fetches keep
+   * their fetch status; restoring the fetch that is currently running ends idle.
+   */
+  restorePersistedState(
+    state: Partial<QueryState<TData, TError>>,
+    options?: { duringFetch?: boolean },
+  ): void {
+    const restored = normalizeRestoredQueryState(state)
+    const base =
+      options?.duringFetch && this.#revertState ? this.#revertState : this.state
+    const merged = isInitialQueryState(base)
+      ? restored
+      : mergeRestoredQueryState(base, restored)
+
+    if (options?.duringFetch) {
+      this.#revertState = undefined
+    }
+
+    this.setState({
+      ...merged,
+      fetchStatus: options?.duringFetch ? 'idle' : base.fetchStatus,
+      fetchMeta: options?.duringFetch ? merged.fetchMeta : base.fetchMeta,
+    })
   }
 
   cancel(options?: CancelOptions): Promise<void> {
@@ -555,6 +595,29 @@ export class Query<
 
     try {
       const data = await this.#retryer.start()
+
+      if (isPersisterRestoreResult<TData, TError>(data)) {
+        const restoredData =
+          data.data !== undefined ? data.data : data.state.data
+        this.restorePersistedState(
+          {
+            ...data.state,
+            data: restoredData,
+          },
+          { duringFetch: true },
+        )
+
+        if (this.state.data === undefined) {
+          // The snapshot was applied. Reject without recording a new fetch failure.
+          throw new PersistedRestoreRejection(
+            this.state.error ??
+              new Error(`${this.queryHash} data is undefined`),
+          )
+        }
+
+        return this.state.data
+      }
+
       // this is more of a runtime guard
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (data === undefined) {
@@ -577,6 +640,9 @@ export class Query<
       )
       return data
     } catch (error) {
+      if (error instanceof PersistedRestoreRejection) {
+        throw error.cause ?? error
+      }
       if (error instanceof CancelledError) {
         if (error.silent) {
           // silent cancellation implies a new fetch is going to be started,
