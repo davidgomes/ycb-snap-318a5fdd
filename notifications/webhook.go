@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Owloops/updo/alerts"
 )
 
 const (
@@ -34,9 +36,22 @@ type WebhookPayload struct {
 	ResponseTimeMs int64     `json:"response_time_ms"`
 	Error          string    `json:"error,omitempty"`
 	StatusCode     int       `json:"status_code,omitempty"`
+
+	State                 string `json:"state"`
+	PreviousState         string `json:"previous_state"`
+	Reason                string `json:"reason"`
+	ConsecutiveFailures   int    `json:"consecutive_failures"`
+	ConsecutiveRecoveries int    `json:"consecutive_recoveries"`
+	LatencyBreaches       int    `json:"latency_breaches"`
+	SSLExpiryDays         int    `json:"ssl_expiry_days"`
+	Region                string `json:"region"`
 }
 
 func SendWebhook(webhookURL string, headers map[string]string, payload WebhookPayload) error {
+	return sendWebhookWithClient(webhookURL, nil, headers, payload)
+}
+
+func sendWebhookWithClient(webhookURL string, client *http.Client, headers map[string]string, payload WebhookPayload) error {
 	formatter := SelectFormatter(webhookURL)
 	data, err := formatter.Format(payload)
 	if err != nil {
@@ -53,8 +68,8 @@ func SendWebhook(webhookURL string, headers map[string]string, payload WebhookPa
 		req.Header.Set(key, value)
 	}
 
-	client := &http.Client{
-		Timeout: _webhookTimeout,
+	if client == nil {
+		client = &http.Client{Timeout: _webhookTimeout}
 	}
 
 	resp, err := client.Do(req)
@@ -110,6 +125,48 @@ func HandleWebhookAlert(webhookURL string, headers []string, isUp bool, alertSen
 	headerMap := parseHeaders(headers)
 
 	if err := SendWebhook(webhookURL, headerMap, payload); err != nil {
+		return fmt.Errorf("failed to send webhook for %s: %w", displayName, err)
+	}
+	return nil
+}
+
+func HandleWebhookDecision(webhookURL string, client *http.Client, decision alerts.Decision, targetName string, targetURL string, responseTime time.Duration, statusCode int, errorMsg string, region string) error {
+	return handleWebhookDecision(webhookURL, client, nil, decision, targetName, targetURL, responseTime, statusCode, errorMsg, region)
+}
+
+func HandleWebhookDecisionWithHeaders(webhookURL string, headers []string, decision alerts.Decision, targetName string, targetURL string, responseTime time.Duration, statusCode int, errorMsg string, region string) error {
+	return handleWebhookDecision(webhookURL, nil, parseHeaders(headers), decision, targetName, targetURL, responseTime, statusCode, errorMsg, region)
+}
+
+func handleWebhookDecision(webhookURL string, client *http.Client, headers map[string]string, decision alerts.Decision, targetName string, targetURL string, responseTime time.Duration, statusCode int, errorMsg string, region string) error {
+	if webhookURL == "" || decision.Event == alerts.EventNone || decision.Suppressed {
+		return nil
+	}
+
+	displayName := targetName
+	if displayName == "" {
+		displayName = targetURL
+	}
+
+	payload := WebhookPayload{
+		Event:                 string(decision.Event),
+		Target:                displayName,
+		URL:                   targetURL,
+		Timestamp:             time.Now().UTC(),
+		ResponseTimeMs:        responseTime.Milliseconds(),
+		StatusCode:            statusCode,
+		Error:                 errorMsg,
+		State:                 string(decision.State),
+		PreviousState:         string(decision.PreviousState),
+		Reason:                decision.Reason,
+		ConsecutiveFailures:   decision.ConsecutiveFailures,
+		ConsecutiveRecoveries: decision.ConsecutiveRecoveries,
+		LatencyBreaches:       decision.LatencyBreaches,
+		SSLExpiryDays:         decision.SSLDaysRemaining,
+		Region:                region,
+	}
+
+	if err := sendWebhookWithClient(webhookURL, client, headers, payload); err != nil {
 		return fmt.Errorf("failed to send webhook for %s: %w", displayName, err)
 	}
 	return nil
