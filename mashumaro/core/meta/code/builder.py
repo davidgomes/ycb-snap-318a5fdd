@@ -31,6 +31,7 @@ from mashumaro.config import (
 from mashumaro.core.const import Sentinel
 from mashumaro.core.helpers import ConfigValue
 from mashumaro.core.meta.code.lines import CodeLines
+from mashumaro.core.meta.flatten import FlattenPlan, collect_flatten_plans
 from mashumaro.core.meta.helpers import (
     get_args,
     get_class_that_defines_field,
@@ -164,6 +165,9 @@ class CodeBuilder:
             self.cls, self.initial_type_args
         )
         self.field_classes = {}
+        self._flatten_plans_cache: typing.Optional[dict[str, FlattenPlan]] = (
+            None
+        )
 
     @property
     def namespace(self) -> typing.Mapping[typing.Any, typing.Any]:
@@ -427,6 +431,7 @@ class CodeBuilder:
             add_kwargs = False
             kw_only_fields = set()
             field_blocks = []
+            flatten_plans = self.get_flatten_plans(field_types)
             for fname, ftype in field_types.items():
                 field = self.dataclass_fields.get(fname)
                 if field and not field.init:
@@ -450,7 +455,15 @@ class CodeBuilder:
                 filtered_fields.append((fname, alias, ftype))
             if filtered_fields:
                 if config.forbid_extra_keys:
-                    allowed_keys = {f[1] or f[0] for f in filtered_fields}
+                    allowed_keys: set[str] = set()
+                    for fname, alias, _ftype in filtered_fields:
+                        plan = flatten_plans.get(fname)
+                        if plan is not None:
+                            allowed_keys.update(plan.input_keys)
+                        else:
+                            allowed_keys.add(alias or fname)
+                            if config.allow_deserialization_not_by_alias:
+                                allowed_keys.add(fname)
 
                     # If a discriminator with a field is set via config,
                     # we should allow this field to be present in the input
@@ -458,9 +471,6 @@ class CodeBuilder:
                     discr = self.get_discriminator(look_in_parents=True)
                     if discr and discr.field:
                         allowed_keys.add(discr.field)
-
-                    if config.allow_deserialization_not_by_alias:
-                        allowed_keys |= {f[0] for f in filtered_fields}
 
                     allowed_keys_str = "'" + "', '".join(allowed_keys) + "'"
 
@@ -485,6 +495,7 @@ class CodeBuilder:
                             ftype=ftype,
                             metadata=metadata,
                             alias=alias,
+                            flatten_plan=flatten_plans.get(fname),
                         )
                         if field_block.in_kwargs:
                             add_kwargs = True
@@ -868,9 +879,14 @@ class CodeBuilder:
             ] = field_types.items()
             if self.get_config().sort_keys:
                 fnames_and_types = sorted(fnames_and_types, key=lambda x: x[0])
+            flatten_plans = self.get_flatten_plans(dict(fnames_and_types))
+            field_order: list[str] = []
 
             for fname, ftype in fnames_and_types:
                 if self.metadatas.get(fname, {}).get("serialize") == "omit":
+                    continue
+                field_order.append(fname)
+                if fname in flatten_plans:
                     continue
                 packer, alias, could_be_none = self._get_field_packer(
                     fname, ftype, config, force_value
@@ -889,10 +905,18 @@ class CodeBuilder:
                 or by_alias_feature
                 and aliases
                 or omit_default
+                or flatten_plans
             ):
                 kwargs = "kwargs"
                 self.add_line("kwargs = {}")
-                for fname, packer in packers.items():
+                for fname in field_order:
+                    flatten_plan = flatten_plans.get(fname)
+                    if flatten_plan is not None:
+                        self._emit_flattened_pack(
+                            flatten_plan, omit_default=omit_default
+                        )
+                        continue
+                    packer = packers[fname]
                     if force_value:
                         self.add_line(f"value = self.{fname}")
                     alias = aliases.get(fname)
@@ -1150,6 +1174,67 @@ class CodeBuilder:
         else:
             self.add_line(f"cls.{cache_name}[dialect] = {method_name}")
 
+    def get_flatten_plans(
+        self, field_types: dict[str, typing.Any]
+    ) -> dict[str, FlattenPlan]:
+        if self._flatten_plans_cache is None:
+            self._flatten_plans_cache = collect_flatten_plans(
+                self, field_types
+            )
+        return self._flatten_plans_cache
+
+    def _emit_flattened_pack(
+        self, plan: FlattenPlan, *, omit_default: bool
+    ) -> None:
+        fname = plan.fname
+        self.add_line(f"value = self.{fname}")
+        conditions: list[str] = []
+        if omit_default:
+            default = self.get_field_default(fname, call_factory=True)
+            if default is not MISSING:
+                default_literal = self.get_field_default_literal(default)
+                conditions.append(f"value != {default_literal}")
+        if plan.could_be_none:
+            conditions.append("value is not None")
+        condition = " and ".join(conditions)
+
+        def emit_merge() -> None:
+            packer = PackerRegistry.get(
+                ValueSpec(
+                    type=plan.inner_type,
+                    expression="value",
+                    builder=self,
+                    field_ctx=FieldContext(name=fname, metadata={}),
+                    could_be_none=False,
+                )
+            )
+            flat_name = f"__flat_{fname}"
+            self.add_line(f"{flat_name} = {packer}")
+            if plan.prefix:
+                prefix = repr(plan.prefix)
+                self.add_line(
+                    "kwargs.update("
+                    f"{{{prefix} + __k: __v for __k, __v in {flat_name}.items()}}"
+                    ")"
+                )
+            elif plan.ser_map:
+                map_name = f"__flatten_ser_map_{fname}"
+                self.ensure_object_imported(plan.ser_map, map_name)
+                self.add_line(
+                    "kwargs.update("
+                    f"{{{map_name}.get(__k, __k): __v "
+                    f"for __k, __v in {flat_name}.items()}}"
+                    ")"
+                )
+            else:
+                self.add_line(f"kwargs.update({flat_name})")
+
+        if condition:
+            with self.indent(f"if {condition}:"):
+                emit_merge()
+        else:
+            emit_merge()
+
     def _get_field_packer(
         self,
         fname: str,
@@ -1182,6 +1267,17 @@ class CodeBuilder:
             )
         )
         return packer, alias, could_be_none
+
+    def field_alias(
+        self,
+        fname: str,
+        ftype: typing.Type,
+        metadata: typing.Mapping[str, typing.Any],
+        config: typing.Optional[typing.Type[BaseConfig]] = None,
+    ) -> typing.Optional[str]:
+        if config is None:
+            config = self.get_config()
+        return self.__get_field_alias(fname, ftype, metadata, config)
 
     @staticmethod
     def __get_field_alias(
@@ -1304,9 +1400,13 @@ class FieldUnpackerCodeBlockBuilder:
         metadata: typing.Mapping,
         *,
         alias: typing.Optional[str] = None,
+        flatten_plan: typing.Optional[FlattenPlan] = None,
     ) -> FieldUnpackerCodeBlock:
         default = self.parent.get_field_default(fname)
         has_default = default is not MISSING
+        if flatten_plan is not None:
+            self._emit_flattened_unpack(fname, flatten_plan, has_default)
+            return FieldUnpackerCodeBlock(self.lines, fname, has_default)
         field_type = self.parent.get_type_name_identifier(
             ftype,
             resolved_type_params=self.parent.get_field_resolved_type_params(
@@ -1401,6 +1501,35 @@ class FieldUnpackerCodeBlockBuilder:
                     else:
                         self._set_value(fname, unpacked_value, has_default)
         return FieldUnpackerCodeBlock(self.lines, fname, has_default)
+
+    def _emit_flattened_unpack(
+        self, fname: str, plan: FlattenPlan, has_default: bool
+    ) -> None:
+        sub = f"__flat_{fname}"
+        self.add_line(f"{sub} = {{}}")
+        for external, internal in plan.bindings:
+            self.add_line(f"__v = d.get({external!r}, MISSING)")
+            with self.indent("if __v is not MISSING:"):
+                self.add_line(f"{sub}[{internal!r}] = __v")
+        unpacker = UnpackerRegistry.get(
+            ValueSpec(
+                type=plan.inner_type,
+                expression=sub,
+                builder=self.parent,
+                field_ctx=FieldContext(name=fname, metadata={}),
+                could_be_none=False,
+            )
+        )
+        if has_default:
+            with self.indent(f"if {sub}:"):
+                self.add_line(f"value = {unpacker}")
+            with self.indent("else:"):
+                self.add_line("value = MISSING")
+            with self.indent("if value is not MISSING:"):
+                self._set_value(fname, "value", True)
+        else:
+            self.add_line(f"value = {unpacker}")
+            self._set_value(fname, "value", False)
 
     def add_line(self, line: str) -> None:
         self.lines.append(line)
