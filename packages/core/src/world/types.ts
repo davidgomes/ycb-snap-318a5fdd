@@ -3,6 +3,7 @@ import type { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
 import type {
+    PairState,
     Query,
     QueryInstance,
     QueryParameter,
@@ -40,6 +41,7 @@ export type WorldInternal = {
     dirtyMasks: Map<number, number[][]>;
     trackingSnapshots: Map<number, number[][]>;
     changedMasks: Map<number, number[][]>;
+    pairTrackingLogs: Map<number, PairState>;
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;

@@ -27,6 +27,7 @@ import { checkQuery } from './utils/check-query';
 import { checkQueryTracking } from './utils/check-query-tracking';
 import { checkQueryWithRelations } from './utils/check-query-with-relations';
 import { createQueryHash } from './utils/create-query-hash';
+import { evaluatePairGroups, seedPairState } from './utils/pair-tracking';
 
 export const IsExcluded: TagTrait = trait();
 
@@ -49,6 +50,7 @@ export function runQuery<T extends QueryParameter[]>(
         for (let i = 0; i < len; i++) {
             query.resetTrackingBitmasks(entities[i]);
         }
+        for (const state of query.pairState.values()) state.clear();
     }
 
     return createQueryResult(world, entities, query, params);
@@ -127,6 +129,25 @@ function processTrackingModifier(
     if (!trackingType) return;
 
     const id = modifier.id;
+
+    if (modifier.pairs) {
+        for (const pair of modifier.pairs) {
+            const { relation, target } = pair[$internal];
+            const trait = relation[$internal].trait;
+            if (!hasTraitInstance(ctx.traitInstances, trait)) registerTrait(world, trait);
+            query.traitInstances.all.push(getTraitInstance(ctx.traitInstances, trait)!);
+            query.traits.push(trait);
+            query.pairGroups.push({ logic, type: trackingType, id, trait, target });
+
+            if (trackingType === 'change') {
+                query.changedTraits.add(trait);
+                query.hasChangedModifiers = true;
+            }
+        }
+        query.isTracking = true;
+        if (modifier.traits.length === 0) return;
+    }
+
     // Key includes logic so Changed(A) at top-level stays separate from Or(Changed(A))
     const key = `${trackingType}-${id}-${logic}`;
 
@@ -194,6 +215,8 @@ export function createQueryInstance<T extends QueryParameter[]>(
         addSubscriptions: new Set<QuerySubscriber>(),
         removeSubscriptions: new Set<QuerySubscriber>(),
         relationFilters: [],
+        pairGroups: [],
+        pairState: new Map(),
 
         run: (world: World, params: QueryParameter[]) => runQuery(world, query, params),
         add: (entity: Entity) => addEntityToQuery(query, entity),
@@ -425,7 +448,11 @@ export function createQueryInstance<T extends QueryParameter[]>(
                 }
             }
         }
-    } else {
+    }
+
+    if (query.pairGroups.length > 0) {
+        populatePairQuery(world, query);
+    } else if (query.trackingGroups.length === 0) {
         // Non-tracking query: populate immediately
         const entities = ctx.entityIndex.dense;
         for (let i = 0; i < entities.length; i++) {
@@ -438,6 +465,63 @@ export function createQueryInstance<T extends QueryParameter[]>(
     }
 
     return query;
+}
+
+/**
+ * Populate a query that contains pair tracking groups.
+ * Candidates matched by trait-level tracking groups are re-validated together with pair groups.
+ */
+function populatePairQuery(world: World, query: QueryInstance) {
+    seedPairState(world, query);
+
+    const traitMatched = new Set<Entity>(query.entities.dense as Entity[]);
+    query.entities.clear();
+
+    let hasTraitAnd = false;
+    let hasTraitOr = false;
+    for (const group of query.trackingGroups) {
+        if (group.logic === 'and') hasTraitAnd = true;
+        else hasTraitOr = true;
+    }
+
+    const candidates = new Set<Entity>(traitMatched);
+    const entityIndex = world[$internal].entityIndex;
+    for (const state of query.pairState.values()) {
+        for (const eid of state.keys()) {
+            const denseIdx = entityIndex.sparse[eid];
+            if (denseIdx === undefined) continue;
+            const entity = entityIndex.dense[denseIdx];
+            if (entity !== undefined && getEntityId(entity) === eid) candidates.add(entity);
+        }
+    }
+
+    for (const entity of candidates) {
+        if (!checkStaticConstraints(world, query, entity)) continue;
+        if (query.relationFilters!.some((pair) => !hasRelationPair(world, entity, pair))) continue;
+
+        const pairs = evaluatePairGroups(query, getEntityId(entity));
+        if (!pairs.and) continue;
+        if (hasTraitAnd && !traitMatched.has(entity)) continue;
+
+        const hasOr = pairs.hasOr || hasTraitOr;
+        const anyOr = pairs.anyOr || (hasTraitOr && traitMatched.has(entity));
+        if (hasOr && !anyOr) continue;
+
+        query.add(entity);
+    }
+}
+
+function checkStaticConstraints(world: World, query: QueryInstance, entity: Entity): boolean {
+    const entityMasks = world[$internal].entityMasks;
+    const eid = getEntityId(entity);
+    for (let i = 0; i < query.generations.length; i++) {
+        const { required, forbidden, or } = query.staticBitmasks[i];
+        const mask = entityMasks[query.generations[i]]?.[eid] | 0;
+        if ((mask & forbidden) !== 0) return false;
+        if ((mask & required) !== required) return false;
+        if (or !== 0 && (mask & or) === 0) return false;
+    }
+    return true;
 }
 
 let queryId = 0;

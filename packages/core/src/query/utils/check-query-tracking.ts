@@ -3,6 +3,7 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import { evaluatePairGroups } from './pair-tracking';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -135,6 +136,14 @@ export function checkQueryTracking(
                 }
             }
         }
+    }
+
+    // 4. Pair-level tracking groups
+    if (query.pairGroups.length > 0) {
+        const pairs = evaluatePairGroups(query, eid);
+        if (!pairs.and) return false;
+        if (pairs.hasOr) hasOrGroup = true;
+        if (pairs.anyOr) anyOrMatched = true;
     }
 
     // If we have OR groups, at least one must match

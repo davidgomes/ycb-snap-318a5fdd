@@ -1,8 +1,7 @@
-import { $internal } from '../../common';
-import { isRelation } from '../../relation/utils/is-relation';
+import type { RelationPair } from '../../relation/types';
 import type { ExtractTraits, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
-import { createModifier } from '../modifier';
+import { createTrackingModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
 
@@ -14,12 +13,12 @@ export function createRemoved() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends (TraitOrRelation | RelationPair)[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `removed-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`removed-${id}`, id, traits);
+        return createTrackingModifier(`removed-${id}`, id, inputs) as Modifier<
+            ExtractTraits<T>,
+            `removed-${number}`
+        >;
     };
 }

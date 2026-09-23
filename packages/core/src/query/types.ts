@@ -93,6 +93,8 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /** Relation pairs for pair-level tracking modifiers */
+    pairs?: RelationPair[];
 };
 
 /** Parameter types that can be passed to Or modifier */
@@ -134,6 +136,18 @@ export type TrackingGroup = {
     trackers: (number[] | undefined)[];
 };
 
+/** Pair-level tracking group for a single relation pair */
+export type PairGroup = {
+    logic: 'and' | 'or';
+    type: EventType;
+    id: number;
+    trait: Trait;
+    target: Entity | '*';
+};
+
+/** Pair event flags indexed by [entityId][relationTraitId][targetEntity] */
+export type PairState = Map<number, Map<number, Map<number, number>>>;
+
 export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     version: number;
     world: World;
@@ -165,6 +179,9 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     removeSubscriptions: Set<QuerySubscriber>;
     /** Relation pairs for target-specific queries */
     relationFilters?: RelationPair[];
+    pairGroups: PairGroup[];
+    /** Pair event state indexed by tracking id */
+    pairState: Map<number, PairState>;
     run: (world: World, params: QueryParameter[]) => QueryResult<T>;
     add: (entity: Entity) => void;
     remove: (world: World, entity: Entity) => void;

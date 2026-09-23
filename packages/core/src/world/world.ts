@@ -70,6 +70,7 @@ export function createWorld(
             dirtyMasks: new Map(),
             trackingSnapshots: new Map(),
             changedMasks: new Map(),
+            pairTrackingLogs: new Map(),
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
@@ -172,6 +173,7 @@ export function createWorld(
             ctx.trackingSnapshots.clear();
             ctx.dirtyMasks.clear();
             ctx.changedMasks.clear();
+            ctx.pairTrackingLogs.clear();
             ctx.trackedTraits.clear();
 
             // Create new world entity.
