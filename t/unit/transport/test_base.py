@@ -18,6 +18,10 @@ from kombu.transport.base import (Management, StdChannel, Transport,
     ({}, {'max_length': 10}, {'x-max-length': 10}),
     ({}, {'max_length_bytes': 1033}, {'x-max-length-bytes': 1033}),
     ({}, {'max_priority': 303}, {'x-max-priority': 303}),
+    ({}, {'dead_letter_exchange': 'dlx'}, {'x-dead-letter-exchange': 'dlx'}),
+    ({}, {'dead_letter_routing_key': 'rk'},
+     {'x-dead-letter-routing-key': 'rk'}),
+    ({}, {'dead_letter_exchange': None}, {}),
 ])
 def test_rabbitmq_queue_arguments(args, input, expected):
     assert to_rabbitmq_queue_arguments(args, **input) == expected

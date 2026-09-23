@@ -435,6 +435,65 @@ class test_Queue:
         assert 'foo' in repr(b)
         assert 'Queue' in repr(b)
 
+    def test_dead_letter_helpers(self) -> None:
+        plain = Queue('plain', self.exchange, 'rk')
+        assert plain.has_dead_letter_exchange is False
+        assert plain.effective_dead_letter_exchange is None
+        assert plain.effective_dead_letter_routing_key == 'rk'
+        assert plain.effective_message_ttl is None
+
+        via_attr = Queue(
+            'attr', self.exchange, 'rk',
+            dead_letter_exchange='dlx',
+            dead_letter_routing_key='dlk',
+            message_ttl=1.5,
+        )
+        assert via_attr.has_dead_letter_exchange is True
+        assert via_attr.effective_dead_letter_exchange == 'dlx'
+        assert via_attr.effective_dead_letter_routing_key == 'dlk'
+        assert via_attr.effective_message_ttl == 1.5
+
+        via_args = Queue(
+            'args', self.exchange, 'fallback',
+            queue_arguments={
+                'x-dead-letter-exchange': 'dlx-args',
+                'x-dead-letter-routing-key': 'dlk-args',
+                'x-message-ttl': 2500,
+            },
+        )
+        assert via_args.has_dead_letter_exchange is True
+        assert via_args.effective_dead_letter_exchange == 'dlx-args'
+        assert via_args.effective_dead_letter_routing_key == 'dlk-args'
+        assert via_args.effective_message_ttl == 2.5
+
+        fallback = Queue(
+            'fb', self.exchange, 'own-key',
+            queue_arguments={'x-dead-letter-exchange': 'dlx'},
+        )
+        assert fallback.effective_dead_letter_routing_key == 'own-key'
+
+    def test_with_dead_letter_and_from_dict(self) -> None:
+        queue = Queue.with_dead_letter(
+            'wdl', 'dlx', 'dlk', routing_key='rk', message_ttl=3,
+        )
+        assert queue.name == 'wdl'
+        assert queue.dead_letter_exchange == 'dlx'
+        assert queue.dead_letter_routing_key == 'dlk'
+        assert queue.routing_key == 'rk'
+        assert queue.message_ttl == 3
+
+        restored = Queue.from_dict('fromd', **{
+            'exchange': 'ex',
+            'exchange_type': 'direct',
+            'routing_key': 'rk',
+            'dead_letter_exchange': 'dlx',
+            'dead_letter_routing_key': 'dlk',
+        })
+        assert restored.dead_letter_exchange == 'dlx'
+        assert restored.dead_letter_routing_key == 'dlk'
+        assert restored.routing_key == 'rk'
+        assert restored.exchange.name == 'ex'
+
 
 class test_MaybeChannelBound:
 
