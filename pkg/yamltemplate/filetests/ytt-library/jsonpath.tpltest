@@ -1,0 +1,45 @@
+#@ load("@ytt:jsonpath", "jsonpath")
+
+#@ doc = {"store": {"book": [{"title": "A", "price": 8}, {"title": "B", "price": 12, "isbn": "x"}], "bicycle": {"color": "red"}}}
+
+#@yaml/text-templated-strings
+#@ def frag():
+items:
+- name: one
+  size: 1
+- name: two
+  size: 2
+#@ end
+
+test1: #@ jsonpath.query(doc, "$.store.book[*].title")
+test2: #@ jsonpath.query(doc, "$.store.book[?(@.price > 10)].title")
+test3: #@ jsonpath.query(doc, "$.missing")
+test4: #@ jsonpath.query_one(doc, "$.store.bicycle")
+test5: #@ jsonpath.query_one(doc, "$.missing")
+test6: #@ jsonpath.query_one(doc, "$.store.book.length()")
+test7: #@ jsonpath.query([1, 2, 3], "$[(@.length-1)]")
+test8: #@ jsonpath.query(frag(), "$.items[?(@.size >= 2)].name")
+test9: #@ jsonpath.query(doc, "$..['title','isbn']")
+test10: #@ type(jsonpath.query(doc, "$.nope"))
+
++++
+
+test1:
+- A
+- B
+test2:
+- B
+test3: []
+test4:
+  color: red
+test5: null
+test6: 2
+test7:
+- 3
+test8:
+- two
+test9:
+- A
+- B
+- x
+test10: list
