@@ -2658,7 +2658,53 @@ func (r *Rego) partial(ctx context.Context, ectx *EvalContext) (*PartialQueries,
 		Support: support,
 	}
 
+	reconstructTemplateStrings(pq, r.functionArity(support))
+
 	return pq, nil
+}
+
+// functionArity returns a lookup for the arity of builtins and user-defined
+// functions, including those in support modules. Relations and unknown refs
+// yield -1.
+func (r *Rego) functionArity(support []*ast.Module) func(ast.Ref) int {
+	var builtins map[string]*ast.Builtin
+	var funcs map[string]int
+
+	return func(ref ast.Ref) int {
+		if builtins == nil {
+			builtins = maps.Clone(ast.BuiltinMap)
+			if caps := r.compiler.Capabilities(); caps != nil {
+				for _, bi := range caps.Builtins {
+					builtins[bi.Name] = bi
+				}
+			}
+			maps.Copy(builtins, r.builtinDecls)
+
+			funcs = map[string]int{}
+			for _, mod := range support {
+				for _, rule := range mod.Rules {
+					if len(rule.Head.Args) > 0 {
+						funcs[mod.Package.Path.Extend(rule.Head.Ref()).String()] = len(rule.Head.Args)
+					}
+				}
+			}
+		}
+
+		name := ref.String()
+		if bi, ok := builtins[name]; ok {
+			if bi.Relation || bi.Decl == nil {
+				return -1
+			}
+			return bi.Decl.Arity()
+		}
+		if n, ok := funcs[name]; ok {
+			return n
+		}
+		if !ref.HasPrefix(ast.DefaultRootRef) {
+			return -1
+		}
+		return r.compiler.GetArity(ref)
+	}
 }
 
 func (r *Rego) rewriteQueryToCaptureValue(_ ast.QueryCompiler, query ast.Body) (ast.Body, error) {
