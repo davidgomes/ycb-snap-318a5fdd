@@ -16,13 +16,18 @@ from ._decoders import (
     ByteChunker,
     ContentDecoder,
     IdentityDecoder,
+    JSONDocumentDecoder,
+    JSONSeqDecoder,
+    JSONStreamDecoder,
     LineDecoder,
     MultiDecoder,
+    NDJSONDecoder,
     TextChunker,
     TextDecoder,
 )
 from ._exceptions import (
     CookieConflict,
+    DecodingError,
     HTTPStatusError,
     RequestNotRead,
     ResponseNotRead,
@@ -721,6 +726,38 @@ class Response:
 
         return self._decoder
 
+    def _get_json_decoder(self) -> JSONStreamDecoder:
+        """
+        Returns a decoder instance which can be used to decode the content
+        into JSON values, depending on the Content-Type used in the response.
+        """
+        content_type = self.headers.get("content-type", "")
+        msg = email.message.Message()
+        msg["content-type"] = content_type
+        media_type = msg.get_content_type()
+
+        decoder_cls: type[JSONStreamDecoder]
+        if media_type in ("application/ndjson", "application/x-ndjson"):
+            decoder_cls = NDJSONDecoder
+        elif media_type == "application/json-seq":
+            decoder_cls = JSONSeqDecoder
+        elif media_type == "application/json" or (
+            media_type.startswith("application/") and media_type.endswith("+json")
+        ):
+            decoder_cls = JSONDocumentDecoder
+        else:
+            raise DecodingError(
+                f"Cannot decode JSON from a response with Content-Type "
+                f"{content_type!r}."
+            )
+
+        encoding = None
+        if msg.get_param("charset") is not None:
+            # Non-ASCII charset values are reported as an empty string,
+            # which is then rejected as an unknown encoding.
+            encoding = msg.get_content_charset(failobj="")
+        return decoder_cls(encoding)
+
     @property
     def is_informational(self) -> bool:
         """
@@ -932,6 +969,28 @@ class Response:
             for line in decoder.flush():
                 yield line
 
+    def iter_json(self) -> typing.Iterator[typing.Any]:
+        """
+        An iterator over the JSON values in the response content.
+
+        For `application/json` and `application/*+json` responses each element
+        of a top-level array is returned in turn, otherwise the single top-level
+        value is returned. For `application/ndjson`, `application/x-ndjson`, and
+        `application/json-seq` responses each JSON text is returned in turn.
+        """
+        with request_context(request=self._request):
+            decoder = self._get_json_decoder()
+            try:
+                for byte_content in self.iter_bytes():
+                    for value in decoder.decode(byte_content):
+                        yield value
+                for value in decoder.flush():
+                    yield value
+            except DecodingError:
+                if not self.is_closed:
+                    self.close()
+                raise
+
     def iter_raw(self, chunk_size: int | None = None) -> typing.Iterator[bytes]:
         """
         A byte-iterator over the raw response content.
@@ -1033,6 +1092,28 @@ class Response:
                     yield line
             for line in decoder.flush():
                 yield line
+
+    async def aiter_json(self) -> typing.AsyncIterator[typing.Any]:
+        """
+        An async iterator over the JSON values in the response content.
+
+        For `application/json` and `application/*+json` responses each element
+        of a top-level array is returned in turn, otherwise the single top-level
+        value is returned. For `application/ndjson`, `application/x-ndjson`, and
+        `application/json-seq` responses each JSON text is returned in turn.
+        """
+        with request_context(request=self._request):
+            decoder = self._get_json_decoder()
+            try:
+                async for byte_content in self.aiter_bytes():
+                    for value in decoder.decode(byte_content):
+                        yield value
+                for value in decoder.flush():
+                    yield value
+            except DecodingError:
+                if not self.is_closed:
+                    await self.aclose()
+                raise
 
     async def aiter_raw(
         self, chunk_size: int | None = None

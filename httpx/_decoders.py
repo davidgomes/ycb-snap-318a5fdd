@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import codecs
 import io
+import json
+import re
 import typing
 import zlib
 
@@ -376,6 +378,289 @@ class LineDecoder:
         self.buffer = []
         self.trailing_cr = False
         return lines
+
+
+JSON_WHITESPACE = " \t\n\r"
+JSON_NON_WHITESPACE = re.compile(r"[^ \t\n\r]")
+JSON_STRUCTURAL = re.compile(r'["\[\]{}]')
+JSON_STRING_SPECIAL = re.compile(r'["\\]')
+JSON_SCALAR_END = re.compile(r"[^0-9A-Za-z+\-.]")
+NEWLINE = re.compile(r"[\r\n]")
+JSON_DECODER = json.JSONDecoder()
+
+
+def decode_json(text: str) -> typing.Any:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise DecodingError(f"Invalid JSON: {exc}") from exc
+
+
+class JSONStreamDecoder:
+    """
+    Handles incrementally decoding bytes into JSON values.
+
+    The text encoding is either given explicitly, or detected as UTF-8, UTF-16,
+    or UTF-32 in the same way as `json.loads()`.
+    """
+
+    def __init__(self, encoding: str | None = None) -> None:
+        self._buffer = b""
+        self._text_decoder: codecs.IncrementalDecoder | None = None
+        if encoding is not None:
+            try:
+                # Rejects unknown codecs, and codecs that do not decode to text.
+                "".encode(encoding)
+                self._text_decoder = codecs.getincrementaldecoder(encoding)()
+            except (LookupError, UnicodeError) as exc:
+                message = f"Unsupported charset for JSON: {encoding!r}"
+                raise DecodingError(message) from exc
+
+    def decode(self, data: bytes) -> list[typing.Any]:
+        return self._decode_text(self._decode_bytes(data, final=False))
+
+    def flush(self) -> list[typing.Any]:
+        values = self._decode_text(self._decode_bytes(b"", final=True))
+        values.extend(self._flush_text())
+        return values
+
+    def _decode_bytes(self, data: bytes, final: bool) -> str:
+        if self._text_decoder is None:
+            # Encoding detection looks at up to the first four bytes.
+            self._buffer += data
+            if len(self._buffer) < 4 and not final:
+                return ""
+            encoding = json.detect_encoding(self._buffer)
+            self._text_decoder = codecs.getincrementaldecoder(encoding)()
+            data, self._buffer = self._buffer, b""
+        try:
+            return self._text_decoder.decode(data, final)
+        except UnicodeError as exc:
+            raise DecodingError(str(exc)) from exc
+
+    def _decode_text(self, text: str) -> list[typing.Any]:
+        raise NotImplementedError()  # pragma: no cover
+
+    def _flush_text(self) -> list[typing.Any]:
+        raise NotImplementedError()  # pragma: no cover
+
+
+class JSONDocumentDecoder(JSONStreamDecoder):
+    """
+    Handles a single JSON text, such as an `application/json` document.
+
+    If the top-level value is an array then each element is returned as soon
+    as it is complete. Otherwise the top-level value is returned once all of
+    the content has been received.
+    """
+
+    def __init__(self, encoding: str | None = None) -> None:
+        super().__init__(encoding)
+        self._state = "start"
+        self._seen_bom = False
+        self._parts: list[str] = []
+        # Scanning state, used to find where an array element ends.
+        self._scalar = False
+        self._depth = 0
+        self._in_string = False
+        self._escape = False
+
+    def _decode_text(self, text: str) -> list[typing.Any]:
+        values: list[typing.Any] = []
+        pos = 0
+        while pos < len(text):
+            if self._state == "value":
+                self._parts.append(text[pos:])
+                break
+
+            if self._state == "element":
+                end = self._scan_element(text, pos)
+                if end is None:
+                    self._parts.append(text[pos:])
+                    break
+                self._parts.append(text[pos:end])
+                values.append(decode_json("".join(self._parts)))
+                self._parts = []
+                self._state = "after_element"
+                pos = end
+                continue
+
+            match = JSON_NON_WHITESPACE.search(text, pos)
+            if match is None:
+                break
+            pos = match.start()
+            char = match.group()
+
+            if self._state == "start":
+                if char == "\ufeff" and not self._seen_bom:
+                    self._seen_bom = True
+                    pos += 1
+                elif char == "[":
+                    self._state = "array"
+                    pos += 1
+                else:
+                    self._state = "value"
+            elif self._state == "after_element":
+                if char not in ",]":
+                    raise DecodingError("Invalid JSON: Expecting ',' delimiter")
+                self._state = "next_element" if char == "," else "end"
+                pos += 1
+            elif self._state == "end":
+                raise DecodingError("Invalid JSON: Extra data")
+            elif char == "]" and self._state == "array":
+                self._state = "end"
+                pos += 1
+            elif char in '"[{' or not JSON_SCALAR_END.match(char):
+                pos = self._start_element(text, pos, values)
+            else:
+                raise DecodingError("Invalid JSON: Expecting value")
+        return values
+
+    def _start_element(self, text: str, pos: int, values: list[typing.Any]) -> int:
+        """
+        Decodes the array element starting at `pos` if it is complete within
+        `text`, otherwise starts scanning for the end of the element.
+        """
+        try:
+            value, end = JSON_DECODER.raw_decode(text, pos)
+        except json.JSONDecodeError:
+            pass
+        else:
+            # A number or literal is only complete once it is followed by a
+            # character that cannot continue it, eg. "1.5e" may become "1.5e3".
+            if end < len(text) and JSON_SCALAR_END.match(text, end):
+                values.append(value)
+                self._state = "after_element"
+                return end
+        self._scalar = text[pos] not in '"[{'
+        self._state = "element"
+        return pos
+
+    def _flush_text(self) -> list[typing.Any]:
+        if self._state == "value":
+            return [decode_json("".join(self._parts))]
+        if self._state == "start":
+            raise DecodingError("Invalid JSON: Expecting value")
+        if self._state != "end":
+            raise DecodingError("Invalid JSON: Unterminated array")
+        return []
+
+    def _scan_element(self, text: str, pos: int) -> int | None:
+        """
+        Returns the index just past the end of the current array element,
+        or `None` if the element continues beyond the end of `text`.
+
+        The element text is validated once it has been fully received.
+        """
+        if self._scalar:
+            match = JSON_SCALAR_END.search(text, pos)
+            return None if match is None else match.start()
+
+        while True:
+            if self._escape:
+                if pos == len(text):
+                    return None
+                pos += 1
+                self._escape = False
+            pattern = JSON_STRING_SPECIAL if self._in_string else JSON_STRUCTURAL
+            match = pattern.search(text, pos)
+            if match is None:
+                return None
+            pos = match.end()
+            char = match.group()
+            if char == "\\":
+                self._escape = True
+                continue
+            if char == '"':
+                self._in_string = not self._in_string
+            elif char in "[{":
+                self._depth += 1
+            else:
+                self._depth -= 1
+            if self._depth == 0 and not self._in_string:
+                return pos
+
+
+class NDJSONDecoder(JSONStreamDecoder):
+    """
+    Handles newline delimited JSON, with one JSON text on each non-blank line.
+    """
+
+    def __init__(self, encoding: str | None = None) -> None:
+        super().__init__(encoding)
+        self._line: list[str] = []
+        self._seen_line = False
+
+    def _decode_text(self, text: str) -> list[typing.Any]:
+        values: list[typing.Any] = []
+        pos = 0
+        # A CRLF is split as a CR followed by an empty line, which is ignored.
+        for match in NEWLINE.finditer(text):
+            self._line.append(text[pos : match.start()])
+            values.extend(self._decode_line())
+            pos = match.end()
+        self._line.append(text[pos:])
+        return values
+
+    def _flush_text(self) -> list[typing.Any]:
+        return self._decode_line()
+
+    def _decode_line(self) -> list[typing.Any]:
+        line = "".join(self._line)
+        self._line = []
+        if not line.strip(JSON_WHITESPACE):
+            return []
+        if not self._seen_line:
+            self._seen_line = True
+            line = line.removeprefix("\ufeff")
+        return [decode_json(line)]
+
+
+class JSONSeqDecoder(JSONStreamDecoder):
+    """
+    Handles JSON text sequences, where each JSON text is preceded by an
+    ASCII record separator.
+
+    See: https://www.rfc-editor.org/rfc/rfc7464
+    """
+
+    def __init__(self, encoding: str | None = None) -> None:
+        super().__init__(encoding)
+        self._started = False
+        self._record: list[str] = []
+
+    def _decode_text(self, text: str) -> list[typing.Any]:
+        values: list[typing.Any] = []
+        pos = 0
+        if not self._started:
+            match = JSON_NON_WHITESPACE.search(text)
+            if match is None:
+                return []
+            if match.group() != "\x1e":
+                raise DecodingError(
+                    "Invalid JSON text sequence: Expecting record separator"
+                )
+            self._started = True
+            pos = match.end()
+        while (index := text.find("\x1e", pos)) != -1:
+            self._record.append(text[pos:index])
+            values.extend(self._decode_record(final=False))
+            pos = index + 1
+        self._record.append(text[pos:])
+        return values
+
+    def _flush_text(self) -> list[typing.Any]:
+        return self._decode_record(final=True) if self._started else []
+
+    def _decode_record(self, final: bool) -> list[typing.Any]:
+        record = "".join(self._record)
+        self._record = []
+        if record.strip(JSON_WHITESPACE):
+            return [decode_json(record)]
+        if final:
+            raise DecodingError("Invalid JSON text sequence: Expecting value")
+        # Empty records between two record separators are skipped.
+        return []
 
 
 SUPPORTED_DECODERS = {
