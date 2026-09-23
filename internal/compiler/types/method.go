@@ -97,16 +97,6 @@ func IsDefined(t reflect.Type) bool {
 	return ok
 }
 
-// HasDeclaredMethods reports whether t is a type returned by DefinedOf, or a
-// pointer to such type, with at least one declared method.
-func HasDeclaredMethods(t reflect.Type) bool {
-	if pt, ok := t.(ptrType); ok {
-		t = pt.elem
-	}
-	dt, ok := t.(definedType)
-	return ok && len(dt.methods.methods) > 0
-}
-
 // toReflectMethod returns m as a reflect.Method with index i.
 func toReflectMethod(m *Method, i int) reflect.Method {
 	return reflect.Method{Name: m.Name, PkgPath: m.PkgPath, Type: m.Func, Index: i}
@@ -149,29 +139,6 @@ func implementsWithMethods(x, y reflect.Type) bool {
 		}
 	}
 	return true
-}
-
-// MissingMethod returns the name of a method of the interface type y that
-// is not in the method set of the Scriggo type x, and reports whether x has
-// such method but with a pointer receiver.
-func MissingMethod(x, y reflect.Type) (string, bool) {
-	pointer := false
-	if pt, ok := x.(ptrType); ok {
-		x = pt.elem
-		pointer = true
-	}
-	dt, _ := x.(definedType)
-	for i := 0; i < y.NumMethod(); i++ {
-		ym := y.Method(i)
-		xm, ok := dt.methods.lookup(ym.Name)
-		if !ok || ym.PkgPath != "" || !sameMethodSignature(xm.Func, ym.Type) {
-			return ym.Name, false
-		}
-		if xm.Pointer && !pointer {
-			return ym.Name, true
-		}
-	}
-	return "", false
 }
 
 // sameMethodSignature reports whether the function type fn, whose first
