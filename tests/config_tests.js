@@ -31,6 +31,29 @@ describe('Config', function() {
     expect(config.progOptions).to.equal(progOptions);
   });
 
+  it('detects and validates report_file templates', function() {
+    expect(config.getExpandedReportFile()).to.equal(null);
+    expect(config.hasAnyReportTemplate()).to.equal(false);
+
+    config.set('report_file', 'out/<date>/<launcher>.xml');
+    expect(config.hasLauncherTemplate()).to.equal(true);
+    expect(config.hasDateTemplate()).to.equal(true);
+    expect(config.hasTimestampTemplate()).to.equal(false);
+    expect(config.hasAnyReportTemplate()).to.equal(true);
+    expect(config.validateReportFile().valid).to.equal(true);
+    expect(config.getExpandedReportFile('Chrome/Headless')).to.match(/out\/\d{4}-\d{2}-\d{2}\/Chrome_Headless\.xml$/);
+
+    config.set('report_file', 'out/<launcher>');
+    let result = config.validateReportFile();
+    expect(result.valid).to.equal(true);
+    expect(result.warnings).to.have.length(1);
+
+    config.set('report_file', 'out/<browser>.xml');
+    result = config.validateReportFile();
+    expect(result.valid).to.equal(false);
+    expect(result.errors[0]).to.match(/<browser>/);
+  });
+
   it('gives progOptions properties when got', function() {
     expect(config.get('file')).to.equal(progOptions.file);
   });

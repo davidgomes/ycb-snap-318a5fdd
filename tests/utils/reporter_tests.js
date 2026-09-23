@@ -61,6 +61,48 @@ describe('Reporter', function() {
     });
 
     // Regresses https://github.com/testem/testem/issues/900
+    it('writes each launcher to its own file and keeps finish idempotent', function() {
+      return tmpNameAsync().then(function(dir) {
+        fs.mkdirSync(dir);
+        let template = dir + '/<launcher>.tap';
+        let stream = new PassThrough();
+        let reporter = new Reporter({
+          config: {
+            get: function(key) {
+              switch (key) {
+                case 'reporter':
+                  return 'tap';
+                case 'tap_show_launcher_summary':
+                  return true;
+              }
+            }
+          }
+        }, stream, template);
+
+        reporter.report('Chrome Headless', { name: 'a', passed: true });
+        reporter.report('Firefox', { name: 'b', passed: false });
+        reporter.report('testem', { name: 'internal', passed: false, error: { message: 'nope' } });
+        reporter.finish();
+        reporter.finish();
+
+        return reporter.close().then(function() {
+          let output = stream.read().toString();
+          expect(output).to.match(/tests 3/);
+          expect(output).to.match(/Per-launcher summary/);
+          expect(output).to.match(/Chrome Headless: 1 tests, 1 pass, 0 fail, 0 skip/);
+          expect(output).to.match(/Firefox: 1 tests, 0 pass, 1 fail, 0 skip/);
+
+          let chrome = fs.readFileSync(dir + '/Chrome_Headless.tap', 'utf8');
+          let firefox = fs.readFileSync(dir + '/Firefox.tap', 'utf8');
+          expect(chrome).to.match(/tests 1/);
+          expect(chrome).to.match(/pass {2}1/);
+          expect(firefox).to.match(/fail {2}1/);
+          expect(fs.existsSync(dir + '/testem.tap')).to.equal(false);
+          expect(output.split('Per-launcher summary').length).to.equal(2);
+        });
+      });
+    });
+
     it('uses file stream when reporting', function() {
       let tapReporterSpy = sandbox.spy(require('../../lib/reporters'), 'tap');
       let reporter = new Reporter(mockApp('tap'), stream, 'report.xml');
