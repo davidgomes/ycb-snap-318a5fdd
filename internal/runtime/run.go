@@ -171,7 +171,11 @@ func (vm *VM) run() (Addr, bool) {
 					v, ok = w.Unwrap(v)
 				} else {
 					if t.Kind() == reflect.Interface {
-						ok = v.Type().Implements(t)
+						if st, isScr := scriggoDynamicType(v); isScr {
+							ok = missingMethod(st, t) == ""
+						} else {
+							ok = v.Type().Implements(t)
+						}
 					} else {
 						ok = v.Type() == t
 					}
@@ -185,6 +189,9 @@ func (vm *VM) run() (Addr, bool) {
 					var method string
 					if v.IsValid() {
 						concrete = v.Type()
+						if st, isScr := scriggoDynamicType(v); isScr {
+							concrete = st
+						}
 						if t.Kind() == reflect.Interface {
 							method = missingMethod(concrete, t)
 						}
@@ -1092,6 +1099,13 @@ func (vm *VM) run() (Addr, bool) {
 				panic(errNilPointer)
 			}
 			method := vm.stringk(b, true)
+			if bm, ok := receiver.Interface().(BoundMethoder); ok {
+				if fn, bound, deref, ok := bm.BoundMethod(method); ok {
+					rv := receiver.Interface().(ScriggoReflectTyper).ScriggoValue()
+					vm.setGeneral(c, reflect.ValueOf(&callable{value: vm.bindScriggoMethod(fn, bound, rv, deref)}))
+					break
+				}
+			}
 			vm.setGeneral(c, reflect.ValueOf(&callable{value: receiver.MethodByName(method)}))
 
 		// Move

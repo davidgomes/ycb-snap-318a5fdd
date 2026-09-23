@@ -1114,6 +1114,77 @@ func (tc *typechecker) makeMacroResultExplicit(macro *ast.Func) {
 	)}
 }
 
+// prepareMethod validates a method receiver and prepends it to the function
+// parameters so the body is compiled as a function with the receiver first.
+func (tc *typechecker) prepareMethod(fn *ast.Func) {
+	if fn.Receiver.Type == nil {
+		panic(tc.errorf(fn, "invalid receiver type"))
+	}
+	ti := tc.checkType(fn.Receiver.Type)
+	recv := ti.Type
+	base := recv
+	if recv.Kind() == reflect.Ptr {
+		base = recv.Elem()
+	}
+	if base.Kind() == reflect.Ptr {
+		panic(tc.errorf(fn.Receiver.Type, "invalid receiver type %s (%s is a pointer type)", recv, base))
+	}
+	if base.Kind() == reflect.Interface {
+		panic(tc.errorf(fn.Receiver.Type, "invalid receiver type %s (%s is an interface type)", base, base))
+	}
+	_, pkg, ok := types.DefinedInfo(base)
+	if !ok {
+		if base.Name() == "" {
+			panic(tc.errorf(fn.Receiver.Type, "invalid receiver type %s (%s is not a defined type)", recv, recv))
+		}
+		panic(tc.errorf(fn.Receiver.Type, "cannot define new methods on non-local type %s", base))
+	}
+	if pkg != "" && pkg != tc.path {
+		panic(tc.errorf(fn.Receiver.Type, "cannot define new methods on non-local type %s", base))
+	}
+	if !isBlankIdentifier(fn.Ident) && base.Kind() == reflect.Struct {
+		n := base.NumField()
+		for i := 0; i < n; i++ {
+			if base.Field(i).Name == fn.Ident.Name {
+				panic(tc.errorf(fn.Ident, "field and method with the same name %s", fn.Ident.Name))
+			}
+		}
+	}
+	fn.Type.Parameters = append([]*ast.Parameter{fn.Receiver}, fn.Type.Parameters...)
+}
+
+// registerMethod adds fn to the method set of its receiver base type.
+func (tc *typechecker) registerMethod(fn *ast.Func, funcType reflect.Type) {
+	if isBlankIdentifier(fn.Ident) {
+		return
+	}
+	recv := tc.compilation.typeInfos[fn.Receiver.Type].Type
+	base := recv
+	ptr := false
+	if recv.Kind() == reflect.Ptr {
+		ptr = true
+		base = recv.Elem()
+	}
+	gt := types.AsGoType(funcType)
+	ins := make([]reflect.Type, gt.NumIn()-1)
+	for i := 1; i < gt.NumIn(); i++ {
+		ins[i-1] = gt.In(i)
+	}
+	outs := make([]reflect.Type, gt.NumOut())
+	for i := range outs {
+		outs[i] = gt.Out(i)
+	}
+	bound := reflect.FuncOf(ins, outs, gt.IsVariadic())
+	if !types.AddMethod(base, fn.Ident.Name, ptr, funcType, bound, fn) {
+		panic(tc.errorf(fn.Ident, "method %s already declared", fn.Ident.Name))
+	}
+}
+
+// methodLinkName is the function-store key of a method declaration.
+func methodLinkName(fn *ast.Func) string {
+	return "\x00" + fn.Receiver.Type.String() + "." + fn.Ident.Name
+}
+
 // checkFunc checks a function.
 func (tc *typechecker) checkFunc(node *ast.Func) {
 
@@ -1332,6 +1403,7 @@ func (tc *typechecker) checkTypeDeclaration(node *ast.TypeDeclaration) (string, 
 	}
 	// Create a new Scriggo type.
 	defType := tc.types.DefinedOf(name, typ.Type)
+	types.SetPackagePath(defType, tc.path)
 	// Associate to
 	//
 	//    type T struct { .. }

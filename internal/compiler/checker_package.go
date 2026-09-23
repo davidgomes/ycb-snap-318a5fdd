@@ -253,6 +253,7 @@ func sortDeclarations(pkg *ast.Package) error {
 	vars := []*ast.Var{}
 	imports := []*ast.Import{}
 	funcs := []*ast.Func{}
+	methods := []*ast.Func{}
 
 	// Fragments global declarations.
 	for _, decl := range pkg.Declarations {
@@ -262,7 +263,11 @@ func sortDeclarations(pkg *ast.Package) error {
 		case *ast.Import:
 			imports = append(imports, decl)
 		case *ast.Func:
-			funcs = append(funcs, decl)
+			if decl.Receiver != nil {
+				methods = append(methods, decl)
+			} else {
+				funcs = append(funcs, decl)
+			}
 		case *ast.Const:
 			if len(decl.Rhs) == 0 {
 				for i := range decl.Lhs {
@@ -498,6 +503,9 @@ varsLoop:
 	for _, f := range funcs {
 		sorted = append(sorted, f)
 	}
+	for _, m := range methods {
+		sorted = append(sorted, m)
+	}
 	pkg.Declarations = sorted
 
 	return nil
@@ -590,10 +598,15 @@ func checkPackage(compilation *compilation, pkg *ast.Package, path string, impor
 	// declarations.
 	for _, d := range pkg.Declarations {
 		if f, ok := d.(*ast.Func); ok {
+			if f.Ident == nil {
+				return tc.errorf(f.Pos(), "missing function name")
+			}
 			if f.Body == nil {
 				return tc.errorf(f.Ident.Pos(), "missing function body")
 			}
-			if f.Ident.Name == "init" || f.Ident.Name == "main" {
+			if f.Receiver != nil {
+				tc.prepareMethod(f)
+			} else if f.Ident.Name == "init" || f.Ident.Name == "main" {
 				if len(f.Type.Parameters) > 0 || len(f.Type.Result) > 0 {
 					return tc.errorf(f.Ident, "func %s must have no arguments and no return values", f.Ident.Name)
 				}
@@ -604,6 +617,10 @@ func checkPackage(compilation *compilation, pkg *ast.Package, path string, impor
 			// Function type must be checked for every function, including
 			// 'init's functions.
 			funcType := tc.checkType(f.Type).Type
+			if f.Receiver != nil {
+				tc.registerMethod(f, funcType)
+				continue
+			}
 			if f.Ident.Name == "init" || isBlankIdentifier(f.Ident) {
 				// Do not add 'init' and '_' functions to the file/package block.
 				continue

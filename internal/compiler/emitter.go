@@ -169,11 +169,27 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 				if emFn, ok := em.alreadyEmittedFuncs[fun]; ok {
 					fn = emFn
 				} else {
-					if fun.Type.Macro {
-						fn = newMacro("main", fun.Ident.Name, fun.Type.Reflect, fun.Format, path, fun.Pos())
-					} else {
-						fn = newFunction("main", fun.Ident.Name, fun.Type.Reflect, path, fun.Pos())
+					fnType := fun.Type.Reflect
+					if fun.Receiver != nil {
+						fnType = types.AsGoType(fnType)
 					}
+					if fun.Type.Macro {
+						fn = newMacro("main", fun.Ident.Name, fnType, fun.Format, path, fun.Pos())
+					} else {
+						name := fun.Ident.Name
+						if fun.Receiver != nil {
+							name = methodLinkName(fun)
+						}
+						fn = newFunction("main", name, fnType, path, fun.Pos())
+					}
+				}
+				if fun.Receiver != nil {
+					if isBlankIdentifier(fun.Ident) {
+						continue
+					}
+					types.BindMethodFunc(em.ti(fun.Receiver.Type).Type, fun.Ident.Name, fn)
+					em.fnStore.makeAvailableScriggoFn(em.pkg, methodLinkName(fun), fn)
+					continue
 				}
 				if fun.Ident.Name == "init" {
 					inits = append(inits, fn)
@@ -246,6 +262,9 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 	for _, dec := range pkg.Declarations {
 		if n, ok := dec.(*ast.Func); ok {
 			var fn *runtime.Function
+			if n.Receiver != nil && isBlankIdentifier(n.Ident) {
+				continue
+			}
 			if isBlankIdentifier(n.Ident) {
 				// Do not emit this function declaration; it has already been
 				// type checked, so there's no need to enter into its body
@@ -256,7 +275,9 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 				// Function has already been emitted, nothing to do.
 				continue
 			}
-			if n.Ident.Name == "init" {
+			if n.Receiver != nil {
+				fn, _ = em.fnStore.availableScriggoFn(em.pkg, methodLinkName(n))
+			} else if n.Ident.Name == "init" {
 				fn = inits[initToBuild]
 				initToBuild++
 			} else {
@@ -564,6 +585,31 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
 func (em *emitter) emitCallNode(call *ast.Call, goStmt bool, deferStmt bool, toFormat ast.Format) ([]int8, []reflect.Type) {
 
 	funTi := em.ti(call.Func)
+
+	// Method call on a Scriggo-defined concrete type.
+	if funTi.MethodType == methodCallConcrete {
+		if afn, ok := funTi.value.(*ast.Func); ok && afn.Receiver != nil {
+			rcv := call.Func.(*ast.Selector).Expr
+			args := make([]ast.Expression, len(call.Args)+1)
+			args[0] = rcv
+			copy(args[1:], call.Args)
+			rfn, ok := em.fnStore.availableScriggoFn(em.pkg, methodLinkName(afn))
+			if !ok {
+				panic(internalError("missing method function %s", afn.Ident.Name))
+			}
+			stackShift := em.fb.currentStackShift()
+			regs, types := em.prepareCallParameters(afn.Type.Reflect, args, callOptions{callHasDots: call.IsVariadic})
+			index := em.fnStore.scriggoFnIndex(rfn)
+			if goStmt {
+				em.fb.emitGo()
+			}
+			if deferStmt {
+				panic(internalError("defer of method call is not implemented"))
+			}
+			em.fb.emitCallFunc(index, stackShift, call.Pos())
+			return regs, types
+		}
+	}
 
 	// Method call on a interface value.
 	if funTi.MethodType == methodCallInterface {

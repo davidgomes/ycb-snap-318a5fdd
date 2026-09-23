@@ -2460,6 +2460,10 @@ func (tc *typechecker) checkMethodExpression(t *typeInfo, expr *ast.Selector) *t
 
 	name := expr.Ident
 
+	if m, ok := types.LookupMethod(t.Type, name); ok {
+		return tc.scriggoMethodExpr(t.Type, expr, m)
+	}
+
 	method, ok := t.Type.MethodByName(name)
 	if !ok {
 		// Return a different error message if T is a defined non-pointer type
@@ -2511,6 +2515,31 @@ func (tc *typechecker) checkMethodValue(t *typeInfo, expr *ast.Selector) (*typeI
 	typ := t.Type
 	kind := typ.Kind()
 
+	if m, ok := types.LookupMethod(typ, name); ok {
+		return tc.scriggoMethodValue(m), true
+	}
+	if kind != reflect.Interface && kind != reflect.Ptr && (t.Addressable() || isCompositeLiteral(expr.Expr)) {
+		ptr := tc.types.PointerTo(typ)
+		if m, ok := types.LookupMethod(ptr, name); ok {
+			if ident, ok := expr.Expr.(*ast.Identifier); ok {
+				if _, decl, ok := tc.scopes.LookupInFunc(ident.Name); ok {
+					tc.compilation.indirectVars[decl] = true
+				}
+			}
+			expr.Expr = ast.NewUnaryOperator(expr.Pos(), ast.OperatorAddress, expr.Expr)
+			tc.compilation.typeInfos[expr.Expr] = &typeInfo{
+				Type:       ptr,
+				MethodType: methodValueConcrete,
+			}
+			return tc.scriggoMethodValue(m), true
+		}
+	}
+	if kind != reflect.Interface && kind != reflect.Ptr && !t.Addressable() && !isCompositeLiteral(expr.Expr) {
+		if _, ok := types.LookupMethod(tc.types.PointerTo(typ), name); ok {
+			panic(tc.errorf(expr, "cannot call pointer method %s on %s", name, typ))
+		}
+	}
+
 	method, ok := t.Type.MethodByName(name)
 	if !ok {
 		if kind == reflect.Interface || kind == reflect.Ptr || !t.Addressable() {
@@ -2552,6 +2581,87 @@ func (tc *typechecker) checkMethodValue(t *typeInfo, expr *ast.Selector) (*typeI
 		MethodType: methodValueConcrete,
 		Properties: propertyIsNative | propertyHasValue,
 	}, true
+}
+
+func isCompositeLiteral(expr ast.Expression) bool {
+	_, ok := expr.(*ast.CompositeLiteral)
+	return ok
+}
+
+func (tc *typechecker) scriggoMethodValue(m types.ScriggoMethod) *typeInfo {
+	return &typeInfo{
+		Type:       stripReceiverType(tc, m.FuncType),
+		value:      m.Node,
+		MethodType: methodValueConcrete,
+	}
+}
+
+func (tc *typechecker) scriggoMethodExpr(recv reflect.Type, expr *ast.Selector, m types.ScriggoMethod) *typeInfo {
+	if m.Promote {
+		return tc.promotedMethodExpr(expr, recv, m)
+	}
+	return &typeInfo{
+		Type:  m.FuncType,
+		value: m.Node,
+	}
+}
+
+func stripReceiverType(tc *typechecker, ft reflect.Type) reflect.Type {
+	in := make([]reflect.Type, ft.NumIn()-1)
+	for i := 1; i < ft.NumIn(); i++ {
+		in[i-1] = ft.In(i)
+	}
+	out := make([]reflect.Type, ft.NumOut())
+	for i := range out {
+		out[i] = ft.Out(i)
+	}
+	return tc.types.FuncOf(in, out, ft.IsVariadic())
+}
+
+// promotedMethodExpr builds a function literal equivalent to (*T).ValueMethod,
+// which dereferences its first argument and calls the value-receiver method.
+func (tc *typechecker) promotedMethodExpr(expr *ast.Selector, recv reflect.Type, m types.ScriggoMethod) *typeInfo {
+	pos := expr.Pos()
+	recvID := ast.NewIdentifier(pos, "$recv")
+	recvTyp := ast.NewPlaceholder()
+	tc.compilation.typeInfos[recvTyp] = &typeInfo{Type: recv, Properties: propertyIsType}
+	params := []*ast.Parameter{ast.NewParameter(recvID, recvTyp)}
+	args := []ast.Expression{}
+	inN := m.FuncType.NumIn()
+	variadic := m.FuncType.IsVariadic()
+	for i := 1; i < inN; i++ {
+		id := ast.NewIdentifier(pos, fmt.Sprintf("$a%d", i))
+		pt := ast.NewPlaceholder()
+		inType := m.FuncType.In(i)
+		if variadic && i == inN-1 {
+			inType = inType.Elem()
+		}
+		tc.compilation.typeInfos[pt] = &typeInfo{Type: inType, Properties: propertyIsType}
+		params = append(params, ast.NewParameter(id, pt))
+		args = append(args, id)
+	}
+	var results []*ast.Parameter
+	outN := m.FuncType.NumOut()
+	for i := 0; i < outN; i++ {
+		pt := ast.NewPlaceholder()
+		tc.compilation.typeInfos[pt] = &typeInfo{Type: m.FuncType.Out(i), Properties: propertyIsType}
+		results = append(results, ast.NewParameter(nil, pt))
+	}
+	deref := ast.NewUnaryOperator(pos, ast.OperatorPointer, recvID)
+	sel := ast.NewSelector(pos, deref, expr.Ident)
+	call := ast.NewCall(pos, sel, args, variadic)
+	var body []ast.Node
+	if outN == 0 {
+		body = []ast.Node{call}
+	} else {
+		body = []ast.Node{ast.NewReturn(pos, []ast.Expression{call})}
+	}
+	ft := ast.NewFuncType(pos, false, params, results, variadic)
+	fn := ast.NewFunc(pos, nil, ft, ast.NewBlock(pos, body), false, 0)
+	fti := tc.checkExpr(fn)
+	// The literal is emitted through replacement, so it must not be treated as a constant.
+	props := fti.Properties &^ propertyHasValue
+	return &typeInfo{Type: fti.Type, Properties: props, replacement: fn}
 }
 
 // checkKeySelector checks a key selector.

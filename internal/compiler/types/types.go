@@ -161,7 +161,18 @@ func ConvertibleTo(x, y reflect.Type) bool {
 // Implements reports whether x implements the interface type y.
 func Implements(x, y reflect.Type) bool {
 	if _, ok := x.(runtime.ScriggoType); ok {
-		return y.NumMethod() == 0
+		if y.Kind() != reflect.Interface {
+			return false
+		}
+		n := y.NumMethod()
+		for i := 0; i < n; i++ {
+			mi := y.Method(i)
+			mt, ok := x.MethodByName(mi.Name)
+			if !ok || !methodSignatureMatch(mt.Type, mi.Type) {
+				return false
+			}
+		}
+		return true
 	}
 	if _, ok := y.(runtime.ScriggoType); ok {
 		return true
@@ -170,6 +181,25 @@ func Implements(x, y reflect.Type) bool {
 	// if x implements y using the x.NumMethod and x.Method methods, because they do not return
 	// the unexported methods of x. Therefore, the x.Implements method is used instead.
 	return x.Implements(y)
+}
+
+// methodSignatureMatch reports whether method type have (with a receiver)
+// matches the interface method type want (without a receiver).
+func methodSignatureMatch(have, want reflect.Type) bool {
+	if have.NumIn()-1 != want.NumIn() || have.NumOut() != want.NumOut() || have.IsVariadic() != want.IsVariadic() {
+		return false
+	}
+	for i := 0; i < want.NumIn(); i++ {
+		if have.In(i+1) != want.In(i) {
+			return false
+		}
+	}
+	for i := 0; i < want.NumOut(); i++ {
+		if have.Out(i) != want.Out(i) {
+			return false
+		}
+	}
+	return true
 }
 
 // identical reports whether the types x and y, or their underlying types if
@@ -281,6 +311,24 @@ func identical(x, y reflect.Type, underlying, ignoreTags bool) bool {
 	}
 
 	return true
+}
+
+// AsGoType returns the gc type that represents t.
+func AsGoType(t reflect.Type) reflect.Type {
+	if st, ok := t.(runtime.ScriggoType); ok {
+		return st.GoType()
+	}
+	return t
+}
+
+// DefinedInfo reports whether t is a Scriggo defined type and, if so, its
+// name and declaring package path.
+func DefinedInfo(t reflect.Type) (name, pkg string, ok bool) {
+	dt, ok := t.(definedType)
+	if !ok {
+		return "", "", false
+	}
+	return dt.name, dt.PackagePath(), true
 }
 
 // TypeOf returns the type of v.

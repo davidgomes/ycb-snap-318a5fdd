@@ -24,19 +24,41 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 	pos := tok.pos
 	// Parses the function name if present.
 	var ident *ast.Identifier
+	var receiver *ast.Parameter
 	tok = p.next()
-	if tok.typ == tokenIdentifier {
+	if !isMacro && kind == parseFuncDecl && tok.typ == tokenLeftParenthesis {
+		var params []*ast.Parameter
+		var variadic bool
+		params, variadic, _, tok = p.parseFuncParameters(tok, false, false)
+		if variadic {
+			panic(syntaxError(tok.pos, "invalid receiver type"))
+		}
+		switch len(params) {
+		case 0:
+			panic(syntaxError(tok.pos, "method has no receiver"))
+		case 1:
+			receiver = params[0]
+		default:
+			pos := tok.pos
+			if params[1].Ident != nil {
+				pos = params[1].Ident.Pos()
+			} else if params[1].Type != nil {
+				pos = params[1].Type.Pos()
+			}
+			panic(syntaxError(pos, "method has multiple receivers"))
+		}
+		if tok.typ != tokenIdentifier {
+			panic(syntaxError(tok.pos, "unexpected %s, expecting name", tok.txt))
+		}
+		ident = ast.NewIdentifier(tok.pos, string(tok.txt))
+		tok = p.next()
+	} else if tok.typ == tokenIdentifier {
 		if kind&parseFuncDecl == 0 {
 			panic(syntaxError(tok.pos, "unexpected %s, expecting (", tok))
 		}
 		ident = ast.NewIdentifier(tok.pos, string(tok.txt))
 		tok = p.next()
 	} else if kind == parseFuncDecl {
-		// This check could be avoided (the code panics anyway) but improves the
-		// readability of the error message.
-		if !isMacro && tok.typ == tokenLeftParenthesis {
-			panic(syntaxError(tok.pos, "method declarations are not supported in this release of Scriggo"))
-		}
 		// Node to parse must be a function declaration.
 		panic(syntaxError(tok.pos, "unexpected %s, expecting name", tok.txt))
 	}
@@ -66,6 +88,7 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 		return typ, tok
 	}
 	node := ast.NewFunc(pos, ident, typ, nil, false, ast.Format(tok.ctx))
+	node.Receiver = receiver
 	if !isMacro && tok.typ != tokenLeftBrace {
 		return node, tok
 	}

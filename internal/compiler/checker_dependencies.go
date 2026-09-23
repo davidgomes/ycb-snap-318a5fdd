@@ -116,6 +116,9 @@ func (d *deps) analyzeGlobalDeclarationAssignment(n *ast.Assignment) {
 // analyzeGlobalFunc analyzes a global function declaration.
 func (d *deps) analyzeGlobalFunc(n *ast.Func) {
 	scopes := depScopes{map[string]struct{}{}}
+	if n.Receiver != nil && n.Receiver.Ident != nil {
+		scopes = declareLocally(scopes, n.Receiver.Ident.Name)
+	}
 	for _, f := range n.Type.Parameters {
 		if f.Ident != nil {
 			scopes = declareLocally(scopes, f.Ident.Name)

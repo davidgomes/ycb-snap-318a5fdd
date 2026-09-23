@@ -812,6 +812,7 @@ type Func struct {
 	expression
 	*Position
 	Ident    *Identifier // name, nil for function literals.
+	Receiver *Parameter  // receiver, nil for functions and literals.
 	Type     *FuncType   // type.
 	Body     *Block      // body.
 	DistFree bool        // reports whether it is distraction free.
@@ -821,7 +822,7 @@ type Func struct {
 
 // NewFunc returns a new [Func] node.
 func NewFunc(pos *Position, name *Identifier, typ *FuncType, body *Block, distFree bool, format Format) *Func {
-	return &Func{expression{}, pos, name, typ, body, distFree, nil, format}
+	return &Func{expression{}, pos, name, nil, typ, body, distFree, nil, format}
 }
 
 // String returns the string representation of n.
@@ -831,6 +832,9 @@ func (n *Func) String() string {
 	}
 	if n.Ident == nil {
 		return "func literal"
+	}
+	if n.Receiver != nil {
+		return "method declaration"
 	}
 	return "func declaration"
 }

@@ -883,6 +883,21 @@ type callFrame struct {
 	numVariadic int8       // number of variadic arguments.
 }
 
+// BoundMethoder is implemented by interface values that carry a Scriggo
+// method set. fn is the compiled method (receiver is its first parameter),
+// boundType is the Go function type without the receiver, and deref reports
+// whether the stored receiver must be dereferenced before the call.
+type BoundMethoder interface {
+	BoundMethod(name string) (fn *Function, boundType reflect.Type, deref bool, ok bool)
+}
+
+// ScriggoReflectTyper is implemented by interface values that carry a Scriggo
+// dynamic type.
+type ScriggoReflectTyper interface {
+	ScriggoReflectType() reflect.Type
+	ScriggoValue() reflect.Value
+}
+
 type callable struct {
 	value  reflect.Value   // reflect value.
 	fn     *Function       // function, if it is a Scriggo function.
@@ -963,6 +978,35 @@ func (c *callable) Value(env *env) reflect.Value {
 		return results
 	})
 	return c.value
+}
+
+func scriggoDynamicType(v reflect.Value) (reflect.Type, bool) {
+	if !v.IsValid() || !v.CanInterface() {
+		return nil, false
+	}
+	p, ok := v.Interface().(ScriggoReflectTyper)
+	if !ok {
+		return nil, false
+	}
+	return p.ScriggoReflectType(), true
+}
+
+// bindScriggoMethod returns a function value of type bound that calls fn with
+// recv prepended. deref dereferences recv first.
+func (vm *VM) bindScriggoMethod(fn *Function, bound reflect.Type, recv reflect.Value, deref bool) reflect.Value {
+	env := vm.env
+	vars := env.globals
+	return reflect.MakeFunc(bound, func(args []reflect.Value) []reflect.Value {
+		r := recv
+		if deref {
+			r = r.Elem()
+		}
+		in := make([]reflect.Value, 0, len(args)+1)
+		in = append(in, r)
+		in = append(in, args...)
+		c := &callable{fn: fn, vars: vars}
+		return c.Value(env).Call(in)
+	})
 }
 
 func packageName(pkg string) string {

@@ -713,6 +713,29 @@ func (em *emitter) emitSelector(v *ast.Selector, reg int8, dstType reflect.Type)
 
 	ti := em.ti(v)
 
+	// Promoted method expression, rewritten to a function literal.
+	if ti.replacement != nil {
+		if fn, ok := ti.replacement.(*ast.Func); ok && fn.Ident == nil && fn.Receiver == nil {
+			em._emitExpr(fn, dstType, reg, true, false)
+			return
+		}
+	}
+
+	// Scriggo method expression: T.M or (*T).M.
+	if fn, ok := ti.value.(*ast.Func); ok && fn.Receiver != nil && ti.MethodType == noMethod {
+		if reg == 0 {
+			return
+		}
+		sf, ok := em.fnStore.availableScriggoFn(em.pkg, methodLinkName(fn))
+		if !ok {
+			panic(internalError("missing method function %s", fn.Ident.Name))
+		}
+		index := em.fnStore.scriggoFnIndex(sf)
+		em.fb.emitLoadFunc(false, index, reg)
+		em.changeRegister(false, reg, reg, ti.Type, dstType)
+		return
+	}
+
 	// Map selector expression.
 	if ti.IsMapSelector() {
 		// Key selector on the empty interface type.
@@ -737,8 +760,10 @@ func (em *emitter) emitSelector(v *ast.Selector, reg int8, dstType reflect.Type)
 		expr := v.Expr
 		typ := em.typ(expr)
 		rcvr := em.emitExpr(expr, typ)
-		// MethodValue reads receiver from general.
-		if kindToType(typ.Kind()) != generalRegister {
+		// MethodValue reads receiver from general. Scriggo values are wrapped
+		// so the method set is available at run time.
+		_, scriggoRecv := typ.(runtime.ScriggoType)
+		if kindToType(typ.Kind()) != generalRegister || (scriggoRecv && ti.MethodType == methodValueConcrete) {
 			oldRcvr := rcvr
 			rcvr = em.fb.newRegister(reflect.Interface)
 			em.fb.emitTypify(false, typ, oldRcvr, rcvr)
@@ -917,6 +942,17 @@ func (em *emitter) emitUnaryOp(expr *ast.UnaryOperator, reg int8, regType reflec
 		case *ast.Identifier:
 			if em.fb.declaredInFunc(operand.Name) {
 				r := em.fb.scopeLookup(operand.Name)
+				// The address encoding is a pointer value. When the destination
+				// is an interface, typify that pointer so its method set is kept.
+				if regType.Kind() == reflect.Interface {
+					em.fb.enterStack()
+					tmp := em.fb.newRegister(exprType.Kind())
+					em.fb.emitNew(em.types.PointerTo(exprType), tmp)
+					em.fb.emitMove(false, -r, tmp, exprType.Kind())
+					em.changeRegister(false, tmp, reg, exprType, regType)
+					em.fb.exitStack()
+					return
+				}
 				em.fb.emitNew(em.types.PointerTo(exprType), reg)
 				em.fb.emitMove(false, -r, reg, regType.Kind())
 				return
