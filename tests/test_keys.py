@@ -1,8 +1,15 @@
+import importlib.util
+from pathlib import Path
+
 import pytest
 
 from textual.app import App
 from textual.binding import Binding
+from textual.events import Key
 from textual.keys import _character_to_key, format_key, key_to_character
+from textual.widgets import RichLog
+
+EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
 
 @pytest.mark.parametrize(
@@ -76,3 +83,79 @@ def test_key_to_character():
     assert key_to_character("ctrl+space") is None
     assert key_to_character("question_mark") == "?"
     assert key_to_character("foo") is None
+
+
+def test_key_event_defaults():
+    event = Key("a", "a")
+    assert event.phase == "press"
+    assert event.is_press
+    assert not event.is_repeat
+    assert not event.is_release
+    assert event.modifiers == ()
+    assert event.base_key == "a"
+    assert event.shifted_key is None
+    assert event.base_layout_key is None
+    assert not any(
+        (event.shift, event.alt, event.ctrl, event.super, event.hyper, event.meta)
+    )
+
+
+@pytest.mark.parametrize(
+    "key,modifiers,base_key",
+    [
+        ("ctrl+a", ("ctrl",), "a"),
+        ("ctrl+shift+left", ("ctrl", "shift"), "left"),
+        ("alt+ctrl+a", ("alt", "ctrl"), "a"),
+        ("shift+tab", ("shift",), "tab"),
+        ("plus", (), "plus"),
+        ("+", (), "+"),
+        ("<ignore>", (), "<ignore>"),
+    ],
+)
+def test_key_event_derives_modifiers(key, modifiers, base_key):
+    """Modifiers and base key are derived from the key, if not supplied."""
+    event = Key(key, None)
+    assert event.modifiers == modifiers
+    assert event.base_key == base_key
+
+
+def test_key_event_modifiers_sorted():
+    event = Key("A", "A", modifiers=["shift", "ctrl", "alt"], base_key="a")
+    assert event.modifiers == ("alt", "ctrl", "shift")
+    assert event.base_key == "a"
+
+
+def test_key_event_invalid_phase():
+    with pytest.raises(ValueError):
+        Key("a", "a", phase="down")
+
+
+def test_key_event_shifted_key_alias():
+    event = Key(
+        "ctrl+shift+equals_sign",
+        None,
+        modifiers=("ctrl", "shift"),
+        base_key="equals_sign",
+        shifted_key="plus",
+    )
+    assert event.aliases == ["ctrl+shift+equals_sign", "ctrl+plus"]
+
+
+async def test_kitty_keyboard_protocol_example():
+    """The example app logs the phase and character of key events."""
+    spec = importlib.util.spec_from_file_location(
+        "kitty_keyboard_protocol", EXAMPLES_DIR / "kitty_keyboard_protocol.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    app = module.KittyKeyboardProtocolApp()
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        app.post_message(Key("a", "a", phase="release"))
+        await pilot.pause()
+        lines = [line.text for line in app.query_one("#events", RichLog).lines]
+    assert "phase=press" in lines[0]
+    assert "character='a'" in lines[0]
+    assert "phase=release" in lines[-1]
