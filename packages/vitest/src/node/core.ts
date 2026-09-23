@@ -47,6 +47,7 @@ import { BlobReporter, readBlobs } from './reporters/blob'
 import { HangingProcessReporter } from './reporters/hanging-process'
 import { createBenchmarkReporters, createReporters } from './reporters/utils'
 import { VitestResolver } from './resolver'
+import { BaseSequencer } from './sequencers/BaseSequencer'
 import { VitestSpecifications } from './specifications'
 import { StateManager } from './state'
 import { populateProjectsTags } from './tags'
@@ -946,6 +947,7 @@ export class Vitest {
           this._checkUnhandledErrors(errors)
           await this._testRun.end(specs, errors, coverage)
           await this.reportCoverage(coverage, allTestsRun)
+          await this.recordFileDurations()
         }
       })()
         .finally(() => {
@@ -959,6 +961,19 @@ export class Vitest {
 
       return await this.runningPromise
     })
+  }
+
+  private async recordFileDurations(): Promise<void> {
+    if (!this.config.sequence.recordFileDurations) {
+      return
+    }
+    try {
+      const sequencer = new BaseSequencer(this)
+      await sequencer.recordFileDurations()
+    }
+    catch (error) {
+      this.logger.error('Failed to record file durations', error)
+    }
   }
 
   /**

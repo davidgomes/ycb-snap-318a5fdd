@@ -774,6 +774,7 @@ export function resolveConfig(
   }
   resolved.sequence.groupOrder ??= 0
   resolved.sequence.hooks ??= 'stack'
+  resolveDurationSequenceOptions(resolved.sequence)
   // Set seed if either files or tests are shuffled
   if (resolved.sequence.sequencer === RandomSequencer || resolved.sequence.shuffle) {
     resolved.sequence.seed ??= Date.now()
@@ -1026,4 +1027,78 @@ function hasOnlyBrowserChromium(vitest: Vitest, config: ResolvedConfig) {
     }
     return isChromiumName(browser.provider!.name, instance.browser)
   })
+}
+
+function resolveDurationSequenceOptions(sequence: ResolvedConfig['sequence']): void {
+  const fail = (message: string): never => {
+    throw new Error(`Invalid "sequence.${message}`)
+  }
+  const oneOf = (name: keyof typeof sequence, values: string[]) => {
+    const value = sequence[name]
+    if (value !== undefined && !values.includes(value as string)) {
+      fail(`${name}" option: expected one of ${values.map(v => `'${v}'`).join(', ')}, received ${JSON.stringify(value)}.`)
+    }
+  }
+  const bool = (name: keyof typeof sequence) => {
+    const value = sequence[name]
+    if (value !== undefined && typeof value !== 'boolean') {
+      fail(`${name}" option: expected a boolean, received ${JSON.stringify(value)}.`)
+    }
+  }
+  const num = (name: keyof typeof sequence, check: (v: number) => boolean, expected: string) => {
+    const value = sequence[name]
+    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || !check(value))) {
+      fail(`${name}" option: expected ${expected}, received ${JSON.stringify(value)}.`)
+    }
+  }
+
+  const strategyWasSet = sequence.shardStrategy !== undefined
+  oneOf('shardStrategy', ['hash', 'time', 'round-robin', 'affinity'])
+  bool('balanceShardsByTime')
+  bool('recordFileDurations')
+  bool('durationBasedSorting')
+  num('durationHistoryTTL', v => v >= 0, 'a finite number >= 0')
+  const path = sequence.durationHistoryPath
+  if (path !== undefined && (typeof path !== 'string' || !path.length || path.trim() !== path)) {
+    fail(`durationHistoryPath" option: expected a non-empty string without leading or trailing whitespace, received ${JSON.stringify(path)}.`)
+  }
+  num('durationHistoryMaxRuns', v => Number.isInteger(v) && v >= 1, 'an integer >= 1')
+  oneOf('durationSmoothing', ['latest', 'average', 'p95', 'median'])
+  const rules = sequence.shardAffinityRules
+  if (rules !== undefined) {
+    if (!Array.isArray(rules)) {
+      fail(`shardAffinityRules" option: expected an array, received ${JSON.stringify(rules)}.`)
+    }
+    rules.forEach((rule, i) => {
+      if (
+        typeof rule !== 'object' || rule === null
+        || typeof rule.pattern !== 'string'
+        || typeof rule.shardIndex !== 'number' || !Number.isInteger(rule.shardIndex) || rule.shardIndex < 0
+      ) {
+        fail(`shardAffinityRules[${i}]" option: expected { pattern: string, shardIndex: integer >= 0 }, received ${JSON.stringify(rule)}.`)
+      }
+    })
+  }
+  num('rebalanceThreshold', v => v >= 0 && v <= 1, 'a number between 0 and 1')
+  num('isolateSlowThreshold', v => v >= 0, 'a number >= 0')
+  oneOf('durationFallbackStrategy', ['hash', 'equal-split'])
+
+  sequence.balanceShardsByTime ??= false
+  if (sequence.balanceShardsByTime && !strategyWasSet) {
+    sequence.shardStrategy = 'time'
+  }
+  sequence.shardStrategy ??= 'hash'
+  if (sequence.shardStrategy !== 'time') {
+    sequence.balanceShardsByTime = false
+  }
+  sequence.recordFileDurations ??= false
+  sequence.durationBasedSorting ??= false
+  sequence.durationHistoryTTL ??= 0
+  sequence.durationHistoryPath ??= 'duration-history.json'
+  sequence.durationHistoryMaxRuns ??= 1
+  sequence.durationSmoothing ??= 'latest'
+  sequence.shardAffinityRules ??= []
+  sequence.rebalanceThreshold ??= 0
+  sequence.isolateSlowThreshold ??= 0
+  sequence.durationFallbackStrategy ??= 'hash'
 }
