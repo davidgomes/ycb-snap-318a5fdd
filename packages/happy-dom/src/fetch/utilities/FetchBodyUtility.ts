@@ -11,6 +11,7 @@ import type { TResponseBody } from '../types/TResponseBody.js';
 import { Buffer } from 'buffer';
 import Stream from 'stream';
 import type BrowserWindow from '../../window/BrowserWindow.js';
+import FetchBodyConsumption from './FetchBodyConsumption.js';
 
 /**
  * Fetch body utility.
@@ -198,26 +199,14 @@ export default class FetchBodyUtility {
 		}
 
 		const reader = body.getReader();
-		const chunks = [];
+		const chunks: any[] = [];
 		let bytes = 0;
 
 		try {
-			let readResult = await reader.read();
-			while (!readResult.done) {
-				if (requestOrResponse[PropertySymbol.error]) {
-					throw requestOrResponse[PropertySymbol.error];
-				}
-				if (requestOrResponse[PropertySymbol.aborted]) {
-					throw new window.DOMException(
-						'Failed to read response body: The stream was aborted.',
-						DOMExceptionNameEnum.abortError
-					);
-				}
-				const chunk = readResult.value;
+			await FetchBodyConsumption.readStream(window, requestOrResponse, reader, (chunk) => {
 				bytes += chunk.length;
 				chunks.push(chunk);
-				readResult = await reader.read();
-			}
+			});
 		} catch (error) {
 			if (error instanceof DOMException) {
 				throw error;

@@ -160,6 +160,12 @@ export default class BrowserFrameNavigator {
 
 		// Create new Window
 		frame[PropertySymbol.asyncTaskManager] = new AsyncTaskManager(frame);
+
+		// The previous page is no longer active. Clear its timers and animation frames,
+		// and reject in-flight body reads, before child-frame teardown can yield.
+		previousWindow[PropertySymbol.discardPageState]();
+		const previousDestroyPromise = previousAsyncTaskManager.destroy();
+
 		(<BrowserWindow>frame.window) = new windowClass(frame, { url: targetURL.href, width, height });
 		frame.window[PropertySymbol.parent] = parentWindow;
 		frame.window[PropertySymbol.top] = topWindow;
@@ -176,7 +182,7 @@ export default class BrowserFrameNavigator {
 		// Destroy child frames and Window
 		const destroyTaskID = frame[PropertySymbol.asyncTaskManager].startTask();
 		const destroyWindowAndAsyncTaskManager = (): void => {
-			previousAsyncTaskManager.destroy().then(() => {
+			previousDestroyPromise.then(() => {
 				if (exceptionObserver) {
 					exceptionObserver.disconnect(previousWindow);
 				}

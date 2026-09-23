@@ -862,6 +862,9 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 	#zeroDelayTimeout: { timeouts: Array<Timeout> | null } = { timeouts: null };
 	#timerLoopStacks: string[] = [];
 	#timerLoopLimits: ITimerLoopsLimit[] = [];
+	#pageStateDiscarded = false;
+	#ownedTimers = new Set<NodeJS.Timeout>();
+	#ownedImmediates = new Set<NodeJS.Immediate>();
 
 	/**
 	 * Constructor.
@@ -1376,7 +1379,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 	 * @returns Timeout ID.
 	 */
 	public setTimeout(callback: Function, delay = 0, ...args: unknown[]): NodeJS.Timeout {
-		if (this.closed) {
+		if (!this.#isPageStateActive()) {
 			return <NodeJS.Timeout>{};
 		}
 
@@ -1419,11 +1422,20 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 						settings.errorCapture === BrowserErrorCaptureEnum.tryAndCatch);
 
 				const id = TIMER.setTimeout(() => {
+					this.#ownedTimers.delete(id);
 					// We need to call endTimer() before the callback as the callback might throw an error.
-					this.#browserFrame[PropertySymbol.asyncTaskManager].endTimer(id);
-					const timeouts = zeroDelayTimeout.timeouts!;
+					if (this.#isPageStateActive()) {
+						this.#browserFrame[PropertySymbol.asyncTaskManager].endTimer(id);
+					}
+					const timeouts = zeroDelayTimeout.timeouts;
 					zeroDelayTimeout.timeouts = null;
+					if (!timeouts || !this.#isPageStateActive()) {
+						return;
+					}
 					for (const timeout of timeouts) {
+						if (!this.#isPageStateActive()) {
+							break;
+						}
 						if (useTryCatch) {
 							let result: any;
 							try {
@@ -1441,6 +1453,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 				}, 0);
 
 				zeroDelayTimeout.timeouts = [];
+				this.#ownedTimers.add(id);
 				this.#browserFrame[PropertySymbol.asyncTaskManager].startTimer(id);
 			}
 
@@ -1458,6 +1471,10 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 
 		const id = TIMER.setTimeout(
 			() => {
+				this.#ownedTimers.delete(id);
+				if (!this.#isPageStateActive()) {
+					return;
+				}
 				// We need to call endTimer() before the callback as the callback might throw an error.
 				this.#browserFrame[PropertySymbol.asyncTaskManager].endTimer(id);
 				if (useTryCatch) {
@@ -1478,6 +1495,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 				? settings?.timer.maxTimeout
 				: delay
 		);
+		this.#ownedTimers.add(id);
 		this.#browserFrame[PropertySymbol.asyncTaskManager].startTimer(id);
 		return id;
 	}
@@ -1505,6 +1523,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 			return;
 		}
 		TIMER.clearTimeout(id);
+		this.#ownedTimers.delete(id);
 		this.#browserFrame[PropertySymbol.asyncTaskManager].endTimer(id);
 	}
 
@@ -1517,7 +1536,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 	 * @returns Interval ID.
 	 */
 	public setInterval(callback: Function, delay = 0, ...args: unknown[]): NodeJS.Timeout {
-		if (this.closed) {
+		if (!this.#isPageStateActive()) {
 			return <NodeJS.Timeout>{};
 		}
 		const settings = this.#browserFrame.page.context.browser.settings;
@@ -1528,6 +1547,11 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 		let iterations = 0;
 		const id = TIMER.setInterval(
 			() => {
+				if (!this.#isPageStateActive()) {
+					this.#ownedTimers.delete(id);
+					TIMER.clearInterval(id);
+					return;
+				}
 				if (useTryCatch) {
 					let result: any;
 					try {
@@ -1556,6 +1580,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 				? settings?.timer.maxIntervalTime
 				: delay
 		);
+		this.#ownedTimers.add(id);
 		this.#browserFrame[PropertySymbol.asyncTaskManager].startTimer(id);
 		return id;
 	}
@@ -1572,6 +1597,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 			return;
 		}
 		TIMER.clearInterval(id);
+		this.#ownedTimers.delete(id);
 		this.#browserFrame[PropertySymbol.asyncTaskManager].endTimer(id);
 	}
 
@@ -1582,7 +1608,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 	 * @returns ID.
 	 */
 	public requestAnimationFrame(callback: (timestamp: number) => void): NodeJS.Immediate {
-		if (this.closed) {
+		if (!this.#isPageStateActive()) {
 			return <NodeJS.Immediate>{};
 		}
 		const settings = this.#browserFrame.page.context.browser.settings;
@@ -1616,6 +1642,10 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 			(!settings.disableErrorCapturing &&
 				settings.errorCapture === BrowserErrorCaptureEnum.tryAndCatch);
 		const id = TIMER.setImmediate(() => {
+			this.#ownedImmediates.delete(id);
+			if (!this.#isPageStateActive()) {
+				return;
+			}
 			// We need to call endImmediate() before the callback as the callback might throw an error.
 			this.#browserFrame[PropertySymbol.asyncTaskManager].endImmediate(id);
 			if (useTryCatch) {
@@ -1632,6 +1662,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 				callback(this.performance.now());
 			}
 		});
+		this.#ownedImmediates.add(id);
 		this.#browserFrame[PropertySymbol.asyncTaskManager].startImmediate(id);
 		return id;
 	}
@@ -1648,6 +1679,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 			return;
 		}
 		TIMER.clearImmediate(id);
+		this.#ownedImmediates.delete(id);
 		this.#browserFrame[PropertySymbol.asyncTaskManager].endImmediate(id);
 	}
 
@@ -1899,6 +1931,8 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 			return;
 		}
 
+		this[PropertySymbol.discardPageState]();
+
 		super[PropertySymbol.destroy]();
 
 		(<boolean>this.closed) = true;
@@ -1959,6 +1993,37 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 		this[PropertySymbol.top] = null;
 
 		WindowBrowserContext.removeWindowBrowserFrameRelation(this);
+	}
+
+	/**
+	 * Returns true when this window is still the page that timers should run on.
+	 *
+	 * @returns True when the page state is active.
+	 */
+	#isPageStateActive(): boolean {
+		return !this.closed && !this.#pageStateDiscarded;
+	}
+
+	/**
+	 * Drops timers and animation frames for a page that has been replaced or closed.
+	 */
+	public [PropertySymbol.discardPageState](): void {
+		if (this.#pageStateDiscarded) {
+			return;
+		}
+
+		this.#pageStateDiscarded = true;
+		this.#zeroDelayTimeout.timeouts = null;
+
+		for (const timer of this.#ownedTimers) {
+			TIMER.clearTimeout(timer);
+		}
+		this.#ownedTimers.clear();
+
+		for (const immediate of this.#ownedImmediates) {
+			TIMER.clearImmediate(immediate);
+		}
+		this.#ownedImmediates.clear();
 	}
 
 	/**

@@ -5,6 +5,7 @@ import MultipartReader from './MultipartReader.js';
 import DOMExceptionNameEnum from '../../exception/DOMExceptionNameEnum.js';
 import { Buffer } from 'buffer';
 import type BrowserWindow from '../../window/BrowserWindow.js';
+import FetchBodyConsumption from '../utilities/FetchBodyConsumption.js';
 
 /**
  * Multipart form data factory.
@@ -64,21 +65,9 @@ export default class MultipartFormDataParser {
 		let buffer: Buffer;
 		const bytes = 0;
 
-		let readResult = await bodyReader.read();
-
-		while (!readResult.done) {
-			if (requestOrResponse[PropertySymbol.error]) {
-				throw requestOrResponse[PropertySymbol.error];
-			}
-			if (requestOrResponse[PropertySymbol.aborted]) {
-				throw new window.DOMException(
-					'Failed to read response body: The stream was aborted.',
-					DOMExceptionNameEnum.abortError
-				);
-			}
-			reader.write(readResult.value);
-			readResult = await bodyReader.read();
-		}
+		await FetchBodyConsumption.readStream(window, requestOrResponse, bodyReader, (value) => {
+			reader.write(value);
+		});
 
 		try {
 			buffer =

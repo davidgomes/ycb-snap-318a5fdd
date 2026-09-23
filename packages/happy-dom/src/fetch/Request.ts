@@ -19,6 +19,7 @@ import MultipartFormDataParser from './multipart/MultipartFormDataParser.js';
 import type BrowserWindow from '../window/BrowserWindow.js';
 import WindowBrowserContext from '../window/WindowBrowserContext.js';
 import type { TRequestMode } from './types/TRequestMode.js';
+import FetchBodyConsumption from './utilities/FetchBodyConsumption.js';
 
 /**
  * Fetch request.
@@ -45,6 +46,7 @@ export default class Request implements Request {
 
 	// Internal properties
 	public [PropertySymbol.aborted]: boolean = false;
+	public [PropertySymbol.cancelBodyConsumption]: (() => void) | null = null;
 	public [PropertySymbol.error]: Error | null = null;
 	public [PropertySymbol.contentLength]: number | null = null;
 	public [PropertySymbol.contentType]: string | null = null;
@@ -127,6 +129,11 @@ export default class Request implements Request {
 			this[PropertySymbol.contentType] = contentType;
 		} else if (input instanceof Request && input[PropertySymbol.contentType]) {
 			this[PropertySymbol.contentType] = input[PropertySymbol.contentType];
+		} else if (this.body) {
+			const headerContentType = this.headers.get('Content-Type');
+			if (headerContentType) {
+				this[PropertySymbol.contentType] = headerContentType;
+			}
 		}
 
 		this[PropertySymbol.redirect] = init?.redirect || (<Request>input).redirect || 'follow';
@@ -308,7 +315,7 @@ export default class Request implements Request {
 		this[PropertySymbol.bodyUsed] = true;
 
 		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
+			FetchBodyConsumption.markAborted(this);
 			this.signal[PropertySymbol.abort]();
 		});
 		let buffer: Buffer;
@@ -359,7 +366,7 @@ export default class Request implements Request {
 		this[PropertySymbol.bodyUsed] = true;
 
 		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
+			FetchBodyConsumption.markAborted(this);
 			this.signal[PropertySymbol.abort]();
 		});
 		let buffer: Buffer;
@@ -396,7 +403,7 @@ export default class Request implements Request {
 		this[PropertySymbol.bodyUsed] = true;
 
 		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
+			FetchBodyConsumption.markAborted(this);
 			this.signal[PropertySymbol.abort]();
 		});
 		let buffer: Buffer;
@@ -445,7 +452,7 @@ export default class Request implements Request {
 			this[PropertySymbol.bodyUsed] = true;
 
 			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
+				FetchBodyConsumption.markAborted(this);
 				this.signal[PropertySymbol.abort]();
 			});
 			let formData: FormData;

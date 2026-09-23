@@ -14,6 +14,7 @@ import type BrowserWindow from '../window/BrowserWindow.js';
 import type ICachedResponse from './cache/response/ICachedResponse.js';
 import { Buffer } from 'buffer';
 import WindowBrowserContext from '../window/WindowBrowserContext.js';
+import FetchBodyConsumption from './utilities/FetchBodyConsumption.js';
 
 const REDIRECT_STATUS_CODES = [301, 302, 303, 307, 308];
 
@@ -46,6 +47,7 @@ export default class Response implements Response {
 	public [PropertySymbol.virtualServerFile]: string | null = null;
 	public [PropertySymbol.aborted]: boolean = false;
 	public [PropertySymbol.error]: Error | null = null;
+	public [PropertySymbol.cancelBodyConsumption]: (() => void) | null = null;
 
 	/**
 	 * Constructor.
@@ -107,6 +109,17 @@ export default class Response implements Response {
 			);
 		}
 
+		let buffer: Buffer | null = this[PropertySymbol.buffer];
+
+		// A fully buffered body does not depend on the page remaining open.
+		if (buffer) {
+			(<boolean>this.bodyUsed) = true;
+			this.#storeBodyInCache(buffer);
+			return <ArrayBuffer>(
+				buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+			);
+		}
+
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
 
 		// No browser frame means that the browser is being teared down.
@@ -118,22 +131,18 @@ export default class Response implements Response {
 
 		(<boolean>this.bodyUsed) = true;
 
-		let buffer: Buffer | null = this[PropertySymbol.buffer];
+		const taskID = asyncTaskManager.startTask(() => {
+			FetchBodyConsumption.markAborted(this);
+		});
 
-		if (!buffer) {
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
-			});
-
-			try {
-				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-			} catch (error) {
-				asyncTaskManager.endTask(taskID);
-				throw error;
-			}
-
+		try {
+			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
+		} catch (error) {
 			asyncTaskManager.endTask(taskID);
+			throw error;
 		}
+
+		asyncTaskManager.endTask(taskID);
 
 		this.#storeBodyInCache(buffer);
 
@@ -169,6 +178,15 @@ export default class Response implements Response {
 			);
 		}
 
+		let buffer: Buffer | null = this[PropertySymbol.buffer];
+
+		// A fully buffered body does not depend on the page remaining open.
+		if (buffer) {
+			(<boolean>this.bodyUsed) = true;
+			this.#storeBodyInCache(buffer);
+			return buffer;
+		}
+
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
 
 		// No browser frame means that the browser is being teared down.
@@ -180,20 +198,16 @@ export default class Response implements Response {
 
 		(<boolean>this.bodyUsed) = true;
 
-		let buffer: Buffer | null = this[PropertySymbol.buffer];
-
-		if (!buffer) {
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
-			});
-			try {
-				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-			} catch (error) {
-				asyncTaskManager.endTask(taskID);
-				throw error;
-			}
+		const taskID = asyncTaskManager.startTask(() => {
+			FetchBodyConsumption.markAborted(this);
+		});
+		try {
+			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
+		} catch (error) {
 			asyncTaskManager.endTask(taskID);
+			throw error;
 		}
+		asyncTaskManager.endTask(taskID);
 
 		this.#storeBodyInCache(buffer);
 
@@ -215,6 +229,15 @@ export default class Response implements Response {
 			);
 		}
 
+		let buffer: Buffer | null = this[PropertySymbol.buffer];
+
+		// A fully buffered body does not depend on the page remaining open.
+		if (buffer) {
+			(<boolean>this.bodyUsed) = true;
+			this.#storeBodyInCache(buffer);
+			return new TextDecoder().decode(buffer);
+		}
+
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
 
 		// No browser frame means that the browser is being teared down.
@@ -226,20 +249,16 @@ export default class Response implements Response {
 
 		(<boolean>this.bodyUsed) = true;
 
-		let buffer: Buffer | null = this[PropertySymbol.buffer];
-
-		if (!buffer) {
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
-			});
-			try {
-				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-			} catch (error) {
-				asyncTaskManager.endTask(taskID);
-				throw error;
-			}
+		const taskID = asyncTaskManager.startTask(() => {
+			FetchBodyConsumption.markAborted(this);
+		});
+		try {
+			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
+		} catch (error) {
 			asyncTaskManager.endTask(taskID);
+			throw error;
 		}
+		asyncTaskManager.endTask(taskID);
 
 		this.#storeBodyInCache(buffer);
 
@@ -264,14 +283,13 @@ export default class Response implements Response {
 	public async formData(): Promise<FormData> {
 		const window = this[PropertySymbol.window];
 		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
+		const contentType = this.headers.get('Content-Type');
 
 		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
+		// Fully buffered bodies can still be parsed.
+		if (!browserFrame && !this[PropertySymbol.buffer]) {
 			return new window.FormData();
 		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
-		const contentType = this.headers.get('Content-Type');
 
 		if (contentType && this.body && /multipart/i.test(contentType)) {
 			if (this.bodyUsed) {
@@ -283,8 +301,15 @@ export default class Response implements Response {
 
 			(<boolean>this.bodyUsed) = true;
 
-			const taskID = browserFrame[PropertySymbol.asyncTaskManager].startTask(() => {
-				this[PropertySymbol.aborted] = true;
+			if (!browserFrame) {
+				const result = await MultipartFormDataParser.streamToFormData(window, this, contentType);
+				this.#storeBodyInCache(result.buffer);
+				return result.formData;
+			}
+
+			const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
+			const taskID = asyncTaskManager.startTask(() => {
+				FetchBodyConsumption.markAborted(this);
 			});
 			let formData: FormData;
 			let buffer: Buffer;
