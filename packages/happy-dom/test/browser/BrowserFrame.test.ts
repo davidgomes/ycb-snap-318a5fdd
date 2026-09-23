@@ -13,6 +13,7 @@ import BrowserErrorCaptureEnum from '../../src/browser/enums/BrowserErrorCapture
 import Headers from '../../src/fetch/Headers';
 import * as PropertySymbol from '../../src/PropertySymbol';
 import type HashChangeEvent from '../../src/event/events/HashChangeEvent';
+import { ReadableStream } from 'stream/web';
 
 const STACK_TRACE_REGEXP = />.+$\s*/gm;
 
@@ -324,6 +325,63 @@ Task #1
 			expect(oldWindow.location.href).toBe('about:blank');
 			expect(page.mainFrame.window.location.href).toBe('http://localhost:3000/');
 			expect(page.mainFrame.window.document.body.innerHTML).toBe('Test');
+		});
+
+		it('Clears timers and animation frames scheduled by the previous window when it is discarded during navigation.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const previousWindow = page.mainFrame.window;
+			const timeoutCallback = vi.fn();
+			const zeroDelayTimeoutCallback = vi.fn();
+			const intervalCallback = vi.fn();
+			const animationFrameCallback = vi.fn();
+			const request = new previousWindow.Request('http://localhost:3000', {
+				method: 'POST',
+				body: new ReadableStream()
+			});
+
+			request.signal.addEventListener('abort', () => {
+				previousWindow.setTimeout(timeoutCallback, 10);
+				previousWindow.setTimeout(zeroDelayTimeoutCallback);
+				previousWindow.setInterval(intervalCallback, 10);
+				previousWindow.requestAnimationFrame(animationFrameCallback);
+			});
+
+			request.text().catch(() => {});
+
+			await page.mainFrame.goto('about:blank');
+			await page.waitUntilComplete();
+			await new Promise((resolve) => setTimeout(resolve, 30));
+
+			expect(request.signal.aborted).toBe(true);
+			expect(timeoutCallback).not.toHaveBeenCalled();
+			expect(zeroDelayTimeoutCallback).not.toHaveBeenCalled();
+			expect(intervalCallback).not.toHaveBeenCalled();
+			expect(animationFrameCallback).not.toHaveBeenCalled();
+
+			await browser.close();
+		});
+
+		it('Clears timers scheduled by the previous window while its child frames are destroyed during navigation.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const previousWindow = page.mainFrame.window;
+			const timeoutCallback = vi.fn();
+
+			BrowserFrameFactory.createChildFrame(page.mainFrame);
+
+			const promise = page.mainFrame.goto('about:blank');
+
+			previousWindow.setTimeout(timeoutCallback, 20);
+
+			await promise;
+			await page.waitUntilComplete();
+			await new Promise((resolve) => setTimeout(resolve, 40));
+
+			expect(previousWindow.closed).toBe(true);
+			expect(timeoutCallback).not.toHaveBeenCalled();
+
+			await browser.close();
 		});
 
 		it('Triggers "beforeContentCallback" before content is loaded into the document', async () => {

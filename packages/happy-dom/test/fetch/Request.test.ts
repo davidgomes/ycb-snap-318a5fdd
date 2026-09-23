@@ -1,4 +1,5 @@
 import Window from '../../src/window/Window.js';
+import Browser from '../../src/browser/Browser.js';
 import type Document from '../../src/nodes/document/Document.js';
 import Request from '../../src/fetch/Request.js';
 import URL from '../../src/url/URL.js';
@@ -838,6 +839,155 @@ describe('Request', () => {
 					resolve(null);
 				}, 50);
 			});
+		});
+	});
+
+	describe('Body consumption during shutdown', () => {
+		const createStream = (): {
+			stream: ReadableStream;
+			controller: ReadableStreamDefaultController;
+		} => {
+			let controller: ReadableStreamDefaultController | null = null;
+			const stream = new ReadableStream({
+				start(streamController) {
+					controller = streamController;
+					streamController.enqueue(Buffer.from('Hello'));
+				}
+			});
+			return { stream, controller: controller! };
+		};
+
+		const waitForPendingRead = (): Promise<void> =>
+			new Promise((resolve) => setTimeout(resolve, 1));
+
+		const captureError = (promise: Promise<unknown>): Promise<Error | null> =>
+			promise.then(
+				() => null,
+				(error: Error) => error
+			);
+
+		const expectAbortError = async (errorPromise: Promise<Error | null>): Promise<void> => {
+			const error = await errorPromise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error?.name).toBe(DOMExceptionNameEnum.abortError);
+		};
+
+		for (const method of <const>['arrayBuffer', 'blob', 'buffer', 'text', 'json']) {
+			it(`Rejects ${method}() with an "AbortError" when interrupted by happyDOM.close().`, async () => {
+				const { stream } = createStream();
+				const request = new window.Request(TEST_URL, { method: 'POST', body: stream });
+				const promise = captureError(request[method]());
+
+				await waitForPendingRead();
+
+				await window.happyDOM.close();
+
+				await expectAbortError(promise);
+				expect(request.signal.aborted).toBe(true);
+			});
+		}
+
+		it('Rejects with an "AbortError" when the stream ends after happyDOM.close().', async () => {
+			const { stream, controller } = createStream();
+			const request = new window.Request(TEST_URL, { method: 'POST', body: stream });
+			const promise = captureError(request.text());
+
+			await waitForPendingRead();
+
+			await window.happyDOM.close();
+
+			controller.close();
+
+			await expectAbortError(promise);
+		});
+
+		it('Rejects with an "AbortError" when interrupted by page.close().', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const { stream } = createStream();
+			const request = new page.mainFrame.window.Request(TEST_URL, {
+				method: 'POST',
+				body: stream
+			});
+			const promise = captureError(request.text());
+
+			await waitForPendingRead();
+
+			await page.close();
+
+			await expectAbortError(promise);
+			await browser.close();
+		});
+
+		it('Rejects with an "AbortError" when interrupted by browser.close().', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const { stream } = createStream();
+			const request = new page.mainFrame.window.Request(TEST_URL, {
+				method: 'POST',
+				body: stream
+			});
+			const promise = captureError(request.text());
+
+			await waitForPendingRead();
+
+			await browser.close();
+
+			await expectAbortError(promise);
+		});
+
+		it('Rejects with an "AbortError" when interrupted by a navigation.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const { stream } = createStream();
+			const request = new page.mainFrame.window.Request(TEST_URL, {
+				method: 'POST',
+				body: stream
+			});
+			const promise = captureError(request.text());
+
+			await waitForPendingRead();
+
+			await page.goto('about:blank');
+
+			await expectAbortError(promise);
+			await browser.close();
+		});
+
+		it('Rejects multipart formData() with an "AbortError" when interrupted by happyDOM.close().', async () => {
+			const { stream } = createStream();
+			const request = new window.Request(TEST_URL, { method: 'POST', body: stream });
+
+			request[PropertySymbol.contentType] = 'multipart/form-data; boundary=test';
+
+			const promise = captureError(request.formData());
+
+			await waitForPendingRead();
+
+			await window.happyDOM.close();
+
+			await expectAbortError(promise);
+		});
+
+		it('Rejects when reading a body after happyDOM.close().', async () => {
+			const request = new window.Request(TEST_URL, { method: 'POST', body: 'Hello World' });
+
+			await window.happyDOM.close();
+
+			await expectAbortError(captureError(request.text()));
+		});
+
+		it('Resolves reads that complete before happyDOM.close().', async () => {
+			const { stream, controller } = createStream();
+			const request = new window.Request(TEST_URL, { method: 'POST', body: stream });
+			const promise = request.text();
+
+			controller.enqueue(Buffer.from(' World'));
+			controller.close();
+
+			expect(await promise).toBe('Hello World');
+
+			await window.happyDOM.close();
 		});
 	});
 
