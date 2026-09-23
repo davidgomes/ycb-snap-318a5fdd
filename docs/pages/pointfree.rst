@@ -406,6 +406,8 @@ API Reference
 
 .. autofunction:: returns.pointfree.bind_result
 
+.. autofunction:: returns.pointfree.bind_validated
+
 .. autofunction:: returns.pointfree.bind_io
 
 .. autofunction:: returns.pointfree.bind_ioresult

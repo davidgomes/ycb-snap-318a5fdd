@@ -823,6 +823,16 @@ Result specific
   :members:
   :private-members:
 
+Validated specific
+~~~~~~~~~~~~~~~~~~
+
+.. autoclasstree:: returns.interfaces.specific.validated
+   :strict:
+
+.. automodule:: returns.interfaces.specific.validated
+  :members:
+  :private-members:
+
 IO specific
 ~~~~~~~~~~~
 

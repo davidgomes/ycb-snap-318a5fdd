@@ -27,6 +27,7 @@ Contents
 
   pages/maybe.rst
   pages/result.rst
+  pages/validated.rst
   pages/io.rst
   pages/future.rst
   pages/context.rst

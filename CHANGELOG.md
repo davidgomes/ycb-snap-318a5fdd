@@ -6,6 +6,17 @@ incremental in minor, bugfixes only are patches.
 See [0Ver](https://0ver.org/).
 
 
+## WIP
+
+### Features
+
+- Added `Validated` container with `Valid` and `Invalid` types
+  to accumulate errors from independent validations,
+  with `combine`, `combine_n`, `validated` decorator,
+  `bind_validated` pointfree function,
+  and `result_to_validated` / `validated_to_result` converters
+
+
 ## 0.26.0
 
 ### Features
