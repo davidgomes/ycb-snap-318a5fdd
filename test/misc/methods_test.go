@@ -56,10 +56,11 @@ func methodsPackages(out *strings.Builder) native.Importer {
 }
 
 var methodsTests = []struct {
-	name string
-	src  string
-	out  string
-	err  string
+	name  string
+	src   string
+	files fstest.Files // additional files.
+	out   string
+	err   string
 }{
 	{
 		name: "value and pointer receivers",
@@ -279,8 +280,12 @@ var methodsTests = []struct {
 			}
 			area := s.Area
 			fmt.Println(area())
+			r := Rect{3, 3}
+			s = &r
+			r.w = 4
+			fmt.Println(s.Name(), s.Area())
 		}`,
-		out: "square 9\nrect 10\nsquare 4\nsquare 4\n16\n",
+		out: "square 9\nrect 10\nsquare 4\nsquare 4\n16\nrect 12\n",
 	},
 	{
 		name: "pointer receivers satisfy only pointer interfaces",
@@ -392,6 +397,61 @@ var methodsTests = []struct {
 		out: "a bb ccc 3\n",
 	},
 	{
+		name: "methods of types declared in an imported package",
+		src: `package main
+
+		import (
+			"fmt"
+			"a.b/geo"
+			"shapes"
+		)
+
+		func main() {
+			p := geo.Point{X: 1, Y: 2}
+			p.Scale(3)
+			fmt.Println(p.Sum(), geo.Point.Sum(p), (*geo.Point).Sum(&p))
+			var s shapes.Shape = &p
+			fmt.Println(s.Name(), s.Area(), geo.NewShape().Name())
+		}`,
+		files: fstest.Files{
+			"go.mod": "module a.b",
+			"geo/geo.go": `package geo
+
+			import "shapes"
+
+			type Point struct{ X, Y int }
+
+			func (p Point) Sum() int      { return p.X + p.Y }
+			func (p *Point) Scale(k int)  { p.X *= k; p.Y *= k }
+			func (p *Point) Area() int    { return p.X * p.Y }
+			func (p *Point) Name() string { return p.name() }
+			func (p *Point) name() string { return "point" }
+
+			func NewShape() shapes.Shape { return &Point{} }`,
+		},
+		out: "9 9 9\npoint 18 point\n",
+	},
+	{
+		name: "unexported method of an imported type",
+		src: `package main
+
+		import "a.b/geo"
+
+		func main() {
+			var p geo.Point
+			p.name()
+		}`,
+		files: fstest.Files{
+			"go.mod": "module a.b",
+			"geo/geo.go": `package geo
+
+			type Point struct{ X, Y int }
+
+			func (p Point) name() string { return "point" }`,
+		},
+		err: "p.name undefined (cannot refer to unexported field or method name)",
+	},
+	{
 		name: "duplicate method",
 		src: `package main
 
@@ -430,6 +490,9 @@ func TestMethods(t *testing.T) {
 		t.Run(cas.name, func(t *testing.T) {
 			var out strings.Builder
 			fsys := fstest.Files{"main.go": cas.src}
+			for name, src := range cas.files {
+				fsys[name] = src
+			}
 			program, err := scriggo.Build(fsys, &scriggo.BuildOptions{Packages: methodsPackages(&out)})
 			if cas.err != "" {
 				if err == nil {
