@@ -24,7 +24,9 @@ from typing import (
 from anyio import fail_after
 from graphql import (
     ExecutionResult,
+    GraphQLDeferDirective,
     GraphQLSchema,
+    GraphQLStreamDirective,
     IntrospectionQuery,
     build_ast_schema,
     parse,
@@ -39,6 +41,7 @@ from tenacity import (
 )
 
 from .graphql_request import GraphQLRequest, support_deprecated_request
+from .incremental import IncrementalExecutionResult, IncrementalResultAccumulator
 from .transport.async_transport import AsyncTransport
 from .transport.exceptions import TransportConnectionFailed, TransportQueryError
 from .transport.local_schema import LocalSchemaTransport
@@ -156,6 +159,9 @@ class Client:
         self.batch_interval = batch_interval
         self.batch_max = batch_max
 
+        # (schema, same schema with the @defer and @stream directives added)
+        self._incremental_schema: Optional[Tuple[GraphQLSchema, GraphQLSchema]] = None
+
     @property
     def batching_enabled(self) -> bool:
         return self.batch_interval != 0
@@ -167,6 +173,38 @@ class Client:
         ), "Cannot validate the document locally, you need to pass a schema."
 
         validation_errors = validate(self.schema, request.document)
+        if validation_errors:
+            raise validation_errors[0]
+
+    def _validate_incremental(self, request: GraphQLRequest) -> None:
+        """Validate a request which may contain @defer or @stream directives,
+        even if those directives are not defined in the schema."""
+        assert (
+            self.schema
+        ), "Cannot validate the document locally, you need to pass a schema."
+
+        schema = self.schema
+
+        missing_directives = tuple(
+            directive
+            for directive in (GraphQLDeferDirective, GraphQLStreamDirective)
+            if schema.get_directive(directive.name) is None
+        )
+
+        if missing_directives:
+            if self._incremental_schema is None or (
+                self._incremental_schema[0] is not self.schema
+            ):
+                schema_kwargs = self.schema.to_kwargs()
+                schema_kwargs["directives"] = (
+                    *schema_kwargs["directives"],
+                    *missing_directives,
+                )
+                self._incremental_schema = (self.schema, GraphQLSchema(**schema_kwargs))
+
+            schema = self._incremental_schema[1]
+
+        validation_errors = validate(schema, request.document)
         if validation_errors:
             raise validation_errors[0]
 
@@ -1595,6 +1633,124 @@ class AsyncClientSession:
 
         return result.data
 
+    async def _execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[ExecutionResult, None]:
+        """Async generator to execute the provided request using the async transport,
+        yielding each payload received from the server as an ExecutionResult object.
+
+        * Validate the query with the schema if provided.
+        * Serialize the variable_values if requested.
+
+        :param request: GraphQL request as a
+                        :class:`GraphQLRequest <gql.GraphQLRequest>` object.
+        :param serialize_variables: whether the variable values should be
+            serialized. Used for custom scalars and/or enums.
+            By default use the serialize_variables argument of the client.
+
+        The extra arguments are passed to the transport execute_incremental method."""
+
+        # Still supporting for now old method of providing
+        # variable_values and operation_name
+        request = support_deprecated_request(request, kwargs)
+
+        # Validate document
+        if self.client.schema:
+            self.client._validate_incremental(request)
+
+            # Parse variable values for custom scalars if requested
+            if request.variable_values is not None:
+                if serialize_variables or (
+                    serialize_variables is None and self.client.serialize_variables
+                ):
+                    request = request.serialize_variable_values(self.client.schema)
+
+        inner_generator: AsyncGenerator[ExecutionResult, None] = (
+            self.transport.execute_incremental(
+                request,
+                **kwargs,
+            )
+        )
+
+        try:
+            async for result in inner_generator:
+                yield result
+        finally:
+            await inner_generator.aclose()
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        parse_result: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalExecutionResult, None]:
+        """Async generator to execute a request which may contain
+        :code:`@defer` or :code:`@stream` directives, yielding a result
+        for each payload received from the server.
+
+        The data of each yielded result contains the data accumulated from all the
+        payloads received so far: the deferred data and streamed items are merged
+        at their path.
+
+        Errors do not raise an exception and do not stop the execution:
+        the errors of each payload are available in the errors attribute
+        of the corresponding result.
+
+        If the server does not support incremental delivery, a single result
+        is yielded.
+
+        :param request: GraphQL query as :class:`GraphQLRequest <gql.GraphQLRequest>`.
+        :param serialize_variables: whether the variable values should be
+            serialized. Used for custom scalars and/or enums.
+            By default use the serialize_variables argument of the client.
+        :param parse_result: Whether gql will deserialize the result.
+            By default use the parse_results argument of the client.
+        :yields: :class:`IncrementalExecutionResult
+                 <gql.incremental.IncrementalExecutionResult>` objects with
+                 the :code:`data`, :code:`errors`, :code:`extensions`
+                 and :code:`has_next` attributes.
+
+        The extra arguments are passed to the transport execute_incremental method.
+        """
+
+        request = support_deprecated_request(request, kwargs)
+
+        inner_generator: AsyncGenerator[ExecutionResult, None] = (
+            self._execute_incremental(
+                request,
+                serialize_variables=serialize_variables,
+                **kwargs,
+            )
+        )
+
+        accumulator = IncrementalResultAccumulator()
+
+        try:
+            async for payload in inner_generator:
+                result = accumulator.add(payload)
+
+                # Unserialize the result if requested
+                if self.client.schema:
+                    if parse_result or (
+                        parse_result is None and self.client.parse_results
+                    ):
+                        result.data = parse_result_fn(
+                            self.client.schema,
+                            request.document,
+                            result.data,
+                            operation_name=request.operation_name,
+                        )
+
+                yield result
+        finally:
+            await inner_generator.aclose()
+
     async def _execute_batch(
         self,
         requests: List[GraphQLRequest],
@@ -2070,6 +2226,36 @@ class ReconnectingAsyncClientSession(AsyncClientSession):
             request,
             serialize_variables=serialize_variables,
             parse_result=parse_result,
+            **kwargs,
+        )
+
+        try:
+            async for result in inner_generator:
+                yield result
+
+        except TransportConnectionFailed:
+            self._reconnect_request_event.set()
+            raise
+
+        finally:
+            await inner_generator.aclose()
+
+    async def _execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[ExecutionResult, None]:
+        """Same Async generator as parent method _execute_incremental but requesting
+        a reconnection if we receive a TransportConnectionFailed exception.
+        """
+
+        inner_generator: AsyncGenerator[
+            ExecutionResult, None
+        ] = super()._execute_incremental(
+            request,
+            serialize_variables=serialize_variables,
             **kwargs,
         )
 
