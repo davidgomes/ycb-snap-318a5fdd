@@ -2,7 +2,7 @@ import {visit} from 'unist-util-visit';
 import type {Position} from 'unist';
 import type {Root} from 'mdast';
 import {hashString53Bit, makeSureContentHasEmptyLinesAddedBeforeAndAfter, replaceTextBetweenStartAndEndWithNewValue, getStartOfLineIndex, replaceAt, getStartOfLineWhitespaceOrBlockquoteLevel} from './strings';
-import {genericLinkRegex, tableRow, tableSeparator, tableStartingPipe, customIgnoreAllStartIndicator, customIgnoreAllEndIndicator, checklistBoxStartsTextRegex, footnoteDefinitionIndicatorAtStartOfLine, emptyLineMathBlockquoteRegex, startsWithBlockquote, startsWithListMarkerRegex} from './regex';
+import {genericLinkRegex, tableRow, tableSeparator, tableStartingPipe, customIgnoreAllStartIndicator, customIgnoreAllEndIndicator, checklistBoxStartsTextRegex, footnoteDefinitionIndicatorAtStartOfLine, emptyLineMathBlockquoteRegex, startsWithBlockquote, startsWithListMarkerRegex, yamlRegex} from './regex';
 import {gfmFootnote} from 'micromark-extension-gfm-footnote';
 import {gfmTaskListItem} from 'micromark-extension-gfm-task-list-item';
 import {frontmatter} from 'micromark-extension-frontmatter';
@@ -1150,16 +1150,72 @@ function countTableDelimiters(line: string): number {
   return numDelimiters;
 }
 
+function isStandaloneLinterMarker(text: string, matchIndex: number, matchLength: number): boolean {
+  const lineStart = text.lastIndexOf('\n', matchIndex - 1) + 1;
+  const newlineIndex = text.indexOf('\n', matchIndex);
+  const lineEnd = newlineIndex === -1 ? text.length : newlineIndex;
+  const before = text.slice(lineStart, matchIndex);
+  const after = text.slice(matchIndex + matchLength, lineEnd);
+  return /^[ \t]*$/.test(before) && /^[ \t]*\r?$/.test(after);
+}
+
+/**
+ * Character ranges where linter comment markers are literal content: YAML frontmatter,
+ * fenced or indented code, inline code, and math blocks.
+ * @param {string} text The markdown text
+ * @return {{start: number, end: number}[]} Ranges that cannot contain active markers
+ */
+export function getLinterMarkerIgnoredRanges(text: string): {start: number, end: number}[] {
+  const ranges: {start: number, end: number}[] = [];
+  for (const type of [MDAstTypes.Code, MDAstTypes.InlineCode, MDAstTypes.Math]) {
+    for (const position of getPositions(type, text)) {
+      if (position?.start?.offset == null || position?.end?.offset == null) {
+        continue;
+      }
+      ranges.push({start: position.start.offset, end: position.end.offset});
+    }
+  }
+
+  const yaml = text.match(yamlRegex);
+  if (yaml?.index != null) {
+    ranges.push({start: yaml.index, end: yaml.index + yaml[0].length});
+  }
+
+  return ranges;
+}
+
+function isInsideIgnoredMarkerRange(matchIndex: number, matchLength: number, ranges: {start: number, end: number}[]): boolean {
+  const matchEnd = matchIndex + matchLength;
+  for (const range of ranges) {
+    if (matchIndex < range.end && range.start < matchEnd) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function getAllCustomIgnoreSectionsInText(text: string): {startIndex: number, endIndex: number}[] {
   let iteratorIndex = 0;
 
   const positions: {startIndex: number, endIndex: number}[] = [];
-  const startMatches = [...text.matchAll(customIgnoreAllStartIndicator)];
-  if (!startMatches || startMatches.length === 0) {
+  const rawStartMatches = [...text.matchAll(customIgnoreAllStartIndicator)];
+  if (rawStartMatches.length === 0) {
     return positions;
   }
 
-  const endMatches = [...text.matchAll(customIgnoreAllEndIndicator)];
+  const ignoredRanges = getLinterMarkerIgnoredRanges(text);
+  const isActiveMarker = (match: RegExpMatchArray) => {
+    return match.index !== undefined &&
+      isStandaloneLinterMarker(text, match.index, match[0].length) &&
+      !isInsideIgnoredMarkerRange(match.index, match[0].length, ignoredRanges);
+  };
+  const startMatches = rawStartMatches.filter(isActiveMarker);
+  if (startMatches.length === 0) {
+    return positions;
+  }
+
+  const endMatches = [...text.matchAll(customIgnoreAllEndIndicator)].filter(isActiveMarker);
 
   startMatches.forEach((startMatch) => {
     iteratorIndex = startMatch.index;

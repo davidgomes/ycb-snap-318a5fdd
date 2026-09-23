@@ -25,6 +25,7 @@ import YamlTitle from './rules/yaml-title';
 import YamlTitleAlias from './rules/yaml-title-alias';
 import BlockquoteStyle from './rules/blockquote-style';
 import {IgnoreTypes, ignoreListOfTypes} from './utils/ignore-types';
+import {applyScopedRuleIgnores, getKnownRuleAliases} from './utils/scoped-rule-ignore';
 import MoveMathBlockIndicatorsToOwnLine from './rules/move-math-block-indicators-to-own-line';
 import {LinterSettings} from './settings-data';
 import TrailingSpaces from './rules/trailing-spaces';
@@ -236,37 +237,40 @@ export class RulesRunner {
   }
 
   runCustomRegexReplacement(customRegexes: CustomReplace[], oldText: string): string {
-    return ignoreListOfTypes([IgnoreTypes.customIgnore], oldText, (text: string) => {
-      logDebug(getTextInLanguage('logs.running-custom-regex'));
+    // Custom regex is not a named rule. An all-rules disable covers it; a rule list does not.
+    return applyScopedRuleIgnores(oldText, 'custom-regex', getKnownRuleAliases(), (textAfterScopedIgnore: string) => {
+      return ignoreListOfTypes([IgnoreTypes.customIgnore], textAfterScopedIgnore, (text: string) => {
+        logDebug(getTextInLanguage('logs.running-custom-regex'));
 
-      let newText = text;
-      let initialText = text;
-      for (const eachRegex of customRegexes) {
-        const findIsEmpty = eachRegex.find === undefined || eachRegex.find == '' || eachRegex.find === null;
-        const replaceIsEmpty = eachRegex.replace === undefined || eachRegex.replace === null;
-        if (findIsEmpty || replaceIsEmpty || !eachRegex.enabled) {
-          continue;
+        let newText = text;
+        let initialText = text;
+        for (const eachRegex of customRegexes) {
+          const findIsEmpty = eachRegex.find === undefined || eachRegex.find == '' || eachRegex.find === null;
+          const replaceIsEmpty = eachRegex.replace === undefined || eachRegex.replace === null;
+          if (findIsEmpty || replaceIsEmpty || !eachRegex.enabled) {
+            continue;
+          }
+
+          let debugMsg = eachRegex.label;
+          if (debugMsg && debugMsg.trim() != '') {
+            debugMsg += ':\n';
+          }
+          debugMsg +=`/${eachRegex.find}/${eachRegex.flags}/${eachRegex.replace}/`;
+
+          logDebug(debugMsg);
+          const regex = new RegExp(`${eachRegex.find}`, eachRegex.flags);
+          // make sure that characters are not string escaped unescape in the replace value to make sure things like \n and \t are correctly inserted
+          newText = newText.replace(regex, convertStringVersionOfEscapeCharactersToEscapeCharacters(eachRegex.replace));
+
+          if (initialText != newText) {
+            logDebug(newText);
+          }
+
+          initialText = newText;
         }
 
-        let debugMsg = eachRegex.label;
-        if (debugMsg && debugMsg.trim() != '') {
-          debugMsg += ':\n';
-        }
-        debugMsg +=`/${eachRegex.find}/${eachRegex.flags}/${eachRegex.replace}/`;
-
-        logDebug(debugMsg);
-        const regex = new RegExp(`${eachRegex.find}`, eachRegex.flags);
-        // make sure that characters are not string escaped unescape in the replace value to make sure things like \n and \t are correctly inserted
-        newText = newText.replace(regex, convertStringVersionOfEscapeCharactersToEscapeCharacters(eachRegex.replace));
-
-        if (initialText != newText) {
-          logDebug(newText);
-        }
-
-        initialText = newText;
-      }
-
-      return newText;
+        return newText;
+      });
     });
   }
 

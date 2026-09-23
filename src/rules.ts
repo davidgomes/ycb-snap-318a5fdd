@@ -9,6 +9,7 @@ import {
 import {LinterError} from './linter-error';
 import {getTextInLanguage, LanguageStringKey} from './lang/helpers';
 import {ignoreListOfTypes, IgnoreType} from './utils/ignore-types';
+import {applyScopedRuleIgnores, getKnownRuleAliases} from './utils/scoped-rule-ignore';
 import {LinterSettings} from './settings-data';
 import {App} from 'obsidian';
 import {YAMLParseError} from 'yaml';
@@ -110,8 +111,10 @@ export class Rule {
   }
 
   public apply(text: string, options?: Options): string {
-    return ignoreListOfTypes(this.ignoreTypes, text, (textAfterIgnore: string) => {
-      return this.applyAfterIgnore(textAfterIgnore, options);
+    return applyScopedRuleIgnores(text, this.alias, getKnownRuleAliases(), (textAfterScopedIgnore: string) => {
+      return ignoreListOfTypes(this.ignoreTypes, textAfterScopedIgnore, (textAfterIgnore: string) => {
+        return this.applyAfterIgnore(textAfterIgnore, options);
+      });
     });
   }
 }

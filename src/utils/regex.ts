@@ -135,14 +135,8 @@ export function matchTagRegex(text: string): string[] {
 }
 
 export function generateHTMLLinterCommentWithSpecificTextAndWhitespaceRegexMatch(isStart: boolean): RegExp {
-  const regexTemplate = '(?:<!-{2,}|%%) *linter-{ENDING_TEXT} *(?:-{2,}>|%%)';
-  let endingText = '';
-
-  if (isStart) {
-    endingText += 'disable';
-  } else {
-    endingText += 'enable';
-  }
-
-  return new RegExp(regexTemplate.replace('{ENDING_TEXT}', endingText), 'g');
+  const endingText = isStart ? 'disable' : 'enable';
+  const body = `linter-${endingText}`;
+  // Paired delimiters only, so an HTML opener cannot be closed by an Obsidian comment and vice versa.
+  return new RegExp(`(?:<!-{2,}[ \\t]*${body}[ \\t]*-{2,}>|%%[ \\t]*${body}[ \\t]*%%)`, 'g');
 }
