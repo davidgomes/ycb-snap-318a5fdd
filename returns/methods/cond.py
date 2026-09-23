@@ -2,6 +2,7 @@ from typing import TypeVar, overload
 
 from returns.context import NoDeps
 from returns.interfaces.failable import DiverseFailableN, SingleFailableN
+from returns.interfaces.specific.validated import ValidatedLikeN
 from returns.primitives.hkt import KindN, kinded
 
 _ValueType = TypeVar('_ValueType')
@@ -9,6 +10,7 @@ _ErrorType = TypeVar('_ErrorType')
 
 _SingleFailableKind = TypeVar('_SingleFailableKind', bound=SingleFailableN)
 _DiverseFailableKind = TypeVar('_DiverseFailableKind', bound=DiverseFailableN)
+_ValidatedLikeKind = TypeVar('_ValidatedLikeKind', bound=ValidatedLikeN)
 
 
 @overload
@@ -28,8 +30,21 @@ def internal_cond(
 ) -> KindN[_DiverseFailableKind, _ValueType, _ErrorType, NoDeps]: ...
 
 
+@overload
 def internal_cond(
-    container_type: (type[_SingleFailableKind] | type[_DiverseFailableKind]),
+    container_type: type[_ValidatedLikeKind],
+    is_success: bool,  # noqa: FBT001
+    success_value: _ValueType,
+    error_value: _ErrorType,
+) -> KindN[_ValidatedLikeKind, _ValueType, _ErrorType, NoDeps]: ...
+
+
+def internal_cond(
+    container_type: (
+        type[_SingleFailableKind]
+        | type[_DiverseFailableKind]
+        | type[_ValidatedLikeKind]
+    ),
     is_success: bool,  # noqa: FBT001
     success_value: _ValueType,
     error_value: _ErrorType | None = None,
@@ -70,11 +85,32 @@ def internal_cond(
       >>> assert is_positive(10) == Some(10)
       >>> assert is_positive(-10) == Nothing
 
+    Example using ``cond`` with the ``Validated`` container:
+
+    .. code:: python
+
+      >>> from returns.validated import Invalid, Valid, Validated
+
+      >>> def is_numeric(string: str) -> Validated[str, str]:
+      ...     return cond(
+      ...         Validated,
+      ...         string.isnumeric(),
+      ...         'It is a number',
+      ...         'It is not a number',
+      ...     )
+
+      >>> assert is_numeric('42') == Valid('It is a number')
+      >>> assert is_numeric('non numeric') == Invalid((
+      ...     'It is not a number',
+      ... ))
+
     """
     if is_success:
         return container_type.from_value(success_value)
 
     if issubclass(container_type, DiverseFailableN):
+        return container_type.from_failure(error_value)
+    if issubclass(container_type, ValidatedLikeN):
         return container_type.from_failure(error_value)
     return container_type.empty
 

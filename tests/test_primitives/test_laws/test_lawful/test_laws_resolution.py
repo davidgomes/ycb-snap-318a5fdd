@@ -15,12 +15,14 @@ from returns.io import IO, IOResult
 from returns.maybe import Maybe
 from returns.primitives.laws import Law, Lawful
 from returns.result import Result
+from returns.validated import Validated
 
 
 @pytest.mark.parametrize(
     'container',
     [
         Result,
+        Validated,
         Maybe,
         Future,
         FutureResult,
