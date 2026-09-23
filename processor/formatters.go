@@ -499,30 +499,36 @@ func toOpenMetricsFiles(input chan *FileJob) string {
 // with the express idea of lowering memory usage, see https://github.com/boyter/scc/issues/210 for
 // the background on why this might be needed
 func toCSVStream(input chan *FileJob) string {
-	fmt.Println("Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc")
-
-	var quoteRegex = regexp.MustCompile("\"")
+	fmt.Println(csvStreamHeader)
 
 	for result := range input {
-		// Escape quotes in location and filename then surround with quotes.
-		var location = "\"" + quoteRegex.ReplaceAllString(result.Location, "\"\"") + "\""
-		var filename = "\"" + quoteRegex.ReplaceAllString(result.Filename, "\"\"") + "\""
-
-		fmt.Printf("%s,%s,%s,%d,%d,%d,%d,%d,%d,%d\n",
-			result.Language,
-			location,
-			filename,
-			result.Lines,
-			result.Code,
-			result.Comment,
-			result.Blank,
-			result.Complexity,
-			result.Bytes,
-			result.Uloc,
-		)
+		fmt.Print(csvStreamLine(result))
 	}
 
 	return ""
+}
+
+const csvStreamHeader = "Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc"
+
+var csvStreamQuoteRegex = regexp.MustCompile("\"")
+
+func csvStreamLine(result *FileJob) string {
+	// Escape quotes in location and filename then surround with quotes.
+	var location = "\"" + csvStreamQuoteRegex.ReplaceAllString(result.Location, "\"\"") + "\""
+	var filename = "\"" + csvStreamQuoteRegex.ReplaceAllString(result.Filename, "\"\"") + "\""
+
+	return fmt.Sprintf("%s,%s,%s,%d,%d,%d,%d,%d,%d,%d\n",
+		result.Language,
+		location,
+		filename,
+		result.Lines,
+		result.Code,
+		result.Comment,
+		result.Blank,
+		result.Complexity,
+		result.Bytes,
+		result.Uloc,
+	)
 }
 
 func toHtml(input chan *FileJob) string {
@@ -828,6 +834,10 @@ func fileSummarize(input chan *FileJob) string {
 // both to files and to stdout. Not the most efficient way to do it in terms of memory
 // but seeing as the files are just summaries by this point it shouldn't be too bad
 func fileSummarizeMulti(input chan *FileJob) string {
+	if BoundedMemory {
+		return fileSummarizeMultiBounded(input)
+	}
+
 	// collect all the results
 	var results []*FileJob
 	for res := range input {
@@ -866,6 +876,9 @@ func fileSummarizeMulti(input chan *FileJob) string {
 				val = toCSV(i)
 			case "csv-stream":
 				// special case where we want to ignore writing to stdout to disk as it's already done
+				if SortBySet {
+					i = sortedCSVStreamInput(results)
+				}
 				_ = toCSVStream(i)
 				continue
 			case "html":

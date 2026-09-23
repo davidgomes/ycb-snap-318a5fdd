@@ -609,6 +609,11 @@ func Process() {
 
 	SortBy = strings.ToLower(SortBy)
 
+	if err := setupBoundedMemory(); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+
 	printDebugF("NumCPU: %d", runtime.NumCPU())
 	printDebugF("SortBy: %s", SortBy)
 	printDebugF("PathDenyList: %v", PathDenyList)
@@ -673,7 +678,7 @@ func Process() {
 					break
 				}
 			}
-			if shouldExclude {
+			if shouldExclude || isInBoundedMemoryDir(fi.Location) {
 				continue
 			}
 
@@ -695,6 +700,7 @@ func Process() {
 	go fileProcessorWorker(fileListQueue, fileSummaryJobQueue)
 
 	result := fileSummarize(fileSummaryJobQueue)
+	printBoundedMemoryStats()
 	if FileOutput == "" {
 		fmt.Print(result)
 	} else {
