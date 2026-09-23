@@ -880,6 +880,95 @@ eval instant at 50m sort_by_label(node_uname_info, "release")
 	node_uname_info{job="node_exporter", instance="4m5", release="1.11.3"} 100
 	node_uname_info{job="node_exporter", instance="4m1000", release="1.111.3"} 100
 
+# Label values are compared by typed domain before falling back to natural order.
+clear
+load 5m
+	typed{v="abc"} 1
+	typed{v="NaN"} 1
+	typed{v="2023-12-31T23:00:00-02:00"} 1
+	typed{v="2024-01-01T00:00:00Z"} 1
+	typed{v="10.0.0.0/16"} 1
+	typed{v="10.0.0.0/8"} 1
+	typed{v="::1"} 1
+	typed{v="10.0.0.1"} 1
+	typed{v="v1.10.0"} 1
+	typed{v="1.10.0-rc.1"} 1
+	typed{v="1.9.0"} 1
+	typed{v="1KiB"} 1
+	typed{v="1000B"} 1
+	typed{v="1h"} 1
+	typed{v="90s"} 1
+	typed{v="-Inf"} 1
+	typed{v="10"} 1
+	typed{v="9"} 1
+	typed{v="-1e3"} 1
+	typed{v="+Inf"} 1
+	typed{v=" pad"} 1
+
+eval instant at 0m sort_by_label(typed, "v")
+	expect ordered
+	typed{v=" pad"} 1
+	typed{v="+Inf"} 1
+	typed{v="-1e3"} 1
+	typed{v="9"} 1
+	typed{v="10"} 1
+	typed{v="-Inf"} 1
+	typed{v="90s"} 1
+	typed{v="1h"} 1
+	typed{v="1000B"} 1
+	typed{v="1KiB"} 1
+	typed{v="1.9.0"} 1
+	typed{v="1.10.0-rc.1"} 1
+	typed{v="v1.10.0"} 1
+	typed{v="10.0.0.1"} 1
+	typed{v="::1"} 1
+	typed{v="10.0.0.0/8"} 1
+	typed{v="10.0.0.0/16"} 1
+	typed{v="2024-01-01T00:00:00Z"} 1
+	typed{v="2023-12-31T23:00:00-02:00"} 1
+	typed{v="NaN"} 1
+	typed{v="abc"} 1
+
+eval instant at 0m sort_by_label_desc(typed, "v")
+	expect ordered
+	typed{v="abc"} 1
+	typed{v="NaN"} 1
+	typed{v="2023-12-31T23:00:00-02:00"} 1
+	typed{v="2024-01-01T00:00:00Z"} 1
+	typed{v="10.0.0.0/16"} 1
+	typed{v="10.0.0.0/8"} 1
+	typed{v="::1"} 1
+	typed{v="10.0.0.1"} 1
+	typed{v="v1.10.0"} 1
+	typed{v="1.10.0-rc.1"} 1
+	typed{v="1.9.0"} 1
+	typed{v="1KiB"} 1
+	typed{v="1000B"} 1
+	typed{v="1h"} 1
+	typed{v="90s"} 1
+	typed{v="-Inf"} 1
+	typed{v="10"} 1
+	typed{v="9"} 1
+	typed{v="-1e3"} 1
+	typed{v="+Inf"} 1
+	typed{v=" pad"} 1
+
+# Equal typed values are ordered by natural order of the label values before
+# the next label is considered.
+clear
+load 5m
+	sizes{size="1000B", rank="0"} 1
+	sizes{size="1kB", rank="1"} 1
+	sizes{size="1e3", rank="0"} 1
+	sizes{size="1000", rank="1"} 1
+
+eval instant at 0m sort_by_label(sizes, "size", "rank")
+	expect ordered
+	sizes{size="1e3", rank="0"} 1
+	sizes{size="1000", rank="1"} 1
+	sizes{size="1kB", rank="1"} 1
+	sizes{size="1000B", rank="0"} 1
+
 # Tests for double_exponential_smoothing
 clear
 
