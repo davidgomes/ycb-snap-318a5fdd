@@ -33,6 +33,8 @@ class Buffer(object):
         self.data = [] # Buffer
         self.size = 0  # Length
         self.buffer_fill_size = buffer_fill_size
+        self._high_water = None # Pause threshold, or None if unset
+        self._low_water = None  # Resume threshold, or None if unset
 
     def __len__(self):
         """
@@ -186,3 +188,73 @@ class Buffer(object):
 
         with context.local(buffer_size=size):
             return context.buffer_size
+
+    def set_watermarks(self, high=None, low=None):
+        """set_watermarks(high=None, low=None)
+
+        Sets the flow-control thresholds of the buffer.
+
+        A watermark that is not specified keeps its current value.
+
+        Arguments:
+            high(int): Size at or above which the buffer is considered full.
+            low(int): Size at or below which the buffer is considered drained.
+
+        Raises:
+            ValueError: ``low`` is greater than ``high``.
+
+        Example:
+
+            >>> b = Buffer()
+            >>> b.over_high_water, b.under_low_water
+            (False, False)
+            >>> b.set_watermarks(high=8, low=2)
+            >>> b.high_water, b.low_water
+            (8, 2)
+            >>> b.under_low_water
+            True
+            >>> b.add(b'A' * 8)
+            >>> b.over_high_water, b.under_low_water
+            (True, False)
+            >>> _ = b.get(6)
+            >>> b.over_high_water, b.under_low_water
+            (False, True)
+            >>> b.set_watermarks(high=1, low=2)
+            Traceback (most recent call last):
+            ...
+            ValueError: low watermark (2) must not exceed high watermark (1)
+        """
+        if high is None:
+            high = self._high_water
+        if low is None:
+            low = self._low_water
+
+        if high is not None and low is not None and low > high:
+            raise ValueError('low watermark (%r) must not exceed high watermark (%r)' % (low, high))
+
+        self._high_water = high
+        self._low_water = low
+
+    @property
+    def high_water(self):
+        """The high watermark, or :const:`None` if unset."""
+        return self._high_water
+
+    @property
+    def low_water(self):
+        """The low watermark, or :const:`None` if unset."""
+        return self._low_water
+
+    @property
+    def over_high_water(self):
+        """:const:`True` if the buffer holds at least :attr:`high_water` bytes."""
+        if self._high_water is None:
+            return False
+        return self.size >= self._high_water
+
+    @property
+    def under_low_water(self):
+        """:const:`True` if the buffer holds at most :attr:`low_water` bytes."""
+        if self._low_water is None:
+            return False
+        return self.size <= self._low_water
