@@ -20,9 +20,9 @@ __all__ = ["CookieStore"]
 
 _WHITESPACE = " \t"
 
-# A comma only separates two cookies when it is followed by a `name=` pair,
-# so that the comma in `Expires=Wed, 09 Jun 2021 10:18:14 GMT` is preserved.
-_COOKIE_SEPARATOR = re.compile(r",(?=[^;,]*=)")
+# A comma only separates cookies when followed by a `name=` pair or an empty
+# cookie string, so the comma in `Expires=Wed, 09 Jun 2021 10:18:14 GMT` stays.
+_COOKIE_SEPARATOR = re.compile(r",(?=[^;,]*=|[ \t]*(?:,|$))")
 
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
 
