@@ -44,7 +44,7 @@ func TruncateANSI(s string, width int, opts TruncateOptions) string {
 	var (
 		b         strings.Builder
 		used      int
-		cut       bool
+		full      bool
 		reopened  bool
 		active    bool
 		activeAt  = -1
@@ -59,8 +59,15 @@ func TruncateANSI(s string, width int, opts TruncateOptions) string {
 	)
 	b.Grow(len(s) + len(opts.Tail) + len(ResetSeq))
 
-	for i := 0; i < len(tokens) && !cut; i++ {
+loop:
+	for i := 0; i < len(tokens); i++ {
 		t := tokens[i]
+		// Once the budget is exhausted, only sequences that close what was
+		// already emitted are kept; anything that would open new styles or
+		// print is cut.
+		if full && t.Type != TokenReset && t.Type != TokenHyperlinkClose {
+			break
+		}
 		switch t.Type {
 		case TokenText:
 			if !truncate || t.Text == "" {
@@ -71,18 +78,16 @@ func TruncateANSI(s string, width int, opts TruncateOptions) string {
 			for len(rest) > 0 {
 				cluster, r, w, ns := uniseg.FirstGraphemeClusterInString(rest, state)
 				if used+w > budget {
-					cut = true
-					break
+					break loop
 				}
 				b.WriteString(cluster)
 				used += w
 				rest, state = r, ns
-				// More visible content is known to follow, so stop as soon as
-				// the budget is exhausted rather than emitting trailing
-				// escapes that would style nothing.
 				if used == budget {
-					cut = true
-					break
+					full = true
+					if len(rest) > 0 {
+						break loop
+					}
 				}
 			}
 		case TokenSGR:
@@ -94,10 +99,14 @@ func TruncateANSI(s string, width int, opts TruncateOptions) string {
 			if resetLeavesStyle(t.Raw) {
 				setActive(i)
 			}
-			if enclosing != "" && endsResetRun(tokens, i) && !startsWith(tokens[i+1:], enclosing) {
+			if enclosing != "" && endsResetRun(tokens, i) {
+				// Reuse a re-open already present in the input instead of
+				// duplicating it.
+				n := matchingSGRTokens(tokens[i+1:], enclosing)
 				b.WriteString(enclosing)
 				setActive(i)
-				reopened = true
+				reopened = reopened || n == 0
+				i += n
 			}
 		case TokenHyperlinkOpen:
 			b.WriteString(t.Raw)
@@ -158,18 +167,21 @@ func endsResetRun(tokens []Token, i int) bool {
 	return i+1 < len(tokens) && tokens[i+1].Type != TokenReset
 }
 
-// startsWith reports whether the SGR tokens at the start of tokens begin with
-// seq.
-func startsWith(tokens []Token, seq string) bool {
+// matchingSGRTokens returns the number of leading SGR tokens whose
+// concatenation is exactly seq, or 0 if there is no such prefix.
+func matchingSGRTokens(tokens []Token, seq string) int {
 	var b strings.Builder
-	for _, t := range tokens {
+	for i, t := range tokens {
 		if t.Type != TokenSGR {
-			break
+			return 0
 		}
 		b.WriteString(t.Raw)
-		if b.Len() >= len(seq) {
-			break
+		switch {
+		case b.String() == seq:
+			return i + 1
+		case !strings.HasPrefix(seq, b.String()):
+			return 0
 		}
 	}
-	return strings.HasPrefix(b.String(), seq)
+	return 0
 }
