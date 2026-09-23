@@ -2,6 +2,8 @@ package notifications
 
 import (
 	"strings"
+
+	"github.com/Owloops/updo/alerts"
 )
 
 type WebhookFormatter interface {
@@ -20,4 +22,8 @@ func SelectFormatter(url string) WebhookFormatter {
 	}
 
 	return &GenericFormatter{}
+}
+
+func isPositiveEvent(event string) bool {
+	return event == _eventTargetUp || event == alerts.EventTargetRecovered || event == alerts.EventTargetHealthy
 }

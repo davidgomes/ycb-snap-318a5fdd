@@ -35,7 +35,7 @@ type SlackFormatter struct{}
 func (f *SlackFormatter) Format(payload WebhookPayload) ([]byte, error) {
 	symbol := _symbolDown
 	color := _colorDanger
-	if payload.Event == _eventTargetUp {
+	if isPositiveEvent(payload.Event) {
 		symbol = _symbolUp
 		color = _colorGood
 	}
@@ -48,6 +48,13 @@ func (f *SlackFormatter) Format(payload WebhookPayload) ([]byte, error) {
 		Title: "URL",
 		Value: payload.URL,
 	})
+
+	if payload.Reason != "" {
+		fields = append(fields, slackField{
+			Title: "Reason",
+			Value: payload.Reason,
+		})
+	}
 
 	if payload.Error != "" {
 		fields = append(fields, slackField{

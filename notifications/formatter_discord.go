@@ -35,7 +35,7 @@ type DiscordFormatter struct{}
 func (f *DiscordFormatter) Format(payload WebhookPayload) ([]byte, error) {
 	symbol := _symbolDown
 	color := _discordColorRed
-	if payload.Event == _eventTargetUp {
+	if isPositiveEvent(payload.Event) {
 		symbol = _symbolUp
 		color = _discordColorGreen
 	}
@@ -43,6 +43,13 @@ func (f *DiscordFormatter) Format(payload WebhookPayload) ([]byte, error) {
 	content := fmt.Sprintf("%s %s", symbol, payload.Event)
 
 	var fields []discordField
+
+	if payload.Reason != "" {
+		fields = append(fields, discordField{
+			Name:  "Reason",
+			Value: payload.Reason,
+		})
+	}
 
 	if payload.Error != "" {
 		fields = append(fields, discordField{

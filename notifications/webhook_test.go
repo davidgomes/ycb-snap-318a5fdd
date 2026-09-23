@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/Owloops/updo/alerts"
 )
 
 func TestSendWebhook(t *testing.T) {
@@ -244,5 +246,68 @@ func TestHandleWebhookAlertEmptyURL(t *testing.T) {
 
 	if !alertSent {
 		t.Error("Alert state should still be updated even without webhook URL")
+	}
+}
+
+func TestHandleWebhookDecision(t *testing.T) {
+	var calls int
+	var raw map[string]any
+	var receivedHeaders http.Header
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		receivedHeaders = r.Header
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			t.Errorf("Failed to decode webhook payload: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	down := alerts.Decision{
+		Event:               alerts.EventTargetDown,
+		State:               alerts.StateDown,
+		PreviousState:       alerts.StateHealthy,
+		Reason:              "3 consecutive failed check(s)",
+		ConsecutiveFailures: 3,
+		SSLDaysRemaining:    -1,
+	}
+
+	if err := HandleWebhookDecisionWithHeaders(server.URL, []string{"X-Token: abc"}, down, "Site", "https://example.com", time.Second, 500, "boom", "us-east-1"); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("Expected 1 webhook call, got %d", calls)
+	}
+	if receivedHeaders.Get("X-Token") != "abc" {
+		t.Errorf("Custom header not preserved: %v", receivedHeaders)
+	}
+	for _, key := range []string{"event", "state", "previous_state", "reason", "consecutive_failures", "consecutive_recoveries", "latency_breaches", "ssl_expiry_days", "region"} {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("Payload missing %q: %v", key, raw)
+		}
+	}
+	if raw["event"] != "target_down" || raw["state"] != "down" || raw["previous_state"] != "healthy" || raw["region"] != "us-east-1" {
+		t.Errorf("Unexpected payload: %v", raw)
+	}
+
+	if err := HandleWebhookDecision(server.URL, server.Client(), alerts.Decision{State: alerts.StateHealthy}, "Site", "https://example.com", 0, 200, "", ""); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	suppressed := down
+	suppressed.Suppressed = true
+	if err := HandleWebhookDecision(server.URL, server.Client(), suppressed, "Site", "https://example.com", 0, 500, "", ""); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("Expected no calls for EventNone or suppressed decisions, got %d total", calls)
+	}
+
+	recovered := alerts.Decision{Event: alerts.EventTargetRecovered, State: alerts.StateHealthy, PreviousState: alerts.StateDown, Reason: "ok"}
+	if err := HandleWebhookDecision(server.URL, server.Client(), recovered, "", "https://example.com", 0, 200, "", ""); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if calls != 2 || raw["target"] != "https://example.com" || raw["consecutive_failures"] != float64(0) {
+		t.Errorf("Unexpected recovered payload: %v", raw)
 	}
 }
