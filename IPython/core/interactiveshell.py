@@ -29,7 +29,7 @@ import traceback
 import types
 import warnings
 from ast import stmt
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from io import open as io_open
 from logging import error
 from pathlib import Path
@@ -2431,7 +2431,7 @@ class InteractiveShell(SingletonConfigurable):
             m.ConfigMagics, m.DisplayMagics, m.ExecutionMagics,
             m.ExtensionMagics, m.HistoryMagics, m.LoggingMagics,
             m.NamespaceMagics, m.OSMagics, m.PackagingMagics,
-            m.PylabMagics, m.ScriptMagics,
+            m.PylabMagics, m.ScriptMagics, m.SessionBundleMagics,
         )
         self.register_magics(m.AsyncMagics)
 
@@ -3164,16 +3164,56 @@ class InteractiveShell(SingletonConfigurable):
         result : :class:`ExecutionResult`
         """
         result = None
-        with self._tee(channel="stdout"), self._tee(channel="stderr"):
-            try:
-                result = self._run_cell(
-                    raw_cell, store_history, silent, shell_futures, cell_id
-                )
-            finally:
-                self.events.trigger("post_execute")
-                if not silent:
-                    self.events.trigger("post_run_cell", result)
+        recorder = None if silent else getattr(self, "_session_bundle", None)
+        capture = (
+            recorder.capture(raw_cell) if recorder is not None else nullcontext({})
+        )
+        with capture as holder:
+            with self._tee(channel="stdout"), self._tee(channel="stderr"):
+                try:
+                    result = self._run_cell(
+                        raw_cell, store_history, silent, shell_futures, cell_id
+                    )
+                finally:
+                    self.events.trigger("post_execute")
+                    if not silent:
+                        self.events.trigger("post_run_cell", result)
+            holder["result"] = result
         return result
+
+    _session_bundle = None
+
+    def start_session_bundle(self, path, *, overwrite=False, redact=None) -> str:
+        """Start recording executed cells into a ``.ipybundle`` file."""
+        from IPython.core.sessionbundle import SessionBundleRecorder
+
+        if self._session_bundle is not None:
+            raise RuntimeError(
+                f"A session bundle is already recording to {self._session_bundle.path}"
+            )
+        path = Path(path).expanduser()
+        if path.exists() and not overwrite:
+            raise FileExistsError(f"Session bundle already exists: {path}")
+        recorder = SessionBundleRecorder(self, path, redact=redact)
+        recorder.save(overwrite=True)
+        self._session_bundle = recorder
+        return str(path)
+
+    def stop_session_bundle(self) -> str:
+        """Stop the active session bundle recording and return its path."""
+        recorder = self._session_bundle
+        if recorder is None:
+            raise RuntimeError("No session bundle is currently recording")
+        self._session_bundle = None
+        recorder.save(overwrite=True)
+        return str(recorder.path)
+
+    def session_bundle_status(self) -> dict:
+        recorder = self._session_bundle
+        return {
+            "recording": recorder is not None,
+            "path": str(recorder.path) if recorder is not None else None,
+        }
 
     def _run_cell(
         self,
