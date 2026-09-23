@@ -157,6 +157,7 @@ type TrafficPolicySpec struct {
 	// If no hash sources are specified, the source IP of the request is used.
 	// Hash policies are evaluated in the following order: headers, cookies, queryParameters,
 	// filterState, sourceIp.
+	// It is applicable to HTTPRoutes and ignored for other targeted kinds.
 	// +optional
 	ConsistentHash *ConsistentHash `json:"consistentHash,omitempty"`
 }
