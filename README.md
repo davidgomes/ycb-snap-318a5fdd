@@ -571,6 +571,27 @@ world.query(Inventory).updateEach(([inventory], entity) => {
 })
 ```
 
+### Deferred commands
+
+Structural changes made while iterating a query can be batched with `world.deferred`. Commands run in the order they were deferred when `updateEach` exits, when `flush` is called, or right before a direct mutation of an entity that has pending commands. Nested `updateEach` calls get their own buffer, which runs when that loop exits without touching the outer one.
+
+```js
+world.query(Health).updateEach(([health], entity) => {
+  if (health.amount <= 0) {
+    world.deferred.destroy(entity)
+    world.deferred.spawn(Corpse, Position(entity.get(Position)))
+  }
+})
+
+// Outside of updateEach, commands wait until flushed
+world.deferred.add(entity, Poisoned)
+world.deferred.remove(entity, Shield)
+world.deferred.addExclusive(entity, Targeting(enemy)) // Replaces all Targeting pairs, '*' clears them
+world.deferred.flush()
+```
+
+While commands are pending, `entity.has` and `entity.get` already return what they will after the flush. Later values for the same trait replace earlier ones, commands on destroyed entities are skipped, and spawning then destroying an entity in the same buffer cancels both. Subscriptions fire once per trait or pair based on the difference between the state before and after the flush.
+
 ### World traits
 
 For global data like time, these can be traits added to the world. **World traits do not appear in queries.**
