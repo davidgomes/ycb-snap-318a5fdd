@@ -153,6 +153,20 @@ main configuration file or any referenced files, such as rule and scrape
 configurations. To ensure consistency and avoid issues during reloads, it's
 recommended to update these files atomically.
 
+## Transactional reload
+
+`--enable-feature=transactional-reload-config`
+
+When enabled, configuration reloaders run in sequence and Prometheus records a single outcome for the whole attempt.
+
+If loading or parsing the configuration fails, Prometheus does not roll back. If at least one component applied the new configuration and a later component fails, Prometheus attempts to roll those components back to the last known-good configuration. That includes the configuration successfully loaded at startup, before any reload.
+
+The most recent outcome is available at `GET /api/v1/status/reload` and is written as JSON to `reload_status.json` in the TSDB storage directory (`--storage.tsdb.path`, or the agent database path in agent mode). The file is created on the first reload attempt. A missing or unreadable file does not prevent startup; the status endpoint then reports that no reload has been attempted.
+
+`error_category` is one of `none`, `load_error`, `apply_error`, or `rollback_error`.
+
+The feature is reported by `GET /api/v1/features` as `prometheus.transactional_reload_config`.
+
 ## OTLP Delta Conversion
 
 `--enable-feature=otlp-deltatocumulative`

@@ -400,6 +400,18 @@ func (*OpenAPIBuilder) statusBuildInfoPath() *v3.PathItem {
 	}
 }
 
+func (*OpenAPIBuilder) statusReloadPath() *v3.PathItem {
+	return &v3.PathItem{
+		Get: &v3.Operation{
+			OperationId: "get-status-reload",
+			Summary:     "Get configuration reload status",
+			Description: "Returns the most recent transactional configuration reload outcome. Before the first reload attempt, last_reload_id is empty and error_category is none.",
+			Tags:        []string{"status"},
+			Responses:   responsesWithErrorExamples("StatusReloadOutputBody", statusReloadResponseExamples(), errorResponseExamples(), "Reload status retrieved successfully.", "Error retrieving reload status."),
+		},
+	}
+}
+
 func (*OpenAPIBuilder) statusFlagsPath() *v3.PathItem {
 	return &v3.PathItem{
 		Get: &v3.Operation{

@@ -86,6 +86,7 @@ import (
 	"github.com/prometheus/prometheus/util/notifications"
 	prom_runtime "github.com/prometheus/prometheus/util/runtime"
 	"github.com/prometheus/prometheus/web"
+	apiv1 "github.com/prometheus/prometheus/web/api/v1"
 )
 
 // klogv1OutputCallDepth is the stack depth where we can find the origin of this call.
@@ -205,6 +206,8 @@ type flagConfig struct {
 	enableAutoReload   bool
 	autoReloadInterval model.Duration
 
+	enableTransactionalReload bool
+
 	maxprocsEnable bool
 	memlimitEnable bool
 	memlimitRatio  float64
@@ -255,6 +258,10 @@ func (c *flagConfig) setFeatureListOptions(logger *slog.Logger) error {
 					c.autoReloadInterval, _ = model.ParseDuration("1s")
 				}
 				logger.Info("Enabled automatic configuration file reloading. Checking for configuration changes every", "interval", c.autoReloadInterval)
+			case "transactional-reload-config":
+				c.enableTransactionalReload = true
+				features.Enable(features.Prometheus, "transactional_reload_config")
+				logger.Info("Experimental transactional configuration reload enabled.")
 			case "concurrent-rule-eval":
 				c.enableConcurrentRuleEval = true
 				logger.Info("Experimental concurrent rule evaluation enabled.")
@@ -601,7 +608,7 @@ func main() {
 	a.Flag("scrape.discovery-reload-interval", "Interval used by scrape manager to throttle target groups updates.").
 		Hidden().Default("5s").SetValue(&cfg.scrape.DiscoveryReloadInterval)
 
-	a.Flag("enable-feature", "Comma separated feature names to enable. Valid options: exemplar-storage, expand-external-labels, memory-snapshot-on-shutdown, promql-per-step-stats, promql-experimental-functions, extra-scrape-metrics, auto-gomaxprocs, created-timestamp-zero-ingestion, concurrent-rule-eval, delayed-compaction, old-ui, otlp-deltatocumulative, promql-duration-expr, use-uncached-io, promql-extended-range-selectors, promql-binop-fill-modifiers. See https://prometheus.io/docs/prometheus/latest/feature_flags/ for more details.").
+	a.Flag("enable-feature", "Comma separated feature names to enable. Valid options: exemplar-storage, expand-external-labels, memory-snapshot-on-shutdown, promql-per-step-stats, promql-experimental-functions, extra-scrape-metrics, auto-gomaxprocs, created-timestamp-zero-ingestion, concurrent-rule-eval, delayed-compaction, old-ui, otlp-deltatocumulative, promql-duration-expr, use-uncached-io, promql-extended-range-selectors, promql-binop-fill-modifiers, transactional-reload-config. See https://prometheus.io/docs/prometheus/latest/feature_flags/ for more details.").
 		Default("").StringsVar(&cfg.featureList)
 
 	a.Flag("agent", "Run Prometheus in 'Agent mode'.").BoolVar(&agentMode)
@@ -1265,6 +1272,12 @@ func main() {
 			},
 		)
 	}
+	reloadOpts := reloadOptions{
+		transactional: cfg.enableTransactionalReload,
+		recordOutcome: true,
+		state:         webHandler.ReloadState(),
+	}
+
 	{
 		// Reload handler.
 
@@ -1297,7 +1310,7 @@ func main() {
 				for {
 					select {
 					case <-hup:
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloadOpts, reloaders...); err != nil {
 							logger.Error("Error reloading config", "err", err)
 						} else if cfg.enableAutoReload {
 							checksum, err = config.GenerateChecksum(cfg.configFile)
@@ -1306,7 +1319,7 @@ func main() {
 							}
 						}
 					case rc := <-webHandler.Reload():
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloadOpts, reloaders...); err != nil {
 							logger.Error("Error reloading config", "err", err)
 							rc <- err
 						} else {
@@ -1331,7 +1344,7 @@ func main() {
 						}
 						logger.Info("Configuration file change detected, reloading the configuration.")
 
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloadOpts, reloaders...); err != nil {
 							logger.Error("Error reloading config", "err", err)
 						} else {
 							checksum = currentChecksum
@@ -1363,7 +1376,9 @@ func main() {
 					return nil
 				}
 
-				if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, func(bool) {}, reloaders...); err != nil {
+				initialReloadOpts := reloadOpts
+				initialReloadOpts.recordOutcome = false
+				if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, func(bool) {}, initialReloadOpts, reloaders...); err != nil {
 					return fmt.Errorf("error loading config from %q: %w", cfg.configFile, err)
 				}
 
@@ -1605,7 +1620,17 @@ type reloader struct {
 	reloader func(*config.Config) error
 }
 
-func reloadConfig(filename string, enableExemplarStorage bool, logger *slog.Logger, noStepSubqueryInterval *safePromQLNoStepSubqueryInterval, callback func(bool), rls ...reloader) (err error) {
+// reloadOptions controls transactional reload recording.
+// The initial configuration load sets recordOutcome to false so startup does
+// not persist a reload attempt, while still remembering that config as the
+// last known-good configuration when transactional mode is enabled.
+type reloadOptions struct {
+	transactional bool
+	recordOutcome bool
+	state         *web.ReloadState
+}
+
+func reloadConfig(filename string, enableExemplarStorage bool, logger *slog.Logger, noStepSubqueryInterval *safePromQLNoStepSubqueryInterval, callback func(bool), opts reloadOptions, rls ...reloader) (err error) {
 	start := time.Now()
 	timingsLogger := logger
 	logger.Info("Loading configuration file", "filename", filename)
@@ -1623,13 +1648,29 @@ func reloadConfig(filename string, enableExemplarStorage bool, logger *slog.Logg
 
 	conf, err := config.LoadFile(filename, agentMode, logger)
 	if err != nil {
-		return fmt.Errorf("couldn't load configuration (--config.file=%q): %w", filename, err)
+		err = fmt.Errorf("couldn't load configuration (--config.file=%q): %w", filename, err)
+		// Parse and load failures are not applied, so there is nothing to roll back.
+		if opts.transactional && opts.recordOutcome {
+			opts.state.Record(apiv1.ReloadStatus{
+				LastReloadID:         start.UTC().Format(time.RFC3339Nano),
+				LastReloadSuccessful: false,
+				ErrorCategory:        apiv1.ReloadErrorLoad,
+				ErrorMessage:         err.Error(),
+				AppliedReloaders:     []string{},
+				ReloaderTimingsMS:    map[string]int64{},
+			})
+		}
+		return err
 	}
 
 	if enableExemplarStorage {
 		if conf.StorageConfig.ExemplarsConfig == nil {
 			conf.StorageConfig.ExemplarsConfig = &config.DefaultExemplarsConfig
 		}
+	}
+
+	if opts.transactional {
+		return applyConfigTransactional(conf, filename, logger, noStepSubqueryInterval, start, opts, rls)
 	}
 
 	failed := false
@@ -1648,6 +1689,104 @@ func reloadConfig(filename string, enableExemplarStorage bool, logger *slog.Logg
 	updateGoGC(conf, logger)
 	noStepSubqueryInterval.Set(conf.GlobalConfig.EvaluationInterval)
 	timingsLogger.Info("Completed loading of configuration file", "filename", filename, "totalDuration", time.Since(start))
+	return nil
+}
+
+func applyConfigTransactional(conf *config.Config, filename string, logger *slog.Logger, noStepSubqueryInterval *safePromQLNoStepSubqueryInterval, start time.Time, opts reloadOptions, rls []reloader) error {
+	timingsLogger := logger
+	timings := make(map[string]int64, len(rls))
+	applied := make([]string, 0, len(rls))
+
+	var (
+		failedReloader string
+		applyErr       error
+	)
+	for _, rl := range rls {
+		rstart := time.Now()
+		err := rl.reloader(conf)
+		elapsed := time.Since(rstart)
+		timings[rl.name] = elapsed.Milliseconds()
+		timingsLogger = timingsLogger.With(rl.name, elapsed)
+		if err != nil {
+			logger.Error("Failed to apply configuration", "reloader", rl.name, "err", err)
+			failedReloader = rl.name
+			applyErr = err
+			break
+		}
+		applied = append(applied, rl.name)
+	}
+
+	reloadID := start.UTC().Format(time.RFC3339Nano)
+	if applyErr == nil {
+		updateGoGC(conf, logger)
+		noStepSubqueryInterval.Set(conf.GlobalConfig.EvaluationInterval)
+		opts.state.SetLastGood(conf)
+		if opts.recordOutcome {
+			opts.state.Record(apiv1.ReloadStatus{
+				LastReloadID:         reloadID,
+				LastReloadSuccessful: true,
+				ErrorCategory:        apiv1.ReloadErrorNone,
+				AppliedReloaders:     applied,
+				ReloaderTimingsMS:    timings,
+			})
+		}
+		timingsLogger.Info("Completed loading of configuration file", "filename", filename, "totalDuration", time.Since(start))
+		return nil
+	}
+
+	status := apiv1.ReloadStatus{
+		LastReloadID:         reloadID,
+		LastReloadSuccessful: false,
+		ErrorCategory:        apiv1.ReloadErrorApply,
+		AppliedReloaders:     applied,
+		FailedReloader:       failedReloader,
+		ReloaderTimingsMS:    timings,
+	}
+	applyMsg := fmt.Sprintf("failed to apply configuration to %q (--config.file=%q): %s", failedReloader, filename, applyErr)
+	status.ErrorMessage = applyMsg
+
+	// Roll back only after at least one reloader accepted the new configuration.
+	if len(applied) > 0 {
+		good := opts.state.LastGood()
+		if good == nil {
+			logger.Warn("skipping configuration rollback because no known-good configuration is available", "failed_reloader", failedReloader)
+		} else {
+			status.RollbackAttempted = true
+			status.RollbackSuccessful = true
+			var rollbackErrs []string
+			for i := len(applied) - 1; i >= 0; i-- {
+				name := applied[i]
+				rl := findReloader(rls, name)
+				if rl == nil {
+					status.RollbackSuccessful = false
+					rollbackErrs = append(rollbackErrs, fmt.Sprintf("%s: reloader not found", name))
+					continue
+				}
+				if err := rl.reloader(good); err != nil {
+					logger.Error("Failed to roll back configuration", "reloader", name, "err", err)
+					status.RollbackSuccessful = false
+					rollbackErrs = append(rollbackErrs, fmt.Sprintf("%s: %s", name, err))
+				}
+			}
+			if !status.RollbackSuccessful {
+				status.ErrorCategory = apiv1.ReloadErrorRollback
+				status.ErrorMessage = applyMsg + "; rollback failed: " + strings.Join(rollbackErrs, "; ")
+			}
+		}
+	}
+
+	if opts.recordOutcome {
+		opts.state.Record(status)
+	}
+	return errors.New(status.ErrorMessage)
+}
+
+func findReloader(rls []reloader, name string) *reloader {
+	for i := range rls {
+		if rls[i].name == name {
+			return &rls[i]
+		}
+	}
 	return nil
 }
 

@@ -230,6 +230,8 @@ type Handler struct {
 
 	apiV1 *api_v1.API
 
+	reloadState *ReloadState
+
 	router      *route.Router
 	quitCh      chan struct{}
 	quitOnce    sync.Once
@@ -245,6 +247,11 @@ type Handler struct {
 	now func() model.Time
 
 	ready atomic.Uint32 // ready is uint32 rather than boolean to be able to use atomic functions.
+}
+
+// ReloadState returns the transactional reload outcome tracker.
+func (h *Handler) ReloadState() *ReloadState {
+	return h.reloadState
 }
 
 // ApplyConfig updates the config field of the Handler struct.
@@ -380,6 +387,8 @@ func New(logger *slog.Logger, o *Options) *Handler {
 		version = o.Version.Version
 	}
 
+	h.reloadState = NewReloadState(o.TSDBDir, logger)
+
 	h.apiV1 = api_v1.NewAPI(h.queryEngine, h.storage, app, appV2, h.exemplarStorage, factorySPr, factoryTr, factoryAr,
 		func() config.Config {
 			h.mtx.RLock()
@@ -427,6 +436,7 @@ func New(logger *slog.Logger, o *Options) *Handler {
 		},
 		o.Parser,
 	)
+	h.apiV1.SetReloadStatus(h.reloadState.Status)
 
 	if r := o.FeatureRegistry; r != nil {
 		// Set dynamic API features (based on configuration).

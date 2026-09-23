@@ -259,8 +259,15 @@ type API struct {
 
 	featureRegistry features.Collector
 	openAPIBuilder  *OpenAPIBuilder
+	reloadStatus    func() ReloadStatus
 
 	parser parser.Parser
+}
+
+// SetReloadStatus installs the provider for GET /api/v1/status/reload.
+// A nil provider serves the pre-reload status.
+func (api *API) SetReloadStatus(fn func() ReloadStatus) {
+	api.reloadStatus = fn
 }
 
 // NewAPI returns an initialized API type.
@@ -457,6 +464,7 @@ func (api *API) Register(r *route.Router) {
 	r.Get("/status/runtimeinfo", wrap(api.serveRuntimeInfo))
 	r.Get("/status/buildinfo", wrap(api.serveBuildInfo))
 	r.Get("/status/flags", wrap(api.serveFlags))
+	r.Get("/status/reload", wrap(api.serveReloadStatus))
 	r.Get("/status/tsdb", wrapAgent(api.serveTSDBStatus))
 	r.Get("/status/tsdb/blocks", wrapAgent(api.serveTSDBBlocks))
 	r.Get("/features", wrap(api.features))

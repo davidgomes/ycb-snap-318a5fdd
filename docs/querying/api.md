@@ -1314,6 +1314,47 @@ curl http://localhost:9090/api/v1/status/flags
 
 *New in v2.2*
 
+### Reload
+
+The following endpoint returns the most recent configuration reload outcome.
+It is populated when `--enable-feature=transactional-reload-config` is set.
+Before the first reload attempt, `last_reload_id` is empty, `last_reload_successful` is false, `error_category` is `none`, and `applied_reloaders` and `reloader_timings_ms` are empty.
+
+```
+GET /api/v1/status/reload
+```
+
+`error_category` is one of `none`, `load_error`, `apply_error`, or `rollback_error`.
+`last_reload_id` is an RFC3339 timestamp.
+
+The same fields are persisted as JSON in `reload_status.json` under the TSDB storage directory after the first reload attempt. A missing or corrupted file does not prevent startup or this endpoint from responding.
+
+```bash
+curl http://localhost:9090/api/v1/status/reload
+```
+
+```json
+{
+  "status": "success",
+  "data": {
+    "last_reload_id": "2026-01-02T13:37:00.000000000Z",
+    "last_reload_successful": false,
+    "error_category": "apply_error",
+    "error_message": "failed to apply configuration to \"query_engine\" (--config.file=\"prometheus.yml\"): can't create json log file: ...",
+    "applied_reloaders": ["db_storage", "remote_storage", "web_handler"],
+    "rollback_attempted": true,
+    "rollback_successful": true,
+    "failed_reloader": "query_engine",
+    "reloader_timings_ms": {
+      "db_storage": 1,
+      "remote_storage": 2,
+      "web_handler": 1,
+      "query_engine": 4
+    }
+  }
+}
+```
+
 ### Runtime Information
 
 The following endpoint returns various runtime information properties about the Prometheus server:
