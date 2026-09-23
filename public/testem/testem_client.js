@@ -124,6 +124,8 @@ var Testem = {
   emitMessageQueue: [],
   afterTestsQueue: [],
   console: {},
+  aborted: false,
+  _emittingAbortSignals: false,
 
   // The maximum depth beyond which decycle will truncate an emitted event
   // object. When undefined, decycle uses its default.
@@ -141,8 +143,22 @@ var Testem = {
     var match = window.location.pathname.match(/^\/(-?[0-9]+)/);
     return match ? match[1] : null;
   },
+  handleAbortTests: function() {
+    if (this.aborted) {
+      return;
+    }
+    this.aborted = true;
+    this.emitMessageQueue = [];
+    this._emittingAbortSignals = true;
+    this.emit('abort-tests');
+    this.emit('after-tests-complete');
+    this._emittingAbortSignals = false;
+  },
   emitMessage: function() {
     if (this._noConnectionRequired) {
+      return;
+    }
+    if (this.aborted && !this._emittingAbortSignals) {
       return;
     }
     var args = new Array(arguments.length);
@@ -263,6 +279,9 @@ var Testem = {
           break;
         case 'stop-run':
           self.emit('after-tests-complete');
+          break;
+        case 'abort-tests':
+          self.handleAbortTests();
           break;
         default:
           if (type && type.indexOf('testem:') === 0) {

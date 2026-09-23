@@ -7,7 +7,7 @@ Testem`s adapter for Mocha. It works by monkey-patching `Runner.prototype.emit`.
 
 */
 
-/* globals mocha, emit, Mocha */
+/* globals mocha, emit, Mocha, Testem */
 /* globals module */
 /* exported mochaAdapter */
 'use strict';
@@ -46,18 +46,54 @@ function mochaAdapter() {
   var _setTimeout = setTimeout;
 
   var oEmit = Runner.prototype.emit;
+  var allResultsSent = false;
+
+  function isTestemAborted() {
+    return typeof Testem !== 'undefined' && Testem.aborted;
+  }
+
+  function signalAbortedAllResults() {
+    if (allResultsSent) {
+      return;
+    }
+    allResultsSent = true;
+    emit('all-test-results');
+  }
+
+  function emitEvent(event, payload) {
+    if (isTestemAborted()) {
+      signalAbortedAllResults();
+      return;
+    }
+    if (arguments.length > 1) {
+      emit(event, payload);
+    } else {
+      emit(event);
+    }
+  }
+
   Runner.prototype.emit = function(evt, test, err) {
     var name = getFullName(test);
+    if (isTestemAborted()) {
+      signalAbortedAllResults();
+      oEmit.apply(this, arguments);
+      return;
+    }
     if (evt === 'start') {
-      emit('tests-start', { name: name });
+      emitEvent('tests-start', { name: name });
     } else if (evt === 'end') {
       if (waiting === 0) {
-        emit('all-test-results');
+        emitEvent('all-test-results');
       }
       ended = true;
     } else if (evt === 'test end') {
       waiting++;
       _setTimeout(function() {
+        if (isTestemAborted()) {
+          waiting--;
+          signalAbortedAllResults();
+          return;
+        }
         waiting--;
         if (test.state === 'passed') {
           testPass(test);
@@ -65,16 +101,24 @@ function mochaAdapter() {
           testPending(test);
         }
         if (ended && waiting === 0) {
-          emit('all-test-results');
+          emitEvent('all-test-results');
         }
       }, 0);
     } else if (evt === 'fail') {
-      testFail(test, err);
+      if (isTestemAborted()) {
+        signalAbortedAllResults();
+      } else {
+        testFail(test, err);
+      }
     }
 
     oEmit.apply(this, arguments);
 
     function testPass(test) {
+      if (isTestemAborted()) {
+        signalAbortedAllResults();
+        return;
+      }
       var tst = {
         passed: 1,
         failed: 0,
@@ -88,7 +132,7 @@ function mochaAdapter() {
       results.passed++;
       results.total++;
       results.tests.push(tst);
-      emit('test-result', tst);
+      emitEvent('test-result', tst);
     }
 
     function makeFailingTest(test, err) {
@@ -112,15 +156,23 @@ function mochaAdapter() {
     }
 
     function testFail(test, err) {
+      if (isTestemAborted()) {
+        signalAbortedAllResults();
+        return;
+      }
       var tst = makeFailingTest(test, err);
       results.failed++;
       results.total++;
       results.tests.push(tst);
-      emit('test-result', tst);
+      emitEvent('test-result', tst);
 
     }
 
     function testPending() {
+      if (isTestemAborted()) {
+        signalAbortedAllResults();
+        return;
+      }
       var tst = {
         passed: 0,
         failed: 0,
@@ -132,7 +184,7 @@ function mochaAdapter() {
       };
       results.total++;
       results.tests.push(tst);
-      emit('test-result', tst);
+      emitEvent('test-result', tst);
     }
   };
 

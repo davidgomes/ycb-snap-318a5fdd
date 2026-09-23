@@ -14,7 +14,7 @@ Testem's QUnit adapter. Works by using QUnit's hooks:
 
 */
 
-/* globals QUnit, emit */
+/* globals QUnit, emit, Testem */
 /* exported qunitAdapter */
 'use strict';
 
@@ -51,7 +51,44 @@ function qunitAdapter() {
     return undefined;
   }
 
+  var allResultsSent = false;
+
+  function isTestemAborted() {
+    return typeof Testem !== 'undefined' && Testem.aborted;
+  }
+
+  function clearQUnitQueue() {
+    if (typeof QUnit !== 'undefined' && QUnit.config && QUnit.config.queue) {
+      QUnit.config.queue.length = 0;
+    }
+  }
+
+  function signalAbortedAllResults() {
+    clearQUnitQueue();
+    if (allResultsSent) {
+      return;
+    }
+    allResultsSent = true;
+    emit('all-test-results');
+  }
+
+  function emitEvent(event, payload) {
+    if (isTestemAborted()) {
+      signalAbortedAllResults();
+      return;
+    }
+    if (arguments.length > 1) {
+      emit(event, payload);
+    } else {
+      emit(event);
+    }
+  }
+
   QUnit.log(function(params, e) {
+    if (isTestemAborted()) {
+      signalAbortedAllResults();
+      return;
+    }
     if (e) {
       currentTest.items.push({
         passed: params.result,
@@ -81,14 +118,22 @@ function qunitAdapter() {
 
   });
   QUnit.testStart(function(params) {
+    if (isTestemAborted()) {
+      signalAbortedAllResults();
+      return;
+    }
     currentTest = {
       id: id++,
       name: (params.module ? params.module + ': ' : '') + params.name,
       items: []
     };
-    emit('tests-start', currentTest);
+    emitEvent('tests-start', currentTest);
   });
   QUnit.testDone(function(params) {
+    if (isTestemAborted()) {
+      signalAbortedAllResults();
+      return;
+    }
     currentTest.failed = params.failed;
     currentTest.passed = params.passed;
     currentTest.skipped = params.skipped;
@@ -109,11 +154,15 @@ function qunitAdapter() {
 
     results.tests.push(currentTest);
 
-    emit('test-result', currentTest);
+    emitEvent('test-result', currentTest);
   });
   QUnit.done(function(params) {
+    if (isTestemAborted()) {
+      signalAbortedAllResults();
+      return;
+    }
     results.runDuration = params.runtime;
-    emit('all-test-results');
+    emitEvent('all-test-results');
   });
 
 }
