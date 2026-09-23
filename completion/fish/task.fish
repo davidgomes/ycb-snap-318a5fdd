@@ -78,6 +78,9 @@ complete -c $GO_TASK_PROGNAME      -l experiments               -d 'list availab
 complete -c $GO_TASK_PROGNAME -s F -l failfast                  -d 'when running tasks in parallel, stop all tasks if one fails'
 complete -c $GO_TASK_PROGNAME -s f -l force                     -d 'force execution even when up-to-date'
 complete -c $GO_TASK_PROGNAME -s g -l global                    -d 'run global Taskfile from home directory'
+complete -c $GO_TASK_PROGNAME      -l graph                     -d 'show the dependency graph of the given tasks'
+complete -c $GO_TASK_PROGNAME      -l graph-format              -d 'set the --graph output format' -xa "json dot text"
+complete -c $GO_TASK_PROGNAME      -l graph-reverse             -d 'show the tasks that depend on the given tasks'
 complete -c $GO_TASK_PROGNAME -s h -l help                      -d 'show help'
 complete -c $GO_TASK_PROGNAME -s i -l init                      -d 'create new Taskfile'
 complete -c $GO_TASK_PROGNAME      -l insecure                  -d 'allow insecure Taskfile downloads'
@@ -85,7 +88,7 @@ complete -c $GO_TASK_PROGNAME -s I -l interval                  -d 'interval to 
 complete -c $GO_TASK_PROGNAME -s j -l json                      -d 'format task list as JSON'
 complete -c $GO_TASK_PROGNAME -s l -l list                      -d 'list tasks with descriptions'
 complete -c $GO_TASK_PROGNAME      -l nested                    -d 'nest namespaces when listing as JSON'
-complete -c $GO_TASK_PROGNAME      -l no-status                 -d 'ignore status when listing as JSON'
+complete -c $GO_TASK_PROGNAME      -l no-status                 -d 'ignore status when listing as JSON or showing the graph'
 complete -c $GO_TASK_PROGNAME      -l interactive               -d 'prompt for missing required variables'
 complete -c $GO_TASK_PROGNAME -s o -l output                    -d 'set output style' -xa "interleaved group prefixed"
 complete -c $GO_TASK_PROGNAME      -l output-group-begin        -d 'message template before grouped output'
