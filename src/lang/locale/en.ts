@@ -672,6 +672,19 @@ export default {
       'name': 'Remove Leftover Footnotes from Quote on Paste',
       'description': 'Removes any leftover footnote references for the text to paste',
     },
+    // link-style.ts
+    'link-style': {
+      'name': 'Link Style',
+      'description': 'Converts between Obsidian wiki links/embeds and markdown links/images.',
+      'link-style': {
+        'name': 'Link Style',
+        'description': 'The style to use for non-image links',
+      },
+      'image-style': {
+        'name': 'Image Style',
+        'description': 'The style to use for images and embeds',
+      },
+    },
     // remove-link-spacing.ts
     'remove-link-spacing': {
       'name': 'Remove link spacing',
@@ -934,6 +947,10 @@ export default {
     'asterisk': 'asterisk',
     'underscore': 'underscore',
     'consistent': 'consistent',
+    // link-style.ts
+    'no-change': 'no change',
+    'markdown': 'markdown',
+    'wiki': 'wiki',
     '-': '-', // leave as is
     '*': '*', // leave as is
     '+': '+', // leave as is
