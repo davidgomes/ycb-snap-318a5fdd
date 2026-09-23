@@ -1924,3 +1924,15 @@ func TestParseNumbers(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, grammar{Int: -30, Uint: 3000, Float: math.Inf(1)}, *result)
 }
+
+func TestStrictModeUnambiguousGrammar(t *testing.T) {
+	type grammar struct {
+		Key   string `@Ident "="`
+		Value int    `@Int`
+	}
+	parser, err := participle.Build[grammar](participle.StrictMode())
+	assert.NoError(t, err)
+	result, err := parser.ParseString("", `answer = 42`)
+	assert.NoError(t, err)
+	assert.Equal(t, &grammar{Key: "answer", Value: 42}, result)
+}
