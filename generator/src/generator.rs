@@ -434,6 +434,8 @@ fn generate_expr(expr: OptimizedExpr) -> TokenStream {
                 state.match_range(#start..#end)
             }
         }
+        OptimizedExpr::CharClass(ranges) => generate_char_class(ranges),
+        OptimizedExpr::NegCharClass(ranges) => generate_neg_char_class(ranges),
         OptimizedExpr::Ident(ident) => {
             let ident = format_ident!("r#{}", ident);
             quote! { self::#ident(state) }
@@ -643,6 +645,8 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
                 state.match_range(#start..#end)
             }
         }
+        OptimizedExpr::CharClass(ranges) => generate_char_class(ranges),
+        OptimizedExpr::NegCharClass(ranges) => generate_neg_char_class(ranges),
         OptimizedExpr::Ident(ident) => {
             let ident = format_ident!("r#{}", ident);
             quote! { self::#ident(state) }
@@ -801,6 +805,50 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
                 }
             }
         },
+    }
+}
+
+fn char_endpoints(ranges: Vec<(String, String)>) -> Vec<(char, char)> {
+    ranges
+        .into_iter()
+        .map(|(start, end)| {
+            (
+                start.chars().next().expect("empty char literal"),
+                end.chars().next().expect("empty char literal"),
+            )
+        })
+        .collect()
+}
+
+fn generate_char_class(ranges: Vec<(String, String)>) -> TokenStream {
+    let mut ranges = char_endpoints(ranges).into_iter();
+    let Some((start, end)) = ranges.next() else {
+        return quote! { state.match_char_by(|_| false) };
+    };
+    let mut out = quote! { state.match_range(#start..#end) };
+    for (start, end) in ranges {
+        out = quote! {
+            #out.or_else(|state| {
+                state.match_range(#start..#end)
+            })
+        };
+    }
+    out
+}
+
+fn generate_neg_char_class(ranges: Vec<(String, String)>) -> TokenStream {
+    let ranges = char_endpoints(ranges);
+    let starts: Vec<char> = ranges.iter().map(|range| range.0).collect();
+    let ends: Vec<char> = ranges.iter().map(|range| range.1).collect();
+    quote! {
+        state.match_char_by(|c| {
+            #(
+                if #starts <= c && c <= #ends {
+                    return false;
+                }
+            )*
+            true
+        })
     }
 }
 

@@ -20,6 +20,7 @@ macro_rules! box_tree {
     ($expr:expr) => ($expr);
 }
 
+mod coalescer;
 mod concatenator;
 mod factorizer;
 mod lister;
@@ -46,6 +47,7 @@ pub fn optimize(rules: Vec<Rule>) -> Vec<OptimizedRule> {
     optimized
         .into_iter()
         .map(|rule| restorer::restore_on_err(rule, &optimized_map))
+        .map(coalescer::coalesce)
         .collect()
 }
 
@@ -130,6 +132,14 @@ pub enum OptimizedExpr {
     Insens(String),
     /// Matches one character in the range, e.g. `'a'..'z'`
     Range(String, String),
+    /// Matches one character in any of the inclusive ranges.
+    ///
+    /// Each pair is an inclusive start and end character, sorted by start code point.
+    CharClass(Vec<(String, String)>),
+    /// Matches one character outside every inclusive range.
+    ///
+    /// Produced from `!(alternatives) ~ ANY` when every alternative is a character class.
+    NegCharClass(Vec<(String, String)>),
     /// Matches the rule with the given name, e.g. `a`
     Ident(String),
     /// Matches a custom part of the stack, e.g. `PEEK[..]`
@@ -268,6 +278,26 @@ impl OptimizedExpr {
     }
 }
 
+fn fmt_char_class(
+    f: &mut core::fmt::Formatter<'_>,
+    ranges: &[(String, String)],
+    negated: bool,
+) -> core::fmt::Result {
+    if negated {
+        write!(f, "!")?;
+    }
+    write!(f, "[")?;
+    for (i, (start, end)) in ranges.iter().enumerate() {
+        if i > 0 {
+            write!(f, " | ")?;
+        }
+        let start = start.chars().next().expect("Empty range start.");
+        let end = end.chars().next().expect("Empty range end.");
+        write!(f, "({:?}..{:?})", start, end)?;
+    }
+    write!(f, "]")
+}
+
 impl core::fmt::Display for OptimizedExpr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -278,6 +308,8 @@ impl core::fmt::Display for OptimizedExpr {
                 let end = end.chars().next().expect("Empty range end.");
                 write!(f, "({:?}..{:?})", start, end)
             }
+            OptimizedExpr::CharClass(ranges) => fmt_char_class(f, ranges, false),
+            OptimizedExpr::NegCharClass(ranges) => fmt_char_class(f, ranges, true),
             OptimizedExpr::Ident(id) => write!(f, "{}", id),
             OptimizedExpr::PeekSlice(start, end) => match end {
                 Some(end) => write!(f, "PEEK[{}..{}]", start, end),
@@ -414,10 +446,10 @@ mod tests {
                 ty: RuleType::Normal,
                 expr: box_tree!(Choice(
                     Choice(
-                        Choice(Str(String::from("a")), Str(String::from("b"))),
-                        Str(String::from("c"))
+                        Choice(Str(String::from("aa")), Str(String::from("bb"))),
+                        Str(String::from("cc"))
                     ),
-                    Str(String::from("d"))
+                    Str(String::from("dd"))
                 )),
             }]
         };
@@ -427,10 +459,10 @@ mod tests {
                 name: "rule".to_owned(),
                 ty: RuleType::Normal,
                 expr: box_tree!(Choice(
-                    Str(String::from("a")),
+                    Str(String::from("aa")),
                     Choice(
-                        Str(String::from("b")),
-                        Choice(Str(String::from("c")), Str(String::from("d")))
+                        Str(String::from("bb")),
+                        Choice(Str(String::from("cc")), Str(String::from("dd")))
                     )
                 )),
             }]

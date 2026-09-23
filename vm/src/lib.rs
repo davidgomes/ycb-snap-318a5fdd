@@ -193,6 +193,36 @@ impl Vm {
 
                 state.match_range(start..end)
             }
+            OptimizedExpr::CharClass(ref ranges) => {
+                if ranges.is_empty() {
+                    return Err(state);
+                }
+                let mut state = Err(state);
+                for (start, end) in ranges {
+                    if let Err(current) = state {
+                        let start = start.chars().next().expect("empty char literal");
+                        let end = end.chars().next().expect("empty char literal");
+                        state = current.match_range(start..end);
+                    } else {
+                        break;
+                    }
+                }
+                state
+            }
+            OptimizedExpr::NegCharClass(ref ranges) => {
+                let parsed: Vec<(char, char)> = ranges
+                    .iter()
+                    .map(|(start, end)| {
+                        (
+                            start.chars().next().expect("empty char literal"),
+                            end.chars().next().expect("empty char literal"),
+                        )
+                    })
+                    .collect();
+                state.match_char_by(move |ch| {
+                    !parsed.iter().any(|(start, end)| *start <= ch && ch <= *end)
+                })
+            }
             OptimizedExpr::Ident(ref name) => self.parse_rule(name, state),
             OptimizedExpr::PeekSlice(start, end) => {
                 state.stack_match_peek_slice(start, end, MatchDir::BottomToTop)
