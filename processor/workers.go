@@ -832,6 +832,14 @@ func processFile(job *FileJob) bool {
 		ulocMutex.Unlock()
 	}
 
+	// Drop file bytes once counts are done so bounded --format-multi does not
+	// keep every source buffer alive until formatting finishes.
+	if BoundedMemory && FormatMulti != "" {
+		job.Content = nil
+		job.ContentByteType = nil
+		job.ComplexityLine = nil
+	}
+
 	return true
 }
 

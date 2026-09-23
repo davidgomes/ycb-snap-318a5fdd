@@ -136,6 +136,27 @@ var Format = ""
 // FormatMulti is a rule for defining multiple output formats
 var FormatMulti = ""
 
+// BoundedMemory spills per-file --format-multi results so only a limited
+// number of file records stay in memory.
+var BoundedMemory = false
+
+// BoundedMemoryDir is the spill directory used when BoundedMemory is enabled.
+// It is created when missing and must be set when the mode is on.
+var BoundedMemoryDir = ""
+
+// boundedMemoryDirAbs is the cleaned absolute spill directory, when enabled.
+var boundedMemoryDirAbs = ""
+
+// BoundedMemoryMaxInMemoryFiles is the maximum file records kept in memory.
+// Required when BoundedMemory is enabled and must be greater than zero.
+var BoundedMemoryMaxInMemoryFiles = 0
+
+// BoundedMemoryStats emits one stderr line describing spill behaviour.
+var BoundedMemoryStats = false
+
+// boundedStatsEmitted guards the single bounded-memory stats line.
+var boundedStatsEmitted = false
+
 // SQLProject is used to store the name for the SQL insert formats but is optional
 var SQLProject = ""
 
@@ -574,6 +595,7 @@ var ulocLanguageCount = map[string]map[string]struct{}{}
 
 // Process is the main entry point of the command line it sets everything up and starts running
 func Process() {
+	boundedStatsEmitted = false
 	if Languages {
 		printLanguages()
 		return
@@ -581,6 +603,10 @@ func Process() {
 
 	ProcessConstants()
 	processFlags()
+	if err := configureBoundedMemory(); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
 
 	// Clean up any invalid arguments before setting everything up
 	if len(DirFilePaths) == 0 {
@@ -600,6 +626,10 @@ func Process() {
 			os.Exit(1)
 		}
 
+		if insideBoundedMemoryDir(fpath) {
+			continue
+		}
+
 		if s.IsDir() {
 			dirPaths = append(dirPaths, fpath)
 		} else {
@@ -607,7 +637,18 @@ func Process() {
 		}
 	}
 
+	addBoundedMemoryExcludes(dirPaths)
+
 	SortBy = strings.ToLower(SortBy)
+
+	prevSummaryQueue := FileSummaryJobQueueSize
+	if BoundedMemory && FormatMulti != "" && BoundedMemoryMaxInMemoryFiles > 0 {
+		// Keep processed results from piling up ahead of the spill buffer.
+		FileSummaryJobQueueSize = 0
+	}
+	defer func() {
+		FileSummaryJobQueueSize = prevSummaryQueue
+	}()
 
 	printDebugF("NumCPU: %d", runtime.NumCPU())
 	printDebugF("SortBy: %s", SortBy)
@@ -654,6 +695,10 @@ func Process() {
 
 	go func() {
 		for _, f := range filePaths {
+			if insideBoundedMemoryDir(f) {
+				continue
+			}
+
 			fileInfo, err := os.Lstat(f)
 			if err != nil {
 				continue
@@ -666,6 +711,10 @@ func Process() {
 		}
 
 		for fi := range potentialFilesQueue {
+			if insideBoundedMemoryDir(fi.Location) {
+				continue
+			}
+
 			shouldExclude := false
 			for _, re := range excludePathRegexes {
 				if re.MatchString(fi.Location) {
@@ -695,6 +744,9 @@ func Process() {
 	go fileProcessorWorker(fileListQueue, fileSummaryJobQueue)
 
 	result := fileSummarize(fileSummaryJobQueue)
+	if BoundedMemory && BoundedMemoryStats && !boundedStatsEmitted {
+		emitBoundedMemoryStats(0, 0)
+	}
 	if FileOutput == "" {
 		fmt.Print(result)
 	} else {

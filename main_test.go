@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -31,6 +33,16 @@ func runSCC(args ...string) (string, error) {
 	cmd := exec.Command(sccBinPath, args...)
 	res, err := cmd.CombinedOutput()
 	return string(res), err
+}
+
+func runSCCOutputs(args ...string) (string, string, error) {
+	args = slices.Insert(args, 0, sccTestFlag)
+	cmd := exec.Command(sccBinPath, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.String(), stderr.String(), err
 }
 
 func TestNoGitIgnore(t *testing.T) {
@@ -689,4 +701,245 @@ func TestSpecificLanguages(t *testing.T) {
 			t.Errorf("language not found in output: %v", language)
 		}
 	}
+}
+
+func TestBoundedMemoryCLI(t *testing.T) {
+	src := t.TempDir()
+	for i, body := range []string{
+		"package a\n\nfunc A() int {\n\tif true {\n\t\treturn 1\n\t}\n\treturn 0\n}\n",
+		"package b\n\nfunc B() {}\n",
+		"# comment\ndef c():\n    return 1\n\n",
+		"package d\n\n// note\nfunc D() int { return 2 }\n",
+	} {
+		name := fmt.Sprintf("f%d.go", i)
+		if i == 2 {
+			name = "c.py"
+		}
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	spill := filepath.Join(t.TempDir(), "nested", "spill")
+	common := []string{
+		"--file-process-job-workers", "1",
+		"--directory-walker-job-workers", "1",
+		"--sort", "lines",
+	}
+
+	formats := []string{
+		"json:stdout",
+		"json2:stdout",
+		"csv:stdout",
+		"csv-stream:stdout",
+		"tabular:stdout,wide:stdout",
+		"json:stdout,csv:stdout",
+	}
+	for _, format := range formats {
+		unbounded, _, err := runSCCOutputs(append(append([]string{"--format-multi", format}, common...), src)...)
+		if err != nil {
+			t.Fatalf("unbounded %s: %v\n%s", format, err, unbounded)
+		}
+		bounded, stderr, err := runSCCOutputs(append(append([]string{
+			"--bounded-memory",
+			"--bounded-memory-dir", spill,
+			"--bounded-memory-max-in-memory-files", "1",
+			"--bounded-memory-stats",
+			"--format-multi", format,
+		}, common...), src)...)
+		if err != nil {
+			t.Fatalf("bounded %s: %v\nstdout:\n%s\nstderr:\n%s", format, err, bounded, stderr)
+		}
+		if format == "tabular:stdout,wide:stdout" {
+			if tabularTotals(unbounded) != tabularTotals(bounded) {
+				t.Fatalf("totals mismatch\nunbounded:\n%s\nbounded:\n%s", unbounded, bounded)
+			}
+		} else if unbounded != bounded {
+			t.Fatalf("stdout mismatch for %s\nunbounded:\n%s\nbounded:\n%s", format, unbounded, bounded)
+		}
+		stats := boundedMemoryLines(stderr)
+		if len(stats) != 1 {
+			t.Fatalf("format %s stats lines=%d stderr=%q", format, len(stats), stderr)
+		}
+		spills, peak := parseBoundedStats(t, stats[0])
+		if spills <= 0 || peak != 1 {
+			t.Fatalf("format %s spills=%d peak=%d", format, spills, peak)
+		}
+	}
+
+	if countSpillFiles(t, spill) < 1 {
+		t.Fatal("expected spill files to remain after exit")
+	}
+
+	streamFile := filepath.Join(t.TempDir(), "stream.csv")
+	unboundedStream, _, err := runSCCOutputs(append(append([]string{"--format-multi", "csv-stream:stdout"}, common...), src)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundedStdout, stderr, err := runSCCOutputs(append(append([]string{
+		"--bounded-memory",
+		"--bounded-memory-dir", spill,
+		"--bounded-memory-max-in-memory-files", "1",
+		"--format-multi", "csv-stream:" + streamFile,
+	}, common...), src)...)
+	if err != nil {
+		t.Fatalf("csv-stream file: %v\n%s", err, stderr)
+	}
+	if boundedStdout != "" {
+		t.Fatalf("csv-stream file destination wrote stdout: %q", boundedStdout)
+	}
+	got, err := os.ReadFile(streamFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != unboundedStream {
+		t.Fatalf("csv-stream file mismatch\nfile:\n%s\nstdout:\n%s", got, unboundedStream)
+	}
+	if !streamLinesNonIncreasing(string(got)) {
+		t.Fatalf("csv-stream not sorted by lines:\n%s", got)
+	}
+
+	excluded := t.TempDir()
+	if err := os.WriteFile(filepath.Join(excluded, "keep.go"), []byte("package keep\n\nfunc K() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(excluded, "spill")
+	if err := os.MkdirAll(inside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := strings.Repeat("package secret\nfunc S() { return 1 }\n", 40)
+	if err := os.WriteFile(filepath.Join(inside, "secret.go"), []byte(secret), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		body := fmt.Sprintf("package p%d\n\nfunc F() int { return %d }\n", i, i)
+		if err := os.WriteFile(filepath.Join(excluded, fmt.Sprintf("p%d.go", i)), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A different directory whose name ends in "spill" must still be counted.
+	otherSpill := filepath.Join(excluded, "other", "spill")
+	if err := os.MkdirAll(otherSpill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(otherSpill, "extra.go"), []byte("package extra\n\nfunc E() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runSCCOutputs(
+		"--bounded-memory",
+		"--bounded-memory-dir", inside,
+		"--bounded-memory-max-in-memory-files", "1",
+		"--bounded-memory-stats",
+		"--format-multi", "tabular:stdout",
+		"--file-process-job-workers", "1",
+		excluded,
+	)
+	if err != nil {
+		t.Fatalf("exclude: %v\n%s\n%s", err, stdout, stderr)
+	}
+	if strings.Contains(stdout, "secret") {
+		t.Fatalf("spill directory was counted:\n%s", stdout)
+	}
+	files := tabularFileCount(t, stdout)
+	if files != 5 {
+		t.Fatalf("expected 5 files excluding spill dir, got %d\n%s", files, stdout)
+	}
+	stats := boundedMemoryLines(stderr)
+	if len(stats) != 1 {
+		t.Fatalf("exclude stats: %q", stderr)
+	}
+
+	if _, _, err := runSCCOutputs("--bounded-memory", "--format-multi", "json:stdout", src); err == nil {
+		t.Fatal("missing spill dir should fail")
+	}
+	if _, _, err := runSCCOutputs("--bounded-memory", "--bounded-memory-dir", spill, "--bounded-memory-max-in-memory-files", "0", "--format-multi", "json:stdout", src); err == nil {
+		t.Fatal("max 0 should fail")
+	}
+}
+
+func boundedMemoryLines(stderr string) []string {
+	var lines []string
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.HasPrefix(line, "bounded-memory:") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func parseBoundedStats(t *testing.T, line string) (int, int) {
+	t.Helper()
+	var spills, peak int
+	if _, err := fmt.Sscanf(line, "bounded-memory: spills=%d peak_in_memory_files=%d", &spills, &peak); err != nil {
+		t.Fatal(err)
+	}
+	return spills, peak
+}
+
+func tabularTotals(out string) string {
+	var totals []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "Total") {
+			totals = append(totals, strings.Join(strings.Fields(line), " "))
+		}
+	}
+	return strings.Join(totals, "\n")
+}
+
+func tabularFileCount(t *testing.T, out string) int {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "Total" {
+			n, err := strconv.Atoi(fields[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			return n
+		}
+	}
+	t.Fatalf("no total line:\n%s", out)
+	return 0
+}
+
+func countSpillFiles(t *testing.T, dir string) int {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().IsRegular() && info.Size() > 0 {
+			n++
+		}
+	}
+	return n
+}
+
+func streamLinesNonIncreasing(out string) bool {
+	rows := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(rows) < 2 {
+		return false
+	}
+	prev := int64(1 << 62)
+	for _, row := range rows[1:] {
+		fields := strings.Split(row, ",")
+		if len(fields) < 4 {
+			return false
+		}
+		n, err := strconv.ParseInt(fields[3], 10, 64)
+		if err != nil {
+			return false
+		}
+		if n > prev {
+			return false
+		}
+		prev = n
+	}
+	return true
 }

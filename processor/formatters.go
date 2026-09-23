@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -499,7 +500,12 @@ func toOpenMetricsFiles(input chan *FileJob) string {
 // with the express idea of lowering memory usage, see https://github.com/boyter/scc/issues/210 for
 // the background on why this might be needed
 func toCSVStream(input chan *FileJob) string {
-	fmt.Println("Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc")
+	writeCSVStream(os.Stdout, input)
+	return ""
+}
+
+func writeCSVStream(w io.Writer, input chan *FileJob) {
+	fmt.Fprintln(w, "Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc")
 
 	var quoteRegex = regexp.MustCompile("\"")
 
@@ -508,7 +514,7 @@ func toCSVStream(input chan *FileJob) string {
 		var location = "\"" + quoteRegex.ReplaceAllString(result.Location, "\"\"") + "\""
 		var filename = "\"" + quoteRegex.ReplaceAllString(result.Filename, "\"\"") + "\""
 
-		fmt.Printf("%s,%s,%s,%d,%d,%d,%d,%d,%d,%d\n",
+		fmt.Fprintf(w, "%s,%s,%s,%d,%d,%d,%d,%d,%d,%d\n",
 			result.Language,
 			location,
 			filename,
@@ -521,8 +527,21 @@ func toCSVStream(input chan *FileJob) string {
 			result.Uloc,
 		)
 	}
+}
 
-	return ""
+// deliverCSVStream writes csv-stream bytes. Unbounded --format-multi always
+// prints them to stdout. Bounded-memory mode honors a file destination.
+func deliverCSVStream(input chan *FileJob, dest string, honorFileDest bool) {
+	if !honorFileDest || dest == "stdout" {
+		writeCSVStream(os.Stdout, input)
+		return
+	}
+
+	var buf bytes.Buffer
+	writeCSVStream(&buf, input)
+	if err := os.WriteFile(dest, buf.Bytes(), 0600); err != nil {
+		fmt.Printf("%s unable to be written to for format %s: %s", dest, "csv-stream", err)
+	}
 }
 
 func toHtml(input chan *FileJob) string {
@@ -828,56 +847,91 @@ func fileSummarize(input chan *FileJob) string {
 // both to files and to stdout. Not the most efficient way to do it in terms of memory
 // but seeing as the files are just summaries by this point it shouldn't be too bad
 func fileSummarizeMulti(input chan *FileJob) string {
+	if BoundedMemory {
+		return fileSummarizeMultiBounded(input)
+	}
+
 	// collect all the results
 	var results []*FileJob
 	for res := range input {
 		results = append(results, res)
 	}
 
+	return renderFormatMulti(func(sorted bool) chan *FileJob {
+		return jobsToChan(results, sorted)
+	}, nil)
+}
+
+func jobsToChan(results []*FileJob, sorted bool) chan *FileJob {
+	jobs := results
+	if sorted {
+		jobs = slices.Clone(results)
+		slices.SortStableFunc(jobs, compareCSVStreamJobs)
+	}
+
+	ch := make(chan *FileJob, len(jobs))
+	for _, job := range jobs {
+		ch <- job
+	}
+	close(ch)
+	return ch
+}
+
+func renderFormatMulti(source func(sorted bool) chan *FileJob, afterWide func()) string {
 	var str strings.Builder
 
 	// for each output pump the results into
 	for s := range strings.SplitSeq(FormatMulti, ",") {
 		t := strings.Split(s, ":")
 		if len(t) == 2 {
-			i := make(chan *FileJob, len(results))
-
-			for _, r := range results {
-				i <- r
+			formatName := strings.ToLower(t[0])
+			if formatName == "csv-stream" {
+				// Sort only when --sort is set so unsorted runs keep walk order.
+				// Unbounded format-multi still ignores the destination and
+				// writes stdout; bounded-memory mode honors a file path.
+				deliverCSVStream(source(SortBy != ""), t[1], BoundedMemory)
+				continue
 			}
-			close(i)
+			if !knownFormatMulti(formatName) {
+				if t[1] == "stdout" {
+					str.WriteString("\n")
+				} else if err := os.WriteFile(t[1], nil, 0600); err != nil {
+					fmt.Printf("%s unable to be written to for format %s: %s", t[1], t[0], err)
+				}
+				continue
+			}
 
+			input := source(false)
 			var val string
 
-			switch strings.ToLower(t[0]) {
+			switch formatName {
 			case "tabular":
-				val = fileSummarizeShort(i)
+				val = fileSummarizeShort(input)
 			case "wide":
-				val = fileSummarizeLong(i)
+				val = fileSummarizeLong(input)
+				if afterWide != nil {
+					afterWide()
+				}
 			case "json":
-				val = toJSON(i)
+				val = toJSON(input)
 			case "json2":
-				val = toJSON2(i)
+				val = toJSON2(input)
 			case "cloc-yaml":
-				val = toClocYAML(i)
+				val = toClocYAML(input)
 			case "cloc-yml":
-				val = toClocYAML(i)
+				val = toClocYAML(input)
 			case "csv":
-				val = toCSV(i)
-			case "csv-stream":
-				// special case where we want to ignore writing to stdout to disk as it's already done
-				_ = toCSVStream(i)
-				continue
+				val = toCSV(input)
 			case "html":
-				val = toHtml(i)
+				val = toHtml(input)
 			case "html-table":
-				val = toHtmlTable(i)
+				val = toHtmlTable(input)
 			case "sql":
-				val = toSql(i)
+				val = toSql(input)
 			case "sql-insert":
-				val = toSqlInsert(i)
+				val = toSqlInsert(input)
 			case "openmetrics":
-				val = toOpenMetrics(i)
+				val = toOpenMetrics(input)
 			}
 
 			if t[1] == "stdout" {
@@ -893,6 +947,16 @@ func fileSummarizeMulti(input chan *FileJob) string {
 	}
 
 	return str.String()
+}
+
+func knownFormatMulti(name string) bool {
+	switch name {
+	case "tabular", "wide", "json", "json2", "cloc-yaml", "cloc-yml", "csv",
+		"html", "html-table", "sql", "sql-insert", "openmetrics":
+		return true
+	default:
+		return false
+	}
 }
 
 func fileSummarizeLong(input chan *FileJob) string {
@@ -928,8 +992,10 @@ func fileSummarizeLong(input chan *FileJob) string {
 		_, ok := langs[res.Language]
 
 		if !ok {
-			files := []*FileJob{}
-			files = append(files, res)
+			var files []*FileJob
+			if Files {
+				files = append(files, res)
+			}
 
 			langs[res.Language] = LanguageSummary{
 				Name:               res.Language,
@@ -945,7 +1011,10 @@ func fileSummarizeLong(input chan *FileJob) string {
 			}
 		} else {
 			tmp := langs[res.Language]
-			files := append(tmp.Files, res)
+			files := tmp.Files
+			if Files {
+				files = append(files, res)
+			}
 			lineLength := append(tmp.LineLength, res.LineLength...)
 
 			langs[res.Language] = LanguageSummary{
@@ -986,7 +1055,7 @@ func fileSummarizeLong(input chan *FileJob) string {
 		if Percent {
 			_, _ = fmt.Fprintf(str,
 				tabularWideFormatBodyPercent,
-				float64(len(summary.Files))/float64(sumFiles)*100,
+				float64(summary.Count)/float64(sumFiles)*100,
 				float64(summary.Lines)/float64(sumLines)*100,
 				float64(summary.Blank)/float64(sumBlank)*100,
 				float64(summary.Comment)/float64(sumComment)*100,
@@ -1115,8 +1184,10 @@ func fileSummarizeShort(input chan *FileJob) string {
 		_, ok := lang[res.Language]
 
 		if !ok {
-			files := []*FileJob{}
-			files = append(files, res)
+			var files []*FileJob
+			if Files {
+				files = append(files, res)
+			}
 
 			lang[res.Language] = LanguageSummary{
 				Name:       res.Language,
@@ -1131,7 +1202,10 @@ func fileSummarizeShort(input chan *FileJob) string {
 			}
 		} else {
 			tmp := lang[res.Language]
-			files := append(tmp.Files, res)
+			files := tmp.Files
+			if Files {
+				files = append(files, res)
+			}
 			lineLength := append(tmp.LineLength, res.LineLength...)
 
 			lang[res.Language] = LanguageSummary{
@@ -1175,7 +1249,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 			if !Complexity {
 				_, _ = p.Fprintf(str,
 					tabularShortPercentLanguageFormatBody,
-					float64(len(summary.Files))/float64(sumFiles)*100,
+					float64(summary.Count)/float64(sumFiles)*100,
 					float64(summary.Lines)/float64(sumLines)*100,
 					float64(summary.Blank)/float64(sumBlank)*100,
 					float64(summary.Comment)/float64(sumComment)*100,
@@ -1185,7 +1259,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 			} else {
 				_, _ = p.Fprintf(str,
 					tabularShortPercentLanguageFormatBodyNoComplexity,
-					float64(len(summary.Files))/float64(sumFiles)*100,
+					float64(summary.Count)/float64(sumFiles)*100,
 					float64(summary.Lines)/float64(sumLines)*100,
 					float64(summary.Blank)/float64(sumBlank)*100,
 					float64(summary.Comment)/float64(sumComment)*100,
