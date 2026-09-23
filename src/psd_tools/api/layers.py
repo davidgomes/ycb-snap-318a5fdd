@@ -38,6 +38,7 @@ Common layer properties:
 - ``visible``: Visibility flag
 - ``opacity``: Opacity (0-255)
 - ``blend_mode``: Blend mode enum
+- ``blend_ranges``: Blend If sliders
 - ``bbox``: Bounding box (left, top, right, bottom)
 - ``width``, ``height``: Dimensions
 - ``kind``: Layer type string ('pixel', 'group', 'type', etc.)
@@ -106,6 +107,7 @@ from PIL import Image, ImageChops
 
 import psd_tools.psd.engine_data as engine_data
 from psd_tools.api import pil_io
+from psd_tools.api.blend_range import BlendRanges
 from psd_tools.api.effects import Effects
 from psd_tools.api.mask import Mask
 from psd_tools.api.protocols import GroupMixinProtocol, LayerProtocol, PSDProtocol
@@ -309,6 +311,41 @@ class Layer(LayerProtocol):
         if self.blend_mode != blend_mode:
             self._psd._mark_updated()
         self._record.blend_mode = blend_mode
+
+    @property
+    def blend_ranges(self) -> BlendRanges:
+        """
+        Blend If ranges for this layer. Writable.
+
+        The returned object reads the layer's
+        :py:class:`~psd_tools.psd.layer_and_mask.LayerBlendingRanges`.
+        Assigning a :py:class:`~psd_tools.api.blend_range.BlendRanges`
+        writes it back. Slider changes on the returned object are written
+        through as well, so they are kept when the document is saved.
+
+        :return: :py:class:`~psd_tools.api.blend_range.BlendRanges`
+        """
+        ranges = BlendRanges.from_raw(self._record.blending_ranges)
+        ranges._listen(lambda: self._commit_blend_ranges(ranges))
+        return ranges
+
+    @blend_ranges.setter
+    def blend_ranges(self, value: BlendRanges) -> None:
+        if not isinstance(value, BlendRanges):
+            raise TypeError(
+                f"blend_ranges must be a BlendRanges, got {type(value).__name__}"
+            )
+        self._commit_blend_ranges(value)
+        value._listen(lambda: self._commit_blend_ranges(value))
+
+    def _commit_blend_ranges(self, ranges: BlendRanges) -> None:
+        raw = self._record.blending_ranges
+        previous = (raw.composite_ranges, raw.channel_ranges)
+        ranges.apply_to_raw(raw)
+        if previous != (raw.composite_ranges, raw.channel_ranges) and (
+            self._psd is not None
+        ):
+            self._psd._mark_updated()
 
     @property
     def left(self) -> int:

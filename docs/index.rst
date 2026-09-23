@@ -91,6 +91,7 @@ Not supported:
 
     reference/psd_tools
     reference/psd_tools.api
+    reference/psd_tools.api.blend_range
     reference/psd_tools.api.adjustments
     reference/psd_tools.api.effects
     reference/psd_tools.api.layers

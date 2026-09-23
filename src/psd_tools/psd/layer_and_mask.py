@@ -471,7 +471,16 @@ class LayerBlendingRanges(BaseElement):
         return cls(composite_ranges, channel_ranges)  # type: ignore[arg-type]
 
     def write(self, fp: BinaryIO, **kwargs: Any) -> int:
+        self._validate_ranges()
         return write_length_block(fp, lambda f: self._write_body(f))
+
+    def _validate_ranges(self) -> None:
+        """Require two source/destination pairs on every written range."""
+        if self.composite_ranges is not None:
+            _require_blend_pairs(self.composite_ranges, "composite_ranges")
+        if self.channel_ranges is not None:
+            for index, channel in enumerate(self.channel_ranges):
+                _require_blend_pairs(channel, f"channel range {index}")
 
     def _write_body(self, fp: BinaryIO) -> int:
         written = 0
@@ -483,6 +492,27 @@ class LayerBlendingRanges(BaseElement):
                 for x in channel:
                     written += write_fmt(fp, "2H", *x)
         return written
+
+
+def _require_blend_pairs(ranges: Any, label: str) -> None:
+    """Raise ValueError unless ``ranges`` is exactly two 2-value pairs."""
+    try:
+        count = len(ranges)
+    except TypeError as exc:
+        raise ValueError(f"{label} must contain exactly 2 pairs") from exc
+    if count != 2:
+        raise ValueError(f"{label} must contain exactly 2 pairs, got {count}")
+    for index, pair in enumerate(ranges):
+        try:
+            length = len(pair)
+        except TypeError as exc:
+            raise ValueError(
+                f"{label} pair {index} must contain exactly 2 values"
+            ) from exc
+        if length != 2:
+            raise ValueError(
+                f"{label} pair {index} must contain exactly 2 values, got {length}"
+            )
 
 
 class LayerRecords(ListElement):

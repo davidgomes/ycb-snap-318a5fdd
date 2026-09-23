@@ -336,6 +336,12 @@ class Compositor(object):
         shape *= shape_mask
         alpha *= shape_mask * opacity_mask * opacity_const
 
+        # Blend If ("this layer" from source color, "underlying" from backdrop).
+        visibility = self._blend_if_visibility(layer, color, knockout)
+        if visibility is not None:
+            shape = shape * visibility
+            alpha = alpha * visibility
+
         # TODO: Tag.BLEND_INTERIOR_ELEMENTS controls how inner effects apply.
 
         # TODO: Apply before effects
@@ -506,6 +512,16 @@ class Compositor(object):
         for clip_layer in layer.clip_layers:
             compositor.apply(clip_layer, clip_compositing=True)
         return compositor._color
+
+    def _blend_if_visibility(
+        self, layer: Layer, color: np.ndarray, knockout: bool
+    ) -> np.ndarray | None:
+        """Per-pixel Blend If weight, or None when every slider is at default."""
+        ranges = layer.blend_ranges
+        if ranges.is_default:
+            return None
+        backdrop = self._color_0 if knockout else self._color
+        return ranges.compute_visibility(color, backdrop)
 
     def _get_mask(self, layer: Layer) -> tuple[float | np.ndarray, float]:
         """Get mask attributes."""

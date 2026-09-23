@@ -98,6 +98,28 @@ def test_layer_blending_ranges() -> None:
             ],
         )
     )
+    check_write_read(LayerBlendingRanges(None, None))  # type: ignore[arg-type]
+
+
+def test_layer_blending_ranges_rejects_invalid_pairs() -> None:
+    too_few_composite = LayerBlendingRanges([(0, 1)], [[(0, 1), (0, 1)]])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="composite_ranges"):
+        too_few_composite.tobytes()
+
+    too_many_composite = LayerBlendingRanges(
+        [(0, 1), (0, 1), (0, 1)],
+        [[(0, 1), (0, 1)]],
+    )
+    with pytest.raises(ValueError, match="composite_ranges"):
+        too_many_composite.tobytes()
+
+    short_channel = LayerBlendingRanges([(0, 1), (0, 1)], [[(0, 1)]])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="channel range 0"):
+        short_channel.tobytes()
+
+    short_pair = LayerBlendingRanges([(0, 1, 2), (0, 1)], [[(0, 1), (0, 1)]])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="exactly 2 values"):
+        short_pair.tobytes()
 
 
 def test_layer_record() -> None:

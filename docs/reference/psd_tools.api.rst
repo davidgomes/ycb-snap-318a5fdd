@@ -15,3 +15,4 @@ PSDImage
     :inherited-members:
 
 For detailed layer types documentation, see :doc:`psd_tools.api.layers`.
+Blend If sliders are documented in :doc:`psd_tools.api.blend_range`.
