@@ -124,6 +124,21 @@ var Dryness = false
 // SortBy sets which column output in formatter should be sorted by
 var SortBy = ""
 
+// SortBySet indicates the sort column was explicitly requested rather than left as the default
+var SortBySet = false
+
+// BoundedMemory limits how many per-file results are held in memory before formatting, spilling the rest to disk
+var BoundedMemory = false
+
+// BoundedMemoryDir is the directory used to spill per-file results when BoundedMemory is enabled
+var BoundedMemoryDir = ""
+
+// BoundedMemoryMaxInMemoryFiles is the maximum number of per-file results held in memory when BoundedMemory is enabled
+var BoundedMemoryMaxInMemoryFiles = 0
+
+// BoundedMemoryStats prints spill statistics to stderr when BoundedMemory is enabled
+var BoundedMemoryStats = false
+
 // Exclude is a regular expression which is used to exclude files from being processed
 var Exclude = []string{}
 
@@ -609,6 +624,13 @@ func Process() {
 
 	SortBy = strings.ToLower(SortBy)
 
+	if BoundedMemory {
+		if err := setupBoundedMemory(); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+
 	printDebugF("NumCPU: %d", runtime.NumCPU())
 	printDebugF("SortBy: %s", SortBy)
 	printDebugF("PathDenyList: %v", PathDenyList)
@@ -654,6 +676,10 @@ func Process() {
 
 	go func() {
 		for _, f := range filePaths {
+			if inBoundedMemoryDir(f) {
+				continue
+			}
+
 			fileInfo, err := os.Lstat(f)
 			if err != nil {
 				continue
@@ -673,7 +699,7 @@ func Process() {
 					break
 				}
 			}
-			if shouldExclude {
+			if shouldExclude || inBoundedMemoryDir(fi.Location) {
 				continue
 			}
 

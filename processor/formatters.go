@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -78,36 +79,69 @@ var openMetricsSummaryRecordFormat = "scc_%s{language=\"%s\"} %d\n"
 var openMetricsFileRecordFormat = "scc_%s{language=\"%s\",file=\"%s\"} %d\n"
 
 func sortSummaryFiles(summary *LanguageSummary) {
-	switch SortBy {
+	slices.SortFunc(summary.Files, getSummaryFilesSortFunc(SortBy))
+}
+
+func getSummaryFilesSortFunc(sortBy string) func(a, b *FileJob) int {
+	switch sortBy {
 	case "name", "names", "language", "languages", "lang", "langs":
-		slices.SortFunc(summary.Files, func(a, b *FileJob) int {
+		return func(a, b *FileJob) int {
 			return strings.Compare(a.Location, b.Location)
-		})
+		}
 	case "line", "lines":
-		slices.SortFunc(summary.Files, func(a, b *FileJob) int {
+		return func(a, b *FileJob) int {
 			return cmp.Compare(b.Lines, a.Lines)
-		})
+		}
 	case "blank", "blanks":
-		slices.SortFunc(summary.Files, func(a, b *FileJob) int {
+		return func(a, b *FileJob) int {
 			return cmp.Compare(b.Blank, a.Blank)
-		})
+		}
 	case "code", "codes":
-		slices.SortFunc(summary.Files, func(a, b *FileJob) int {
+		return func(a, b *FileJob) int {
 			return cmp.Compare(b.Code, a.Code)
-		})
+		}
 	case "comment", "comments":
-		slices.SortFunc(summary.Files, func(a, b *FileJob) int {
+		return func(a, b *FileJob) int {
 			return cmp.Compare(b.Comment, a.Comment)
-		})
+		}
 	case "complexity", "complexitys", "comp":
-		slices.SortFunc(summary.Files, func(a, b *FileJob) int {
+		return func(a, b *FileJob) int {
 			return cmp.Compare(b.Complexity, a.Complexity)
-		})
+		}
 	default:
-		slices.SortFunc(summary.Files, func(a, b *FileJob) int {
+		return func(a, b *FileJob) int {
 			return cmp.Compare(b.Lines, a.Lines)
-		})
+		}
 	}
+}
+
+// summaryTotals holds the totals across all languages used by the tabular style formatters
+type summaryTotals struct {
+	Files              int64
+	Lines              int64
+	Code               int64
+	Comment            int64
+	Blank              int64
+	Complexity         int64
+	Bytes              int64
+	WeightedComplexity float64
+}
+
+// languageFilesFunc emits the files of a language in the order they should be displayed
+type languageFilesFunc func(summary LanguageSummary, emit func(*FileJob))
+
+// lineLengthFunc returns the max and mean line length for a language
+type lineLengthFunc func(summary LanguageSummary) (int, int)
+
+func summaryFiles(summary LanguageSummary, emit func(*FileJob)) {
+	sortSummaryFiles(&summary)
+	for _, res := range summary.Files {
+		emit(res)
+	}
+}
+
+func summaryLineLength(summary LanguageSummary) (int, int) {
+	return maxIn(summary.LineLength), meanIn(summary.LineLength)
 }
 
 // LanguageSummary to generate output like cloc
@@ -274,6 +308,15 @@ func toJSON2(input chan *FileJob) string {
 	language := aggregateLanguageSummary(input)
 	language = sortLanguageSummary(language)
 
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
+	jsonString, _ := json.Marshal(buildJSON2(language))
+
+	printDebugF("milliseconds to build formatted string: %d", makeTimestampMilli()-startTime)
+
+	return string(jsonString)
+}
+
+func buildJSON2(language []LanguageSummary) Json2 {
 	var sumCode, sumComplexity int64
 	for _, l := range language {
 		sumCode += l.Code
@@ -301,12 +344,7 @@ func toJSON2(input chan *FileJob) string {
 		j2.EstimatedLLMCycles = &result.IterationFactor
 	}
 
-	json := jsoniter.ConfigCompatibleWithStandardLibrary
-	jsonString, _ := json.Marshal(j2)
-
-	printDebugF("milliseconds to build formatted string: %d", makeTimestampMilli()-startTime)
-
-	return string(jsonString)
+	return j2
 }
 
 func toCSV(input chan *FileJob) string {
@@ -410,27 +448,20 @@ func getCSVFilesSortFunc(sortBy string) func(a, b []string) int {
 	}
 }
 
-func toCSVFiles(input chan *FileJob) string {
-	records := [][]string{}
-
-	for result := range input {
-		records = append(records, []string{
-			result.Language,
-			result.Location,
-			result.Filename,
-			strconv.FormatInt(result.Lines, 10),
-			strconv.FormatInt(result.Code, 10),
-			strconv.FormatInt(result.Comment, 10),
-			strconv.FormatInt(result.Blank, 10),
-			strconv.FormatInt(result.Complexity, 10),
-			strconv.FormatInt(result.Bytes, 10),
-			strconv.Itoa(result.Uloc),
-		})
+// getCSVFilesTotalSortFunc extends getCSVFilesSortFunc by breaking ties on the whole record
+// so the output does not depend on the order in which files finished processing
+func getCSVFilesTotalSortFunc(sortBy string) func(a, b []string) int {
+	sortFunc := getCSVFilesSortFunc(sortBy)
+	return func(a, b []string) int {
+		if order := sortFunc(a, b); order != 0 {
+			return order
+		}
+		return slices.Compare(a, b)
 	}
+}
 
-	slices.SortFunc(records, getCSVFilesSortFunc(SortBy))
-
-	recordsEnd := [][]string{{
+func csvFilesHeader() []string {
+	return []string{
 		"Language",
 		"Provider",
 		"Filename",
@@ -441,7 +472,34 @@ func toCSVFiles(input chan *FileJob) string {
 		"Complexity",
 		"Bytes",
 		"ULOC",
-	}}
+	}
+}
+
+func csvFilesRecord(result *FileJob) []string {
+	return []string{
+		result.Language,
+		result.Location,
+		result.Filename,
+		strconv.FormatInt(result.Lines, 10),
+		strconv.FormatInt(result.Code, 10),
+		strconv.FormatInt(result.Comment, 10),
+		strconv.FormatInt(result.Blank, 10),
+		strconv.FormatInt(result.Complexity, 10),
+		strconv.FormatInt(result.Bytes, 10),
+		strconv.Itoa(result.Uloc),
+	}
+}
+
+func toCSVFiles(input chan *FileJob) string {
+	records := [][]string{}
+
+	for result := range input {
+		records = append(records, csvFilesRecord(result))
+	}
+
+	slices.SortFunc(records, getCSVFilesTotalSortFunc(SortBy))
+
+	recordsEnd := [][]string{csvFilesHeader()}
 
 	recordsEnd = append(recordsEnd, records...)
 
@@ -499,7 +557,12 @@ func toOpenMetricsFiles(input chan *FileJob) string {
 // with the express idea of lowering memory usage, see https://github.com/boyter/scc/issues/210 for
 // the background on why this might be needed
 func toCSVStream(input chan *FileJob) string {
-	fmt.Println("Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc")
+	writeCSVStream(os.Stdout, input)
+	return ""
+}
+
+func writeCSVStream(w io.Writer, input chan *FileJob) {
+	_, _ = fmt.Fprintln(w, "Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc")
 
 	var quoteRegex = regexp.MustCompile("\"")
 
@@ -508,7 +571,7 @@ func toCSVStream(input chan *FileJob) string {
 		var location = "\"" + quoteRegex.ReplaceAllString(result.Location, "\"\"") + "\""
 		var filename = "\"" + quoteRegex.ReplaceAllString(result.Filename, "\"\"") + "\""
 
-		fmt.Printf("%s,%s,%s,%d,%d,%d,%d,%d,%d,%d\n",
+		_, _ = fmt.Fprintf(w, "%s,%s,%s,%d,%d,%d,%d,%d,%d,%d\n",
 			result.Language,
 			location,
 			filename,
@@ -521,13 +584,15 @@ func toCSVStream(input chan *FileJob) string {
 			result.Uloc,
 		)
 	}
-
-	return ""
 }
 
 func toHtml(input chan *FileJob) string {
+	return htmlDocument(toHtmlTable(input))
+}
+
+func htmlDocument(table string) string {
 	return `<html lang="en"><head><meta charset="utf-8" /><title>scc html output</title><style>table { border-collapse: collapse; }td, th { border: 1px solid #999; padding: 0.5rem; text-align: left;}</style></head><body>` +
-		toHtmlTable(input) +
+		table +
 		"</body></html>\n"
 }
 
@@ -586,6 +651,20 @@ func toHtmlTable(input chan *FileJob) string {
 
 	language = sortLanguageSummary(language)
 
+	return renderHtmlTable(language, summaryTotals{
+		Files:      sumFiles,
+		Lines:      sumLines,
+		Code:       sumCode,
+		Comment:    sumComment,
+		Blank:      sumBlank,
+		Complexity: sumComplexity,
+		Bytes:      sumBytes,
+	}, summaryFiles)
+}
+
+func renderHtmlTable(language []LanguageSummary, totals summaryTotals, files languageFilesFunc) string {
+	sumFiles, sumLines, sumCode, sumComment, sumBlank, sumComplexity, sumBytes := totals.Files, totals.Lines, totals.Code, totals.Comment, totals.Blank, totals.Complexity, totals.Bytes
+
 	str := &strings.Builder{}
 
 	str.WriteString(`<table id="scc-table">
@@ -613,12 +692,10 @@ func toHtmlTable(input chan *FileJob) string {
 		<th>%d</th>
 		<th>%d</th>
 		<th>%d</th>
-	</tr>`, r.Name, len(r.Files), r.Lines, r.Blank, r.Comment, r.Code, r.Complexity, r.Bytes, len(ulocLanguageCount[r.Name]))
+	</tr>`, r.Name, r.Count, r.Lines, r.Blank, r.Comment, r.Code, r.Complexity, r.Bytes, len(ulocLanguageCount[r.Name]))
 
 		if Files {
-			sortSummaryFiles(&r)
-
-			for _, res := range r.Files {
+			files(r, func(res *FileJob) {
 				_, _ = fmt.Fprintf(str, `<tr>
 		<td>%s</td>
 		<td></td>
@@ -630,7 +707,7 @@ func toHtmlTable(input chan *FileJob) string {
 		<td>%d</td>
 		<td>%d</td>
 	</tr>`, res.Location, res.Lines, res.Blank, res.Comment, res.Code, res.Complexity, res.Bytes, res.Uloc)
-			}
+			})
 		}
 
 	}
@@ -792,6 +869,10 @@ create table t        (
 }
 
 func fileSummarize(input chan *FileJob) string {
+	if BoundedMemory {
+		return boundedFileSummarize(input)
+	}
+
 	if FormatMulti != "" {
 		return fileSummarizeMulti(input)
 	}
@@ -842,7 +923,16 @@ func fileSummarizeMulti(input chan *FileJob) string {
 		if len(t) == 2 {
 			i := make(chan *FileJob, len(results))
 
-			for _, r := range results {
+			ordered := results
+			if SortBySet && strings.EqualFold(t[0], "csv-stream") {
+				ordered = slices.Clone(results)
+				sortFunc := getCSVFilesTotalSortFunc(SortBy)
+				slices.SortFunc(ordered, func(a, b *FileJob) int {
+					return sortFunc(csvFilesRecord(a), csvFilesRecord(b))
+				})
+			}
+
+			for _, r := range ordered {
 				i <- r
 			}
 			close(i)
@@ -896,15 +986,6 @@ func fileSummarizeMulti(input chan *FileJob) string {
 }
 
 func fileSummarizeLong(input chan *FileJob) string {
-	str := &strings.Builder{}
-
-	str.WriteString(getTabularWideBreak())
-	_, _ = fmt.Fprintf(str, tabularWideFormatHead, "Language", "Files", "Lines", "Blanks", "Comments", "Code", "Complexity", "Complexity/Lines")
-
-	if !Files {
-		str.WriteString(getTabularWideBreak())
-	}
-
 	langs := map[string]LanguageSummary{}
 	var sumFiles, sumLines, sumCode, sumComment, sumBlank, sumComplexity, sumBytes int64 = 0, 0, 0, 0, 0, 0, 0
 	var sumWeightedComplexity float64
@@ -970,6 +1051,31 @@ func fileSummarizeLong(input chan *FileJob) string {
 
 	language = sortLanguageSummary(language)
 
+	return renderLong(language, summaryTotals{
+		Files:              sumFiles,
+		Lines:              sumLines,
+		Code:               sumCode,
+		Comment:            sumComment,
+		Blank:              sumBlank,
+		Complexity:         sumComplexity,
+		Bytes:              sumBytes,
+		WeightedComplexity: sumWeightedComplexity,
+	}, summaryFiles, summaryLineLength)
+}
+
+func renderLong(language []LanguageSummary, totals summaryTotals, files languageFilesFunc, lineLength lineLengthFunc) string {
+	sumFiles, sumLines, sumCode, sumComment, sumBlank, sumComplexity, sumBytes := totals.Files, totals.Lines, totals.Code, totals.Comment, totals.Blank, totals.Complexity, totals.Bytes
+	sumWeightedComplexity := totals.WeightedComplexity
+
+	str := &strings.Builder{}
+
+	str.WriteString(getTabularWideBreak())
+	_, _ = fmt.Fprintf(str, tabularWideFormatHead, "Language", "Files", "Lines", "Blanks", "Comments", "Code", "Complexity", "Complexity/Lines")
+
+	if !Files {
+		str.WriteString(getTabularWideBreak())
+	}
+
 	startTime := makeTimestampMilli()
 	for _, summary := range language {
 		if Files {
@@ -986,7 +1092,7 @@ func fileSummarizeLong(input chan *FileJob) string {
 		if Percent {
 			_, _ = fmt.Fprintf(str,
 				tabularWideFormatBodyPercent,
-				float64(len(summary.Files))/float64(sumFiles)*100,
+				float64(summary.Count)/float64(sumFiles)*100,
 				float64(summary.Lines)/float64(sumLines)*100,
 				float64(summary.Blank)/float64(sumBlank)*100,
 				float64(summary.Comment)/float64(sumComment)*100,
@@ -1002,7 +1108,8 @@ func fileSummarizeLong(input chan *FileJob) string {
 		}
 
 		if MaxMean {
-			_, _ = fmt.Fprintf(str, tabularWideFormatFileMaxMean, maxIn(summary.LineLength), meanIn(summary.LineLength))
+			maxLine, meanLine := lineLength(summary)
+			_, _ = fmt.Fprintf(str, tabularWideFormatFileMaxMean, maxLine, meanLine)
 		}
 
 		if UlocMode {
@@ -1013,15 +1120,14 @@ func fileSummarizeLong(input chan *FileJob) string {
 		}
 
 		if Files {
-			sortSummaryFiles(&summary)
 			str.WriteString(getTabularWideBreak())
 
-			for _, res := range summary.Files {
+			files(summary, func(res *FileJob) {
 				tmp := unicodeAwareTrim(res.Location, wideFormatFileTruncate)
 				tmp = unicodeAwareRightPad(tmp, 43)
 
 				_, _ = fmt.Fprintf(str, tabularWideFormatFile, tmp, res.Lines, res.Blank, res.Comment, res.Code, res.Complexity, res.WeightedComplexity)
-			}
+			})
 		}
 	}
 
@@ -1085,23 +1191,8 @@ func unicodeAwareRightPad(tmp string, size int) string {
 }
 
 func fileSummarizeShort(input chan *FileJob) string {
-	str := &strings.Builder{}
-
-	str.WriteString(getTabularShortBreak())
-	if !Complexity {
-		_, _ = fmt.Fprintf(str, tabularShortFormatHead, "Language", "Files", "Lines", "Blanks", "Comments", "Code", "Complexity")
-	} else {
-		_, _ = fmt.Fprintf(str, tabularShortFormatHeadNoComplexity, "Language", "Files", "Lines", "Blanks", "Comments", "Code")
-	}
-
-	if !Files {
-		str.WriteString(getTabularShortBreak())
-	}
-
 	lang := map[string]LanguageSummary{}
 	var sumFiles, sumLines, sumCode, sumComment, sumBlank, sumComplexity, sumBytes int64 = 0, 0, 0, 0, 0, 0, 0
-
-	p := gmessage.NewPrinter(glanguage.Make(os.Getenv("LANG")))
 
 	for res := range input {
 		sumFiles++
@@ -1155,6 +1246,35 @@ func fileSummarizeShort(input chan *FileJob) string {
 
 	language = sortLanguageSummary(language)
 
+	return renderShort(language, summaryTotals{
+		Files:      sumFiles,
+		Lines:      sumLines,
+		Code:       sumCode,
+		Comment:    sumComment,
+		Blank:      sumBlank,
+		Complexity: sumComplexity,
+		Bytes:      sumBytes,
+	}, summaryFiles, summaryLineLength)
+}
+
+func renderShort(language []LanguageSummary, totals summaryTotals, files languageFilesFunc, lineLength lineLengthFunc) string {
+	sumFiles, sumLines, sumCode, sumComment, sumBlank, sumComplexity, sumBytes := totals.Files, totals.Lines, totals.Code, totals.Comment, totals.Blank, totals.Complexity, totals.Bytes
+
+	str := &strings.Builder{}
+
+	str.WriteString(getTabularShortBreak())
+	if !Complexity {
+		_, _ = fmt.Fprintf(str, tabularShortFormatHead, "Language", "Files", "Lines", "Blanks", "Comments", "Code", "Complexity")
+	} else {
+		_, _ = fmt.Fprintf(str, tabularShortFormatHeadNoComplexity, "Language", "Files", "Lines", "Blanks", "Comments", "Code")
+	}
+
+	if !Files {
+		str.WriteString(getTabularShortBreak())
+	}
+
+	p := gmessage.NewPrinter(glanguage.Make(os.Getenv("LANG")))
+
 	startTime := makeTimestampMilli()
 	for _, summary := range language {
 		addBreak := false
@@ -1175,7 +1295,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 			if !Complexity {
 				_, _ = p.Fprintf(str,
 					tabularShortPercentLanguageFormatBody,
-					float64(len(summary.Files))/float64(sumFiles)*100,
+					float64(summary.Count)/float64(sumFiles)*100,
 					float64(summary.Lines)/float64(sumLines)*100,
 					float64(summary.Blank)/float64(sumBlank)*100,
 					float64(summary.Comment)/float64(sumComment)*100,
@@ -1185,7 +1305,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 			} else {
 				_, _ = p.Fprintf(str,
 					tabularShortPercentLanguageFormatBodyNoComplexity,
-					float64(len(summary.Files))/float64(sumFiles)*100,
+					float64(summary.Count)/float64(sumFiles)*100,
 					float64(summary.Lines)/float64(sumLines)*100,
 					float64(summary.Blank)/float64(sumBlank)*100,
 					float64(summary.Comment)/float64(sumComment)*100,
@@ -1197,20 +1317,20 @@ func fileSummarizeShort(input chan *FileJob) string {
 		}
 
 		if MaxMean {
+			maxLine, meanLine := lineLength(summary)
 			if !Complexity {
-				_, _ = p.Fprintf(str, tabularShortFormatFileMaxMean, maxIn(summary.LineLength), meanIn(summary.LineLength))
+				_, _ = p.Fprintf(str, tabularShortFormatFileMaxMean, maxLine, meanLine)
 			} else {
-				_, _ = p.Fprintf(str, tabularShortFormatFileMaxMeanNoComplexity, maxIn(summary.LineLength), meanIn(summary.LineLength))
+				_, _ = p.Fprintf(str, tabularShortFormatFileMaxMeanNoComplexity, maxLine, meanLine)
 			}
 
 			addBreak = true
 		}
 
 		if Files {
-			sortSummaryFiles(&summary)
 			str.WriteString(getTabularShortBreak())
 
-			for _, res := range summary.Files {
+			files(summary, func(res *FileJob) {
 				tmp := unicodeAwareTrim(res.Location, shortFormatFileTruncate)
 
 				if !Complexity {
@@ -1220,7 +1340,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 					tmp = unicodeAwareRightPad(tmp, 34)
 					_, _ = p.Fprintf(str, tabularShortFormatFileNoComplexity, tmp, res.Lines, res.Blank, res.Comment, res.Code)
 				}
-			}
+			})
 		}
 
 		if UlocMode {
