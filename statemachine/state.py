@@ -13,6 +13,7 @@ from .event import _expand_event_id
 from .exceptions import InvalidDefinition
 from .i18n import _
 from .invoke import normalize_invoke_callbacks
+from .state_data import normalize_data
 from .transition import Transition
 from .transition_list import TransitionList
 
@@ -134,6 +135,10 @@ class State:
             See :ref:`actions`.
         exit: One or more callbacks assigned to be executed when the state is exited.
             See :ref:`actions`.
+        data: A dict mapping variable names to default values owned by the state.
+            Values may be plain defaults (copied on each entry), callables (used as
+            factories) or :class:`~statemachine.state_data.DataVar` declarations.
+            See :ref:`state-data`.
 
     State is a core component on how this library implements an expressive API to declare
     StateMachines.
@@ -214,9 +219,11 @@ class State:
         exit: Any = None,
         invoke: Any = None,
         donedata: Any = None,
+        data: Any = None,
         _callbacks: Any = None,
     ):
         self.name = name
+        self.data = normalize_data(data)
         self.value = value
         self._parallel = parallel
         self.states = states or []

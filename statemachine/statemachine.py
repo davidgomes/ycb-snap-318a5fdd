@@ -33,11 +33,13 @@ from .i18n import _
 from .model import Model
 from .signature import SignatureAdapter
 from .state import InstanceState
+from .state import State
+from .state_data import DataChangeInfo
+from .state_data import StateDataStore
 from .utils import run_async_from_sync
 
 if TYPE_CHECKING:
     from .event import Event
-    from .state import State
     from .states import States
 
 TModel = TypeVar("TModel")
@@ -148,6 +150,7 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         self.history_values: Dict[
             str, List[State]
         ] = {}  # Mapping of compound states to last active state(s).
+        self._state_data = StateDataStore()
         self.state_field = state_field
         self.start_configuration_values = (
             [start_value] if start_value is not None else list(self.start_configuration_values)
@@ -169,6 +172,9 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         # after state machine creation.
         self._engine = self._get_engine()
         self._engine.start(**kwargs)
+        self._state_data.ensure(
+            self.states_map[value] for value in self.configuration_values if value in self.states_map
+        )
 
     def _get_engine(self):
         if self._callbacks.has_async_callbacks:
@@ -377,6 +383,48 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
     @configuration.setter
     def configuration(self, new_configuration: OrderedSet["State"]):
         self._config.states = new_configuration
+
+    def get_state_data(self, state: "State | str") -> "Dict[str, Any] | None":
+        """The data owned by ``state`` (a :ref:`State` or its id) while it's active.
+
+        Returns ``None`` if the state is not active or declares no ``data``.
+        """
+        state_id = state if isinstance(state, str) else state.id
+        return self._state_data.get(state_id)
+
+    @property
+    def state_data_values(self) -> Dict[str, Dict[str, Any]]:
+        """A snapshot of the data of all active states, keyed by state id."""
+        return self._state_data.values
+
+    def set_state_data(self, state: "State | str", key: str, value: Any) -> None:
+        """Assign ``value`` to the ``key`` data variable of an active ``state``.
+
+        Raises:
+            InvalidDefinition: If the state is unknown or not active, the key is not
+                declared on it, or the value violates the declared
+                :class:`~statemachine.state_data.DataVar` type.
+        """
+        target = self._resolve_state(state)
+        if key not in target.data:
+            raise InvalidDefinition(
+                _("Data variable {!r} is not declared on state {!r}.").format(key, target.id)
+            )
+        if self._state_data.get(target.id) is None:
+            raise InvalidDefinition(_("State {!r} is not active.").format(target.id))
+        self._state_data.set(target, key, value)
+
+    def get_data_changes(self) -> List[DataChangeInfo]:
+        """The state data assignments made during the current macrostep."""
+        return self._state_data.changes
+
+    def _resolve_state(self, state: "State | str") -> "State":
+        if isinstance(state, State):
+            return state
+        for candidate in self.states_map.values():
+            if candidate.id == state:
+                return candidate
+        raise InvalidDefinition(_("{!r} is not a valid state.").format(state))
 
     @property
     def current_state_value(self):
