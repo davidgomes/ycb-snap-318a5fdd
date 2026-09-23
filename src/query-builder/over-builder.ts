@@ -15,6 +15,8 @@ import {
 } from '../parser/partition-by-parser.js'
 import { freeze } from '../util/object-utils.js'
 import type { OrderByInterface } from './order-by-interface.js'
+import type { FrameMode } from '../operation-node/frame-node.js'
+import { FrameBuilder, type FrameBuilderCallback } from './frame-builder.js'
 
 export class OverBuilder<DB, TB extends keyof DB>
   implements OrderByInterface<DB, TB, {}>, OperationNodeSource
@@ -127,6 +129,54 @@ export class OverBuilder<DB, TB extends keyof DB>
       overNode: OverNode.cloneWithPartitionByItems(
         this.#props.overNode,
         parsePartitionBy(partitionBy),
+      ),
+    })
+  }
+
+  /**
+   * Adds a `rows` frame clause inside the over function.
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select(
+   *     (eb) => eb.fn.sum<number>('age').over(
+   *       ob => ob.orderBy('id').rows(fb => fb.betweenPreceding(1).andCurrentRow())
+   *     ).as('running_age')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select sum("age") over(order by "id" rows between $1 preceding and current row) as "running_age"
+   * from "person"
+   * ```
+   */
+  rows(cb: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#frame('rows', cb)
+  }
+
+  /**
+   * Adds a `range` frame clause inside the over function. See {@link rows}.
+   */
+  range(cb: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#frame('range', cb)
+  }
+
+  /**
+   * Adds a `groups` frame clause inside the over function. See {@link rows}.
+   */
+  groups(cb: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#frame('groups', cb)
+  }
+
+  #frame(mode: FrameMode, cb: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return new OverBuilder({
+      overNode: OverNode.cloneWithFrame(
+        this.#props.overNode,
+        cb(new FrameBuilder(mode)).toOperationNode(),
       ),
     })
   }

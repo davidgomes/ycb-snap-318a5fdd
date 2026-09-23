@@ -2,6 +2,7 @@ import { ExpressionWrapper } from '../expression/expression-wrapper.js'
 import type { Expression } from '../expression/expression.js'
 import { AggregateFunctionNode } from '../operation-node/aggregate-function-node.js'
 import { FunctionNode } from '../operation-node/function-node.js'
+import { ValueNode } from '../operation-node/value-node.js'
 import type {
   ExtractTypeFromCoalesce1,
   ExtractTypeFromCoalesce3,
@@ -769,6 +770,150 @@ export interface FunctionModule<DB, TB extends keyof DB> {
         ? Simplify<ShallowDehydrateObject<O>>
         : never
   >
+  /**
+   * Calls the `row_number` window function.
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) => eb.fn.rowNumber<number>().over(ob => ob.orderBy('id')).as('rn'))
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select row_number() over(order by "id") as "rn" from "person"
+   * ```
+   */
+  rowNumber<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `rank` window function.
+   */
+  rank<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `dense_rank` window function.
+   */
+  denseRank<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `percent_rank` window function.
+   */
+  percentRank<
+    O extends number | string = number | string,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `cume_dist` window function.
+   */
+  cumeDist<
+    O extends number | string = number | string,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `ntile` window function. The bucket count is passed as a parameter.
+   */
+  ntile<O extends number | string | bigint = number | string | bigint>(
+    buckets: number | bigint,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `first_value` window function.
+   */
+  firstValue<
+    O = unknown,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `last_value` window function.
+   */
+  lastValue<
+    O = unknown,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `nth_value` window function.
+   */
+  nthValue<
+    O = unknown,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+    n: number | bigint,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `lag` window function.
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) => eb.fn.lag<number>('age', 1, 0).over(ob => ob.orderBy('id')).as('prev_age'))
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select lag("age", $1, $2) over(order by "id") as "prev_age" from "person"
+   * ```
+   */
+  lag<
+    O = unknown,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `lead` window function. See {@link lag}.
+   */
+  lead<
+    O = unknown,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `grouping` function, which can be used to detect the null-filled
+   * super-aggregate rows produced by `cube`, `rollup` and `grouping sets`.
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) => ['gender', eb.fn.grouping<number>('gender').as('g')])
+   *   .groupByRollup('gender')
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "gender", grouping("gender") as "g" from "person" group by rollup("gender")
+   * ```
+   */
+  grouping<
+    O extends number | string | bigint = number,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+  ): ExpressionWrapper<DB, TB, O>
 }
 
 export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
@@ -793,6 +938,19 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
         name,
         args ? parseReferenceExpressionOrList(args) : undefined,
       ),
+    })
+  }
+
+  const aggWithValues = (
+    name: string,
+    refs: ReadonlyArray<ReferenceExpression<DB, TB>>,
+    values: ReadonlyArray<number | bigint>,
+  ): AggregateFunctionBuilder<DB, TB, any> => {
+    return new AggregateFunctionBuilder({
+      aggregateFunctionNode: AggregateFunctionNode.create(name, [
+        ...parseReferenceExpressionOrList(refs),
+        ...values.map((value) => ValueNode.create(value)),
+      ]),
     })
   }
 
@@ -860,5 +1018,72 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
         ]),
       )
     },
+
+    rowNumber(): any {
+      return agg('row_number')
+    },
+
+    rank(): any {
+      return agg('rank')
+    },
+
+    denseRank(): any {
+      return agg('dense_rank')
+    },
+
+    percentRank(): any {
+      return agg('percent_rank')
+    },
+
+    cumeDist(): any {
+      return agg('cume_dist')
+    },
+
+    ntile(buckets: number | bigint): any {
+      return aggWithValues('ntile', [], [buckets])
+    },
+
+    firstValue(expr: any): any {
+      return agg('first_value', [expr])
+    },
+
+    lastValue(expr: any): any {
+      return agg('last_value', [expr])
+    },
+
+    nthValue(expr: any, n: number | bigint): any {
+      return aggWithValues('nth_value', [expr], [n])
+    },
+
+    lag(
+      expr: any,
+      offset?: number | bigint,
+      defaultValue?: number | bigint,
+    ): any {
+      return aggWithValues('lag', [expr], offsetArgs(offset, defaultValue))
+    },
+
+    lead(
+      expr: any,
+      offset?: number | bigint,
+      defaultValue?: number | bigint,
+    ): any {
+      return aggWithValues('lead', [expr], offsetArgs(offset, defaultValue))
+    },
+
+    grouping(column: any): any {
+      return fn('grouping', [column])
+    },
   })
+}
+
+function offsetArgs(
+  offset: number | bigint | undefined,
+  defaultValue: number | bigint | undefined,
+): Array<number | bigint> {
+  if (defaultValue !== undefined) {
+    return [offset ?? 1, defaultValue]
+  }
+
+  return offset !== undefined ? [offset] : []
 }

@@ -94,6 +94,7 @@ import type { MatchedNode } from './matched-node.js'
 import type { AddIndexNode } from './add-index-node.js'
 import type { CastNode } from './cast-node.js'
 import type { FetchNode } from './fetch-node.js'
+import type { FrameNode } from './frame-node.js'
 import type { TopNode } from './top-node.js'
 import type { OutputNode } from './output-node.js'
 import type { RefreshMaterializedViewNode } from './refresh-materialized-view-node.js'
@@ -203,6 +204,7 @@ export abstract class OperationNodeVisitor {
     AddIndexNode: this.visitAddIndex.bind(this),
     CastNode: this.visitCast.bind(this),
     FetchNode: this.visitFetch.bind(this),
+    FrameNode: this.visitFrame.bind(this),
     TopNode: this.visitTop.bind(this),
     OutputNode: this.visitOutput.bind(this),
     OrActionNode: this.visitOrAction.bind(this),
@@ -320,6 +322,7 @@ export abstract class OperationNodeVisitor {
   protected abstract visitAddIndex(node: AddIndexNode): void
   protected abstract visitCast(node: CastNode): void
   protected abstract visitFetch(node: FetchNode): void
+  protected abstract visitFrame(node: FrameNode): void
   protected abstract visitTop(node: TopNode): void
   protected abstract visitOutput(node: OutputNode): void
   protected abstract visitOrAction(node: OrActionNode): void

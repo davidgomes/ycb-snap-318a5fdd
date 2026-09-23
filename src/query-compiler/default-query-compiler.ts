@@ -109,6 +109,7 @@ import type { MatchedNode } from '../operation-node/matched-node.js'
 import type { AddIndexNode } from '../operation-node/add-index-node.js'
 import type { CastNode } from '../operation-node/cast-node.js'
 import type { FetchNode } from '../operation-node/fetch-node.js'
+import type { FrameBound, FrameNode } from '../operation-node/frame-node.js'
 import type { TopNode } from '../operation-node/top-node.js'
 import type { OutputNode } from '../operation-node/output-node.js'
 import type { RefreshMaterializedViewNode } from '../operation-node/refresh-materialized-view-node.js'
@@ -1488,6 +1489,11 @@ export class DefaultQueryCompiler
 
     this.append(')')
 
+    if (node.nullTreatment) {
+      this.append(' ')
+      this.append(node.nullTreatment)
+    }
+
     if (node.withinGroup) {
       this.append(' within group (')
       this.visitNode(node.withinGroup)
@@ -1521,7 +1527,43 @@ export class DefaultQueryCompiler
       this.visitNode(node.orderBy)
     }
 
+    if (node.frame) {
+      if (node.partitionBy || node.orderBy) {
+        this.append(' ')
+      }
+
+      this.visitNode(node.frame)
+    }
+
     this.append(')')
+  }
+
+  protected override visitFrame(node: FrameNode): void {
+    this.append(node.mode)
+    this.append(' ')
+
+    if (node.end) {
+      this.append('between ')
+      this.compileFrameBound(node.start)
+      this.append(' and ')
+      this.compileFrameBound(node.end)
+    } else {
+      this.compileFrameBound(node.start)
+    }
+
+    if (node.exclude) {
+      this.append(' exclude ')
+      this.append(node.exclude)
+    }
+  }
+
+  protected compileFrameBound(bound: FrameBound): void {
+    if (bound.offset) {
+      this.visitNode(bound.offset)
+      this.append(' ')
+    }
+
+    this.append(bound.type)
   }
 
   protected override visitPartitionBy(node: PartitionByNode): void {

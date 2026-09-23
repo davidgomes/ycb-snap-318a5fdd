@@ -92,6 +92,7 @@ import type { MatchedNode } from './matched-node.js'
 import type { AddIndexNode } from './add-index-node.js'
 import type { CastNode } from './cast-node.js'
 import type { FetchNode } from './fetch-node.js'
+import type { FrameBound, FrameNode } from './frame-node.js'
 import type { TopNode } from './top-node.js'
 import type { OutputNode } from './output-node.js'
 import type { RefreshMaterializedViewNode } from './refresh-materialized-view-node.js'
@@ -238,6 +239,7 @@ export class OperationNodeTransformer {
     AddIndexNode: this.transformAddIndex.bind(this),
     CastNode: this.transformCast.bind(this),
     FetchNode: this.transformFetch.bind(this),
+    FrameNode: this.transformFrame.bind(this),
     TopNode: this.transformTop.bind(this),
     OutputNode: this.transformOutput.bind(this),
     OrActionNode: this.transformOrAction.bind(this),
@@ -1071,6 +1073,7 @@ export class OperationNodeTransformer {
       withinGroup: this.transformNode(node.withinGroup, queryId),
       filter: this.transformNode(node.filter, queryId),
       over: this.transformNode(node.over, queryId),
+      nullTreatment: node.nullTreatment,
     })
   }
 
@@ -1079,6 +1082,31 @@ export class OperationNodeTransformer {
       kind: 'OverNode',
       orderBy: this.transformNode(node.orderBy, queryId),
       partitionBy: this.transformNode(node.partitionBy, queryId),
+      frame: this.transformNode(node.frame, queryId),
+    })
+  }
+
+  protected transformFrame(node: FrameNode, queryId?: QueryId): FrameNode {
+    return requireAllProps<FrameNode>({
+      kind: 'FrameNode',
+      mode: node.mode,
+      start: this.transformFrameBound(node.start, queryId)!,
+      end: this.transformFrameBound(node.end, queryId),
+      exclude: node.exclude,
+    })
+  }
+
+  protected transformFrameBound(
+    bound: FrameBound | undefined,
+    queryId?: QueryId,
+  ): FrameBound | undefined {
+    if (!bound) {
+      return undefined
+    }
+
+    return requireAllProps<FrameBound>({
+      type: bound.type,
+      offset: this.transformNode(bound.offset, queryId),
     })
   }
 

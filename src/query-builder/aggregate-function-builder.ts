@@ -103,6 +103,48 @@ export class AggregateFunctionBuilder<DB, TB extends keyof DB, O = unknown>
   }
 
   /**
+   * Adds `respect nulls` after the function arguments. Meant to be used
+   * with value window functions such as `first_value`, `lag` and `lead`.
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn.lag<string>('first_name').respectNulls().over(ob => ob.orderBy('id')).as('prev')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL:
+   *
+   * ```sql
+   * select lag("first_name") respect nulls over(order by "id") as "prev" from "person"
+   * ```
+   */
+  respectNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNullTreatment(
+        this.#props.aggregateFunctionNode,
+        'respect nulls',
+      ),
+    })
+  }
+
+  /**
+   * Adds `ignore nulls` after the function arguments. See {@link respectNulls}.
+   */
+  ignoreNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNullTreatment(
+        this.#props.aggregateFunctionNode,
+        'ignore nulls',
+      ),
+    })
+  }
+
+  /**
    * Adds an `order by` clause inside the aggregate function.
    *
    * ### Examples

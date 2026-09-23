@@ -91,6 +91,7 @@ export type OperationNodeKind =
   | 'AddIndexNode'
   | 'CastNode'
   | 'FetchNode'
+  | 'FrameNode'
   | 'TopNode'
   | 'OutputNode'
   | 'OrActionNode'

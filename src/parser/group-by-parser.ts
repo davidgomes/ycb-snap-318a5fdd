@@ -1,4 +1,7 @@
 import { GroupByItemNode } from '../operation-node/group-by-item-node.js'
+import { FunctionNode } from '../operation-node/function-node.js'
+import { ListNode } from '../operation-node/list-node.js'
+import { ParensNode } from '../operation-node/parens-node.js'
 import {
   expressionBuilder,
   type ExpressionBuilder,
@@ -25,4 +28,41 @@ export function parseGroupBy(
 ): GroupByItemNode[] {
   groupBy = isFunction(groupBy) ? groupBy(expressionBuilder()) : groupBy
   return parseReferenceExpressionOrList(groupBy).map(GroupByItemNode.create)
+}
+
+export function parseGroupByCube(
+  columns: ReadonlyArray<GroupByExpression<any, any, any>>,
+): GroupByItemNode[] {
+  return [
+    GroupByItemNode.create(
+      FunctionNode.create('cube', parseReferenceExpressionOrList(columns)),
+    ),
+  ]
+}
+
+export function parseGroupByRollup(
+  columns: ReadonlyArray<GroupByExpression<any, any, any>>,
+): GroupByItemNode[] {
+  return [
+    GroupByItemNode.create(
+      FunctionNode.create('rollup', parseReferenceExpressionOrList(columns)),
+    ),
+  ]
+}
+
+export function parseGroupByGroupingSets(
+  sets: ReadonlyArray<ReadonlyArray<GroupByExpression<any, any, any>>>,
+): GroupByItemNode[] {
+  return [
+    GroupByItemNode.create(
+      FunctionNode.create(
+        'grouping sets',
+        sets.map((set) =>
+          ParensNode.create(
+            ListNode.create(parseReferenceExpressionOrList(set)),
+          ),
+        ),
+      ),
+    ),
+  ]
 }
