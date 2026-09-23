@@ -68,6 +68,9 @@ class ControllerManager:
         collections.OrderedDict()
     )  # controller_name: objects
     self._controller_modules = {}  # controller_name: module
+    # config name -> objects, so grouped execution can pair each config
+    # entry with the object created from it.
+    self._objects_by_config_name = collections.OrderedDict()
     self._class_name = class_name
     self.controller_configs = controller_configs
 
@@ -147,11 +150,33 @@ class ControllerManager:
     # Save a shallow copy of the list for internal usage, so tests can't
     # affect internal registry by manipulating the object list.
     self._controller_objects[module_ref_name] = copy.copy(objects)
+    self._objects_by_config_name[module_config_name] = copy.copy(objects)
     logging.debug(
         'Found %d objects for controller %s', len(objects), module_config_name
     )
     self._controller_modules[module_ref_name] = module
     return objects
+
+  def get_registered_objects(self):
+    """Returns registered controller objects in registration order.
+
+    Returns:
+      A list of controller objects. Objects from each controller module stay
+      in creation order, and modules are ordered by registration.
+    """
+    objects = []
+    for registered in self._controller_objects.values():
+      objects.extend(registered)
+    return objects
+
+  def get_objects_by_config_name(self):
+    """Returns registered objects keyed by controller config name.
+
+    Returns:
+      An ordered mapping of MOBLY_CONTROLLER_CONFIG_NAME to the list of
+      objects created for that config.
+    """
+    return self._objects_by_config_name
 
   def unregister_controllers(self):
     """Destroy controller objects and clear internal registry.
@@ -166,6 +191,7 @@ class ControllerManager:
         module.destroy(self._controller_objects[name])
     self._controller_objects = collections.OrderedDict()
     self._controller_modules = {}
+    self._objects_by_config_name = collections.OrderedDict()
 
   def _create_controller_info_record(self, controller_module_name):
     """Creates controller info record for a particular controller type.
