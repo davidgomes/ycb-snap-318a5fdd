@@ -98,6 +98,27 @@ def test_layer_blending_ranges() -> None:
             ],
         )
     )
+    check_write_read(LayerBlendingRanges(None, None))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ["composite_ranges", "channel_ranges"],
+    [
+        ([(0, 65535)], [[(0, 65535), (0, 65535)]]),
+        ([(0, 65535), (0, 65535), (0, 65535)], []),
+        ([(0, 65535), (0, 65535)], [[(0, 65535)]]),
+        ([(0, 65535), (0, 65535)], [[(0, 65535), (0, 65535)], []]),
+        ([(0, 65535), (0, 65535)], [[(0, 65535), (0, 65535, 0)]]),
+    ],
+)
+def test_layer_blending_ranges_invalid(
+    composite_ranges: Any, channel_ranges: Any
+) -> None:
+    ranges = LayerBlendingRanges(composite_ranges, channel_ranges)
+    with io.BytesIO() as f:
+        with pytest.raises(ValueError):
+            ranges.write(f)
+        assert f.getvalue() == b""
 
 
 def test_layer_record() -> None:

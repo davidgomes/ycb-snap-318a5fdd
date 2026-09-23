@@ -4,6 +4,7 @@ from typing import Any, Optional, Tuple
 import pytest
 from PIL import Image
 
+from psd_tools.api.blend_range import BlendRangeChannel, BlendRanges
 from psd_tools.api.layers import (
     AdjustmentLayer,
     Artboard,
@@ -633,6 +634,65 @@ def test_layer_sheet_color(pixel_layer: PixelLayer) -> None:
 
     pixel_layer.sheet_color = SheetColorType.NO_COLOR
     assert pixel_layer.sheet_color == SheetColorType.NO_COLOR
+
+
+def test_layer_blend_ranges(pixel_layer: PixelLayer) -> None:
+    blend_ranges = pixel_layer.blend_ranges
+    assert isinstance(blend_ranges, BlendRanges)
+    assert blend_ranges.is_default
+    assert blend_ranges.channel_count == 4
+
+    # The property returns a copy until it is assigned back.
+    blend_ranges.composite.this_layer_black = (32, 96)
+    assert pixel_layer.blend_ranges.is_default
+    assert not pixel_layer._psd.is_updated()
+
+    pixel_layer.blend_ranges = blend_ranges
+    assert pixel_layer.blend_ranges == blend_ranges
+    assert pixel_layer._record.blending_ranges.composite_ranges[0] == (
+        96 << 8 | 32,
+        65535,
+    )
+    assert pixel_layer._psd.is_updated()
+
+    with pytest.raises(TypeError):
+        pixel_layer.blend_ranges = None  # type: ignore[assignment]
+
+
+def test_layer_blend_ranges_unchanged_does_not_mark_updated(
+    pixel_layer: PixelLayer,
+) -> None:
+    pixel_layer.blend_ranges = pixel_layer.blend_ranges
+    assert not pixel_layer._psd.is_updated()
+
+
+def test_layer_blend_ranges_round_trip(tmp_path: Any) -> None:
+    psdimage = PSDImage.new(mode="RGB", size=(8, 8))
+    layer = psdimage.create_pixel_layer(Image.new("RGB", (8, 8)))
+    group = psdimage.create_group([layer])
+
+    blend_ranges = layer.blend_ranges
+    blend_ranges.composite = BlendRangeChannel(
+        this_layer_black=(10, 40), underlying_white=(200, 250)
+    )
+    blend_ranges[0].this_layer_white = (128, 128)
+    blend_ranges[-1].underlying_black = (5, 6)
+    layer.blend_ranges = blend_ranges
+
+    group_ranges = BlendRanges.from_channels(
+        BlendRangeChannel.from_values(underlying_black=64),
+        [BlendRangeChannel.default() for _ in range(3)],
+    )
+    group.blend_ranges = group_ranges
+
+    out = tmp_path / "blend_ranges.psd"
+    psdimage.save(str(out))
+
+    reloaded = PSDImage.open(str(out))
+    reloaded_group = reloaded[0]
+    assert isinstance(reloaded_group, Group)
+    assert reloaded_group.blend_ranges == group_ranges
+    assert reloaded_group[0].blend_ranges == blend_ranges
 
 
 def test_layer_move_up(

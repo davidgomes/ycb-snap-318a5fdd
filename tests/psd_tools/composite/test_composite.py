@@ -4,9 +4,11 @@ from typing import Any, Optional
 import numpy as np
 import pytest
 
+from psd_tools.api.blend_range import BlendRangeChannel, BlendRanges
+from psd_tools.api.layers import Layer
 from psd_tools.api.psd_image import PSDImage
 from psd_tools.composite import composite
-from psd_tools.constants import CompatibilityMode
+from psd_tools.constants import BlendMode, CompatibilityMode
 from PIL import Image
 
 from ..utils import full_name
@@ -271,3 +273,97 @@ def test_composite_pixel_layer_with_vector_stroke() -> None:
     reference = composite(psd, force=True)
     result = composite(psd)
     assert _mse(reference[0], result[0]) <= 0.01
+
+
+RED = (255, 0, 0)
+BLUE = (0, 0, 255)
+
+
+def _gray(*values: int) -> list[tuple[int, int, int]]:
+    return [(v, v, v) for v in values]
+
+
+def _row_image(pixels: list[tuple[int, int, int]]) -> Image.Image:
+    return Image.fromarray(np.array([pixels], dtype=np.uint8))
+
+
+def _blend_if_psd(
+    bottom: list[tuple[int, int, int]], top: list[tuple[int, int, int]]
+) -> tuple[PSDImage, Layer]:
+    psd = PSDImage.new("RGB", (len(bottom), 1))
+    psd.create_pixel_layer(_row_image(bottom), name="bottom")
+    top_layer = psd.create_pixel_layer(_row_image(top), name="top")
+    return psd, top_layer
+
+
+def _composite_pixels(psd: PSDImage) -> list[tuple[int, int, int]]:
+    color = composite(psd)[0]
+    return [tuple(pixel) for pixel in np.round(255 * color[0]).astype(int).tolist()]
+
+
+def test_composite_blend_if_this_layer(tmp_path: Any) -> None:
+    top = _gray(0, 64, 128, 255)
+    psd, layer = _blend_if_psd([RED] * 4, top)
+    assert _composite_pixels(psd) == top
+
+    layer.blend_ranges = BlendRanges(
+        BlendRangeChannel.from_values(this_layer_black=100)
+    )
+    expected = [RED, RED, top[2], top[3]]
+    assert _composite_pixels(psd) == expected
+
+    # The saved preview and the reloaded layers honor the blend ranges.
+    out = tmp_path / "blend_if.psd"
+    psd.save(str(out))
+    reloaded = PSDImage.open(str(out))
+    assert _composite_pixels(reloaded) == expected
+    preview = reloaded.topil()
+    assert preview is not None
+    assert [tuple(p) for p in np.asarray(preview.convert("RGB"))[0].tolist()] == (
+        expected
+    )
+
+
+def test_composite_blend_if_underlying() -> None:
+    bottom = _gray(0, 64, 192, 255)
+    psd, layer = _blend_if_psd(bottom, [BLUE] * 4)
+    layer.blend_ranges = BlendRanges(
+        BlendRangeChannel.from_values(underlying_white=128)
+    )
+    assert _composite_pixels(psd) == [BLUE, BLUE, bottom[2], bottom[3]]
+
+
+def test_composite_blend_if_channel() -> None:
+    top = [(200, 0, 0), (50, 0, 0), (50, 200, 0), (0, 0, 200)]
+    psd, layer = _blend_if_psd(_gray(255, 255, 255, 255), top)
+    blend_ranges = layer.blend_ranges
+    blend_ranges[0].this_layer_white = (100, 100)  # Red of this layer.
+    blend_ranges[1].this_layer_black = (0, 100)  # Green of this layer, split.
+    layer.blend_ranges = blend_ranges
+
+    # Red hides the first pixel; the green ramp hides pixels without green.
+    assert _composite_pixels(psd) == [
+        (255, 255, 255),
+        (255, 255, 255),
+        (50, 200, 0),
+        (255, 255, 255),
+    ]
+
+
+def test_composite_blend_if_split_fades_linearly() -> None:
+    values = (0, 51, 102, 204, 255)
+    psd, layer = _blend_if_psd(_gray(0, 0, 0, 0, 0), _gray(*values))
+    layer.blend_ranges = BlendRanges(BlendRangeChannel(this_layer_black=(0, 255)))
+    # Over black, the result is the layer value weighted by its visibility.
+    color = composite(psd)[0][0, :, 0]
+    np.testing.assert_allclose(color, [(v / 255.0) ** 2 for v in values], atol=1e-5)
+
+
+def test_composite_blend_if_group() -> None:
+    top = _gray(0, 64, 128, 255)
+    psd, layer = _blend_if_psd([RED] * 4, top)
+    group = psd.create_group([layer], blend_mode=BlendMode.NORMAL)
+    group.blend_ranges = BlendRanges(
+        BlendRangeChannel.from_values(this_layer_black=100)
+    )
+    assert _composite_pixels(psd) == [RED, RED, top[2], top[3]]
