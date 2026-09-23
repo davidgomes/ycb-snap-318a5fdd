@@ -41,6 +41,30 @@
     :members:
 ```
 
+## DataVar
+
+```{versionadded} 3.1.0
+```
+
+```{seealso}
+{ref}`state-data`.
+```
+
+```{eval-rst}
+.. autoclass:: statemachine.state_data.DataVar
+    :members:
+```
+
+## DataChangeInfo
+
+```{versionadded} 3.1.0
+```
+
+```{eval-rst}
+.. autoclass:: statemachine.state_data.DataChangeInfo
+    :members:
+```
+
 ## States (class)
 
 ```{eval-rst}
