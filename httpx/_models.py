@@ -30,7 +30,11 @@ from ._exceptions import (
     StreamConsumed,
     request_context,
 )
-from ._multipart import get_multipart_boundary_from_content_type
+from ._multipart import (
+    MultipartParser,
+    MultipartPart,
+    get_multipart_boundary_from_content_type,
+)
 from ._status_codes import codes
 from ._types import (
     AsyncByteStream,
@@ -932,6 +936,33 @@ class Response:
             for line in decoder.flush():
                 yield line
 
+    def iter_multipart(self) -> typing.Iterator[MultipartPart]:
+        """
+        Iterate over parts of a ``multipart/*`` response.
+
+        When the body is still streaming, iteration consumes the raw stream and
+        closes the response. A second call then raises ``StreamConsumed``.
+        When the body is already in memory, iteration is repeatable.
+        """
+        with request_context(request=self._request):
+            parser = MultipartParser.for_content_type(self.headers.get("Content-Type"))
+
+        chunks = self.iter_bytes()
+        try:
+            with request_context(request=self._request):
+                for chunk in chunks:
+                    yield from parser.feed(chunk)
+                yield from parser.flush()
+        finally:
+            if isinstance(chunks, typing.Generator):
+                chunks.close()
+            if (
+                not hasattr(self, "_content")
+                and isinstance(self.stream, SyncByteStream)
+                and not self.is_closed
+            ):
+                self.close()
+
     def iter_raw(self, chunk_size: int | None = None) -> typing.Iterator[bytes]:
         """
         A byte-iterator over the raw response content.
@@ -1033,6 +1064,35 @@ class Response:
                     yield line
             for line in decoder.flush():
                 yield line
+
+    async def aiter_multipart(self) -> typing.AsyncIterator[MultipartPart]:
+        """
+        Iterate over parts of a ``multipart/*`` response.
+
+        When the body is still streaming, iteration consumes the raw stream and
+        closes the response. A second call then raises ``StreamConsumed``.
+        When the body is already in memory, iteration is repeatable.
+        """
+        with request_context(request=self._request):
+            parser = MultipartParser.for_content_type(self.headers.get("Content-Type"))
+
+        chunks = self.aiter_bytes()
+        try:
+            with request_context(request=self._request):
+                async for chunk in chunks:
+                    for part in parser.feed(chunk):
+                        yield part
+                for part in parser.flush():
+                    yield part
+        finally:
+            if isinstance(chunks, typing.AsyncGenerator):
+                await chunks.aclose()
+            if (
+                not hasattr(self, "_content")
+                and isinstance(self.stream, AsyncByteStream)
+                and not self.is_closed
+            ):
+                await self.aclose()
 
     async def aiter_raw(
         self, chunk_size: int | None = None

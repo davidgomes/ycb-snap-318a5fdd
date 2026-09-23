@@ -77,6 +77,7 @@
 * `def .iter_bytes([chunk_size])` - **bytes iterator**
 * `def .iter_text([chunk_size])` - **text iterator**
 * `def .iter_lines()` - **text iterator**
+* `def .iter_multipart()` - **multipart part iterator**
 * `def .close()` - **None**
 * `def .next()` - **Response**
 * `def .aread()` - **bytes**
@@ -84,8 +85,16 @@
 * `def .aiter_bytes([chunk_size])` - **async bytes iterator**
 * `def .aiter_text([chunk_size])` - **async text iterator**
 * `def .aiter_lines()` - **async text iterator**
+* `def .aiter_multipart()` - **async multipart part iterator**
 * `def .aclose()` - **None**
 * `def .anext()` - **Response**
+
+## `MultipartPart`
+
+*A single part from a `multipart/*` response, as yielded by `Response.iter_multipart()` and `Response.aiter_multipart()`.*
+
+* `.headers` - **Headers**
+* `.content` - **bytes**
 
 ## `Request`
 

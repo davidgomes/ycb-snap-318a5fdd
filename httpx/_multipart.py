@@ -7,6 +7,7 @@ import re
 import typing
 from pathlib import Path
 
+from ._exceptions import DecodingError
 from ._types import (
     AsyncByteStream,
     FileContent,
@@ -20,6 +21,9 @@ from ._utils import (
     primitive_value_to_str,
     to_bytes,
 )
+
+if typing.TYPE_CHECKING:  # pragma: no cover
+    from ._models import Headers
 
 _HTML5_FORM_ENCODING_REPLACEMENTS = {'"': "%22", "\\": "\\\\"}
 _HTML5_FORM_ENCODING_REPLACEMENTS.update(
@@ -219,6 +223,270 @@ class FileField:
     def render(self) -> typing.Iterator[bytes]:
         yield self.render_headers()
         yield from self.render_data()
+
+
+def _is_sp_htab_only(value: bytes) -> bool:
+    return value.strip(b" \t") == b""
+
+
+def _split_content_type(value: str) -> list[str]:
+    """Split a Content-Type header on semicolons, respecting quoted strings."""
+
+    parts: list[str] = []
+    start = 0
+    in_quotes = False
+    for index, char in enumerate(value):
+        if char == '"':
+            in_quotes = not in_quotes
+        elif char == ";" and not in_quotes:
+            parts.append(value[start:index])
+            start = index + 1
+    parts.append(value[start:])
+    return parts
+
+
+def parse_multipart_response_boundary(content_type: str | None) -> bytes:
+    """
+    Return the boundary from a ``multipart/*`` Content-Type header.
+
+    Parameter names are matched case-insensitively and the last ``boundary``
+    parameter wins. Raises ``DecodingError`` when the response is not
+    multipart or the boundary is missing or invalid.
+    """
+
+    if content_type is None:
+        raise DecodingError("Cannot decode multipart response: not multipart")
+    if "\r" in content_type or "\n" in content_type:
+        raise DecodingError("Cannot decode multipart response: invalid boundary")
+
+    segments = _split_content_type(content_type)
+    media_type = segments[0].strip(" \t").lower()
+    if not media_type.startswith("multipart/"):
+        raise DecodingError("Cannot decode multipart response: not multipart")
+    subtype = media_type[len("multipart/") :]
+    if subtype == "":
+        raise DecodingError(
+            "Cannot decode multipart response: empty multipart subtype"
+        )
+
+    boundary: str | None = None
+    for segment in segments[1:]:
+        if "=" not in segment:
+            continue
+        name, raw_value = segment.split("=", 1)
+        if name.strip(" \t").lower() == "boundary":
+            boundary = raw_value
+
+    if boundary is None:
+        raise DecodingError("Cannot decode multipart response: missing boundary")
+
+    value = boundary.strip(" \t")
+    if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+        value = value[1:-1]
+    if value == "" or value.startswith("=") or "\x00" in value or not value.isascii():
+        raise DecodingError("Cannot decode multipart response: invalid boundary")
+    return value.encode("ascii")
+
+
+class MultipartPart:
+    """A single part from a ``multipart/*`` response body."""
+
+    def __init__(self, headers: Headers, content: bytes) -> None:
+        self.headers = headers
+        self.content = content
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, MultipartPart):
+            return NotImplemented
+        return self.headers == other.headers and self.content == other.content
+
+    def __repr__(self) -> str:
+        return f"MultipartPart(headers={self.headers!r}, content={self.content!r})"
+
+
+class _MultipartLineBuffer:
+    """
+    Incrementally split bytes into lines terminated by LF, CRLF, or CR.
+
+    A CR at the end of a chunk is held back so a CRLF split across chunks
+    stays one terminator.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = bytearray()
+        self._pending_cr = False
+
+    def feed(self, data: bytes) -> list[tuple[bytes, bytes]]:
+        if self._pending_cr:
+            data = b"\r" + data
+            self._pending_cr = False
+        if data.endswith(b"\r"):
+            self._pending_cr = True
+            data = data[:-1]
+        if not data:
+            return []
+        return self._consume(data)
+
+    def flush(self) -> list[tuple[bytes, bytes]]:
+        if self._pending_cr:
+            line = bytes(self._buffer)
+            self._buffer.clear()
+            self._pending_cr = False
+            return [(line, b"\r")]
+        if self._buffer:
+            line = bytes(self._buffer)
+            self._buffer.clear()
+            return [(line, b"")]
+        return []
+
+    def _consume(self, data: bytes) -> list[tuple[bytes, bytes]]:
+        self._buffer.extend(data)
+        raw = bytes(self._buffer)
+        lines: list[tuple[bytes, bytes]] = []
+        start = 0
+        index = 0
+        length = len(raw)
+        while index < length:
+            byte = raw[index]
+            if byte == 0x0A:
+                lines.append((raw[start:index], b"\n"))
+                index += 1
+                start = index
+            elif byte == 0x0D:
+                if index + 1 < length and raw[index + 1] == 0x0A:
+                    lines.append((raw[start:index], b"\r\n"))
+                    index += 2
+                    start = index
+                else:
+                    lines.append((raw[start:index], b"\r"))
+                    index += 1
+                    start = index
+            else:
+                index += 1
+        del self._buffer[:]
+        self._buffer.extend(raw[start:])
+        return lines
+
+
+class MultipartParser:
+    """Parse a ``multipart/*`` body into parts."""
+
+    def __init__(self, boundary: bytes) -> None:
+        self._boundary = boundary
+        self._dash_boundary = b"--" + boundary
+        self._lines = _MultipartLineBuffer()
+        self._state = "preamble"
+        self._at_message_start = True
+        self._headers: list[tuple[bytes, bytes]] = []
+        self._body = bytearray()
+        self._held_terminator = b""
+
+    @classmethod
+    def for_content_type(cls, content_type: str | None) -> MultipartParser:
+        return cls(parse_multipart_response_boundary(content_type))
+
+    def feed(self, data: bytes) -> list[MultipartPart]:
+        parts: list[MultipartPart] = []
+        for line, terminator in self._lines.feed(data):
+            parts.extend(self._handle_line(line, terminator))
+        return parts
+
+    def flush(self) -> list[MultipartPart]:
+        parts: list[MultipartPart] = []
+        for line, terminator in self._lines.flush():
+            parts.extend(self._handle_line(line, terminator))
+        if self._state != "epilogue":
+            raise DecodingError("Cannot decode multipart response: malformed framing")
+        return parts
+
+    def _match_delimiter(self, line: bytes) -> str | None:
+        if not line.startswith(self._dash_boundary):
+            return None
+        rest = line[len(self._dash_boundary) :]
+        if rest.startswith(b"--") and _is_sp_htab_only(rest[2:]):
+            return "close"
+        if _is_sp_htab_only(rest):
+            return "open"
+        return None
+
+    def _handle_line(self, line: bytes, terminator: bytes) -> list[MultipartPart]:
+        if self._state == "epilogue":
+            return []
+
+        if self._state == "preamble":
+            kind = self._match_delimiter(line)
+            if (
+                self._at_message_start
+                and kind is None
+                and line.startswith(self._dash_boundary)
+            ):
+                raise DecodingError(
+                    "Cannot decode multipart response: malformed framing"
+                )
+            self._at_message_start = False
+            if kind == "close":
+                self._state = "epilogue"
+            elif kind == "open":
+                self._state = "headers"
+                self._headers = []
+            return []
+
+        if self._state == "headers":
+            if line == b"":
+                self._state = "body"
+                self._body = bytearray()
+                self._held_terminator = b""
+                return []
+            self._consume_header_line(line)
+            return []
+
+        kind = self._match_delimiter(line)
+        if kind is None:
+            self._body.extend(self._held_terminator)
+            self._body.extend(line)
+            self._held_terminator = terminator
+            return []
+
+        part = self._build_part()
+        self._body = bytearray()
+        self._held_terminator = b""
+        if kind == "close":
+            self._state = "epilogue"
+        else:
+            self._state = "headers"
+            self._headers = []
+        return [part]
+
+    def _consume_header_line(self, line: bytes) -> None:
+        if line.startswith((b" ", b"\t")):
+            if not self._headers:
+                raise DecodingError(
+                    "Cannot decode multipart response: invalid part header"
+                )
+            if _is_sp_htab_only(line):
+                raise DecodingError(
+                    "Cannot decode multipart response: invalid part header"
+                )
+            name, value = self._headers[-1]
+            self._headers[-1] = (name, value + line)
+            return
+
+        if b":" not in line:
+            raise DecodingError(
+                "Cannot decode multipart response: invalid part header"
+            )
+        name, value = line.split(b":", 1)
+        name = name.rstrip(b" \t")
+        if name == b"":
+            raise DecodingError(
+                "Cannot decode multipart response: invalid part header"
+            )
+        self._headers.append((name, value.lstrip(b" \t")))
+
+    def _build_part(self) -> MultipartPart:
+        from ._models import Headers
+
+        return MultipartPart(Headers(self._headers), bytes(self._body))
 
 
 class MultipartStream(SyncByteStream, AsyncByteStream):
