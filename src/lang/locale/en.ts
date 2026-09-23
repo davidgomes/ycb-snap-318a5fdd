@@ -278,6 +278,51 @@ export default {
 
   // rules
   'rules': {
+    // auto-toc.ts
+    'auto-toc': {
+      'name': 'Auto Table of Contents',
+      'description': 'Generates or updates a table of contents where <code>&lt;!-- toc --&gt;</code> is present. Headings inside the TOC region, YAML, code blocks, and math blocks are ignored.',
+      'list-style': {
+        'name': 'List Style',
+        'description': 'The list style used for table of contents items',
+      },
+      'bullet-marker': {
+        'name': 'Bullet Marker',
+        'description': 'The marker used when <code>List Style</code> is <code>bullet</code>',
+      },
+      'ordered-list-style': {
+        'name': 'Ordered List Style',
+        'description': 'How ordered list markers are numbered when <code>List Style</code> is <code>number</code>',
+      },
+      'indent-size': {
+        'name': 'Indent Size',
+        'description': 'The number of spaces to indent each heading level below <code>Minimum Level</code>',
+      },
+      'min-level': {
+        'name': 'Minimum Level',
+        'description': 'The lowest ATX heading level to include',
+      },
+      'max-level': {
+        'name': 'Maximum Level',
+        'description': 'The highest ATX heading level to include',
+      },
+      'title': {
+        'name': 'Title',
+        'description': 'Optional line inserted at the top of the table of contents. Leave empty to omit it',
+      },
+      'use-explicit-ids': {
+        'name': 'Use Explicit Heading IDs',
+        'description': 'When a heading ends with <code>{#id}</code>, use that id as the anchor',
+      },
+      'strip-formatting-in-toc': {
+        'name': 'Strip Formatting in TOC',
+        'description': 'Removes images, resolves links to their display text, and strips formatting in table of contents labels',
+      },
+      'exclude-headings': {
+        'name': 'Exclude Headings',
+        'description': 'Headings to leave out of the table of contents, one per line. A plain value matches the full heading case-insensitively. A value wrapped in slashes, such as <code>/draft/</code>, is a case-insensitive regular expression',
+      },
+    },
     // auto-correct-common-misspellings.ts
     'auto-correct-common-misspellings': {
       'name': 'Auto-correct Common Misspellings',
@@ -925,6 +970,10 @@ export default {
     'INFO': 'info',
     'WARN': 'warn',
     'SILENT': 'silent',
+    'bullet': 'bullet',
+    'number': 'number',
+    'always-one': 'always-one',
+    'increment': 'increment',
     'ascending': 'ascending',
     'lazy': 'lazy',
     'preserve': 'preserve',

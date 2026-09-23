@@ -20,6 +20,7 @@ import {CustomReplace} from './ui/linter-components/custom-replace-option';
 import {LintCommand} from './ui/linter-components/custom-command-option';
 import {convertStringVersionOfEscapeCharactersToEscapeCharacters} from './utils/strings';
 import {getTextInLanguage} from './lang/helpers';
+import AutoToc from './rules/auto-toc';
 import CapitalizeHeadings from './rules/capitalize-headings';
 import YamlTitle from './rules/yaml-title';
 import YamlTitleAlias from './rules/yaml-title-alias';
@@ -151,6 +152,8 @@ export class RulesRunner {
     const postRuleLogText = getTextInLanguage('logs.post-rules');
     timingBegin(postRuleLogText);
     [newText] = CapitalizeHeadings.applyIfEnabled(newText, runOptions.settings, this.disabledRules);
+
+    [newText] = AutoToc.applyIfEnabled(newText, runOptions.settings, this.disabledRules);
 
     [newText] = YamlTitle.applyIfEnabled(newText, runOptions.settings, this.disabledRules, {
       fileName: runOptions.fileInfo.name,
