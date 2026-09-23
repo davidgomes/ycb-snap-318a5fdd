@@ -39,6 +39,7 @@ from tenacity import (
 )
 
 from .graphql_request import GraphQLRequest, support_deprecated_request
+from .incremental import IncrementalAccumulator, IncrementalResult
 from .transport.async_transport import AsyncTransport
 from .transport.exceptions import TransportConnectionFailed, TransportQueryError
 from .transport.local_schema import LocalSchemaTransport
@@ -1444,6 +1445,52 @@ class AsyncClientSession:
                         yield result
                     else:
                         yield result.data
+        finally:
+            await inner_generator.aclose()
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalResult, None]:
+        """Execute a request using the @defer and/or @stream directives,
+        yielding an :class:`IncrementalResult <gql.incremental.IncrementalResult>`
+        for every payload received from the server.
+
+        The :code:`data` attribute of each result contains the data accumulated
+        from all the payloads received so far. The :code:`errors` and
+        :code:`extensions` attributes are those of the current payload.
+        Errors do not stop the iteration.
+
+        :param request: GraphQL query as :class:`GraphQLRequest <gql.GraphQLRequest>`.
+        :param serialize_variables: whether the variable values should be
+            serialized. Used for custom scalars and/or enums.
+            By default use the serialize_variables argument of the client.
+
+        The extra arguments are passed to the transport execute_incremental method.
+        """
+        request = support_deprecated_request(request, kwargs)
+
+        if self.client.schema:
+            self.client.validate(request)
+
+            if request.variable_values is not None:
+                if serialize_variables or (
+                    serialize_variables is None and self.client.serialize_variables
+                ):
+                    request = request.serialize_variable_values(self.client.schema)
+
+        accumulator = IncrementalAccumulator()
+
+        inner_generator: AsyncGenerator[ExecutionResult, None] = (
+            self.transport.execute_incremental(request, **kwargs)
+        )
+
+        try:
+            async for payload in inner_generator:
+                yield accumulator.apply(payload)
         finally:
             await inner_generator.aclose()
 

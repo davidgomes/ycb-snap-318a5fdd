@@ -49,6 +49,18 @@ class AsyncTransport(abc.ABC):
             "This Transport has not implemented the execute_batch method"
         )  # pragma: no cover
 
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        **kwargs: Any,
+    ) -> AsyncGenerator[ExecutionResult, None]:
+        """Execute a request which may use the @defer or @stream directives
+        and yield each payload received from the server.
+
+        By default, the request is executed normally and a single result is yielded.
+        """
+        yield await self.execute(request, **kwargs)
+
     @abc.abstractmethod
     def subscribe(
         self,

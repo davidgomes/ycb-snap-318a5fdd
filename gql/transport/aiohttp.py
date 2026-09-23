@@ -25,6 +25,7 @@ from graphql import ExecutionResult
 from multidict import CIMultiDictProxy
 
 from ..graphql_request import GraphQLRequest
+from ..incremental import IncrementalPayload
 from .appsync_auth import AppSyncAuthentication
 from .async_transport import AsyncTransport
 from .common.aiohttp_closed_event import create_aiohttp_closed_event
@@ -480,6 +481,92 @@ class AIOHTTPTransport(AsyncTransport):
                 # Parse multipart response
                 async for result in self._parse_multipart_response(resp):
                     yield result
+
+        except TransportError:
+            raise
+        except Exception as e:
+            raise TransportConnectionFailed(str(e)) from e
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        extra_args: Optional[Dict[str, Any]] = None,
+    ) -> AsyncGenerator[ExecutionResult, None]:
+        """Execute a request using @defer or @stream and yield every payload
+        received in the multipart/mixed response.
+
+        Don't call this directly on the transport, instead use
+        :code:`execute_incremental` on a session.
+        """
+        if self.session is None:
+            raise TransportClosed("Transport is not connected")
+
+        post_args = self._prepare_request(request, extra_args)
+
+        headers = post_args.get("headers", {})
+        headers.update(
+            {
+                "Content-Type": "application/json",
+                "Accept": (
+                    "multipart/mixed;boundary=graphql;"
+                    "deferSpec=20220824,application/json"
+                ),
+            }
+        )
+        post_args["headers"] = headers
+
+        try:
+            async with self.session.post(self.url, ssl=self.ssl, **post_args) as resp:
+                self.response_headers = resp.headers
+
+                content_type = resp.headers.get("Content-Type", "")
+                if "multipart/mixed" not in content_type:
+                    yield await self._prepare_result(resp)
+                    return
+
+                if resp.status >= 400:
+                    self._raise_transport_server_error_if_status_more_than_400(resp)
+
+                reader = MultipartReader.from_response(resp)
+                while True:
+                    try:
+                        part = await reader.next()
+                    except Exception:
+                        if reader.at_eof():
+                            break
+                        raise  # pragma: no cover
+
+                    if part is None:
+                        break
+
+                    assert not isinstance(
+                        part, MultipartReader
+                    ), "Nested multipart parts are not supported"
+
+                    body = (await part.text()).strip()
+
+                    if log.isEnabledFor(logging.DEBUG):
+                        log.debug("<<< %s", ascii(body or "(empty body, skipping)"))
+
+                    if not body:
+                        continue
+
+                    try:
+                        payload = self.json_deserialize(body)
+                    except ValueError as e:
+                        raise TransportProtocolError(
+                            f"Server did not return a valid JSON part: {body}"
+                        ) from e
+
+                    if not isinstance(payload, dict) or not payload:
+                        continue
+
+                    result = IncrementalPayload.from_dict(payload)
+                    yield result
+
+                    if not result.has_next:
+                        break
 
         except TransportError:
             raise

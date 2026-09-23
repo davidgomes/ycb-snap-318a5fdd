@@ -449,6 +449,26 @@ class DSLDirective:
         return f"<DSLDirective @{self.name}({args_str})>"
 
 
+def _incremental_directive(
+    name: str, label: Optional[str] = None, initial_count: Optional[int] = None
+) -> DirectiveNode:
+    arguments = []
+    if initial_count is not None:
+        arguments.append(
+            ArgumentNode(
+                name=NameNode(value="initialCount"),
+                value=IntValueNode(value=str(initial_count)),
+            )
+        )
+    if label is not None:
+        arguments.append(
+            ArgumentNode(
+                name=NameNode(value="label"), value=StringValueNode(value=label)
+            )
+        )
+    return DirectiveNode(name=NameNode(value=name), arguments=tuple(arguments))
+
+
 class DSLDirectable(ABC):
     """Mixin class for DSL elements that can have directives.
 
@@ -461,6 +481,7 @@ class DSLDirectable(ABC):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._directives = ()
+        self._incremental_directives: Tuple[DirectiveNode, ...] = ()
 
     @abstractmethod
     def is_valid_directive(self, directive: DSLDirective) -> bool:
@@ -537,7 +558,9 @@ class DSLDirectable(ABC):
     @property
     def directives_ast(self) -> Tuple[DirectiveNode, ...]:
         """Get AST directive nodes for this element."""
-        return tuple(directive.ast_directive for directive in self._directives)
+        return tuple(
+            directive.ast_directive for directive in self._directives
+        ) + getattr(self, "_incremental_directives", ())
 
 
 class DSLSelectable(DSLDirectable):
@@ -1186,6 +1209,32 @@ class DSLField(DSLSelectableWithAlias, DSLFieldSelector):
 
         return self
 
+    def stream(
+        self, label: Optional[str] = None, initial_count: Optional[int] = None
+    ) -> Self:
+        """Add a @stream directive to this list field.
+
+        :param label: optional label identifying the streamed payloads
+        :param initial_count: number of items to return in the initial payload
+        :return: itself
+
+        :raises GraphQLError: if the field is not a list field
+        """
+        field_type = self.field.type
+        if is_non_null_type(field_type):
+            field_type = cast(GraphQLNonNull, field_type).of_type
+        if not is_list_type(field_type):
+            raise GraphQLError(
+                f"@stream can only be used on list fields, not on {self!r}"
+            )
+
+        self._incremental_directives += (
+            _incremental_directive("stream", label, initial_count),
+        )
+        self.ast_field.directives = self.directives_ast
+
+        return self
+
     def is_valid_directive(self, directive: DSLDirective) -> bool:
         """Check if directive is valid for Field locations."""
         return DirectiveLocation.FIELD in directive.directive_def.locations
@@ -1341,6 +1390,16 @@ class DSLFragmentSpread(DSLSelectable):
         self.ast_field.directives = self.directives_ast
         return self
 
+    def defer(self, label: Optional[str] = None) -> Self:
+        """Add a @defer directive to this fragment spread.
+
+        :param label: optional label identifying the deferred payload
+        :return: itself
+        """
+        self._incremental_directives += (_incremental_directive("defer", label),)
+        self.ast_field.directives = self.directives_ast
+        return self
+
     def is_valid_directive(self, directive: DSLDirective) -> bool:
         """Check if directive is valid for Fragment Spread locations."""
         return DirectiveLocation.FRAGMENT_SPREAD in directive.directive_def.locations
@@ -1393,6 +1452,19 @@ class DSLFragment(DSLSelectable, DSLFragmentSelector, DSLExecutable):
         :return: DSLFragmentSpread instance for this fragment
         """
         return DSLFragmentSpread(self)
+
+    def defer(self, label: Optional[str] = None) -> Self:
+        """Add a @defer directive where this fragment is spread.
+
+        The directive is set on the fragment spread, not on the fragment definition.
+
+        :param label: optional label identifying the deferred payload
+        :return: itself
+        """
+        self.ast_field.directives = tuple(self.ast_field.directives or ()) + (
+            _incremental_directive("defer", label),
+        )
+        return self
 
     def select(
         self, *fields: DSLSelectable, **fields_with_alias: DSLSelectableWithAlias

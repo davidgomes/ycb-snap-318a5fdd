@@ -321,6 +321,16 @@ class SubscriptionTransportBase(AsyncTransport):
             log.debug(f"In subscribe finally for query_id {query_id}")
             self._remove_listener(query_id)
 
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        **kwargs: Any,
+    ) -> AsyncGenerator[ExecutionResult, None]:
+        """Execute a request using @defer or @stream, yielding every payload
+        received for this operation until the server completes it."""
+        async for result in self.subscribe(request, **kwargs):
+            yield result
+
     async def execute(
         self,
         request: GraphQLRequest,
