@@ -160,6 +160,30 @@ what gets sent over the wire.*
 * `def clear([domain], [path])`
 * *Standard mutable mapping interface*
 
+## `CookieStore`
+
+*A deterministic cookie container. Use it anywhere `cookies=` is accepted.*
+
+```pycon
+>>> store = CookieStore(max_cookies=100)
+>>> store.set("session", "abc", domain="example.org", path="/")
+```
+
+`CookieStore` parses `Set-Cookie`, including several cookies combined into one
+header, and writes a `Cookie` header ordered by path length and creation time.
+Cookies without `Domain` are host-only. `domain=""` cookies (the default for
+`set()` and for dict or list inputs) are sent to any matching host.
+
+* `def __init__([cookies], *, [max_cookies], [max_cookies_per_domain])`
+* `def extract_cookies(response)`
+* `def set_cookie_header(request)`
+* `def set(name, value, [domain], [path])`
+* `def get(name, [default], [domain], [path])`
+* `def delete(name, [domain], [path])`
+* `def clear([domain], [path])`
+* `def update(cookies)`
+* *Standard mutable mapping interface*
+
 ## `Proxy`
 
 *A configuration of the proxy server.*
