@@ -976,13 +976,18 @@ class Response:
         with request_context(request=self._request):
             decoder = self._get_multipart_decoder()
             is_streaming = not hasattr(self, "_content")
+            chunks = self.iter_bytes()
             try:
-                for chunk in self.iter_bytes():
+                for chunk in chunks:
                     for headers, content in decoder.decode(chunk):
                         yield MultipartPart(headers=headers, content=content)
                 for headers, content in decoder.flush():
                     yield MultipartPart(headers=headers, content=content)
             except DecodingError:
+                # Consume the rest of the body, rather than leaving the
+                # stream part-way through.
+                for _ in chunks:
+                    pass
                 if is_streaming:
                     self.close()
                 raise
@@ -1096,13 +1101,18 @@ class Response:
         with request_context(request=self._request):
             decoder = self._get_multipart_decoder()
             is_streaming = not hasattr(self, "_content")
+            chunks = self.aiter_bytes()
             try:
-                async for chunk in self.aiter_bytes():
+                async for chunk in chunks:
                     for headers, content in decoder.decode(chunk):
                         yield MultipartPart(headers=headers, content=content)
                 for headers, content in decoder.flush():
                     yield MultipartPart(headers=headers, content=content)
             except DecodingError:
+                # Consume the rest of the body, rather than leaving the
+                # stream part-way through.
+                async for _ in chunks:
+                    pass
                 if is_streaming:
                     await self.aclose()
                 raise
