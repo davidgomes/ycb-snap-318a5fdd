@@ -8,6 +8,15 @@ import {
   resolveFetchOptions,
   callHooks,
 } from "./utils.ts";
+import {
+  admitCircuit,
+  classifyCircuitError,
+  classifyCircuitResponse,
+  getRequestOrigin,
+  recordCircuitOutcome,
+  resolveCircuitBreaker,
+} from "./circuit.ts";
+import type { CircuitEntry } from "./circuit.ts";
 import type {
   CreateFetchOptions,
   FetchResponse,
@@ -17,6 +26,30 @@ import type {
   FetchRequest,
   FetchOptions,
 } from "./types.ts";
+
+const CIRCUIT_RETRY_OPTION = "__ofetchCircuitRetry";
+
+interface CreateFetchOptionsWithCircuit extends CreateFetchOptions {
+  __circuitStates?: Map<string, CircuitEntry>;
+}
+
+function withoutCircuitRetryFlag<R extends ResponseType>(
+  options: FetchOptions<R>
+): { isCircuitRetry: boolean; options: FetchOptions<R> } {
+  const record = options as FetchOptions<R> & Record<string, unknown>;
+  if (!record[CIRCUIT_RETRY_OPTION]) {
+    return { isCircuitRetry: false, options };
+  }
+
+  const next = { ...options } as FetchOptions<R> & Record<string, unknown>;
+  delete next[CIRCUIT_RETRY_OPTION];
+  return { isCircuitRetry: true, options: next as FetchOptions<R> };
+}
+
+function createCircuitOpenError(context: FetchContext) {
+  context.error = new Error("Circuit breaker is open");
+  return createFetchError(context);
+}
 
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
 const retryStatusCodes = new Set([
@@ -35,6 +68,9 @@ const nullBodyResponses = new Set([101, 204, 205, 304]);
 
 export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
   const { fetch = globalThis.fetch } = globalOptions;
+  const circuitStates =
+    (globalOptions as CreateFetchOptionsWithCircuit).__circuitStates ??
+    new Map<string, CircuitEntry>();
 
   async function onError(context: FetchContext): Promise<FetchResponse<any>> {
     // Is Abort
@@ -72,7 +108,8 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
         return $fetchRaw(context.request, {
           ...context.options,
           retry: retries - 1,
-        });
+          [CIRCUIT_RETRY_OPTION]: true,
+        } as FetchOptions);
       }
     }
 
@@ -86,86 +123,7 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
     throw error;
   }
 
-  const $fetchRaw: $Fetch["raw"] = async function $fetchRaw<
-    T = any,
-    R extends ResponseType = "json",
-  >(_request: FetchRequest, _options: FetchOptions<R> = {}) {
-    const context: FetchContext = {
-      request: _request,
-      options: resolveFetchOptions<R, T>(
-        _request,
-        _options,
-        globalOptions.defaults as unknown as FetchOptions<R, T>,
-        Headers
-      ),
-      response: undefined,
-      error: undefined,
-    };
-
-    // Uppercase method name
-    if (context.options.method) {
-      context.options.method = context.options.method.toUpperCase();
-    }
-
-    if (context.options.onRequest) {
-      await callHooks(context, context.options.onRequest);
-    }
-
-    if (typeof context.request === "string") {
-      if (context.options.baseURL) {
-        context.request = withBase(context.request, context.options.baseURL);
-      }
-      if (context.options.query) {
-        context.request = withQuery(context.request, context.options.query);
-        delete context.options.query;
-      }
-      if ("query" in context.options) {
-        delete context.options.query;
-      }
-      if ("params" in context.options) {
-        delete context.options.params;
-      }
-    }
-
-    if (context.options.body && isPayloadMethod(context.options.method)) {
-      if (isJSONSerializable(context.options.body)) {
-        const contentType = context.options.headers.get("content-type");
-
-        // Automatically stringify request bodies, when not already a string.
-        if (typeof context.options.body !== "string") {
-          context.options.body =
-            contentType === "application/x-www-form-urlencoded"
-              ? new URLSearchParams(
-                  context.options.body as Record<string, any>
-                ).toString()
-              : JSON.stringify(context.options.body);
-        }
-
-        // Set Content-Type and Accept headers to application/json by default
-        // for JSON serializable request bodies.
-        // Pass empty object as older browsers don't support undefined.
-        context.options.headers = new Headers(context.options.headers || {});
-        if (!contentType) {
-          context.options.headers.set("content-type", "application/json");
-        }
-        if (!context.options.headers.has("accept")) {
-          context.options.headers.set("accept", "application/json");
-        }
-      } else if (
-        // ReadableStream Body
-        ("pipeTo" in (context.options.body as ReadableStream) &&
-          typeof (context.options.body as ReadableStream).pipeTo ===
-            "function") ||
-        // Node.js Stream Body
-        typeof (context.options.body as Readable).pipe === "function"
-      ) {
-        // eslint-disable-next-line unicorn/no-lonely-if
-        if (!("duplex" in context.options)) {
-          context.options.duplex = "half";
-        }
-      }
-    }
-
+  async function dispatch(context: FetchContext): Promise<FetchResponse<any>> {
     let abortTimeout: NodeJS.Timeout | undefined;
 
     if (context.options.timeout) {
@@ -254,6 +212,131 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
     }
 
     return context.response;
+  }
+
+  const $fetchRaw: $Fetch["raw"] = async function $fetchRaw<
+    T = any,
+    R extends ResponseType = "json",
+  >(_request: FetchRequest, _options: FetchOptions<R> = {}) {
+    const { isCircuitRetry, options: requestOptions } =
+      withoutCircuitRetryFlag(_options);
+    const context: FetchContext = {
+      request: _request,
+      options: resolveFetchOptions<R, T>(
+        _request,
+        requestOptions,
+        globalOptions.defaults as unknown as FetchOptions<R, T>,
+        Headers
+      ),
+      response: undefined,
+      error: undefined,
+    };
+
+    // Uppercase method name
+    if (context.options.method) {
+      context.options.method = context.options.method.toUpperCase();
+    }
+
+    if (context.options.onRequest) {
+      await callHooks(context, context.options.onRequest);
+    }
+
+    if (typeof context.request === "string") {
+      if (context.options.baseURL) {
+        context.request = withBase(context.request, context.options.baseURL);
+      }
+      if (context.options.query) {
+        context.request = withQuery(context.request, context.options.query);
+        delete context.options.query;
+      }
+      if ("query" in context.options) {
+        delete context.options.query;
+      }
+      if ("params" in context.options) {
+        delete context.options.params;
+      }
+    }
+
+    if (context.options.body && isPayloadMethod(context.options.method)) {
+      if (isJSONSerializable(context.options.body)) {
+        const contentType = context.options.headers.get("content-type");
+
+        // Automatically stringify request bodies, when not already a string.
+        if (typeof context.options.body !== "string") {
+          context.options.body =
+            contentType === "application/x-www-form-urlencoded"
+              ? new URLSearchParams(
+                  context.options.body as Record<string, any>
+                ).toString()
+              : JSON.stringify(context.options.body);
+        }
+
+        // Set Content-Type and Accept headers to application/json by default
+        // for JSON serializable request bodies.
+        // Pass empty object as older browsers don't support undefined.
+        context.options.headers = new Headers(context.options.headers || {});
+        if (!contentType) {
+          context.options.headers.set("content-type", "application/json");
+        }
+        if (!context.options.headers.has("accept")) {
+          context.options.headers.set("accept", "application/json");
+        }
+      } else if (
+        // ReadableStream Body
+        ("pipeTo" in (context.options.body as ReadableStream) &&
+          typeof (context.options.body as ReadableStream).pipeTo ===
+            "function") ||
+        // Node.js Stream Body
+        typeof (context.options.body as Readable).pipe === "function"
+      ) {
+        // eslint-disable-next-line unicorn/no-lonely-if
+        if (!("duplex" in context.options)) {
+          context.options.duplex = "half";
+        }
+      }
+    }
+
+    const circuit = isCircuitRetry
+      ? undefined
+      : resolveCircuitBreaker(context.options.circuitBreaker);
+    const origin = circuit ? getRequestOrigin(context.request) : undefined;
+    const admission =
+      circuit && origin
+        ? admitCircuit(circuitStates, origin, circuit)
+        : undefined;
+
+    if (admission && !admission.allowed) {
+      const error = createCircuitOpenError(context);
+      if (Error.captureStackTrace) {
+        Error.captureStackTrace(error, $fetchRaw);
+      }
+      throw error;
+    }
+
+    try {
+      const response = await dispatch(context);
+      if (circuit && origin) {
+        recordCircuitOutcome(
+          circuitStates,
+          origin,
+          circuit,
+          classifyCircuitResponse(response.status, circuit.failureStatusCodes)
+        );
+      }
+      return response;
+    } catch (error) {
+      if (circuit && origin) {
+        recordCircuitOutcome(
+          circuitStates,
+          origin,
+          circuit,
+          classifyCircuitError(error, circuit.failureStatusCodes)
+        );
+      }
+      throw error;
+    } finally {
+      admission?.release();
+    }
   };
 
   const $fetch = async function $fetch(request, options) {
@@ -274,7 +357,8 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
         ...customGlobalOptions.defaults,
         ...defaultOptions,
       },
-    });
+      __circuitStates: circuitStates,
+    } as CreateFetchOptions);
 
   return $fetch;
 }

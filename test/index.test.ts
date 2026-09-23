@@ -506,6 +506,9 @@ describe("ofetch", () => {
   });
 
   it("default fetch options", async () => {
+    // Assert the options passed through to fetch without a live network call.
+    const offlineResponse = async () => new Response("{}");
+    fetch.mockImplementationOnce(offlineResponse);
     await $fetch("https://jsonplaceholder.typicode.com/todos/1", {});
     expect(fetch).toHaveBeenCalledOnce();
     const options = fetch.mock.calls[0][1];
@@ -513,6 +516,7 @@ describe("ofetch", () => {
       headers: expect.any(Headers),
     });
     fetch.mockReset();
+    fetch.mockImplementationOnce(offlineResponse);
     await $fetch("https://jsonplaceholder.typicode.com/todos/1", {
       timeout: 10_000,
     });
