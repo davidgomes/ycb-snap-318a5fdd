@@ -298,6 +298,51 @@ export default {
       'default-install-failed': 'Failed to download {URL}. Disabling Auto-correct Common Misspellings.',
       'defaults-missing': 'Failed to find default common auto-correct file: {FILE}.',
     },
+    // auto-toc.ts
+    'auto-toc': {
+      'name': 'Auto TOC',
+      'description': 'Generates or updates a table of contents between the <code>&lt;!-- toc --&gt;</code> and <code>&lt;!-- /toc --&gt;</code> markers. The file is left unchanged when the start marker is absent.',
+      'list-style': {
+        'name': 'List Style',
+        'description': 'Use a bulleted list or a numbered list for the table of contents',
+      },
+      'bullet-marker': {
+        'name': 'Bullet Marker',
+        'description': 'Marker used for bulleted table of contents items',
+      },
+      'ordered-list-style': {
+        'name': 'Ordered List Style',
+        'description': 'Number every item as 1, or increment the number across all items',
+      },
+      'indent-size': {
+        'name': 'Indent Size',
+        'description': 'Number of spaces to indent each heading level below the minimum level',
+      },
+      'min-level': {
+        'name': 'Minimum Heading Level',
+        'description': 'Lowest ATX heading level to include (inclusive)',
+      },
+      'max-level': {
+        'name': 'Maximum Heading Level',
+        'description': 'Highest ATX heading level to include (inclusive)',
+      },
+      'title': {
+        'name': 'Title',
+        'description': 'Optional title line inserted above the table of contents. Leave empty to omit it',
+      },
+      'use-explicit-ids': {
+        'name': 'Use Explicit IDs',
+        'description': 'When a heading ends with {#id}, use that id as the anchor',
+      },
+      'strip-formatting-in-toc': {
+        'name': 'Strip Formatting in TOC',
+        'description': 'Remove markdown formatting from the table of contents text',
+      },
+      'exclude-headings': {
+        'name': 'Exclude Headings',
+        'description': 'Headings to omit, one per line. Plain text matches the full heading case-insensitively. Wrap a pattern in slashes (/like so/) for a case-insensitive regular expression',
+      },
+    },
     // add-blank-line-after-yaml.ts
     'add-blank-line-after-yaml': {
       'name': 'Add Blank Line After YAML',
@@ -975,5 +1020,10 @@ export default {
     '<br>': '<br>', // leave as is
     '  ': '  ', // leave as is
     '<br/>': '<br/>', // leave as is
+    // auto-toc.ts
+    'bullet': 'bullet',
+    'number': 'number',
+    'always-one': 'always-one',
+    'increment': 'increment',
   },
 };

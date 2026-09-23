@@ -6,6 +6,176 @@
 A heading for the purpose of the Linter is an ATX header. It does _not_ currently support Setext headers (see [this issue](https://github.com/platers/obsidian-linter/issues/423)).
 
 
+## Auto TOC
+
+Alias: `auto-toc`
+
+Generates or updates a table of contents between the <code>&lt;!-- toc --&gt;</code> and <code>&lt;!-- /toc --&gt;</code> markers. The file is left unchanged when the start marker is absent.
+
+### Options
+
+| Name | Description | List Items | Default Value |
+| ---- | ----------- | ---------- | ------------- |
+| `List Style` | Use a bulleted list or a numbered list for the table of contents | `bullet`: Bulleted list items<br/><br/>`number`: Numbered list items | `bullet` |
+| `Bullet Marker` | Marker used for bulleted table of contents items | N/A | `-` |
+| `Ordered List Style` | Number every item as 1, or increment the number across all items | `always-one`: Every item is numbered 1<br/><br/>`increment`: Numbers increment across all items | `always-one` |
+| `Indent Size` | Number of spaces to indent each heading level below the minimum level | N/A | `2` |
+| `Minimum Heading Level` | Lowest ATX heading level to include (inclusive) | N/A | `2` |
+| `Maximum Heading Level` | Highest ATX heading level to include (inclusive) | N/A | `6` |
+| `Title` | Optional title line inserted above the table of contents. Leave empty to omit it | N/A |  |
+| `Use Explicit IDs` | When a heading ends with {#id}, use that id as the anchor | N/A | false |
+| `Strip Formatting in TOC` | Remove markdown formatting from the table of contents text | N/A | false |
+| `Exclude Headings` | Headings to omit, one per line. Plain text matches the full heading case-insensitively. Wrap a pattern in slashes (/like so/) for a case-insensitive regular expression | N/A |  |
+
+
+
+### Examples
+
+<details><summary>Inserts a table of contents for ATX headings when only the start marker is present, skipping heading level 1 by default</summary>
+
+Before:
+
+`````` markdown
+# Title
+
+<!-- toc -->
+
+## Section One
+### Details
+## Section Two
+``````
+
+After:
+
+`````` markdown
+# Title
+
+<!-- toc -->
+
+- [Section One](#section-one)
+  - [Details](#details)
+- [Section Two](#section-two)
+
+<!-- /toc -->
+
+## Section One
+### Details
+## Section Two
+``````
+</details>
+<details><summary>Replaces an existing table of contents and ignores headings in YAML, code blocks, and math blocks</summary>
+
+Before:
+
+`````` markdown
+---
+# not a heading
+title: Note
+---
+
+<!-- TOC -->
+- [Stale](#stale)
+<!-- /TOC -->
+
+## Kept
+
+```
+# Comment
+## Also a comment
+```
+
+$$
+# x
+$$
+
+## After Math
+``````
+
+After:
+
+`````` markdown
+---
+# not a heading
+title: Note
+---
+
+<!-- toc -->
+
+- [Kept](#kept)
+- [After Math](#after-math)
+
+<!-- /toc -->
+
+## Kept
+
+```
+# Comment
+## Also a comment
+```
+
+$$
+# x
+$$
+
+## After Math
+``````
+</details>
+<details><summary>With `List Style = number`, `Ordered List Style = increment`, `Title = Contents`, and `Strip Formatting in TOC = true`</summary>
+
+Before:
+
+`````` markdown
+<!-- toc -->
+
+## **Bold** and [[Page|Alias]]
+### Sub
+``````
+
+After:
+
+`````` markdown
+<!-- toc -->
+
+Contents
+
+1. [Bold and Alias](#bold-and-alias)
+  2. [Sub](#sub)
+
+<!-- /toc -->
+
+## **Bold** and [[Page|Alias]]
+### Sub
+``````
+</details>
+<details><summary>With `Use Explicit IDs = true`, a trailing {#id} is the anchor and duplicate anchors gain -1, -2, ...</summary>
+
+Before:
+
+`````` markdown
+<!-- toc -->
+
+## Intro {#custom}
+## Intro
+## Intro
+``````
+
+After:
+
+`````` markdown
+<!-- toc -->
+
+- [Intro](#custom)
+- [Intro](#intro)
+- [Intro](#intro-1)
+
+<!-- /toc -->
+
+## Intro {#custom}
+## Intro
+## Intro
+``````
+</details>
+
 ## Capitalize Headings
 
 Alias: `capitalize-headings`
