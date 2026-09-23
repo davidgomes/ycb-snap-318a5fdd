@@ -54,4 +54,18 @@ CREATE_CLONABLE = (
     + r"(\s+if\s+not\s+exists)?"
 )
 
+CREATE_TABLE = (
+    r"create(\s+or\s+replace)?(\s+(local|global))?"
+    r"(\s+(temp|temporary|transient|volatile|unlogged))?"
+    r"\s+table(\s+if\s+not\s+exists)?"
+)
+
+_TABLE_NAME_PART = group(
+    r'"(?:[^"]|"")*"',
+    r"`[^`]*`",
+    r"\{\{.*?\}\}",
+    r"\w+",
+)
+TABLE_NAME = _TABLE_NAME_PART + r"(\s*\.\s*" + _TABLE_NAME_PART + r")*"
+
 PRAGMA_SET_CALL = group(r"pragma", r"set", r"call")

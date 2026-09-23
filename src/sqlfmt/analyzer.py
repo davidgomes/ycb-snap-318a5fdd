@@ -51,10 +51,13 @@ class Analyzer:
 
     def clear_buffers(self) -> None:
         """
-        Reset the analyer's node, comment, and line buffers, and its parsing position.
-        (It is possible for the same analyzer to be used to lex twice, so we need to
-        reset buffers before lexing begins)
+        Reset the analyer's node, comment, and line buffers, its parsing position,
+        and its rules. (It is possible for the same analyzer to be used to lex twice,
+        so we need to reset buffers before lexing begins)
         """
+        if self.rule_stack:
+            self.rules = self.rule_stack[0]
+            self.rule_stack = []
         self.node_buffer = []
         self.comment_buffer = []
         self.line_buffer = []

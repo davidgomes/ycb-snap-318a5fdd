@@ -198,6 +198,95 @@ def handle_ddl_as(
         analyzer.pop_rules()
 
 
+def handle_create_table(
+    analyzer: "Analyzer",
+    source_string: str,
+    match: re.Match,
+    new_ruleset: List["Rule"],
+    fallback_ruleset: List["Rule"],
+) -> None:
+    """
+    Lex the keyword of a CREATE TABLE statement with a column list, then lex
+    the rest of the statement with new_ruleset. CREATE TABLE ... AS SELECT
+    statements with a column list are lexed with fallback_ruleset instead.
+    """
+    if _is_create_table_as(analyzer, source_string, match.end(0)):
+        lex_ruleset(analyzer, source_string, match, new_ruleset=fallback_ruleset)
+        return
+
+    add_node_to_buffer(
+        analyzer=analyzer,
+        source_string=source_string,
+        match=match,
+        token_type=TokenType.WORD_OPERATOR,
+    )
+    lex_ruleset(analyzer, source_string, match, new_ruleset=new_ruleset)
+
+
+def _is_create_table_as(analyzer: "Analyzer", source_string: str, pos: int) -> bool:
+    """
+    Scan the rest of the statement starting at pos, and return True if
+    it contains an "as" keyword outside of brackets after the
+    column list.
+    """
+    quoted_name_rule = analyzer.get_rule("quoted_name")
+    comment_rule = analyzer.get_rule("comment")
+    program = re.compile(
+        group(
+            quoted_name_rule.pattern,
+            comment_rule.pattern,
+            r"\{\{.*?\}\}",
+            r"\{%.*?%\}",
+            r"\{#.*?#\}",
+            r"[(\[]",
+            r"[)\]]",
+            r";",
+            r"\bas\b",
+        ),
+        re.IGNORECASE | re.DOTALL,
+    )
+    depth = 0
+    seen_body = False
+    for m in program.finditer(source_string, pos):
+        token = m.group(0).lower()
+        if token in ("(", "["):
+            depth += 1
+            seen_body = True
+        elif token in (")", "]"):
+            depth -= 1
+        elif token == ";" and depth <= 0:
+            break
+        elif token == "as" and depth == 0 and seen_body:
+            return True
+    return False
+
+
+def handle_ddl_post_body_keyword(
+    analyzer: "Analyzer",
+    source_string: str,
+    match: re.Match,
+) -> None:
+    """
+    Keywords like OPTIONS can follow a CREATE TABLE's column list, but they
+    can also appear inside column definitions. Inside brackets, lex them as
+    names; otherwise, lex them as unterminated keywords.
+    """
+    token = Token.from_match(source_string, match, token_type=TokenType.NAME)
+    node = analyzer.node_manager.create_node(
+        token=token, previous_node=analyzer.previous_node
+    )
+    if any(b.is_opening_bracket for b in node.open_brackets):
+        analyzer.node_buffer.append(node)
+        analyzer.pos = token.epos
+    else:
+        add_node_to_buffer(
+            analyzer=analyzer,
+            source_string=source_string,
+            match=match,
+            token_type=TokenType.UNTERM_KEYWORD,
+        )
+
+
 def handle_closing_angle_bracket(
     analyzer: "Analyzer",
     source_string: str,

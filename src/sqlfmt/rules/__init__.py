@@ -8,11 +8,14 @@ from sqlfmt.rules.common import (
     ALTER_WAREHOUSE,
     CREATE_CLONABLE,
     CREATE_FUNCTION,
+    CREATE_TABLE,
     CREATE_WAREHOUSE,
     PRAGMA_SET_CALL,
+    TABLE_NAME,
     group,
 )
 from sqlfmt.rules.core import CORE as CORE
+from sqlfmt.rules.create_table import CREATE_TABLE as CREATE_TABLE_RULES
 from sqlfmt.rules.function import FUNCTION as FUNCTION
 from sqlfmt.rules.grant import GRANT as GRANT
 from sqlfmt.rules.jinja import JINJA as JINJA  # noqa
@@ -283,6 +286,24 @@ MAIN = [
         action=partial(
             actions.handle_nonreserved_top_level_keyword,
             action=partial(actions.lex_ruleset, new_ruleset=GRANT),
+        ),
+    ),
+    Rule(
+        # CREATE TABLE ... LIKE and CREATE TABLE ... AS are lexed by
+        # the unsupported_ddl rule
+        name="create_table",
+        priority=2012,
+        pattern=group(CREATE_TABLE)
+        + r"(?=(\s+|(?=[\"`{]))"
+        + TABLE_NAME
+        + r"\s*\((?!\s*like\W))",
+        action=partial(
+            actions.handle_nonreserved_top_level_keyword,
+            action=partial(
+                actions.handle_create_table,
+                new_ruleset=CREATE_TABLE_RULES,
+                fallback_ruleset=UNSUPPORTED,
+            ),
         ),
     ),
     Rule(

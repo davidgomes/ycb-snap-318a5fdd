@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Optional
 
+from sqlfmt.ddl import CreateTableFormatter, split_create_table_runs
 from sqlfmt.jinjafmt import JinjaFormatter
 from sqlfmt.line import Line
 from sqlfmt.merger import LineMerger
@@ -46,8 +47,14 @@ class QueryFormatter:
         by the splitter
         """
         merger = LineMerger(mode=self.mode)
-        lines = merger.maybe_merge_lines(lines)
-        return lines
+        create_table_formatter = CreateTableFormatter(mode=self.mode)
+        new_lines: List[Line] = []
+        for is_create_table, run in split_create_table_runs(lines):
+            formatted = create_table_formatter.format(run) if is_create_table else None
+            if formatted is None:
+                formatted = merger.maybe_merge_lines(run)
+            new_lines.extend(formatted)
+        return new_lines
 
     def _dedent_jinja_blocks(self, lines: List[Line]) -> List[Line]:
         """
