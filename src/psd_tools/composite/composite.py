@@ -326,7 +326,7 @@ class Compositor(object):
         else:
             color, shape, alpha = self._get_object(layer)
 
-        # "This Layer" blend-if ranges refer to the layer's own pixels.
+        # Evaluate before clipping so "This Layer" sees the layer's own pixels.
         blend_if = self._get_blend_if(layer, color, knockout)
 
         # Composite clip layers.
