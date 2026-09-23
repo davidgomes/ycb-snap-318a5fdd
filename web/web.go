@@ -262,20 +262,23 @@ type Options struct {
 	Context               context.Context
 	TSDBRetentionDuration model.Duration
 	TSDBDir               string
-	TSDBMaxBytes          units.Base2Bytes
-	TSDBMaxPercentage     uint
-	LocalStorage          LocalStorage
-	Storage               storage.Storage
-	ExemplarStorage       storage.ExemplarQueryable
-	QueryEngine           *promql.Engine
-	LookbackDelta         time.Duration
-	ScrapeManager         *scrape.Manager
-	RuleManager           *rules.Manager
-	Notifier              *notifier.Manager
-	Version               *PrometheusVersion
-	NotificationsGetter   func() []notifications.Notification
-	NotificationsSub      func() (<-chan notifications.Notification, func(), bool)
-	Flags                 map[string]string
+	// ReloadStatus returns the latest configuration reload outcome.
+	// When nil, /api/v1/status/reload serves the empty pre-reload status.
+	ReloadStatus        func() api_v1.ReloadStatus
+	TSDBMaxBytes        units.Base2Bytes
+	TSDBMaxPercentage   uint
+	LocalStorage        LocalStorage
+	Storage             storage.Storage
+	ExemplarStorage     storage.ExemplarQueryable
+	QueryEngine         *promql.Engine
+	LookbackDelta       time.Duration
+	ScrapeManager       *scrape.Manager
+	RuleManager         *rules.Manager
+	Notifier            *notifier.Manager
+	Version             *PrometheusVersion
+	NotificationsGetter func() []notifications.Notification
+	NotificationsSub    func() (<-chan notifications.Notification, func(), bool)
+	Flags               map[string]string
 
 	ListenAddresses            []string
 	CORSOrigin                 *regexp.Regexp
@@ -427,6 +430,9 @@ func New(logger *slog.Logger, o *Options) *Handler {
 		},
 		o.Parser,
 	)
+	if o.ReloadStatus != nil {
+		h.apiV1.SetReloadStatusFunc(o.ReloadStatus)
+	}
 
 	if r := o.FeatureRegistry; r != nil {
 		// Set dynamic API features (based on configuration).

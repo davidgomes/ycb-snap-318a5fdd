@@ -261,6 +261,8 @@ type API struct {
 	openAPIBuilder  *OpenAPIBuilder
 
 	parser parser.Parser
+
+	reloadStatus func() ReloadStatus
 }
 
 // NewAPI returns an initialized API type.
@@ -454,6 +456,7 @@ func (api *API) Register(r *route.Router) {
 	r.Get("/metadata", wrap(api.metricMetadata))
 
 	r.Get("/status/config", wrap(api.serveConfig))
+	r.Get("/status/reload", wrap(api.serveReload))
 	r.Get("/status/runtimeinfo", wrap(api.serveRuntimeInfo))
 	r.Get("/status/buildinfo", wrap(api.serveBuildInfo))
 	r.Get("/status/flags", wrap(api.serveFlags))
@@ -1807,6 +1810,18 @@ func (api *API) serveConfig(*http.Request) apiFuncResult {
 		YAML: api.config().String(),
 	}
 	return apiFuncResult{cfg, nil, nil, nil}
+}
+
+// SetReloadStatusFunc supplies the latest transactional reload outcome.
+func (api *API) SetReloadStatusFunc(f func() ReloadStatus) {
+	api.reloadStatus = f
+}
+
+func (api *API) serveReload(*http.Request) apiFuncResult {
+	if api.reloadStatus == nil {
+		return apiFuncResult{EmptyReloadStatus(), nil, nil, nil}
+	}
+	return apiFuncResult{api.reloadStatus(), nil, nil, nil}
 }
 
 func (api *API) serveFlags(*http.Request) apiFuncResult {

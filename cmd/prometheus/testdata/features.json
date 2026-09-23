@@ -21,6 +21,7 @@
     "agent_mode": false,
     "auto_reload_config": false,
     "server_mode": true,
+    "transactional_reload_config": false,
     "stringlabels": true
   },
   "promql": {

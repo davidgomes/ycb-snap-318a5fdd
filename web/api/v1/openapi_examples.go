@@ -686,6 +686,31 @@ func statusConfigResponseExamples() *orderedmap.Map[string, *base.Example] {
 	return examples
 }
 
+// statusReloadResponseExamples returns examples for /status/reload response.
+func statusReloadResponseExamples() *orderedmap.Map[string, *base.Example] {
+	examples := orderedmap.New[string, *base.Example]()
+
+	examples.Set("beforeFirstReload", &base.Example{
+		Summary: "Before the first reload attempt",
+		Value: createYAMLNode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"last_reload_id":         "",
+				"last_reload_successful": false,
+				"error_category":         "none",
+				"error_message":          "",
+				"applied_reloaders":      []string{},
+				"rollback_attempted":     false,
+				"rollback_successful":    false,
+				"failed_reloader":        "",
+				"reloader_timings_ms":    map[string]int64{},
+			},
+		}),
+	})
+
+	return examples
+}
+
 // statusRuntimeInfoResponseExamples returns examples for /status/runtimeinfo response.
 func statusRuntimeInfoResponseExamples() *orderedmap.Map[string, *base.Example] {
 	examples := orderedmap.New[string, *base.Example]()

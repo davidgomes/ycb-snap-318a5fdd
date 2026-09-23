@@ -1284,6 +1284,36 @@ curl http://localhost:9090/api/v1/status/config
 }
 ```
 
+### Reload
+
+The following endpoint returns the most recent configuration reload outcome.
+It is populated when `--enable-feature=transactional-reload-config` is set.
+Before the first reload attempt, `last_reload_id` is empty, `last_reload_successful`
+is false, `error_category` is `none`, and the list and map fields are empty.
+
+`error_category` is one of `none`, `load_error`, `apply_error`, or `rollback_error`.
+
+```
+GET /api/v1/status/reload
+```
+
+```json
+{
+  "status": "success",
+  "data": {
+    "last_reload_id": "2026-01-02T13:37:00.000Z",
+    "last_reload_successful": false,
+    "error_category": "apply_error",
+    "error_message": "failed to apply scrape config",
+    "applied_reloaders": ["db_storage", "remote_storage"],
+    "rollback_attempted": true,
+    "rollback_successful": true,
+    "failed_reloader": "web_handler",
+    "reloader_timings_ms": {"db_storage": 1, "remote_storage": 2, "web_handler": 3}
+  }
+}
+```
+
 ### Flags
 
 The following endpoint returns flag values that Prometheus was configured with:

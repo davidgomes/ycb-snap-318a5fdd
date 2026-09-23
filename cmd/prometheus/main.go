@@ -202,8 +202,9 @@ type flagConfig struct {
 	RemoteFlushDeadline         model.Duration
 	maxNotificationsSubscribers int
 
-	enableAutoReload   bool
-	autoReloadInterval model.Duration
+	enableAutoReload          bool
+	autoReloadInterval        model.Duration
+	enableTransactionalReload bool
 
 	maxprocsEnable bool
 	memlimitEnable bool
@@ -255,6 +256,9 @@ func (c *flagConfig) setFeatureListOptions(logger *slog.Logger) error {
 					c.autoReloadInterval, _ = model.ParseDuration("1s")
 				}
 				logger.Info("Enabled automatic configuration file reloading. Checking for configuration changes every", "interval", c.autoReloadInterval)
+			case "transactional-reload-config":
+				c.enableTransactionalReload = true
+				logger.Info("Transactional configuration reload enabled")
 			case "concurrent-rule-eval":
 				c.enableConcurrentRuleEval = true
 				logger.Info("Experimental concurrent rule evaluation enabled.")
@@ -863,6 +867,7 @@ func main() {
 	features.Set(features.Prometheus, "agent_mode", agentMode)
 	features.Set(features.Prometheus, "server_mode", !agentMode)
 	features.Set(features.Prometheus, "auto_reload_config", cfg.enableAutoReload)
+	features.Set(features.Prometheus, "transactional_reload_config", cfg.enableTransactionalReload)
 	features.Enable(features.Prometheus, labels.ImplementationName)
 	template.RegisterFeatures(features.DefaultRegistry)
 
@@ -985,6 +990,9 @@ func main() {
 	cfg.web.TSDBMaxBytes = cfg.tsdb.MaxBytes
 	cfg.web.TSDBMaxPercentage = cfg.tsdb.MaxPercentage
 	cfg.web.TSDBDir = localStoragePath
+	configReloadState = newReloadState(localStoragePath, logger)
+	configReloadState.load()
+	cfg.web.ReloadStatus = configReloadState.snapshot
 	cfg.web.LocalStorage = localStorage
 	cfg.web.Storage = fanoutStorage
 	cfg.web.ExemplarStorage = localStorage
@@ -1297,7 +1305,7 @@ func main() {
 				for {
 					select {
 					case <-hup:
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, cfg.enableTransactionalReload, true, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
 							logger.Error("Error reloading config", "err", err)
 						} else if cfg.enableAutoReload {
 							checksum, err = config.GenerateChecksum(cfg.configFile)
@@ -1306,7 +1314,7 @@ func main() {
 							}
 						}
 					case rc := <-webHandler.Reload():
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, cfg.enableTransactionalReload, true, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
 							logger.Error("Error reloading config", "err", err)
 							rc <- err
 						} else {
@@ -1331,7 +1339,7 @@ func main() {
 						}
 						logger.Info("Configuration file change detected, reloading the configuration.")
 
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, cfg.enableTransactionalReload, true, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
 							logger.Error("Error reloading config", "err", err)
 						} else {
 							checksum = currentChecksum
@@ -1363,7 +1371,7 @@ func main() {
 					return nil
 				}
 
-				if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, func(bool) {}, reloaders...); err != nil {
+				if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, cfg.enableTransactionalReload, false, logger, noStepSubqueryInterval, func(bool) {}, reloaders...); err != nil {
 					return fmt.Errorf("error loading config from %q: %w", cfg.configFile, err)
 				}
 
@@ -1605,7 +1613,7 @@ type reloader struct {
 	reloader func(*config.Config) error
 }
 
-func reloadConfig(filename string, enableExemplarStorage bool, logger *slog.Logger, noStepSubqueryInterval *safePromQLNoStepSubqueryInterval, callback func(bool), rls ...reloader) (err error) {
+func reloadConfig(filename string, enableExemplarStorage bool, transactional, recordOutcome bool, logger *slog.Logger, noStepSubqueryInterval *safePromQLNoStepSubqueryInterval, callback func(bool), rls ...reloader) (err error) {
 	start := time.Now()
 	timingsLogger := logger
 	logger.Info("Loading configuration file", "filename", filename)
@@ -1623,13 +1631,28 @@ func reloadConfig(filename string, enableExemplarStorage bool, logger *slog.Logg
 
 	conf, err := config.LoadFile(filename, agentMode, logger)
 	if err != nil {
-		return fmt.Errorf("couldn't load configuration (--config.file=%q): %w", filename, err)
+		err = fmt.Errorf("couldn't load configuration (--config.file=%q): %w", filename, err)
+		if transactional && recordOutcome {
+			recordReloadOutcome(reloadOutcome{
+				successful:    false,
+				category:      reloadErrLoad,
+				message:       err.Error(),
+				applied:       nil,
+				timings:       map[string]int64{},
+				rollbackTried: false,
+			})
+		}
+		return err
 	}
 
 	if enableExemplarStorage {
 		if conf.StorageConfig.ExemplarsConfig == nil {
 			conf.StorageConfig.ExemplarsConfig = &config.DefaultExemplarsConfig
 		}
+	}
+
+	if transactional {
+		return applyConfigTransactional(filename, conf, recordOutcome, logger, timingsLogger, start, noStepSubqueryInterval, rls...)
 	}
 
 	failed := false
@@ -1645,8 +1668,82 @@ func reloadConfig(filename string, enableExemplarStorage bool, logger *slog.Logg
 		return fmt.Errorf("one or more errors occurred while applying the new configuration (--config.file=%q)", filename)
 	}
 
+	if configReloadState != nil {
+		configReloadState.setLastGood(conf)
+	}
 	updateGoGC(conf, logger)
 	noStepSubqueryInterval.Set(conf.GlobalConfig.EvaluationInterval)
+	timingsLogger.Info("Completed loading of configuration file", "filename", filename, "totalDuration", time.Since(start))
+	return nil
+}
+
+// applyConfigTransactional applies reloaders in order and, when a later
+// reloader fails after at least one success, rolls back to the last known-good
+// configuration. recordOutcome is false for the initial startup load so no
+// reload-status file is written before the first reload attempt.
+func applyConfigTransactional(filename string, conf *config.Config, recordOutcome bool, logger, timingsLogger *slog.Logger, start time.Time, noStepSubqueryInterval *safePromQLNoStepSubqueryInterval, rls ...reloader) error {
+	applied := make([]string, 0, len(rls))
+	timings := make(map[string]int64, len(rls))
+	var failName string
+	var failErr error
+
+	for _, rl := range rls {
+		rstart := time.Now()
+		err := rl.reloader(conf)
+		elapsed := time.Since(rstart)
+		timings[rl.name] = elapsed.Milliseconds()
+		timingsLogger = timingsLogger.With(rl.name, elapsed)
+		if err != nil {
+			logger.Error("Failed to apply configuration", "err", err, "reloader", rl.name)
+			failName = rl.name
+			failErr = err
+			break
+		}
+		applied = append(applied, rl.name)
+	}
+
+	if failErr != nil {
+		outcome := reloadOutcome{
+			successful: false,
+			category:   reloadErrApply,
+			message:    failErr.Error(),
+			applied:    applied,
+			timings:    timings,
+			failedName: failName,
+		}
+		if len(applied) > 0 && configReloadState != nil && configReloadState.lastGood() != nil {
+			outcome.rollbackTried = true
+			outcome.rollbackOK = true
+			good := configReloadState.lastGood()
+			for _, rl := range rls {
+				if err := rl.reloader(good); err != nil {
+					logger.Error("Failed to roll back configuration", "err", err, "reloader", rl.name)
+					outcome.rollbackOK = false
+					outcome.category = reloadErrRollback
+					outcome.message = err.Error()
+					break
+				}
+			}
+		}
+		if recordOutcome {
+			recordReloadOutcome(outcome)
+		}
+		return fmt.Errorf("one or more errors occurred while applying the new configuration (--config.file=%q)", filename)
+	}
+
+	if configReloadState != nil {
+		configReloadState.setLastGood(conf)
+	}
+	updateGoGC(conf, logger)
+	noStepSubqueryInterval.Set(conf.GlobalConfig.EvaluationInterval)
+	if recordOutcome {
+		recordReloadOutcome(reloadOutcome{
+			successful: true,
+			category:   reloadErrNone,
+			applied:    applied,
+			timings:    timings,
+		})
+	}
 	timingsLogger.Info("Completed loading of configuration file", "filename", filename, "totalDuration", time.Since(start))
 	return nil
 }
