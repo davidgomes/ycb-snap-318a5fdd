@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "wasm")]
 use tsify::Tsify;
 
-use crate::error::JobsError;
+use crate::{error::JobsError, utils::structural_selectors::StructuralSelectors};
 
 #[cfg_attr(feature = "wasm", derive(Tsify))]
 #[cfg_attr(feature = "napi", napi(object))]
@@ -28,6 +28,11 @@ use crate::error::JobsError;
 /// Filters `<g>` elements that have no effect.
 ///
 /// For removing empty groups, see [`super::RemoveEmptyContainers`].
+///
+/// # Differences to SVGO
+///
+/// OXVG will avoid collapsing groups where it would change what a structure-dependent
+/// selector (e.g. `g > path` or `path:first-child`) matches in the stylesheets.
 ///
 /// # Correctness
 ///
@@ -45,15 +50,26 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
 
     fn prepare(
         &self,
-        _document: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        document: &Element<'input, 'arena>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
-        Ok(if self.0 {
-            PrepareOutcome::none
-        } else {
-            PrepareOutcome::skip
-        })
+        if self.0 {
+            context.query_has_stylesheet(document);
+            // Must be gathered before any rewrite, as collapsing may remove the evidence of a match
+            let structure =
+                StructuralSelectors::new(document, &context.query_has_stylesheet_result);
+            State { structure }.start_with_context(document, context)?;
+        }
+        Ok(PrepareOutcome::skip)
     }
+}
+
+struct State<'input, 'arena> {
+    structure: StructuralSelectors<'input, 'arena>,
+}
+
+impl<'input, 'arena> Visitor<'input, 'arena> for State<'input, 'arena> {
+    type Error = JobsError<'input>;
 
     fn exit_element(
         &self,
@@ -68,6 +84,10 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
             return Ok(());
         }
         if !is_element!(element, G) || !element.has_child_elements() {
+            return Ok(());
+        }
+        if is_structure_dependent(element, &parent, &self.structure) {
+            log::debug!("collapse_groups: not collapsing: structure-dependent selector");
             return Ok(());
         }
 
@@ -173,6 +193,46 @@ fn flatten_when_all_attributes_moved(element: &Element) {
     }
 
     element.flatten();
+}
+
+/// Whether collapsing the group would change an element or relationship that a
+/// structure-dependent selector relies on.
+fn is_structure_dependent<'input, 'arena>(
+    element: &Element<'input, 'arena>,
+    parent: &Element<'input, 'arena>,
+    structure: &StructuralSelectors<'input, 'arena>,
+) -> bool {
+    if structure.is_anchor(element) {
+        return true;
+    }
+
+    let mut children = element.children_iter();
+    if let (Some(child), None) = (children.next(), children.next()) {
+        if element.has_attributes() && structure.is_anchor(&child) {
+            return true;
+        }
+    }
+
+    let has_preceding = element.previous_element_sibling().is_some();
+    let has_following = element.next_element_sibling().is_some();
+    if element.children_iter().any(|child| {
+        (has_preceding && structure.depends_on_preceding(&child))
+            || (has_following && structure.depends_on_following(&child))
+    }) {
+        return true;
+    }
+
+    let mut is_after_element = false;
+    parent.children_iter().any(|sibling| {
+        if sibling == *element {
+            is_after_element = true;
+            false
+        } else if is_after_element {
+            structure.depends_on_preceding(&sibling)
+        } else {
+            structure.depends_on_following(&sibling)
+        }
+    })
 }
 
 fn has_animated_attr<'input>(element: &Element<'input, '_>, local_name: &Atom<'input>) -> bool {
