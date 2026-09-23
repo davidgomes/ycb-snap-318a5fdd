@@ -164,6 +164,25 @@ def foo(arg: Sequence):
 ```
 
 
+## Caching
+
+For large code bases, pass `--cache` to store the analysis results in a
+cache directory (`.vulture-cache/` by default, use `--cache-dir PATH` to
+change it). Subsequent runs with `--cache` only re-analyze files that
+changed and the files that (transitively) import them. The results are the
+same as without the cache.
+
+    $ vulture --cache mydir/
+    $ vulture --cache --cache-dir /tmp/vulture-cache mydir/
+    $ vulture --cache --cache-clear mydir/  # Start with an empty cache.
+
+The cache is invalidated automatically when the Python or Vulture version
+changes, or when options that affect the analysis (`--ignore-names` and
+`--ignore-decorators`) change. `--cache-clear` removes all contents of the
+cache directory before running. Concurrent Vulture processes can safely
+share a cache directory. You may want to add the cache directory to your
+`.gitignore` file.
+
 ## Configuration
 
 You can also store command line arguments in `pyproject.toml` under the
@@ -177,6 +196,8 @@ Example Config:
 
 ``` toml
 [tool.vulture]
+cache = true
+cache_dir = ".vulture-cache/"
 exclude = ["*file*.py", "dir/"]
 ignore_decorators = ["@app.route", "@require_*"]
 ignore_names = ["visit_*", "do_*"]
