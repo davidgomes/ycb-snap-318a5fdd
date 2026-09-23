@@ -13,7 +13,7 @@
  */
 
 import Result from './result.js';
-import Maybe from './maybe.js';
+import Maybe, { sequence, traverse, zip } from './maybe.js';
 import { curry1 } from './-private/utils.js';
 
 /**
@@ -159,4 +159,152 @@ export function toOkOrElseErr<T extends {}, E>(
  */
 export function fromResult<T extends {}>(result: Result<T, unknown>): Maybe<T> {
   return result.isOk ? Maybe.just(result.value) : Maybe.nothing<T>();
+}
+
+/**
+  Given an iterable of {@linkcode Maybe}s, produce an {@linkcode "result".Ok Ok}
+  of an array of all their values if every item is {@linkcode "maybe".Just
+  Just}, or an {@linkcode "result".Err Err} of `errValue` if any item is
+  {@linkcode "maybe".Nothing Nothing}.
+
+  Iteration stops immediately after the first `Nothing`.
+
+  ```ts
+  import * as maybe from 'true-myth/maybe';
+  import { sequenceMaybeAsResult } from 'true-myth/toolbelt';
+
+  sequenceMaybeAsResult('missing', [maybe.just(1), maybe.just(2)]); // Ok([1, 2])
+  sequenceMaybeAsResult('missing', [maybe.just(1), maybe.nothing()]); // Err('missing')
+  ```
+
+  @param errValue The error to use if any item is `Nothing`.
+  @param maybes   The `Maybe`s to combine.
+ */
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E,
+  maybes: Iterable<Maybe<T>>
+): Result<Array<T>, E>;
+/**
+  Given an iterable of {@linkcode Maybe}s, produce an {@linkcode "result".Ok Ok}
+  of an array of all their values if every item is {@linkcode "maybe".Just
+  Just}, or an {@linkcode "result".Err Err} of `errValue` if any item is
+  {@linkcode "maybe".Nothing Nothing}.
+
+  This curried form accepts the `errValue` first and produces a function which
+  accepts the `Maybe`s.
+
+  @param errValue The error to use if any item is `Nothing`.
+ */
+export function sequenceMaybeAsResult<E>(
+  errValue: E
+): <T extends {}>(maybes: Iterable<Maybe<T>>) => Result<Array<T>, E>;
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E,
+  maybes?: Iterable<Maybe<T>>
+): Result<Array<T>, E> | (<T extends {}>(maybes: Iterable<Maybe<T>>) => Result<Array<T>, E>) {
+  const op = <T extends {}>(ms: Iterable<Maybe<T>>) => toOkOrErr(errValue, sequence(ms));
+  return maybes === undefined ? op : op(maybes);
+}
+
+/**
+  Apply a function which produces a {@linkcode Maybe} to every item in an
+  iterable, producing an {@linkcode "result".Ok Ok} of an array of the results
+  if every call produced a {@linkcode "maybe".Just Just}, or an {@linkcode
+  "result".Err Err} of `errValue` as soon as any call produces {@linkcode
+  "maybe".Nothing Nothing}.
+
+  After the first `Nothing`, `fn` is not called for, and the iterable is not
+  advanced past, any later items.
+
+  ```ts
+  import * as maybe from 'true-myth/maybe';
+  import { traverseMaybeAsResult } from 'true-myth/toolbelt';
+
+  const lookup = (key: string) => maybe.of(process.env[key]);
+
+  traverseMaybeAsResult('missing env var', ['HOME', 'PATH'], lookup); // Ok([...])
+  traverseMaybeAsResult('missing env var', ['HOME', 'NOPE'], lookup); // Err('missing env var')
+  ```
+
+  @param errValue The error to use if any call produces `Nothing`.
+  @param items    The items to apply `fn` to.
+  @param fn       A function producing a `Maybe` from each item.
+ */
+export function traverseMaybeAsResult<A, B extends {}, E>(
+  errValue: E,
+  items: Iterable<A>,
+  fn: (item: A) => Maybe<B>
+): Result<Array<B>, E>;
+/**
+  Apply a function which produces a {@linkcode Maybe} to every item in an
+  iterable, producing an {@linkcode "result".Ok Ok} of an array of the results
+  if every call produced a {@linkcode "maybe".Just Just}, or an {@linkcode
+  "result".Err Err} of `errValue` as soon as any call produces {@linkcode
+  "maybe".Nothing Nothing}.
+
+  This curried form accepts the `errValue` first and produces a function which
+  accepts the items and the function.
+
+  @param errValue The error to use if any call produces `Nothing`.
+ */
+export function traverseMaybeAsResult<E>(
+  errValue: E
+): <A, B extends {}>(items: Iterable<A>, fn: (item: A) => Maybe<B>) => Result<Array<B>, E>;
+export function traverseMaybeAsResult<A, B extends {}, E>(
+  errValue: E,
+  items?: Iterable<A>,
+  fn?: (item: A) => Maybe<B>
+):
+  | Result<Array<B>, E>
+  | (<A, B extends {}>(items: Iterable<A>, fn: (item: A) => Maybe<B>) => Result<Array<B>, E>) {
+  const op = <A, B extends {}>(is: Iterable<A>, f: (item: A) => Maybe<B>) =>
+    toOkOrErr(errValue, traverse(is, f));
+  return items === undefined ? op : op(items, fn as (item: A) => Maybe<B>);
+}
+
+/**
+  Combine two {@linkcode Maybe}s into an {@linkcode "result".Ok Ok} of a tuple
+  of their values if both are {@linkcode "maybe".Just Just}, or an {@linkcode
+  "result".Err Err} of `errValue` if either is {@linkcode "maybe".Nothing
+  Nothing}.
+
+  ```ts
+  import * as maybe from 'true-myth/maybe';
+  import { zipMaybeAsResult } from 'true-myth/toolbelt';
+
+  zipMaybeAsResult('missing', maybe.just(1), maybe.just('a')); // Ok([1, 'a'])
+  zipMaybeAsResult('missing', maybe.just(1), maybe.nothing()); // Err('missing')
+  ```
+
+  @param errValue The error to use if either `Maybe` is `Nothing`.
+  @param a        The first `Maybe`.
+  @param b        The second `Maybe`.
+ */
+export function zipMaybeAsResult<A extends {}, B extends {}, E>(
+  errValue: E,
+  a: Maybe<A>,
+  b: Maybe<B>
+): Result<[A, B], E>;
+/**
+  Combine two {@linkcode Maybe}s into an {@linkcode "result".Ok Ok} of a tuple
+  of their values if both are {@linkcode "maybe".Just Just}, or an {@linkcode
+  "result".Err Err} of `errValue` if either is {@linkcode "maybe".Nothing
+  Nothing}.
+
+  This curried form accepts the `errValue` first and produces a function which
+  accepts the two `Maybe`s.
+
+  @param errValue The error to use if either `Maybe` is `Nothing`.
+ */
+export function zipMaybeAsResult<E>(
+  errValue: E
+): <A extends {}, B extends {}>(a: Maybe<A>, b: Maybe<B>) => Result<[A, B], E>;
+export function zipMaybeAsResult<A extends {}, B extends {}, E>(
+  errValue: E,
+  a?: Maybe<A>,
+  b?: Maybe<B>
+): Result<[A, B], E> | (<A extends {}, B extends {}>(a: Maybe<A>, b: Maybe<B>) => Result<[A, B], E>) {
+  const op = <A extends {}, B extends {}>(ma: Maybe<A>, mb: Maybe<B>) =>
+    toOkOrErr(errValue, zip(ma, mb));
+  return a === undefined ? op : op(a, b as Maybe<B>);
 }
