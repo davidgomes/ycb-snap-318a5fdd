@@ -700,6 +700,51 @@ This generates GraphQL equivalent to::
       }
     }
 
+Defer and Stream
+""""""""""""""""
+
+The :code:`@defer` and :code:`@stream` directives allow the server to send the
+critical data first and the non-essential fields incrementally.
+They are available even if they are not defined in the schema.
+
+Use the :code:`defer` method on a fragment
+(:meth:`DSLFragment <gql.dsl.DSLFragment.defer>`,
+:meth:`DSLFragmentSpread <gql.dsl.DSLFragmentSpread.defer>` or
+:meth:`DSLInlineFragment <gql.dsl.DSLInlineFragment.defer>`) and the
+:meth:`stream <gql.dsl.DSLField.stream>` method on a list field::
+
+    query = DSLQuery(
+        ds.Query.hero.select(
+            ds.Character.id,
+            DSLInlineFragment()
+            .on(ds.Character)
+            .select(ds.Character.name)
+            .defer(label="HeroName"),
+            ds.Character.friends.stream(initial_count=1).select(ds.Character.name),
+        )
+    )
+
+This generates::
+
+    {
+      hero {
+        id
+        ... on Character @defer(label: "HeroName") {
+          name
+        }
+        friends @stream(initialCount: 1) {
+          name
+        }
+      }
+    }
+
+Then use :meth:`execute_incremental <gql.client.AsyncClientSession.execute_incremental>`
+to receive a result for each payload sent by the server, with the data accumulated
+so far::
+
+    async for result in session.execute_incremental(dsl_gql(query)):
+        print(result.data, result.has_next)
+
 Executable examples
 -------------------
 
