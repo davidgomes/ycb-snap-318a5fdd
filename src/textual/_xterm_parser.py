@@ -37,7 +37,12 @@ FOCUSOUT: Final[str] = "\x1b[O"
 SPECIAL_SEQUENCES = {BRACKETED_PASTE_START, BRACKETED_PASTE_END, FOCUSIN, FOCUSOUT}
 """Set of special sequences."""
 
-_re_extended_key: Final = re.compile(r"\x1b\[(?:(\d+)(?:;(\d+))?)?([u~ABCDEFHPQRS])")
+_re_extended_key: Final = re.compile(
+    r"\x1b\[(?:(\d+)(?::(\d*))?(?::(\d*))?)?"
+    r"(?:;(\d*)(?::(\d+))?(?:;([\d:]*))?)?([u~ABCDEFHPQRS])"
+)
+_MODIFIERS: Final = ("shift", "alt", "ctrl", "super", "hyper", "meta")
+_KEY_PHASES: Final = {"1": "press", "2": "repeat", "3": "release"}
 _re_in_band_window_resize: Final = re.compile(
     r"\x1b\[48;(\d+(?:\:.*?)?);(\d+(?:\:.*?)?);(\d+(?:\:.*?)?);(\d+(?:\:.*?)?)t"
 )
@@ -324,6 +329,113 @@ class XTermParser(Parser[Message]):
             self._debug_log_file.close()
             self._debug_log_file = None
 
+    def _extended_key_event(
+        self,
+        number: str | None,
+        shifted_code: str | None,
+        base_layout_code: str | None,
+        modifiers: str | None,
+        event_type: str | None,
+        text_codes: str | None,
+        end: str,
+    ) -> events.Key:
+        """Build a key event from a (possibly Kitty protocol) CSI key sequence."""
+
+        def code_to_key(code: str | None) -> str | None:
+            if not code:
+                return None
+            try:
+                return _character_to_key(chr(int(code)))
+            except Exception:
+                return None
+
+        phase = _KEY_PHASES.get(event_type or "1", "press")
+        modifier_bits = int(modifiers) - 1 if modifiers else 0
+        # Ignore caps_lock and num_lock modifiers
+        modifier_names = sorted(
+            modifier
+            for bit, modifier in enumerate(_MODIFIERS)
+            if modifier_bits & (1 << bit)
+        )
+        text = ""
+        if text_codes:
+            try:
+                text = "".join(chr(int(code)) for code in text_codes.split(":") if code)
+            except (ValueError, OverflowError):
+                text = ""
+        shifted_key = code_to_key(shifted_code)
+        base_layout_key = code_to_key(base_layout_code)
+
+        number = number or "1"
+        if number == "0" and text:
+            return events.Key(
+                text,
+                text,
+                phase=phase,
+                modifiers=modifier_names,
+                base_key=text,
+            )
+
+        functional_key = FUNCTIONAL_KEYS.get(f"{number}{end}", "")
+        if functional_key or end != "u":
+            base_key = (functional_key or number).lower()
+            key = "+".join([*modifier_names, base_key])
+            return events.Key(
+                key, None, phase=phase, modifiers=modifier_names, base_key=base_key
+            )
+
+        try:
+            base_character = chr(int(number))
+            base_key = _character_to_key(base_character)
+        except Exception:
+            base_character = ""
+            base_key = number
+        if len(base_key) == 1:
+            base_key = base_key.lower()
+
+        aliases: list[str] = []
+        non_shift = [modifier for modifier in modifier_names if modifier != "shift"]
+        if shifted_key is not None and "shift" in modifier_names:
+            aliases.append("+".join([*non_shift, shifted_key]))
+        if base_layout_key is not None and base_layout_key != base_key:
+            aliases.append("+".join([*modifier_names, base_layout_key]))
+
+        character: str | None
+        if not modifier_names or modifier_names == ["shift"]:
+            if modifier_names:
+                character = (
+                    text
+                    or (chr(int(shifted_code)) if shifted_code else "")
+                    or base_character.upper()
+                )
+            else:
+                character = text or base_character
+            if (
+                len(character) == 1
+                and character.isprintable()
+                and not (modifier_names and character == base_character)
+            ):
+                key = _character_to_key(character)
+                if modifier_names:
+                    aliases.append(f"shift+{base_key}")
+            else:
+                key = "+".join([*modifier_names, base_key])
+                character = character or None
+        else:
+            key = "+".join([*modifier_names, base_key])
+            character = None
+
+        return events.Key(
+            key,
+            character,
+            phase=phase,
+            modifiers=modifier_names,
+            base_key=base_key,
+            shifted_key=shifted_key,
+            base_layout_key=base_layout_key,
+            aliases=[alias for alias in aliases if alias != key],
+        )
+
     def _sequence_to_key_events(
         self, sequence: str, alt: bool = False
     ) -> Iterable[events.Key]:
@@ -337,28 +449,7 @@ class XTermParser(Parser[Message]):
         """
 
         if (match := _re_extended_key.fullmatch(sequence)) is not None:
-            number, modifiers, end = match.groups()
-            number = number or 1
-            if not (key := FUNCTIONAL_KEYS.get(f"{number}{end}", "")):
-                try:
-                    key = _character_to_key(chr(int(number)))
-                except Exception:
-                    key = chr(int(number))
-            key_tokens: list[str] = []
-            if modifiers:
-                modifier_bits = int(modifiers) - 1
-                # Not convinced of the utility in reporting caps_lock and num_lock
-                MODIFIERS = ("shift", "alt", "ctrl", "super", "hyper", "meta")
-                # Ignore caps_lock and num_lock modifiers
-                for bit, modifier in enumerate(MODIFIERS):
-                    if modifier_bits & (1 << bit):
-                        key_tokens.append(modifier)
-
-            key_tokens.sort()
-            key_tokens.append(key.lower())
-            yield events.Key(
-                "+".join(key_tokens), sequence if len(sequence) == 1 else None
-            )
+            yield self._extended_key_event(*match.groups())
             return
 
         keys = ANSI_SEQUENCES_KEYS.get(sequence)

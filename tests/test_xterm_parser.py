@@ -386,3 +386,68 @@ def test_terminal_mode_reporting_synchronized_output_not_supported(parser):
     sequence = "\x1b[?2026;0$y"
     events = list(parser.feed(sequence))
     assert events == []
+
+
+@pytest.mark.parametrize(
+    "sequence, phase",
+    [
+        ("\x1b[97;5u", "press"),
+        ("\x1b[97;5:1u", "press"),
+        ("\x1b[97;5:2u", "repeat"),
+        ("\x1b[97;5:3u", "release"),
+    ],
+)
+def test_kitty_key_phase(parser, sequence, phase):
+    [event] = list(parser.feed(sequence))
+    assert event.key == "ctrl+a"
+    assert event.phase == phase
+    assert event.modifiers == ("ctrl",)
+    assert event.base_key == "a"
+    assert event.ctrl and not event.shift
+
+
+def test_kitty_shift_printable(parser):
+    [event] = list(parser.feed("\x1b[97:65;2;65u"))
+    assert event.key in ("A", "shift+a")
+    assert event.character == "A"
+    assert event.modifiers == ("shift",)
+    assert event.base_key == "a"
+    assert "shift+a" in event.aliases
+
+
+def test_kitty_modified_printable(parser):
+    [event] = list(parser.feed("\x1b[97;4u"))
+    assert event.key == "alt+shift+a"
+    assert event.character is None
+
+
+def test_kitty_text_only(parser):
+    [event] = list(parser.feed("\x1b[0;;228u"))
+    assert event.key == "ä"
+    assert event.character == "ä"
+
+
+def test_kitty_shifted_alternate(parser):
+    [event] = list(parser.feed("\x1b[61:43;6u"))
+    assert event.shifted_key == "plus"
+    assert "ctrl+plus" in event.aliases
+
+
+@pytest.mark.parametrize(
+    "sequence, key, character, modifiers, base_key",
+    [
+        ("\x1b\r", "enter", "\r", (), "enter"),
+        ("\x1b ", "space", " ", (), "space"),
+        ("\x1b\x7f", "ctrl+w", None, ("ctrl",), "w"),
+        ("\x1b\x01", "ctrl+a", "\x01", ("ctrl",), "a"),
+    ],
+)
+def test_legacy_alt_prefixed_metadata(
+    parser, sequence, key, character, modifiers, base_key
+):
+    events = list(parser.feed(sequence)) + list(parser.feed(""))
+    [event] = events
+    assert event.key == key
+    assert event.character == character
+    assert event.modifiers == modifiers
+    assert event.base_key == base_key
