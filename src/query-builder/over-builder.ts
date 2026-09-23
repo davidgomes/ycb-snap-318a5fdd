@@ -15,6 +15,8 @@ import {
 } from '../parser/partition-by-parser.js'
 import { freeze } from '../util/object-utils.js'
 import type { OrderByInterface } from './order-by-interface.js'
+import type { FrameMode } from '../operation-node/frame-node.js'
+import { FrameBuilder, type FrameBuilderCallback } from './frame-builder.js'
 
 export class OverBuilder<DB, TB extends keyof DB>
   implements OrderByInterface<DB, TB, {}>, OperationNodeSource
@@ -127,6 +129,102 @@ export class OverBuilder<DB, TB extends keyof DB>
       overNode: OverNode.cloneWithPartitionByItems(
         this.#props.overNode,
         parsePartitionBy(partitionBy),
+      ),
+    })
+  }
+
+  /**
+   * Adds a `rows` frame extent inside the over function.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select(
+   *     (eb) => eb.fn.avg<number>('age').over(
+   *       ob => ob.orderBy('id').rows(
+   *         (fb) => fb.betweenPreceding(2).andCurrentRow()
+   *       )
+   *     ).as('moving_average_age')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select avg("age") over(order by "id" rows between $1 preceding and current row) as "moving_average_age"
+   * from "person"
+   * ```
+   */
+  rows(frame: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#frame('rows', frame)
+  }
+
+  /**
+   * Adds a `range` frame extent inside the over function.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * import { sql } from 'kysely'
+   *
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select(
+   *     (eb) => eb.fn.count<number>('id').over(
+   *       ob => ob.orderBy('age').range(
+   *         (fb) => fb.betweenPreceding(sql.lit(5)).andFollowing(sql.lit(5)).excludeCurrentRow()
+   *       )
+   *     ).as('similar_age_count')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select count("id") over(order by "age" range between 5 preceding and 5 following exclude current row) as "similar_age_count"
+   * from "person"
+   * ```
+   */
+  range(frame: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#frame('range', frame)
+  }
+
+  /**
+   * Adds a `groups` frame extent inside the over function.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select(
+   *     (eb) => eb.fn.count<number>('id').over(
+   *       ob => ob.orderBy('age').groups((fb) => fb.unboundedPreceding())
+   *     ).as('running_count')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select count("id") over(order by "age" groups unbounded preceding) as "running_count"
+   * from "person"
+   * ```
+   */
+  groups(frame: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#frame('groups', frame)
+  }
+
+  #frame(mode: FrameMode, frame: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return new OverBuilder({
+      overNode: OverNode.cloneWithFrame(
+        this.#props.overNode,
+        frame(new FrameBuilder(mode)).toOperationNode(),
       ),
     })
   }

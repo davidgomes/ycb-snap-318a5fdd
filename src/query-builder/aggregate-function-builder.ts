@@ -103,6 +103,74 @@ export class AggregateFunctionBuilder<DB, TB extends keyof DB, O = unknown>
   }
 
   /**
+   * Adds a `respect nulls` clause after the function's arguments.
+   *
+   * Applicable to value window functions such as `first_value`, `last_value`,
+   * `nth_value`, `lag` and `lead`. Support varies between dialects.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn.lag('first_name').respectNulls().over((ob) => ob.orderBy('id')).as('previous_name')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (MySQL):
+   *
+   * ```sql
+   * select lag(`first_name`) respect nulls over(order by `id`) as `previous_name`
+   * from `person`
+   * ```
+   */
+  respectNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNullTreatment(
+        this.#props.aggregateFunctionNode,
+        'respect nulls',
+      ),
+    })
+  }
+
+  /**
+   * Adds an `ignore nulls` clause after the function's arguments.
+   *
+   * Applicable to value window functions such as `first_value`, `last_value`,
+   * `nth_value`, `lag` and `lead`. Support varies between dialects.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn.lastValue('middle_name').ignoreNulls().over((ob) => ob.orderBy('id')).as('last_middle_name')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (MS SQL Server):
+   *
+   * ```sql
+   * select last_value("middle_name") ignore nulls over(order by "id") as "last_middle_name"
+   * from "person"
+   * ```
+   */
+  ignoreNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNullTreatment(
+        this.#props.aggregateFunctionNode,
+        'ignore nulls',
+      ),
+    })
+  }
+
+  /**
    * Adds an `order by` clause inside the aggregate function.
    *
    * ### Examples

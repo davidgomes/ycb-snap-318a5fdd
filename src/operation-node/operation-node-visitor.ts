@@ -77,6 +77,9 @@ import type { AggregateFunctionNode } from './aggregate-function-node.js'
 import type { OverNode } from './over-node.js'
 import type { PartitionByNode } from './partition-by-node.js'
 import type { PartitionByItemNode } from './partition-by-item-node.js'
+import type { FrameNode } from './frame-node.js'
+import type { FrameBoundNode } from './frame-bound-node.js'
+import type { GroupingElementNode } from './grouping-element-node.js'
 import type { SetOperationNode } from './set-operation-node.js'
 import type { BinaryOperationNode } from './binary-operation-node.js'
 import type { UnaryOperationNode } from './unary-operation-node.js'
@@ -186,6 +189,9 @@ export abstract class OperationNodeVisitor {
     OverNode: this.visitOver.bind(this),
     PartitionByNode: this.visitPartitionBy.bind(this),
     PartitionByItemNode: this.visitPartitionByItem.bind(this),
+    FrameNode: this.visitFrame.bind(this),
+    FrameBoundNode: this.visitFrameBound.bind(this),
+    GroupingElementNode: this.visitGroupingElement.bind(this),
     SetOperationNode: this.visitSetOperation.bind(this),
     BinaryOperationNode: this.visitBinaryOperation.bind(this),
     UnaryOperationNode: this.visitUnaryOperation.bind(this),
@@ -303,6 +309,9 @@ export abstract class OperationNodeVisitor {
   protected abstract visitOver(node: OverNode): void
   protected abstract visitPartitionBy(node: PartitionByNode): void
   protected abstract visitPartitionByItem(node: PartitionByItemNode): void
+  protected abstract visitFrame(node: FrameNode): void
+  protected abstract visitFrameBound(node: FrameBoundNode): void
+  protected abstract visitGroupingElement(node: GroupingElementNode): void
   protected abstract visitSetOperation(node: SetOperationNode): void
   protected abstract visitBinaryOperation(node: BinaryOperationNode): void
   protected abstract visitUnaryOperation(node: UnaryOperationNode): void

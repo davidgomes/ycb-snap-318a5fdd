@@ -92,6 +92,9 @@ import type { AggregateFunctionNode } from '../operation-node/aggregate-function
 import type { OverNode } from '../operation-node/over-node.js'
 import type { PartitionByNode } from '../operation-node/partition-by-node.js'
 import type { PartitionByItemNode } from '../operation-node/partition-by-item-node.js'
+import type { FrameNode } from '../operation-node/frame-node.js'
+import type { FrameBoundNode } from '../operation-node/frame-bound-node.js'
+import type { GroupingElementNode } from '../operation-node/grouping-element-node.js'
 import { SetOperationNode } from '../operation-node/set-operation-node.js'
 import type { BinaryOperationNode } from '../operation-node/binary-operation-node.js'
 import type { UnaryOperationNode } from '../operation-node/unary-operation-node.js'
@@ -1488,6 +1491,11 @@ export class DefaultQueryCompiler
 
     this.append(')')
 
+    if (node.nullTreatment) {
+      this.append(' ')
+      this.append(node.nullTreatment)
+    }
+
     if (node.withinGroup) {
       this.append(' within group (')
       this.visitNode(node.withinGroup)
@@ -1509,18 +1517,53 @@ export class DefaultQueryCompiler
   protected override visitOver(node: OverNode): void {
     this.append('over(')
 
-    if (node.partitionBy) {
-      this.visitNode(node.partitionBy)
+    const clauses = [node.partitionBy, node.orderBy, node.frame].filter(
+      (clause) => clause !== undefined,
+    )
 
-      if (node.orderBy) {
+    clauses.forEach((clause, i) => {
+      if (i > 0) {
         this.append(' ')
       }
+
+      this.visitNode(clause)
+    })
+
+    this.append(')')
+  }
+
+  protected override visitFrame(node: FrameNode): void {
+    this.append(node.mode)
+    this.append(' ')
+
+    if (node.end) {
+      this.append('between ')
+      this.visitNode(node.start)
+      this.append(' and ')
+      this.visitNode(node.end)
+    } else {
+      this.visitNode(node.start)
     }
 
-    if (node.orderBy) {
-      this.visitNode(node.orderBy)
+    if (node.exclusion) {
+      this.append(' exclude ')
+      this.append(node.exclusion)
+    }
+  }
+
+  protected override visitFrameBound(node: FrameBoundNode): void {
+    if (node.offset) {
+      this.visitNode(node.offset)
+      this.append(' ')
     }
 
+    this.append(node.type)
+  }
+
+  protected override visitGroupingElement(node: GroupingElementNode): void {
+    this.append(node.type)
+    this.append('(')
+    this.compileList(node.items)
     this.append(')')
   }
 

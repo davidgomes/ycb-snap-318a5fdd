@@ -13,6 +13,7 @@ import {
   type ExtractTypeFromReferenceExpression,
   type ReferenceExpression,
   type StringReference,
+  parseReferenceExpression,
   parseReferenceExpressionOrList,
   type ExtractTypeFromStringReference,
 } from '../parser/reference-parser.js'
@@ -29,6 +30,8 @@ import type { SelectQueryBuilderExpression } from '../query-builder/select-query
 import { isString } from '../util/object-utils.js'
 import { parseTable } from '../parser/table-parser.js'
 import type { Selectable, SelectType } from '../util/column-type.js'
+import type { OperationNode } from '../operation-node/operation-node.js'
+import { ValueNode } from '../operation-node/value-node.js'
 
 /**
  * Helpers for type safe SQL function calls.
@@ -623,6 +626,352 @@ export interface FunctionModule<DB, TB extends keyof DB> {
   ): AggregateFunctionBuilder<DB, TB, O>
 
   /**
+   * Calls the `grouping` function for the column or expression given as the argument.
+   *
+   * This sql function returns `1` for rows where the argument was null-filled
+   * as part of a super-aggregate row produced by {@link SelectQueryBuilder.groupByCube},
+   * {@link SelectQueryBuilder.groupByRollup} or {@link SelectQueryBuilder.groupByGroupingSets},
+   * and `0` otherwise.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) => [
+   *     'gender',
+   *     eb.fn.grouping<number>('gender').as('is_total'),
+   *     eb.fn.countAll<number>().as('count'),
+   *   ])
+   *   .groupByRollup('gender')
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "gender", grouping("gender") as "is_total", count(*) as "count"
+   * from "person"
+   * group by rollup("gender")
+   * ```
+   */
+  grouping<
+    O extends number | string | bigint = number,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+  ): ExpressionWrapper<DB, TB, O>
+
+  /**
+   * Calls the `row_number` window function.
+   *
+   * Use {@link AggregateFunctionBuilder.over} to define the window.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) => eb.fn.rowNumber<number>().over((ob) => ob.orderBy('id')).as('rn'))
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select row_number() over(order by "id") as "rn" from "person"
+   * ```
+   */
+  rowNumber<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `rank` window function.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) => eb.fn.rank<number>().over((ob) => ob.orderBy('age', 'desc')).as('age_rank'))
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select rank() over(order by "age" desc) as "age_rank" from "person"
+   * ```
+   */
+  rank<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `dense_rank` window function.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) => eb.fn.denseRank<number>().over((ob) => ob.orderBy('age', 'desc')).as('age_rank'))
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select dense_rank() over(order by "age" desc) as "age_rank" from "person"
+   * ```
+   */
+  denseRank<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `percent_rank` window function.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) => eb.fn.percentRank<number>().over((ob) => ob.orderBy('age')).as('age_percent_rank'))
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select percent_rank() over(order by "age") as "age_percent_rank" from "person"
+   * ```
+   */
+  percentRank<
+    O extends number | string = number | string,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `cume_dist` window function.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) => eb.fn.cumeDist<number>().over((ob) => ob.orderBy('age')).as('age_cume_dist'))
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select cume_dist() over(order by "age") as "age_cume_dist" from "person"
+   * ```
+   */
+  cumeDist<
+    O extends number | string = number | string,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `ntile` window function with the given bucket count.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) => eb.fn.ntile<number>(4).over((ob) => ob.orderBy('age')).as('age_quartile'))
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select ntile($1) over(order by "age") as "age_quartile" from "person"
+   * ```
+   */
+  ntile<O extends number | string | bigint = number | string | bigint>(
+    buckets: number | bigint,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `first_value` window function for the column or expression given
+   * as the argument.
+   *
+   * If this function is used in a `select` statement, the type of the selected
+   * expression will be the referenced column's type by default.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn.firstValue('first_name').over((ob) => ob.partitionBy('gender').orderBy('age')).as('youngest_name')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select first_value("first_name") over(partition by "gender" order by "age") as "youngest_name"
+   * from "person"
+   * ```
+   */
+  firstValue<
+    O = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true ? ExtractTypeFromReferenceExpression<DB, TB, RE> : O
+  >
+
+  /**
+   * Calls the `last_value` window function for the column or expression given
+   * as the argument.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn.lastValue('first_name').over(
+   *       (ob) => ob.orderBy('age').rows((fb) => fb.betweenUnboundedPreceding().andUnboundedFollowing())
+   *     ).as('oldest_name')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select last_value("first_name") over(order by "age" rows between unbounded preceding and unbounded following) as "oldest_name"
+   * from "person"
+   * ```
+   */
+  lastValue<
+    O = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true ? ExtractTypeFromReferenceExpression<DB, TB, RE> : O
+  >
+
+  /**
+   * Calls the `nth_value` window function for the column or expression given
+   * as the first argument, and the (1-based) position given as the second argument.
+   *
+   * The result is null when the window frame has less than `n` rows.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn.nthValue('first_name', 2).over((ob) => ob.orderBy('age')).as('second_youngest_name')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select nth_value("first_name", $1) over(order by "age") as "second_youngest_name"
+   * from "person"
+   * ```
+   */
+  nthValue<
+    O = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+    n: number | bigint,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true
+      ? ExtractTypeFromReferenceExpression<DB, TB, RE> | null
+      : O
+  >
+
+  /**
+   * Calls the `lag` window function for the column or expression given as the
+   * first argument, optionally with an offset and a default value.
+   *
+   * When a default value is given without an offset, an offset of `1` is used.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn.lag('age', 1, 0).over((ob) => ob.orderBy('id')).as('previous_age')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select lag("age", $1, $2) over(order by "id") as "previous_age"
+   * from "person"
+   * ```
+   */
+  lag<
+    O = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true
+      ? ExtractTypeFromReferenceExpression<DB, TB, RE> | null
+      : O
+  >
+
+  /**
+   * Calls the `lead` window function for the column or expression given as the
+   * first argument, optionally with an offset and a default value.
+   *
+   * When a default value is given without an offset, an offset of `1` is used.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn.lead('age', 2).over((ob) => ob.orderBy('id')).as('next_next_age')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select lead("age", $1) over(order by "id") as "next_next_age"
+   * from "person"
+   * ```
+   */
+  lead<
+    O = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true
+      ? ExtractTypeFromReferenceExpression<DB, TB, RE> | null
+      : O
+  >
+
+  /**
    * Calls the `any` function for the column or expression given as the argument.
    *
    * The argument must be a subquery or evaluate to an array.
@@ -796,6 +1145,34 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
     })
   }
 
+  const windowFn = (
+    name: string,
+    args: ReadonlyArray<OperationNode> = [],
+  ): AggregateFunctionBuilder<DB, TB, any> => {
+    return new AggregateFunctionBuilder({
+      aggregateFunctionNode: AggregateFunctionNode.create(name, args),
+    })
+  }
+
+  const offsetFn = (
+    name: string,
+    expr: ReferenceExpression<DB, TB>,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): AggregateFunctionBuilder<DB, TB, any> => {
+    const args = [parseReferenceExpression(expr)]
+
+    if (offset !== undefined || defaultValue !== undefined) {
+      args.push(ValueNode.create(offset ?? 1))
+    }
+
+    if (defaultValue !== undefined) {
+      args.push(ValueNode.create(defaultValue))
+    }
+
+    return windowFn(name, args)
+  }
+
   return Object.assign(fn, {
     agg,
 
@@ -839,6 +1216,68 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
       C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
     >(column: C): AggregateFunctionBuilder<DB, TB, O> {
       return agg('sum', [column])
+    },
+
+    grouping<
+      O extends number | string | bigint = number,
+      RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+    >(expr: RE): ExpressionWrapper<DB, TB, O> {
+      return fn('grouping', [expr])
+    },
+
+    rowNumber(): any {
+      return windowFn('row_number')
+    },
+
+    rank(): any {
+      return windowFn('rank')
+    },
+
+    denseRank(): any {
+      return windowFn('dense_rank')
+    },
+
+    percentRank(): any {
+      return windowFn('percent_rank')
+    },
+
+    cumeDist(): any {
+      return windowFn('cume_dist')
+    },
+
+    ntile(buckets: number | bigint): any {
+      return windowFn('ntile', [ValueNode.create(buckets)])
+    },
+
+    firstValue(expr: ReferenceExpression<DB, TB>): any {
+      return windowFn('first_value', [parseReferenceExpression(expr)])
+    },
+
+    lastValue(expr: ReferenceExpression<DB, TB>): any {
+      return windowFn('last_value', [parseReferenceExpression(expr)])
+    },
+
+    nthValue(expr: ReferenceExpression<DB, TB>, n: number | bigint): any {
+      return windowFn('nth_value', [
+        parseReferenceExpression(expr),
+        ValueNode.create(n),
+      ])
+    },
+
+    lag(
+      expr: ReferenceExpression<DB, TB>,
+      offset?: number | bigint,
+      defaultValue?: number | bigint,
+    ): any {
+      return offsetFn('lag', expr, offset, defaultValue)
+    },
+
+    lead(
+      expr: ReferenceExpression<DB, TB>,
+      offset?: number | bigint,
+      defaultValue?: number | bigint,
+    ): any {
+      return offsetFn('lead', expr, offset, defaultValue)
     },
 
     any<RE extends ReferenceExpression<DB, TB>>(column: RE): any {

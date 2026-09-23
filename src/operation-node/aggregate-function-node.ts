@@ -5,11 +5,14 @@ import { WhereNode } from './where-node.js'
 import { OrderByNode } from './order-by-node.js'
 import type { OrderByItemNode } from './order-by-item-node.js'
 
+export type NullTreatment = 'respect nulls' | 'ignore nulls'
+
 export interface AggregateFunctionNode extends OperationNode {
   readonly kind: 'AggregateFunctionNode'
   readonly func: string
   readonly aggregated: readonly OperationNode[]
   readonly distinct?: boolean
+  readonly nullTreatment?: NullTreatment
   readonly orderBy?: OrderByNode
   readonly withinGroup?: OrderByNode
   readonly filter?: WhereNode
@@ -24,6 +27,10 @@ type AggregateFunctionNodeFactory = Readonly<{
   ): Readonly<AggregateFunctionNode>
   cloneWithDistinct(
     aggregateFunctionNode: AggregateFunctionNode,
+  ): Readonly<AggregateFunctionNode>
+  cloneWithNullTreatment(
+    aggregateFunctionNode: AggregateFunctionNode,
+    nullTreatment: NullTreatment,
   ): Readonly<AggregateFunctionNode>
   cloneWithOrderBy(
     aggregateFunctionNode: AggregateFunctionNode,
@@ -65,6 +72,13 @@ export const AggregateFunctionNode: AggregateFunctionNodeFactory =
       return freeze({
         ...aggregateFunctionNode,
         distinct: true,
+      })
+    },
+
+    cloneWithNullTreatment(aggregateFunctionNode, nullTreatment) {
+      return freeze({
+        ...aggregateFunctionNode,
+        nullTreatment,
       })
     },
 
