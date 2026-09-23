@@ -1,4 +1,5 @@
 import contextlib
+import copy
 import email.message
 import functools
 import inspect
@@ -57,6 +58,7 @@ from fastapi.exceptions import (
     ResponseValidationError,
     WebSocketRequestValidationError,
 )
+from fastapi.middleware.methods import IMPLICIT_METHOD_SCOPE_KEY
 from fastapi.sse import (
     _PING_INTERVAL,
     KEEPALIVE_COMMENT,
@@ -970,6 +972,8 @@ class APIRoute(routing.Route):
             response_class, DefaultPlaceholder
         )
         self.app = request_response(self.get_route_handler())
+        self.auto_head: bool | None = None
+        self.auto_options: bool | None = None
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         return get_request_handler(
@@ -996,6 +1000,223 @@ class APIRoute(routing.Route):
         if match != Match.NONE:
             child_scope["route"] = self
         return match, child_scope
+
+
+_HTTP_METHOD_ORDER = (
+    "GET",
+    "HEAD",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS",
+    "TRACE",
+)
+_EXCLUDED_OPERATION_KEYS = {"head", "options"}
+
+
+def _resolve_omitted_bool(
+    route_value: bool | None,
+    include_value: bool | None,
+    router_value: bool | None,
+    *,
+    default: bool,
+) -> bool:
+    if route_value is not None:
+        return route_value
+    if include_value is not None:
+        return include_value
+    if router_value is not None:
+        return router_value
+    return default
+
+
+def _ordered_methods(methods: Collection[str]) -> list[str]:
+    present = {method.upper() for method in methods}
+    ordered = [method for method in _HTTP_METHOD_ORDER if method in present]
+    extras = sorted(present.difference(_HTTP_METHOD_ORDER))
+    return ordered + extras
+
+
+async def _send_without_body(
+    app: ASGIApp, scope: Scope, receive: Receive, send: Send
+) -> None:
+    started = False
+    body_sent = False
+
+    async def send_head(message: dict[str, Any]) -> None:
+        nonlocal started, body_sent
+        message_type = message["type"]
+        if message_type == "http.response.start":
+            started = True
+            await send(message)
+            return
+        if message_type in {"http.response.body", "http.response.pathsend"}:
+            if not body_sent:
+                body_sent = True
+                await send({"type": "http.response.body", "body": b""})
+            return
+        await send(message)
+
+    await app(scope, receive, send_head)
+    if started and not body_sent:
+        await send({"type": "http.response.body", "body": b""})
+
+
+def _effective_auto_head(router: "APIRouter", route: APIRoute) -> bool:
+    return _resolve_omitted_bool(
+        getattr(route, "auto_head", None),
+        None,
+        getattr(router, "auto_head", None),
+        default=True,
+    )
+
+
+def _effective_auto_options(router: "APIRouter", route: APIRoute) -> bool:
+    return _resolve_omitted_bool(
+        getattr(route, "auto_options", None),
+        None,
+        getattr(router, "auto_options", None),
+        default=False,
+    )
+
+
+def _has_explicit_method(router: "APIRouter", scope: Scope, method: str) -> bool:
+    for route in router.routes:
+        if not isinstance(route, routing.Route):
+            continue
+        methods = route.methods
+        if methods is not None and method not in methods:
+            continue
+        probe = dict(scope)
+        probe["method"] = method
+        match, _child_scope = route.matches(probe)
+        if match == Match.FULL:
+            return True
+    return False
+
+
+def _openapi_operations_for_path(
+    scope: Scope, path_format: str, routes: Sequence[APIRoute]
+) -> dict[str, Any]:
+    app = scope.get("app")
+    schema: Any = None
+    if app is not None and callable(getattr(app, "openapi", None)):
+        schema = app.openapi()
+    path_item: dict[str, Any] | None = None
+    if isinstance(schema, dict):
+        paths = schema.get("paths")
+        if (
+            isinstance(paths, dict)
+            and isinstance(paths.get(path_format), dict)
+        ):
+            path_item = paths[path_format]
+        else:
+            path_item = {}
+    if path_item is None:
+        from fastapi.openapi.utils import get_openapi
+
+        generated = get_openapi(
+            title=getattr(app, "title", "FastAPI"),
+            version=getattr(app, "version", "0.1.0"),
+            routes=list(routes),
+        )
+        candidate = generated.get("paths", {}).get(path_format, {})
+        path_item = candidate if isinstance(candidate, dict) else {}
+    return copy.deepcopy(
+        {
+            key: value
+            for key, value in path_item.items()
+            if str(key).lower() not in _EXCLUDED_OPERATION_KEYS
+        }
+    )
+
+
+async def _dispatch_implicit_head(
+    router: "APIRouter", scope: Scope, receive: Receive, send: Send
+) -> bool:
+    if _has_explicit_method(router, scope, "HEAD"):
+        return False
+    probe = dict(scope)
+    probe["method"] = "GET"
+    for route in router.routes:
+        if not isinstance(route, routing.Route):
+            continue
+        match, child_scope = route.matches(probe)
+        if match != Match.FULL:
+            continue
+        if not isinstance(route, APIRoute):
+            return False
+        methods = route.methods or set()
+        if "GET" not in methods or not _effective_auto_head(router, route):
+            return False
+        scope[IMPLICIT_METHOD_SCOPE_KEY] = "head"
+        scope["route"] = route
+        scope.update(child_scope)
+        await _send_without_body(route.app, scope, receive, send)
+        return True
+    return False
+
+
+async def _dispatch_implicit_options(
+    router: "APIRouter", scope: Scope, receive: Receive, send: Send
+) -> bool:
+    if _has_explicit_method(router, scope, "OPTIONS"):
+        return False
+    matched: list[tuple[routing.Route, Scope]] = []
+    for route in router.routes:
+        if not isinstance(route, routing.Route):
+            continue
+        methods = route.methods
+        probe = dict(scope)
+        if methods:
+            probe["method"] = next(iter(methods))
+        match, child_scope = route.matches(probe)
+        if match == Match.FULL:
+            matched.append((route, child_scope))
+    if not matched:
+        return False
+    path_format = getattr(matched[0][0], "path_format", None) or matched[0][0].path
+    group = [
+        route
+        for route, _child_scope in matched
+        if (getattr(route, "path_format", None) or route.path) == path_format
+    ]
+    api_routes = [route for route in group if isinstance(route, APIRoute)]
+    if not any(_effective_auto_options(router, route) for route in api_routes):
+        return False
+    methods: set[str] = set()
+    for route in group:
+        if route.methods:
+            methods.update(method.upper() for method in route.methods)
+    if "HEAD" not in methods and any(
+        isinstance(route, APIRoute)
+        and route.methods
+        and "GET" in route.methods
+        and _effective_auto_head(router, route)
+        for route in group
+    ):
+        methods.add("HEAD")
+    methods.add("OPTIONS")
+    ordered = _ordered_methods(methods)
+    scope[IMPLICIT_METHOD_SCOPE_KEY] = "options"
+    scope["route"] = next(
+        route
+        for route in api_routes
+        if _effective_auto_options(router, route)
+    )
+    response = JSONResponse(
+        {
+            "path": path_format,
+            "methods": ordered,
+            "operations": _openapi_operations_for_path(
+                scope, path_format, api_routes
+            ),
+        },
+        headers={"Allow": ", ".join(ordered)},
+    )
+    await response(scope, receive, send)
+    return True
 
 
 class APIRouter(routing.Router):
@@ -1262,6 +1483,47 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(True),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `HEAD` for GET routes.
+
+                Implicit `HEAD` keeps the GET route's dependencies, status code,
+                response headers, and validation, and returns an empty body.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `True` for GET routes.
+
+                An explicit `HEAD` operation always takes precedence.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `OPTIONS` response for this path.
+
+                The response is `200` JSON with `path`, `methods` ordered
+                `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+                `TRACE`, and `operations` copied from the OpenAPI path item
+                without `HEAD` or `OPTIONS`. The response sends an `Allow`
+                header.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `False`.
+
+                An explicit `OPTIONS` operation always takes precedence. One
+                implicit `OPTIONS` response is generated per path when any
+                operation enables it.
+                """
+            ),
+        ] = None,
     ) -> None:
         # Determine the lifespan context to use
         if lifespan is None:
@@ -1309,6 +1571,21 @@ class APIRouter(routing.Router):
         self.default_response_class = default_response_class
         self.generate_unique_id_function = generate_unique_id_function
         self.strict_content_type = strict_content_type
+        self.auto_head = auto_head
+        self.auto_options = auto_options
+
+    async def app(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            method = str(scope.get("method", "")).upper()
+            if method == "HEAD" and await _dispatch_implicit_head(
+                self, scope, receive, send
+            ):
+                return
+            if method == "OPTIONS" and await _dispatch_implicit_options(
+                self, scope, receive, send
+            ):
+                return
+        await super().app(scope, receive, send)
 
     def route(
         self,
@@ -1360,6 +1637,47 @@ class APIRouter(routing.Router):
         generate_unique_id_function: Callable[[APIRoute], str]
         | DefaultPlaceholder = Default(generate_unique_id),
         strict_content_type: bool | DefaultPlaceholder = Default(True),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `HEAD` for GET routes.
+
+                Implicit `HEAD` keeps the GET route's dependencies, status code,
+                response headers, and validation, and returns an empty body.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `True` for GET routes.
+
+                An explicit `HEAD` operation always takes precedence.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `OPTIONS` response for this path.
+
+                The response is `200` JSON with `path`, `methods` ordered
+                `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+                `TRACE`, and `operations` copied from the OpenAPI path item
+                without `HEAD` or `OPTIONS`. The response sends an `Allow`
+                header.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `False`.
+
+                An explicit `OPTIONS` operation always takes precedence. One
+                implicit `OPTIONS` response is generated per path when any
+                operation enables it.
+                """
+            ),
+        ] = None,
     ) -> None:
         route_class = route_class_override or self.route_class
         responses = responses or {}
@@ -1410,6 +1728,8 @@ class APIRouter(routing.Router):
                 strict_content_type, self.strict_content_type
             ),
         )
+        route.auto_head = auto_head
+        route.auto_options = auto_options
         self.routes.append(route)
 
     def api_route(
@@ -1441,6 +1761,47 @@ class APIRouter(routing.Router):
         generate_unique_id_function: Callable[[APIRoute], str] = Default(
             generate_unique_id
         ),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `HEAD` for GET routes.
+
+                Implicit `HEAD` keeps the GET route's dependencies, status code,
+                response headers, and validation, and returns an empty body.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `True` for GET routes.
+
+                An explicit `HEAD` operation always takes precedence.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `OPTIONS` response for this path.
+
+                The response is `200` JSON with `path`, `methods` ordered
+                `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+                `TRACE`, and `operations` copied from the OpenAPI path item
+                without `HEAD` or `OPTIONS`. The response sends an `Allow`
+                header.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `False`.
+
+                An explicit `OPTIONS` operation always takes precedence. One
+                implicit `OPTIONS` response is generated per path when any
+                operation enables it.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         def decorator(func: DecoratedCallable) -> DecoratedCallable:
             self.add_api_route(
@@ -1469,6 +1830,8 @@ class APIRouter(routing.Router):
                 callbacks=callbacks,
                 openapi_extra=openapi_extra,
                 generate_unique_id_function=generate_unique_id_function,
+                auto_head=auto_head,
+                auto_options=auto_options,
             )
             return func
 
@@ -1682,6 +2045,47 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `HEAD` for GET routes.
+
+                Implicit `HEAD` keeps the GET route's dependencies, status code,
+                response headers, and validation, and returns an empty body.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `True` for GET routes.
+
+                An explicit `HEAD` operation always takes precedence.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `OPTIONS` response for this path.
+
+                The response is `200` JSON with `path`, `methods` ordered
+                `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+                `TRACE`, and `operations` copied from the OpenAPI path item
+                without `HEAD` or `OPTIONS`. The response sends an `Allow`
+                header.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `False`.
+
+                An explicit `OPTIONS` operation always takes precedence. One
+                implicit `OPTIONS` response is generated per path when any
+                operation enables it.
+                """
+            ),
+        ] = None,
     ) -> None:
         """
         Include another `APIRouter` in the same current `APIRouter`.
@@ -1755,6 +2159,18 @@ class APIRouter(routing.Router):
                     generate_unique_id_function,
                     self.generate_unique_id_function,
                 )
+                resolved_auto_head = _resolve_omitted_bool(
+                    getattr(route, "auto_head", None),
+                    auto_head,
+                    getattr(router, "auto_head", None),
+                    default=True,
+                )
+                resolved_auto_options = _resolve_omitted_bool(
+                    getattr(route, "auto_options", None),
+                    auto_options,
+                    getattr(router, "auto_options", None),
+                    default=False,
+                )
                 self.add_api_route(
                     prefix + route.path,
                     route.endpoint,
@@ -1789,6 +2205,8 @@ class APIRouter(routing.Router):
                         router.strict_content_type,
                         self.strict_content_type,
                     ),
+                    auto_head=resolved_auto_head,
+                    auto_options=resolved_auto_options,
                 )
             elif isinstance(route, routing.Route):
                 methods = list(route.methods or [])
@@ -2155,6 +2573,47 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `HEAD` for GET routes.
+
+                Implicit `HEAD` keeps the GET route's dependencies, status code,
+                response headers, and validation, and returns an empty body.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `True` for GET routes.
+
+                An explicit `HEAD` operation always takes precedence.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `OPTIONS` response for this path.
+
+                The response is `200` JSON with `path`, `methods` ordered
+                `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+                `TRACE`, and `operations` copied from the OpenAPI path item
+                without `HEAD` or `OPTIONS`. The response sends an `Allow`
+                header.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `False`.
+
+                An explicit `OPTIONS` operation always takes precedence. One
+                implicit `OPTIONS` response is generated per path when any
+                operation enables it.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP GET operation.
@@ -2199,6 +2658,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def put(
@@ -2532,6 +2993,47 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `HEAD` for GET routes.
+
+                Implicit `HEAD` keeps the GET route's dependencies, status code,
+                response headers, and validation, and returns an empty body.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `True` for GET routes.
+
+                An explicit `HEAD` operation always takes precedence.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `OPTIONS` response for this path.
+
+                The response is `200` JSON with `path`, `methods` ordered
+                `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+                `TRACE`, and `operations` copied from the OpenAPI path item
+                without `HEAD` or `OPTIONS`. The response sends an `Allow`
+                header.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `False`.
+
+                An explicit `OPTIONS` operation always takes precedence. One
+                implicit `OPTIONS` response is generated per path when any
+                operation enables it.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP PUT operation.
@@ -2581,6 +3083,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def post(
@@ -2914,6 +3418,47 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `HEAD` for GET routes.
+
+                Implicit `HEAD` keeps the GET route's dependencies, status code,
+                response headers, and validation, and returns an empty body.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `True` for GET routes.
+
+                An explicit `HEAD` operation always takes precedence.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `OPTIONS` response for this path.
+
+                The response is `200` JSON with `path`, `methods` ordered
+                `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+                `TRACE`, and `operations` copied from the OpenAPI path item
+                without `HEAD` or `OPTIONS`. The response sends an `Allow`
+                header.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `False`.
+
+                An explicit `OPTIONS` operation always takes precedence. One
+                implicit `OPTIONS` response is generated per path when any
+                operation enables it.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP POST operation.
@@ -2963,6 +3508,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def delete(
@@ -3296,6 +3843,47 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `HEAD` for GET routes.
+
+                Implicit `HEAD` keeps the GET route's dependencies, status code,
+                response headers, and validation, and returns an empty body.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `True` for GET routes.
+
+                An explicit `HEAD` operation always takes precedence.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `OPTIONS` response for this path.
+
+                The response is `200` JSON with `path`, `methods` ordered
+                `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+                `TRACE`, and `operations` copied from the OpenAPI path item
+                without `HEAD` or `OPTIONS`. The response sends an `Allow`
+                header.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `False`.
+
+                An explicit `OPTIONS` operation always takes precedence. One
+                implicit `OPTIONS` response is generated per path when any
+                operation enables it.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP DELETE operation.
@@ -3340,6 +3928,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def options(
@@ -3673,6 +4263,47 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `HEAD` for GET routes.
+
+                Implicit `HEAD` keeps the GET route's dependencies, status code,
+                response headers, and validation, and returns an empty body.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `True` for GET routes.
+
+                An explicit `HEAD` operation always takes precedence.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `OPTIONS` response for this path.
+
+                The response is `200` JSON with `path`, `methods` ordered
+                `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+                `TRACE`, and `operations` copied from the OpenAPI path item
+                without `HEAD` or `OPTIONS`. The response sends an `Allow`
+                header.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `False`.
+
+                An explicit `OPTIONS` operation always takes precedence. One
+                implicit `OPTIONS` response is generated per path when any
+                operation enables it.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP OPTIONS operation.
@@ -3717,6 +4348,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def head(
@@ -4050,6 +4683,47 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `HEAD` for GET routes.
+
+                Implicit `HEAD` keeps the GET route's dependencies, status code,
+                response headers, and validation, and returns an empty body.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `True` for GET routes.
+
+                An explicit `HEAD` operation always takes precedence.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `OPTIONS` response for this path.
+
+                The response is `200` JSON with `path`, `methods` ordered
+                `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+                `TRACE`, and `operations` copied from the OpenAPI path item
+                without `HEAD` or `OPTIONS`. The response sends an `Allow`
+                header.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `False`.
+
+                An explicit `OPTIONS` operation always takes precedence. One
+                implicit `OPTIONS` response is generated per path when any
+                operation enables it.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP HEAD operation.
@@ -4099,6 +4773,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def patch(
@@ -4432,6 +5108,47 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `HEAD` for GET routes.
+
+                Implicit `HEAD` keeps the GET route's dependencies, status code,
+                response headers, and validation, and returns an empty body.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `True` for GET routes.
+
+                An explicit `HEAD` operation always takes precedence.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `OPTIONS` response for this path.
+
+                The response is `200` JSON with `path`, `methods` ordered
+                `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+                `TRACE`, and `operations` copied from the OpenAPI path item
+                without `HEAD` or `OPTIONS`. The response sends an `Allow`
+                header.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `False`.
+
+                An explicit `OPTIONS` operation always takes precedence. One
+                implicit `OPTIONS` response is generated per path when any
+                operation enables it.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP PATCH operation.
@@ -4481,6 +5198,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def trace(
@@ -4814,6 +5533,47 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `HEAD` for GET routes.
+
+                Implicit `HEAD` keeps the GET route's dependencies, status code,
+                response headers, and validation, and returns an empty body.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `True` for GET routes.
+
+                An explicit `HEAD` operation always takes precedence.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Register an implicit `OPTIONS` response for this path.
+
+                The response is `200` JSON with `path`, `methods` ordered
+                `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+                `TRACE`, and `operations` copied from the OpenAPI path item
+                without `HEAD` or `OPTIONS`. The response sends an `Allow`
+                header.
+
+                `None` means omitted. Omitted values use the nearest explicit
+                setting among the route, `include_router`, and the router.
+                Routes added directly on a `FastAPI` app use the app value
+                before the default. The default is `False`.
+
+                An explicit `OPTIONS` operation always takes precedence. One
+                implicit `OPTIONS` response is generated per path when any
+                operation enables it.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP TRACE operation.
@@ -4863,6 +5623,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     # TODO: remove this once the lifespan (or alternative) interface is improved
