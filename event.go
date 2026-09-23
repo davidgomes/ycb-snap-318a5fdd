@@ -925,6 +925,14 @@ type EventListener struct {
 	// operation such as flush or compaction.
 	BackgroundError func(error)
 
+	// BatchDurable is invoked exactly once per sync commit (WriteOptions.Sync)
+	// once the WAL sync covering the batch has completed, including when the
+	// sync failed (BatchDurableInfo.Err). It is not invoked for non-sync
+	// commits or when the WAL is disabled. It is invoked on the committing
+	// goroutine before DB.Apply returns, or, for DB.ApplyNoSyncWait, from
+	// Batch.SyncWait.
+	BatchDurable func(BatchDurableInfo)
+
 	// BlobFileCreated is invoked after a blob file has been created.
 	BlobFileCreated func(BlobFileCreateInfo)
 
@@ -1036,6 +1044,9 @@ func (l *EventListener) EnsureDefaults(logger Logger) {
 			l.BackgroundError = func(error) {}
 		}
 	}
+	if l.BatchDurable == nil {
+		l.BatchDurable = noopBatchDurable
+	}
 	if l.BlobFileCreated == nil {
 		l.BlobFileCreated = func(info BlobFileCreateInfo) {}
 	}
@@ -1133,6 +1144,8 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 		BackgroundError: func(err error) {
 			logger.Errorf("background error: %s", err)
 		},
+		// Sync commits are too frequent to log individually.
+		BatchDurable: noopBatchDurable,
 		BlobFileCreated: func(info BlobFileCreateInfo) {
 			logger.Infof("%s", info)
 		},
@@ -1218,11 +1231,19 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 func TeeEventListener(a, b EventListener) EventListener {
 	a.EnsureDefaults(nil)
 	b.EnsureDefaults(nil)
+	batchDurable := noopBatchDurable
+	if isBatchDurableConfigured(a.BatchDurable) || isBatchDurableConfigured(b.BatchDurable) {
+		batchDurable = func(info BatchDurableInfo) {
+			a.BatchDurable(info)
+			b.BatchDurable(info)
+		}
+	}
 	return EventListener{
 		BackgroundError: func(err error) {
 			a.BackgroundError(err)
 			b.BackgroundError(err)
 		},
+		BatchDurable: batchDurable,
 		BlobFileCreated: func(info BlobFileCreateInfo) {
 			a.BlobFileCreated(info)
 			b.BlobFileCreated(info)

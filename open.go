@@ -165,6 +165,7 @@ func Open(dirname string, opts *Options) (db *DB, err error) {
 		bgCtx:               ctx,
 		bgCtxCancel:         cancel,
 	}
+	d.durability.init(opts)
 	d.mu.versions = &versionSet{}
 	d.diskAvailBytes.Store(math.MaxUint64)
 	d.problemSpans.Init(manifest.NumLevels, opts.Comparer.Compare)

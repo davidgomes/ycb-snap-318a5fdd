@@ -405,6 +405,10 @@ type WriteOptions struct {
 	//
 	// The default value is true.
 	Sync bool
+
+	// CommitCorrelationID is an opaque value reported as
+	// BatchDurableInfo.CorrelationID when a sync commit becomes durable.
+	CommitCorrelationID uint64
 }
 
 // Sync specifies the default write options for writes which synchronize to
@@ -418,6 +422,15 @@ var NoSync = &WriteOptions{Sync: false}
 // GetSync returns the Sync value or true if the receiver is nil.
 func (o *WriteOptions) GetSync() bool {
 	return o == nil || o.Sync
+}
+
+// GetCommitCorrelationID returns the CommitCorrelationID value or zero if the
+// receiver is nil.
+func (o *WriteOptions) GetCommitCorrelationID() uint64 {
+	if o == nil {
+		return 0
+	}
+	return o.CommitCorrelationID
 }
 
 // LevelOptions holds the optional per-level parameters.

@@ -301,6 +301,8 @@ type DB struct {
 
 	commit *commitPipeline
 
+	durability durabilityTracker
+
 	// readState provides access to the state needed for reading without needing
 	// to acquire DB.mu.
 	readState struct {
@@ -832,7 +834,19 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 			return err
 		}
 	}
-	if err := d.commit.Commit(batch, sync, noSyncWait); err != nil {
+	if sync {
+		batch.durable = batchDurability{
+			tracker:       &d.durability,
+			startTime:     crtime.NowMono(),
+			correlationID: opts.GetCommitCorrelationID(),
+		}
+	}
+	err := d.commit.Commit(batch, sync, noSyncWait)
+	if !noSyncWait || err != nil {
+		// With noSyncWait, the WAL sync is reported by Batch.SyncWait.
+		d.durability.complete(batch, err)
+	}
+	if err != nil {
 		// There isn't much we can do on an error here. The commit pipeline will be
 		// horked at this point.
 		d.opts.Logger.Fatalf("pebble: fatal commit error: %v", err)
@@ -853,12 +867,14 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 func (d *DB) commitApply(b *Batch, mem *memTable) error {
 	if b.flushable != nil {
 		// This is a large batch which was already added to the immutable queue.
+		b.durable.markApplied()
 		return nil
 	}
 	err := mem.apply(b, b.SeqNum())
 	if err != nil {
 		return err
 	}
+	b.durable.markApplied()
 
 	// If the batch contains range tombstones and the database is configured
 	// to flush range deletions, schedule a delayed flush so that disk space
@@ -907,6 +923,9 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 			if err != nil {
 				panic(err)
 			}
+			if b.durable.tracker != nil {
+				b.durable.tracker.register(b, len(repr))
+			}
 		}
 	}
 
@@ -948,6 +967,9 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 		size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr}, b)
 		if err != nil {
 			panic(err)
+		}
+		if b.durable.tracker != nil {
+			b.durable.tracker.register(b, len(repr))
 		}
 	}
 
@@ -1570,6 +1592,7 @@ func (d *DB) Close() error {
 	d.closed.Store(errors.WithStack(ErrClosed))
 	close(d.closedCh)
 	d.bgCtxCancel()
+	d.durability.close()
 
 	defer d.cacheHandle.Close()
 
@@ -1987,6 +2010,7 @@ func (d *DB) Metrics() *Metrics {
 	}
 	metrics.WAL.BytesWritten = metrics.Levels[0].TableBytesIn + metrics.WAL.Size
 	metrics.WAL.Failover = walStats.Failover
+	metrics.DurableCommitCount, metrics.DurableCommitDuration = d.durability.metrics()
 
 	if p := d.mu.versions.picker; p != nil {
 		compactions := d.getInProgressCompactionInfoLocked(nil)
