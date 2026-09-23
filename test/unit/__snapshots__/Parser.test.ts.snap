@@ -629,6 +629,125 @@ exports[`Parser parses parenthesized expressions 1`] = `
 ]
 `;
 
+exports[`Parser parses pipe syntax 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "quoted": false,
+            "text": "tbl",
+            "type": "identifier",
+          },
+        ],
+        "nameKw": {
+          "raw": "FROM",
+          "text": "FROM",
+          "tokenType": "RESERVED_CLAUSE",
+          "type": "keyword",
+        },
+        "type": "clause",
+      },
+      {
+        "children": [
+          {
+            "nameKw": {
+              "raw": "COUNT",
+              "text": "COUNT",
+              "tokenType": "RESERVED_FUNCTION_NAME",
+              "type": "keyword",
+            },
+            "parenthesis": {
+              "children": [
+                {
+                  "text": "*",
+                  "type": "operator",
+                },
+              ],
+              "closeParen": ")",
+              "openParen": "(",
+              "type": "parenthesis",
+            },
+            "type": "function_call",
+          },
+          {
+            "children": [
+              {
+                "quoted": false,
+                "text": "x",
+                "type": "identifier",
+              },
+            ],
+            "nameKw": {
+              "raw": "GROUP BY",
+              "text": "GROUP BY",
+              "tokenType": "RESERVED_CLAUSE",
+              "type": "keyword",
+            },
+            "type": "clause",
+          },
+        ],
+        "nameKw": {
+          "raw": "aggregate",
+          "text": "AGGREGATE",
+          "tokenType": "RESERVED_CLAUSE",
+          "type": "keyword",
+        },
+        "type": "pipe_clause",
+      },
+      {
+        "children": [
+          {
+            "quoted": false,
+            "text": "t",
+            "type": "identifier",
+          },
+        ],
+        "nameKw": {
+          "raw": "AS",
+          "text": "AS",
+          "tokenType": "RESERVED_CLAUSE",
+          "type": "keyword",
+        },
+        "type": "pipe_clause",
+      },
+      {
+        "children": [
+          {
+            "type": "all_columns_asterisk",
+          },
+        ],
+        "nameKw": {
+          "raw": "SELECT",
+          "text": "SELECT",
+          "tokenType": "RESERVED_SELECT",
+          "type": "keyword",
+        },
+        "type": "pipe_clause",
+      },
+      {
+        "children": [
+          {
+            "text": "1",
+            "type": "literal",
+          },
+        ],
+        "nameKw": {
+          "raw": "LIMIT",
+          "text": "LIMIT",
+          "tokenType": "LIMIT",
+          "type": "keyword",
+        },
+        "type": "pipe_clause",
+      },
+    ],
+    "hasSemicolon": true,
+    "type": "statement",
+  },
+]
+`;
+
 exports[`Parser parses qualified.identifier.sequence 1`] = `
 [
   {

@@ -5,17 +5,18 @@ describe('Parser', () => {
   const parse = (sql: string) => {
     const tokenizer = new Tokenizer(
       {
-        reservedClauses: ['FROM', 'WHERE', 'LIMIT', 'CREATE TABLE'],
+        reservedClauses: ['FROM', 'WHERE', 'LIMIT', 'CREATE TABLE', 'GROUP BY'],
         reservedSelect: ['SELECT'],
         reservedSetOperations: ['UNION', 'UNION ALL'],
         reservedJoins: ['JOIN'],
-        reservedFunctionNames: ['SQRT', 'CURRENT_TIME'],
-        reservedKeywords: ['BETWEEN', 'LIKE', 'ON', 'USING'],
+        reservedFunctionNames: ['SQRT', 'CURRENT_TIME', 'COUNT'],
+        reservedKeywords: ['BETWEEN', 'LIKE', 'ON', 'USING', 'AS'],
         reservedDataTypes: [],
         operators: [':'],
         extraParens: ['[]', '{}'],
         stringTypes: ["''-qq"],
         identTypes: ['""-qq'],
+        supportsPipeSyntax: true,
       },
       'sql'
     );
@@ -97,5 +98,15 @@ describe('Parser', () => {
 
   it('parses CASE expression', () => {
     expect(parse('SELECT CASE foo WHEN 1+1 THEN 10 ELSE 20 END;')).toMatchSnapshot();
+  });
+
+  it('parses pipe syntax', () => {
+    expect(
+      parse('FROM tbl |> aggregate COUNT(*) GROUP BY x |> AS t |> SELECT * |> LIMIT 1;')
+    ).toMatchSnapshot();
+  });
+
+  it('throws error when pipe operator name is missing', () => {
+    expect(() => parse('FROM tbl |> ;')).toThrow('Parse error at token: ;');
   });
 });

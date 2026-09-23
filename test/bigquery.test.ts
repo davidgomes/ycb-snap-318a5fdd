@@ -322,6 +322,302 @@ describe('BigQueryFormatter', () => {
     `);
   });
 
+  describe('supports pipe syntax', () => {
+    it('formats each pipe step on a separate line', () => {
+      expect(
+        format(`
+          FROM Produce |> WHERE item != 'bananas' AND category IN ('fruit', 'nut')
+          |> AGGREGATE COUNT(*) AS num_items, SUM(sales) AS total_sales GROUP BY item
+          |> ORDER BY item DESC;
+        `)
+      ).toBe(dedent`
+        FROM
+          Produce
+        |> WHERE
+          item != 'bananas'
+          AND category IN ('fruit', 'nut')
+        |> AGGREGATE
+          COUNT(*) AS num_items,
+          SUM(sales) AS total_sales
+          GROUP BY
+            item
+        |> ORDER BY
+          item DESC;
+      `);
+    });
+
+    it('formats GROUP AND ORDER BY inside AGGREGATE', () => {
+      expect(
+        format(
+          'FROM Produce |> AGGREGATE SUM(sales) AS total_sales DESC GROUP AND ORDER BY category, item DESC'
+        )
+      ).toBe(dedent`
+        FROM
+          Produce
+        |> AGGREGATE
+          SUM(sales) AS total_sales DESC
+          GROUP AND ORDER BY
+            category,
+            item DESC
+      `);
+    });
+
+    it('formats AGGREGATE with only GROUP BY', () => {
+      expect(format('FROM Produce |> AGGREGATE GROUP BY item')).toBe(dedent`
+        FROM
+          Produce
+        |> AGGREGATE
+          GROUP BY
+            item
+      `);
+    });
+
+    it('formats EXTEND, SET, DROP and RENAME with indented body', () => {
+      expect(
+        format(`
+          FROM Produce
+          |> EXTEND sales * 2 AS double_sales, item IN ('bananas', 'lemons') AS is_yellow
+          |> SET sales = sales + 1, category = 'food'
+          |> DROP double_sales, is_yellow
+          |> RENAME item AS fruit, sales AS amount
+        `)
+      ).toBe(dedent`
+        FROM
+          Produce
+        |> EXTEND
+          sales * 2 AS double_sales,
+          item IN ('bananas', 'lemons') AS is_yellow
+        |> SET
+          sales = sales + 1,
+          category = 'food'
+        |> DROP
+          double_sales,
+          is_yellow
+        |> RENAME
+          item AS fruit,
+          sales AS amount
+      `);
+    });
+
+    it('formats SELECT with WINDOW sub-clause', () => {
+      expect(
+        format(`
+          FROM Produce
+          |> SELECT *, SUM(sales) OVER item_window AS category_total
+             WINDOW item_window AS (PARTITION BY category)
+        `)
+      ).toBe(dedent`
+        FROM
+          Produce
+        |> SELECT
+          *,
+          SUM(sales) OVER item_window AS category_total
+          WINDOW
+            item_window AS (
+              PARTITION BY
+                category
+            )
+      `);
+    });
+
+    it('formats LIMIT, JOIN and AS on a single line', () => {
+      expect(
+        format(`
+          FROM Produce
+          |> AS p
+          |> LEFT JOIN Sales AS s ON p.item = s.item AND p.year = s.year
+          |> INNER JOIN Stock USING (item)
+          |> LIMIT 10 OFFSET 20;
+        `)
+      ).toBe(dedent`
+        FROM
+          Produce
+        |> AS p
+        |> LEFT JOIN Sales AS s ON p.item = s.item
+          AND p.year = s.year
+        |> INNER JOIN Stock USING (item)
+        |> LIMIT 10 OFFSET 20;
+      `);
+    });
+
+    it('formats other pipe operators', () => {
+      expect(
+        format(`
+          FROM Produce
+          |> DISTINCT
+          |> TABLESAMPLE SYSTEM (1 PERCENT)
+          |> CALL my_tvf(10)
+          |> PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2'))
+          |> WITH t AS (SELECT 1 AS id)
+          |> UNION ALL (FROM t)
+        `)
+      ).toBe(dedent`
+        FROM
+          Produce
+        |> DISTINCT
+        |> TABLESAMPLE SYSTEM (1 PERCENT)
+        |> CALL my_tvf (10)
+        |> PIVOT (
+            SUM(sales)
+            FOR quarter IN ('Q1', 'Q2')
+          )
+        |> WITH
+          t AS (
+            SELECT
+              1 AS id
+          )
+        |> UNION ALL
+          (
+            FROM
+              t
+          )
+      `);
+    });
+
+    it('formats pipe operators following a standard query', () => {
+      expect(format('SELECT item, sales FROM Produce WHERE sales > 0 |> EXTEND sales * 2 AS dbl'))
+        .toBe(dedent`
+        SELECT
+          item,
+          sales
+        FROM
+          Produce
+        WHERE
+          sales > 0
+        |> EXTEND
+          sales * 2 AS dbl
+      `);
+    });
+
+    it('formats pipe queries inside subqueries', () => {
+      expect(
+        format(`
+          SELECT * FROM (FROM Produce |> WHERE sales > 0 |> SELECT item) AS p
+          WHERE p.item IN (FROM Stock |> SELECT item |> LIMIT 5)
+        `)
+      ).toBe(dedent`
+        SELECT
+          *
+        FROM
+          (
+            FROM
+              Produce
+            |> WHERE
+              sales > 0
+            |> SELECT
+              item
+          ) AS p
+        WHERE
+          p.item IN (
+            FROM
+              Stock
+            |> SELECT
+              item
+            |> LIMIT 5
+          )
+      `);
+    });
+
+    it('formats mixed pipe and standard statements independently', () => {
+      expect(
+        format(`
+          FROM Produce |> WHERE sales > 0;
+          SELECT item FROM Produce WHERE sales > 0;
+          FROM Produce |> LIMIT 1;
+        `)
+      ).toBe(dedent`
+        FROM
+          Produce
+        |> WHERE
+          sales > 0;
+
+        SELECT
+          item
+        FROM
+          Produce
+        WHERE
+          sales > 0;
+
+        FROM
+          Produce
+        |> LIMIT 1;
+      `);
+    });
+
+    it('places semicolon on a separate line after the last pipe step', () => {
+      expect(format('FROM Produce |> LIMIT 1;', { newlineBeforeSemicolon: true })).toBe(dedent`
+        FROM
+          Produce
+        |> LIMIT 1
+        ;
+      `);
+    });
+
+    it('applies keywordCase to pipe keywords', () => {
+      const sql = `from Produce |> Aggregate sum(sales) as total Group By item |> extend total * 2 as dbl |> limit 5`;
+      expect(format(sql, { keywordCase: 'upper' })).toBe(dedent`
+        FROM
+          Produce
+        |> AGGREGATE
+          sum(sales) AS total
+          GROUP BY
+            item
+        |> EXTEND
+          total * 2 AS dbl
+        |> LIMIT 5
+      `);
+      expect(format(sql, { keywordCase: 'lower' })).toBe(dedent`
+        from
+          Produce
+        |> aggregate
+          sum(sales) as total
+          group by
+            item
+        |> extend
+          total * 2 as dbl
+        |> limit 5
+      `);
+    });
+
+    it('formats pipe syntax in tabular style', () => {
+      expect(format('FROM Produce |> WHERE sales > 0 |> LIMIT 10;', { indentStyle: 'tabularLeft' }))
+        .toBe(dedent`
+        FROM      Produce
+        |> WHERE     sales > 0
+        |> LIMIT     10;
+      `);
+    });
+
+    it('preserves comments in pipe steps', () => {
+      expect(
+        format(`
+          FROM Produce -- all produce
+          |> WHERE sales > 0 -- only sold
+          |> /* project */ SELECT item
+        `)
+      ).toBe(dedent`
+        FROM
+          Produce -- all produce
+        |> WHERE
+          sales > 0 -- only sold
+        |> /* project */ SELECT
+          item
+      `);
+    });
+
+    it('treats AGGREGATE and EXTEND as identifiers outside of pipe syntax', () => {
+      expect(format('SELECT aggregate, extend FROM tbl WHERE extend > 1')).toBe(dedent`
+        SELECT
+          aggregate,
+          extend
+        FROM
+          tbl
+        WHERE
+          extend > 1
+      `);
+    });
+  });
+
   describe('BigQuery DDL Create Statements', () => {
     it(`Supports CREATE SCHEMA`, () => {
       const input = `
