@@ -524,10 +524,10 @@ class BaseEngine:
         return result
 
     def _with_state_data(self, kwargs: Dict[str, Any], state: State) -> Dict[str, Any]:
-        """Copy of the (cached) ``kwargs`` with ``state_data`` bound to ``state``.
+        """The (cached) ``kwargs`` with ``state_data`` bound to ``state``.
 
         Exit callbacks share the kwargs of the transition source, but each exited state
-        must see its own data.
+        must see its own data. The cached dict is copied, never mutated.
         """
         state_data = self.sm._state_data
         if not state_data.enabled:
