@@ -1,0 +1,162 @@
+# This test covers TrafficPolicy consistentHash:
+# - route-full: all hash sources, with duplicate entries that are deduplicated by key
+#   and entries emitted in canonical type order regardless of spec order
+# - route-empty: an empty consistentHash defaults to a single sourceIp hash policy
+# - route-merge: two policies targeting the same route have their entries unioned,
+#   with the higher-priority policy's entries (and sourceIp) taking precedence
+kind: Gateway
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: example-gateway
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - protocol: HTTP
+      port: 8080
+      name: http
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-svc
+spec:
+  selector:
+    test: example-gateway
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: route-full
+spec:
+  parentRefs:
+    - name: example-gateway
+  hostnames:
+    - "full.example.com"
+  rules:
+    - backendRefs:
+        - name: example-svc
+          port: 8000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: route-empty
+spec:
+  parentRefs:
+    - name: example-gateway
+  hostnames:
+    - "empty.example.com"
+  rules:
+    - backendRefs:
+        - name: example-svc
+          port: 8000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: route-merge
+spec:
+  parentRefs:
+    - name: example-gateway
+  hostnames:
+    - "merge.example.com"
+  rules:
+    - backendRefs:
+        - name: example-svc
+          port: 8000
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: full-policy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: route-full
+  consistentHash:
+    sourceIp:
+      terminal: false
+    filterState:
+      - key: io.kgateway.hash
+        terminal: true
+      - key: io.kgateway.hash
+    queryParameters:
+      - name: user
+      - name: user
+        terminal: true
+    cookies:
+      - name: session
+        ttl: "3600"
+        path: /
+        attributes:
+          - name: SameSite
+            value: Strict
+          - name: Secure
+        terminal: true
+      - name: session
+        ttl: 1h30m
+      - name: tracking
+        ttl: 1h30m
+    headers:
+      - headerName: X-User-Id
+        terminal: true
+      - headerName: x-user-id
+      - headerName: x-session
+        regexRewrite:
+          pattern: "^([^.]+)\\..*$"
+          substitution: "\\1"
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: empty-policy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: route-empty
+  consistentHash: {}
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: merge-a
+  creationTimestamp: "2024-01-01T00:00:00Z"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: route-merge
+  consistentHash:
+    headers:
+      - headerName: x-user
+        terminal: true
+    cookies:
+      - name: a
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: merge-b
+  creationTimestamp: "2024-01-02T00:00:00Z"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: route-merge
+  consistentHash:
+    headers:
+      - headerName: X-User
+      - headerName: x-tenant
+    queryParameters:
+      - name: q
+    sourceIp:
+      terminal: true

@@ -1,0 +1,112 @@
+# This test covers TrafficPolicy consistentHash inheritance from a policy attached to the
+# whole HTTPRoute by policies attached to individual rules via sectionName:
+# - rule inherit: inherits the route-wide hash policies
+# - rule augment: unions its own hash policies with the route-wide ones, with its own first;
+#   sourceIp is not inherited since the rule policy does not set it
+# - rule disable: suppresses the route-wide hash policies with disable: true
+kind: Gateway
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: example-gateway
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - protocol: HTTP
+      port: 8080
+      name: http
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-svc
+spec:
+  selector:
+    test: example-gateway
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: example-route
+spec:
+  parentRefs:
+    - name: example-gateway
+  hostnames:
+    - "example.com"
+  rules:
+    - name: inherit
+      matches:
+        - path:
+            type: PathPrefix
+            value: /inherit
+      backendRefs:
+        - name: example-svc
+          port: 8000
+    - name: augment
+      matches:
+        - path:
+            type: PathPrefix
+            value: /augment
+      backendRefs:
+        - name: example-svc
+          port: 8000
+    - name: disable
+      matches:
+        - path:
+            type: PathPrefix
+            value: /disable
+      backendRefs:
+        - name: example-svc
+          port: 8000
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: route-policy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: example-route
+  consistentHash:
+    headers:
+      - headerName: x-route
+    cookies:
+      - name: route-cookie
+    sourceIp: {}
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: augment-policy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: example-route
+      sectionName: augment
+  consistentHash:
+    headers:
+      - headerName: x-rule
+        terminal: true
+      - headerName: X-Route
+        terminal: true
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: disable-policy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: example-route
+      sectionName: disable
+  consistentHash:
+    disable: true
