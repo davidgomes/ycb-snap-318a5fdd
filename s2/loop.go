@@ -1302,12 +1302,7 @@ func (l *Loop) decode(d *decoder) {
 		}
 		return
 	}
-	l.vertices = make([]Point, nvertices)
-	for i := range l.vertices {
-		l.vertices[i].X = d.readFloat64()
-		l.vertices[i].Y = d.readFloat64()
-		l.vertices[i].Z = d.readFloat64()
-	}
+	l.vertices = d.readPoints(uint64(nvertices))
 	l.index = NewShapeIndex()
 	l.originInside = d.readBool()
 	l.depth = int(d.readUint32())

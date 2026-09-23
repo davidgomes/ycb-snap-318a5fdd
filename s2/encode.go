@@ -17,6 +17,7 @@ package s2
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 )
@@ -202,4 +203,44 @@ func (d *decoder) readUvarint() (x uint64) {
 	}
 	x, d.err = binary.ReadUvarint(d.r)
 	return
+}
+
+// maxDecodePrealloc caps the capacity reserved up front for a count read from
+// untrusted input. Slices grow past it only as elements are actually decoded,
+// so a forged count cannot force a large allocation before the data runs out.
+const maxDecodePrealloc = 1 << 10
+
+func decodePrealloc(n uint64) int {
+	return int(min(n, maxDecodePrealloc))
+}
+
+func (e *encoder) writePoints(points []Point) {
+	for _, p := range points {
+		e.writeFloat64(p.X)
+		e.writeFloat64(p.Y)
+		e.writeFloat64(p.Z)
+	}
+}
+
+// readPoints reads n points written by writePoints.
+func (d *decoder) readPoints(n uint64) []Point {
+	if d.err != nil {
+		return nil
+	}
+	if n > maxEncodedVertices {
+		d.err = fmt.Errorf("too many vertices (%d; max is %d)", n, maxEncodedVertices)
+		return nil
+	}
+	points := make([]Point, 0, decodePrealloc(n))
+	for i := uint64(0); i < n && d.err == nil; i++ {
+		var p Point
+		p.X = d.readFloat64()
+		p.Y = d.readFloat64()
+		p.Z = d.readFloat64()
+		points = append(points, p)
+	}
+	if d.err != nil {
+		return nil
+	}
+	return points
 }

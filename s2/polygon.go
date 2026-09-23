@@ -1165,11 +1165,12 @@ func (p *Polygon) decode(d *decoder) {
 		d.err = fmt.Errorf("too many loops (%d; max is %d)", nloops, maxEncodedLoops)
 		return
 	}
-	p.loops = make([]*Loop, nloops)
-	for i := range p.loops {
-		p.loops[i] = new(Loop)
-		p.loops[i].decode(d)
-		p.numVertices += len(p.loops[i].vertices)
+	p.loops = make([]*Loop, 0, decodePrealloc(uint64(nloops)))
+	for i := uint32(0); i < nloops && d.err == nil; i++ {
+		l := new(Loop)
+		l.decode(d)
+		p.loops = append(p.loops, l)
+		p.numVertices += len(l.vertices)
 	}
 
 	p.bound.decode(d)

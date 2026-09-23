@@ -371,12 +371,12 @@ func (p Polyline) encode(e *encoder) {
 
 // Decode decodes the polyline.
 func (p *Polyline) Decode(r io.Reader) error {
-	d := decoder{r: asByteReader(r)}
+	d := &decoder{r: asByteReader(r)}
 	p.decode(d)
 	return d.err
 }
 
-func (p *Polyline) decode(d decoder) {
+func (p *Polyline) decode(d *decoder) {
 	version := d.readInt8()
 	if d.err != nil {
 		return
@@ -393,12 +393,7 @@ func (p *Polyline) decode(d decoder) {
 		d.err = fmt.Errorf("too many vertices (%d; max is %d)", nvertices, maxEncodedVertices)
 		return
 	}
-	*p = make([]Point, nvertices)
-	for i := range *p {
-		(*p)[i].X = d.readFloat64()
-		(*p)[i].Y = d.readFloat64()
-		(*p)[i].Z = d.readFloat64()
-	}
+	*p = d.readPoints(uint64(nvertices))
 }
 
 // Project returns a point on the polyline that is closest to the given point,
