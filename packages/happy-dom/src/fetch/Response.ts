@@ -12,7 +12,7 @@ import DOMExceptionNameEnum from '../exception/DOMExceptionNameEnum.js';
 import MultipartFormDataParser from './multipart/MultipartFormDataParser.js';
 import type BrowserWindow from '../window/BrowserWindow.js';
 import type ICachedResponse from './cache/response/ICachedResponse.js';
-import { Buffer } from 'buffer';
+import type { Buffer } from 'buffer';
 import WindowBrowserContext from '../window/WindowBrowserContext.js';
 
 const REDIRECT_STATUS_CODES = [301, 302, 303, 307, 308];
@@ -226,18 +226,12 @@ export default class Response implements Response {
 			(<boolean>this.bodyUsed) = true;
 
 			// A fully buffered body can still be parsed after the window has been closed.
-			if (
-				this[PropertySymbol.buffer] &&
-				!new WindowBrowserContext(window).getAsyncTaskManager()
-			) {
-				return (await MultipartFormDataParser.streamToFormData(window, this, contentType))
-					.formData;
+			if (this[PropertySymbol.buffer] && !new WindowBrowserContext(window).getAsyncTaskManager()) {
+				return (await MultipartFormDataParser.streamToFormData(window, this, contentType)).formData;
 			}
 
-			const { formData, buffer } = await FetchBodyUtility.consumeBodyAsAsyncTask(
-				window,
-				this,
-				() => MultipartFormDataParser.streamToFormData(window, this, contentType)
+			const { formData, buffer } = await FetchBodyUtility.consumeBodyAsAsyncTask(window, this, () =>
+				MultipartFormDataParser.streamToFormData(window, this, contentType)
 			);
 
 			this.#storeBodyInCache(buffer);

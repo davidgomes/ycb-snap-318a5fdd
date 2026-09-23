@@ -642,9 +642,7 @@ describe('Response', () => {
 
 			expect(await textResponse.text()).toBe('Hello World');
 			expect(await jsonResponse.json()).toEqual({ key: 'value' });
-			expect(Buffer.from(await arrayBufferResponse.arrayBuffer()).toString()).toBe(
-				'Hello World'
-			);
+			expect(Buffer.from(await arrayBufferResponse.arrayBuffer()).toString()).toBe('Hello World');
 			expect((await formDataResponse.formData()).get('key')).toBe('value');
 		});
 	});
