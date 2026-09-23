@@ -825,6 +825,55 @@ class Queue(MaybeChannelBound):
         )
 
     @property
+    def is_single_active_consumer(self):
+        """Return true when the queue is declared single-active-consumer."""
+        arguments = self.queue_arguments or {}
+        return bool(arguments.get('x-single-active-consumer'))
+
+    @property
+    def consumer_priority(self):
+        """Consumer priority from ``x-priority`` (default 0)."""
+        arguments = self.consumer_arguments or {}
+        value = arguments.get('x-priority', 0)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def with_consumer_priority(cls, name, exchange, priority=0, **kwargs):
+        """Return a queue whose consumers register at `priority`."""
+        consumer_arguments = dict(kwargs.pop('consumer_arguments', None) or {})
+        consumer_arguments['x-priority'] = priority
+        return cls(
+            name, exchange, consumer_arguments=consumer_arguments, **kwargs)
+
+    @classmethod
+    def with_single_active_consumer(cls, name, exchange, durable=True,
+                                    **kwargs):
+        """Return a single-active-consumer queue."""
+        queue_arguments = dict(kwargs.pop('queue_arguments', None) or {})
+        queue_arguments['x-single-active-consumer'] = True
+        kwargs.setdefault('durable', durable)
+        return cls(name, exchange, queue_arguments=queue_arguments, **kwargs)
+
+    @classmethod
+    def with_priority_and_sac(cls, name, exchange, priority=0, durable=True,
+                              **kwargs):
+        """Return a SAC queue whose consumers register at `priority`."""
+        consumer_arguments = dict(kwargs.pop('consumer_arguments', None) or {})
+        queue_arguments = dict(kwargs.pop('queue_arguments', None) or {})
+        consumer_arguments['x-priority'] = priority
+        queue_arguments['x-single-active-consumer'] = True
+        kwargs.setdefault('durable', durable)
+        return cls(
+            name, exchange,
+            consumer_arguments=consumer_arguments,
+            queue_arguments=queue_arguments,
+            **kwargs,
+        )
+
+    @property
     def can_cache_declaration(self):
         if self.queue_arguments:
             expiring_queue = "x-expires" in self.queue_arguments

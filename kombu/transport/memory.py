@@ -101,6 +101,8 @@ class Transport(virtual.Transport):
     def __init__(self, client, **kwargs):
         super().__init__(client, **kwargs)
         self.state = self.global_state
+        # Registrations must not leak into the next connection.
+        self.state.clear_consumers()
 
     def driver_version(self):
         return 'N/A'
