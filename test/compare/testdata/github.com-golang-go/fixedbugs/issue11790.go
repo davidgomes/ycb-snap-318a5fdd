@@ -1,5 +1,3 @@
-// skip : method declaration (https://github.com/open2b/scriggo/issues/458)
-
 // compile
 
 // Copyright 2015 The Go Authors. All rights reserved.
