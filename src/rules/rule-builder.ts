@@ -2,7 +2,7 @@ import {Example, Options, Rule, RuleType, registerRule, wrapLintError} from '../
 import {BooleanOption, DropdownOption, DropdownRecord, MdFilePickerOption, MomentFormatOption, Option, TextAreaOption, TextOption} from '../option';
 import {logDebug, timingBegin, timingEnd} from '../utils/logger';
 import {getTextInLanguage, LanguageStringKey} from '../lang/helpers';
-import {IgnoreType, IgnoreTypes} from '../utils/ignore-types';
+import {createRuleScopedCustomIgnore, IgnoreType} from '../utils/ignore-types';
 import {LinterSettings} from 'src/settings-data';
 import {App} from 'obsidian';
 
@@ -100,10 +100,11 @@ export default abstract class RuleBuilder<TOptions extends Options> extends Rule
     this.hasSpecialExecutionOrder = args.hasSpecialExecutionOrder ?? false;
     this.disableConflictingOptions = args.disableConflictingOptions ?? null;
 
+    const customIgnore = createRuleScopedCustomIgnore(this.alias);
     if (args.ruleIgnoreTypes) {
-      this.ignoreTypes = [IgnoreTypes.customIgnore, ...args.ruleIgnoreTypes];
+      this.ignoreTypes = [customIgnore, ...args.ruleIgnoreTypes];
     } else {
-      this.ignoreTypes = [IgnoreTypes.customIgnore];
+      this.ignoreTypes = [customIgnore];
     }
   }
 

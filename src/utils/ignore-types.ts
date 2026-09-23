@@ -1,5 +1,6 @@
 import {obsidianMultilineCommentRegex, tagWithLeadingWhitespaceRegex, wikiLinkRegex, yamlRegex, escapeDollarSigns, genericLinkRegex, urlRegex, anchorTagRegex, templaterCommandRegex, footnoteDefinitionIndicatorAtStartOfLine} from './regex';
-import {getAllCustomIgnoreSectionsInText, getAllTablesInText, getPositions, MDAstTypes} from './mdast';
+import {getAllTablesInText, getPositions, MDAstTypes} from './mdast';
+import {getAllCustomIgnoreSectionsInText} from './scoped-rule-ignore';
 import type {Position} from 'unist';
 import {replaceTextBetweenStartAndEndWithNewValue} from './strings';
 
@@ -61,6 +62,11 @@ export function ignoreListOfTypes(ignoreTypes: IgnoreType[], text: string, func:
   if (setOfPlaceholders != null && setOfPlaceholders.length > 0) {
     setOfPlaceholders.forEach((replacedInfo: {placeholder: string, replacedValues: string[], replaceDollarSigns: boolean}) => {
       replacedInfo.replacedValues.forEach((replacedValue: string) => {
+        if (replacedInfo.placeholder === IgnoreTypes.customIgnore.placeholder) {
+          text = restoreCustomIgnorePlaceholder(text, replacedInfo.placeholder, replacedValue);
+          return;
+        }
+
         // Regex was added to fix capitalization issue  where another rule made the text not match the original place holder's case
         // see https://github.com/platers/obsidian-linter/issues/201
         text = text.replace(new RegExp(replacedInfo.placeholder, 'i'), escapeDollarSigns(replacedValue));
@@ -199,8 +205,23 @@ function replaceTables(text: string, tablePlaceholder: string): [string[], strin
 }
 
 
-function replaceCustomIgnore(text: string, customIgnorePlaceholder: string): [string[], string] {
-  const customIgnorePositions = getAllCustomIgnoreSectionsInText(text);
+/**
+ * Builds a custom-ignore pass that only skips regions disabled for one rule.
+ * Marker lines are always included so no rule can edit them.
+ * @param {string} ruleAlias The alias of the rule about to run.
+ * @return {IgnoreType} Ignore type that hides that rule's disabled regions.
+ */
+export function createRuleScopedCustomIgnore(ruleAlias: string): IgnoreType {
+  return {
+    replaceAction: (text: string, placeholder: string): [string[], string] => {
+      return replaceCustomIgnore(text, placeholder, ruleAlias);
+    },
+    placeholder: '{CUSTOM_IGNORE_PLACEHOLDER}',
+  };
+}
+
+function replaceCustomIgnore(text: string, customIgnorePlaceholder: string, ruleAlias: string | null = null): [string[], string] {
+  const customIgnorePositions = getAllCustomIgnoreSectionsInText(text, ruleAlias);
 
   const replacedSections: string[] = new Array(customIgnorePositions.length);
   let index = 0;
@@ -214,6 +235,35 @@ function replaceCustomIgnore(text: string, customIgnorePlaceholder: string): [st
   }
 
   return [replacedSections, text];
+}
+
+/**
+ * Puts a protected region back and drops trailing spaces or tabs a rule attached to the placeholder line.
+ * Marker lines and disabled regions stay byte-for-byte the same when a rule only pads that line.
+ * @param {string} text Text after the rule ran.
+ * @param {string} placeholder Placeholder token inserted for the region.
+ * @param {string} original Original region text.
+ * @return {string} Text with the first placeholder replaced by the original region.
+ */
+function restoreCustomIgnorePlaceholder(text: string, placeholder: string, original: string): string {
+  const start = text.toLowerCase().indexOf(placeholder.toLowerCase());
+  if (start === -1) {
+    return text;
+  }
+
+  let end = start + placeholder.length;
+  const lineBreak = text.indexOf('\n', end);
+  const lineLimit = lineBreak === -1 ? text.length : lineBreak;
+  let trailing = end;
+  while (trailing < lineLimit && (text[trailing] === ' ' || text[trailing] === '\t')) {
+    trailing++;
+  }
+
+  if (trailing === lineLimit) {
+    end = trailing;
+  }
+
+  return text.slice(0, start) + original + text.slice(end);
 }
 
 function removeOverlappingPositions(positions: Position[]): Position[] {

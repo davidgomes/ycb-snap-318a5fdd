@@ -50,9 +50,20 @@ disabled rules: [all]
 
 ### Range Ignore
 
-When there is a need to disable the Linter for part of a file, ranged ignores can be used. The syntax for a ranged ignore
-is `<!-- linter-disable -->` or `%%linter-disable%%` with an optional `<!-- linter-enable -->` or `%%linter-disable%%` where you want the Linter to start back up with its linting.
-Leaving off the ending of a range ignore will assume you want to ignore the file contents from the start of the range ignore to the end of the file. So be careful when not ending a range ignore.
+Comment markers disable rules for part of a file. A marker is recognized only when it is the whole line, aside from leading or trailing spaces and tabs. The same instructions can be written as an HTML comment or an Obsidian comment:
+
+- `<!-- linter-disable -->` or `%% linter-disable %%` disables every rule from the next line through the matching enable marker. If that scope is never closed, it runs through the end of the file.
+- `<!-- linter-disable rule-a, rule-b -->` disables only those rule aliases.
+- `<!-- linter-enable -->` closes the most recently opened disable scope.
+- `<!-- linter-enable rule-a -->` stops disabling `rule-a` by removing it from the nearest open scope that currently disables it. A scope that only listed rules is closed once none remain. A scope that disables every rule stays open, with those rules turned back on inside it.
+- `<!-- linter-disable-next-line -->` and `<!-- linter-disable-next-line rule-a -->` do the same thing for the next line only.
+- `<!-- linter-disable-next-n-lines: 3 -->` and `<!-- linter-disable-next-n-lines: 3 rule-a, rule-b -->` do the same thing for the next 3 lines. `3` must be a positive base-10 integer. The range stops at the end of the file when there are fewer lines left. If this marker is the last line of the file, it does nothing.
+
+`%% linter-enable %%`, `%% linter-disable-next-line %%`, and `%% linter-disable-next-n-lines: 3 %%` work the same way. Rule aliases are matched without case sensitivity. Repeated names, empty entries, and trailing commas are ignored. An unknown alias is ignored. If a list is present but every entry is unknown or empty, that marker does nothing. Leaving the list off a disable marker always disables every rule.
+
+Scopes can be nested. Disabling every rule and then re-enabling one alias inside that region is supported.
+
+Markers inside YAML frontmatter, fenced or indented code, inline code, or math blocks are not markers. A marker line is never edited by any rule.
 
 !!! warning
     Ranged ignores only prevent the values in the ranged ignore from being linted. It *does not* prevent whitespace or other additions around the ranged ignore.
@@ -64,9 +75,9 @@ Here is some text
                           This area will not be formatted
 <!-- linter-enable -->
 More content goes here...
-%%linter-disable %%
+%% linter-disable %%
                           This area will not be formatted
-%%linter-enable%%
+%% linter-enable %%
 ```
 
 Here is another example that shows a ranged ignore without an ending indicator:
@@ -75,6 +86,17 @@ Here is some text
 <!-- linter-disable -->
                           This area will not be formatted
 This content is also not formatted either.
+```
+
+Disable one rule, then turn that rule back on while other rules stay disabled:
+
+``` markdown
+<!-- linter-disable -->
+This whole region skips every rule
+<!-- linter-enable trailing-spaces -->
+Trailing spaces can be cleaned up here, but other rules still skip this region
+<!-- linter-enable -->
+Every rule runs again here
 ```
 
 !!! info

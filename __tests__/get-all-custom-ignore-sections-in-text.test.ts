@@ -1,4 +1,4 @@
-import {getAllCustomIgnoreSectionsInText} from '../src/utils/mdast';
+import {getAllCustomIgnoreSectionsInText} from '../src/utils/scoped-rule-ignore';
 import dedent from 'ts-dedent';
 
 type customIgnoresInTextTestCase = {
@@ -19,24 +19,24 @@ const getCustomIgnoreSectionsInTextTestCases: customIgnoresInTextTestCase[] = [
     expectedPositions: [],
   },
   {
-    name: 'when no custom ignore start indicator is present, no positions are returned even if custom ignore end indicator is present',
+    name: 'a standalone enable marker is kept unchanged even when no disable scope is open',
     text: dedent`
       Here is some text
       <!-- linter-enable -->
       Here is some more text
     `,
-    expectedCustomIgnoresInText: 0,
-    expectedPositions: [],
+    expectedCustomIgnoresInText: 1,
+    expectedPositions: [{startIndex: 18, endIndex: 40}],
   },
   {
-    name: 'when no custom ignore start indicator is present, no positions are returned even if custom ignore end indicator is present when Obsidian comment format is used',
+    name: 'a standalone enable marker is kept unchanged even when no disable scope is open when Obsidian comment format is used',
     text: dedent`
       Here is some text
       %% linter-enable %%
       Here is some more text
     `,
-    expectedCustomIgnoresInText: 0,
-    expectedPositions: [],
+    expectedCustomIgnoresInText: 1,
+    expectedPositions: [{startIndex: 18, endIndex: 37}],
   },
   {
     name: 'a simple example of a start and end custom ignore indicator results in the proper start and end positions for the ignore section',
@@ -74,7 +74,7 @@ const getCustomIgnoreSectionsInTextTestCases: customIgnoresInTextTestCase[] = [
       More text here...
     `,
     expectedCustomIgnoresInText: 1,
-    expectedPositions: [{startIndex: 18, endIndex: 129}],
+    expectedPositions: [{startIndex: 18, endIndex: 130}],
   },
   {
     name: 'when a custom ignore start indicator is not followed by a custom ignore end indicator in the text, the end is considered to be the end of the text when Obsidian comment format is used',
@@ -86,45 +86,48 @@ const getCustomIgnoreSectionsInTextTestCases: customIgnoresInTextTestCase[] = [
       More text here...
     `,
     expectedCustomIgnoresInText: 1,
-    expectedPositions: [{startIndex: 18, endIndex: 126}],
+    expectedPositions: [{startIndex: 18, endIndex: 127}],
   },
   {
-    name: 'when a custom ignore start indicator shows up midline, it ignores the part in question',
+    name: 'markers that share a line with other text are ignored',
     text: dedent`
       Here is some text<!-- linter-disable -->here is some ignored text<!-- linter-enable -->
       This content will be ignored
       So any format put here gets to stay as is
       More text here...
     `,
-    expectedCustomIgnoresInText: 1,
-    expectedPositions: [{startIndex: 17, endIndex: 87}],
+    expectedCustomIgnoresInText: 0,
+    expectedPositions: [],
   },
   {
-    name: 'when a custom ignore start indicator shows up midline, it ignores the part in question when Obsidian comment format is used',
+    name: 'markers that share a line with other text are ignored when Obsidian comment format is used',
     text: dedent`
       Here is some text%% linter-disable %%here is some ignored text%% linter-enable %%
       This content will be ignored
       So any format put here gets to stay as is
       More text here...
     `,
-    expectedCustomIgnoresInText: 1,
-    expectedPositions: [{startIndex: 17, endIndex: 81}],
+    expectedCustomIgnoresInText: 0,
+    expectedPositions: [],
   },
   {
-    name: 'when a custom ignore start indicator does not follow the exact syntax, it is counted as existing when it is a single-line comment',
+    name: 'extra dashes still count when the marker is on its own line',
     text: dedent`
-      Here is some text<!-- linter-disable-->here is some ignored text<!-------------         linter-enable ------>
+      Here is some text
+      <!-------------         linter-disable ------>
       This content will be ignored
-      So any format put here gets to stay as is
-      More text here...
+      <!-- linter-enable -->
     `,
     expectedCustomIgnoresInText: 1,
-    expectedPositions: [{startIndex: 17, endIndex: 109}],
+    expectedPositions: [{startIndex: 18, endIndex: 116}],
   },
   {
     name: 'multiple matches can be returned',
     text: dedent`
-      Here is some text<!-- linter-disable -->here is some ignored text<!-- linter-enable -->
+      Here is some text
+      <!-- linter-disable -->
+      here is some ignored text
+      <!-- linter-enable -->
       This content will be ignored
       So any format put here gets to stay as is
       More text here...
@@ -137,12 +140,15 @@ const getCustomIgnoreSectionsInTextTestCases: customIgnoresInTextTestCase[] = [
       Finish
     `,
     expectedCustomIgnoresInText: 2,
-    expectedPositions: [{startIndex: 178, endIndex: 316}, {startIndex: 17, endIndex: 87}],
+    expectedPositions: [{startIndex: 181, endIndex: 320}, {startIndex: 18, endIndex: 90}],
   },
   {
     name: 'multiple matches can be returned when Obsidian comment format is used',
     text: dedent`
-      Here is some text%% linter-disable %%here is some ignored text%% linter-enable %%
+      Here is some text
+      %% linter-disable %%
+      here is some ignored text
+      %% linter-enable %%
       This content will be ignored
       So any format put here gets to stay as is
       More text here...
@@ -155,7 +161,7 @@ const getCustomIgnoreSectionsInTextTestCases: customIgnoresInTextTestCase[] = [
       Finish
     `,
     expectedCustomIgnoresInText: 2,
-    expectedPositions: [{startIndex: 172, endIndex: 307}, {startIndex: 17, endIndex: 81}],
+    expectedPositions: [{startIndex: 175, endIndex: 311}, {startIndex: 18, endIndex: 84}],
   },
   { // relates to https://github.com/platers/obsidian-linter/issues/733
     name: 'multiple matches can be returned with math blocks',
