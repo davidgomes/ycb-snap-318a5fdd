@@ -1,10 +1,17 @@
 package handler
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 	"errors"
+	"io"
 	"net"
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/liweiyi88/onedump/encryption"
 
 	"golang.org/x/crypto/ssh"
 
@@ -153,11 +160,53 @@ func TestGetStorages(t *testing.T) {
 }
 
 func TestEnsureFileSuffix(t *testing.T) {
-	gzip := fileutil.EnsureFileSuffix("test.sql", true)
+	gzip := fileutil.EnsureFileSuffix("test.sql", true, false)
 	assert.Equal(t, "test.sql.gz", gzip)
 
-	sql := fileutil.EnsureFileSuffix("test.sql.gz", true)
+	sql := fileutil.EnsureFileSuffix("test.sql.gz", true, false)
 	assert.Equal(t, "test.sql.gz", sql)
+}
+
+func TestEncryptedPipelineRoundTrip(t *testing.T) {
+	raw := bytes.Repeat([]byte{9}, 32)
+	t.Setenv("ONEDUMP_PIPE_KEY", base64.StdEncoding.EncodeToString(raw))
+
+	job := &config.Job{Gzip: true}
+	job.Encryption = encryption.Config{Enabled: true, KeySource: "env", KeyEnvVar: "ONEDUMP_PIPE_KEY"}
+	key, err := encryption.LoadKey(job.Encryption)
+	assert.NoError(t, err)
+	enc, err := encryption.NewEncryptor(key)
+	assert.NoError(t, err)
+
+	readers, writer, closer := storageReadWriteCloser(1, true, enc)
+	plain := []byte("dump-bytes-round-trip")
+	go func() {
+		_, _ = writer.Write(plain)
+		_ = closer.Close()
+	}()
+
+	stored, err := io.ReadAll(readers[0])
+	assert.NoError(t, err)
+
+	dec, err := encryption.DecryptReader(bytes.NewReader(stored), key)
+	assert.NoError(t, err)
+	gz, err := gzip.NewReader(dec)
+	assert.NoError(t, err)
+	got, err := io.ReadAll(gz)
+	assert.NoError(t, err)
+	assert.Equal(t, plain, got)
+
+	name := fileutil.EnsureFileName("dump.sql", true, true, false)
+	assert.Equal(t, "dump.sql.gz.enc", name)
+}
+
+func TestMissingEncryptionKeyBeforeStorage(t *testing.T) {
+	job := config.NewJob("job", "mysql", testDBDsn)
+	job.Encryption = encryption.Config{Enabled: true, KeySource: "env", KeyEnvVar: "ONEDUMP_ABSENT_KEY"}
+	err := NewJobHandler(job).save()
+	if err == nil || (!strings.Contains(err.Error(), "encryption") && !strings.Contains(err.Error(), "key")) {
+		t.Fatalf("missing key: %v", err)
+	}
 }
 
 func TestGetDumper(t *testing.T) {
