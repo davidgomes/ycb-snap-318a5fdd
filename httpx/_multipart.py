@@ -7,6 +7,7 @@ import re
 import typing
 from pathlib import Path
 
+from ._exceptions import DecodingError
 from ._types import (
     AsyncByteStream,
     FileContent,
@@ -65,6 +66,220 @@ def get_multipart_boundary_from_content_type(
             if section.strip().lower().startswith(b"boundary="):
                 return section.strip()[len(b"boundary=") :].strip(b'"')
     return None
+
+
+def _split_header_params(value: str) -> list[str]:
+    """
+    Split a header value on `;`, ignoring any `;` inside quoted strings.
+    """
+    sections: list[str] = []
+    current: list[str] = []
+    in_quotes = escaped = False
+    for char in value:
+        if escaped:
+            escaped = False
+        elif in_quotes and char == "\\":
+            escaped = True
+        elif char == '"':
+            in_quotes = not in_quotes
+        elif char == ";" and not in_quotes:
+            sections.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    sections.append("".join(current))
+    return sections
+
+
+def get_multipart_boundary_from_response_content_type(
+    content_type: str | None,
+) -> bytes:
+    """
+    Return the boundary of a `multipart/*` response Content-Type.
+
+    Raises `DecodingError` if the content type is not multipart, or if the
+    boundary is missing or invalid.
+    """
+    if content_type is None:
+        raise DecodingError("Response has no Content-Type, expected multipart/*.")
+
+    media_type, *params = _split_header_params(content_type)
+    main_type, _, subtype = media_type.strip(" \t").lower().partition("/")
+    if main_type != "multipart" or not subtype.strip(" \t"):
+        raise DecodingError(
+            f"Response Content-Type is not multipart/*: {content_type!r}."
+        )
+
+    boundary: str | None = None
+    for param in params:
+        name, _, value = param.partition("=")
+        if name.strip(" \t").lower() == "boundary":
+            boundary = value
+
+    if boundary is None:
+        raise DecodingError("Multipart response Content-Type has no boundary.")
+    if "\r" in content_type or "\n" in content_type:
+        raise DecodingError("Invalid multipart boundary.")
+
+    boundary = boundary.strip(" \t")
+    if boundary.startswith('"'):
+        if len(boundary) < 2 or not boundary.endswith('"'):
+            raise DecodingError("Invalid multipart boundary.")
+        boundary = boundary[1:-1]
+    if (
+        not boundary
+        or not boundary.isascii()
+        or boundary.startswith("=")
+        or "\x00" in boundary
+    ):
+        raise DecodingError("Invalid multipart boundary.")
+    return boundary.encode("ascii")
+
+
+_LINE_TERMINATOR_RE = re.compile(rb"\r\n|\r|\n")
+
+MultipartPartItem = typing.Tuple[typing.List[typing.Tuple[bytes, bytes]], bytes]
+
+
+class MultipartDecoder:
+    """
+    Incrementally parses a multipart body into `(headers, content)` items,
+    where `headers` is a list of raw `(name, value)` byte pairs.
+
+    Accepts LF, CRLF, or CR line terminators. Any preamble before the first
+    delimiter line and any epilogue after the closing delimiter are ignored.
+    """
+
+    def __init__(self, boundary: bytes) -> None:
+        self._dash_boundary = b"--" + boundary
+        self._buffer = bytearray()
+        self._pos = 0
+        self._search_from = 0
+        self._at_message_start = True
+        self._state = "preamble"  # "preamble" | "headers" | "body" | "epilogue"
+        self._headers: list[tuple[bytes, bytes]] = []
+        self._body: list[bytes] = []
+        self._body_terminator = b""
+
+    def decode(self, data: bytes) -> list[MultipartPartItem]:
+        if self._state == "epilogue":
+            return []
+        self._buffer += data
+        items = self._process(final=False)
+        if self._state == "epilogue":
+            self._buffer.clear()
+            self._pos = self._search_from = 0
+        else:
+            del self._buffer[: self._pos]
+            self._search_from -= self._pos
+            self._pos = 0
+        return items
+
+    def flush(self) -> list[MultipartPartItem]:
+        items = [] if self._state == "epilogue" else self._process(final=True)
+        self._buffer.clear()
+        self._pos = self._search_from = 0
+        if self._state != "epilogue":
+            raise DecodingError("Multipart body is missing its closing boundary.")
+        return items
+
+    def _process(self, final: bool) -> list[MultipartPartItem]:
+        items = []
+        while self._state != "epilogue":
+            line = self._next_line(final)
+            if line is None:
+                break
+            item = self._handle_line(*line)
+            if item is not None:
+                items.append(item)
+        return items
+
+    def _next_line(self, final: bool) -> tuple[bytes, bytes] | None:
+        buffer = self._buffer
+        match = _LINE_TERMINATOR_RE.search(buffer, self._search_from)
+        if match is not None:
+            if match.end() == len(buffer) and match.group() == b"\r" and not final:
+                # A trailing CR may be the first half of a CRLF split across chunks.
+                self._search_from = match.start()
+                return None
+            line = bytes(buffer[self._pos : match.start()])
+            self._pos = self._search_from = match.end()
+            return line, match.group()
+        if final and self._pos < len(buffer):
+            line = bytes(buffer[self._pos :])
+            self._pos = self._search_from = len(buffer)
+            return line, b""
+        self._search_from = len(buffer)
+        return None
+
+    def _match_delimiter(self, line: bytes) -> bool | None:
+        """
+        Returns `None` if `line` is not a delimiter line, otherwise whether
+        it is the closing delimiter.
+        """
+        if not line.startswith(self._dash_boundary):
+            return None
+        rest = line[len(self._dash_boundary) :].rstrip(b" \t")
+        if rest == b"":
+            return False
+        if rest == b"--":
+            return True
+        return None
+
+    def _handle_line(self, line: bytes, terminator: bytes) -> MultipartPartItem | None:
+        at_message_start = self._at_message_start
+        self._at_message_start = False
+        is_closing = self._match_delimiter(line)
+
+        if self._state == "preamble":
+            if is_closing is None:
+                if at_message_start and line.startswith(self._dash_boundary):
+                    raise DecodingError("Malformed multipart delimiter line.")
+                return None
+            self._start_part(is_closing)
+            return None
+
+        if is_closing is not None:
+            item = (self._headers, b"".join(self._body))
+            self._start_part(is_closing)
+            return item
+
+        if self._state == "headers":
+            if line:
+                self._parse_header_line(line)
+            else:
+                self._state = "body"
+            return None
+
+        self._body += [self._body_terminator, line]
+        self._body_terminator = terminator
+        return None
+
+    def _start_part(self, is_closing: bool) -> None:
+        self._state = "epilogue" if is_closing else "headers"
+        self._headers = []
+        self._body = []
+        self._body_terminator = b""
+
+    def _parse_header_line(self, line: bytes) -> None:
+        if line[:1] in (b" ", b"\t"):
+            if not self._headers:
+                raise DecodingError(
+                    "Malformed multipart header: unexpected leading whitespace."
+                )
+            continuation = line.strip(b" \t")
+            if not continuation:
+                raise DecodingError("Malformed multipart header: empty continuation.")
+            name, value = self._headers[-1]
+            value = value + b" " + continuation if value else continuation
+            self._headers[-1] = (name, value)
+            return
+
+        name, sep, value = line.partition(b":")
+        name = name.rstrip(b" \t")
+        if not sep or not name:
+            raise DecodingError(f"Malformed multipart header line: {line!r}.")
+        self._headers.append((name, value.strip(b" \t")))
 
 
 class DataField:
