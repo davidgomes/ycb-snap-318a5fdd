@@ -56,7 +56,9 @@ function oneOf<T extends string>(
   return allowed.indexOf(value as T) !== -1 ? (value as T) : fallback;
 }
 
-export function resolveStripInternalFrames(value: unknown): StripInternalFrames {
+export function resolveStripInternalFrames(
+  value: unknown
+): StripInternalFrames {
   return oneOf(value, STRIP_INTERNAL_FRAMES, 'none');
 }
 

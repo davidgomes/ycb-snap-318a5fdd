@@ -41,7 +41,11 @@ function annotationFor(
   name: unknown,
   options: NormalizedErrorStackOptions | undefined
 ): ErrorTypeAnnotation {
-  if (!options || options.mode === 'off' || !matchesClassFilter(name, options)) {
+  if (
+    !options ||
+    options.mode === 'off' ||
+    !matchesClassFilter(name, options)
+  ) {
     return 'Error';
   }
   return options.mode === 'string' ? 'Error/stack' : 'Error/frames';

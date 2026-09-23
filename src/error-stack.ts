@@ -86,10 +86,7 @@ function currentWorkingDirectory(): string {
 function cwdPrefixPattern(cwd: string): RegExp {
   const separator = cwd.includes('\\') && !cwd.includes('/') ? '\\' : '/';
   const prefix = /[\\/]$/.test(cwd) ? cwd : cwd + separator;
-  return new RegExp(
-    '(^|[\\s(@])(?:file://)?' + escapeRegExp(prefix),
-    'g'
-  );
+  return new RegExp('(^|[\\s(@])(?:file://)?' + escapeRegExp(prefix), 'g');
 }
 
 function redactFrames(lines: string[], redact: RedactPaths): string[] {
