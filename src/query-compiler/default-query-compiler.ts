@@ -91,6 +91,8 @@ import type { SchemableIdentifierNode } from '../operation-node/schemable-identi
 import type { DefaultInsertValueNode } from '../operation-node/default-insert-value-node.js'
 import type { AggregateFunctionNode } from '../operation-node/aggregate-function-node.js'
 import type { OverNode } from '../operation-node/over-node.js'
+import type { FrameNode } from '../operation-node/frame-node.js'
+import type { FrameBoundNode } from '../operation-node/frame-bound-node.js'
 import type { PartitionByNode } from '../operation-node/partition-by-node.js'
 import type { PartitionByItemNode } from '../operation-node/partition-by-item-node.js'
 import { SetOperationNode } from '../operation-node/set-operation-node.js'
@@ -1517,19 +1519,41 @@ export class DefaultQueryCompiler
   protected override visitOver(node: OverNode): void {
     this.append('over(')
 
-    if (node.partitionBy) {
-      this.visitNode(node.partitionBy)
+    const clauses = [node.partitionBy, node.orderBy, node.frame].filter(
+      (clause): clause is NonNullable<typeof clause> => clause !== undefined,
+    )
 
-      if (node.orderBy) {
-        this.append(' ')
-      }
-    }
-
-    if (node.orderBy) {
-      this.visitNode(node.orderBy)
-    }
+    this.compileList(clauses, ' ')
 
     this.append(')')
+  }
+
+  protected override visitFrame(node: FrameNode): void {
+    this.append(node.mode)
+    this.append(' ')
+
+    if (node.end) {
+      this.append('between ')
+      this.visitNode(node.start)
+      this.append(' and ')
+      this.visitNode(node.end)
+    } else {
+      this.visitNode(node.start)
+    }
+
+    if (node.exclusion) {
+      this.append(' exclude ')
+      this.append(node.exclusion)
+    }
+  }
+
+  protected override visitFrameBound(node: FrameBoundNode): void {
+    if (node.offset) {
+      this.visitNode(node.offset)
+      this.append(' ')
+    }
+
+    this.append(node.type)
   }
 
   protected override visitPartitionBy(node: PartitionByNode): void {

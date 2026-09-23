@@ -73,6 +73,8 @@ export type OperationNodeKind =
   | 'DefaultInsertValueNode'
   | 'AggregateFunctionNode'
   | 'OverNode'
+  | 'FrameNode'
+  | 'FrameBoundNode'
   | 'PartitionByNode'
   | 'PartitionByItemNode'
   | 'SetOperationNode'

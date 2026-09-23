@@ -1,4 +1,5 @@
 import type { Expression } from '../expression/expression.js'
+import type { FrameMode } from '../operation-node/frame-node.js'
 import type { OperationNodeSource } from '../operation-node/operation-node-source.js'
 import { OverNode } from '../operation-node/over-node.js'
 import { QueryNode } from '../operation-node/query-node.js'
@@ -14,6 +15,7 @@ import {
   type PartitionByExpressionOrList,
 } from '../parser/partition-by-parser.js'
 import { freeze } from '../util/object-utils.js'
+import { FrameBuilder, type FrameBuilderCallback } from './frame-builder.js'
 import type { OrderByInterface } from './order-by-interface.js'
 
 export class OverBuilder<DB, TB extends keyof DB>
@@ -132,6 +134,133 @@ export class OverBuilder<DB, TB extends keyof DB>
   }
 
   /**
+   * Adds a `rows` frame clause inside the over function. The frame bounds are
+   * counted in rows relative to the current row.
+   *
+   * Calling this method (or {@link range} or {@link groups}) again replaces
+   * the frame clause.
+   *
+   * ### Examples
+   *
+   * Running total over the current row and the two previous rows:
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('toy')
+   *   .select(
+   *     (eb) => eb.fn.sum<number>('price').over(
+   *       ob => ob.orderBy('id').rows(
+   *         frame => frame.betweenPreceding(2).andCurrentRow()
+   *       )
+   *     ).as('moving_total')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select sum("price") over(order by "id" rows between $1 preceding and current row) as "moving_total"
+   * from "toy"
+   * ```
+   *
+   * Numeric offsets are passed as parameters. Pass an expression to inline
+   * the offset instead:
+   *
+   * ```ts
+   * import { sql } from 'kysely'
+   *
+   * const result = await db
+   *   .selectFrom('toy')
+   *   .select(
+   *     (eb) => eb.fn.sum<number>('price').over(
+   *       ob => ob.orderBy('id').rows(
+   *         frame => frame.betweenCurrentRow().andFollowing(sql.lit(1)).excludeCurrentRow()
+   *       )
+   *     ).as('next_price')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select sum("price") over(order by "id" rows between current row and 1 following exclude current row) as "next_price"
+   * from "toy"
+   * ```
+   */
+  rows(frame: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#frame('rows', frame)
+  }
+
+  /**
+   * Adds a `range` frame clause inside the over function. The frame bounds are
+   * value offsets from the current row's `order by` value, and peer rows are
+   * always included together.
+   *
+   * Calling this method (or {@link rows} or {@link groups}) again replaces
+   * the frame clause.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select(
+   *     (eb) => eb.fn.count<number>('id').over(
+   *       ob => ob.orderBy('age').range(
+   *         frame => frame.betweenPreceding(5).andFollowing(5)
+   *       )
+   *     ).as('similar_age_count')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select count("id") over(order by "age" range between $1 preceding and $2 following) as "similar_age_count"
+   * from "person"
+   * ```
+   */
+  range(frame: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#frame('range', frame)
+  }
+
+  /**
+   * Adds a `groups` frame clause inside the over function. The frame bounds are
+   * counted in peer groups relative to the current row's peer group.
+   *
+   * Calling this method (or {@link rows} or {@link range}) again replaces
+   * the frame clause.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select(
+   *     (eb) => eb.fn.count<number>('id').over(
+   *       ob => ob.orderBy('age').groups(
+   *         frame => frame.betweenUnboundedPreceding().andCurrentRow().excludeTies()
+   *       )
+   *     ).as('younger_count')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select count("id") over(order by "age" groups between unbounded preceding and current row exclude ties) as "younger_count"
+   * from "person"
+   * ```
+   */
+  groups(frame: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#frame('groups', frame)
+  }
+
+  /**
    * Simply calls the provided function passing `this` as the only argument. `$call` returns
    * what the provided function returns.
    */
@@ -141,6 +270,15 @@ export class OverBuilder<DB, TB extends keyof DB>
 
   toOperationNode(): OverNode {
     return this.#props.overNode
+  }
+
+  #frame(mode: FrameMode, frame: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return new OverBuilder({
+      overNode: OverNode.cloneWithFrame(
+        this.#props.overNode,
+        frame(new FrameBuilder({ mode })).toOperationNode(),
+      ),
+    })
   }
 }
 
