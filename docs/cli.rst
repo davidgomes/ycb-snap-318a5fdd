@@ -1561,6 +1561,67 @@ This command takes the same options as the ``sqlite-utils insert`` command - so 
 
 By default all of the SQL queries will be executed in a single transaction. To commit every 20 records, use ``--batch-size 20``.
 
+.. _cli_safe_import:
+
+Safe imports
+============
+
+Bulk imports can fail halfway through and leave a database half-updated, including new tables, columns, indexes, or triggers. Safe import mode snapshots the database first and restores that snapshot — data and schema — if the import does not fully succeed.
+
+Enable it once per database:
+
+.. code-block:: bash
+
+    sqlite-utils enable-safe-import data.db
+
+Disable it again with:
+
+.. code-block:: bash
+
+    sqlite-utils disable-safe-import data.db
+
+Invariants are persistent SQL checks for a table. Register one with ``sqlite-utils add-import-invariant``:
+
+.. code-block:: bash
+
+    sqlite-utils add-import-invariant data.db books "price > 0"
+
+The command prints an opaque id. List every invariant for a table with ``sqlite-utils list-import-invariants`` — each line is the id followed by the SQL:
+
+.. code-block:: bash
+
+    sqlite-utils list-import-invariants data.db books
+
+Remove one with ``sqlite-utils remove-import-invariant``:
+
+.. code-block:: bash
+
+    sqlite-utils remove-import-invariant data.db books 0123abcd0123abcd0123abcd0123abcd
+
+``sqlite-utils validate-import-invariants`` always exits 0. The output says ``result: pass`` or ``result: fail`` and, on failure, lists the failing invariant ids:
+
+.. code-block:: bash
+
+    sqlite-utils validate-import-invariants data.db books
+
+An invariant is either a ``SELECT`` statement or an expression. ``SELECT`` queries use the first column of the first row as a truth value. Aggregate expressions such as ``COUNT(*) > 0`` or ``SUM(price) < 1000`` are evaluated once for the table. Any other expression, such as ``price > 0``, must be true for every row.
+
+Pass ``--safe-mode`` to ``insert``, ``upsert``, or ``bulk`` to use the snapshot. Format flags (``--csv``, ``--tsv``, ``--nl``) can be omitted; the file format is inferred. ``bulk --safe-mode`` accepts ``UPDATE`` statements as well as inserts. The command exits 0 only when the operation commits. Any SQL error or failed invariant rolls the database back to the pre-import state and the command exits non-zero.
+
+.. code-block:: bash
+
+    sqlite-utils insert data.db books books.csv --pk id --safe-mode
+
+.. code-block:: bash
+
+    sqlite-utils upsert data.db books books.csv --pk id --safe-mode
+
+.. code-block:: bash
+
+    sqlite-utils bulk data.db \
+      "update books set price = :price where id = :id" \
+      updates.csv --safe-mode
+
 .. _cli_insert_files:
 
 Inserting data from files
