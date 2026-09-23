@@ -1,12 +1,13 @@
 import type Element from '../nodes/element/Element.js';
+import type Document from '../nodes/document/Document.js';
 
 export default interface IIntersectionObserverInit {
 	/**
 	 * A specific ancestor of the target element against which the intersection is to be calculated.
 	 */
-	root?: Element;
+	root?: Element | Document | null;
 	/**
-	 * A string which specifies a specific property to observe on the intersection target.
+	 * Margin around the root. Can have values similar to the CSS margin property (e.g. "10px 20px 30px 40px"), in pixels or percent.
 	 */
 	rootMargin?: string;
 	/**
