@@ -104,6 +104,7 @@ if TYPE_CHECKING:
         CallbackManagerForChainRun,
     )
     from langchain_core.prompts.base import BasePromptTemplate
+    from langchain_core.runnables.coalesce import CoalesceBackend, RunnableCoalesce
     from langchain_core.runnables.fallbacks import (
         RunnableWithFallbacks as RunnableWithFallbacksT,
     )
@@ -1919,6 +1920,50 @@ class Runnable(ABC, Generic[Input, Output]):
             wait_exponential_jitter=wait_exponential_jitter,
             max_attempt_number=stop_after_attempt,
             exponential_jitter_params=exponential_jitter_params,
+        )
+
+    def with_coalesce(
+        self,
+        *,
+        backend: CoalesceBackend | None = None,
+    ) -> RunnableCoalesce[Input, Output]:
+        """Deduplicate identical in-flight calls to this `Runnable`.
+
+        Concurrent `invoke`, `stream`, `batch`, and `batch_as_completed` calls,
+        and their async counterparts, share one execution when they carry the
+        same input. The coalescing key is the input value only. Configuration,
+        extra keyword arguments, and dictionary key order do not change it.
+        After that execution finishes, the next call with the same input runs
+        again.
+
+        `transform`, `atransform`, and event streaming are not coalesced.
+
+        Args:
+            backend: Store for in-flight calls. A process-local in-memory
+                backend is created when omitted. Wrappers that share a backend
+                coalesce with each other.
+
+        Returns:
+            A `Runnable` that coalesces identical in-flight calls. The wrapper
+            exposes `coalesce_info` and `coalesce_clear`.
+
+        Example:
+            ```python
+            from langchain_core.runnables import RunnableLambda
+
+            runnable = RunnableLambda(lambda text: text.upper()).with_coalesce()
+            runnable.invoke("hello")
+            ```
+        """
+        # Import locally to prevent circular import
+        from langchain_core.runnables.coalesce import (  # noqa: PLC0415
+            InMemoryCoalesceBackend,
+            RunnableCoalesce,
+        )
+
+        return RunnableCoalesce(
+            bound=self,
+            backend=InMemoryCoalesceBackend() if backend is None else backend,
         )
 
     def map(self) -> Runnable[list[Input], list[Output]]:
