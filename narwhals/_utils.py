@@ -1475,8 +1475,7 @@ def _validate_rolling_quantile_arguments(quantile: float, interpolation: str) ->
     valid_interpolations = ("nearest", "higher", "lower", "midpoint", "linear")
     if interpolation not in valid_interpolations:
         msg = (
-            f"Interpolation must be one of {valid_interpolations}, "
-            f"got {interpolation!r}."
+            f"Interpolation must be one of {valid_interpolations}, got {interpolation!r}."
         )
         raise ValueError(msg)
 

@@ -2170,6 +2170,15 @@ class Expr:
             >>> df.with_columns(
             ...     a_rolling_min=nw.col("a").rolling_min(window_size=3, min_samples=1)
             ... )
+            ┌─────────────────────┐
+            | Narwhals DataFrame  |
+            |---------------------|
+            |     a  a_rolling_min|
+            |0  1.0            1.0|
+            |1  2.0            1.0|
+            |2  NaN            1.0|
+            |3  4.0            2.0|
+            └─────────────────────┘
         """
         window_size, min_samples = _validate_rolling_arguments(
             window_size=window_size, min_samples=min_samples
@@ -2216,6 +2225,15 @@ class Expr:
             >>> df.with_columns(
             ...     a_rolling_max=nw.col("a").rolling_max(window_size=3, min_samples=1)
             ... )
+            ┌─────────────────────┐
+            | Narwhals DataFrame  |
+            |---------------------|
+            |     a  a_rolling_max|
+            |0  1.0            1.0|
+            |1  2.0            2.0|
+            |2  NaN            2.0|
+            |3  4.0            4.0|
+            └─────────────────────┘
         """
         window_size, min_samples = _validate_rolling_arguments(
             window_size=window_size, min_samples=min_samples
@@ -2264,6 +2282,15 @@ class Expr:
             ...         window_size=3, min_samples=1
             ...     )
             ... )
+            ┌────────────────────────┐
+            |   Narwhals DataFrame   |
+            |------------------------|
+            |     a  a_rolling_median|
+            |0  1.0               1.0|
+            |1  2.0               1.5|
+            |2  NaN               1.5|
+            |3  4.0               3.0|
+            └────────────────────────┘
         """
         window_size, min_samples = _validate_rolling_arguments(
             window_size=window_size, min_samples=min_samples
@@ -2326,6 +2353,15 @@ class Expr:
             ...         window_size=3, quantile=0.25, min_samples=1
             ...     )
             ... )
+            ┌──────────────────────────┐
+            |    Narwhals DataFrame    |
+            |--------------------------|
+            |     a  a_rolling_quantile|
+            |0  1.0                1.00|
+            |1  2.0                1.25|
+            |2  NaN                1.25|
+            |3  4.0                2.50|
+            └──────────────────────────┘
         """
         window_size, min_samples = _validate_rolling_arguments(
             window_size=window_size, min_samples=min_samples

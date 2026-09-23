@@ -2649,6 +2649,11 @@ class Series(Generic[IntoSeriesT]):
             >>> nw.from_native(s_native, series_only=True).rolling_min(
             ...     window_size=2
             ... ).to_native()
+            0    NaN
+            1    2.0
+            2    2.0
+            3    1.0
+            dtype: float64
         """
         window_size, min_samples = _validate_rolling_arguments(
             window_size=window_size, min_samples=min_samples
@@ -2691,6 +2696,15 @@ class Series(Generic[IntoSeriesT]):
             >>> nw.from_native(s_native, series_only=True).rolling_max(
             ...     window_size=2
             ... ).to_native()  # doctest:+ELLIPSIS
+            <pyarrow.lib.ChunkedArray object at ...>
+            [
+              [
+                null,
+                4,
+                3,
+                3
+              ]
+            ]
         """
         window_size, min_samples = _validate_rolling_arguments(
             window_size=window_size, min_samples=min_samples
@@ -2733,6 +2747,14 @@ class Series(Generic[IntoSeriesT]):
             >>> nw.from_native(s_native, series_only=True).rolling_median(
             ...     window_size=3, min_samples=1
             ... ).to_native()  # doctest:+NORMALIZE_WHITESPACE
+            shape: (4,)
+            Series: '' [f64]
+            [
+               4.0
+               3.0
+               3.0
+               2.0
+            ]
         """
         window_size, min_samples = _validate_rolling_arguments(
             window_size=window_size, min_samples=min_samples
@@ -2785,6 +2807,11 @@ class Series(Generic[IntoSeriesT]):
             >>> nw.from_native(s_native, series_only=True).rolling_quantile(
             ...     window_size=3, quantile=0.25, min_samples=1
             ... ).to_native()
+            0    4.0
+            1    2.5
+            2    2.5
+            3    1.5
+            dtype: float64
         """
         window_size, min_samples = _validate_rolling_arguments(
             window_size=window_size, min_samples=min_samples

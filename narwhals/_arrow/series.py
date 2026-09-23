@@ -1024,9 +1024,7 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
             return self
 
         padded_series, offset = pad_series(self, window_size=window_size, center=center)
-        values = pc.fill_null(
-            pc.cast(padded_series.native, pa.float64()), float("nan")
-        ).to_numpy()
+        values = padded_series.native.cast(pa.float64()).to_numpy()
         windows = np.lib.stride_tricks.sliding_window_view(
             np.concatenate([np.full(window_size - 1, np.nan), values]), window_size
         )
@@ -1062,9 +1060,7 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
         )
         return result._with_native(result.native.cast(self.native.type))
 
-    def rolling_median(
-        self, window_size: int, *, min_samples: int, center: bool
-    ) -> Self:
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
         import numpy as np  # ignore-banned-import
 
         return self._rolling_nan_aggregate(
@@ -1087,10 +1083,9 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
 
         # `interpolation` was renamed to `method` in numpy 1.22.
         method_kwarg = "method" if parse_version(np) >= (1, 22) else "interpolation"
+        method_kwds: dict[str, Any] = {method_kwarg: interpolation}
         return self._rolling_nan_aggregate(
-            lambda windows: np.nanquantile(
-                windows, quantile, axis=1, **{method_kwarg: interpolation}
-            ),
+            lambda windows: np.nanquantile(windows, quantile, axis=1, **method_kwds),
             window_size,
             min_samples=min_samples,
             center=center,

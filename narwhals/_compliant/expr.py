@@ -746,9 +746,7 @@ class EagerExpr(
             "rolling_max", window_size=window_size, min_samples=min_samples, center=center
         )
 
-    def rolling_median(
-        self, window_size: int, *, min_samples: int, center: bool
-    ) -> Self:
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
         return self._reuse_series(
             "rolling_median",
             window_size=window_size,

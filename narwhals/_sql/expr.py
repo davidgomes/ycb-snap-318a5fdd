@@ -257,7 +257,16 @@ class SQLExpr(LazyExpr[SQLLazyFrameT, NativeExprT], Protocol[SQLLazyFrameT, Nati
         *,
         center: bool,
     ) -> WindowFunction[SQLLazyFrameT, NativeExprT]:
-        supported_funcs = ["sum", "mean", "std", "var", "min", "max", "median", "quantile"]
+        supported_funcs = [
+            "sum",
+            "mean",
+            "std",
+            "var",
+            "min",
+            "max",
+            "median",
+            "quantile",
+        ]
         if center:
             half = (window_size - 1) // 2
             remainder = (window_size - 1) % 2
@@ -708,9 +717,7 @@ class SQLExpr(LazyExpr[SQLLazyFrameT, NativeExprT], Protocol[SQLLazyFrameT, Nati
             self._rolling_window_func("max", window_size, min_samples, center=center)
         )
 
-    def rolling_median(
-        self, window_size: int, *, min_samples: int, center: bool
-    ) -> Self:
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
         return self._with_window_function(
             self._rolling_window_func("median", window_size, min_samples, center=center)
         )

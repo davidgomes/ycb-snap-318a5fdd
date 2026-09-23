@@ -1012,9 +1012,7 @@ class PandasLikeSeries(EagerSeries[Any]):
         ).max()
         return self._with_native(result)
 
-    def rolling_median(
-        self, window_size: int, *, min_samples: int, center: bool
-    ) -> Self:
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
         result = self.native.rolling(
             window=window_size, min_periods=min_samples, center=center
         ).median()
