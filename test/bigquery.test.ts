@@ -601,4 +601,120 @@ describe('BigQueryFormatter', () => {
       expect(format(input, { linesBetweenQueries: 0 })).toBe(input);
     });
   });
+
+  describe('pipe syntax', () => {
+    it('formats pipe query with each |> step on its own line', () => {
+      const result = format(
+        `FROM mydataset.produce |> WHERE sales > 0 AND item != 'x' |> ORDER BY item DESC |> SELECT item, sales |> LIMIT 10;`
+      );
+      expect(result).toBe(dedent`
+        FROM
+          mydataset.produce
+        |> WHERE
+          sales > 0
+          AND item != 'x'
+        |> ORDER BY
+          item DESC
+        |> SELECT
+          item,
+          sales
+        |> LIMIT 10;
+      `);
+    });
+
+    it('formats pipe-exclusive clauses', () => {
+      const result = format(
+        'FROM t |> AGGREGATE SUM(sales) AS total, COUNT(*) AS cnt GROUP BY item, category |> EXTEND total * 2 AS dbl |> SET dbl = dbl + 1 |> DROP cnt, category |> AS t2'
+      );
+      expect(result).toBe(dedent`
+        FROM
+          t
+        |> AGGREGATE
+          SUM(sales) AS total,
+          COUNT(*) AS cnt
+          GROUP BY
+            item,
+            category
+        |> EXTEND
+          total * 2 AS dbl
+        |> SET
+          dbl = dbl + 1
+        |> DROP
+          cnt,
+          category
+        |> AS t2
+      `);
+    });
+
+    it('formats JOIN pipe steps on a single line', () => {
+      const result = format(
+        'FROM a |> JOIN b USING (id) |> LEFT OUTER JOIN c ON a.id = c.id |> LIMIT 5 OFFSET 2'
+      );
+      expect(result).toBe(dedent`
+        FROM
+          a
+        |> JOIN b USING (id)
+        |> LEFT OUTER JOIN c ON a.id = c.id
+        |> LIMIT 5 OFFSET 2
+      `);
+    });
+
+    it('formats pipe query inside parentheses', () => {
+      const result = format('SELECT * FROM (FROM t |> WHERE a = 1 |> SELECT a) AS x');
+      expect(result).toBe(dedent`
+        SELECT
+          *
+        FROM
+          (
+            FROM
+              t
+            |> WHERE
+              a = 1
+            |> SELECT
+              a
+          ) AS x
+      `);
+    });
+
+    it('applies keywordCase to pipe keywords', () => {
+      const result = format('from t |> aggregate count(*) group by x |> extend 1 as y', {
+        keywordCase: 'upper',
+      });
+      expect(result).toBe(dedent`
+        FROM
+          t
+        |> AGGREGATE
+          count(*)
+          GROUP BY
+            x
+        |> EXTEND
+          1 AS y
+      `);
+    });
+
+    it('formats mixed pipe and traditional statements independently', () => {
+      const result = format('FROM t |> WHERE a = 1; SELECT a | b FROM t WHERE c > 1;');
+      expect(result).toBe(dedent`
+        FROM
+          t
+        |> WHERE
+          a = 1;
+
+        SELECT
+          a | b
+        FROM
+          t
+        WHERE
+          c > 1;
+      `);
+    });
+
+    it('tokenizes |> as a single pipe operator', () => {
+      expect(format('FROM t |> WHERE x = 1')).not.toContain('| >');
+      expect(format('SELECT a | b > c')).toBe(dedent`
+        SELECT
+          a | b > c
+      `);
+    });
+  });
 });

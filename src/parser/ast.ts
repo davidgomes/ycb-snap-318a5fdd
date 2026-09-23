@@ -4,6 +4,7 @@ export enum NodeType {
   statement = 'statement',
   clause = 'clause',
   set_operation = 'set_operation',
+  pipe_clause = 'pipe_clause',
   function_call = 'function_call',
   parameterized_data_type = 'parameterized_data_type',
   array_subscript = 'array_subscript',
@@ -48,6 +49,14 @@ export interface SetOperationNode extends BaseNode {
   type: NodeType.set_operation;
   nameKw: KeywordNode;
   children: AstNode[];
+}
+
+// |> <clause> [<sub-clause> ...]
+// e.g. |> AGGREGATE COUNT(*) GROUP BY x
+export interface PipeClauseNode extends BaseNode {
+  type: NodeType.pipe_clause;
+  clause: ClauseNode | LimitClauseNode | SetOperationNode;
+  subClauses: ClauseNode[];
 }
 
 export interface FunctionCallNode extends BaseNode {
@@ -190,6 +199,7 @@ export type CommentNode = LineCommentNode | BlockCommentNode | DisableCommentNod
 export type AstNode =
   | ClauseNode
   | SetOperationNode
+  | PipeClauseNode
   | FunctionCallNode
   | ParameterizedDataTypeNode
   | ArraySubscriptNode

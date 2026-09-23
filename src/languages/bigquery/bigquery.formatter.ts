@@ -190,6 +190,7 @@ export const bigquery: DialectOptions = {
     variableTypes: [{ regex: String.raw`@@\w+` }],
     lineCommentTypes: ['--', '#'],
     operators: ['&', '|', '^', '~', '>>', '<<', '||', '=>'],
+    supportsPipeOperator: true,
     postProcess,
   },
   formatOptions: {
@@ -199,7 +200,30 @@ export const bigquery: DialectOptions = {
 };
 
 function postProcess(tokens: Token[]): Token[] {
-  return detectArraySubscripts(combineParameterizedTypes(tokens));
+  return detectPipeClauses(detectArraySubscripts(combineParameterizedTypes(tokens)));
+}
+
+// Pipe-only operators that aren't otherwise reserved words
+// https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax
+const pipeClauseNames = ['AGGREGATE', 'EXTEND', 'RENAME'];
+
+// Converts pipe-only operator names following |> to RESERVED_CLAUSE
+function detectPipeClauses(tokens: Token[]) {
+  let prevToken = EOF_TOKEN;
+  return tokens.map(token => {
+    const isComment =
+      token.type === TokenType.LINE_COMMENT || token.type === TokenType.BLOCK_COMMENT;
+    if (isComment) {
+      return token;
+    }
+    const afterPipe = prevToken.type === TokenType.PIPE_OPERATOR;
+    prevToken = token;
+    const text = token.text.toUpperCase();
+    if (afterPipe && token.type === TokenType.IDENTIFIER && pipeClauseNames.includes(text)) {
+      return { ...token, type: TokenType.RESERVED_CLAUSE, text };
+    }
+    return token;
+  });
 }
 
 // Converts OFFSET token inside array from RESERVED_CLAUSE to RESERVED_FUNCTION_NAME

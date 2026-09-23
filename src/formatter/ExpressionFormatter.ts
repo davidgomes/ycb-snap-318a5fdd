@@ -10,6 +10,7 @@ import {
   AstNode,
   BetweenPredicateNode,
   SetOperationNode,
+  PipeClauseNode,
   ClauseNode,
   FunctionCallNode,
   LimitClauseNode,
@@ -120,6 +121,8 @@ export default class ExpressionFormatter {
         return this.formatClause(node);
       case NodeType.set_operation:
         return this.formatSetOperation(node);
+      case NodeType.pipe_clause:
+        return this.formatPipeClause(node);
       case NodeType.limit_clause:
         return this.formatLimitClause(node);
       case NodeType.all_columns_asterisk:
@@ -289,6 +292,55 @@ export default class ExpressionFormatter {
     this.layout.add(WS.NEWLINE, WS.INDENT, this.showKw(node.nameKw), WS.NEWLINE);
     this.layout.add(WS.INDENT);
     this.layout = this.formatSubExpression(node.children);
+  }
+
+  private formatPipeClause({ clause, subClauses }: PipeClauseNode) {
+    const nameKw = clause.type === NodeType.limit_clause ? clause.limitKw : clause.nameKw;
+
+    this.layout.add(WS.NEWLINE, WS.INDENT, '|>', WS.SPACE);
+    this.withComments(nameKw, () => {
+      this.layout.add(this.showNonTabularKw(nameKw));
+    });
+    this.layout.indentation.increaseTopLevel();
+
+    if (clause.type === NodeType.limit_clause) {
+      this.layout.add(WS.SPACE);
+      if (clause.offset) {
+        this.layout = this.formatSubExpression(clause.offset);
+        this.layout.add(WS.NO_SPACE, ',', WS.SPACE);
+      }
+      this.layout = this.formatSubExpression(clause.count);
+      subClauses.forEach(subClause => {
+        this.layout.add(this.showNonTabularKw(subClause.nameKw), WS.SPACE);
+        this.layout = this.formatSubExpression(subClause.children);
+      });
+    } else if (this.isOnelinePipeClause(clause)) {
+      this.layout.add(WS.SPACE);
+      this.layout = this.formatSubExpression(clause.children);
+      subClauses.forEach(subClause => {
+        this.layout.add(this.showNonTabularKw(subClause.nameKw), WS.SPACE);
+        this.layout = this.formatSubExpression(subClause.children);
+      });
+    } else {
+      this.layout.add(WS.NEWLINE, WS.INDENT);
+      this.layout = this.formatSubExpression(clause.children);
+      subClauses.forEach(subClause => {
+        this.layout.add(WS.NEWLINE, WS.INDENT, this.showNonTabularKw(subClause.nameKw), WS.NEWLINE);
+        this.layout.indentation.increaseTopLevel();
+        this.layout.add(WS.INDENT);
+        this.layout = this.formatSubExpression(subClause.children);
+        this.layout.indentation.decreaseTopLevel();
+      });
+    }
+
+    this.layout.indentation.decreaseTopLevel();
+  }
+
+  private isOnelinePipeClause(clause: ClauseNode | SetOperationNode): boolean {
+    return (
+      clause.type === NodeType.clause &&
+      (clause.nameKw.tokenType === TokenType.RESERVED_JOIN || clause.nameKw.text === 'AS')
+    );
   }
 
   private formatLimitClause(node: LimitClauseNode) {

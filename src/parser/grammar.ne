@@ -1,7 +1,7 @@
 @preprocessor typescript
 @{%
 import LexerAdapter from './LexerAdapter.js';
-import { NodeType, AstNode, CommentNode, KeywordNode, IdentifierNode, DataTypeNode } from './ast.js';
+import { NodeType, AstNode, CommentNode, KeywordNode, IdentifierNode, DataTypeNode, PipeClauseNode } from './ast.js';
 import { Token, TokenType } from '../lexer/token.js';
 
 // The lexer here is only to provide the has() method,
@@ -57,6 +57,28 @@ const addCommentsToArray = (nodes: AstNode[], { leading, trailing }: CommentAtta
   return nodes;
 };
 
+const pipeClauseName = (node: PipeClauseNode): string =>
+  node.clause.type === NodeType.limit_clause ? node.clause.limitKw.text : node.clause.nameKw.text;
+
+// Clauses that belong to the preceding pipe clause, like GROUP BY in |> AGGREGATE ... GROUP BY ...
+const pipeSubClauses: Record<string, string[]> = {
+  'AGGREGATE': ['GROUP BY'],
+  'LIMIT': ['OFFSET'],
+};
+
+const nestPipeSubClauses = (clauses: AstNode[]): AstNode[] =>
+  clauses.reduce((result: AstNode[], node) => {
+    const prev = result[result.length - 1];
+    if (
+      prev?.type === NodeType.pipe_clause &&
+      node.type === NodeType.clause &&
+      pipeSubClauses[pipeClauseName(prev)]?.includes(node.nameKw.text)
+    ) {
+      return [...result.slice(0, -1), { ...prev, subClauses: [...prev.subClauses, node] }];
+    }
+    return [...result, node];
+  }, []);
+
 %}
 @lexer lexer
 
@@ -90,14 +112,37 @@ statement -> expressions_or_clauses (%DELIMITER | %EOF) {%
 
 # To avoid ambiguity, plain expressions can only come before clauses
 expressions_or_clauses -> free_form_sql:* clause:* {%
-  ([expressions, clauses]) => [...expressions, ...clauses]
+  ([expressions, clauses]) => [...expressions, ...nestPipeSubClauses(clauses)]
 %}
 
 clause ->
   ( limit_clause
   | select_clause
   | other_clause
-  | set_operation ) {% unwrap %}
+  | set_operation
+  | pipe_clause ) {% unwrap %}
+
+pipe_clause -> %PIPE_OPERATOR _ ( limit_clause | select_clause | other_clause | set_operation | pipe_keyword_clause ) {%
+  ([pipeToken, _, [clause]]) => {
+    const withComments = clause.type === NodeType.limit_clause
+      ? { ...clause, limitKw: addComments(clause.limitKw, { leading: _ }) }
+      : { ...clause, nameKw: addComments(clause.nameKw, { leading: _ }) };
+    return {
+      type: NodeType.pipe_clause,
+      clause: withComments,
+      subClauses: [],
+    };
+  }
+%}
+
+# Pipe operators starting with a non-clause keyword, like: |> LEFT JOIN, |> AS
+pipe_keyword_clause -> ( %RESERVED_JOIN | %RESERVED_KEYWORD | %RESERVED_KEYWORD_PHRASE ) free_form_sql:* {%
+  ([[nameToken], children]) => ({
+    type: NodeType.clause,
+    nameKw: toKeywordNode(nameToken),
+    children,
+  })
+%}
 
 limit_clause -> %LIMIT _ expression_chain_ (%COMMA free_form_sql:+):? {%
   ([limitToken, _, exp1, optional]) => {

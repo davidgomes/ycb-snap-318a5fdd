@@ -186,6 +186,10 @@ export default class Tokenizer {
         regex: regex.parenthesis('close', cfg.extraParens),
       },
       {
+        type: TokenType.PIPE_OPERATOR,
+        regex: cfg.supportsPipeOperator ? /\|>/uy : undefined,
+      },
+      {
         type: TokenType.OPERATOR,
         regex: regex.operator([
           // standard operators

@@ -101,6 +101,8 @@ export interface TokenizerOptions {
   // Additional operators for property access, in addition to .
   // Like in table.column
   propertyAccessOperators?: string[];
+  // True to support the |> pipe operator (BigQuery pipe syntax)
+  supportsPipeOperator?: boolean;
   // Enables PostgreSQL-specific OPERATOR(...) syntax
   operatorKeyword?: boolean;
   // True to support underscores in number literals (e.g., 1_000_000)
