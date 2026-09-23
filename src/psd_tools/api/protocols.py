@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 import numpy as np
 from PIL import Image
 
+from psd_tools.api.blend_range import BlendRanges
 from psd_tools.constants import BlendMode, ChannelID, ColorMode, CompatibilityMode
 from psd_tools.psd.document import PSD
 from psd_tools.psd.image_resources import ImageResources
@@ -161,6 +162,14 @@ class LayerProtocol(Protocol):
 
     @blend_mode.setter
     def blend_mode(self, value: bytes | str | BlendMode) -> None: ...
+
+    @property
+    def blend_ranges(self) -> BlendRanges:
+        """Blend ranges ("Blend If" sliders) of this layer."""
+        ...
+
+    @blend_ranges.setter
+    def blend_ranges(self, value: BlendRanges) -> None: ...
 
     @property
     def left(self) -> int:
