@@ -5562,10 +5562,29 @@ func (m Models) GenerateContent(ctx context.Context, model string, contents []*C
 
 // GenerateContentStream generates a stream of content based on the provided model, contents, and configuration.
 func (m Models) GenerateContentStream(ctx context.Context, model string, contents []*Content, config *GenerateContentConfig) iter.Seq2[*GenerateContentResponse, error] {
+	return m.generateContentStreamAccumulated(ctx, model, contents, config, newFunctionCallAccumulator())
+}
+
+// generateContentStreamAccumulated streams content, replacing the Args of each
+// streamed function call with the arguments accumulated so far in acc.
+func (m Models) generateContentStreamAccumulated(ctx context.Context, model string, contents []*Content, config *GenerateContentConfig, acc *functionCallAccumulator) iter.Seq2[*GenerateContentResponse, error] {
 	if config != nil {
 		config.setDefaults()
 	}
-	return m.generateContentStream(ctx, model, contents, config)
+	stream := m.generateContentStream(ctx, model, contents, config)
+	return func(yield func(*GenerateContentResponse, error) bool) {
+		for resp, err := range stream {
+			if err == nil {
+				if err = acc.accumulateResponse(resp); err != nil {
+					yield(nil, err)
+					return
+				}
+			}
+			if !yield(resp, err) {
+				return
+			}
+		}
+	}
 }
 
 // List retrieves a paginated list of models resources.

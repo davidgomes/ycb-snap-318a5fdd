@@ -46,6 +46,7 @@ type Live struct {
 type Session struct {
 	conn      *websocket.Conn
 	apiClient *apiClient
+	toolCalls *functionCallAccumulator
 }
 
 // Preview. Connect establishes a WebSocket connection to the specified
@@ -125,6 +126,7 @@ func (r *Live) Connect(context context.Context, model string, config *LiveConnec
 	s := &Session{
 		conn:      conn,
 		apiClient: r.apiClient,
+		toolCalls: newFunctionCallAccumulator(),
 	}
 	modelFullName, err := tModelFullName(r.apiClient, model)
 	if err != nil {
@@ -320,6 +322,14 @@ func (s *Session) Receive() (*LiveServerMessage, error) {
 	err = mapToStruct(responseMap, message)
 	if err != nil {
 		return nil, err
+	}
+	if message.ToolCall != nil {
+		if s.toolCalls == nil {
+			s.toolCalls = newFunctionCallAccumulator()
+		}
+		if err := s.toolCalls.accumulateCalls(message.ToolCall.FunctionCalls); err != nil {
+			return nil, err
+		}
 	}
 	return message, err
 }

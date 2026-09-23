@@ -221,13 +221,16 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 	contents := append(c.curatedHistory, inputContent)
 
 	// Generate Content
-	response := c.GenerateContentStream(ctx, c.model, contents, c.config)
+	acc := newFunctionCallAccumulator()
+	response := c.generateContentStreamAccumulated(ctx, c.model, contents, c.config, acc)
 
 	// Return a new iterator that will yield the responses and record history with merged response.
 	return func(yield func(*GenerateContentResponse, error) bool) {
 		var outputContents []*Content
 		isValid := true
 		finishReason := FinishReasonUnspecified
+		onlyFunctionCalls := true
+		hasStreamedFunctionCall := false
 		for chunk, err := range response {
 			if err == io.EOF {
 				break
@@ -242,6 +245,15 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 			if len(chunk.Candidates) > 0 {
 				if chunk.Candidates[0].Content != nil {
 					outputContents = append(outputContents, chunk.Candidates[0].Content)
+					for _, part := range chunk.Candidates[0].Content.Parts {
+						if part == nil || part.FunctionCall == nil {
+							onlyFunctionCalls = false
+							continue
+						}
+						if len(part.FunctionCall.PartialArgs) > 0 || part.FunctionCall.WillContinue != nil {
+							hasStreamedFunctionCall = true
+						}
+					}
 				}
 				if chunk.Candidates[0].FinishReason != FinishReasonUnspecified {
 					finishReason = chunk.Candidates[0].FinishReason
@@ -249,6 +261,11 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 			}
 			if !yield(chunk, nil) {
 				return
+			}
+		}
+		if onlyFunctionCalls && hasStreamedFunctionCall {
+			if parts := acc.completedParts(); len(parts) > 0 {
+				outputContents = []*Content{{Role: RoleModel, Parts: parts}}
 			}
 		}
 		// Record history. By default, use the first candidate for history.
