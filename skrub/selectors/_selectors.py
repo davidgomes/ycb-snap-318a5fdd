@@ -12,6 +12,7 @@ __all__ = [
     "integer",
     "float",
     "any_date",
+    "duration",
     "categorical",
     "string",
     "boolean",
@@ -328,6 +329,35 @@ def any_date():
 
     """
     return Filter(sbd.is_any_date, name="any_date")
+
+
+def duration():
+    """
+    Select columns that have a duration data type.
+
+
+    This selects ``timedelta64`` columns in pandas and ``Duration`` columns in
+    polars.
+
+    Examples
+    --------
+    >>> from datetime import timedelta
+    >>> from skrub import selectors as s
+    >>> import pandas as pd
+
+    >>> df = pd.DataFrame(
+    ...     {
+    ...         "since_login": [timedelta(days=1), timedelta(hours=3)],
+    ...         "age": [20, 21],
+    ...     }
+    ... )
+    >>> s.select(df, s.duration())
+       since_login
+    0 1 days 00:00:00
+    1 0 days 03:00:00
+
+    """
+    return Filter(sbd.is_duration, name="duration")
 
 
 def categorical():

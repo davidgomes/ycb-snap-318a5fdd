@@ -276,6 +276,7 @@ def passthrough_vectorizer():
         low_cardinality="passthrough",
         numeric="passthrough",
         datetime="passthrough",
+        duration="passthrough",
     )
 
 
@@ -1092,6 +1093,38 @@ def test_cleaner_empty_column_name():
     cleaner.fit_transform(df)
     assert list(cleaner.all_processing_steps_.keys()) == df.columns
     assert all(len(step) > 0 for step in cleaner.all_processing_steps_.values())
+
+
+def test_table_vectorizer_duration(df_module):
+    from datetime import timedelta
+
+    from skrub import DurationEncoder
+
+    df = df_module.make_dataframe(
+        {
+            "when": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
+            "elapsed": [timedelta(days=1), timedelta(hours=3)],
+            "n": [1.0, 2.0],
+        }
+    )
+    vectorizer = TableVectorizer().fit(df)
+    assert vectorizer.column_to_kind_["elapsed"] == "duration"
+    assert vectorizer.column_to_kind_["when"] == "datetime"
+    assert isinstance(vectorizer.transformers_["elapsed"], DurationEncoder)
+    assert vectorizer.transformers_["elapsed"].resolution_ == "hour"
+    out = vectorizer.transform(df)
+    names = sbd.column_names(out)
+    assert "elapsed_total_seconds" in names
+    assert "elapsed_days" in names
+    assert "elapsed_hours" in names
+    assert "elapsed_minutes" not in names
+    assert "elapsed" not in vectorizer.kind_to_columns_["high_cardinality"]
+
+    dropped = TableVectorizer(duration="drop").fit_transform(df)
+    assert not any(name.startswith("elapsed") for name in sbd.column_names(dropped))
+
+    passthrough = TableVectorizer(duration="passthrough").fit_transform(df)
+    assert sbd.is_duration(sbd.col(passthrough, "elapsed"))
 
 
 def test_pipeline_in_table_vectorizer(df_module):

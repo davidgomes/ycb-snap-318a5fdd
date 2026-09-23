@@ -28,6 +28,9 @@ We study the case of predicting wages using the
 .. |DatetimeEncoder| replace::
     :class:`~skrub.DatetimeEncoder`
 
+.. |DurationEncoder| replace::
+    :class:`~skrub.DurationEncoder`
+
 .. |HGBR| replace::
     :class:`~sklearn.ensemble.HistGradientBoostingRegressor`
 
@@ -130,14 +133,15 @@ HistGradientBoostingRegressor().fit(vectorized_X, y)
 # Inspecting the TableVectorizer
 # ------------------------------
 #
-# The |TableVectorizer| distinguishes between 4 basic kinds of columns (more may be
-# added in the future).
+# The |TableVectorizer| distinguishes between several basic kinds of columns.
 # For each kind, it applies a different transformation, which we can configure. The
 # kinds of columns and the default transformation for each of them are:
 #
 # - numeric columns: simply casting to floating-point
 # - datetime columns: extracting features such as year, day, hour with the
 #   |DatetimeEncoder|
+# - duration columns: extracting the total length and remainder components with
+#   the |DurationEncoder|
 # - low-cardinality categorical columns: one-hot encoding
 # - high-cardinality categorical columns: a simple and effective text representation
 #   pipeline provided by the |GapEncoder|

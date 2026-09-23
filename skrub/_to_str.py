@@ -8,16 +8,16 @@ class ToStr(SingleColumnTransformer):
     """
     Convert a column to strings.
 
-    By default, a numeric, datetime or categorical column is rejected with a
-    ``RejectColumn`` exception. This is to avoid accidentally converting a
+    By default, a numeric, datetime, duration or categorical column is rejected
+    with a ``RejectColumn`` exception. This is to avoid accidentally converting a
     column that already has a more informative dtype.
 
     Any other column is converted to a column of strings. Null values are
     preserved, i.e. will still be nulls in the output.
 
     If ``convert_categorical=True``, categorical columns are converted to strings,
-    and the additional information on categories is lost. Datetime columns are not
-    modified in any case.
+    and the additional information on categories is lost. Datetime and duration
+    columns are not modified in any case.
 
     Examples
     --------
@@ -84,7 +84,7 @@ class ToStr(SingleColumnTransformer):
 
     For other pandas columns, a copy or a modified copy is returned.
 
-    A numeric, datetime or categorical column is rejected:
+    A numeric, datetime, duration or categorical column is rejected:
 
     >>> to_str.fit_transform(pd.Series([1.1, 2.2], name='s'))
     Traceback (most recent call last):
@@ -98,6 +98,11 @@ class ToStr(SingleColumnTransformer):
     Traceback (most recent call last):
         ...
     skrub._single_column_transformer.RejectColumn: Refusing to convert None with dtype 'datetime64[...]' to strings.
+    >>> from datetime import timedelta
+    >>> to_str.fit_transform(pd.Series([timedelta(days=1)], name='s'))
+    Traceback (most recent call last):
+        ...
+    skrub._single_column_transformer.RejectColumn: Refusing to convert 's' with dtype 'timedelta64[...]' to strings.
 
     However, once a column has been accepted, the output of ``transform`` will
     always be strings:
@@ -198,6 +203,7 @@ class ToStr(SingleColumnTransformer):
             (sbd.is_categorical(column) and not self.convert_category)
             or sbd.is_numeric(column)
             or sbd.is_any_date(column)
+            or sbd.is_duration(column)
         ):
             raise RejectColumn(
                 f"Refusing to convert {sbd.name(column)!r} "

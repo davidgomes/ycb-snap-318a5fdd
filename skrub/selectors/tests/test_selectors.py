@@ -1,3 +1,4 @@
+import datetime
 import inspect
 import pickle
 import types
@@ -77,6 +78,22 @@ def test_dtype_selectors(df_module):
         # pandas doesn't have a 'date' dtype, only datetime
         assert df_module.name == "pandas"
         assert s.any_date().expand(df) == ["datetime-col"]
+
+
+def test_duration_selector(df_module):
+    from datetime import timedelta
+
+    df = df_module.make_dataframe(
+        {
+            "since": [timedelta(days=1), timedelta(hours=2)],
+            "when": [datetime.datetime(2020, 1, 1), datetime.datetime(2020, 1, 2)],
+            "n": [1, 2],
+        }
+    )
+    assert s.duration().expand(df) == ["since"]
+    assert "since" not in s.any_date().expand(df)
+    assert "when" not in s.duration().expand(df)
+    assert repr(s.duration()) == "duration()"
 
 
 def test_dtype_pandas_object():

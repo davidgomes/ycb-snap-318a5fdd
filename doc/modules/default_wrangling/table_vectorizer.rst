@@ -39,7 +39,7 @@ datetime parsing step.
 
 
 After detecting the datatypes, the |TableVectorizer| maps columns to one of
-four groups depending either on the datatype, and the number of unique values
+several groups depending either on the datatype, and the number of unique values
 for categorical/string columns
 
 The default transformers used by the |TableVectorizer| for each column category
@@ -49,6 +49,7 @@ are the following:
 - **Low-cardinality categorical columns**: scikit-learn |OneHotEncoder|
 - **Numeric columns**: "passthrough" (no transformation)
 - **Datetime columns**: |DatetimeEncoder|
+- **Duration columns**: :class:`~skrub.DurationEncoder`
 
 **High cardinality** categorical columns are those with more than 40 unique values,
 while all other categorical columns are considered **low cardinality**: the

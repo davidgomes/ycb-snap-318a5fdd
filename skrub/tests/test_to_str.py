@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -42,6 +44,9 @@ def test_rejected_columns(df_module):
             ToStr().fit_transform(col)
         to_str = ToStr().fit(df_module.make_column("", [""]))
         assert sbd.is_string(to_str.transform(col))
+    duration = df_module.make_column("", [timedelta(days=1)])
+    with pytest.raises(RejectColumn):
+        ToStr().fit_transform(duration)
 
 
 def test_pandas_string():

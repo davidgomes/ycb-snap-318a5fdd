@@ -8,8 +8,8 @@ class ToFloat(SingleColumnTransformer):
     """
     Convert a column to 32-bit floating-point numbers.
 
-    No conversion is attempted if the column has a datetime or categorical
-    dtype; a ``RejectColumn`` exception is raised.
+    No conversion is attempted if the column has a datetime, duration or
+    categorical dtype; a ``RejectColumn`` exception is raised.
 
     Otherwise, we attempt to convert the column to float32. If the conversion
     fails the column is rejected (a ``RejectColumn`` exception is raised).
@@ -143,7 +143,7 @@ class ToFloat(SingleColumnTransformer):
     1    NaN
     dtype: float32
 
-    Categorical and datetime columns are always rejected:
+    Categorical, datetime and duration columns are always rejected:
 
     >>> s = pd.Series(['1.1', '2.2'], dtype='category', name='s')
     >>> s
@@ -159,6 +159,11 @@ class ToFloat(SingleColumnTransformer):
     Traceback (most recent call last):
         ...
     skrub._single_column_transformer.RejectColumn: Refusing to cast column 's' with dtype 'datetime64[...]' to numbers.
+    >>> from datetime import timedelta
+    >>> to_float.fit_transform(pd.Series([timedelta(days=1)], name='s'))
+    Traceback (most recent call last):
+        ...
+    skrub._single_column_transformer.RejectColumn: Refusing to cast column 's' with dtype 'timedelta64[...]' to numbers.
 
     float32 columns are passed through:
 
@@ -185,7 +190,11 @@ class ToFloat(SingleColumnTransformer):
         """
         del y
         self.all_outputs_ = [sbd.name(column)]
-        if sbd.is_any_date(column) or sbd.is_categorical(column):
+        if (
+            sbd.is_any_date(column)
+            or sbd.is_categorical(column)
+            or sbd.is_duration(column)
+        ):
             raise RejectColumn(
                 f"Refusing to cast column {sbd.name(column)!r} "
                 f"with dtype '{sbd.dtype(column)}' to numbers."

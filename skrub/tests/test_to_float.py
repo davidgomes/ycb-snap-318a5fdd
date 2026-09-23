@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import numpy as np
 import pytest
 
@@ -37,6 +39,7 @@ def test_rejected_columns(df_module):
         df_module.make_column("c", ["1", "2", "hello"]),
         ToDatetime().fit_transform(df_module.make_column("c", ["2020-02-02"])),
         ToCategorical().fit_transform(df_module.make_column("c", ["1", "2"])),
+        df_module.make_column("c", [timedelta(days=1)]),
     ]
     for col in columns:
         with pytest.raises(RejectColumn):
