@@ -1,15 +1,20 @@
 package handler
 
 import (
+	"bytes"
+	"compress/gzip"
 	"errors"
+	"io"
 	"net"
 	"os"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
 
 	"github.com/liweiyi88/onedump/config"
 	"github.com/liweiyi88/onedump/dumper"
+	"github.com/liweiyi88/onedump/encryption"
 	"github.com/liweiyi88/onedump/fileutil"
 	"github.com/liweiyi88/onedump/storage/dropbox"
 	"github.com/liweiyi88/onedump/storage/gdrive"
@@ -17,6 +22,7 @@ import (
 	"github.com/liweiyi88/onedump/storage/s3"
 	"github.com/liweiyi88/onedump/testutils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var testDBDsn = "root@tcp(127.0.0.1:3306)/dump_test"
@@ -153,11 +159,60 @@ func TestGetStorages(t *testing.T) {
 }
 
 func TestEnsureFileSuffix(t *testing.T) {
-	gzip := fileutil.EnsureFileSuffix("test.sql", true)
+	gzip := fileutil.EnsureFileSuffix("test.sql", true, false)
 	assert.Equal(t, "test.sql.gz", gzip)
 
-	sql := fileutil.EnsureFileSuffix("test.sql.gz", true)
+	sql := fileutil.EnsureFileSuffix("test.sql.gz", true, false)
 	assert.Equal(t, "test.sql.gz", sql)
+}
+
+func TestStoragePipelineGzipEncryptRoundTrip(t *testing.T) {
+	key := bytes.Repeat([]byte{9}, 32)
+	enc, err := encryption.NewEncryptor(key)
+	require.NoError(t, err)
+
+	readers, writer, closer := storageReadWriteCloser(1, true, enc)
+	payload := []byte("onedump encrypted pipeline payload")
+
+	errCh := make(chan error, 2)
+	go func() {
+		_, err := writer.Write(payload)
+		errCh <- err
+		errCh <- closer.Close()
+	}()
+
+	encrypted, err := io.ReadAll(readers[0])
+	require.NoError(t, err)
+	require.NoError(t, <-errCh)
+	require.NoError(t, <-errCh)
+
+	dec, err := encryption.DecryptReader(bytes.NewReader(encrypted), key)
+	require.NoError(t, err)
+	gz, err := gzip.NewReader(dec)
+	require.NoError(t, err)
+	got, err := io.ReadAll(gz)
+	require.NoError(t, err)
+	require.NoError(t, gz.Close())
+	assert.Equal(t, payload, got)
+}
+
+func TestSaveMissingEncryptionKey(t *testing.T) {
+	job := config.NewJob("job", "mysql", testDBDsn)
+	job.Encryption = encryption.Config{
+		Enabled:   true,
+		KeySource: "env",
+		KeyEnvVar: "ONEDUMP_MISSING_ENCRYPTION_KEY",
+	}
+	err := NewJobHandler(job).save()
+	require.Error(t, err)
+	msg := strings.ToLower(err.Error())
+	assert.True(t, strings.Contains(msg, "encryption") || strings.Contains(msg, "key"), msg)
+
+	job.Storage.Local = []*local.Local{{Path: t.TempDir() + "/dump.sql"}}
+	err = NewJobHandler(job).save()
+	require.Error(t, err)
+	msg = strings.ToLower(err.Error())
+	assert.True(t, strings.Contains(msg, "encryption") || strings.Contains(msg, "key"), msg)
 }
 
 func TestGetDumper(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/liweiyi88/onedump/encryption"
 	"github.com/liweiyi88/onedump/jobresult"
 	"github.com/stretchr/testify/assert"
 )
@@ -90,6 +91,18 @@ func TestResultString(t *testing.T) {
 
 	s = r2.String()
 	assert.Equal("job1 failed, it took 1s with error: test err", s)
+}
+
+func TestJobEncryptionValidate(t *testing.T) {
+	job := NewJob("job", "mysql", testDBDsn)
+	assert.False(t, job.Encrypted())
+	assert.NoError(t, job.Validate())
+
+	job.Encryption = encryption.Config{Enabled: true, KeySource: "literal", KeyFile: "other", Key: "abc"}
+	assert.True(t, job.Encrypted())
+	err := job.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "mutually exclusive")
 }
 
 func TestViaSsh(t *testing.T) {
