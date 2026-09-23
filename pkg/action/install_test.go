@@ -1297,3 +1297,51 @@ func TestInstallRelease_WaitOptionsPassedDownstream(t *testing.T) {
 	// Verify that WaitOptions were passed to GetWaiter
 	is.NotEmpty(failer.RecordedWaitOptions, "WaitOptions should be passed to GetWaiter")
 }
+
+func TestInstallRelease_MergeStrategyOverridesTakePrecedenceOverAnnotations(t *testing.T) {
+	is := assert.New(t)
+	req := require.New(t)
+
+	instAction := installAction(t)
+	instAction.MergeStrategies = []string{"containers=merge", "env=append"}
+	instAction.MergeKeys = []string{"containers=name"}
+
+	chrt := buildChartWithTemplates([]*common.File{{
+		Name:    "templates/values",
+		ModTime: time.Now(),
+		Data:    []byte("env: {{ toJson .Values.env }}\ncontainers: {{ toJson .Values.containers }}\n"),
+	}}, withValues(map[string]any{
+		"env":        []any{"A=1"},
+		"containers": []any{map[string]any{"name": "app", "image": "app:1", "port": 80}},
+	}))
+	chrt.Metadata.Annotations = map[string]string{
+		"helm.sh/merge-strategy/containers": "append",
+		"helm.sh/merge-key/containers":      "image",
+	}
+	vals := map[string]any{
+		"env":        []any{"B=2"},
+		"containers": []any{map[string]any{"name": "app", "image": "app:2"}},
+	}
+
+	resi, err := instAction.Run(chrt, vals)
+	req.NoError(err)
+	res, err := releaserToV1Release(resi)
+	req.NoError(err)
+
+	is.Contains(res.Manifest, `env: ["A=1","B=2"]`)
+	is.Contains(res.Manifest, `containers: [{"image":"app:2","name":"app","port":80}]`)
+	is.Equal(map[string]string{
+		"helm.sh/merge-strategy/containers": "merge",
+		"helm.sh/merge-key/containers":      "name",
+		"helm.sh/merge-strategy/env":        "append",
+	}, res.Chart.Metadata.Annotations, "overrides are stored with the release chart")
+}
+
+func TestInstallRelease_InvalidMergeStrategyOverride(t *testing.T) {
+	instAction := installAction(t)
+	instAction.MergeStrategies = []string{"items=prepend"}
+
+	_, err := instAction.Run(buildChart(), map[string]any{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unsupported strategy "prepend"`)
+}

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: merge-strategies
+version: 0.1.0
+annotations:
+  helm.sh/merge-strategy/env: append

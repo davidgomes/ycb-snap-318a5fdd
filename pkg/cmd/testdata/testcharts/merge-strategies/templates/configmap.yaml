@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: merge-strategies
+data:
+  env: {{ toJson .Values.env | quote }}
+  containers: {{ toJson .Values.containers | quote }}

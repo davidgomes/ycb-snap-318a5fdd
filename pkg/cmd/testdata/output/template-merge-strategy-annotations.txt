@@ -1,0 +1,9 @@
+---
+# Source: merge-strategies/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: merge-strategies
+data:
+  env: "[\"A=1\",\"B=2\"]"
+  containers: "[{\"image\":\"app:2\",\"name\":\"app\"}]"

@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/cli-runtime/pkg/resource"
 
+	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/kube"
 	kubefake "helm.sh/helm/v4/pkg/kube/fake"
@@ -801,4 +802,82 @@ func TestUpgradeRelease_WaitOptionsPassedDownstream(t *testing.T) {
 
 	// Verify that WaitOptions were passed to GetWaiter
 	is.NotEmpty(failer.RecordedWaitOptions, "WaitOptions should be passed to GetWaiter")
+}
+
+func TestUpgradeRelease_ValueReuseWithMergeStrategies(t *testing.T) {
+	appendItems := map[string]string{"helm.sh/merge-strategy/items": "append"}
+	itemsChart := func(annotations map[string]string, defaults ...any) *chart.Chart {
+		c := buildChartWithTemplates([]*chartcommon.File{{
+			Name:    "templates/items",
+			ModTime: time.Now(),
+			Data:    []byte("items: {{ toJson .Values.items }}\n"),
+		}}, withValues(map[string]any{"items": defaults}))
+		c.Metadata.Annotations = annotations
+		return c
+	}
+
+	tests := []struct {
+		name             string
+		configure        func(*Upgrade)
+		newChart         *chart.Chart
+		expectedConfig   map[string]any
+		expectedManifest string
+	}{
+		{
+			name:             "reuse values appends new values after the old config",
+			configure:        func(u *Upgrade) { u.ReuseValues = true },
+			newChart:         itemsChart(appendItems, "new-default"),
+			expectedConfig:   map[string]any{"items": []any{"old", "new"}},
+			expectedManifest: `items: ["old-default","old","new"]`,
+		},
+		{
+			name: "reuse values with command line merge strategies",
+			configure: func(u *Upgrade) {
+				u.ReuseValues = true
+				u.MergeStrategies = []string{"items=append"}
+			},
+			newChart:         itemsChart(nil, "new-default"),
+			expectedConfig:   map[string]any{"items": []any{"old", "new"}},
+			expectedManifest: `items: ["old-default","old","new"]`,
+		},
+		{
+			name:             "reset then reuse values uses the new chart defaults",
+			configure:        func(u *Upgrade) { u.ResetThenReuseValues = true },
+			newChart:         itemsChart(appendItems, "new-default"),
+			expectedConfig:   map[string]any{"items": []any{"old", "new"}},
+			expectedManifest: `items: ["new-default","old","new"]`,
+		},
+		{
+			name:             "reset values ignores the old config",
+			configure:        func(u *Upgrade) { u.ResetValues = true },
+			newChart:         itemsChart(appendItems, "new-default"),
+			expectedConfig:   map[string]any{"items": []any{"new"}},
+			expectedManifest: `items: ["new-default","new"]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			is := assert.New(t)
+			req := require.New(t)
+
+			upAction := upgradeAction(t)
+			tt.configure(upAction)
+
+			rel := releaseStub()
+			rel.Name = "nuketown"
+			rel.Info.Status = common.StatusDeployed
+			rel.Chart = itemsChart(appendItems, "old-default")
+			rel.Config = map[string]any{"items": []any{"old"}}
+			req.NoError(upAction.cfg.Releases.Create(rel))
+
+			resi, err := upAction.Run(rel.Name, tt.newChart, map[string]any{"items": []any{"new"}})
+			req.NoError(err)
+			res, err := releaserToV1Release(resi)
+			req.NoError(err)
+
+			is.Equal(tt.expectedConfig, res.Config)
+			is.Contains(res.Manifest, tt.expectedManifest)
+		})
+	}
 }

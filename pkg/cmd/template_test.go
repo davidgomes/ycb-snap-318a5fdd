@@ -24,6 +24,31 @@ import (
 
 var chartPath = "testdata/testcharts/subchart"
 
+func TestTemplateCmdWithMergeStrategyFlags(t *testing.T) {
+	mergeChart := "testdata/testcharts/merge-strategies"
+	userValues := `--set-json 'env=["B=2"]' --set-json 'containers=[{"name":"app","image":"app:2"}]'`
+
+	tests := []cmdTestCase{
+		{
+			name:   "chart merge strategy annotations",
+			cmd:    fmt.Sprintf("template '%s' %s", mergeChart, userValues),
+			golden: "output/template-merge-strategy-annotations.txt",
+		},
+		{
+			name:   "merge strategy flags",
+			cmd:    fmt.Sprintf("template '%s' %s --merge-strategy containers=merge --merge-key containers=name", mergeChart, userValues),
+			golden: "output/template-merge-strategy-flags.txt",
+		},
+		{
+			name:      "unsupported merge strategy flag",
+			cmd:       fmt.Sprintf("template '%s' --merge-strategy env=prepend", mergeChart),
+			wantError: true,
+			golden:    "output/template-merge-strategy-unsupported.txt",
+		},
+	}
+	runTestCmd(t, tests)
+}
+
 func TestTemplateCmd(t *testing.T) {
 	deletevalchart := "testdata/testcharts/issue-9027"
 

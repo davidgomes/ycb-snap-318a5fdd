@@ -1,0 +1,6 @@
+env:
+  - A=1
+containers:
+  - name: app
+    image: app:1
+    port: 8080
