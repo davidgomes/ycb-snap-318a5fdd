@@ -30,6 +30,8 @@ func (v Vars) WithoutWildcards() Vars {
 type Result struct {
 	Expressions []*ExpressionValue `json:"expressions"`
 	Bindings    Vars               `json:"bindings,omitempty"`
+
+	ruleProfileResult //nolint:unused // adds Result.Profile when built with the "profile" tag
 }
 
 func newResult() Result {

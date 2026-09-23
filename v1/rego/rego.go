@@ -125,6 +125,8 @@ type EvalContext struct {
 	baseCache                   topdown.BaseCache
 	tracing                     tracing.Options
 	externalCancel              topdown.Cancel // Note(philip): If non-nil, the cancellation is handled outside of this package.
+
+	ruleProfileConfig //nolint:unused // populated when built with the "profile" tag
 }
 
 func (e *EvalContext) RawInput() *any {
@@ -450,6 +452,9 @@ func (pq preparedQuery) newEvalContext(ctx context.Context, options []EvalOption
 		tracing:                  pq.r.distributedTracingOpts,
 	}
 
+	// Construction-time profiling is the default; EvalRuleProfile may override it.
+	applyStoredRuleProfile(ectx, pq.r)
+
 	for _, o := range options {
 		o(ectx)
 	}
@@ -667,6 +672,8 @@ type Rego struct {
 	compilerHook                func(*ast.Compiler)
 	evalMode                    *ast.CompilerEvalMode
 	filter                      filter.LoaderFilter
+
+	ruleProfileConfig //nolint:unused // populated when built with the "profile" tag
 }
 
 func (r *Rego) RegoVersion() ast.RegoVersion {
@@ -2297,6 +2304,9 @@ func (r *Rego) eval(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
 		q = q.WithResolver(ectx.resolvers[i].ref, ectx.resolvers[i].r)
 	}
 
+	profiler := beginRuleProfile(ectx)
+	q = attachRuleProfiler(q, profiler)
+
 	// Cancel query if context is cancelled or deadline is reached.
 	if ectx.externalCancel == nil {
 		// Create a one-off goroutine to handle cancellation for this query.
@@ -2325,11 +2335,7 @@ func (r *Rego) eval(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
 		return nil, err
 	}
 
-	if len(rs) == 0 {
-		return nil, nil
-	}
-
-	return rs, nil
+	return finishRuleProfile(rs, profiler), nil
 }
 
 func (r *Rego) evalWasm(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
