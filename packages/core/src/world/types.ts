@@ -1,5 +1,6 @@
 import { ActionInstance } from '../actions/types';
 import type { $internal } from '../common';
+import type { DeferredCommands, DeferredState } from '../deferred/types';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
 import type {
@@ -43,6 +44,7 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    deferred: DeferredState;
 };
 
 export type World = {
@@ -50,6 +52,8 @@ export type World = {
     readonly isInitialized: boolean;
     readonly entities: Entity[];
     readonly traits: Set<Trait>;
+    /** Buffers entity mutations. Commands run when `updateEach` exits, on `flush`, or before a direct mutation of an entity with pending commands. */
+    readonly deferred: DeferredCommands;
     [$internal]: WorldInternal;
     init(...traits: ConfigurableTrait[]): void;
     spawn(...traits: ConfigurableTrait[]): Entity;

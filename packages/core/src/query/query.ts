@@ -1,4 +1,5 @@
 import { $internal } from '../common';
+import { emitAdd, emitRemove } from '../deferred/event-log';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import type { Relation } from '../relation/types';
@@ -58,9 +59,7 @@ export function addEntityToQuery(query: QueryInstance, entity: Entity) {
     query.entities.add(entity);
 
     // Notify subscriptions.
-    for (const sub of query.addSubscriptions) {
-        sub(entity);
-    }
+    emitAdd(query, entity);
 
     query.version++;
 }
@@ -74,9 +73,7 @@ export function removeEntityFromQuery(world: World, query: QueryInstance, entity
     ctx.dirtyQueries.add(query);
 
     // Notify subscriptions.
-    for (const sub of query.removeSubscriptions) {
-        sub(entity);
-    }
+    emitRemove(query, entity);
 
     query.version++;
 }

@@ -14,6 +14,12 @@ import './entity-methods-patch';
 export function createEntity(world: World, ...traits: ConfigurableTrait[]): Entity {
     const ctx = world[$internal];
     const entity = allocateEntity(ctx.entityIndex);
+    initializeEntity(world, entity, traits);
+    return entity;
+}
+
+export function initializeEntity(world: World, entity: Entity, traits: ConfigurableTrait[]) {
+    const ctx = world[$internal];
 
     for (const query of ctx.notQueries) {
         const match = query.check(world, entity);
@@ -24,8 +30,6 @@ export function createEntity(world: World, ...traits: ConfigurableTrait[]): Enti
 
     ctx.entityTraits.set(entity, new Set());
     addTrait(world, entity, ...traits);
-
-    return entity;
 }
 
 const cachedSet = new Set<Entity>();
