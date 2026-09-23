@@ -3,6 +3,8 @@ import { TokenType } from '../lexer/token.js';
 export enum NodeType {
   statement = 'statement',
   clause = 'clause',
+  // BigQuery pipe step: |> CLAUSE
+  pipe_clause = 'pipe_clause',
   set_operation = 'set_operation',
   function_call = 'function_call',
   parameterized_data_type = 'parameterized_data_type',
@@ -42,6 +44,13 @@ export interface ClauseNode extends BaseNode {
   type: NodeType.clause;
   nameKw: KeywordNode;
   children: AstNode[];
+}
+
+// |> WHERE / |> AGGREGATE / |> LIMIT / |> JOIN / |> AS ...
+export interface PipeClauseNode extends BaseNode {
+  type: NodeType.pipe_clause;
+  pipeKw: KeywordNode;
+  clause: ClauseNode | LimitClauseNode | SetOperationNode;
 }
 
 export interface SetOperationNode extends BaseNode {
@@ -189,6 +198,7 @@ export type CommentNode = LineCommentNode | BlockCommentNode | DisableCommentNod
 
 export type AstNode =
   | ClauseNode
+  | PipeClauseNode
   | SetOperationNode
   | FunctionCallNode
   | ParameterizedDataTypeNode

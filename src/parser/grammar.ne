@@ -1,7 +1,7 @@
 @preprocessor typescript
 @{%
 import LexerAdapter from './LexerAdapter.js';
-import { NodeType, AstNode, CommentNode, KeywordNode, IdentifierNode, DataTypeNode } from './ast.js';
+import { NodeType, AstNode, CommentNode, KeywordNode, IdentifierNode, DataTypeNode, ClauseNode } from './ast.js';
 import { Token, TokenType } from '../lexer/token.js';
 
 // The lexer here is only to provide the has() method,
@@ -57,6 +57,75 @@ const addCommentsToArray = (nodes: AstNode[], { leading, trailing }: CommentAtta
   return nodes;
 };
 
+const toPipeKeyword = (token: Token): KeywordNode => ({
+  type: NodeType.keyword,
+  tokenType: TokenType.OPERATOR,
+  text: token.text,
+  raw: token.raw,
+});
+
+// Pipe operators that are not already reserved clauses (AS, JOIN, RENAME, ...)
+// are parsed as a free-form tail and wrapped into a clause node.
+const toPipeBodyClause = (nodes: AstNode[]): ClauseNode => {
+  const [first, ...rest] = nodes;
+  if (first && first.type === NodeType.keyword) {
+    return { type: NodeType.clause, nameKw: first, children: rest };
+  }
+  if (first && first.type === NodeType.identifier && !first.quoted) {
+    return {
+      type: NodeType.clause,
+      nameKw: {
+        type: NodeType.keyword,
+        tokenType: TokenType.RESERVED_KEYWORD,
+        text: first.text.toUpperCase(),
+        raw: first.text,
+        leadingComments: first.leadingComments,
+        trailingComments: first.trailingComments,
+      },
+      children: rest,
+    };
+  }
+  return {
+    type: NodeType.clause,
+    nameKw: {
+      type: NodeType.keyword,
+      tokenType: TokenType.RESERVED_KEYWORD,
+      text: '',
+      raw: '',
+    },
+    children: nodes,
+  };
+};
+
+// GROUP BY is part of the AGGREGATE pipe operator, not a following top-level clause.
+const nestAggregateGroupBy = (nodes: AstNode[]): AstNode[] => {
+  const result: AstNode[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    const next = nodes[i + 1];
+    if (
+      node.type === NodeType.pipe_clause &&
+      node.clause.type === NodeType.clause &&
+      node.clause.nameKw.text === 'AGGREGATE' &&
+      next &&
+      next.type === NodeType.clause &&
+      next.nameKw.text === 'GROUP BY'
+    ) {
+      result.push({
+        ...node,
+        clause: {
+          ...node.clause,
+          children: [...node.clause.children, next],
+        },
+      });
+      i++;
+    } else {
+      result.push(node);
+    }
+  }
+  return result;
+};
+
 %}
 @lexer lexer
 
@@ -88,16 +157,47 @@ statement -> expressions_or_clauses (%DELIMITER | %EOF) {%
   })
 %}
 
-# To avoid ambiguity, plain expressions can only come before clauses
-expressions_or_clauses -> free_form_sql:* clause:* {%
-  ([expressions, clauses]) => [...expressions, ...clauses]
+# To avoid ambiguity, plain expressions can only come before clauses.
+# Pipe steps are siblings of clauses so each |> returns to the enclosing base indent.
+expressions_or_clauses -> free_form_sql:* clause_or_pipe:* {%
+  ([expressions, clauses]) => nestAggregateGroupBy([...expressions, ...clauses])
 %}
+
+clause_or_pipe ->
+  ( clause
+  | pipe_step ) {% unwrap %}
 
 clause ->
   ( limit_clause
   | select_clause
   | other_clause
   | set_operation ) {% unwrap %}
+
+# |> <clause>. The pipe token is not free-form SQL, so it ends the previous clause.
+pipe_step -> %PIPE_OPERATOR _ pipe_clause {%
+  ([pipeToken, comments, clause]) => {
+    const pipeKw = toPipeKeyword(pipeToken);
+    if (comments.length) {
+      pipeKw.trailingComments = comments;
+    }
+    return {
+      type: NodeType.pipe_clause,
+      pipeKw,
+      clause,
+    };
+  }
+%}
+
+pipe_clause ->
+  ( limit_clause
+  | select_clause
+  | other_clause
+  | set_operation
+  | generic_pipe_clause ) {% unwrap %}
+
+generic_pipe_clause -> free_form_sql:+ {%
+  ([nodes]) => toPipeBodyClause(nodes)
+%}
 
 limit_clause -> %LIMIT _ expression_chain_ (%COMMA free_form_sql:+):? {%
   ([limitToken, _, exp1, optional]) => {

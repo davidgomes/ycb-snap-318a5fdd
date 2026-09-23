@@ -11,6 +11,7 @@ import {
   BetweenPredicateNode,
   SetOperationNode,
   ClauseNode,
+  PipeClauseNode,
   FunctionCallNode,
   LimitClauseNode,
   NodeType,
@@ -118,6 +119,8 @@ export default class ExpressionFormatter {
         return this.formatCaseElse(node);
       case NodeType.clause:
         return this.formatClause(node);
+      case NodeType.pipe_clause:
+        return this.formatPipeClause(node);
       case NodeType.set_operation:
         return this.formatSetOperation(node);
       case NodeType.limit_clause:
@@ -283,6 +286,74 @@ export default class ExpressionFormatter {
     this.layout.indentation.increaseTopLevel();
     this.layout = this.formatSubExpression(node.children);
     this.layout.indentation.decreaseTopLevel();
+  }
+
+  // BigQuery pipe step. |> and the clause keyword share a line at the current
+  // base indent (each pipe is a sibling of the leading FROM, not a child of it).
+  // Indented clause bodies use the same extra level as traditional clauses.
+  // LIMIT, JOIN, and AS keep their body on the keyword line.
+  private formatPipeClause(node: PipeClauseNode) {
+    this.layout.add(WS.NEWLINE, WS.INDENT);
+    this.formatNode(node.pipeKw);
+
+    const { clause } = node;
+    if (clause.type === NodeType.limit_clause) {
+      this.formatPipeLimit(clause);
+      return;
+    }
+    if (clause.nameKw.text === '') {
+      this.layout = this.formatSubExpression(clause.children);
+      return;
+    }
+    if (this.isPipeOnelineClause(clause)) {
+      this.formatPipeOneline(clause.nameKw, clause.children);
+    } else {
+      this.formatPipeIndented(clause.nameKw, clause.children);
+    }
+  }
+
+  private isPipeOnelineClause(node: ClauseNode | SetOperationNode): boolean {
+    if (node.type !== NodeType.clause) {
+      return false;
+    }
+    if (node.nameKw.tokenType === TokenType.RESERVED_JOIN || node.nameKw.text === 'AS') {
+      return true;
+    }
+    // Bare DROP is an oneline DDL clause. Pipe DROP removes columns and is indented.
+    if (node.nameKw.text === 'DROP') {
+      return false;
+    }
+    return Boolean(this.dialectCfg.onelineClauses[node.nameKw.text]);
+  }
+
+  private formatPipeOneline(nameKw: KeywordNode, children: AstNode[]) {
+    this.withComments(nameKw, () => {
+      this.layout.add(this.showKw(nameKw), WS.SPACE);
+    });
+    this.layout = this.formatSubExpression(children);
+  }
+
+  private formatPipeIndented(nameKw: KeywordNode, children: AstNode[]) {
+    this.withComments(nameKw, () => {
+      this.layout.add(this.showKw(nameKw), WS.NEWLINE);
+    });
+    this.layout.indentation.increaseTopLevel();
+    this.layout.add(WS.INDENT);
+    this.layout = this.formatSubExpression(children);
+    this.layout.indentation.decreaseTopLevel();
+  }
+
+  private formatPipeLimit(node: LimitClauseNode) {
+    this.withComments(node.limitKw, () => {
+      this.layout.add(this.showKw(node.limitKw), WS.SPACE);
+    });
+    if (node.offset) {
+      this.layout = this.formatSubExpression(node.offset);
+      this.layout.add(WS.NO_SPACE, ',', WS.SPACE);
+      this.layout = this.formatSubExpression(node.count);
+    } else {
+      this.layout = this.formatSubExpression(node.count);
+    }
   }
 
   private formatSetOperation(node: SetOperationNode) {

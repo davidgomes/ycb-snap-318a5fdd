@@ -27,6 +27,8 @@ export enum TokenType {
   OR = 'OR',
   XOR = 'XOR',
   OPERATOR = 'OPERATOR',
+  // BigQuery pipe operator |> (distinct from bitwise | followed by >)
+  PIPE_OPERATOR = 'PIPE_OPERATOR',
   COMMA = 'COMMA',
   ASTERISK = 'ASTERISK', // *
   PROPERTY_ACCESS_OPERATOR = 'PROPERTY_ACCESS_OPERATOR', // Usually "."

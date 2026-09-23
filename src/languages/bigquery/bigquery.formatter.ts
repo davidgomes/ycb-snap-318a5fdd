@@ -190,6 +190,7 @@ export const bigquery: DialectOptions = {
     variableTypes: [{ regex: String.raw`@@\w+` }],
     lineCommentTypes: ['--', '#'],
     operators: ['&', '|', '^', '~', '>>', '<<', '||', '=>'],
+    pipeOperator: true,
     postProcess,
   },
   formatOptions: {
@@ -199,7 +200,46 @@ export const bigquery: DialectOptions = {
 };
 
 function postProcess(tokens: Token[]): Token[] {
-  return detectArraySubscripts(combineParameterizedTypes(tokens));
+  return promotePipeExclusiveClauses(detectArraySubscripts(combineParameterizedTypes(tokens)));
+}
+
+// AGGREGATE and EXTEND are pipe-only clause heads. They stay ordinary words
+// unless they immediately follow |>.
+const pipeExclusiveClauses = new Set(['AGGREGATE', 'EXTEND']);
+
+function promotePipeExclusiveClauses(tokens: Token[]): Token[] {
+  return tokens.map((token, index) => {
+    const canonical = token.text.toUpperCase();
+    if (!pipeExclusiveClauses.has(canonical)) {
+      return token;
+    }
+    if (token.type !== TokenType.IDENTIFIER && token.type !== TokenType.RESERVED_KEYWORD) {
+      return token;
+    }
+    const prev = previousNonCommentToken(tokens, index);
+    if (prev?.type !== TokenType.PIPE_OPERATOR) {
+      return token;
+    }
+    return {
+      ...token,
+      type: TokenType.RESERVED_CLAUSE,
+      text: canonical,
+    };
+  });
+}
+
+function previousNonCommentToken(tokens: Token[], index: number): Token | undefined {
+  for (let i = index - 1; i >= 0; i--) {
+    const token = tokens[i];
+    if (
+      token.type !== TokenType.LINE_COMMENT &&
+      token.type !== TokenType.BLOCK_COMMENT &&
+      token.type !== TokenType.DISABLE_COMMENT
+    ) {
+      return token;
+    }
+  }
+  return undefined;
 }
 
 // Converts OFFSET token inside array from RESERVED_CLAUSE to RESERVED_FUNCTION_NAME
