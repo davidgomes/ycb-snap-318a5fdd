@@ -47,6 +47,9 @@ export interface Logic {
   listeners?: Record<string, ListenerFunctionWrapper[]>
   sharedListeners?: Record<string, ListenerFunction>
 
+  /** Only defined with `resetContext({ atomicSelectors: true })` */
+  selectorHealth?: () => SelectorHealthReport
+
   __keaTypeGenInternalSelectorTypes: Record<string, any>
   __keaTypeGenInternalReducerActions: Record<string, any>
   __keaTypeGenInternalExtraInput: Record<string, any>
@@ -258,6 +261,22 @@ export type SelectorTuple =
 export type SelectorDefinition<Selectors, PropSelectors, SelectorFunction extends any> =
   | [(s: Selectors, p: PropSelectors) => SelectorTuple, SelectorFunction]
   | [(s: Selectors, p: PropSelectors) => SelectorTuple, SelectorFunction, DefaultMemoizeOptions]
+
+export interface SelectorHealth {
+  /** Leaf state paths read (e.g. `user.name`) and local selectors used as inputs */
+  dependencies: string[]
+  /** Local selectors that use this selector as an input */
+  dependents: string[]
+  /** How many times the compute function has been invoked */
+  evaluations: number
+  /** What caused the most recent invalidation: a leaf path, or `selector:<localName>` */
+  dirtyCause: string | null
+}
+
+export interface SelectorHealthReport {
+  selectors: Record<string, SelectorHealth>
+  topologicalOrder: string[]
+}
 
 export type LogicPropSelectors<LogicType extends Logic> = {
   [PK in keyof LogicType['props']]: () => LogicType['props'][PK]
@@ -538,6 +557,7 @@ export interface InternalContextOptions {
   detachStrategy: 'dispatch' | 'replace' | 'persist'
   defaultPath: string[]
   disableAsyncActions: boolean
+  atomicSelectors: boolean
   // ...otherOptions
 }
 
