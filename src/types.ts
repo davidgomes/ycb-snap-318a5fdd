@@ -34,6 +34,8 @@ export interface Logic {
   reducerOptions: Record<string, any>
   selector?: Selector
   selectors: Record<string, Selector>
+  /** Present only when the context was opened with `atomicSelectors: true`. */
+  selectorHealth?: () => SelectorHealth
   values: Record<string, any>
   events: {
     beforeMount?: () => void
@@ -538,7 +540,21 @@ export interface InternalContextOptions {
   detachStrategy: 'dispatch' | 'replace' | 'persist'
   defaultPath: string[]
   disableAsyncActions: boolean
+  /** Fine-grained selector dependency tracking. Defaults to false. */
+  atomicSelectors?: boolean
   // ...otherOptions
+}
+
+export interface SelectorHealthEntry {
+  dependencies: string[]
+  dependents: string[]
+  evaluations: number
+  dirtyCause: string | null
+}
+
+export interface SelectorHealth {
+  selectors: Record<string, SelectorHealthEntry>
+  topologicalOrder: string[]
 }
 
 export interface ContextOptions extends Partial<InternalContextOptions> {

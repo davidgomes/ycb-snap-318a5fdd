@@ -1,6 +1,7 @@
 import { Logic, LogicBuilder, LogicPropSelectors, Selector, SelectorDefinition, SelectorDefinitions } from '../types'
-import { createSelector, createSelectorCreator, defaultMemoize, ParametricSelector } from 'reselect'
-import { getStoreState } from '../kea/context'
+import { createSelector, ParametricSelector } from 'reselect'
+import { getContext, getStoreState } from '../kea/context'
+import { atomicEnabled, bindDerivedRunner, notePropRead, recordBuildDependencies } from './atomic-selectors'
 
 /**
   Logic builder:
@@ -48,7 +49,12 @@ export function selectors<L extends Logic = Logic>(
                   )}: '' }) to resolve.`,
                 )
               }
-              return () => target[prop]
+              return () => {
+                if (atomicEnabled()) {
+                  notePropRead(String(prop))
+                }
+                return target[prop]
+              }
             },
           })
         : (Object.fromEntries(
@@ -61,18 +67,35 @@ export function selectors<L extends Logic = Logic>(
         throw new Error(`[KEA] Logic "${logic.pathString}" selector "${key}" is undefined`)
       }
       const [input, func, memoizeOptions] = arr
-      const args: ParametricSelector<any, any, any>[] = input(logic.selectors, propSelectors)
+      let args: ParametricSelector<any, any, any>[] = []
+      const readInputs = () => {
+        args = input(logic.selectors, propSelectors)
+      }
+      if (atomicEnabled()) {
+        recordBuildDependencies(logic, key, readInputs)
+      } else {
+        readInputs()
+      }
 
       if (args.filter((a) => typeof a !== 'function').length > 0) {
         const argTypes = args.map((a) => typeof a).join(', ')
         const msg = `[KEA] Logic "${logic.pathString}", selector "${key}" has incorrect input: [${argTypes}].`
         throw new Error(msg)
       }
-      builtSelectors[key] = createSelector(args, func, { memoizeOptions })
+      if (atomicEnabled()) {
+        const equality = (memoizeOptions as { resultEqualityCheck?: (a: any, b: any) => boolean } | undefined)
+          ?.resultEqualityCheck
+        builtSelectors[key] = bindDerivedRunner(logic, key, args, func, equality)
+      } else {
+        builtSelectors[key] = createSelector(args, func, { memoizeOptions })
+      }
 
-      addSelectorAndValue(logic, key, (state = getStoreState(), props = logic.props) =>
-        builtSelectors[key](state, props),
-      )
+      const wrappedSelector = (state = getStoreState(), props = logic.props) => builtSelectors[key](state, props)
+      const atomicName = (builtSelectors[key] as { __keaAtomicName?: string }).__keaAtomicName
+      if (atomicName) {
+        ;(wrappedSelector as { __keaAtomicName?: string }).__keaAtomicName = atomicName
+      }
+      addSelectorAndValue(logic, key, wrappedSelector)
 
       if (!logic.values.hasOwnProperty(key)) {
         Object.defineProperty(logic.values, key, {

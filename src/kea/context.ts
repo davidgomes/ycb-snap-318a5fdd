@@ -3,6 +3,7 @@ import { createStore } from './store'
 import { Context, ContextOptions } from '../types'
 import type { Store } from 'redux'
 import { corePlugin } from '../core'
+import { atomicSelectorsPlugin } from '../core/atomic-selectors'
 
 let context: Context
 
@@ -23,7 +24,13 @@ export function openContext(options: ContextOptions = {}, initial = false): Cont
     console.error('[KEA] overwriting already opened context. This may lead to errors.')
   }
 
-  const { plugins, createStore: createStoreOptions = true, defaults, ...otherOptions } = options
+  const {
+    plugins,
+    createStore: createStoreOptions = true,
+    defaults,
+    atomicSelectors = false,
+    ...otherOptions
+  } = options
 
   const newContext = {
     contextId: `kea-context-${contextId++}`,
@@ -66,6 +73,7 @@ export function openContext(options: ContextOptions = {}, initial = false): Cont
       attachStrategy: 'dispatch',
       detachStrategy: 'dispatch',
       defaultPath: ['kea', 'logic'],
+      atomicSelectors,
       ...otherOptions,
     },
   } as Context
@@ -87,6 +95,10 @@ export function openContext(options: ContextOptions = {}, initial = false): Cont
   setContext(newContext)
 
   activatePlugin(corePlugin)
+
+  if (atomicSelectors) {
+    activatePlugin(atomicSelectorsPlugin)
+  }
 
   runPlugins('afterOpenContext', newContext, options)
 

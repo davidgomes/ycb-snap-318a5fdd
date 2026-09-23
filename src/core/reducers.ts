@@ -18,6 +18,7 @@ import { getStoreState } from '../kea/context'
 import { createSelector } from 'reselect'
 import { getContextDefaults } from './defaults'
 import { addSelectorAndValue } from './selectors'
+import { atomicEnabled, bindReducerRunner } from './atomic-selectors'
 
 export function rootReducer<L extends Logic = Logic>(): LogicBuilder<L> {
   return (logic) => {
@@ -130,11 +131,15 @@ export function reducers<L extends Logic = Logic>(
 
       // create selector for reducer
       if (!logic.selectors[key]) {
-        addSelectorAndValue(
-          logic,
-          key,
-          createSelector(logic.selector!, (state) => state[key]),
-        )
+        if (atomicEnabled()) {
+          addSelectorAndValue(logic, key, bindReducerRunner(logic, key))
+        } else {
+          addSelectorAndValue(
+            logic,
+            key,
+            createSelector(logic.selector!, (state) => state[key]),
+          )
+        }
       }
     }
   }
