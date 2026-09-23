@@ -389,6 +389,28 @@ class TestScoping:
             "left": {"common": "parallel", "side": "left"},
         }
 
+    async def test_machines_without_data_inject_an_empty_view(self, sm_runner):
+        seen = []
+
+        class Machine(StateChart):
+            a = State(initial=True)
+            b = State(final=True)
+
+            go = a.to(b)
+
+            def on_exit_a(self, state_data):
+                seen.append(dict(state_data))
+
+            def on_enter_b(self, state_data):
+                seen.append(len(state_data))
+                with pytest.raises(InvalidDefinition, match="no active state data variable"):
+                    state_data["x"] = 1
+
+        sm = await sm_runner.start(Machine)
+        await sm_runner.send(sm, "go")
+
+        assert seen == [{}, 0]
+
     async def test_enabled_events_inject_state_data_on_guards(self, sm_runner):
         class Machine(StateChart):
             a = State(initial=True, data={"ready": False})
@@ -739,6 +761,13 @@ class TestErrorRollback:
         assert sm.state_data_values == {"a": {"n": 1}}
 
 
+class NoData(StateChart):
+    a = State(initial=True)
+    b = State(final=True)
+
+    go = a.to(b)
+
+
 class DiagramMachine(StateChart):
     class tasks(State.Compound, data={"done": 0}):
         todo = State(initial=True, data={"count": DataVar(0, type=int), "items": list})
@@ -799,6 +828,12 @@ class TestDiagrams:
 
 
 class TestSerialization:
+    def test_machines_without_data_survive_pickle(self):
+        sm = pickle.loads(pickle.dumps(NoData()))
+
+        assert sm.state_data_values == {}
+        assert sm.get_state_data("a") is None
+
     async def test_data_survives_pickle(self, sm_runner):
         sm = await sm_runner.start(Nested)
         sm.set_state_data("outer", "shared", 42)
