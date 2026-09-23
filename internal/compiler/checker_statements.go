@@ -1120,6 +1120,15 @@ func (tc *typechecker) checkFunc(node *ast.Func) {
 	tc.scopes.Enter(node)
 	tc.addToAncestors(node)
 
+	// Adds the receiver of a method to the function body scope.
+	if node.Recv != nil {
+		if ident := node.Recv.Ident; ident != nil && !isBlankIdentifier(ident) {
+			typ := tc.compilation.typeInfos[node.Recv.Type].Type
+			tc.scopes.Declare(ident.Name, &typeInfo{Type: typ, Properties: propertyAddressable}, ident, nil)
+			tc.scopes.Use(ident.Name)
+		}
+	}
+
 	// Adds parameters to the function body scope.
 	t := node.Type.Reflect
 	for i := 0; i < t.NumIn(); i++ {
@@ -1344,6 +1353,68 @@ func (tc *typechecker) checkTypeDeclaration(node *ast.TypeDeclaration) (string, 
 		Type:       defType,
 		Properties: propertyIsType,
 	}
+}
+
+// checkMethodDeclaration checks the declaration of a method, without checking
+// its body, and adds the method to the method set of its receiver base type.
+//
+//	func (t T) M()
+//	func (t *T) M()
+func (tc *typechecker) checkMethodDeclaration(node *ast.Func) {
+
+	if node.Body == nil {
+		panic(tc.errorf(node.Ident.Pos(), "missing function body"))
+	}
+
+	// Check the receiver type.
+	recv := tc.checkType(node.Recv.Type).Type
+	base := recv
+	ptr := recv.Kind() == reflect.Ptr && recv.Name() == ""
+	if ptr {
+		base = recv.Elem()
+	}
+	if !tc.types.Defines(base) {
+		if base.Name() != "" {
+			panic(tc.errorf(node.Recv.Type, "cannot define new methods on non-local type %s", base))
+		}
+		panic(tc.errorf(node.Recv.Type, "invalid receiver type %s", recv))
+	}
+	if k := base.Kind(); k == reflect.Ptr || k == reflect.Interface {
+		panic(tc.errorf(node.Recv.Type, "invalid receiver type %s (pointer or interface type)", base))
+	}
+
+	// Check the method type.
+	typ := tc.checkType(node.Type).Type
+	if ident := node.Recv.Ident; ident != nil && !isBlankIdentifier(ident) {
+		for _, params := range [2][]*ast.Parameter{node.Type.Parameters, node.Type.Result} {
+			for _, param := range params {
+				if param.Ident != nil && param.Ident.Name == ident.Name {
+					panic(tc.errorf(param.Ident, "duplicate argument %s", ident.Name))
+				}
+			}
+		}
+	}
+
+	name := node.Ident.Name
+	if name == "_" {
+		return
+	}
+
+	// A struct type cannot have a field and a method with the same name.
+	if base.Kind() == reflect.Struct {
+		for i := 0; i < base.NumField(); i++ {
+			if decodeFieldName(base.Field(i).Name) == name {
+				panic(tc.errorf(node.Ident, "field and method with the same name %s", name))
+			}
+		}
+	}
+
+	m, ok := tc.types.AddMethod(base, name, typ, ptr)
+	if !ok {
+		prev := tc.methodDecls[m]
+		panic(tc.errorf(node.Ident, "method %s.%s already declared at %s", base, name, prev.Ident.Pos()))
+	}
+	tc.methodDecls[m] = node
 }
 
 // explodeUsingStatement explodes an 'using' statement.

@@ -16,15 +16,20 @@ const (
 	parseFuncDecl                             // func declaration
 )
 
-// parseFunc parses a function type, literal or declaration or a macro type.
-// tok must be either the token "func" or "macro". If tok is "macro", kind is
-// parseFuncType.
+// parseFunc parses a function type, literal or declaration, a method
+// declaration or a macro type. tok must be either the token "func" or
+// "macro". If tok is "macro", kind is parseFuncType.
 func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 	isMacro := tok.typ == tokenMacro
 	pos := tok.pos
+	tok = p.next()
+	// Parses the receiver of a method declaration if present.
+	var recv *ast.Parameter
+	if kind == parseFuncDecl && !isMacro && tok.typ == tokenLeftParenthesis {
+		recv, tok = p.parseFuncReceiver(tok)
+	}
 	// Parses the function name if present.
 	var ident *ast.Identifier
-	tok = p.next()
 	if tok.typ == tokenIdentifier {
 		if kind&parseFuncDecl == 0 {
 			panic(syntaxError(tok.pos, "unexpected %s, expecting (", tok))
@@ -32,11 +37,6 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 		ident = ast.NewIdentifier(tok.pos, string(tok.txt))
 		tok = p.next()
 	} else if kind == parseFuncDecl {
-		// This check could be avoided (the code panics anyway) but improves the
-		// readability of the error message.
-		if !isMacro && tok.typ == tokenLeftParenthesis {
-			panic(syntaxError(tok.pos, "method declarations are not supported in this release of Scriggo"))
-		}
 		// Node to parse must be a function declaration.
 		panic(syntaxError(tok.pos, "unexpected %s, expecting name", tok.txt))
 	}
@@ -66,6 +66,7 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 		return typ, tok
 	}
 	node := ast.NewFunc(pos, ident, typ, nil, false, ast.Format(tok.ctx))
+	node.Recv = recv
 	if !isMacro && tok.typ != tokenLeftBrace {
 		return node, tok
 	}
@@ -100,6 +101,23 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 	p.removeLastAncestor()
 	p.removeLastAncestor()
 	return node, p.next()
+}
+
+// parseFuncReceiver parses the receiver of a method declaration. tok is the
+// "(" token that starts the receiver. Returns the receiver and the next
+// token.
+func (p *parsing) parseFuncReceiver(tok token) (*ast.Parameter, token) {
+	pos := tok.pos
+	params, isVariadic, _, tok := p.parseFuncParameters(tok, false, false)
+	switch {
+	case len(params) == 0:
+		panic(syntaxError(pos, "method has no receiver"))
+	case len(params) > 1:
+		panic(syntaxError(pos, "method has multiple receivers"))
+	case isVariadic:
+		panic(syntaxError(params[0].Type.Pos(), "cannot use ... in receiver or result parameter list"))
+	}
+	return params[0], tok
 }
 
 // parseFuncParameters parses the parameters of a function or macro. tok is

@@ -151,7 +151,9 @@ func analyzeTree(pkg *ast.Package) packageDeclsDeps {
 		case *ast.Const:
 			d.analyzeGlobalConst(n)
 		case *ast.Func:
-			d.analyzeGlobalFunc(n)
+			if n.Recv == nil {
+				d.analyzeGlobalFunc(n)
+			}
 		case *ast.TypeDeclaration:
 			d.analyzeGlobalTypeDeclaration(n)
 		}

@@ -160,11 +160,17 @@ func ConvertibleTo(x, y reflect.Type) bool {
 
 // Implements reports whether x implements the interface type y.
 func Implements(x, y reflect.Type) bool {
-	if _, ok := x.(runtime.ScriggoType); ok {
-		return y.NumMethod() == 0
-	}
-	if _, ok := y.(runtime.ScriggoType); ok {
+	if y.NumMethod() == 0 {
 		return true
+	}
+	if st, ok := y.(runtime.ScriggoType); ok {
+		y = st.GoType()
+	}
+	if st, ok := x.(runtime.ScriggoType); ok {
+		if x.Kind() == reflect.Interface {
+			return st.GoType().Implements(y)
+		}
+		return implementsScriggo(x, y)
 	}
 	// If y has unexported methods, and x is not an interface type, it is not possible to check
 	// if x implements y using the x.NumMethod and x.Method methods, because they do not return

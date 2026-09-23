@@ -320,7 +320,7 @@ func (em *emitter) emitAssignmentOperation(addr address, rh ast.Expression) {
 		assignNonLocalSliceIndex:
 		em.fb.emitIndex(false, addr.op1, addr.op2, c, addrTyp, addr.pos, false)
 	case assignPtrIndirection:
-		em.changeRegister(false, addr.op1, c, addrTyp, addrTyp)
+		em.changeRegister(false, -addr.op1, c, typ, typ)
 	case assignLocalStructSelector,
 		assignNonLocalStructSelector:
 		em.fb.emitField(addr.op1, addr.op2, c, typ.Kind())

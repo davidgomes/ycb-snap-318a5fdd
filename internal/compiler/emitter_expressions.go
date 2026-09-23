@@ -732,6 +732,30 @@ func (em *emitter) emitSelector(v *ast.Selector, reg int8, dstType reflect.Type)
 		return
 	}
 
+	// Method declared in Scriggo code.
+	if m := ti.method; m != nil {
+		em.fb.enterStack()
+		tmp := em.fb.newRegister(reflect.Func)
+		if ti.MethodType == noMethod {
+			// Method expression.
+			fn := em.methodExprFunc(m, em.typ(v.Expr))
+			em.fb.emitLoadFunc(false, em.fnStore.scriggoFnIndex(fn), tmp)
+		} else {
+			// Method value. The receiver is typified with its Scriggo type
+			// so that the method can be resolved when executed.
+			typ := em.typ(v.Expr)
+			rcvr := em.emitExpr(v.Expr, typ)
+			typed := em.fb.newRegister(reflect.Interface)
+			em.fb.emitTypify(false, typ, rcvr, typed)
+			em.fb.emitMethodValue(em.fb.makeStringValue(v.Ident), typed, tmp, v.Pos())
+		}
+		if reg != 0 {
+			em.changeRegister(false, tmp, reg, ti.Type, dstType)
+		}
+		em.fb.exitStack()
+		return
+	}
+
 	// Method value on concrete and interface values.
 	if ti.MethodType == methodValueConcrete || ti.MethodType == methodValueInterface {
 		expr := v.Expr

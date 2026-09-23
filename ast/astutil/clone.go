@@ -142,7 +142,15 @@ func CloneNode(node ast.Node) ast.Node {
 			ident = ast.NewIdentifier(ClonePosition(n.Ident.Position), n.Ident.Name)
 		}
 		typ := CloneExpression(n.Type).(*ast.FuncType)
-		return ast.NewFunc(ClonePosition(n.Position), ident, typ, CloneNode(n.Body).(*ast.Block), n.DistFree, n.Format)
+		fn := ast.NewFunc(ClonePosition(n.Position), ident, typ, CloneNode(n.Body).(*ast.Block), n.DistFree, n.Format)
+		if n.Recv != nil {
+			var recvIdent *ast.Identifier
+			if n.Recv.Ident != nil {
+				recvIdent = ast.NewIdentifier(ClonePosition(n.Recv.Ident.Position), n.Recv.Ident.Name)
+			}
+			fn.Recv = ast.NewParameter(recvIdent, CloneExpression(n.Recv.Type))
+		}
+		return fn
 
 	case *ast.Go:
 		return ast.NewGo(ClonePosition(n.Position), CloneExpression(n.Call))

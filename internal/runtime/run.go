@@ -163,18 +163,17 @@ func (vm *VM) run() (Addr, bool) {
 
 		// Assert
 		case OpAssert:
-			v := vm.general(a)
+			x := vm.general(a)
+			v := x
 			t := vm.fn.Types[uint8(b)]
 			var ok bool
 			if v.IsValid() {
-				if w, isScriggoType := t.(ScriggoType); isScriggoType {
+				if t.Kind() == reflect.Interface {
+					ok = vm.env.typeof(v).Implements(t)
+				} else if w, isScriggoType := t.(ScriggoType); isScriggoType {
 					v, ok = w.Unwrap(v)
 				} else {
-					if t.Kind() == reflect.Interface {
-						ok = v.Type().Implements(t)
-					} else {
-						ok = v.Type() == t
-					}
+					ok = v.Type() == t
 				}
 			}
 			vm.ok = ok
@@ -183,8 +182,8 @@ func (vm *VM) run() (Addr, bool) {
 				if in.Op == OpPanic {
 					var concrete reflect.Type
 					var method string
-					if v.IsValid() {
-						concrete = v.Type()
+					if x.IsValid() {
+						concrete = vm.env.typeof(x)
 						if t.Kind() == reflect.Interface {
 							method = missingMethod(concrete, t)
 						}
@@ -218,6 +217,13 @@ func (vm *VM) run() (Addr, bool) {
 						s = v.String()
 					}
 					vm.setString(c, s)
+				case reflect.Interface:
+					// The dynamic value may have a Scriggo type, that does
+					// not implement t in Go, so it is not converted to t.
+					if !ok {
+						v = reflect.Value{}
+					}
+					vm.setGeneral(c, v)
 				default:
 					if w, ok := t.(ScriggoType); ok {
 						t = w.GoType()
@@ -1092,7 +1098,11 @@ func (vm *VM) run() (Addr, bool) {
 				panic(errNilPointer)
 			}
 			method := vm.stringk(b, true)
-			vm.setGeneral(c, reflect.ValueOf(&callable{value: receiver.MethodByName(method)}))
+			if fn, rcvr, ok := vm.scriggoMethod(receiver, method); ok {
+				vm.setGeneral(c, reflect.ValueOf(&callable{fn: fn, vars: []reflect.Value{rcvr}}))
+			} else {
+				vm.setGeneral(c, reflect.ValueOf(&callable{value: receiver.MethodByName(method)}))
+			}
 
 		// Move
 		case OpMove, -OpMove:

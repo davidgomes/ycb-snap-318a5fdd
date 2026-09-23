@@ -165,6 +165,10 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 		// their bodies: order of declaration doesn't matter at package level.
 		for _, dec := range pkg.Declarations {
 			if fun, ok := dec.(*ast.Func); ok {
+				if fun.Recv != nil {
+					em.declareMethod(fun, path)
+					continue
+				}
 				var fn *runtime.Function
 				if emFn, ok := em.alreadyEmittedFuncs[fun]; ok {
 					fn = emFn
@@ -256,7 +260,10 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 				// Function has already been emitted, nothing to do.
 				continue
 			}
-			if n.Ident.Name == "init" {
+			isMethod := n.Recv != nil
+			if isMethod {
+				fn = em.methodOf(n).Func
+			} else if n.Ident.Name == "init" {
 				fn = inits[initToBuild]
 				initToBuild++
 			} else {
@@ -267,7 +274,7 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 			// If this is the main function, functions that initialize variables
 			// must be called before executing every other statement of the main
 			// function.
-			if n.Ident.Name == "main" {
+			if n.Ident.Name == "main" && !isMethod {
 				// First: initialize the package variables.
 				if initVarsFn != nil {
 					iv, _ := em.fnStore.availableScriggoFn(em.pkg, "$initvars")
@@ -506,10 +513,16 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
 		}
 	}
 
+	// The receiver of a method is its first input parameter.
+	params := fn.Type.Parameters
+	if fn.Recv != nil {
+		params = append([]*ast.Parameter{fn.Recv}, params...)
+	}
+
 	// Reserve space for the input parameters and eventually bind them.
-	for i, inParam := range fn.Type.Parameters {
+	for i, inParam := range params {
 		kind := em.typ(inParam.Type).Kind()
-		if fn.Type.IsVariadic && i == len(fn.Type.Parameters)-1 {
+		if fn.Type.IsVariadic && i == len(params)-1 {
 			kind = reflect.Slice
 		}
 		if inParam.Ident == nil || isBlankIdentifier(inParam.Ident) {
@@ -539,7 +552,7 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
 	}
 
 	// Rebind input parameters that should be declared as indirect.
-	for _, param := range fn.Type.Parameters {
+	for _, param := range params {
 		if em.varStore.mustBeDeclaredAsIndirect(param.Ident) {
 			// reg is used only to read input parameters; after copying values
 			// into the indirect register it is not used anymore.
@@ -580,21 +593,40 @@ func (em *emitter) emitCallNode(call *ast.Call, goStmt bool, deferStmt bool, toF
 		s := em.fb.makeStringValue(name)
 		em.fb.emitMethodValue(s, rcvr, method, call.Func.Pos())
 		stackShift := em.fb.currentStackShift()
+		// The method can be implemented both by a native method and by a
+		// method declared in Scriggo, so the arguments are emitted as for an
+		// indirect call.
 		opts := callOptions{
-			predefined:    true,
+			predefined:    false,
 			receiverAsArg: false,
 			callHasDots:   call.IsVariadic,
 		}
 		regs, types := em.prepareCallParameters(funTi.Type, call.Args, opts)
-		// TODO(Gianluca): handle variadic method calls.
 		if goStmt {
 			em.fb.emitGo()
 		}
 		if deferStmt {
-			panic(internalError("not implemented"))
+			args := stackDifference(em.fb.currentStackShift(), stackShift)
+			em.fb.emitDefer(method, int8(runtime.NoVariadicArgs), stackShift, args, funTi.Type)
+			return regs, types
 		}
-		em.fb.emitCallIndirect(method, 0, stackShift, call.Pos(), funTi.Type, toFormat)
+		em.fb.emitCallIndirect(method, int8(runtime.NoVariadicArgs), stackShift, call.Pos(), funTi.Type, toFormat)
 		return regs, types
+	}
+
+	// Method declared in Scriggo code called on a concrete value.
+	if funTi.MethodType == methodCallConcrete && funTi.method != nil {
+		m := funTi.method
+		args := append([]ast.Expression{call.Func.(*ast.Selector).Expr}, call.Args...)
+		opts := callOptions{receiverAsArg: true, callHasDots: call.IsVariadic}
+		return em.emitScriggoFuncCall(call, m.Func, m.Type, args, opts, goStmt, deferStmt)
+	}
+
+	// Method expression of a method declared in Scriggo code.
+	if funTi.method != nil && funTi.MethodType == noMethod {
+		fn := em.methodExprFunc(funTi.method, em.typ(call.Func.(*ast.Selector).Expr))
+		opts := callOptions{callHasDots: call.IsVariadic}
+		return em.emitScriggoFuncCall(call, fn, fn.Type, call.Args, opts, goStmt, deferStmt)
 	}
 
 	// Predefined function (identifiers, selectors etc...).

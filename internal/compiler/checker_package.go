@@ -253,6 +253,7 @@ func sortDeclarations(pkg *ast.Package) error {
 	vars := []*ast.Var{}
 	imports := []*ast.Import{}
 	funcs := []*ast.Func{}
+	methods := []*ast.Func{}
 
 	// Fragments global declarations.
 	for _, decl := range pkg.Declarations {
@@ -262,6 +263,11 @@ func sortDeclarations(pkg *ast.Package) error {
 		case *ast.Import:
 			imports = append(imports, decl)
 		case *ast.Func:
+			if decl.Recv != nil {
+				// Methods are not declared in the package block.
+				methods = append(methods, decl)
+				continue
+			}
 			funcs = append(funcs, decl)
 		case *ast.Const:
 			if len(decl.Rhs) == 0 {
@@ -498,6 +504,9 @@ varsLoop:
 	for _, f := range funcs {
 		sorted = append(sorted, f)
 	}
+	for _, m := range methods {
+		sorted = append(sorted, m)
+	}
 	pkg.Declarations = sorted
 
 	return nil
@@ -586,10 +595,17 @@ func checkPackage(compilation *compilation, pkg *ast.Package, path string, impor
 		}
 	}
 
+	// Declare the methods on the declared types.
+	for _, d := range pkg.Declarations {
+		if f, ok := d.(*ast.Func); ok && f.Recv != nil {
+			tc.checkMethodDeclaration(f)
+		}
+	}
+
 	// Defines functions in file/package block before checking all
 	// declarations.
 	for _, d := range pkg.Declarations {
-		if f, ok := d.(*ast.Func); ok {
+		if f, ok := d.(*ast.Func); ok && f.Recv == nil {
 			if f.Body == nil {
 				return tc.errorf(f.Ident.Pos(), "missing function body")
 			}

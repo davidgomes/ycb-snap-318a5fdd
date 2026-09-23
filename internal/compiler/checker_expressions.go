@@ -2455,10 +2455,48 @@ func (tc *typechecker) checkPackageSelector(expr *ast.Selector) (*typeInfo, bool
 	return ti, true
 }
 
+// scriggoMethod returns the method selected by expr, declared in Scriggo code
+// on the type t or, if t is a pointer, on its element type. It returns nil if
+// there is no such method.
+func (tc *typechecker) scriggoMethod(t reflect.Type, expr *ast.Selector) *types.Method {
+	m := types.MethodOf(t, expr.Ident)
+	if m == nil {
+		return nil
+	}
+	if !isExported(m.Name) {
+		base := t
+		if t.Kind() == reflect.Ptr && t.Name() == "" {
+			base = t.Elem()
+		}
+		if !tc.types.Defines(base) {
+			panic(tc.errorf(expr, "%s undefined (cannot refer to unexported field or method %s)", expr, m.Name))
+		}
+	}
+	return m
+}
+
 // checkMethodExpression checks a method expression.
 func (tc *typechecker) checkMethodExpression(t *typeInfo, expr *ast.Selector) *typeInfo {
 
 	name := expr.Ident
+
+	// Method declared in Scriggo code.
+	if m := tc.scriggoMethod(t.Type, expr); m != nil {
+		if m.Pointer && t.Type.Kind() != reflect.Ptr {
+			panic(tc.errorf(expr, "invalid method expression %s (needs pointer receiver: (*%s).%s)",
+				expr, expr.Expr, expr.Ident))
+		}
+		in := make([]reflect.Type, m.Type.NumIn()+1)
+		in[0] = t.Type
+		for i := 1; i < len(in); i++ {
+			in[i] = m.Type.In(i - 1)
+		}
+		out := make([]reflect.Type, m.Type.NumOut())
+		for i := range out {
+			out[i] = m.Type.Out(i)
+		}
+		return &typeInfo{Type: tc.types.FuncOf(in, out, m.Type.IsVariadic()), method: m}
+	}
 
 	method, ok := t.Type.MethodByName(name)
 	if !ok {
@@ -2510,6 +2548,30 @@ func (tc *typechecker) checkMethodValue(t *typeInfo, expr *ast.Selector) (*typeI
 	name := expr.Ident
 	typ := t.Type
 	kind := typ.Kind()
+
+	// Method declared in Scriggo code.
+	if m := tc.scriggoMethod(typ, expr); m != nil {
+		isPtr := kind == reflect.Ptr
+		switch {
+		case m.Pointer && !isPtr:
+			if !t.Addressable() {
+				panic(tc.errorf(expr, "cannot call pointer method %s on %s", name, typ))
+			}
+			// Transform t.Mp into (&t).Mp.
+			if ident, ok := expr.Expr.(*ast.Identifier); ok {
+				if _, decl, ok := tc.scopes.LookupInFunc(ident.Name); ok {
+					tc.compilation.indirectVars[decl] = true
+				}
+			}
+			expr.Expr = ast.NewUnaryOperator(expr.Expr.Pos(), ast.OperatorAddress, expr.Expr)
+			tc.compilation.typeInfos[expr.Expr] = &typeInfo{Type: tc.types.PointerTo(typ)}
+		case !m.Pointer && isPtr:
+			// Transform p.Mv into (*p).Mv.
+			expr.Expr = ast.NewUnaryOperator(expr.Expr.Pos(), ast.OperatorPointer, expr.Expr)
+			tc.compilation.typeInfos[expr.Expr] = &typeInfo{Type: typ.Elem(), Properties: propertyAddressable}
+		}
+		return &typeInfo{Type: m.Type, MethodType: methodValueConcrete, method: m}, true
+	}
 
 	method, ok := t.Type.MethodByName(name)
 	if !ok {

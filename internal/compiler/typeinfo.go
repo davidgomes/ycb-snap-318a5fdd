@@ -8,6 +8,7 @@ import (
 	"reflect"
 
 	"github.com/open2b/scriggo/ast"
+	"github.com/open2b/scriggo/internal/compiler/types"
 	"github.com/open2b/scriggo/internal/runtime"
 )
 
@@ -42,6 +43,10 @@ type typeInfo struct {
 	value             interface{}  // value; for packages has type *Package.
 	valueType         reflect.Type // When value is a native type holds the original type of value.
 	replacement       ast.Node     // Replacement node.
+
+	// method is the method declared in Scriggo code selected by a method
+	// selector or a method expression.
+	method *types.Method
 }
 
 // methodType represents the type of a method, intended as a combination of a

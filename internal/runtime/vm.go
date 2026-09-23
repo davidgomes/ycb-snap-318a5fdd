@@ -57,6 +57,17 @@ type ScriggoType interface {
 	GoType() reflect.Type
 }
 
+// A ScriggoMethodSet is implemented by the Scriggo types whose method set
+// can contain methods declared in Scriggo code.
+type ScriggoMethodSet interface {
+
+	// BoundMethod returns the function that implements the method with the
+	// given name, with the receiver bound as its only non-local variable. If
+	// deref is true, the receiver is a pointer that must be dereferenced
+	// before being bound. If there is no such method, fn is nil.
+	BoundMethod(name string) (fn *Function, deref bool)
+}
+
 type StackShift [4]int8
 
 type Instruction struct {
@@ -439,6 +450,35 @@ func (vm *VM) callNative(fn *NativeFunction, numVariadic int8, shift StackShift,
 	vm.fp = fp // Restore the frame pointer.
 
 	return
+}
+
+// scriggoMethod returns the function that implements the method, declared in
+// Scriggo code, with the given name of the value v, and the receiver to bind
+// to it as its only non-local variable. If v does not have a Scriggo type
+// with such method, ok is false.
+func (vm *VM) scriggoMethod(v reflect.Value, name string) (fn *Function, rcvr reflect.Value, ok bool) {
+	st, isScriggoType := vm.env.typeof(v).(ScriggoType)
+	if !isScriggoType {
+		return nil, reflect.Value{}, false
+	}
+	ms, hasMethods := st.(ScriggoMethodSet)
+	if !hasMethods {
+		return nil, reflect.Value{}, false
+	}
+	fn, deref := ms.BoundMethod(name)
+	if fn == nil {
+		return nil, reflect.Value{}, false
+	}
+	v, _ = st.Unwrap(v)
+	if deref {
+		if v.IsNil() {
+			panic(errNilPointer)
+		}
+		v = v.Elem()
+	}
+	rcvr = reflect.New(v.Type()).Elem()
+	rcvr.Set(v)
+	return fn, rcvr, true
 }
 
 // equals reports whether x and y are equal.

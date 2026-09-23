@@ -45,6 +45,56 @@ func (x ptrType) Implements(y reflect.Type) bool {
 	return Implements(x, y)
 }
 
+// methodSet returns the methods declared in Scriggo code on the element
+// type, or nil if the element type has no such methods.
+func (x ptrType) methodSet() *methodSet {
+	if dt, ok := x.elem.(definedType); ok && len(dt.methods.methods) > 0 {
+		return dt.methods
+	}
+	return nil
+}
+
+func (x ptrType) Method(i int) reflect.Method {
+	ms := x.methodSet()
+	if ms == nil {
+		return x.Type.Method(i)
+	}
+	return ms.reflectMethod(ms.exported(true)[i], x, i)
+}
+
+func (x ptrType) MethodByName(name string) (reflect.Method, bool) {
+	ms := x.methodSet()
+	if ms == nil {
+		return x.Type.MethodByName(name)
+	}
+	for i, m := range ms.exported(true) {
+		if m.Name == name {
+			return ms.reflectMethod(m, x, i), true
+		}
+	}
+	if x.elem.Kind() == reflect.Struct {
+		// Methods promoted from embedded fields with a Go type.
+		return x.Type.MethodByName(name)
+	}
+	return reflect.Method{}, false
+}
+
+func (x ptrType) NumMethod() int {
+	ms := x.methodSet()
+	if ms == nil {
+		return x.Type.NumMethod()
+	}
+	return len(ms.exported(true))
+}
+
+// BoundMethod implements the interface runtime.ScriggoMethodSet.
+func (x ptrType) BoundMethod(name string) (*runtime.Function, bool) {
+	if dt, ok := x.elem.(definedType); ok {
+		return dt.methods.boundMethod(name, true)
+	}
+	return nil, false
+}
+
 func (x ptrType) Name() string {
 	return "" // composite types do not have a name.
 }

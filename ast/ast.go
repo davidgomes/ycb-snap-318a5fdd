@@ -807,10 +807,12 @@ func NewForRange(pos *Position, assignment *Assignment, body []Node, els *Block)
 	return &ForRange{pos, assignment, body, els}
 }
 
-// Func node represents a function declaration or literal.
+// Func node represents a function declaration, a method declaration or a
+// function literal.
 type Func struct {
 	expression
 	*Position
+	Recv     *Parameter  // receiver, nil for functions and function literals.
 	Ident    *Identifier // name, nil for function literals.
 	Type     *FuncType   // type.
 	Body     *Block      // body.
@@ -821,7 +823,7 @@ type Func struct {
 
 // NewFunc returns a new [Func] node.
 func NewFunc(pos *Position, name *Identifier, typ *FuncType, body *Block, distFree bool, format Format) *Func {
-	return &Func{expression{}, pos, name, typ, body, distFree, nil, format}
+	return &Func{Position: pos, Ident: name, Type: typ, Body: body, DistFree: distFree, Format: format}
 }
 
 // String returns the string representation of n.
@@ -831,6 +833,9 @@ func (n *Func) String() string {
 	}
 	if n.Ident == nil {
 		return "func literal"
+	}
+	if n.Recv != nil {
+		return "method declaration"
 	}
 	return "func declaration"
 }

@@ -27,6 +27,9 @@ type definedType struct {
 	// represents are identical (every defined type, in Go, is different from
 	// every other type).
 	sign *byte
+
+	// methods holds the methods declared in Scriggo code on the type.
+	methods *methodSet
 }
 
 // DefinedOf returns the defined type with the given name and underlying type.
@@ -36,7 +39,7 @@ func (types *Types) DefinedOf(name string, underlyingType reflect.Type) reflect.
 	if name == "" {
 		panic(internalError("name cannot be empty"))
 	}
-	return definedType{Type: underlyingType, name: name, sign: new(byte)}
+	return definedType{Type: underlyingType, name: name, sign: new(byte), methods: &methodSet{types: types}}
 }
 
 func (x definedType) Name() string {
@@ -55,9 +58,35 @@ func (x definedType) Implements(y reflect.Type) bool {
 	return Implements(x, y)
 }
 
-func (x definedType) MethodByName(string) (reflect.Method, bool) {
-	// TODO.
+func (x definedType) Method(i int) reflect.Method {
+	if x.Kind() == reflect.Interface || len(x.methods.methods) == 0 {
+		return x.Type.Method(i)
+	}
+	return x.methods.reflectMethod(x.methods.exported(false)[i], x, i)
+}
+
+func (x definedType) MethodByName(name string) (reflect.Method, bool) {
+	if x.Kind() == reflect.Interface {
+		return x.Type.MethodByName(name)
+	}
+	for i, m := range x.methods.exported(false) {
+		if m.Name == name {
+			return x.methods.reflectMethod(m, x, i), true
+		}
+	}
 	return reflect.Method{}, false
+}
+
+func (x definedType) NumMethod() int {
+	if x.Kind() == reflect.Interface || len(x.methods.methods) == 0 {
+		return x.Type.NumMethod()
+	}
+	return len(x.methods.exported(false))
+}
+
+// BoundMethod implements the interface runtime.ScriggoMethodSet.
+func (x definedType) BoundMethod(name string) (*runtime.Function, bool) {
+	return x.methods.boundMethod(name, false)
 }
 
 func (x definedType) String() string {

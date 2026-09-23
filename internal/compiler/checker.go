@@ -178,6 +178,10 @@ type typechecker struct {
 	// of its fields have been declared.
 	structDeclPkg map[reflect.Type]string
 
+	// methodDecls maps the methods declared in the package to their
+	// declarations.
+	methodDecls map[*types.Method]*ast.Func
+
 	// withinUsingAffectedStmt reports whether the type checker is currently
 	// checking the affected statement of a 'using' statement.
 	withinUsingAffectedStmt bool
@@ -219,6 +223,7 @@ func newTypechecker(compilation *compilation, path string, opts checkerOptions, 
 		types:         tt,
 		mdConverter:   opts.mdConverter,
 		structDeclPkg: map[reflect.Type]string{},
+		methodDecls:   map[*types.Method]*ast.Func{},
 		importer:      importer,
 		toBeEmitted:   true,
 	}
