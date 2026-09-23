@@ -290,6 +290,7 @@ headers = ["Authorization: Bearer token"]
 
 - `refresh_interval`, `timeout`, `follow_redirects`, `accept_redirects`, `receive_alert`, `count`
 - `webhook_url`, `webhook_headers`: Default webhook settings
+- `alert_policy`: Default alert policy (see [Alert Policies](#alert-policies))
 - `only`, `skip`: Target filtering arrays
 - `regions`: AWS regions for remote executors
 
@@ -300,7 +301,30 @@ headers = ["Authorization: Bearer token"]
 - `assert_text`, `should_fail`: Response validation
 - `skip_ssl`, `follow_redirects`, `accept_redirects`: Connection options
 - `webhook_url`, `webhook_headers`: Per-target notifications
+- `alert_policy`: Per-target alert policy; unset fields inherit from `global.alert_policy`
 - `regions`: Target-specific AWS regions
+
+### Alert Policies
+
+Alert policies control when desktop and webhook notifications fire:
+
+```toml
+[global.alert_policy]
+consecutive_failures = 3        # failed checks before target_down (default 1)
+consecutive_recoveries = 2      # successful checks before target_recovered (default 1)
+cooldown_seconds = 300          # suppress repeat non-recovery alerts per target
+latency_threshold_ms = 800      # emit target_degraded above this (0 disables)
+latency_breach_count = 3        # consecutive slow checks before degraded (default 1)
+ssl_expiry_threshold_days = 14  # emit ssl_expiring at or below this (0 disables)
+
+[[targets]]
+url = "https://api.example.com"
+
+[targets.alert_policy]
+consecutive_failures = 5
+```
+
+Events: `target_down`, `target_recovered`, `target_degraded` (repeated for every slow check while degraded), `target_healthy`, and `ssl_expiring` (once each time the certificate enters the threshold). Target states are `healthy`, `degraded`, and `down`. The cooldown applies across `target_down`, `target_degraded`, and `ssl_expiring`; recovery events are never suppressed. In simple mode each line shows `alert=<state>`, plus `event=<event>` when a check emits an event.
 
 ## Multi-Region Monitoring
 
@@ -353,8 +377,8 @@ webhook_url = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
 ```
 
 Updo automatically formats Slack messages with:
-- Color-coded attachments (red for down, green for up)
-- Unicode symbols (✘ for down, ✔ for up)
+- Color-coded attachments (red for down, yellow for degraded/SSL expiry, green for recovered)
+- Unicode symbols (✘ for down, ⚠ for warnings, ✔ for recovered)
 - Structured fields for URL, error, status code, response time, and timestamp
 
 **Discord Webhook (Auto-Detected):**
@@ -367,8 +391,8 @@ webhook_url = "https://discord.com/api/webhooks/123456789/YOUR_WEBHOOK_TOKEN"
 ```
 
 Updo automatically formats Discord messages with:
-- Color-coded embeds (red for down, green for up)
-- Unicode symbols (✘ for down, ✔ for up)
+- Color-coded embeds (red for down, orange for degraded/SSL expiry, green for recovered)
+- Unicode symbols (✘ for down, ⚠ for warnings, ✔ for recovered)
 - Structured fields with inline formatting
 - Clickable URL links
 
@@ -384,7 +408,15 @@ For custom webhooks, Updo sends a generic JSON payload:
   "timestamp": "2024-01-01T12:00:00Z",
   "response_time_ms": 1500,
   "status_code": 500,
-  "error": "Internal Server Error"
+  "error": "Internal Server Error",
+  "state": "down",
+  "previous_state": "healthy",
+  "reason": "3 consecutive failed checks",
+  "consecutive_failures": 3,
+  "consecutive_recoveries": 0,
+  "latency_breaches": 0,
+  "ssl_expiry_days": -1,
+  "region": ""
 }
 ```
 

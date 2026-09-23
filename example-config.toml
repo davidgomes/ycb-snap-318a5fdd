@@ -8,6 +8,14 @@ count = 0
 skip = ["GitHub-API"]
 # regions = ["us-east-1", "eu-central-1", "ap-southeast-1"]
 
+# [global.alert_policy]
+# consecutive_failures = 3
+# consecutive_recoveries = 2
+# cooldown_seconds = 300
+# latency_threshold_ms = 800
+# latency_breach_count = 3
+# ssl_expiry_threshold_days = 14
+
 [[targets]]
 url = "https://www.github.com"
 name = "GitHub"
