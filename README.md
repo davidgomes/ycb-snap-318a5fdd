@@ -411,6 +411,22 @@ world.onAdd(ChildOf('*'), (entity, target) => {})
 
 Modifiers are used to filter query results enabling powerful patterns. All modifiers can be mixed together.
 
+#### Predicates
+
+`createPredicate` filters entities by trait values. Pass the dependency traits and a function that receives their data in that order. Tags and relations are not valid dependencies. Each call returns a distinct predicate. `set` and `add` on a dependency re-evaluate it. Predicates do not add entries to `updateEach` tuples, and dependency writes during `updateEach` re-evaluate after the iteration finishes.
+
+`Not(predicate)` matches entities missing any dependency or whose predicate returns false. `Or` accepts predicates. `Added(predicate)` matches entities that satisfy it and were not in the previous result. `Removed(predicate)` matches a transition to false. `Changed(predicate)` matches any truthiness change. Predicates compose with relation pairs.
+
+```js
+import { createPredicate, Not } from 'koota'
+
+const Health = trait({ hp: 100 })
+const isHurt = createPredicate([Health], ([health]) => health.hp < 50)
+
+const hurt = world.query(isHurt)
+const healthy = world.query(Not(isHurt))
+```
+
 #### Not
 
 The `Not` modifier excludes entities that have specific traits from the query results.

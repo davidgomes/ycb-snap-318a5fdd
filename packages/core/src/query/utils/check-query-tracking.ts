@@ -2,6 +2,7 @@ import { $internal } from '../../common';
 import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
+import { matchPredicateFilters, matchPredicateTrackers } from '../predicate';
 import { EventType, QueryInstance } from '../types';
 
 /**
@@ -34,7 +35,11 @@ export function checkQueryTracking(
     const trackingGroupsLen = trackingGroups.length;
 
     // Early exit: no traits to check
-    if (traitInstancesAll.length === 0) return false;
+    if (traitInstancesAll.length === 0 && !query.hasPredicateFilters && query.predicateTrackers.length === 0) {
+        return false;
+    }
+
+    let orTraitFailed = false;
 
     // 1. Check static constraints (required/forbidden/or)
     for (let i = 0; i < generationsLen; i++) {
@@ -57,7 +62,17 @@ export function checkQueryTracking(
         if (required && (entityMask & required) !== required) return false;
 
         // Check Or traits
-        if (or !== 0 && (entityMask & or) === 0) return false;
+        if (or !== 0 && (entityMask & or) === 0) {
+            if (!query.hasPredicateOr) return false;
+            orTraitFailed = true;
+        }
+    }
+
+    if (
+        query.hasPredicateFilters &&
+        !matchPredicateFilters(world, query, entity, orTraitFailed)
+    ) {
+        return false;
     }
 
     // 2. Process tracking groups - update trackers and check cross-event invalidation
@@ -139,6 +154,10 @@ export function checkQueryTracking(
 
     // If we have OR groups, at least one must match
     if (hasOrGroup && !anyOrMatched) {
+        return false;
+    }
+
+    if (query.predicateTrackers.length > 0 && !matchPredicateTrackers(world, query, entity)) {
         return false;
     }
 

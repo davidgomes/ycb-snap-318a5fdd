@@ -11,11 +11,15 @@ import { universe } from '../universe/universe';
 import { SparseSet } from '../utils/sparse-set';
 import type { World } from '../world';
 import { getTrackingType, isModifier, isOrWithModifiers, isTrackingModifier } from './modifier';
+import { commitPredicateTrackers, isPredicate, matchPredicateFilters, matchPredicateTrackers } from './predicate';
+import { watchPredicate } from './predicate-query';
 import { createQueryResult } from './query-result';
 import { $queryRef } from './symbols';
 import {
     type EventType,
     type Modifier,
+    type Predicate,
+    type PredicateTracker,
     type Query,
     type QueryInstance,
     type QueryParameter,
@@ -36,6 +40,9 @@ export function runQuery<T extends QueryParameter[]>(
     params: QueryParameter[]
 ): QueryResult<T> {
     commitQueryRemovals(world);
+
+    // Snapshot predicate truth before the tracking result is cleared.
+    if (query.predicateTrackers.length > 0) commitPredicateTrackers(world, query);
 
     // With hybrid bitmask strategy, query.entities is already incrementally maintained
     // with both trait and relation filters applied. Just return the pre-filtered entities.
@@ -190,6 +197,10 @@ export function createQueryInstance<T extends QueryParameter[]>(
         isTracking: false,
         hasChangedModifiers: false,
         changedTraits: new Set<Trait>(),
+        predicateFilters: { require: [], not: [], or: [] },
+        predicateTrackers: [],
+        hasPredicateFilters: false,
+        hasPredicateOr: false,
         toRemove: new SparseSet(),
         addSubscriptions: new Set<QuerySubscriber>(),
         removeSubscriptions: new Set<QuerySubscriber>(),
@@ -218,6 +229,11 @@ export function createQueryInstance<T extends QueryParameter[]>(
     for (let i = 0; i < parameters.length; i++) {
         const parameter = parameters[i];
 
+        if (isPredicate(parameter)) {
+            addRequiredPredicate(world, query, parameter);
+            continue;
+        }
+
         // Handle relation pairs
         if (isRelationPair(parameter)) {
             const pairCtx = parameter[$internal];
@@ -242,6 +258,10 @@ export function createQueryInstance<T extends QueryParameter[]>(
                 if (!hasTraitInstance(ctx.traitInstances, t)) registerTrait(world, t);
             }
 
+            if (parameter.predicates?.length) {
+                absorbModifierPredicates(world, query, parameter, 'and');
+            }
+
             if (parameter.type === 'not') {
                 query.traitInstances.forbidden.push(
                     ...traits.map((t) => getTraitInstance(ctx.traitInstances, t)!)
@@ -255,6 +275,9 @@ export function createQueryInstance<T extends QueryParameter[]>(
                 // Handle nested tracking modifiers in Or
                 if (isOrWithModifiers(parameter)) {
                     for (const nestedModifier of parameter.modifiers) {
+                        if (nestedModifier.predicates?.length) {
+                            absorbModifierPredicates(world, query, nestedModifier, 'or');
+                        }
                         if (isTrackingModifier(nestedModifier)) {
                             processTrackingModifier(world, query, nestedModifier, 'or', ctx, trackingGroupsMap);
                         }
@@ -409,6 +432,13 @@ export function createQueryInstance<T extends QueryParameter[]>(
                     if (logic === 'or' && matches) break;
                 }
 
+                if (matches && query.hasPredicateFilters) {
+                    matches = matchPredicateFilters(world, query, entity, false);
+                }
+                if (matches && query.predicateTrackers.length > 0) {
+                    matches = matchPredicateTrackers(world, query, entity);
+                }
+
                 if (matches) {
                     if (hasRelationFilters) {
                         let relationMatch = true;
@@ -437,7 +467,81 @@ export function createQueryInstance<T extends QueryParameter[]>(
         }
     }
 
+    if (query.predicateTrackers.length > 0 && query.trackingGroups.length === 0) {
+        const entities = ctx.entityIndex.dense;
+        for (let i = 0; i < entities.length; i++) {
+            const entity = entities[i];
+            const match = hasRelationFilters
+                ? checkQueryTrackingWithRelations(world, query, entity, 'change', 0, 0)
+                : query.checkTracking(world, entity, 'change', 0, 0);
+            if (match) query.add(entity);
+        }
+    }
+
     return query;
+}
+
+function addRequiredPredicate(world: World, query: QueryInstance, predicate: Predicate) {
+    const ctx = world[$internal];
+    const deps = predicate.dependencies;
+    for (let i = 0; i < deps.length; i++) {
+        const dep = deps[i];
+        if (!hasTraitInstance(ctx.traitInstances, dep)) registerTrait(world, dep);
+        const instance = getTraitInstance(ctx.traitInstances, dep)!;
+        query.traitInstances.required.push(instance);
+        query.traits.push(dep);
+    }
+    query.predicateFilters.require.push(predicate);
+    query.hasPredicateFilters = true;
+    watchPredicate(world, query, predicate);
+}
+
+function absorbModifierPredicates(
+    world: World,
+    query: QueryInstance,
+    modifier: Modifier,
+    nestedLogic: 'and' | 'or'
+) {
+    const predicates = modifier.predicates;
+    if (!predicates?.length) return;
+
+    const ctx = world[$internal];
+    for (let i = 0; i < predicates.length; i++) {
+        const predicate = predicates[i];
+        const deps = predicate.dependencies;
+        for (let j = 0; j < deps.length; j++) {
+            if (!hasTraitInstance(ctx.traitInstances, deps[j])) registerTrait(world, deps[j]);
+        }
+        watchPredicate(world, query, predicate);
+    }
+
+    if (modifier.type === 'not') {
+        for (let i = 0; i < predicates.length; i++) query.predicateFilters.not.push(predicates[i]);
+        query.hasPredicateFilters = true;
+        return;
+    }
+
+    if (modifier.type === 'or') {
+        for (let i = 0; i < predicates.length; i++) query.predicateFilters.or.push(predicates[i]);
+        query.hasPredicateFilters = true;
+        query.hasPredicateOr = true;
+        return;
+    }
+
+    const kind = getTrackingType(modifier);
+    if (!kind) return;
+
+    const logic = modifier.type === 'or' ? 'or' : nestedLogic;
+    for (let i = 0; i < predicates.length; i++) {
+        const tracker: PredicateTracker = {
+            predicate: predicates[i],
+            kind,
+            logic,
+            committed: new Uint8Array(0),
+        };
+        query.predicateTrackers.push(tracker);
+    }
+    query.isTracking = true;
 }
 
 let queryId = 0;

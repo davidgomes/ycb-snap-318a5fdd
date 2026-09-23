@@ -2,6 +2,8 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { setChanged, setPairChanged } from '../query/modifiers/changed';
+import { queuePredicateRecheck, recheckPredicatesForTrait } from '../query/predicate-query';
+import type { QueryInstance } from '../query/types';
 import { checkQueryTrackingWithRelations } from '../query/utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
 import { getOrderedTraitRelation, isOrderedTrait, setupOrderedTraitSync } from '../relation/ordered';
@@ -104,6 +106,7 @@ export function registerTrait(world: World, trait: Trait) {
         trackingQueries: new Set(),
         notQueries: new Set(),
         relationQueries: new Set(),
+        predicateQueries: new Set(),
         schema: trait.schema,
         changeSubscriptions: new Set(),
         addSubscriptions: new Set(),
@@ -419,6 +422,7 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
 
     ctx.set(index, store, value);
     triggerChanged && setChanged(world, entity, trait);
+    if (!triggerChanged) recheckPredicatesForTrait(world, entity, trait);
 }
 
 /**
@@ -452,6 +456,7 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
 
     // Update non-tracking queries (no event data needed)
     for (const query of queries) {
+        if (deferPredicateQuery(world, query, entity)) continue;
         query.toRemove.remove(entity);
         // Use checkQueryWithRelations if query has relation filters, otherwise use checkQuery
         const match =
@@ -464,6 +469,7 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
 
     // Update tracking queries (with event data)
     for (const query of trackingQueries) {
+        if (deferPredicateQuery(world, query, entity)) continue;
         query.toRemove.remove(entity);
         // Use checkQueryTrackingWithRelations if query has relation filters, otherwise use checkQueryTracking
         const match =
@@ -502,6 +508,7 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
 
     // Update non-tracking queries
     for (const query of queries) {
+        if (deferPredicateQuery(world, query, entity)) continue;
         // Use checkQueryWithRelations if query has relation filters, otherwise use checkQuery
         const match =
             query.relationFilters && query.relationFilters.length > 0
@@ -513,6 +520,7 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
 
     // Update tracking queries (with event data)
     for (const query of trackingQueries) {
+        if (deferPredicateQuery(world, query, entity)) continue;
         // Use checkQueryTrackingWithRelations if query has relation filters, otherwise use checkQueryTracking
         const match =
             query.relationFilters && query.relationFilters.length > 0
@@ -531,4 +539,13 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
 
     // Remove trait from entity internally
     ctx.entityTraits.get(entity)!.delete(trait);
+
+    recheckPredicatesForTrait(world, entity, trait);
+}
+
+function deferPredicateQuery(world: World, query: QueryInstance, entity: Entity): boolean {
+    if (world[$internal].deferPredicateDepth === 0) return false;
+    if (!query.hasPredicateFilters && query.predicateTrackers.length === 0) return false;
+    queuePredicateRecheck(world, query, entity);
+    return true;
 }

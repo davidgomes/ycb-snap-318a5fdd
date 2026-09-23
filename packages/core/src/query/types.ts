@@ -12,10 +12,32 @@ import type {
 import type { SparseSet } from '../utils/sparse-set';
 import type { World } from '../world';
 import { $modifier } from './modifier';
-import { $parameters, $queryRef } from './symbols';
+import { $parameters, $predicate, $queryRef } from './symbols';
 
 export type QueryModifier = (...components: Trait[]) => Modifier;
-export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier>;
+export type QueryParameter = Trait | RelationPair | Modifier | Predicate;
+
+/** Value filter over one or more data traits. Each `createPredicate` call is a distinct instance. */
+export type Predicate<TDeps extends Trait[] = Trait[]> = {
+    [$predicate]: true;
+    id: number;
+    dependencies: TDeps;
+    test: (data: PredicateData<TDeps>) => boolean;
+};
+
+export type PredicateData<TDeps extends Trait[]> = {
+    [K in keyof TDeps]: TDeps[K] extends Trait ? TraitRecord<TDeps[K]> : never;
+};
+
+export type PredicateFilterMode = 'require' | 'not' | 'or';
+
+export type PredicateTracker = {
+    predicate: Predicate;
+    kind: 'add' | 'remove' | 'change';
+    logic: 'and' | 'or';
+    /** 1 if the predicate was true for that entity when the query last ran. */
+    committed: Uint8Array;
+};
 export type QuerySubscriber = (entity: Entity) => void;
 export type QueryUnsubscriber = () => void;
 
@@ -46,7 +68,9 @@ export type StoresFromParameters<T extends QueryParameter[]> = T extends [infer 
               ? [ExtractStore<First>]
               : First extends Modifier
                 ? StoresFromParameters<UnwrapModifierData<First>>
-                : []),
+                : First extends Predicate
+                  ? []
+                  : []),
           ...(Rest extends QueryParameter[] ? StoresFromParameters<Rest> : []),
       ]
     : [];
@@ -66,7 +90,9 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
                 ? IsNotModifier<First> extends true
                     ? []
                     : InstancesFromParameters<UnwrapModifierData<First>>
-                : []),
+                : First extends Predicate
+                  ? []
+                  : []),
           ...(Rest extends QueryParameter[] ? InstancesFromParameters<Rest> : []),
       ]
     : [];
@@ -93,10 +119,12 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /** Value predicates carried by this modifier (Not, Or, Added, Removed, Changed). */
+    predicates?: Predicate[];
 };
 
 /** Parameter types that can be passed to Or modifier */
-export type OrParameter = Trait | Modifier;
+export type OrParameter = Trait | Modifier | Predicate;
 
 /** Or modifier that can contain both traits and nested modifiers */
 export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
@@ -160,6 +188,17 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     isTracking: boolean;
     hasChangedModifiers: boolean;
     changedTraits: Set<Trait>;
+    /** Positive, negated, and OR predicate filters. Empty unless the query uses predicates. */
+    predicateFilters: {
+        require: Predicate[];
+        not: Predicate[];
+        or: Predicate[];
+    };
+    /** Added / Removed / Changed over predicate truth. */
+    predicateTrackers: PredicateTracker[];
+    hasPredicateFilters: boolean;
+    /** True when an Or() group includes at least one predicate. */
+    hasPredicateOr: boolean;
     toRemove: SparseSet;
     addSubscriptions: Set<QuerySubscriber>;
     removeSubscriptions: Set<QuerySubscriber>;

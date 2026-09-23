@@ -1,5 +1,6 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
+import { getEntityWorld } from '../entity/entity';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { isRelationPair } from '../relation/utils/is-relation';
 import type { Relation } from '../relation/types';
@@ -9,6 +10,8 @@ import type { Trait } from '../trait/types';
 import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
 import { isModifier } from './modifier';
+import { isPredicate } from './predicate';
+import { beginPredicateDefer, endPredicateDefer } from './predicate-query';
 import { setChanged } from './modifiers/changed';
 import type {
     InstancesFromParameters,
@@ -54,6 +57,14 @@ export function createQueryResult<T extends QueryParameter[]>(
             options: QueryResultOptions = { changeDetection: 'auto' }
         ) {
             const state = Array.from({ length: traits.length });
+            beginPredicateDefer(world);
+            try {
+            updateEachBody();
+            } finally {
+                endPredicateDefer(world);
+            }
+
+            function updateEachBody() {
 
             // Inline all three permutations of updateEach for performance.
             if (options.changeDetection === 'auto') {
@@ -169,6 +180,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                     }
                 }
             }
+            }
 
             return results;
         },
@@ -264,6 +276,8 @@ export function createQueryResult<T extends QueryParameter[]>(
             continue;
         }
 
+        if (isPredicate(param)) continue;
+
         if (isModifier(param)) {
             // Skip not modifier.
             if (param.type === 'not') continue;
@@ -305,9 +319,14 @@ const relationOnlyMethods = {
         return this;
     },
     updateEach(this: QueryResult<any>, callback: any) {
-        // No traits to update, just iterate entities
-        for (let i = 0; i < this.length; i++) {
-            callback([], this[i], i);
+        const world = this.length ? getEntityWorld(this[0]) : undefined;
+        if (world) beginPredicateDefer(world);
+        try {
+            for (let i = 0; i < this.length; i++) {
+                callback([], this[i], i);
+            }
+        } finally {
+            if (world) endPredicateDefer(world);
         }
         return this;
     },

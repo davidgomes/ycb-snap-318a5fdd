@@ -320,6 +320,14 @@ function updateQueriesForRelationChange(
     // Update queries indexed by this relation (much faster than iterating all queries)
     // All queries in relationQueries already filter by this relation
     for (const query of traitData.relationQueries) {
+        if (
+            ctx.deferPredicateDepth > 0 &&
+            (query.hasPredicateFilters || query.predicateTrackers.length > 0)
+        ) {
+            ctx.deferredPredicateQueries.push(query);
+            ctx.deferredPredicateEntities.push(entity);
+            continue;
+        }
         // Re-check entity against query
         const match = checkQueryWithRelations(world, query, entity);
         if (match) {

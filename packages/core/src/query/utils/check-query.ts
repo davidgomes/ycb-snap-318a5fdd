@@ -2,6 +2,7 @@ import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import type { World } from '../../world';
+import { matchPredicateFilters } from '../predicate';
 import type { QueryInstance } from '../types';
 
 /**
@@ -14,7 +15,9 @@ export function checkQuery(world: World, query: QueryInstance, entity: Entity): 
     const ctx = world[$internal];
     const eid = getEntityId(entity);
 
-    if (query.traitInstances.all.length === 0) return false;
+    if (query.traitInstances.all.length === 0 && !query.hasPredicateFilters) return false;
+
+    let orTraitFailed = false;
 
     for (let i = 0; i < generations.length; i++) {
         const generationId = generations[i];
@@ -29,7 +32,17 @@ export function checkQuery(world: World, query: QueryInstance, entity: Entity): 
         if (!forbidden && !required && !or) return false;
         if (forbidden && (entityMask & forbidden) !== 0) return false;
         if (required && (entityMask & required) !== required) return false;
-        if (or !== 0 && (entityMask & or) === 0) return false;
+        if (or !== 0 && (entityMask & or) === 0) {
+            if (!query.hasPredicateOr) return false;
+            orTraitFailed = true;
+        }
+    }
+
+    if (
+        query.hasPredicateFilters &&
+        !matchPredicateFilters(world, query, entity, orTraitFailed)
+    ) {
+        return false;
     }
 
     return true;

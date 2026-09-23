@@ -2,13 +2,15 @@ import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { isRelation } from '../../relation/utils/is-relation';
+import { recheckPredicatesForTrait } from '../predicate-query';
 import { hasTrait, registerTrait } from '../../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../../trait/trait-instance';
 import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
 import { createModifier } from '../modifier';
-import type { Modifier } from '../types';
+import { isPredicate } from '../predicate';
+import type { Modifier, Predicate } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
 
@@ -21,12 +23,19 @@ export function createChanged() {
     }
 
     return <T extends TraitOrRelation[]>(
-        ...inputs: T
+        ...inputs: [...T, ...Predicate[]]
     ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`changed-${id}`, id, traits);
+        const traits: Trait[] = [];
+        const predicates: Predicate[] = [];
+        for (let i = 0; i < inputs.length; i++) {
+            const input = inputs[i] as TraitOrRelation | Predicate;
+            if (isPredicate(input)) predicates.push(input);
+            else if (isRelation(input)) traits.push(input[$internal].trait);
+            else traits.push(input);
+        }
+        const modifier = createModifier(`changed-${id}`, id, traits as ExtractTraits<T>);
+        if (predicates.length) modifier.predicates = predicates;
+        return modifier;
     };
 }
 
@@ -76,6 +85,7 @@ function markChanged(world: World, entity: Entity, trait: Trait) {
 
 export function setChanged(world: World, entity: Entity, trait: Trait) {
     const data = markChanged(world, entity, trait);
+    recheckPredicatesForTrait(world, entity, trait);
     if (!data) return;
     for (const sub of data.changeSubscriptions) sub(entity);
 }

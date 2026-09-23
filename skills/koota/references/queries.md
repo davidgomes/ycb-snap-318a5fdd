@@ -38,6 +38,32 @@ const player = world.queryFirst(IsPlayer, Position)
 const allEntities = world.query()
 ```
 
+## Predicates
+
+`createPredicate` filters on trait values instead of presence.
+
+```typescript
+import { createPredicate, Not, Or, createAdded, createRemoved, createChanged } from 'koota'
+
+const isHurt = createPredicate([Health], ([health]) => health.hp < 50)
+
+world.query(isHurt)
+world.query(Position, isHurt).updateEach(([pos]) => {
+  // predicate data is not part of the tuple
+})
+world.query(Not(isHurt)) // missing Health, or hp >= 50
+world.query(Or(isHurt, IsPlayer))
+world.query(Added(isHurt)) // newly true since the previous result
+world.query(Removed(isHurt)) // transitioned to false
+world.query(Changed(isHurt)) // either truthiness change
+world.query(ChildOf(parent), isHurt)
+```
+
+- Each `createPredicate` call is a distinct instance.
+- Dependencies must be data traits. Tags and relations throw.
+- `set` and `add` on a dependency re-evaluate the predicate.
+- Dependency changes inside `updateEach` re-evaluate after the iteration ends.
+
 ## Query modifiers
 
 Filter queries with logical modifiers.
