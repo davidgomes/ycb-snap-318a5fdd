@@ -31,7 +31,13 @@ type parserOptions struct {
 	unionDefs             []unionDef
 	customDefs            []customDef
 	elide                 []string
+	strictMode            bool
 }
+
+// runStrictAnalysis reports grammar conflicts when StrictMode is enabled.
+// The analyze-tagged analyzer installs this hook; without that tag it stays nil
+// and StrictMode does not reject grammars.
+var runStrictAnalysis func(root node) error
 
 // A Parser for a particular grammar and lexer.
 type Parser[G any] struct {
@@ -134,6 +140,11 @@ func Build[G any](options ...Option) (parser *Parser[G], err error) {
 	p.typeNodes = context.typeNodes
 	p.typeNodes[p.rootType] = rootNode
 	p.setCaseInsensitiveTokens()
+	if p.strictMode && runStrictAnalysis != nil {
+		if err := runStrictAnalysis(rootNode); err != nil {
+			return nil, err
+		}
+	}
 	return p, nil
 }
 

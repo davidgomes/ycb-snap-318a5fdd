@@ -112,6 +112,20 @@ func Union[T any](members ...T) Option {
 	}
 }
 
+// StrictMode rejects ambiguous grammars while Build constructs the parser.
+//
+// When analysis is compiled in (the "analyze" build tag), Build runs it after the
+// grammar is validated. Any conflict, warnings included, makes Build return a nil
+// parser and an error whose text contains "conflict". SuppressConflictType does
+// not apply to this check. Without the analyze tag the option is still accepted
+// and Build does not reject grammars.
+func StrictMode() Option {
+	return func(p *parserOptions) error {
+		p.strictMode = true
+		return nil
+	}
+}
+
 // ParseOption modifies how an individual parse is applied.
 type ParseOption func(p *parseContext)
 
