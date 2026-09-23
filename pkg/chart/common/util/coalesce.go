@@ -141,6 +141,8 @@ func coalesceDeps(printf printFn, chrt chart.Charter, dest map[string]any, prefi
 
 // coalesceGlobals copies the globals out of src and merges them into dest.
 //
+// For convenience, returns dest.
+//
 // The strategies are the merge strategies of the chart owning dest, relative to
 // the globals map.
 func coalesceGlobals(printf printFn, dest, src map[string]any, prefix string, merge bool, strategies map[string]MergeStrategy) {
