@@ -1561,6 +1561,47 @@ This command takes the same options as the ``sqlite-utils insert`` command - so 
 
 By default all of the SQL queries will be executed in a single transaction. To commit every 20 records, use ``--batch-size 20``.
 
+.. _cli_safe_import:
+
+Safe import
+===========
+
+Bulk imports can stop halfway through and leave a database half-updated, including new columns, indexes, or triggers. Safe import mode records rollback checkpoints and commits a write only when it finishes and every import invariant for the affected tables passes.
+
+Enable it once per database file:
+
+.. code-block:: bash
+
+    sqlite-utils enable-safe-import data.db
+
+Disable it again with:
+
+.. code-block:: bash
+
+    sqlite-utils disable-safe-import data.db
+
+Invariants are stored in the database. An invariant is either a ``SELECT`` statement (the first column of the first row is treated as a boolean) or a SQL expression. Aggregate expressions such as ``COUNT(*)``, ``SUM(...)``, ``AVG(...)``, ``MIN(...)``, and ``MAX(...)`` are evaluated once for the table. Any other expression must be true for every row.
+
+.. code-block:: bash
+
+    sqlite-utils add-import-invariant data.db dogs 'age > 0'
+    sqlite-utils add-import-invariant data.db dogs 'COUNT(*) < 1000'
+    sqlite-utils list-import-invariants data.db dogs
+    sqlite-utils remove-import-invariant data.db dogs inv_example
+    sqlite-utils validate-import-invariants data.db dogs
+
+``list-import-invariants`` prints each invariant id and its SQL. ``validate-import-invariants`` always exits with status 0. It prints ``pass`` when every invariant holds, or ``fail`` followed by the failing invariant ids.
+
+``insert``, ``upsert``, and ``bulk`` accept ``--safe-mode``. The import runs inside a checkpoint. The process exits 0 only when that checkpoint is committed. A failed invariant check or a SQL error rolls the database back to the pre-import state (rows and schema) and exits non-zero. ``--safe-mode`` can infer CSV, TSV, or newline-delimited JSON when those format flags are omitted. ``bulk --safe-mode`` also wraps ``UPDATE`` statements.
+
+.. code-block:: bash
+
+    sqlite-utils insert data.db dogs dogs.csv --safe-mode
+    sqlite-utils upsert data.db dogs dogs.json --pk id --safe-mode
+    sqlite-utils bulk data.db \
+        'update dogs set age = :age where id = :id' \
+        updates.json --safe-mode
+
 .. _cli_insert_files:
 
 Inserting data from files
