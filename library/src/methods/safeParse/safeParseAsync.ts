@@ -6,7 +6,7 @@ import type {
   Config,
   InferIssue,
 } from '../../types/index.ts';
-import type { SchemaWithoutRecur } from '../recursive/index.ts';
+import type { NoUnresolvedRecur } from '../recursive/index.ts';
 import type { SafeParseResult } from './types.ts';
 
 /**
@@ -20,11 +20,13 @@ import type { SafeParseResult } from './types.ts';
  */
 // @__NO_SIDE_EFFECTS__
 export async function safeParseAsync<
-  const TSchema extends
+  const TSchema extends (
     | BaseSchema<unknown, unknown, BaseIssue<unknown>>
-    | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>,
+    | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>
+  ) &
+    NoUnresolvedRecur<TSchema>,
 >(
-  schema: SchemaWithoutRecur<TSchema>,
+  schema: TSchema,
   input: unknown,
   config?: Config<InferIssue<TSchema>>
 ): Promise<SafeParseResult<TSchema>> {

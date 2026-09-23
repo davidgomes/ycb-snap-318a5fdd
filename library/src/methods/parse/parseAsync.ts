@@ -8,7 +8,7 @@ import type {
   InferOutput,
 } from '../../types/index.ts';
 import { ValiError } from '../../utils/index.ts';
-import type { SchemaWithoutRecur } from '../recursive/index.ts';
+import type { NoUnresolvedRecur } from '../recursive/index.ts';
 
 /**
  * Parses an unknown input based on a schema.
@@ -20,11 +20,13 @@ import type { SchemaWithoutRecur } from '../recursive/index.ts';
  * @returns The parsed input.
  */
 export async function parseAsync<
-  const TSchema extends
+  const TSchema extends (
     | BaseSchema<unknown, unknown, BaseIssue<unknown>>
-    | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>,
+    | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>
+  ) &
+    NoUnresolvedRecur<TSchema>,
 >(
-  schema: SchemaWithoutRecur<TSchema>,
+  schema: TSchema,
   input: unknown,
   config?: Config<InferIssue<TSchema>>
 ): Promise<InferOutput<TSchema>> {

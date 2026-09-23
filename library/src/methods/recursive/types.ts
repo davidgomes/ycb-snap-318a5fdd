@@ -3,8 +3,6 @@ import type {
   BaseSchema,
   BaseSchemaAsync,
   Config,
-  InferInput,
-  InferOutput,
 } from '../../types/index.ts';
 
 /**
@@ -142,21 +140,25 @@ export interface UnresolvedRecur {
  *
  * Hint: The state of unresolved schemas is `any`, because TypeScript ignores
  * `any` branches when computing the constraint of a deferred conditional type.
- * This way, schemas with generic types are still accepted.
+ * This way, schemas with generic types are still accepted. The input and
+ * output types are inferred instead of using `InferInput` and `InferOutput`,
+ * so that this type can be used in the constraint of the schema itself.
  */
-type RecurState<
-  TSchema extends
-    | BaseSchema<unknown, unknown, BaseIssue<unknown>>
-    | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>,
-> = TSchema extends unknown
-  ? HasRecur<InferInput<TSchema>> extends true
+type RecurState<TSchema> = [TSchema] extends [
+  {
+    readonly '~types'?:
+      | { readonly input: infer TInput; readonly output: infer TOutput }
+      | undefined;
+  },
+]
+  ? HasRecur<TInput> extends true
     ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
       any
-    : HasRecur<InferOutput<TSchema>> extends true
+    : HasRecur<TOutput> extends true
       ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
         any
       : 'resolved'
-  : never;
+  : 'resolved';
 
 /**
  * Recur state map type.
@@ -166,14 +168,11 @@ type RecurStateMap = { readonly resolved: unknown } & {
 };
 
 /**
- * Schema without recur type.
+ * No unresolved recur type.
  *
- * Hint: This type rejects schemas whose input or output type still contains a
- * `Recur` placeholder, because they must be wrapped with `recursive` or
- * `recursiveAsync` first.
+ * Hint: This type is `unknown` if neither the input nor the output type of the
+ * schema contains a `Recur` placeholder. Otherwise, it is `UnresolvedRecur`,
+ * so that a constraint intersected with it rejects the schema until it is
+ * wrapped with `recursive` or `recursiveAsync`.
  */
-export type SchemaWithoutRecur<
-  TSchema extends
-    | BaseSchema<unknown, unknown, BaseIssue<unknown>>
-    | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>,
-> = TSchema & RecurStateMap[RecurState<TSchema>];
+export type NoUnresolvedRecur<TSchema> = RecurStateMap[RecurState<TSchema>];
