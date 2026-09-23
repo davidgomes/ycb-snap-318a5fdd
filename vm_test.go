@@ -940,6 +940,72 @@ b(a, c)
 `, nil, "Runtime Error: not callable: int\n\tat test:7:4\n\tat test:3:4\n\tat test:9:1")
 }
 
+func TestCallFromGo(t *testing.T) {
+	var swallowed error
+	opts := Opts().Module("go", &tengo.BuiltinModule{
+		Attrs: map[string]tengo.Object{
+			"call": &tengo.UserFunction{
+				Name: "call",
+				Value: func(args ...tengo.Object) (tengo.Object, error) {
+					return args[0].Call(args[1:]...)
+				},
+			},
+			"swallow": &tengo.UserFunction{
+				Name: "swallow",
+				Value: func(args ...tengo.Object) (tengo.Object, error) {
+					_, swallowed = args[0].Call(args[1:]...)
+					return nil, nil
+				},
+			},
+		},
+	})
+
+	expectRun(t, `call := import("go").call
+out = call(func(a, b) { return a + b }, 1, 2)`, opts, 3)
+	expectRun(t, `call := import("go").call
+n := 1
+f := func() { n += 10; return n }
+call(f)
+out = call(f) + n`, opts, 42)
+	expectRun(t, `call := import("go").call
+out = call(func(a, ...b) { return [a, b] }, 1, 2, 3)`,
+		opts, ARR{1, ARR{2, 3}})
+	expectRun(t, `call := import("go").call
+out = call(func(...a) { return a }, [1, 2]...)`, opts, ARR{1, 2})
+	expectRun(t, `call := import("go").call
+f := func(n) { if n == 0 { return 0 }; return n + call(f, n - 1) }
+out = call(f, 10)`, opts, 55)
+	expectRun(t, `call := import("go").call
+mul := call(func(x) { return func(y) { return x * y } }, 6)
+out = call(mul, 7)`, opts, 42)
+	expectRun(t, `call := import("go").call
+math := import("math")
+out = call(func() { return math.abs(-3) }) + call(copy(math.abs), -4)`,
+		opts.Module("math",
+			&tengo.BuiltinModule{Attrs: stdlib.BuiltinModules["math"]}), 7.0)
+
+	// errors read as if the function was called from the script
+	expectError(t, `call := import("go").call
+f := func(x) {
+	return x + "a"
+}
+call(f, 1)`, opts,
+		"Runtime Error: invalid operation: int + string\n\tat test:3:9\n\tat test:5:1")
+	expectError(t, `call := import("go").call; call(func(a, b) {}, 1)`, opts,
+		"Runtime Error: wrong number of arguments: want=2, got=1\n\tat test:1:28")
+	expectError(t, `call := import("go").call; call(func(a, ...b) {})`, opts,
+		"Runtime Error: wrong number of arguments: want>=1, got=0\n\tat test:1:28")
+	expectError(t, `call := import("go").call; f := func() { return call(f) }; f()`,
+		opts, "Runtime Error: stack overflow")
+
+	// nested calls count toward the allocation limit of the script
+	expectError(t, `swallow := import("go").swallow
+swallow(func() { for i := 0; i < 100; i++ { [i] } })
+out = [1]`, opts.MaxAllocs(50).Skip2ndPass(),
+		"Runtime Error: object allocation limit exceeded")
+	require.True(t, errors.Is(swallowed, tengo.ErrObjectAllocLimit))
+}
+
 func TestChar(t *testing.T) {
 	expectRun(t, `out = 'a'`, nil, 'a')
 	expectRun(t, `out = '九'`, nil, rune(20061))

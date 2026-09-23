@@ -640,6 +640,322 @@ func compiledIsDefined(
 ) {
 	require.Equal(t, expected, c.IsDefined(name))
 }
+func TestCompiledFunction_Call(t *testing.T) {
+	c := compile(t, `
+g := 10
+add := func(a, b) { return a + b + g }
+incr := func(x) { g += x; return g }
+counter := func() {
+	n := 0
+	return func() { n++; return n }
+}()
+vargs := func(a, ...rest) { return [a, rest] }
+fib := func(n) { if n < 2 { return n }; return fib(n-1) + fib(n-2) }
+sum := func(n, acc) { if n == 0 { return acc }; return sum(n-1, acc+n) }
+fact := func() {
+	f := func(n) { if n == 0 { return 1 }; return n * f(n-1) }
+	return f
+}()
+adder := func(x) { return func(y) { return x + y + g } }
+ops := func(x) { return {inc: func() { x++; return x }, get: [func() { return x }]} }
+nested := {a: [1, {f: func(x) { return x * g }}], b: immutable({f: func() { return g }})}
+`, nil)
+	compiledRun(t, c)
+
+	compiledCall(t, c.Get("add").Object(), ARR{1, 2}, 13)
+	compiledCall(t, c.Get("incr").Object(), ARR{5}, 15)
+	compiledGet(t, c, "g", int64(15))
+	compiledCall(t, c.Get("add").Object(), ARR{1, 2}, 18)
+
+	compiledCall(t, c.Get("counter").Object(), nil, 1)
+	compiledCall(t, c.Get("counter").Object(), nil, 2)
+
+	compiledCall(t, c.Get("vargs").Object(), ARR{1}, ARR{1, ARR{}})
+	compiledCall(t, c.Get("vargs").Object(), ARR{1, 2, 3}, ARR{1, ARR{2, 3}})
+
+	compiledCall(t, c.Get("fib").Object(), ARR{15}, 610)
+	compiledCall(t, c.Get("sum").Object(), ARR{10000, 0}, 50005000)
+	compiledCall(t, c.Get("fact").Object(), ARR{5}, 120)
+
+	// returned closures and composite values stay callable
+	add1 := compiledCall(t, c.Get("adder").Object(), ARR{1}, nil)
+	compiledCall(t, add1, ARR{2}, 18)
+	ops := compiledCall(t, c.Get("ops").Object(), ARR{7}, nil).(*tengo.Map)
+	compiledCall(t, ops.Value["inc"], nil, 8)
+	compiledCall(t, ops.Value["get"].(*tengo.Array).Value[0], nil, 8)
+
+	nested := c.Get("nested").Object().(*tengo.Map)
+	compiledCall(t, nested.Value["a"].(*tengo.Array).Value[1].(*tengo.Map).
+		Value["f"], ARR{2}, 30)
+	compiledCall(t, nested.Value["b"].(*tengo.ImmutableMap).Value["f"], nil, 15)
+
+	// the script sees the effects of calls made from Go
+	c = compile(t, `
+n := 0
+f := func() { n++; return n }
+out := f() + f()
+`, nil)
+	compiledRun(t, c)
+	compiledCall(t, c.Get("f").Object(), nil, 3)
+	compiledGet(t, c, "n", int64(3))
+	compiledRun(t, c)
+	compiledGet(t, c, "out", int64(3))
+
+	_, err := (&tengo.CompiledFunction{}).Call()
+	require.Error(t, err)
+}
+
+func TestCompiledFunction_CallErrors(t *testing.T) {
+	src := `
+inner := func(x) {
+	return x + "a"
+}
+outer := func(x) {
+	return inner(x)
+}
+`
+	c := compile(t, src, nil)
+	compiledRun(t, c)
+	_, err := c.Get("outer").Object().Call(&tengo.Int{Value: 1})
+	require.Error(t, err)
+	require.Equal(t, "Runtime Error: invalid operation: int + string"+
+		"\n\tat (main):3:9\n\tat (main):6:9", err.Error())
+
+	// same as the error of a call from the script, minus its call site
+	_, err2 := tengo.NewScript([]byte(src + "outer(1)")).Run()
+	require.Error(t, err2)
+	require.Equal(t, err.Error()+"\n\tat (main):8:1", err2.Error())
+
+	_, err = c.Get("outer").Object().Call()
+	require.Error(t, err)
+	require.Equal(t, "Runtime Error: wrong number of arguments: want=1, got=0",
+		err.Error())
+
+	userErr := errors.New("user error")
+	c = compile(t, `f := func() { return fail() }`, M{
+		"fail": &tengo.UserFunction{
+			Value: func(args ...tengo.Object) (tengo.Object, error) {
+				return nil, userErr
+			},
+		},
+	})
+	compiledRun(t, c)
+	_, err = c.Get("f").Object().Call()
+	require.True(t, errors.Is(err, userErr))
+	require.Equal(t, "Runtime Error: user error\n\tat (main):1:22", err.Error())
+
+	s := tengo.NewScript([]byte(`f := func() { a := []; for true { a = append(a, 1) } }`))
+	s.SetMaxAllocs(100)
+	c, err = s.Run()
+	require.NoError(t, err)
+	_, err = c.Get("f").Object().Call()
+	require.True(t, errors.Is(err, tengo.ErrObjectAllocLimit))
+}
+
+func TestCompiledFunction_CallFromCallback(t *testing.T) {
+	var kept tengo.Object
+	apply := &tengo.UserFunction{
+		Value: func(args ...tengo.Object) (tengo.Object, error) {
+			return args[0].Call(args[1:]...)
+		},
+	}
+	c := compile(t, `
+g := 2
+out := apply(func(x) { return x * g }, 21)
+keep(func(x) { g += x; return g })
+`, M{
+		"apply": apply,
+		"keep": &tengo.UserFunction{
+			Value: func(args ...tengo.Object) (tengo.Object, error) {
+				kept = args[0]
+				return nil, nil
+			},
+		},
+	})
+	compiledRun(t, c)
+	compiledGet(t, c, "out", int64(42))
+	compiledCall(t, kept, ARR{3}, 5)
+	compiledGet(t, c, "g", int64(5))
+
+	// an error passed back by the callback reads like an in-script call's
+	c = compile(t, `bad := func(x) {
+	return x + "a"
+}
+out := apply(bad, 1)`, M{"apply": apply})
+	err := c.Run()
+	require.Error(t, err)
+	_, err2 := tengo.NewScript([]byte(`bad := func(x) {
+	return x + "a"
+}
+out := bad(1)`)).Run()
+	require.Error(t, err2)
+	require.Equal(t, err2.Error(), err.Error())
+	require.Equal(t, "Runtime Error: invalid operation: int + string"+
+		"\n\tat (main):2:9\n\tat (main):4:8", err.Error())
+
+	// calls made while the script is aborted stop with it
+	var callErr error
+	c = compile(t, `run(func() { for true {} })`, M{
+		"run": &tengo.UserFunction{
+			Value: func(args ...tengo.Object) (tengo.Object, error) {
+				_, callErr = args[0].Call()
+				return nil, callErr
+			},
+		},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(),
+		10*time.Millisecond)
+	defer cancel()
+	require.Equal(t, context.DeadlineExceeded, c.RunContext(ctx))
+	require.True(t, errors.Is(callErr, tengo.ErrVMAborted))
+}
+
+func TestCompiledFunction_CallSourceModule(t *testing.T) {
+	mods := stdlib.GetModuleMap("math")
+	mods.AddSourceModule("mod", []byte(`
+math := import("math")
+count := 0
+export {
+	abs: func(x) { return math.abs(x) },
+	next: func() { count++; return count },
+	num: func(...xs) { return len(xs) }
+}`))
+	mods.AddSourceModule("double", []byte(`export func(x) { return x * 2 }`))
+	s := tengo.NewScript([]byte(`mod := import("mod"); double := import("double")`))
+	s.SetImports(mods)
+	c, err := s.Run()
+	require.NoError(t, err)
+
+	mod := c.Get("mod").Object().(*tengo.ImmutableMap)
+	compiledCall(t, mod.Value["abs"], ARR{-2.5}, 2.5)
+	compiledCall(t, mod.Value["next"], nil, 1)
+	compiledCall(t, mod.Value["next"], nil, 2)
+	compiledCall(t, mod.Value["num"], ARR{1, 2, 3}, 3)
+	compiledCall(t, c.Get("double").Object(), ARR{4}, 8)
+}
+
+func TestCompiled_CloneFunctions(t *testing.T) {
+	c := compile(t, `
+count := 0
+mk := func() {
+	n := 0
+	data := {k: 0}
+	return func() { n++; count++; data.k += 10; return [n, count, data.k] }
+}
+f := mk()
+f()
+m := {fns: [f], other: mk()}
+`, nil)
+	compiledRun(t, c)
+	clone := c.Clone()
+
+	// the clone has its own globals and captured variables
+	compiledCall(t, clone.Get("f").Object(), nil, ARR{2, 2, 20})
+	compiledGet(t, clone, "count", int64(2))
+	compiledGet(t, c, "count", int64(1))
+	compiledCall(t, c.Get("f").Object(), nil, ARR{2, 2, 20})
+	compiledCall(t, c.Get("f").Object(), nil, ARR{3, 3, 30})
+	compiledGet(t, clone, "count", int64(2))
+
+	// callables inside arrays and maps too, keeping captures they share
+	fns := clone.Get("m").Object().(*tengo.Map).Value["fns"].(*tengo.Array)
+	compiledCall(t, fns.Value[0], nil, ARR{3, 3, 30})
+	other := clone.Get("m").Object().(*tengo.Map).Value["other"]
+	compiledCall(t, other, nil, ARR{1, 4, 10})
+	compiledGet(t, c, "count", int64(3))
+
+	// running the clone leaves the original alone
+	compiledRun(t, clone)
+	compiledGet(t, clone, "count", int64(1))
+	compiledCall(t, c.Get("f").Object(), nil, ARR{4, 4, 40})
+}
+
+func TestCompiled_SetFunctions(t *testing.T) {
+	src := `
+count := 0
+mk := func() {
+	n := 0
+	return func() { n++; count++; return [n, count] }
+}
+f := mk()
+m := {fns: [f, mk()]}
+`
+	c1 := compile(t, src, nil)
+	compiledRun(t, c1)
+	f1 := c1.Get("f").Object()
+	compiledCall(t, f1, nil, ARR{1, 1})
+	compiledCall(t, f1, nil, ARR{2, 2})
+
+	c2 := compile(t, src, nil)
+	compiledRun(t, c2)
+	require.NoError(t, c2.Set("f", f1))
+
+	// captures as they were when assigned, globals of the destination
+	compiledCall(t, c2.Get("f").Object(), nil, ARR{3, 1})
+	compiledGet(t, c1, "count", int64(2))
+	compiledCall(t, f1, nil, ARR{3, 3})
+	compiledCall(t, c2.Get("f").Object(), nil, ARR{4, 2})
+
+	// callables inside arrays and maps are moved the same way
+	require.NoError(t, c2.Set("m", c1.Get("m").Object()))
+	m2 := c2.Get("m").Object().(*tengo.Map)
+	require.True(t, m2 != c1.Get("m").Object())
+	compiledCall(t, m2.Value["fns"].(*tengo.Array).Value[0], nil, ARR{4, 3})
+	compiledCall(t, m2.Value["fns"].(*tengo.Array).Value[1], nil, ARR{1, 4})
+	compiledGet(t, c1, "count", int64(3))
+	m1 := c1.Get("m").Object().(*tengo.Map)
+	compiledCall(t, m1.Value["fns"].(*tengo.Array).Value[1], nil, ARR{1, 4})
+
+	// values without functions are assigned as they are
+	arr := &tengo.Array{Value: []tengo.Object{&tengo.Int{Value: 1}}}
+	require.NoError(t, c2.Set("m", arr))
+	require.True(t, c2.Get("m").Object() == arr)
+
+	// functions from another script run their own code against the globals
+	// of the destination
+	c3 := compile(t, `count := 0; f = func() { count += 5; return "n" + count }`,
+		M{"f": 0})
+	compiledRun(t, c3)
+	c4 := compile(t, `count := 100; out := f()`, M{"f": 0})
+	require.NoError(t, c4.Set("f", c3.Get("f").Object()))
+	compiledRun(t, c4)
+	compiledGet(t, c4, "out", "n105")
+	compiledGet(t, c3, "count", int64(0))
+
+	// variables added to a script are moved into each compiled instance
+	counter := compile(t, `f := func() { n := 0; return func() { n++; return n } }()
+f()`, nil)
+	compiledRun(t, counter)
+	s := tengo.NewScript([]byte(`a := f(); b := f()`))
+	require.NoError(t, s.Add("f", counter.Get("f").Object()))
+	ca, err := s.Run()
+	require.NoError(t, err)
+	cb, err := s.Run()
+	require.NoError(t, err)
+	compiledGet(t, ca, "b", int64(3))
+	compiledGet(t, cb, "b", int64(3))
+	compiledCall(t, counter.Get("f").Object(), nil, 2)
+}
+
+func compiledCall(
+	t *testing.T,
+	fn tengo.Object,
+	args ARR,
+	expected interface{},
+) tengo.Object {
+	var objs []tengo.Object
+	for _, arg := range args {
+		objs = append(objs, toObject(arg))
+	}
+	require.True(t, fn.CanCall())
+	res, err := fn.Call(objs...)
+	require.NoError(t, err)
+	if expected != nil {
+		require.Equal(t, toObject(expected), res)
+	}
+	return res
+}
+
 func TestCompiled_Clone(t *testing.T) {
 	script := tengo.NewScript([]byte(`
 count += 1
