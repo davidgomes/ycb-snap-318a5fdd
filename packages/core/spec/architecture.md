@@ -36,6 +36,8 @@ The internal hot paths should avoid Maps and Sets where an SMI and array can wor
 
 **Pair.** A pair is of a trait and target entity `(trait, targetEntity)`. Relations produce pairs.
 
+**Aspect.** A ref returned by `createAspect()` that groups two or more traits so they can be used as one. It has no storage of its own. Reads merge the fields of its traits, writes go to the trait that owns each field, and queries, modifiers and events treat it as present only when the entity has every trait.
+
 **OrderedRelation.** A trait added to the **target** entity that stores an ordered list of all entities with a relation pointing to it. The list and relation stay in sync bidirectionally. Modifying the list updates the relation pairs, and modifying the relation updates the list.
 
 ## Definitions

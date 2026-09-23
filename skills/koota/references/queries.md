@@ -7,6 +7,7 @@ Complete guide to querying entities in Koota.
 - [Basic queries](#basic-queries)
 - [Query modifiers](#query-modifiers) - Not, Or
 - [Tracking modifiers](#tracking-modifiers) - Added, Removed, Changed
+- [Aspects](#aspects) - Query grouped traits as one
 - [Caching queries](#caching-queries) - createQuery for performance
 - [Change detection](#change-detection) - updateEach options
 - [Query + select](#query--select) - Select subset of traits for updates
@@ -132,6 +133,30 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 - Create instances at module scope, not inside functions
 - Tracking resets after each query execution
 - Changed only tracks `set()` calls and `entity.changed()` signals
+
+## Aspects
+
+An aspect from `createAspect` requires all of its traits in a query. `readEach` and `updateEach` get one merged object for it, and writes are committed to each trait with per-trait change detection. Tag-only aspects are excluded from the data array, like tags.
+
+```typescript
+const Body = createAspect(Position, Velocity)
+
+world.query(Body, Mass).updateEach(([body, mass]) => {
+  body.x += body.vx / mass.value
+})
+```
+
+Modifiers treat the aspect as a whole:
+
+```typescript
+world.query(Not(Body)) // Missing at least one trait
+world.query(Or(Body, Mass)) // Has every trait of Body, or has Mass
+world.query(Added(Body)) // Went from missing a trait to having all of them
+world.query(Removed(Body)) // Went from having all traits to missing one (includes destroyed)
+world.query(Changed(Body)) // Has all traits and any of them changed
+```
+
+With `useStores`, an aspect contributes the stores of its data traits in order: `([position, velocity]) => {}`.
 
 ## Caching queries
 

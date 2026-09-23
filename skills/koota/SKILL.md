@@ -12,6 +12,7 @@ Koota manages state using entities with composable traits.
 - **Entity** - A unique identifier pointing to data defined by traits. Spawned from a world.
 - **Trait** - A reusable data definition. Can be schema-based (SoA), callback-based (AoS), or a tag.
 - **Relation** - A directional connection between entities to build graphs.
+- **Aspect** - A group of traits handled as one. Used anywhere a trait is, with a merged view of their fields.
 - **World** - The context for all entities and their data (traits).
 - **Archetype** - A unique combination of traits that entities share.
 - **Query** - Fetches entities matching an archetype. The primary way to batch update state.
@@ -213,6 +214,33 @@ world.query(IsPlayer, Position, Velocity).updateEach(([pos, vel]) => {
 ```
 
 For tracking changes, caching queries, and advanced patterns, see [references/queries.md](references/queries.md).
+
+## Aspects
+
+Use `createAspect` when the same traits are always read, written or queried together, instead of listing them at every call site.
+
+```typescript
+import { createAspect } from 'koota'
+
+const Body = createAspect(Position, Velocity)
+
+const entity = world.spawn(Body({ x: 10, vx: 1 })) // Adds only missing traits
+entity.has(Body) // Has every trait
+entity.get(Body) // { x, y, vx, vy } or undefined if any trait is missing
+entity.set(Body, { x: 20 }) // Writes to Position only, flags only Position as changed
+entity.remove(Body) // Removes every trait
+
+// One merged object per aspect, writes go back to each trait
+world.query(Body).updateEach(([body]) => {
+  body.x += body.vx
+})
+
+world.onAdd(Body, (entity) => {}) // Gained its last missing trait
+world.onRemove(Body, (entity) => {}) // Lost one trait while having all of them
+world.onChange(Body, (entity) => {}) // A trait changed while having all of them
+```
+
+**Rules:** at least two traits, field names must be unique across traits, no relations (all throw on creation). Tags are allowed and nested aspects flatten. `Not(Body)` matches entities missing at least one trait, and `Added`, `Removed` and `Changed` treat the aspect as a whole. See [references/queries.md](references/queries.md#aspects).
 
 ## React integration
 

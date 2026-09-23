@@ -549,6 +549,88 @@ const unsub = world.onAdd(Likes, (entity, target) => {
 })
 ```
 
+### Aspects
+
+An aspect groups traits that are used together so they can be handled as one. It can be used anywhere a trait can: adding, reading, writing, querying and subscribing to events.
+
+```js
+import { createAspect } from 'koota'
+
+const Position = trait({ x: 0, y: 0 })
+const Velocity = trait({ vx: 0, vy: 0 })
+
+const Body = createAspect(Position, Velocity)
+
+// Adds only the traits the entity is missing, giving each field to the trait that owns it
+const entity = world.spawn(Body({ x: 10, vx: 1 }))
+
+// True when the entity has every trait
+entity.has(Body)
+
+// A merged object of all fields, or undefined if any trait is missing
+entity.get(Body) // { x: 10, y: 0, vx: 1, vy: 0 }
+
+// Each field is written to its trait and only those traits are flagged as changed
+entity.set(Body, { x: 20 })
+
+// Removes every trait
+entity.remove(Body)
+```
+
+An aspect needs at least two traits. Field names must be unique across its traits and relations can't be included, otherwise `createAspect` throws. Tags are allowed and nested aspects flatten to their traits. Each call to `createAspect` returns a new aspect, and every aspect exposes its `id`, `traits` and merged `schema`.
+
+```js
+const IsActive = trait()
+const Mass = trait({ mass: 1 })
+
+const ActiveBody = createAspect(Body, Mass, IsActive)
+ActiveBody.traits // [Position, Velocity, Mass, IsActive]
+ActiveBody.schema // { x: 0, y: 0, vx: 0, vy: 0, mass: 1 }
+```
+
+Callback-based traits contribute the fields of the object they return. The callback is called once when the aspect is created to find them, and writes go to the stored object instead of replacing it.
+
+In queries an aspect requires all of its traits. `readEach` and `updateEach` get one merged object for it, and writes are sent back to each trait with change detection per trait.
+
+```js
+world.query(Body, Mass).updateEach(([body, mass]) => {
+  body.x += body.vx / mass.mass
+  body.y += body.vy / mass.mass
+})
+```
+
+Aspects work with every query modifier and are treated as a whole.
+
+```js
+// Entities missing at least one of the traits
+world.query(Not(Body))
+
+// Entities with every trait of Body, or with Mass
+world.query(Or(Body, Mass))
+
+// Entities that went from missing a trait to having all of them
+world.query(Added(Body))
+
+// Entities that went from having all traits to missing one, including destroyed entities
+world.query(Removed(Body))
+
+// Entities that have all traits and where any of them changed
+world.query(Changed(Body))
+```
+
+Events follow the same rules. `onChange` is called for each trait that changes, so setting fields of two traits at once calls it twice.
+
+```js
+// When the entity gains its last missing trait
+world.onAdd(Body, (entity) => {})
+
+// When the entity loses one of the traits, before the data is removed
+world.onRemove(Body, (entity) => {})
+
+// When any of the traits changes while the entity has all of them
+world.onChange(Body, (entity) => {})
+```
+
 ### Change detection with `updateEach`
 
 By default, `updateEach` will automatically turn on change detection for traits that are being tracked via `onChange` or the `Changed` modifier. If you want to silence change detection for a loop or force it to always run, you can do so with an options config.
