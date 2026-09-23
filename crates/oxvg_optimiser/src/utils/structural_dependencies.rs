@@ -62,7 +62,7 @@ impl StructuralDependencies {
     }
 
     fn add_selector<'input>(&mut self, root: &Element<'input, '_>, selector: &CssSelector<'input>) {
-        if self.is_unknown {
+        if self.is_unknown || is_element_local(selector) {
             return;
         }
         let Some(selector) = parse_selector(selector) else {
@@ -188,6 +188,30 @@ impl StructuralDependencies {
 
 fn is_same_type(a: &Element, b: &Element) -> bool {
     a.local_name() == b.local_name() && a.prefix() == b.prefix()
+}
+
+/// Returns whether the selector only matches against an element's own name, attributes, and
+/// state, which never relies on the document's structure.
+fn is_element_local(selector: &CssSelector) -> bool {
+    selector.iter_raw_match_order().all(|component| {
+        matches!(
+            component,
+            Component::LocalName(_)
+                | Component::ID(_)
+                | Component::Class(_)
+                | Component::AttributeInNoNamespaceExists { .. }
+                | Component::AttributeInNoNamespace { .. }
+                | Component::AttributeOther(_)
+                | Component::ExplicitUniversalType
+                | Component::ExplicitAnyNamespace
+                | Component::ExplicitNoNamespace
+                | Component::DefaultNamespace(_)
+                | Component::Namespace(..)
+                | Component::NonTSPseudoClass(_)
+                | Component::PseudoElement(_)
+                | Component::Combinator(Combinator::PseudoElement)
+        )
+    })
 }
 
 /// Converts a stylesheet's selector to one that can be matched against the document.
