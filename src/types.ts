@@ -57,6 +57,7 @@ export interface BuiltLogicAdditions<LogicType extends Logic> {
   mount: () => () => void
   unmount: () => void
   isMounted: () => boolean
+  selectorHealth?: () => SelectorHealth
   extend: <ExtendLogicType extends Logic = LogicType>(
     extendedInput: LogicInput<ExtendLogicType> | LogicInput<ExtendLogicType>[],
   ) => LogicWrapper<ExtendLogicType>
@@ -538,6 +539,7 @@ export interface InternalContextOptions {
   detachStrategy: 'dispatch' | 'replace' | 'persist'
   defaultPath: string[]
   disableAsyncActions: boolean
+  atomicSelectors: boolean
   // ...otherOptions
 }
 
@@ -660,4 +662,16 @@ export interface Context {
   __store: Store | undefined
 
   options: InternalContextOptions
+}
+
+export interface SelectorHealthEntry {
+  dependencies: string[]
+  dependents: string[]
+  evaluations: number
+  dirtyCause: string | null
+}
+
+export interface SelectorHealth {
+  selectors: Record<string, SelectorHealthEntry>
+  topologicalOrder: string[]
 }

@@ -159,6 +159,10 @@ export function kea<L extends Logic = Logic>(
     proxyFields(wrapper)
   }
 
+  if (getContext().options.atomicSelectors) {
+    proxyFieldToLogic(wrapper, 'selectorHealth' as keyof Logic)
+  }
+
   return wrapper
 }
 

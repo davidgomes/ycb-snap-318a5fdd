@@ -1,6 +1,7 @@
 import { Logic, LogicBuilder, LogicPropSelectors, Selector, SelectorDefinition, SelectorDefinitions } from '../types'
 import { createSelector, createSelectorCreator, defaultMemoize, ParametricSelector } from 'reselect'
-import { getStoreState } from '../kea/context'
+import { getContext, getStoreState } from '../kea/context'
+import { createAtomicSelector, detectCircularSelectors } from './atomic'
 
 /**
   Logic builder:
@@ -55,6 +56,8 @@ export function selectors<L extends Logic = Logic>(
             Object.keys(logic.props).map((key) => [key, () => logic.props[key]]),
           ) as LogicPropSelectors<L>)
 
+    const atomic = !!getContext().options.atomicSelectors
+
     for (const entry of Object.entries(selectorInputs)) {
       const [key, arr]: [string, SelectorDefinition<L['selectors'], LogicPropSelectors<L>, any> | undefined] = entry
       if (!arr) {
@@ -68,7 +71,9 @@ export function selectors<L extends Logic = Logic>(
         const msg = `[KEA] Logic "${logic.pathString}", selector "${key}" has incorrect input: [${argTypes}].`
         throw new Error(msg)
       }
-      builtSelectors[key] = createSelector(args, func, { memoizeOptions })
+      builtSelectors[key] = atomic
+        ? createAtomicSelector(logic, key, args, func, memoizeOptions)
+        : createSelector(args, func, { memoizeOptions })
 
       addSelectorAndValue(logic, key, (state = getStoreState(), props = logic.props) =>
         builtSelectors[key](state, props),
@@ -82,6 +87,10 @@ export function selectors<L extends Logic = Logic>(
           enumerable: true,
         })
       }
+    }
+
+    if (atomic) {
+      detectCircularSelectors(logic)
     }
   }
 }
