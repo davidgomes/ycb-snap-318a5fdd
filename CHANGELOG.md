@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Add the opt-in Atomic Signal Selector Engine with `resetContext({ atomicSelectors: true })` (defaults to `false`).
+  Selectors track the exact leaf paths they read, so a selector that reads `user.name` no longer re-evaluates
+  when `user.age` changes:
+
+```ts
+resetContext({ atomicSelectors: true })
+
+const logic = kea([
+  reducers({ user: [{ name: 'Alice', age: 30 }, { ... }] }),
+  selectors({
+    userName: [(s) => [s.user], (user) => user.name],
+    upperName: [(s) => [s.userName], (userName) => userName.toUpperCase()],
+  }),
+])
+
+logic.selectorHealth()
+// {
+//   selectors: {
+//     userName: { dependencies: ['user.name'], dependents: ['upperName'], evaluations: 1, dirtyCause: null },
+//     upperName: { dependencies: ['userName'], dependents: [], evaluations: 1, dirtyCause: null },
+//   },
+//   topologicalOrder: ['userName', 'upperName'],
+// }
+```
+
+- Map keys, Set membership and array elements are tracked individually (`data.map:a`, `data.set:a`, `list.0`),
+  including the elements visited by `includes`, `indexOf`, `lastIndexOf`, `find`, `findIndex`, `some` and `every`.
+- Each dispatched action re-evaluates an affected selector at most once, and changes only propagate to selectors
+  whose inputs changed.
+- Circular selector dependencies throw `[KEA] Circular dependency detected` while the logic is built.
+- `logic.selectorHealth` is `undefined` unless `atomicSelectors` is enabled.
+
 ## 3.1.7 - 2025-08-14
 - Add `logic.findAllMounted()` to find all mounted instances of a logic, regardless of the key.
 
