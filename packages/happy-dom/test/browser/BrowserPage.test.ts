@@ -416,6 +416,55 @@ describe('BrowserPage', () => {
 			expect(usedURL).toBe('http://localhost:3000');
 			expect(usedOptions).toEqual({ timeout: 10000 });
 		});
+
+		it('Clears timers and animation frames of the previous window when navigating.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const calls: string[] = [];
+
+			BrowserFrameFactory.createChildFrame(page.mainFrame);
+
+			const previousWindow = page.mainFrame.window;
+
+			previousWindow.setTimeout(() => calls.push('timeout-before'), 1);
+			previousWindow.requestAnimationFrame(() => calls.push('animation-frame-before'));
+
+			const navigation = page.goto('about:blank');
+
+			expect(page.mainFrame.window).not.toBe(previousWindow);
+
+			previousWindow.setTimeout(() => calls.push('timeout-after'), 1);
+			previousWindow.setTimeout(() => calls.push('zero-timeout-after'));
+			previousWindow.requestAnimationFrame(() => calls.push('animation-frame-after'));
+
+			await navigation;
+			await page.waitUntilComplete();
+			await new Promise((resolve) => setTimeout(resolve, 20));
+
+			expect(calls).toEqual([]);
+
+			await browser.close();
+		});
+
+		it('Clears timers and animation frames of the window when closing a page with child frames.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const window = page.mainFrame.window;
+			const calls: string[] = [];
+
+			BrowserFrameFactory.createChildFrame(page.mainFrame);
+
+			window.setTimeout(() => calls.push('timeout'), 1);
+			window.setTimeout(() => calls.push('zero-timeout'));
+			window.requestAnimationFrame(() => calls.push('animation-frame'));
+
+			await page.close();
+			await new Promise((resolve) => setTimeout(resolve, 20));
+
+			expect(calls).toEqual([]);
+
+			await browser.close();
+		});
 	});
 
 	describe('goBack()', () => {
