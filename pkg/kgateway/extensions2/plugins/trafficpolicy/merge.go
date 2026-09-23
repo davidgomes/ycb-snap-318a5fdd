@@ -61,6 +61,7 @@ func MergeTrafficPolicies(
 		mergeURLRewrite,
 		mergeAPIKeyAuth,
 		mergeOAuth,
+		mergeConsistentHash,
 	}
 
 	for _, mergeFunc := range mergeFuncs {
@@ -619,6 +620,45 @@ func mergeURLRewrite(
 		Set: func(spec *trafficPolicySpecIr, val *urlRewriteIR) { spec.urlRewrite = val },
 	}
 	defaultMerge(p1, p2, p2Ref, p2MergeOrigins, opts, mergeOrigins, accessor, "urlRewrite")
+}
+
+// mergeConsistentHash unions the hash policies of p1 and p2 regardless of the merge
+// strategy; the strategy only determines which policy's entries take priority.
+func mergeConsistentHash(
+	p1, p2 *TrafficPolicy,
+	p2Ref *ir.AttachedPolicyRef,
+	p2MergeOrigins ir.MergeOrigins,
+	opts policy.MergeOptions,
+	mergeOrigins ir.MergeOrigins,
+	_ TrafficPolicyMergeOpts,
+) {
+	const fieldName = "consistentHash"
+	p1Field := p1.spec.consistentHash
+	p2Field := p2.spec.consistentHash
+	if p2Field == nil {
+		return
+	}
+
+	var merged *consistentHashIR
+	switch opts.Strategy {
+	case policy.AugmentedShallowMerge, policy.AugmentedDeepMerge:
+		merged = mergeConsistentHashIR(p1Field, p2Field)
+	case policy.OverridableShallowMerge, policy.OverridableDeepMerge:
+		merged = mergeConsistentHashIR(p2Field, p1Field)
+	default:
+		logger.Warn("unsupported merge strategy for policy", "strategy", opts.Strategy, "policy", p2Ref, "field", fieldName)
+		return
+	}
+
+	switch {
+	case merged == p2Field:
+		mergeOrigins.SetOne(fieldName, p2Ref, p2MergeOrigins)
+	case merged.Equals(p1Field):
+		return
+	default:
+		mergeOrigins.Append(fieldName, p2Ref, p2MergeOrigins)
+	}
+	p1.spec.consistentHash = merged
 }
 
 // fieldAccessor defines how to access and set a field on trafficPolicySpecIr
