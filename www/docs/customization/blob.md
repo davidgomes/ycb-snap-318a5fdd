@@ -127,6 +127,16 @@ blobs:
 
     # Upload only the files defined in extra_files.
     extra_files_only: true
+
+    # Retry transient bucket-open and per-artifact upload failures.
+    # An error is transient when it implements Timeout() or Temporary() and
+    # that method returns true. max_delay caps every wait. Each upload try
+    # resends the full artifact. Upload tries are recorded in
+    # extra.publish_attempts; bucket-open tries are not.
+    retry:
+      attempts: 3
+      delay: 1s
+      max_delay: 10s
 ```
 
 <!-- md:templates -->

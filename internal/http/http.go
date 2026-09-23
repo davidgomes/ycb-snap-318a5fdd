@@ -4,17 +4,21 @@ package http
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	h "net/http"
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/caarlos0/log"
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/extrafiles"
 	"github.com/goreleaser/goreleaser/v2/internal/pipe"
+	"github.com/goreleaser/goreleaser/v2/internal/publishattempt"
+	"github.com/goreleaser/goreleaser/v2/internal/retry"
 	"github.com/goreleaser/goreleaser/v2/internal/semerrgroup"
 	"github.com/goreleaser/goreleaser/v2/internal/tmpl"
 	"github.com/goreleaser/goreleaser/v2/pkg/config"
@@ -308,12 +312,13 @@ func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact
 		return fmt.Errorf("%s: %s: error while building target URL: %w", upload.Name, kind, err)
 	}
 
-	// Handle the artifact
-	asset, err := assetOpen(kind, artifact)
-	if err != nil {
+	// Validate the asset before checksum/header work. The retry loop opens it
+	// again so every attempt sends the full body.
+	if opened, err := assetOpen(kind, artifact); err != nil {
+		return err
+	} else if err := opened.ReadCloser.Close(); err != nil {
 		return err
 	}
-	defer asset.ReadCloser.Close()
 
 	// target url need to contain the artifact name unless the custom
 	// artifact name is used
@@ -346,8 +351,15 @@ func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact
 		WithField("file", artifact.Name).
 		Info("uploading")
 
-	res, err := uploadAssetToServer(ctx, upload, targetURL, username, secret, headers, asset, check)
+	res, err := uploadAssetToServer(ctx, upload, targetURL, username, secret, headers, kind, artifact, check)
 	if err != nil {
+		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
+			return cerr
+		}
+		var openErr *assetOpenError
+		if errors.As(err, &openErr) {
+			return openErr.err
+		}
 		return fmt.Errorf("%s: %s: upload failed: %w", upload.Name, kind, err)
 	}
 	if err := res.Body.Close(); err != nil {
@@ -357,14 +369,105 @@ func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact
 	return nil
 }
 
-// uploadAssetToServer uploads the asset file to target.
-func uploadAssetToServer(ctx *context.Context, upload *config.Upload, target, username, secret string, headers map[string]string, a *asset, check ResponseChecker) (*h.Response, error) {
-	req, err := newUploadRequest(ctx, upload.Method, target, username, secret, headers, a)
-	if err != nil {
-		return nil, err
-	}
+// uploadAssetToServer uploads the asset file to target, retrying retriable
+// failures. Each attempt opens the artifact again so the full body is resent.
+func uploadAssetToServer(ctx *context.Context, upload *config.Upload, target, username, secret string, headers map[string]string, kind string, art *artifact.Artifact, check ResponseChecker) (*h.Response, error) {
+	attempts := retry.Count(upload.Retry)
+	var lastResp *h.Response
+	var lastErr error
+	for attempt := uint(1); attempt <= attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 
-	return executeHTTPRequest(ctx, upload, req, check)
+		opened, err := assetOpen(kind, art)
+		if err != nil {
+			recordAttempt(ctx, art, kind, upload.Name, target, int(attempt), err)
+			return nil, &assetOpenError{err: err}
+		}
+
+		req, err := newUploadRequest(ctx, upload.Method, target, username, secret, headers, opened)
+		if err != nil {
+			_ = opened.ReadCloser.Close()
+			recordAttempt(ctx, art, kind, upload.Name, target, int(attempt), err)
+			return nil, err
+		}
+
+		resp, err := executeHTTPRequest(ctx, upload, req, check)
+		_ = opened.ReadCloser.Close()
+		lastResp = resp
+		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				recordAttempt(ctx, art, kind, upload.Name, target, int(attempt), cerr)
+				return resp, cerr
+			}
+			lastErr = err
+			recordAttempt(ctx, art, kind, upload.Name, target, int(attempt), err)
+			retryAfter, hasRetryAfter := retryAfterFor(resp, time.Now())
+			if !retriableHTTP(resp, err) || attempt == attempts {
+				return resp, err
+			}
+			wait := retry.NextDelay(upload.Retry, int(attempt), retryAfter, hasRetryAfter)
+			if serr := retry.Sleep(ctx, wait); serr != nil {
+				return resp, serr
+			}
+			continue
+		}
+
+		recordAttempt(ctx, art, kind, upload.Name, target, int(attempt), nil)
+		return resp, nil
+	}
+	return lastResp, lastErr
+}
+
+type assetOpenError struct{ err error }
+
+func (e *assetOpenError) Error() string { return e.err.Error() }
+func (e *assetOpenError) Unwrap() error { return e.err }
+
+func recordAttempt(ctx *context.Context, art *artifact.Artifact, publisher, instance, target string, attempt int, err error) {
+	entry := context.PublishAttempt{
+		Publisher: publisher,
+		Instance:  instance,
+		Target:    target,
+		Attempt:   attempt,
+		Status:    context.PublishStatusSuccess,
+	}
+	if err != nil {
+		entry.Status = context.PublishStatusFailure
+		entry.Error = err.Error()
+	}
+	publishattempt.Record(ctx, art, entry)
+}
+
+func retriableHTTP(resp *h.Response, err error) bool {
+	if err == nil {
+		return false
+	}
+	if resp == nil || resp.StatusCode == 0 {
+		return true
+	}
+	switch resp.StatusCode {
+	case h.StatusRequestTimeout,
+		h.StatusTooManyRequests,
+		h.StatusInternalServerError,
+		h.StatusBadGateway,
+		h.StatusServiceUnavailable,
+		h.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func retryAfterFor(resp *h.Response, now time.Time) (time.Duration, bool) {
+	if resp == nil {
+		return 0, false
+	}
+	if resp.StatusCode != h.StatusTooManyRequests && resp.StatusCode != h.StatusServiceUnavailable {
+		return 0, false
+	}
+	return retry.ParseRetryAfter(resp.Header.Get("Retry-After"), now)
 }
 
 // newUploadRequest creates a new h.Request for uploading.

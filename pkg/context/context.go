@@ -7,11 +7,14 @@
 package context
 
 import (
+	"cmp"
 	stdctx "context"
 	"maps"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
@@ -112,6 +115,37 @@ type Context struct {
 	Skips             map[string]bool
 
 	NotifiedDeprecations map[string]struct{}
+
+	// Extra holds publisher audit data. Publish attempts are stored at
+	// Extra["publish_attempts"] and kept sorted for deterministic output.
+	Extra map[string]any `json:"extra,omitempty"`
+
+	publishAttempts *publishAttemptLog
+}
+
+// ExtraPublishAttempts is the Extra key for the publish attempt audit log.
+const ExtraPublishAttempts = "publish_attempts"
+
+// PublishAttempt is one try to publish a single artifact.
+type PublishAttempt struct {
+	Publisher string `json:"publisher"`
+	Instance  string `json:"instance"`
+	Target    string `json:"target"`
+	Attempt   int    `json:"attempt"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
+
+const (
+	// PublishStatusSuccess is a successful publish attempt.
+	PublishStatusSuccess = "success"
+	// PublishStatusFailure is a failed publish attempt.
+	PublishStatusFailure = "failure"
+)
+
+type publishAttemptLog struct {
+	mu    sync.Mutex
+	items []PublishAttempt
 }
 
 type Runtime struct {
@@ -144,11 +178,67 @@ func Wrap(ctx stdctx.Context, config config.Project) *Context {
 		Date:                 time.Now(),
 		Skips:                map[string]bool{},
 		NotifiedDeprecations: map[string]struct{}{},
+		Extra:                map[string]any{},
+		publishAttempts:      &publishAttemptLog{},
 		Runtime: Runtime{
 			Goos:   runtime.GOOS,
 			Goarch: runtime.GOARCH,
 		},
 	}
+}
+
+// AddPublishAttempt appends one attempt and re-sorts extra.publish_attempts
+// by publisher, instance, target, then attempt.
+func (ctx *Context) AddPublishAttempt(attempt PublishAttempt) {
+	if ctx == nil {
+		return
+	}
+	log := ctx.ensurePublishAttempts()
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	log.items = append(log.items, attempt)
+	sortPublishAttempts(log.items)
+	if ctx.Extra == nil {
+		ctx.Extra = map[string]any{}
+	}
+	ctx.Extra[ExtraPublishAttempts] = slices.Clone(log.items)
+}
+
+// PublishAttempts returns a copy of the sorted publish attempt audit log.
+func (ctx *Context) PublishAttempts() []PublishAttempt {
+	if ctx == nil {
+		return nil
+	}
+	log := ctx.ensurePublishAttempts()
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	return slices.Clone(log.items)
+}
+
+var publishAttemptInit sync.Mutex
+
+func (ctx *Context) ensurePublishAttempts() *publishAttemptLog {
+	publishAttemptInit.Lock()
+	defer publishAttemptInit.Unlock()
+	if ctx.publishAttempts == nil {
+		ctx.publishAttempts = &publishAttemptLog{}
+	}
+	return ctx.publishAttempts
+}
+
+func sortPublishAttempts(items []PublishAttempt) {
+	slices.SortStableFunc(items, func(a, b PublishAttempt) int {
+		if c := strings.Compare(a.Publisher, b.Publisher); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Instance, b.Instance); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Target, b.Target); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Attempt, b.Attempt)
+	})
 }
 
 // ToEnv converts a list of strings to an Env (aka a map[string]string).

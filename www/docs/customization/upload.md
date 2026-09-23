@@ -241,6 +241,17 @@ uploads:
     # <!-- md:inline_version v2.7 -->.
     skip: "{{gt .Patch 0}}"
 
+    # Retry transient failures for each artifact, including extra_files.
+    # Transport errors and HTTP 408, 429, 500, 502, 503, and 504 are retried.
+    # For 429 and 503, a valid Retry-After value (delta-seconds or HTTP-date)
+    # waits max(exponential backoff, Retry-After), then caps that wait with
+    # max_delay. Every try resends the full artifact and is recorded in
+    # extra.publish_attempts.
+    retry:
+      attempts: 3
+      delay: 1s
+      max_delay: 10s
+
     # Certificate chain used to validate server certificates
     trusted_certificates: |
       -----BEGIN CERTIFICATE-----
