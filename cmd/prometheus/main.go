@@ -1705,8 +1705,8 @@ func (t *transactionalReloader) reload(filename string, enableExemplarStorage bo
 		st.FailedReloader = rl.name
 		if !initial && len(st.AppliedReloaders) > 0 {
 			st.RollbackAttempted = true
-			if rerr := t.rollback(logger, rls[:i+1]); rerr != nil {
-				err = fmt.Errorf("%w; rollback to the last known-good configuration failed: %w", err, rerr)
+			if rbErr := t.rollback(logger, rls[:i+1]); rbErr != nil {
+				err = fmt.Errorf("%w; rollback to the last known-good configuration failed: %w", err, rbErr)
 				st.ErrorCategory = reloadstatus.ErrorCategoryRollback
 			} else {
 				st.RollbackSuccessful = true
