@@ -33,6 +33,7 @@ from returns.pointfree.bind_io import bind_io as bind_io
 from returns.pointfree.bind_ioresult import bind_ioresult as bind_ioresult
 from returns.pointfree.bind_optional import bind_optional as bind_optional
 from returns.pointfree.bind_result import bind_result as bind_result
+from returns.pointfree.bind_validated import bind_validated as bind_validated
 from returns.pointfree.compose_result import compose_result as compose_result
 from returns.pointfree.cond import cond as cond
 from returns.pointfree.lash import lash as lash
