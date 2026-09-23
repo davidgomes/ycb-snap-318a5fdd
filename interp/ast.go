@@ -387,6 +387,9 @@ func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err
 		// Parse comments in REPL mode, to allow tag setting.
 		mode |= parser.ParseComments
 	}
+	if strings.Contains(src, embedDirective) {
+		mode |= parser.ParseComments
+	}
 
 	if ok, err := interp.buildOk(&interp.context, name, src); !ok || err != nil {
 		return nil, err // skip source not matching build constraints
@@ -433,6 +436,8 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 	var root *node
 	var anc astNode
 	var st nodestack
+	var embedSpecs map[*ast.ValueSpec]*embedVar
+	var embeds []*embedVar
 	pkgName := "main"
 
 	addChild := func(root **node, anc astNode, pos token.Pos, kind nkind, act action) *node {
@@ -682,6 +687,9 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 
 		case *ast.File:
 			pkgName = a.Name.Name
+			if embedSpecs, err = interp.embedDirectives(a); err != nil {
+				return false
+			}
 			st.push(addChild(&root, anc, pos, fileStmt, aNop), nod)
 
 		case *ast.ForStmt:
@@ -927,6 +935,19 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 			n.nleft = len(a.Names)
 			n.nright = len(a.Values)
 			st.push(n, nod)
+			if ev := embedSpecs[a]; ev != nil {
+				switch {
+				case len(a.Names) > 1:
+					err = interp.embedErrorf(pos, "go:embed cannot apply to multiple vars")
+				case a.Values != nil:
+					err = interp.embedErrorf(pos, "go:embed cannot apply to var with initializer")
+				case a.Type == nil:
+					err = interp.embedErrorf(pos, "go:embed cannot apply to var without type")
+				default:
+					ev.spec = n
+					embeds = append(embeds, ev)
+				}
+			}
 
 		default:
 			err = astError(fmt.Errorf("ast: %T not implemented, line %s", a, interp.fset.Position(pos)))
@@ -936,6 +957,12 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 	})
 
 	interp.roots = append(interp.roots, root)
+	if len(embeds) > 0 && err == nil {
+		if interp.embeds == nil {
+			interp.embeds = map[*node][]*embedVar{}
+		}
+		interp.embeds[root] = embeds
+	}
 	return pkgName, root, err
 }
 

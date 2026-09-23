@@ -126,6 +126,9 @@ func (interp *Interpreter) importSrc(rPath, importPath string, skipTest bool) (s
 		if nodes, err = interp.cfg(root, nil, importPath, pkgName); err != nil {
 			return "", err
 		}
+		if err = interp.resolveEmbeds(root); err != nil {
+			return "", err
+		}
 		initNodes = append(initNodes, nodes...)
 	}
 
@@ -143,6 +146,9 @@ func (interp *Interpreter) importSrc(rPath, importPath string, skipTest bool) (s
 
 	interp.frame.mutex.Lock()
 	interp.resizeFrame()
+	for _, root := range rootNodes {
+		interp.initEmbeds(root)
+	}
 	interp.frame.mutex.Unlock()
 	interp.mutex.Unlock()
 

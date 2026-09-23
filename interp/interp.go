@@ -3,6 +3,7 @@ package interp
 import (
 	"bufio"
 	"context"
+	"embed"
 	"errors"
 	"fmt"
 	"go/build"
@@ -213,6 +214,7 @@ type Interpreter struct {
 	done     chan struct{}     // for cancellation of channel operations
 	roots    []*node
 	generic  map[string]*node
+	embeds   map[*node][]*embedVar // go:embed variables, indexed by file root node
 
 	hooks *hooks // symbol hooks
 
@@ -327,10 +329,13 @@ func New(options Options) *Interpreter {
 		fset:     token.NewFileSet(),
 		universe: initUniverse(),
 		scopes:   map[string]*scope{},
-		binPkg:   Exports{"": map[string]reflect.Value{"_error": reflect.ValueOf((*_error)(nil))}},
+		binPkg: Exports{
+			"":      map[string]reflect.Value{"_error": reflect.ValueOf((*_error)(nil))},
+			"embed": map[string]reflect.Value{"FS": reflect.ValueOf((*embed.FS)(nil))},
+		},
 		mapTypes: map[reflect.Value][]reflect.Type{},
 		srcPkg:   imports{},
-		pkgNames: map[string]string{},
+		pkgNames: map[string]string{"embed": "embed"},
 		rdir:     map[string]bool{},
 		hooks:    &hooks{},
 		generic:  map[string]*node{},

@@ -108,6 +108,10 @@ func (interp *Interpreter) CompileAST(n ast.Node) (*Program, error) {
 		return nil, err
 	}
 
+	if err = interp.resolveEmbeds(root); err != nil {
+		return nil, err
+	}
+
 	if root.kind != fileStmt {
 		// REPL may skip package statement.
 		setExec(root.start)
@@ -158,6 +162,7 @@ func (interp *Interpreter) Execute(p *Program) (res reflect.Value, err error) {
 	interp.frame.setrunid(interp.runid())
 	interp.frame.mutex.Lock()
 	interp.resizeFrame()
+	interp.initEmbeds(p.root)
 	interp.frame.mutex.Unlock()
 
 	// Execute node closures.
