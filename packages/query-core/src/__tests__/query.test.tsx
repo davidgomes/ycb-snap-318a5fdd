@@ -1279,7 +1279,11 @@ describe('query', () => {
           state: persistedState,
         })
       })
-      const options = { queryKey: key, queryFn: () => 'fetched data', persister }
+      const options = {
+        queryKey: key,
+        queryFn: () => 'fetched data',
+        persister,
+      }
 
       const results = Promise.all([
         queryClient.fetchQuery(options),
