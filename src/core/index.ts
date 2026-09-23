@@ -1,6 +1,6 @@
 import { CreateStoreOptions, KeaPlugin } from '../types'
 import { listeners, ListenersPluginContext, sharedListeners } from './listeners'
-import { getPluginContext, setPluginContext } from '../kea/context'
+import { getContext, getPluginContext, setPluginContext } from '../kea/context'
 import { connect } from './connect'
 import { actions } from './actions'
 import { defaults } from './defaults'
@@ -8,6 +8,7 @@ import { reducers } from './reducers'
 import { selectors } from './selectors'
 import { events } from './events'
 import { runPlugins } from '../kea/plugins'
+import { atomicSelectorsMiddleware } from './atomic'
 
 export { actions } from './actions'
 export { connect } from './connect'
@@ -71,6 +72,9 @@ export const corePlugin: KeaPlugin = {
         }
         return response
       })
+      if (getContext().options.atomicSelectors) {
+        options.middleware.push(atomicSelectorsMiddleware)
+      }
     },
 
     // support kea 2.0 style object building

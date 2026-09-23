@@ -1,6 +1,7 @@
 import { Logic, LogicBuilder, LogicPropSelectors, Selector, SelectorDefinition, SelectorDefinitions } from '../types'
 import { createSelector, createSelectorCreator, defaultMemoize, ParametricSelector } from 'reselect'
-import { getStoreState } from '../kea/context'
+import { getContext, getStoreState } from '../kea/context'
+import { getAtomicSelectorGraph, trackSelectorNames } from './atomic'
 
 /**
   Logic builder:
@@ -25,6 +26,7 @@ export function selectors<L extends Logic = Logic>(
 ): LogicBuilder<L> {
   return (logic) => {
     const selectorInputs = typeof input === 'function' ? input(logic) : input
+    const atomicGraph = getContext().options.atomicSelectors ? getAtomicSelectorGraph(logic) : null
 
     // small cache so the order would not count
     const builtSelectors: Record<string, Selector> = {}
@@ -32,7 +34,14 @@ export function selectors<L extends Logic = Logic>(
       if (typeof logic.selectors[key] !== 'undefined') {
         throw new Error(`[KEA] Logic "${logic.pathString}" selector "${key}" already exists`)
       }
-      addSelectorAndValue(logic, key, (...args) => builtSelectors[key](...args))
+      if (atomicGraph) {
+        atomicGraph.declare(key)
+        addSelectorAndValue(logic, key, (state = getStoreState(), props = logic.props) =>
+          atomicGraph.read(key, state, props),
+        )
+      } else {
+        addSelectorAndValue(logic, key, (...args) => builtSelectors[key](...args))
+      }
     }
 
     const propSelectors =
@@ -61,12 +70,19 @@ export function selectors<L extends Logic = Logic>(
         throw new Error(`[KEA] Logic "${logic.pathString}" selector "${key}" is undefined`)
       }
       const [input, func, memoizeOptions] = arr
-      const args: ParametricSelector<any, any, any>[] = input(logic.selectors, propSelectors)
+      const inputNames = atomicGraph && new Map<unknown, string>()
+      const args: ParametricSelector<any, any, any>[] = inputNames
+        ? input(trackSelectorNames(logic.selectors, inputNames), trackSelectorNames(propSelectors, inputNames, 'props.'))
+        : input(logic.selectors, propSelectors)
 
       if (args.filter((a) => typeof a !== 'function').length > 0) {
         const argTypes = args.map((a) => typeof a).join(', ')
         const msg = `[KEA] Logic "${logic.pathString}", selector "${key}" has incorrect input: [${argTypes}].`
         throw new Error(msg)
+      }
+      if (atomicGraph && inputNames) {
+        atomicGraph.define(key, args, inputNames, func, memoizeOptions)
+        continue
       }
       builtSelectors[key] = createSelector(args, func, { memoizeOptions })
 
@@ -83,6 +99,8 @@ export function selectors<L extends Logic = Logic>(
         })
       }
     }
+
+    atomicGraph?.sort()
   }
 }
 
