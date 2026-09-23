@@ -133,12 +133,25 @@ func (s *Script) Compile() (*Compiled, error) {
 			return nil, fmt.Errorf("exceeding constant objects limit: %d", cnt)
 		}
 	}
-	return &Compiled{
+	compiled := &Compiled{
 		globalIndexes: globalIndexes,
 		bytecode:      bytecode,
 		globals:       globals,
 		maxAllocs:     s.maxAllocs,
-	}, nil
+	}
+	compiled.rt = newRuntime(&program{
+		bytecode:      bytecode,
+		globalIndexes: globalIndexes,
+	}, globals, s.maxAllocs)
+
+	// rebind functions of other compiled scripts added as variables
+	t := newTransfer(compiled, false)
+	for idx, g := range globals {
+		if g != nil {
+			globals[idx] = compiled.adopt(g, t)
+		}
+	}
+	return compiled, nil
 }
 
 // Run compiles and runs the scripts. Use returned compiled object to access
@@ -200,6 +213,11 @@ type Compiled struct {
 	globals       []Object
 	maxAllocs     int64
 	lock          sync.RWMutex
+	rt            *runtime
+
+	// foreign holds the runtimes executing functions of other programs that
+	// were transferred into this instance.
+	foreign map[*program]*runtime
 }
 
 // Run executes the compiled script in the virtual machine.
@@ -207,7 +225,7 @@ func (c *Compiled) Run() error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	v := newVM(c.rt, c.bytecode.MainFunction)
 	return v.Run()
 }
 
@@ -216,7 +234,7 @@ func (c *Compiled) RunContext(ctx context.Context) (err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	v := newVM(c.rt, c.bytecode.MainFunction)
 	ch := make(chan error, 1)
 	go func() {
 		defer func() {
@@ -254,7 +272,8 @@ func (c *Compiled) Size() int64 {
 }
 
 // Clone creates a new copy of Compiled. Cloned copies are safe for concurrent
-// use by multiple goroutines.
+// use by multiple goroutines. Functions reachable from the globals of the
+// clone are bound to the clone and hold copies of their captured variables.
 func (c *Compiled) Clone() *Compiled {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -265,10 +284,13 @@ func (c *Compiled) Clone() *Compiled {
 		globals:       make([]Object, len(c.globals)),
 		maxAllocs:     c.maxAllocs,
 	}
+	clone.rt = newRuntime(c.rt.prog, clone.globals, c.maxAllocs)
+
 	// copy global objects
+	t := newTransfer(clone, true)
 	for idx, g := range c.globals {
 		if g != nil {
-			clone.globals[idx] = g.Copy()
+			clone.globals[idx] = t.value(g)
 		}
 	}
 	return clone
@@ -329,7 +351,10 @@ func (c *Compiled) GetAll() []*Variable {
 }
 
 // Set replaces the value of a global variable identified by the name. An error
-// will be returned if the name was not defined during compilation.
+// will be returned if the name was not defined during compilation. Functions
+// of other Compiled instances reachable from the value are copied and bound to
+// this instance: they keep a snapshot of their captured variables and resolve
+// globals by name against this instance.
 func (c *Compiled) Set(name string, value interface{}) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -342,6 +367,6 @@ func (c *Compiled) Set(name string, value interface{}) error {
 	if !ok {
 		return fmt.Errorf("'%s' is not defined", name)
 	}
-	c.globals[idx] = obj
+	c.globals[idx] = c.adopt(obj, nil)
 	return nil
 }

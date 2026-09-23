@@ -576,6 +576,19 @@ type CompiledFunction struct {
 	VarArgs       bool
 	SourceMap     map[int]parser.Pos
 	Free          []*ObjectPtr
+	rt            *runtime
+}
+
+func (o *CompiledFunction) bind(rt *runtime) *CompiledFunction {
+	return &CompiledFunction{
+		Instructions:  o.Instructions,
+		NumLocals:     o.NumLocals,
+		NumParameters: o.NumParameters,
+		VarArgs:       o.VarArgs,
+		SourceMap:     o.SourceMap,
+		Free:          o.Free,
+		rt:            rt,
+	}
 }
 
 // TypeName returns the name of the type.
@@ -600,7 +613,9 @@ func (o *CompiledFunction) Copy() Object {
 		NumLocals:     o.NumLocals,
 		NumParameters: o.NumParameters,
 		VarArgs:       o.VarArgs,
+		SourceMap:     o.SourceMap,
 		Free:          append([]*ObjectPtr{}, o.Free...), // DO NOT Copy() of elements; these are variable pointers
+		rt:            o.rt,
 	}
 }
 
@@ -624,6 +639,18 @@ func (o *CompiledFunction) SourcePos(ip int) parser.Pos {
 // CanCall returns whether the Object can be Called.
 func (o *CompiledFunction) CanCall() bool {
 	return true
+}
+
+// Call executes the function from Go against the globals, imports and
+// captured variables of the compiled script it was created in, and returns
+// its return value. Runtime errors are formatted like the ones returned by
+// Compiled.Run. Call does not lock the Compiled instance the function belongs
+// to, so it must not run concurrently with other executions of that instance.
+func (o *CompiledFunction) Call(args ...Object) (Object, error) {
+	if o.rt == nil {
+		return nil, ErrNotBoundFunction
+	}
+	return newVM(o.rt, goCallTrampoline).invoke(o, args)
 }
 
 // Error represents an error value.

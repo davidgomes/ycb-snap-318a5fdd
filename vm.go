@@ -11,6 +11,7 @@ import (
 // frame represents a function call frame.
 type frame struct {
 	fn          *CompiledFunction
+	rt          *runtime
 	freeVars    []*ObjectPtr
 	ip          int
 	basePointer int
@@ -18,11 +19,12 @@ type frame struct {
 
 // VM is a virtual machine that executes the bytecode compiled by Compiler.
 type VM struct {
+	rt          *runtime
 	constants   []Object
 	stack       [StackSize]Object
 	sp          int
 	globals     []Object
-	fileSet     *parser.SourceFileSet
+	globalMap   []int
 	frames      [MaxFrames]frame
 	framesIndex int
 	curFrame    *frame
@@ -34,6 +36,28 @@ type VM struct {
 	err         error
 }
 
+// goCallTrampoline is the bottom frame of Go-side calls of compiled
+// functions. It calls the function at the bottom of the stack spreading the
+// arguments array next to it, and suspends.
+var goCallTrampoline = &CompiledFunction{
+	Instructions: append(MakeInstruction(parser.OpCall, 1, 1),
+		parser.OpSuspend),
+}
+
+// callError is a runtime error returned by a Go-side call of a compiled
+// function. It is already formatted with its call stack.
+type callError struct {
+	err error
+}
+
+func (e *callError) Error() string {
+	return e.err.Error()
+}
+
+func (e *callError) Unwrap() error {
+	return e.err
+}
+
 // NewVM creates a VM.
 func NewVM(
 	bytecode *Bytecode,
@@ -43,20 +67,31 @@ func NewVM(
 	if globals == nil {
 		globals = make([]Object, GlobalsSize)
 	}
+	rt := newRuntime(&program{bytecode: bytecode}, globals, maxAllocs)
+	return newVM(rt, bytecode.MainFunction)
+}
+
+func newVM(rt *runtime, main *CompiledFunction) *VM {
 	v := &VM{
-		constants:   bytecode.Constants,
 		sp:          0,
-		globals:     globals,
-		fileSet:     bytecode.FileSet,
 		framesIndex: 1,
 		ip:          -1,
-		maxAllocs:   maxAllocs,
+		maxAllocs:   rt.maxAllocs,
 	}
-	v.frames[0].fn = bytecode.MainFunction
+	v.frames[0].fn = main
+	v.frames[0].rt = rt
 	v.frames[0].ip = -1
 	v.curFrame = &v.frames[0]
 	v.curInsts = v.curFrame.fn.Instructions
+	v.setRuntime(rt)
 	return v
+}
+
+func (v *VM) setRuntime(rt *runtime) {
+	v.rt = rt
+	v.constants = rt.constants
+	v.globals = rt.globals
+	v.globalMap = rt.globalMap
 }
 
 // Abort aborts the execution.
@@ -68,7 +103,29 @@ func (v *VM) Abort() {
 func (v *VM) Run() (err error) {
 	// reset VM states
 	v.sp = 0
+	return v.execute()
+}
+
+// invoke calls fn with args on top of goCallTrampoline and returns the
+// result.
+func (v *VM) invoke(fn *CompiledFunction, args []Object) (Object, error) {
+	if len(args)+fn.NumLocals+2 > StackSize {
+		return nil, &callError{
+			err: fmt.Errorf("Runtime Error: %w", ErrStackOverflow),
+		}
+	}
+	v.stack[0] = fn
+	v.stack[1] = &Array{Value: args}
+	v.sp = 2
+	if err := v.execute(); err != nil {
+		return nil, &callError{err: err}
+	}
+	return v.stack[0], nil
+}
+
+func (v *VM) execute() (err error) {
 	v.curFrame = &(v.frames[0])
+	v.setRuntime(v.curFrame.rt)
 	v.curInsts = v.curFrame.fn.Instructions
 	v.framesIndex = 1
 	v.ip = -1
@@ -78,20 +135,34 @@ func (v *VM) Run() (err error) {
 	atomic.StoreInt64(&v.aborting, 0)
 	err = v.err
 	if err != nil {
-		filePos := v.fileSet.Position(
-			v.curFrame.fn.SourcePos(v.ip - 1))
-		err = fmt.Errorf("Runtime Error: %w\n\tat %s",
-			err, filePos)
+		// errors of nested Go-side calls already carry their prefix
+		if _, ok := err.(*callError); !ok {
+			err = fmt.Errorf("Runtime Error: %w", err)
+		}
+		err = v.curFrame.traceError(err, v.ip-1)
 		for v.framesIndex > 1 {
 			v.framesIndex--
 			v.curFrame = &v.frames[v.framesIndex-1]
-			filePos = v.fileSet.Position(
-				v.curFrame.fn.SourcePos(v.curFrame.ip - 1))
-			err = fmt.Errorf("%w\n\tat %s", err, filePos)
+			err = v.curFrame.traceError(err, v.curFrame.ip-1)
 		}
 		return err
 	}
 	return nil
+}
+
+func (f *frame) traceError(err error, ip int) error {
+	if f.fn == goCallTrampoline {
+		return err
+	}
+	filePos := f.rt.fileSet().Position(f.fn.SourcePos(ip))
+	return fmt.Errorf("%w\n\tat %s", err, filePos)
+}
+
+func (v *VM) globalRef(idx int) *Object {
+	if v.globalMap == nil {
+		return &v.globals[idx]
+	}
+	return v.rt.globalRef(idx)
 }
 
 func (v *VM) run() {
@@ -247,7 +318,11 @@ func (v *VM) run() {
 			v.ip += 2
 			v.sp--
 			globalIndex := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
-			v.globals[globalIndex] = v.stack[v.sp]
+			if v.globalMap == nil {
+				v.globals[globalIndex] = v.stack[v.sp]
+			} else {
+				*v.globalRef(globalIndex) = v.stack[v.sp]
+			}
 		case parser.OpSetSelGlobal:
 			v.ip += 3
 			globalIndex := int(v.curInsts[v.ip-1]) | int(v.curInsts[v.ip-2])<<8
@@ -260,7 +335,7 @@ func (v *VM) run() {
 			}
 			val := v.stack[v.sp-numSelectors-1]
 			v.sp -= numSelectors + 1
-			e := indexAssign(v.globals[globalIndex], val, selectors)
+			e := indexAssign(*v.globalRef(globalIndex), val, selectors)
 			if e != nil {
 				v.err = e
 				return
@@ -268,7 +343,12 @@ func (v *VM) run() {
 		case parser.OpGetGlobal:
 			v.ip += 2
 			globalIndex := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
-			val := v.globals[globalIndex]
+			var val Object
+			if v.globalMap == nil {
+				val = v.globals[globalIndex]
+			} else {
+				val = *v.globalRef(globalIndex)
+			}
 			v.stack[v.sp] = val
 			v.sp++
 		case parser.OpArray:
@@ -620,10 +700,19 @@ func (v *VM) run() {
 					return
 				}
 
+				rt := callee.rt
+				if rt == nil {
+					rt = v.rt
+				}
+
 				// update call frame
 				v.curFrame.ip = v.ip // store current ip before call
 				v.curFrame = &(v.frames[v.framesIndex])
 				v.curFrame.fn = callee
+				v.curFrame.rt = rt
+				if rt != v.rt {
+					v.setRuntime(rt)
+				}
 				v.curFrame.freeVars = callee.Free
 				v.curFrame.basePointer = v.sp - numArgs
 				v.curInsts = callee.Instructions
@@ -678,6 +767,9 @@ func (v *VM) run() {
 			//v.sp--
 			v.framesIndex--
 			v.curFrame = &v.frames[v.framesIndex-1]
+			if v.curFrame.rt != v.rt {
+				v.setRuntime(v.curFrame.rt)
+			}
 			v.curInsts = v.curFrame.fn.Instructions
 			v.ip = v.curFrame.ip
 			//v.sp = lastFrame.basePointer - 1
@@ -772,6 +864,7 @@ func (v *VM) run() {
 				VarArgs:       fn.VarArgs,
 				SourceMap:     fn.SourceMap,
 				Free:          free,
+				rt:            v.rt,
 			}
 			v.allocs--
 			if v.allocs == 0 {

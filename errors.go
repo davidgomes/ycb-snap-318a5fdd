@@ -52,6 +52,10 @@ var (
 
 	// ErrInvalidRangeStep is an error where the step parameter is less than or equal to 0 when using builtin range function.
 	ErrInvalidRangeStep = errors.New("range step must be greater than 0")
+
+	// ErrNotBoundFunction is an error where a CompiledFunction that was not
+	// created by a VM is called from Go.
+	ErrNotBoundFunction = errors.New("compiled function is not bound to a runtime")
 )
 
 // ErrInvalidArgumentType represents an invalid argument value type error.
