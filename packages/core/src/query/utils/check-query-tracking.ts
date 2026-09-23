@@ -64,6 +64,8 @@ export function checkQueryTracking(
     // Also track OR group state to avoid second loop when possible
     let hasOrGroup = false;
     let anyOrMatched = false;
+    // Keep processing so later groups still record this event
+    let allAndMatched = true;
 
     for (let i = 0; i < trackingGroupsLen; i++) {
         const group = trackingGroups[i];
@@ -121,7 +123,7 @@ export function checkQueryTracking(
                     }
                 }
             }
-        } else {
+        } else if (allAndMatched) {
             // AND group: all traits must be tracked
             const groupTrackers = group.trackers;
             const bitmaskLen = groupBitmasks.length;
@@ -131,11 +133,14 @@ export function checkQueryTracking(
                 const trackerArr = groupTrackers[genId];
                 const tracker = trackerArr ? (trackerArr[eid] | 0) : 0;
                 if ((tracker & mask) !== mask) {
-                    return false;
+                    allAndMatched = false;
+                    break;
                 }
             }
         }
     }
+
+    if (!allAndMatched) return false;
 
     // If we have OR groups, at least one must match
     if (hasOrGroup && !anyOrMatched) {

@@ -404,6 +404,19 @@ describe('Query modifiers', () => {
         expect(entities.length).toBe(0);
     });
 
+    it('should record events for every tracking group regardless of order', () => {
+        const Added = createAdded();
+        const Removed = createRemoved();
+
+        const entity = world.spawn(Bar);
+        expect(world.query(Added(Foo), Removed(Bar))).toHaveLength(0);
+
+        // Removed(Bar) is satisfied before Added(Foo).
+        entity.remove(Bar);
+        entity.add(Foo);
+        expect(world.query(Added(Foo), Removed(Bar))[0]).toBe(entity);
+    });
+
     it('should properly populate Changed queries when traits are changed', () => {
         const Changed = createChanged();
 
