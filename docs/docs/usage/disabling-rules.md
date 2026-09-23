@@ -51,7 +51,7 @@ disabled rules: [all]
 ### Range Ignore
 
 When there is a need to disable the Linter for part of a file, ranged ignores can be used. The syntax for a ranged ignore
-is `<!-- linter-disable -->` or `%%linter-disable%%` with an optional `<!-- linter-enable -->` or `%%linter-disable%%` where you want the Linter to start back up with its linting.
+is `<!-- linter-disable -->` or `%%linter-disable%%` with an optional `<!-- linter-enable -->` or `%%linter-enable%%` where you want the Linter to start back up with its linting.
 Leaving off the ending of a range ignore will assume you want to ignore the file contents from the start of the range ignore to the end of the file. So be careful when not ending a range ignore.
 
 !!! warning
@@ -79,3 +79,43 @@ This content is also not formatted either.
 
 !!! info
     Paste rules are not affected by ranged ignores as that would require the copied text to have a ranged ignore in it.
+
+Markers are only recognized when they are on a line by themselves (optionally surrounded by spaces or tabs). Markers inside
+YAML frontmatter, code blocks, inline code, or math blocks are ignored. Marker lines themselves are never modified by any rule.
+
+#### Disabling Specific Rules
+
+A comma separated list of rule aliases can be added after `linter-disable` to only disable those rules for the range.
+Rule aliases are case-insensitive, and unknown aliases are ignored. If none of the listed aliases are valid, the marker has no effect.
+
+``` markdown
+<!-- linter-disable capitalize-headings, header-increment -->
+# only capitalize headings and header increment are disabled here
+<!-- linter-enable -->
+```
+
+Ranges can be nested. A `linter-enable` without a rule list closes the most recently opened range. A `linter-enable` with a rule list
+re-enables just those rules by removing each of them from the nearest open range that disables it (a rule specific range is closed once
+all of its rules have been re-enabled). This allows disabling all rules and then re-enabling a few of them:
+
+``` markdown
+%% linter-disable %%
+Nothing is linted here
+%% linter-enable capitalize-headings %%
+Only capitalize headings is linted here
+%% linter-enable %%
+```
+
+#### Disabling Rules for the Next Lines
+
+`linter-disable-next-line` disables rules for the line that follows it, and `linter-disable-next-n-lines: N` disables rules for the
+following `N` lines where `N` is a positive whole number. Both accept an optional rule list just like `linter-disable`.
+They have no effect when there is no following line, and ranges that go past the end of the file stop at the end of the file.
+
+``` markdown
+<!-- linter-disable-next-line capitalize-headings -->
+# this heading is left as is
+%% linter-disable-next-n-lines: 2 %%
+These two lines
+are not linted
+```
