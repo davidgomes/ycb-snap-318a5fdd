@@ -946,6 +946,9 @@ func (v *VM) run() {
 				rt := callee.rt
 				if rt == nil {
 					rt = v.curFrame.rt
+				} else if rt != v.curFrame.rt {
+					v.constants = rt.constants
+					v.globals = rt.globals
 				}
 
 				// update call frame
@@ -956,8 +959,6 @@ func (v *VM) run() {
 				v.curFrame.basePointer = v.sp - numArgs
 				v.curFrame.rt = rt
 				v.curInsts = callee.Instructions
-				v.constants = rt.constants
-				v.globals = rt.globals
 				v.ip = -1
 				v.framesIndex++
 				v.sp = v.sp - numArgs + callee.NumLocals
@@ -1007,11 +1008,14 @@ func (v *VM) run() {
 				retVal = UndefinedValue
 			}
 			//v.sp--
+			rt := v.curFrame.rt
 			v.framesIndex--
 			v.curFrame = &v.frames[v.framesIndex-1]
 			v.curInsts = v.curFrame.fn.Instructions
-			v.constants = v.curFrame.rt.constants
-			v.globals = v.curFrame.rt.globals
+			if v.curFrame.rt != rt {
+				v.constants = v.curFrame.rt.constants
+				v.globals = v.curFrame.rt.globals
+			}
 			v.ip = v.curFrame.ip
 			//v.sp = lastFrame.basePointer - 1
 			v.sp = v.frames[v.framesIndex].basePointer
