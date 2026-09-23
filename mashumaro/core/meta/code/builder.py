@@ -31,6 +31,7 @@ from mashumaro.config import (
 from mashumaro.core.const import Sentinel
 from mashumaro.core.helpers import ConfigValue
 from mashumaro.core.meta.code.lines import CodeLines
+from mashumaro.core.meta.flatten import FlattenPlan, build_flatten_plans
 from mashumaro.core.meta.helpers import (
     get_args,
     get_class_that_defines_field,
@@ -365,6 +366,7 @@ class CodeBuilder:
             and self.allow_postponed_evaluation
             and self.is_nailed
         ):
+            self._validate_flatten_config()
             self._add_unpack_method_lines_lazy(method_name)
             return
         try:
@@ -377,6 +379,7 @@ class CodeBuilder:
                 raise
             self._add_unpack_method_lines_lazy(method_name)
         else:
+            flatten_plans = build_flatten_plans(self)
             if self.decoder is not None:
                 self.add_line("d = decoder(d)")
             discr = self.get_discriminator()
@@ -450,7 +453,13 @@ class CodeBuilder:
                 filtered_fields.append((fname, alias, ftype))
             if filtered_fields:
                 if config.forbid_extra_keys:
-                    allowed_keys = {f[1] or f[0] for f in filtered_fields}
+                    allowed_keys: set[str] = set()
+                    for fname, alias, _ftype in filtered_fields:
+                        plan = flatten_plans.get(fname)
+                        if plan is not None:
+                            allowed_keys.update(plan.de_parent_keys)
+                        else:
+                            allowed_keys.add(alias or fname)
 
                     # If a discriminator with a field is set via config,
                     # we should allow this field to be present in the input
@@ -460,9 +469,13 @@ class CodeBuilder:
                         allowed_keys.add(discr.field)
 
                     if config.allow_deserialization_not_by_alias:
-                        allowed_keys |= {f[0] for f in filtered_fields}
+                        for fname, _alias, _ftype in filtered_fields:
+                            if fname not in flatten_plans:
+                                allowed_keys.add(fname)
 
-                    allowed_keys_str = "'" + "', '".join(allowed_keys) + "'"
+                    allowed_keys_str = ", ".join(
+                        repr(key) for key in sorted(allowed_keys)
+                    )
 
                     self.add_line("d_keys = set(d.keys())")
                     self.add_line(
@@ -478,14 +491,20 @@ class CodeBuilder:
                     for fname, alias, ftype in filtered_fields:
                         self.add_type_modules(ftype)
                         metadata = self.metadatas.get(fname, {})
-                        field_block = FieldUnpackerCodeBlockBuilder(
-                            self, CodeLines()
-                        ).build(
-                            fname=fname,
-                            ftype=ftype,
-                            metadata=metadata,
-                            alias=alias,
-                        )
+                        plan = flatten_plans.get(fname)
+                        if plan is not None and metadata.get("flatten"):
+                            field_block = self._build_flatten_unpack_block(
+                                plan, ftype
+                            )
+                        else:
+                            field_block = FieldUnpackerCodeBlockBuilder(
+                                self, CodeLines()
+                            ).build(
+                                fname=fname,
+                                ftype=ftype,
+                                metadata=metadata,
+                                alias=alias,
+                            )
                         if field_block.in_kwargs:
                             add_kwargs = True
                         field_blocks.append(field_block)
@@ -822,6 +841,7 @@ class CodeBuilder:
             and self.allow_postponed_evaluation
             and self.is_nailed
         ):
+            self._validate_flatten_config()
             self._add_pack_method_lines_lazy(method_name)
             return
         try:
@@ -834,6 +854,7 @@ class CodeBuilder:
                 raise
             self._add_pack_method_lines_lazy(method_name)
         else:
+            flatten_plans = build_flatten_plans(self)
             pre_serialize = self.get_declared_hook(__PRE_SERIALIZE__)
             if pre_serialize:
                 if self.is_code_generation_option_enabled(
@@ -872,6 +893,9 @@ class CodeBuilder:
             for fname, ftype in fnames_and_types:
                 if self.metadatas.get(fname, {}).get("serialize") == "omit":
                     continue
+                if fname in flatten_plans:
+                    packers[fname] = ""
+                    continue
                 packer, alias, could_be_none = self._get_field_packer(
                     fname, ftype, config, force_value
                 )
@@ -889,10 +913,15 @@ class CodeBuilder:
                 or by_alias_feature
                 and aliases
                 or omit_default
+                or flatten_plans
             ):
                 kwargs = "kwargs"
                 self.add_line("kwargs = {}")
                 for fname, packer in packers.items():
+                    plan = flatten_plans.get(fname)
+                    if plan is not None:
+                        self._emit_flatten_pack(plan, omit_default)
+                        continue
                     if force_value:
                         self.add_line(f"value = self.{fname}")
                     alias = aliases.get(fname)
@@ -1182,6 +1211,183 @@ class CodeBuilder:
             )
         )
         return packer, alias, could_be_none
+
+    def get_field_alias_value(
+        self,
+        fname: str,
+        ftype: typing.Type,
+        metadata: typing.Mapping[str, typing.Any],
+    ) -> typing.Optional[str]:
+        return self.__get_field_alias(
+            fname, ftype, metadata, self.get_config()
+        )
+
+    def _validate_flatten_config(self) -> None:
+        try:
+            self.get_field_types(include_extras=True)
+        except UnresolvedTypeReferenceError:
+            return
+        build_flatten_plans(self)
+
+    def _field_could_be_none(self, fname: str, ftype: typing.Any) -> bool:
+        default = self.get_field_default(fname)
+        return bool(
+            ftype in (typing.Any, type(None), None)
+            or is_type_var_any(self.get_real_type(fname, ftype))
+            or is_optional(ftype, self.get_field_resolved_type_params(fname))
+            or default is None
+        )
+
+    def ensure_child_pack_method(
+        self, origin: typing.Type, type_args: typing.Tuple[typing.Any, ...]
+    ) -> str:
+        method_name = self.get_pack_method_name(type_args, self.format_name)
+        method_loc = origin if self.is_nailed else self.attrs
+        if get_class_that_defines_method(
+            method_name, method_loc
+        ) != method_loc and (
+            origin is not self.cls
+            or self.get_pack_method_name(
+                type_args=type_args,
+                format_name=self.format_name,
+                encoder=self.encoder,
+            )
+            != method_name
+        ):
+            builder = self.__class__(
+                origin,
+                type_args,
+                dialect=self.dialect,
+                format_name=self.format_name,
+                default_dialect=self.default_dialect,
+                attrs=method_loc,
+                attrs_registry=(
+                    self.attrs_registry if not self.is_nailed else None
+                ),
+            )
+            builder.add_pack_method()
+        return str(method_name)
+
+    def ensure_child_unpack_method(
+        self, origin: typing.Type, type_args: typing.Tuple[typing.Any, ...]
+    ) -> str:
+        method_name = self.get_unpack_method_name(type_args, self.format_name)
+        method_loc = origin if self.is_nailed else self.attrs
+        if get_class_that_defines_method(
+            method_name, method_loc
+        ) != method_loc and (
+            origin is not self.cls
+            or self.get_unpack_method_name(
+                type_args=type_args,
+                format_name=self.format_name,
+                decoder=self.decoder,
+            )
+            != method_name
+        ):
+            builder = self.__class__(
+                origin,
+                type_args,
+                dialect=self.dialect,
+                format_name=self.format_name,
+                default_dialect=self.default_dialect,
+                attrs=method_loc,
+                attrs_registry=(
+                    self.attrs_registry if not self.is_nailed else None
+                ),
+            )
+            builder.add_unpack_method()
+        return str(method_name)
+
+    def _emit_flatten_pack(
+        self, plan: FlattenPlan, omit_default: bool
+    ) -> None:
+        fname = plan.fname
+        method_name = self.ensure_child_pack_method(
+            plan.origin, plan.type_args
+        )
+        flags = self.get_pack_method_flags(plan.origin)
+        if flags:
+            call = f"value.{method_name}({flags})"
+        else:
+            call = f"value.{method_name}()"
+        could_be_none = self._field_could_be_none(fname, plan.field_type)
+        has_default = self.get_field_default(fname) is not MISSING
+        self.add_line(f"value = self.{fname}")
+        conds: list[str] = []
+        if could_be_none:
+            conds.append("value is not None")
+        if omit_default and has_default:
+            default_value = self.get_field_default(fname, call_factory=True)
+            literal = self.get_field_default_literal(default_value)
+            if isinstance(default_value, float) and math.isnan(default_value):
+                self.ensure_object_imported(math.isnan, "isnan")
+                conds.append("not isnan(value)")
+            else:
+                conds.append(f"value != {literal}")
+
+        def _emit_merge() -> None:
+            src = f"__flat_{fname}"
+            self.add_line(f"{src} = {call}")
+            if plan.mode == "prefix":
+                with self.indent(f"for __fk, __fv in {src}.items():"):
+                    self.add_line(f"kwargs[{plan.prefix!r} + __fk] = __fv")
+            elif plan.mode == "rename":
+                map_name = f"__flat_map_{fname}"
+                self.add_line(f"{map_name} = {plan.output_map!r}")
+                with self.indent(f"for __fk, __fv in {src}.items():"):
+                    self.add_line(f"kwargs[{map_name}.get(__fk, __fk)] = __fv")
+            else:
+                self.add_line(f"kwargs.update({src})")
+
+        if conds:
+            with self.indent(f"if {' and '.join(conds)}:"):
+                _emit_merge()
+        else:
+            _emit_merge()
+
+    def _build_flatten_unpack_block(
+        self, plan: FlattenPlan, ftype: typing.Any
+    ) -> "FieldUnpackerCodeBlock":
+        block = FieldUnpackerCodeBlockBuilder(self, CodeLines())
+        method_name = self.ensure_child_unpack_method(
+            plan.origin, plan.type_args
+        )
+        cls_name = self.get_type_name_identifier(plan.origin)
+        self.add_type_modules(plan.origin)
+        flags = self.get_unpack_method_flags(plan.origin)
+        sub = f"__flat_in_{plan.fname}"
+        block.add_line(f"{sub} = {{}}")
+        block.add_line(f"for __pk, __ck in {plan.input_bindings!r}.items():")
+        with block.indent():
+            block.add_line("__pv = d.get(__pk, MISSING)")
+            with block.indent("if __pv is not MISSING:"):
+                block.add_line(f"{sub}[__ck] = __pv")
+        if flags:
+            call = f"{cls_name}.{method_name}({sub}, {flags})"
+        else:
+            call = f"{cls_name}.{method_name}({sub})"
+        has_default = self.get_field_default(plan.fname) is not MISSING
+        could_be_none = self._field_could_be_none(plan.fname, ftype)
+        if has_default:
+            with block.indent(f"if {sub}:"):
+                block.add_line(f"kwargs['{plan.fname}'] = {call}")
+        elif could_be_none:
+            field_type = self.get_type_name_identifier(
+                ftype,
+                resolved_type_params=self.get_field_resolved_type_params(
+                    plan.fname
+                ),
+            )
+            with block.indent(f"if {sub}:"):
+                block.add_line(f"__{plan.fname} = {call}")
+            with block.indent("else:"):
+                block.add_line(
+                    f"raise MissingField('{plan.fname}',"
+                    f"{field_type},cls) from None"
+                )
+        else:
+            block.add_line(f"__{plan.fname} = {call}")
+        return FieldUnpackerCodeBlock(block.lines, plan.fname, has_default)
 
     @staticmethod
     def __get_field_alias(

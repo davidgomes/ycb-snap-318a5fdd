@@ -36,15 +36,26 @@ def field_options(
     ] = None,
     serialization_strategy: Optional[SerializationStrategy] = None,
     alias: Optional[str] = None,
+    flatten: bool = False,
+    flatten_prefix: Optional[Union[str, bool]] = None,
+    flatten_rename: Optional[dict[str, str]] = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    return {
+    options: dict[str, Any] = {
         "serialize": serialize,
         "deserialize": deserialize,
         "serialization_strategy": serialization_strategy,
         "alias": alias,
-        **kwargs,
     }
+    # Keep the historical default mapping unchanged unless flatten is used.
+    if flatten:
+        options["flatten"] = flatten
+    if flatten_prefix not in (None, False):
+        options["flatten_prefix"] = flatten_prefix
+    if flatten_rename is not None:
+        options["flatten_rename"] = flatten_rename
+    options.update(kwargs)
+    return options
 
 
 class _PassThrough(SerializationStrategy):
