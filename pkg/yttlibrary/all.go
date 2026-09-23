@@ -59,6 +59,9 @@ func NewAPI(
 		"url":    URLAPI,
 		"ip":     IPAPI,
 
+		// Querying
+		"jsonpath": JSONPathAPI,
+
 		// Templating
 		"template": NewTemplateModule(replaceNodeFunc).AsModule(),
 		"data":     dataMod.AsModule(),
