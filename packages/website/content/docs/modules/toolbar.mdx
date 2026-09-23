@@ -210,6 +210,13 @@ Note by supplying your own HTML element, Quill searches for particular input ele
 </script>
 ```
 
+The same toolbar container can be shared by several editors. Toolbar actions apply to the editor that most recently had focus or a selection, and the toolbar reflects that editor's formats. While that editor is disabled or read-only, the shared controls are disabled.
+
+```javascript
+const first = new Quill('#first-editor', { modules: { toolbar: '#toolbar' } });
+const second = new Quill('#second-editor', { modules: { toolbar: '#toolbar' } });
+```
+
 ## Handlers
 
 The toolbar controls by default applies and removes formatting, but you can also overwrite this with custom handlers, for example in order to show external UI.
