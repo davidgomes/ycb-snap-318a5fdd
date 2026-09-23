@@ -1,5 +1,8 @@
+import ast
 import re
 import xml.etree.ElementTree as ET
+from typing import Any
+from typing import Dict
 from typing import List
 from typing import Literal
 from typing import Set
@@ -138,6 +141,26 @@ def parse_datamodel(root: ET.Element) -> "DataModel | None":
     return data_model if data_model.data or data_model.scripts else None
 
 
+def parse_state_data(state_elem: ET.Element) -> Dict[str, Any]:
+    """Parse the ``<data id expr>`` items of a state's own ``<datamodel>`` as state data.
+
+    Only ``expr`` values that are valid Python literals are kept; other expressions
+    are still handled by the document-level datamodel.
+    """
+    data: Dict[str, Any] = {}
+    for datamodel_elem in state_elem.findall("datamodel"):
+        for data_elem in datamodel_elem.findall("data"):
+            data_id = data_elem.attrib.get("id")
+            expr = data_elem.attrib.get("expr")
+            if not data_id or expr is None:
+                continue
+            try:
+                data[data_id] = ast.literal_eval(expr)
+            except (ValueError, SyntaxError):
+                continue
+    return data
+
+
 def parse_history(state_elem: ET.Element) -> HistoryState:
     state_id = state_elem.get("id")
     if not state_id:
@@ -169,7 +192,13 @@ def parse_state(  # noqa: C901
         state_id = f"__auto_{uuid4().hex[:8]}"
 
     initial = state_id in initial_states
-    state = State(id=state_id, initial=initial, final=is_final, parallel=is_parallel)
+    state = State(
+        id=state_id,
+        initial=initial,
+        final=is_final,
+        parallel=is_parallel,
+        data=parse_state_data(state_elem),
+    )
 
     # Parse onentry actions
     for onentry_elem in state_elem.findall("onentry"):

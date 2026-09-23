@@ -23,6 +23,7 @@ class ActionType(Enum):
     ENTRY = "entry"
     EXIT = "exit"
     INTERNAL = "internal"
+    DATA = "data"
 
 
 @dataclass

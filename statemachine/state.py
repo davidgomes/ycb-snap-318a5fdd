@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import Dict
 from typing import Generator
 from typing import List
 from typing import cast
@@ -13,6 +14,8 @@ from .event import _expand_event_id
 from .exceptions import InvalidDefinition
 from .i18n import _
 from .invoke import normalize_invoke_callbacks
+from .state_data import DataVar
+from .state_data import normalize_data
 from .transition import Transition
 from .transition_list import TransitionList
 
@@ -134,6 +137,9 @@ class State:
             See :ref:`actions`.
         exit: One or more callbacks assigned to be executed when the state is exited.
             See :ref:`actions`.
+        data: A mapping of variable names to default values (or :class:`DataVar`
+            declarations, or factory callables) owned by this state. The values are
+            initialized on entry and discarded on exit. See :ref:`state data`.
 
     State is a core component on how this library implements an expressive API to declare
     StateMachines.
@@ -214,8 +220,10 @@ class State:
         exit: Any = None,
         invoke: Any = None,
         donedata: Any = None,
+        data: "Dict[str, Any] | None" = None,
         _callbacks: Any = None,
     ):
+        self._data_spec = normalize_data(data)
         self.name = name
         self.value = value
         self._parallel = parallel
@@ -336,6 +344,15 @@ class State:
     @property
     def is_history(self):
         return isinstance(self, HistoryState)
+
+    @property
+    def data_spec(self) -> "Dict[str, DataVar] | None":
+        """The state data declaration, or ``None`` if the state owns no data.
+
+        Only the declared defaults live here; runtime values are stored per machine
+        instance (see :meth:`StateChart.get_state_data`).
+        """
+        return self._data_spec
 
     def ancestors(self, parent: "State | None" = None) -> Generator["State", None, None]:  # noqa: UP043
         selected = self.parent

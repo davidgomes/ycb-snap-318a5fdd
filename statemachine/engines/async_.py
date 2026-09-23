@@ -3,7 +3,9 @@ import contextvars
 from itertools import chain
 from time import time
 from typing import TYPE_CHECKING
+from typing import Any
 from typing import Callable
+from typing import Dict
 from typing import List
 
 from ..event_data import EventData
@@ -168,6 +170,7 @@ class AsyncEngine(BaseEngine):
     ) -> "OrderedSet[State]":
         ordered_states, result = self._prepare_exit_states(enabled_transitions)
         on_error = self._on_error_handler()
+        exited_data: Dict[str, Dict[str, Any]] = {}
 
         for info in ordered_states:
             # Cancel invocations for this state before executing exit handlers.
@@ -179,11 +182,16 @@ class AsyncEngine(BaseEngine):
             if info.state is not None:  # pragma: no branch
                 self._debug("%s Exiting state: %s", self._log_id, info.state)
                 await self.sm._callbacks.async_call(
-                    info.state.exit.key, *args, on_error=on_error, **kwargs
+                    info.state.exit.key,
+                    *args,
+                    on_error=on_error,
+                    **self._exit_kwargs(info.state, kwargs),
                 )
+                self._discard_state_data(info.state, exited_data)
 
             self._remove_state_from_configuration(info.state)
 
+        self._save_history_data(ordered_states, exited_data)
         return result
 
     async def _enter_states(  # noqa: C901
@@ -234,6 +242,7 @@ class AsyncEngine(BaseEngine):
 
             self._debug("%s Entering state: %s", self._log_id, target)
             self._add_state_to_configuration(target)
+            self._enter_state_data(target)
 
             on_entry_result = await self.sm._callbacks.async_call(
                 target.enter.key, *args, on_error=on_error, **kwargs
@@ -425,6 +434,7 @@ class AsyncEngine(BaseEngine):
 
                     self._macrostep_count += 1
                     self._microstep_count = 0
+                    self.sm._state_data_store.clear_changes()
                     self._debug(
                         "%s macrostep %d: event=%s",
                         self._log_id,
@@ -517,6 +527,7 @@ class AsyncEngine(BaseEngine):
                             "target": transition.target,
                             "state": state,
                             "transition": transition,
+                            "state_data": sm._state_data_store.scope(state),
                         }
                     )
                     try:

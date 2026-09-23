@@ -142,6 +142,7 @@ class SyncEngine(BaseEngine):
 
                     self._macrostep_count += 1
                     self._microstep_count = 0
+                    self.sm._state_data_store.clear_changes()
                     self._debug(
                         "%s macrostep %d: event=%s",
                         self._log_id,
@@ -193,6 +194,7 @@ class SyncEngine(BaseEngine):
                             "target": transition.target,
                             "state": state,
                             "transition": transition,
+                            "state_data": sm._state_data_store.scope(state),
                         }
                     )
                     try:

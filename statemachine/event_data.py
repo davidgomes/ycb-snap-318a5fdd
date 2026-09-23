@@ -7,6 +7,7 @@ from typing import Any
 if TYPE_CHECKING:
     from .event import Event
     from .state import State
+    from .state_data import ScopedStateData
     from .statemachine import StateChart
     from .transition import Transition
 
@@ -91,4 +92,10 @@ class EventData:
         kwargs["state"] = self.state
         kwargs["source"] = self.source
         kwargs["target"] = self.target
+        kwargs["state_data"] = self.state_data
         return kwargs
+
+    @property
+    def state_data(self) -> "ScopedStateData":
+        """Live view of the data of :attr:`state` merged with its ancestors' data."""
+        return self.trigger_data.machine._state_data_store.scope(self.state)

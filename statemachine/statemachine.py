@@ -33,6 +33,8 @@ from .i18n import _
 from .model import Model
 from .signature import SignatureAdapter
 from .state import InstanceState
+from .state_data import DataChangeInfo
+from .state_data import StateDataStore
 from .utils import run_async_from_sync
 
 if TYPE_CHECKING:
@@ -154,6 +156,7 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         )
         self._callbacks = CallbacksRegistry()
         self._config = self._build_configuration()
+        self._state_data_store = StateDataStore()
         self._listeners: Dict[int, Any] = {}
         """Listeners that provides attributes to be used as callbacks."""
 
@@ -377,6 +380,43 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
     @configuration.setter
     def configuration(self, new_configuration: OrderedSet["State"]):
         self._config.states = new_configuration
+
+    def _resolve_state(self, state: "State | str") -> "State":
+        if not isinstance(state, str):
+            return state
+        for candidate in self.states_map.values():
+            if candidate.id == state:
+                return candidate
+        raise InvalidDefinition(_("Unknown state '{}'.").format(state))
+
+    def get_state_data(self, state: "State | str") -> "Dict[str, Any] | None":
+        """Return the live data dict of an active state, or ``None``.
+
+        ``None`` is returned when the state is not active or declares no ``data``.
+        The state can be given as a :ref:`State` or by its id.
+        """
+        return self._state_data_store.get(self._resolve_state(state))
+
+    @property
+    def state_data_values(self) -> Dict[str, Dict[str, Any]]:
+        """A snapshot of the data of all active states, keyed by state id."""
+        return self._state_data_store.snapshot()
+
+    def set_state_data(self, state: "State | str", key: str, value: Any):
+        """Assign ``value`` to the data variable ``key`` owned by ``state``.
+
+        Raises:
+            InvalidDefinition: If the state is not active, does not declare ``key``,
+                or ``value`` violates the :class:`DataVar` type constraint.
+        """
+        state = self._resolve_state(state)
+        if state.value not in self.configuration_values and self.get_state_data(state) is None:
+            raise InvalidDefinition(_("State '{}' is not active.").format(state.id))
+        self._state_data_store.set(state, key, value)
+
+    def get_data_changes(self) -> List[DataChangeInfo]:
+        """Data assignments made during the current macrostep, in order."""
+        return list(self._state_data_store.changes)
 
     @property
     def current_state_value(self):

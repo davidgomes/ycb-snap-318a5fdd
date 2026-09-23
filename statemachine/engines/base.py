@@ -98,6 +98,7 @@ class BaseEngine:
         self._log_id = f"[{type(sm).__name__}]"
         self._debug = logger.debug if logger.isEnabledFor(logging.DEBUG) else lambda *a, **k: None
         self._root_parallel_final_pending: "State | None" = None
+        self._pending_data_restore: Dict[str, Dict[str, Any]] = {}
 
     def empty(self):  # pragma: no cover
         return self.external_queue.is_empty()
@@ -490,12 +491,42 @@ class BaseEngine:
         if not self.sm.atomic_configuration_update:
             self.sm._config.discard(state)
 
+    def _exit_kwargs(self, state: State, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Scope ``state_data`` to the exiting state instead of the transition source."""
+        return {**kwargs, "state_data": self.sm._state_data_store.scope(state)}
+
+    def _discard_state_data(self, state: State, exited_data: Dict[str, Dict[str, Any]]):
+        data = self.sm._state_data_store.exit(state)
+        if data is not None:
+            exited_data[state.id] = data
+
+    def _save_history_data(
+        self, ordered_states: "List[StateTransition]", exited_data: Dict[str, Dict[str, Any]]
+    ):
+        """Snapshot the data of the states recorded by each history pseudo-state."""
+        store = self.sm._state_data_store
+        for info in ordered_states:
+            for history in info.state.history:
+                store.save_history(
+                    history.id,
+                    {
+                        s.id: exited_data[s.id]
+                        for s in self.sm.history_values[history.id]
+                        if s.id in exited_data
+                    },
+                )
+
+    def _enter_state_data(self, state: State):
+        restored = self._pending_data_restore.pop(state.id, None)
+        self.sm._state_data_store.enter(state, restored)
+
     def _exit_states(
         self, enabled_transitions: List[Transition], trigger_data: TriggerData
     ) -> OrderedSet[State]:
         """Compute and process the states to exit for the given transitions."""
         ordered_states, result = self._prepare_exit_states(enabled_transitions)
         on_error = self._on_error_handler()
+        exited_data: Dict[str, Dict[str, Any]] = {}
 
         for info in ordered_states:
             # Cancel invocations for this state before executing exit handlers.
@@ -507,10 +538,17 @@ class BaseEngine:
             # Execute `onexit` handlers — same per-block error isolation as onentry.
             if info.state is not None:  # pragma: no branch
                 self._debug("%s Exiting state: %s", self._log_id, info.state)
-                self.sm._callbacks.call(info.state.exit.key, *args, on_error=on_error, **kwargs)
+                self.sm._callbacks.call(
+                    info.state.exit.key,
+                    *args,
+                    on_error=on_error,
+                    **self._exit_kwargs(info.state, kwargs),
+                )
+                self._discard_state_data(info.state, exited_data)
 
             self._remove_state_from_configuration(info.state)
 
+        self._save_history_data(ordered_states, exited_data)
         return result
 
     def _execute_transition_content(
@@ -549,6 +587,7 @@ class BaseEngine:
         states_to_enter = OrderedSet[StateTransition]()
         states_for_default_entry = OrderedSet[StateTransition]()
         default_history_content: Dict[str, Any] = {}
+        self._pending_data_restore = {}
 
         self.compute_entry_set(
             enabled_transitions, states_to_enter, states_for_default_entry, default_history_content
@@ -673,6 +712,7 @@ class BaseEngine:
 
             self._debug("%s Entering state: %s", self._log_id, target)
             self._add_state_to_configuration(target)
+            self._enter_state_data(target)
 
             # Execute `onentry` handlers — each handler is a separate block per
             # SCXML spec: errors in one block MUST NOT affect other blocks.
@@ -778,6 +818,9 @@ class BaseEngine:
                     state,
                     state.type.value,
                     [s.id for s in self.sm.history_values[state.id]],
+                )
+                self._pending_data_restore.update(
+                    self.sm._state_data_store.history_snapshot(state.id)
                 )
                 for history_state in self.sm.history_values[state.id]:
                     info_to_add = StateTransition(transition=info.transition, state=history_state)
