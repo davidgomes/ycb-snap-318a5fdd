@@ -816,8 +816,12 @@ label values are equal, elements are sorted by their full label sets.
 Please note that `sort_by_label` only affects the results of instant queries, as
 range query results always have a fixed output ordering.
 
-`sort_by_label` uses [natural sort
-order](https://en.wikipedia.org/wiki/Natural_sort_order).
+`sort_by_label` uses a typed total order. Values with leading whitespace are not
+parsed and sort first, by natural order of the original strings. Other values
+are ordered by class: positive infinity, finite numbers, negative infinity,
+durations, byte sizes, semantic versions, IP addresses, CIDR prefixes,
+timestamps, then untyped strings (including empty values) in natural order.
+Equal typed values are tie-broken by natural order of the original strings.
 
 ## `sort_by_label_desc()`
 

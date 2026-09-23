@@ -3068,8 +3068,10 @@ const funcDocs: Record<string, React.ReactNode> = {
       </p>
 
       <p>
-        <code>sort_by_label</code> uses{" "}
-        <a href="https://en.wikipedia.org/wiki/Natural_sort_order">natural sort order</a>.
+        <code>sort_by_label</code> uses a typed total order. Leading whitespace sorts first and is not
+        parsed. Other values are ordered by class: positive infinity, finite numbers, negative infinity,
+        durations, byte sizes, semantic versions, IP addresses, CIDR prefixes, timestamps, then untyped
+        strings in natural order. Equal typed values are tie-broken by natural order of the original strings.
       </p>
     </>
   ),

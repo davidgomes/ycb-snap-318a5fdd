@@ -880,6 +880,68 @@ eval instant at 50m sort_by_label(node_uname_info, "release")
 	node_uname_info{job="node_exporter", instance="4m5", release="1.11.3"} 100
 	node_uname_info{job="node_exporter", instance="4m1000", release="1.111.3"} 100
 
+# Typed label order: leading whitespace, +inf, numbers, -inf, duration, bytes,
+# semver, IPv4 then IPv6, CIDR (shorter prefix first), timestamp, then untyped.
+clear
+load 1m
+	typed{k=" inf"} 1
+	typed{k="+Inf"} 1
+	typed{k="-2"} 1
+	typed{k="10"} 1
+	typed{k="1e2"} 1
+	typed{k="-infinity"} 1
+	typed{k="30s"} 1
+	typed{k="1m"} 1
+	typed{k="1KiB"} 1
+	typed{k="v1.2.3"} 1
+	typed{k="1.10.0"} 1
+	typed{k="10.1.0.1"} 1
+	typed{k="::1"} 1
+	typed{k="10.0.0.0/8"} 1
+	typed{k="10.0.0.0/16"} 1
+	typed{k="2020-01-02T03:04:05Z"} 1
+	typed{k="NaN"} 1
+
+eval instant at 0m sort_by_label(typed, "k")
+	expect ordered
+	typed{k=" inf"} 1
+	typed{k="+Inf"} 1
+	typed{k="-2"} 1
+	typed{k="10"} 1
+	typed{k="1e2"} 1
+	typed{k="-infinity"} 1
+	typed{k="30s"} 1
+	typed{k="1m"} 1
+	typed{k="1KiB"} 1
+	typed{k="v1.2.3"} 1
+	typed{k="1.10.0"} 1
+	typed{k="10.1.0.1"} 1
+	typed{k="::1"} 1
+	typed{k="10.0.0.0/8"} 1
+	typed{k="10.0.0.0/16"} 1
+	typed{k="2020-01-02T03:04:05Z"} 1
+	typed{k="NaN"} 1
+
+eval instant at 0m sort_by_label_desc(typed, "k")
+	expect ordered
+	typed{k="NaN"} 1
+	typed{k="2020-01-02T03:04:05Z"} 1
+	typed{k="10.0.0.0/16"} 1
+	typed{k="10.0.0.0/8"} 1
+	typed{k="::1"} 1
+	typed{k="10.1.0.1"} 1
+	typed{k="1.10.0"} 1
+	typed{k="v1.2.3"} 1
+	typed{k="1KiB"} 1
+	typed{k="1m"} 1
+	typed{k="30s"} 1
+	typed{k="-infinity"} 1
+	typed{k="1e2"} 1
+	typed{k="10"} 1
+	typed{k="-2"} 1
+	typed{k="+Inf"} 1
+	typed{k=" inf"} 1
+
 # Tests for double_exponential_smoothing
 clear
 

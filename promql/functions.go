@@ -23,7 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/facette/natsort"
 	"github.com/grafana/regexp"
 	"github.com/prometheus/common/model"
 
@@ -644,20 +643,10 @@ func funcSortByLabel(vectorVals []Vector, _ Matrix, args parser.Expressions, _ *
 	lbls := stringSliceFromArgs(args[1:])
 	slices.SortFunc(vectorVals[0], func(a, b Sample) int {
 		for _, label := range lbls {
-			lv1 := a.Metric.Get(label)
-			lv2 := b.Metric.Get(label)
-
-			if lv1 == lv2 {
-				continue
+			if cmp := compareLabelValues(a.Metric.Get(label), b.Metric.Get(label)); cmp != 0 {
+				return cmp
 			}
-
-			if natsort.Compare(lv1, lv2) {
-				return -1
-			}
-
-			return +1
 		}
-
 		// If all labels provided as arguments were equal, sort by the full label set. This ensures a consistent ordering.
 		return labels.Compare(a.Metric, b.Metric)
 	})
@@ -670,20 +659,10 @@ func funcSortByLabelDesc(vectorVals []Vector, _ Matrix, args parser.Expressions,
 	lbls := stringSliceFromArgs(args[1:])
 	slices.SortFunc(vectorVals[0], func(a, b Sample) int {
 		for _, label := range lbls {
-			lv1 := a.Metric.Get(label)
-			lv2 := b.Metric.Get(label)
-
-			if lv1 == lv2 {
-				continue
+			if cmp := compareLabelValues(a.Metric.Get(label), b.Metric.Get(label)); cmp != 0 {
+				return -cmp
 			}
-
-			if natsort.Compare(lv1, lv2) {
-				return +1
-			}
-
-			return -1
 		}
-
 		// If all labels provided as arguments were equal, sort by the full label set. This ensures a consistent ordering.
 		return -labels.Compare(a.Metric, b.Metric)
 	})
