@@ -224,8 +224,8 @@ export function experimental_createQueryPersister<TStorageValue = string>({
       const persistedQuery = await retrievePersistedQuery(
         query.queryHash,
         ({ state }: PersistedQuery) => {
-          // `Query.fetch` adopts the restored state, so this only applies
-          // when the restore result is consumed by someone else
+          // Queries that adopted the restore result in `Query.fetch` already hold
+          // these timestamps; only callers consuming `persisterFn` directly lag behind
           if (query.state.dataUpdatedAt < state.dataUpdatedAt) {
             query.setState({
               dataUpdatedAt: state.dataUpdatedAt,
@@ -296,6 +296,7 @@ export function experimental_createQueryPersister<TStorageValue = string>({
 
     if (storage?.entries) {
       const storageKeyPrefix = `${prefix}-`
+      const queryCache = queryClient.getQueryCache()
       const entries = await storage.entries()
       for (const [key, value] of entries) {
         if (key.startsWith(storageKeyPrefix)) {
@@ -321,7 +322,6 @@ export function experimental_createQueryPersister<TStorageValue = string>({
             }
           }
 
-          const queryCache = queryClient.getQueryCache()
           const query = queryCache.get(persistedQuery.queryHash)
 
           if (query) {
