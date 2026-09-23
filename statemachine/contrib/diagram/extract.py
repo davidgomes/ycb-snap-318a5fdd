@@ -95,6 +95,7 @@ def _extract_state(
         name=state.name,
         type=state_type,
         actions=actions,
+        data=[var.describe(key) for key, var in state.data.items()],
         children=children,
         is_active=is_active,
         is_parallel_area=is_parallel_area,

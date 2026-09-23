@@ -271,7 +271,7 @@ class DotRenderer:
         fillcolor = self.config.state_active_fillcolor if state.is_active else "white"
         penwidth = self.config.state_active_penwidth if state.is_active else 2
 
-        if not actions:
+        if not actions and not state.data:
             # Simple state: native rounded rectangle
             node = pydot.Node(
                 state.id,
@@ -285,7 +285,7 @@ class DotRenderer:
                 peripheries=2 if state.type == StateType.FINAL else 1,
             )
         else:
-            # State with actions: native shape + HTML TABLE label (border=0).
+            # State with data or actions: native shape + HTML TABLE label (border=0).
             # The native shape handles edge clipping; the TABLE provides
             # UML compartment layout with <hr/> separator.
             label = self._build_html_table_label(state, actions)
@@ -309,7 +309,7 @@ class DotRenderer:
         state: DiagramState,
         actions: List[DiagramAction],
     ) -> str:
-        """Build an HTML TABLE label with UML compartments (name | actions).
+        """Build an HTML TABLE label with UML compartments (name | data | actions).
 
         The TABLE has ``border="0"`` because the visible border is drawn by
         the native Graphviz shape, ensuring edges are clipped correctly.
@@ -318,10 +318,15 @@ class DotRenderer:
         font_size = self.config.state_font_size
         action_font_size = self.config.transition_font_size
 
-        action_lines = "<br/>".join(
-            f'<font point-size="{action_font_size}">{_escape_html(self._format_action(a))}</font>'
-            for a in actions
-        )
+        def compartment(lines: List[str]) -> str:
+            body = "<br/>".join(
+                f'<font point-size="{action_font_size}">{_escape_html(line)}</font>'
+                for line in lines
+            )
+            return f'<tr><td align="left" cellpadding="6">{body}</td></tr>'
+
+        action_lines = [self._format_action(a) for a in actions]
+        rows = "<hr/>".join(compartment(lines) for lines in (state.data, action_lines) if lines)
 
         return (
             f'<table border="0" cellborder="0" cellspacing="0" cellpadding="0">'
@@ -329,9 +334,7 @@ class DotRenderer:
             f'<font point-size="{font_size}">{name}</font>'
             f"</td></tr>"
             f"<hr/>"
-            f'<tr><td align="left" cellpadding="6">'
-            f"{action_lines}"
-            f"</td></tr>"
+            f"{rows}"
             f"</table>"
         )
 
@@ -415,17 +418,17 @@ class DotRenderer:
         """Build HTML label for a compound/parallel subgraph."""
         name = _escape_html(state.name)
         if state.type == StateType.PARALLEL:
-            return f"<b>{name}</b> &#9783;"
+            lines = list(state.data)
+            rows = [f"<b>{name}</b> &#9783;"]
+        else:
+            actions = [a for a in state.actions if a.type != ActionType.INTERNAL or a.body]
+            lines = state.data + [self._format_action(a) for a in actions]
+            rows = [f"<b>{name}</b>"]
 
-        actions = [a for a in state.actions if a.type != ActionType.INTERNAL or a.body]
-        if not actions:
-            return f"<b>{name}</b>"
-
-        rows = [f"<b>{name}</b>"]
-        for action in actions:
-            action_text = _escape_html(self._format_action(action))
+        for line in lines:
             rows.append(
-                f'<font point-size="{self.config.transition_font_size}">{action_text}</font>'
+                f'<font point-size="{self.config.transition_font_size}">'
+                f"{_escape_html(line)}</font>"
             )
         return "<br/>".join(rows)
 

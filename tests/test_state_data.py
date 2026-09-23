@@ -739,6 +739,65 @@ class TestErrorRollback:
         assert sm.state_data_values == {"a": {"n": 1}}
 
 
+class DiagramMachine(StateChart):
+    class tasks(State.Compound, data={"done": 0}):
+        todo = State(initial=True, data={"count": DataVar(0, type=int), "items": list})
+        doing = State(data={"owner": None}, enter="notify")
+
+        work = todo.to(doing)
+
+    class split(State.Parallel, data={"flag": True}):
+        class left(State.Compound):
+            l1 = State(initial=True)
+
+        class right(State.Compound):
+            r1 = State(initial=True)
+
+    finish = tasks.to(split)
+
+    def notify(self): ...
+
+
+class TestDiagrams:
+    def test_extract_describes_the_data_declarations(self):
+        from statemachine.contrib.diagram.extract import extract
+
+        graph = extract(DiagramMachine)
+        tasks, split = graph.states
+        todo, doing = tasks.children
+
+        assert tasks.data == ["done = 0"]
+        assert todo.data == ["count: int = 0", "items = list()"]
+        assert doing.data == ["owner = None"]
+        assert split.data == ["flag = True"]
+        assert split.children[0].data == []
+
+    def test_dot_annotates_atomic_and_compound_states(self):
+        from statemachine.contrib.diagram import DotGraphMachine
+
+        dot = DotGraphMachine(DiagramMachine)().to_string()
+
+        assert (
+            '<tr><td align="left" cellpadding="6">'
+            '<font point-size="9">count: int = 0</font><br/>'
+            '<font point-size="9">items = list()</font></td></tr></table>'
+        ) in dot
+        assert (
+            '<font point-size="9">owner = None</font></td></tr><hr/>'
+            '<tr><td align="left" cellpadding="6">'
+            '<font point-size="9">entry / notify</font></td></tr>'
+        ) in dot
+        assert '<b>Tasks</b><br/><font point-size="9">done = 0</font>' in dot
+        assert '<b>Split</b> &#9783;<br/><font point-size="9">flag = True</font>' in dot
+
+    def test_mermaid_annotates_atomic_states(self):
+        mermaid = format(DiagramMachine, "mermaid")
+
+        assert "todo : count: int = 0\n" in mermaid
+        assert "todo : items = list()\n" in mermaid
+        assert "doing : owner = None\n        doing : entry / notify\n" in mermaid
+
+
 class TestSerialization:
     async def test_data_survives_pickle(self, sm_runner):
         sm = await sm_runner.start(Nested)

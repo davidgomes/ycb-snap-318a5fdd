@@ -175,6 +175,9 @@ class MermaidRenderer:
         if state.name != state.id:
             lines.append(f'{pad}state "{state.name}" as {state.id}')
 
+        for declaration in state.data:
+            lines.append(f"{pad}{state.id} : {declaration}")
+
         actions = [a for a in state.actions if a.type != ActionType.INTERNAL or a.body]
         if actions:
             for action in actions:
