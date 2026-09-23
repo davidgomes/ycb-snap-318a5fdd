@@ -221,11 +221,14 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 	contents := append(c.curatedHistory, inputContent)
 
 	// Generate Content
-	response := c.GenerateContentStream(ctx, c.model, contents, c.config)
+	c.config.setDefaults()
+	functionCalls := newFunctionCallAccumulator()
+	response := functionCalls.accumulateStream(c.generateContentStream(ctx, c.model, contents, c.config))
 
 	// Return a new iterator that will yield the responses and record history with merged response.
 	return func(yield func(*GenerateContentResponse, error) bool) {
 		var outputContents []*Content
+		onlyFunctionCalls := true
 		isValid := true
 		finishReason := FinishReasonUnspecified
 		for chunk, err := range response {
@@ -240,8 +243,11 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 				isValid = false
 			}
 			if len(chunk.Candidates) > 0 {
-				if chunk.Candidates[0].Content != nil {
-					outputContents = append(outputContents, chunk.Candidates[0].Content)
+				if content := chunk.Candidates[0].Content; content != nil {
+					outputContents = append(outputContents, content)
+					for _, part := range content.Parts {
+						onlyFunctionCalls = onlyFunctionCalls && part != nil && part.FunctionCall != nil
+					}
 				}
 				if chunk.Candidates[0].FinishReason != FinishReasonUnspecified {
 					finishReason = chunk.Candidates[0].FinishReason
@@ -249,6 +255,13 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 			}
 			if !yield(chunk, nil) {
 				return
+			}
+		}
+		// A turn made of streamed function calls is stored as one turn of
+		// completed calls, so that it can be replayed without partial arguments.
+		if onlyFunctionCalls && len(outputContents) > 0 {
+			if turn := functionCalls.completedTurn(0); turn != nil {
+				outputContents = []*Content{turn}
 			}
 		}
 		// Record history. By default, use the first candidate for history.

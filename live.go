@@ -46,6 +46,7 @@ type Live struct {
 type Session struct {
 	conn      *websocket.Conn
 	apiClient *apiClient
+	toolCalls functionCallStream
 }
 
 // Preview. Connect establishes a WebSocket connection to the specified
@@ -291,6 +292,8 @@ func (s *Session) send(input *LiveClientMessage) error {
 // The returned message represents a part of or a complete model turn.
 // If the received message is a [LiveServerToolCall], the user must call
 // [SendToolResponse] to provide the function execution result and continue the turn.
+// For tool calls whose arguments are streamed as [FunctionCall.PartialArgs],
+// [FunctionCall.Args] holds the arguments accumulated so far for that call.
 func (s *Session) Receive() (*LiveServerMessage, error) {
 	messageType, msgBytes, err := s.conn.ReadMessage()
 	if err != nil {
@@ -319,6 +322,9 @@ func (s *Session) Receive() (*LiveServerMessage, error) {
 	var message = new(LiveServerMessage)
 	err = mapToStruct(responseMap, message)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.toolCalls.accumulateToolCall(message.ToolCall); err != nil {
 		return nil, err
 	}
 	return message, err
