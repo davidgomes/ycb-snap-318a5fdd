@@ -37,6 +37,7 @@ User migrating from bind mounts might need to ajust permissions too, depending o
 - [PERF] OTLP: Add label caching for OTLP-to-Prometheus conversion to reduce allocations and improve latency. #17860
 - [PERF] API: Compute `/api/v1/targets/relabel_steps` in a single pass instead of re-running relabeling for each prefix. #17969
 - [PERF] tsdb: Optimize LabelValues intersection performance for matchers. #18069
+- [ENHANCEMENT] PromQL: `sort_by_label` and `sort_by_label_desc` use a typed total order (infinity, numbers, durations, bytes, semantic versions, IP addresses, CIDR prefixes, timestamps) before natural string order.
 - [BUGFIX] PromQL: Prevent query strings containing only UTF-8 continuation bytes from crashing Prometheus. #17735
 - [BUGFIX] Web: Fix missing `X-Prometheus-Stopping` header for `/-/ready` endpoint in `NotReady` state. #17795
 - [BUGFIX] PromQL: Fix PromQL `info()` function returning empty results when filtering by a label that exists on both the input metric and `target_info`. #17817
