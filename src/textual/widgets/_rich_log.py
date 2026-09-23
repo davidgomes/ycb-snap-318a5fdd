@@ -253,9 +253,7 @@ class RichLog(ScrollView, can_focus=True):
             removed_lines: Number of lines removed from the top of the log.
         """
         if removed_lines:
-            self.scroll_target_y = self.scroll_y = max(
-                0, self.scroll_y - removed_lines
-            )
+            self.scroll_target_y = self.scroll_y = max(0, self.scroll_y - removed_lines)
             self.refresh()
 
     def notify_style_update(self) -> None:
@@ -272,8 +270,6 @@ class RichLog(ScrollView, can_focus=True):
                 self.write(*deferred_render)
         else:
             self._rerender_expanded()
-        if self.auto_scroll and self._following_end:
-            self._scroll_end_after_refresh(animate=False, force=False)
 
     def watch_min_width(self) -> None:
         self._rerender_expanded()
@@ -485,7 +481,9 @@ class RichLog(ScrollView, can_focus=True):
         self._line_cache.clear()
         removed = self._prune_max_lines()
         self.virtual_size = Size(self._widest_line_width, len(self.lines))
-        if not (self.auto_scroll and self._following_end):
+        if self.auto_scroll and self._following_end:
+            self._scroll_end_after_refresh(animate=False, force=False)
+        else:
             self._keep_viewport(removed)
         self.refresh()
 

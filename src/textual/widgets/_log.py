@@ -170,9 +170,7 @@ class Log(ScrollView, can_focus=True):
             removed_lines: Number of lines removed from the top of the log.
         """
         if removed_lines:
-            self.scroll_target_y = self.scroll_y = max(
-                0, self.scroll_y - removed_lines
-            )
+            self.scroll_target_y = self.scroll_y = max(0, self.scroll_y - removed_lines)
             self.refresh()
 
     @property
