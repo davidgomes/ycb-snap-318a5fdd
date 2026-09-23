@@ -47,7 +47,7 @@ export default class IntersectionObserver {
 	// Previous threshold index of each target (-1 before the first update), in the order that the targets were observed.
 	#targets: Map<Element, number> = new Map();
 	#isUpdateQueued = false;
-	#updateListener = (): void => this.#queueUpdate();
+	#updateListener: () => void = this.#queueUpdate.bind(this);
 
 	/**
 	 * Constructor.

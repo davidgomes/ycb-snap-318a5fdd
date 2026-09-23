@@ -3,7 +3,7 @@ import type Document from '../../src/nodes/document/Document.js';
 import type Element from '../../src/nodes/element/Element.js';
 import DOMRect from '../../src/dom/DOMRect.js';
 import IntersectionObserver from '../../src/intersection-observer/IntersectionObserver.js';
-import IntersectionObserverEntry from '../../src/intersection-observer/IntersectionObserverEntry.js';
+import type IntersectionObserverEntry from '../../src/intersection-observer/IntersectionObserverEntry.js';
 import DOMExceptionNameEnum from '../../src/exception/DOMExceptionNameEnum.js';
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 
@@ -130,7 +130,9 @@ describe('IntersectionObserver', () => {
 
 		it('Throws a TypeError if the root is not an element or a document.', () => {
 			for (const root of ['body', {}, document.createTextNode('text')]) {
-				const error = getError(() => new window.IntersectionObserver(() => {}, { root: <any>root }));
+				const error = getError(
+					() => new window.IntersectionObserver(() => {}, { root: <any>root })
+				);
 
 				expect(error).toBeInstanceOf(window.TypeError);
 				expect(error?.message).toBe(
