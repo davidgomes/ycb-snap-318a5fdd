@@ -145,7 +145,6 @@ function validateSequenceOptions(sequence: ResolvedConfig['sequence']): void {
   ] as const
   const isBoolean = (value: unknown) => typeof value === 'boolean'
   const isNumber = (value: unknown): value is number => typeof value === 'number' && !Number.isNaN(value)
-  const isNonNegativeInteger = (value: unknown) => Number.isInteger(value) && (value as number) >= 0
 
   assert('shardStrategy', ...oneOf(shardStrategies))
   assert('balanceShardsByTime', isBoolean, 'a boolean')
@@ -175,7 +174,7 @@ function validateSequenceOptions(sequence: ResolvedConfig['sequence']): void {
     if (typeof rule.pattern !== 'string' || rule.pattern.length === 0) {
       throw new Error(`"sequence.shardAffinityRules[${index}].pattern" must be a non-empty string, received ${inspect(rule.pattern)}.`)
     }
-    if (!isNonNegativeInteger(rule.shardIndex)) {
+    if (!Number.isInteger(rule.shardIndex) || rule.shardIndex < 0) {
       throw new Error(`"sequence.shardAffinityRules[${index}].shardIndex" must be an integer greater than or equal to 0, received ${inspect(rule.shardIndex)}.`)
     }
   })
