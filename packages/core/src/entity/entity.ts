@@ -5,15 +5,32 @@ import type { ConfigurableTrait } from '../trait/types';
 import { universe } from '../universe/universe';
 import type { World } from '../world';
 import type { Entity } from './types';
-import { allocateEntity, releaseEntity } from './utils/entity-index';
+import { allocateEntity, allocateEntityAt, releaseEntity } from './utils/entity-index';
 import { getEntityId, getEntityWorldId } from './utils/pack-entity';
 
 // Ensure entity methods are patched.
 import './entity-methods-patch';
 
 export function createEntity(world: World, ...traits: ConfigurableTrait[]): Entity {
+    const entity = allocateEntity(world[$internal].entityIndex);
+    initEntity(world, entity);
+    addTrait(world, entity, ...traits);
+
+    return entity;
+}
+
+/**
+ * Creates an entity with an exact ID and generation, e.g. to restore it from a snapshot.
+ */
+export function createEntityAt(world: World, id: number, generation: number): Entity {
+    const entity = allocateEntityAt(world[$internal].entityIndex, id, generation);
+    initEntity(world, entity);
+
+    return entity;
+}
+
+/* @inline */ function initEntity(world: World, entity: Entity) {
     const ctx = world[$internal];
-    const entity = allocateEntity(ctx.entityIndex);
 
     for (const query of ctx.notQueries) {
         const match = query.check(world, entity);
@@ -23,9 +40,6 @@ export function createEntity(world: World, ...traits: ConfigurableTrait[]): Enti
     }
 
     ctx.entityTraits.set(entity, new Set());
-    addTrait(world, entity, ...traits);
-
-    return entity;
 }
 
 const cachedSet = new Set<Entity>();

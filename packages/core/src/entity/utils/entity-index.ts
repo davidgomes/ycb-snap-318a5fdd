@@ -59,6 +59,38 @@ export const allocateEntity = (index: EntityIndex): Entity => {
 };
 
 /**
+ * Allocates a specific entity ID with a specific generation, e.g. to restore an entity from a snapshot.
+ * @param index - The EntityIndex to add to.
+ * @param id - The entity ID to allocate. Must not be alive.
+ * @param generation - The generation to give the entity.
+ * @returns The packed entity.
+ */
+export const allocateEntityAt = (index: EntityIndex, id: number, generation: number): Entity => {
+    // Grow the index up to the ID, leaving the skipped IDs free for recycling.
+    while (index.maxId <= id) {
+        const freeId = index.maxId++;
+        index.sparse[freeId] = index.dense.length;
+        index.dense.push(packEntity(index.worldId, 0, freeId));
+    }
+
+    const denseIndex = index.sparse[id];
+    if (denseIndex < index.aliveCount) throw new Error(`Koota: Entity ID ${id} is already in use.`);
+
+    // Swap the ID into the first free slot of the dense array to make it alive.
+    const aliveIndex = index.aliveCount;
+    const displacedEntity = index.dense[aliveIndex];
+    index.dense[denseIndex] = displacedEntity;
+    index.sparse[getEntityId(displacedEntity)] = denseIndex;
+
+    const entity = packEntity(index.worldId, generation, id);
+    index.dense[aliveIndex] = entity;
+    index.sparse[id] = aliveIndex;
+    index.aliveCount++;
+
+    return entity;
+};
+
+/**
  * Removes an entity ID from the index.
  * @param index - The EntityIndex to remove from.
  * @param entity - The packed entity to remove.
