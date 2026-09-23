@@ -10,4 +10,5 @@ vulture.egg-info/
 .pytest_cache/
 .tox/
 .venv/
+.vulture-cache/
 .vscode/

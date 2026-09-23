@@ -187,6 +187,22 @@ sort_by_size = true
 verbose = true
 ```
 
+### Caching
+
+Pass `--cache` to reuse analysis results from the previous run. Vulture
+re-analyzes a file when its contents change, when a file it imports
+(directly or indirectly) changes, or when a whitelist that affects it
+changes. Unchanged files are loaded from the cache.
+
+```
+$ vulture mypackage --cache
+$ vulture mypackage --cache --cache-dir=/tmp/vulture-cache
+$ vulture mypackage --cache-clear
+```
+
+The default cache directory is `.vulture-cache/`. `--cache-clear` deletes the
+contents of that directory and then runs (and rebuilds the cache).
+
 Vulture will automatically look for a `pyproject.toml` in the current working directory.
 
 To use a `pyproject.toml` in another directory, you can use the `--config path/to/pyproject.toml` flag.

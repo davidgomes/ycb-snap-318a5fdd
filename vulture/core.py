@@ -7,6 +7,7 @@ from fnmatch import fnmatch, fnmatchcase
 from functools import partial
 from pathlib import Path
 
+from vulture import cache as analysis_cache
 from vulture import lines, noqa, utils
 from vulture.config import InputError, make_config
 from vulture.reachability import Reachability
@@ -27,6 +28,17 @@ PYTEST_METHOD_NAMES = {
     "setup_method",
     "teardown_method",
 }
+
+_ITEM_COLLECTIONS = (
+    "defined_attrs",
+    "defined_classes",
+    "defined_funcs",
+    "defined_imports",
+    "defined_methods",
+    "defined_props",
+    "defined_vars",
+    "unreachable_code",
+)
 
 ERROR_CODES = {
     "attribute": "V101",
@@ -187,11 +199,51 @@ class Item:
         return hash(self._tuple())
 
 
+def _item_to_dict(item):
+    return {
+        "confidence": item.confidence,
+        "filename": str(item.filename),
+        "first_lineno": item.first_lineno,
+        "last_lineno": item.last_lineno,
+        "message": item.message,
+        "name": item.name,
+        "typ": item.typ,
+    }
+
+
+def _item_from_dict(data):
+    return Item(
+        data["name"],
+        data["typ"],
+        Path(data["filename"]),
+        data["first_lineno"],
+        data["last_lineno"],
+        message=data.get("message", ""),
+        confidence=data.get("confidence", DEFAULT_CONFIDENCE),
+    )
+
+
+def _empty_cache_entry(digest, errors=None):
+    return {
+        "sha256": digest,
+        "imports": [],
+        "invalid_input": True,
+        "errors": list(errors or []),
+        "used_names": [],
+        "items": {name: [] for name in _ITEM_COLLECTIONS},
+    }
+
+
 class Vulture(ast.NodeVisitor):
     """Find dead code."""
 
     def __init__(
-        self, verbose=False, ignore_names=None, ignore_decorators=None
+        self,
+        verbose=False,
+        ignore_names=None,
+        ignore_decorators=None,
+        cache_dir=None,
+        cache_settings=None,
     ):
         self.verbose = verbose
 
@@ -216,6 +268,17 @@ class Vulture(ast.NodeVisitor):
         self.code = []
         self.exit_code = ExitCode.NoDeadCode
         self.noqa_lines = {}
+        self.module_imports = []
+        self._scan_invalid = False
+        self._scan_errors = []
+        self._cache_stats = {"scanned": set(), "reused": set()}
+        self.cache_dir = cache_dir
+        self.cache_settings = cache_settings
+        self._cache = (
+            None
+            if cache_dir is None
+            else analysis_cache.AnalysisCache(cache_dir, cache_settings)
+        )
 
         report = partial(
             self._define,
@@ -229,15 +292,16 @@ class Vulture(ast.NodeVisitor):
         self.code = code.splitlines()
         self.noqa_lines = noqa.parse_noqa(self.code)
         self.filename = filename
+        self.module_imports = []
+        self._scan_invalid = False
+        self._scan_errors = []
 
         def handle_syntax_error(e):
             text = f' at "{e.text.strip()}"' if e.text else ""
-            self._log(
-                f"{utils.format_path(filename)}:{e.lineno}: {e.msg}{text}",
-                file=sys.stderr,
-                force=True,
+            message = (
+                f"{utils.format_path(filename)}:{e.lineno}: {e.msg}{text}"
             )
-            self.exit_code = ExitCode.InvalidInput
+            self._record_scan_error(message)
 
         try:
             node = ast.parse(
@@ -247,12 +311,9 @@ class Vulture(ast.NodeVisitor):
             handle_syntax_error(err)
         except ValueError as err:
             # ValueError is raised if source contains null bytes.
-            self._log(
-                f'{utils.format_path(filename)}: invalid source code "{err}"',
-                file=sys.stderr,
-                force=True,
+            self._record_scan_error(
+                f'{utils.format_path(filename)}: invalid source code "{err}"'
             )
-            self.exit_code = ExitCode.InvalidInput
         else:
             # When parsing type comments, visiting can throw SyntaxError.
             try:
@@ -263,6 +324,41 @@ class Vulture(ast.NodeVisitor):
         # Reset the reachability internals for every module to reduce memory
         # usage.
         self.reachability.reset()
+
+    def _record_scan_error(self, message):
+        self._scan_errors.append(message)
+        self._scan_invalid = True
+        self._log(message, file=sys.stderr, force=True)
+        self.exit_code = ExitCode.InvalidInput
+
+    def _note_import(self, module_name):
+        if not module_name or module_name == "__future__":
+            return
+        parts = module_name.split(".")
+        for index in range(1, len(parts) + 1):
+            name = ".".join(parts[:index])
+            if name not in self.module_imports:
+                self.module_imports.append(name)
+
+    def _resolve_relative_import(self, module, level):
+        path = self.filename
+        if not isinstance(path, Path) or path == Path() or not path.name:
+            return None
+        parts = []
+        current = path.parent
+        while (current / "__init__.py").is_file():
+            parts.append(current.name)
+            current = current.parent
+        parts.reverse()
+        if level - 1 > len(parts):
+            return None
+        if level > 1:
+            parts = parts[: len(parts) - (level - 1)]
+        if module:
+            parts.extend(module.split("."))
+        if not parts:
+            return None
+        return ".".join(parts)
 
     def scavenge(self, paths, exclude=None):
         def prepare_pattern(pattern):
@@ -276,26 +372,123 @@ class Vulture(ast.NodeVisitor):
             return _match(path, exclude, case=False)
 
         paths = [Path(path) for path in paths]
-
+        selected = []
         for module in utils.get_modules(paths):
             if exclude_path(module):
                 self._log("Excluded:", module)
                 continue
+            selected.append(module)
 
-            self._log("Scanning:", module)
-            try:
-                module_string = utils.read_file(module)
-            except utils.VultureInputException as err:
-                self._log(
-                    f"Error: Could not read file {module} - {err}\n"
-                    f"Try to change the encoding to UTF-8.",
-                    file=sys.stderr,
-                    force=True,
+        self._cache_stats = {"scanned": set(), "reused": set()}
+        to_scan = list(selected)
+        to_reuse = []
+        if self._cache is not None:
+            self._cache.load()
+            if not self._cache.force_full:
+                roots = analysis_cache.search_roots(paths)
+                to_scan, to_reuse = analysis_cache.select_for_analysis(
+                    selected,
+                    roots,
+                    self._cache.modules,
+                    self._cache.changed_whitelists(),
                 )
-                self.exit_code = ExitCode.InvalidInput
-            else:
-                self.scan(module_string, filename=module)
 
+        for module in to_reuse:
+            entry = self._cache.modules[analysis_cache.normalize_path(module)]
+            self._restore_cache_entry(entry)
+            self._cache_stats["reused"].add(
+                analysis_cache.normalize_path(module)
+            )
+            self._log("Cached:", module)
+
+        try:
+            for module in to_scan:
+                entry = self._analyze_module(module)
+                if self._cache is not None and entry is not None:
+                    self._cache.update_module(module, entry)
+                self._cache_stats["scanned"].add(
+                    analysis_cache.normalize_path(module)
+                )
+            self._scan_whitelists(exclude_path)
+        except KeyboardInterrupt:
+            if self._cache is not None:
+                try:
+                    self._cache.save()
+                except Exception as exc:
+                    self._log(
+                        f"Warning: failed to save cache: {exc}",
+                        file=sys.stderr,
+                        force=True,
+                    )
+            raise
+
+        if self._cache is not None:
+            self._cache.save()
+
+    def _analyze_module(self, module):
+        """Scan *module* and return a JSON-ready cache entry."""
+        self._log("Scanning:", module)
+        try:
+            module_string = utils.read_file(module)
+            digest = analysis_cache.hash_file(module)
+        except utils.VultureInputException as err:
+            message = (
+                f"Error: Could not read file {module} - {err}\n"
+                f"Try to change the encoding to UTF-8."
+            )
+            self._log(message, file=sys.stderr, force=True)
+            self.exit_code = ExitCode.InvalidInput
+            try:
+                digest = analysis_cache.hash_file(module)
+            except OSError:
+                digest = ""
+            return _empty_cache_entry(digest, errors=[message])
+
+        return self._scan_isolated(module_string, module, digest)
+
+    def _scan_isolated(self, module_string, module, digest):
+        """Scan one module without mixing its used names into other files."""
+        previous_used = self.used_names
+        local_used = utils.LoggingSet("name", self.verbose)
+        self.used_names = local_used
+        lengths = {
+            name: len(getattr(self, name)) for name in _ITEM_COLLECTIONS
+        }
+        try:
+            self.scan(module_string, filename=module)
+            imports = list(self.module_imports)
+            items = {}
+            for name in _ITEM_COLLECTIONS:
+                collection = getattr(self, name)
+                items[name] = [
+                    _item_to_dict(item) for item in collection[lengths[name] :]
+                ]
+            return {
+                "sha256": digest,
+                "imports": sorted(set(imports)),
+                "invalid_input": self._scan_invalid,
+                "errors": list(self._scan_errors),
+                "used_names": sorted(local_used),
+                "items": items,
+            }
+        finally:
+            previous_used.update(local_used)
+            self.used_names = previous_used
+
+    def _restore_cache_entry(self, entry):
+        for message in entry.get("errors") or []:
+            self._log(message, file=sys.stderr, force=True)
+        if entry.get("invalid_input"):
+            self.exit_code = ExitCode.InvalidInput
+        items = entry.get("items") or {}
+        for name in _ITEM_COLLECTIONS:
+            collection = getattr(self, name)
+            for data in items.get(name) or []:
+                collection.append(_item_from_dict(data))
+        for name in entry.get("used_names") or []:
+            self.used_names.add(name)
+
+    def _scan_whitelists(self, exclude_path):
         unique_imports = {item.name for item in self.defined_imports}
         for import_name in unique_imports:
             path = Path("whitelists") / (import_name + "_whitelist.py")
@@ -597,10 +790,24 @@ class Vulture(ast.NodeVisitor):
 
     def visit_Import(self, node):
         self._add_aliases(node)
+        for alias in node.names:
+            self._note_import(alias.name)
 
     def visit_ImportFrom(self, node):
         if node.module != "__future__":
             self._add_aliases(node)
+        if node.level:
+            absolute = self._resolve_relative_import(node.module, node.level)
+            if absolute:
+                self._note_import(absolute)
+                for alias in node.names:
+                    if alias.name != "*":
+                        self._note_import(f"{absolute}.{alias.name}")
+        elif node.module and node.module != "__future__":
+            self._note_import(node.module)
+            for alias in node.names:
+                if alias.name != "*":
+                    self._note_import(f"{node.module}.{alias.name}")
 
     def visit_Name(self, node):
         if (
@@ -668,10 +875,20 @@ def main():
         print(e, file=sys.stderr)
         sys.exit(ExitCode.InvalidCmdlineArguments)
 
+    cache_dir = None
+    if config["cache"] or config["cache_clear"]:
+        cache_dir = config["cache_dir"]
+        if config["cache_clear"]:
+            analysis_cache.clear_cache(cache_dir)
     vulture = Vulture(
         verbose=config["verbose"],
         ignore_names=config["ignore_names"],
         ignore_decorators=config["ignore_decorators"],
+        cache_dir=cache_dir,
+        cache_settings={
+            "ignore_decorators": config["ignore_decorators"],
+            "ignore_names": config["ignore_names"],
+        },
     )
     vulture.scavenge(config["paths"], exclude=config["exclude"])
     sys.exit(
