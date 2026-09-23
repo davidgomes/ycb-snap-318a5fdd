@@ -8,7 +8,7 @@ use super::errors::{
 };
 use crate::{
     TrapCode,
-    engine::{ResumableHostTrapError, ResumableOutOfFuelError, TranslationError},
+    engine::{CoreDump, ResumableHostTrapError, ResumableOutOfFuelError, TranslationError},
     module::ReadError,
 };
 use alloc::{boxed::Box, string::String};
@@ -22,8 +22,17 @@ use wat::Error as WatError;
 /// The generic Wasmi root error type.
 #[derive(Debug)]
 pub struct Error {
+    /// The underlying kind of the error and its associated information.
+    inner: Box<ErrorInner>,
+}
+
+/// The heap allocated contents of an [`Error`].
+#[derive(Debug)]
+struct ErrorInner {
     /// The underlying kind of the error and its specific information.
-    kind: Box<ErrorKind>,
+    kind: ErrorKind,
+    /// The coredump generated for the Wasm trap that caused the error, if any.
+    coredump: Option<Box<CoreDump>>,
 }
 
 #[test]
@@ -36,8 +45,31 @@ impl Error {
     /// Creates a new [`Error`] from the [`ErrorKind`].
     fn from_kind(kind: ErrorKind) -> Self {
         Self {
-            kind: Box::new(kind),
+            inner: Box::new(ErrorInner {
+                kind,
+                coredump: None,
+            }),
         }
+    }
+
+    /// Returns the coredump bytes attached to the [`Error`] if any.
+    ///
+    /// # Note
+    ///
+    /// Coredumps are only generated for Wasm traps if enabled via
+    /// [`Config::generate_coredump`](crate::Config::generate_coredump).
+    pub fn coredump(&self) -> Option<&[u8]> {
+        self.inner.coredump.as_deref().map(CoreDump::as_bytes)
+    }
+
+    /// Returns an exclusive reference to the [`CoreDump`] attached to the [`Error`] if any.
+    pub(crate) fn coredump_mut(&mut self) -> Option<&mut CoreDump> {
+        self.inner.coredump.as_deref_mut()
+    }
+
+    /// Attaches the [`CoreDump`] to the [`Error`].
+    pub(crate) fn set_coredump(&mut self, coredump: CoreDump) {
+        self.inner.coredump = Some(Box::new(coredump));
     }
 
     /// Creates a new [`Error`] described by a `message`.
@@ -73,7 +105,7 @@ impl Error {
 
     /// Returns the [`ErrorKind`] of the [`Error`].
     pub fn kind(&self) -> &ErrorKind {
-        &self.kind
+        &self.inner.kind
     }
 
     /// Returns a reference to [`TrapCode`] if [`Error`] is a [`TrapCode`].
@@ -96,7 +128,8 @@ impl Error {
     where
         T: HostError,
     {
-        self.kind
+        self.inner
+            .kind
             .as_host()
             .and_then(<dyn HostError + 'static>::downcast_ref)
     }
@@ -109,7 +142,8 @@ impl Error {
     where
         T: HostError,
     {
-        self.kind
+        self.inner
+            .kind
             .as_host_mut()
             .and_then(<dyn HostError + 'static>::downcast_mut)
     }
@@ -122,7 +156,8 @@ impl Error {
     where
         T: HostError,
     {
-        self.kind
+        self.inner
+            .kind
             .into_host()
             .and_then(|error| error.downcast().ok())
             .map(|boxed| *boxed)
@@ -146,7 +181,7 @@ impl core::error::Error for Error {}
 
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(&self.kind, f)
+        Display::fmt(&self.inner.kind, f)
     }
 }
 

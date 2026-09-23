@@ -46,6 +46,7 @@ use crate::{
         BlockType,
         Cell,
         CompiledFuncEntity,
+        CoreDumpFuncInfo,
         TranslationError,
         translator::{
             WasmTranslator,
@@ -190,10 +191,18 @@ impl WasmTranslator<'_> for FuncTranslator {
         let Some(frame_size) = self.frame_size() else {
             return Err(Error::from(TranslationError::AllocatedTooManySlots));
         };
-        finalize(CompiledFuncEntity::new(
-            frame_size,
-            self.instrs.encoded_ops(),
-        ));
+        let mut compiled_func = CompiledFuncEntity::new(frame_size, self.instrs.encoded_ops());
+        if self.engine.config().get_generate_coredump() {
+            let locals = (0..self.locals.len())
+                .map(|index| self.locals.ty(LocalIdx::from(index as u32)))
+                .collect();
+            compiled_func = compiled_func.with_coredump_info(CoreDumpFuncInfo {
+                module_key: self.module.engine_key(),
+                func_index: self.func.into_u32(),
+                locals,
+            });
+        }
+        finalize(compiled_func);
         Ok(self.into_allocations())
     }
 }

@@ -73,6 +73,16 @@ impl InstanceEntity {
         self.memories.get(index as usize).copied()
     }
 
+    /// Returns all linear memories of the [`InstanceEntity`] in index order.
+    pub fn memories(&self) -> &[Memory] {
+        &self.memories
+    }
+
+    /// Returns all global variables of the [`InstanceEntity`] in index order.
+    pub fn globals(&self) -> &[Global] {
+        &self.globals
+    }
+
     /// Returns the table at the `index` if any.
     pub fn get_table(&self, index: u32) -> Option<Table> {
         self.tables.get(index as usize).copied()

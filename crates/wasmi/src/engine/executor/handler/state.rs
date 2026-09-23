@@ -177,6 +177,11 @@ impl PartialEq for Inst {
 impl Eq for Inst {}
 
 impl Inst {
+    /// Returns the address of the referenced [`InstanceEntity`].
+    pub fn addr(&self) -> usize {
+        self.value.as_ptr() as usize
+    }
+
     /// Returns a shared reference to the referenced [`InstanceEntity`].
     ///
     /// # Safety
@@ -654,6 +659,34 @@ impl Stack {
         let start = self.frames.replace(callee_ip, callee_instance)?;
         self.values.replace(start, callee_size, callee_params)
     }
+
+    /// Returns an iterator over all function frames of `self` from youngest to oldest.
+    pub fn frames(&self) -> impl Iterator<Item = FrameView<'_>> + '_ {
+        let mut instance = self.frames.instance;
+        self.frames.frames.iter().rev().map(move |frame| {
+            let frame_instance = instance;
+            if let Some(caller_instance) = frame.instance {
+                instance = Some(caller_instance);
+            }
+            let start = frame.start.into_inner();
+            FrameView {
+                ip: frame.ip.value as usize,
+                cells: self.values.cells.get(start..).unwrap_or(&[]),
+                instance: frame_instance,
+            }
+        })
+    }
+}
+
+/// A read-only view of a function frame on the [`Stack`].
+#[derive(Debug)]
+pub struct FrameView<'a> {
+    /// The address of an instruction within the frame's function.
+    pub ip: usize,
+    /// The cells of the value stack starting at the frame's first cell.
+    pub cells: &'a [Cell],
+    /// The instance of the frame's function if known.
+    pub instance: Option<Inst>,
 }
 
 /// The value stack.

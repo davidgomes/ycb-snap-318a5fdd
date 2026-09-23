@@ -128,6 +128,11 @@ impl ModuleHeader {
         Some(self.inner.engine_funcs.get_or_panic(index))
     }
 
+    /// Returns a key that uniquely identifies `self` within its [`Engine`].
+    pub fn engine_key(&self) -> usize {
+        self.inner.engine_funcs.start_index() as usize
+    }
+
     /// Returns the [`FuncIdx`] for the given [`EngineFunc`].
     #[expect(unused)]
     pub fn get_func_index(&self, func: EngineFunc) -> Option<FuncIdx> {

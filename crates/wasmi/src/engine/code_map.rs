@@ -10,6 +10,7 @@ use crate::{
     Config,
     Error,
     TrapCode,
+    ValType,
     collections::arena::{Arena, ArenaKey},
     core::{Fuel, FuelCostsProvider},
     engine::{ResumableOutOfFuelError, utils::unreachable_unchecked},
@@ -17,7 +18,7 @@ use crate::{
     ir::index::InternalFunc,
     module::{FuncIdx, ModuleHeader},
 };
-use alloc::boxed::Box;
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::{
     fmt,
     mem::{self, MaybeUninit},
@@ -145,6 +146,11 @@ impl EngineFuncSpan {
             return None;
         }
         Some(func.0 - self.start.0)
+    }
+
+    /// Returns the first [`EngineFunc`] index of `self`.
+    pub fn start_index(&self) -> u32 {
+        self.start.0
     }
 
     /// Returns the n-th [`EngineFunc`] in `self`, if any.
@@ -802,9 +808,88 @@ pub struct CompiledFuncEntity {
     /// This includes stack slots to store the function local constant values,
     /// function parameters, function locals and dynamically used stack slots.
     len_stack_slots: u16,
+    /// Information required to generate coredumps.
+    ///
+    /// This is `Some` only if coredump generation is enabled.
+    coredump: Option<Arc<CoreDumpFuncInfo>>,
+}
+
+/// Information about a compiled function required for coredump generation.
+#[derive(Debug)]
+pub struct CoreDumpFuncInfo {
+    /// Uniquely identifies the Wasm module of the function within its [`Engine`](crate::Engine).
+    pub module_key: usize,
+    /// The index of the function within its Wasm module.
+    pub func_index: u32,
+    /// The types of the function parameters followed by the types of its declared locals.
+    pub locals: Box<[ValType]>,
+}
+
+/// Maps instruction addresses to the [`CoreDumpFuncInfo`] of their compiled function.
+#[derive(Debug, Default)]
+pub struct CoreDumpFuncMap {
+    /// Instruction address ranges sorted by their start address.
+    funcs: Vec<CoreDumpFuncEntry>,
+}
+
+/// An entry of the [`CoreDumpFuncMap`].
+#[derive(Debug)]
+struct CoreDumpFuncEntry {
+    /// The address range of the function's encoded instructions.
+    ops: Range<usize>,
+    /// The number of stack slots used by the function in total.
+    len_stack_slots: u16,
+    /// The coredump information of the function.
+    info: Arc<CoreDumpFuncInfo>,
+}
+
+impl CoreDumpFuncMap {
+    /// Returns the [`CoreDumpFuncInfo`] and the number of stack slots of the
+    /// compiled function containing the instruction at `addr`.
+    pub fn get(&self, addr: usize) -> Option<(&CoreDumpFuncInfo, u16)> {
+        let index = self
+            .funcs
+            .partition_point(|entry| entry.ops.start <= addr)
+            .checked_sub(1)?;
+        let entry = &self.funcs[index];
+        if addr > entry.ops.end {
+            return None;
+        }
+        Some((&entry.info, entry.len_stack_slots))
+    }
+}
+
+impl CodeMap {
+    /// Returns a [`CoreDumpFuncMap`] for all compiled functions with coredump information.
+    pub fn coredump_func_map(&self) -> CoreDumpFuncMap {
+        let funcs = self.funcs.lock();
+        let mut map: Vec<_> = funcs
+            .iter()
+            .filter_map(|(_, entity)| match entity {
+                FuncEntity::Compiled(func) => {
+                    let info = func.coredump.clone()?;
+                    let start = func.ops.as_ptr() as usize;
+                    Some(CoreDumpFuncEntry {
+                        ops: start..start + func.ops.len(),
+                        len_stack_slots: func.len_stack_slots,
+                        info,
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        map.sort_unstable_by_key(|entry| entry.ops.start);
+        CoreDumpFuncMap { funcs: map }
+    }
 }
 
 impl CompiledFuncEntity {
+    /// Attaches the [`CoreDumpFuncInfo`] to `self`.
+    pub fn with_coredump_info(mut self, info: CoreDumpFuncInfo) -> Self {
+        self.coredump = Some(Arc::new(info));
+        self
+    }
+
     /// Create a new initialized [`CompiledFuncEntity`].
     ///
     /// # Panics
@@ -829,6 +914,7 @@ impl CompiledFuncEntity {
         Self {
             ops,
             len_stack_slots,
+            coredump: None,
         }
     }
 }

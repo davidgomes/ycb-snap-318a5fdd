@@ -3,6 +3,7 @@
 mod block_type;
 mod code_map;
 mod config;
+mod coredump;
 mod executor;
 mod func_types;
 mod limits;
@@ -31,17 +32,19 @@ pub(crate) use self::{
         LazyFuncTranslator,
         ValidatingFuncTranslator,
         WasmTranslator,
+        required_cells_for_ty,
         required_cells_for_tys,
     },
 };
 use self::{
-    code_map::{CodeMap, CompiledFuncEntity},
+    code_map::{CodeMap, CompiledFuncEntity, CoreDumpFuncInfo},
     func_types::FuncTypeRegistry,
     resumable::ResumableCallBase,
 };
 pub use self::{
     code_map::{EngineFunc, EngineFuncSpan, EngineFuncSpanIter},
     config::{CompilationMode, Config},
+    coredump::CoreDump,
     limits::{EnforcedLimits, EnforcedLimitsError, StackConfig},
     resumable::{
         ResumableCall,
