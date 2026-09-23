@@ -2431,7 +2431,7 @@ class InteractiveShell(SingletonConfigurable):
             m.ConfigMagics, m.DisplayMagics, m.ExecutionMagics,
             m.ExtensionMagics, m.HistoryMagics, m.LoggingMagics,
             m.NamespaceMagics, m.OSMagics, m.PackagingMagics,
-            m.PylabMagics, m.ScriptMagics,
+            m.PylabMagics, m.ScriptMagics, m.SessionBundleMagics,
         )
         self.register_magics(m.AsyncMagics)
 
@@ -4148,6 +4148,49 @@ class InteractiveShell(SingletonConfigurable):
     # Overridden in terminal subclass to change prompts
     def switch_doctest_mode(self, mode):
         pass
+
+    def start_session_bundle(self, path, *, overwrite: bool = False, redact=None) -> str:
+        """Start recording executed cells to an ``.ipybundle`` file.
+
+        Parameters
+        ----------
+        path : path-like
+            Destination bundle path.
+        overwrite : bool, optional
+            Replace an existing bundle. When False and ``path`` exists, raise
+            ``FileExistsError``.
+        redact : sequence of str, optional
+            Literal strings to replace with ``<redacted>`` in recorded events.
+
+        Returns
+        -------
+        str
+            Bundle path being recorded.
+
+        Raises
+        ------
+        RuntimeError
+            If a recording is already active.
+        FileExistsError
+            If ``path`` exists and ``overwrite`` is False.
+        """
+        from IPython.core.sessionbundle import get_session_bundle_recorder
+
+        return get_session_bundle_recorder(self).start(
+            path, overwrite=overwrite, redact=redact
+        )
+
+    def stop_session_bundle(self) -> str:
+        """Stop the active session-bundle recording and return its path."""
+        from IPython.core.sessionbundle import get_session_bundle_recorder
+
+        return get_session_bundle_recorder(self).stop()
+
+    def session_bundle_status(self) -> dict:
+        """Return ``{"recording": bool, "path": str | None}`` for the recorder."""
+        from IPython.core.sessionbundle import get_session_bundle_recorder
+
+        return get_session_bundle_recorder(self).status()
 
 
 class InteractiveShellABC(metaclass=abc.ABCMeta):
