@@ -271,3 +271,25 @@ def test_composite_pixel_layer_with_vector_stroke() -> None:
     reference = composite(psd, force=True)
     result = composite(psd)
     assert _mse(reference[0], result[0]) <= 0.01
+
+
+def test_composite_blend_if() -> None:
+    from psd_tools.api.blend_range import BlendRangeChannel
+
+    psd = PSDImage.open(full_name("layers/pixel-layer.psd"))
+    layer = psd[0]
+    _, _, alpha_before = composite(psd, viewport=layer.bbox, force=True)
+
+    source, shape = layer.numpy("color"), layer.numpy("shape")
+    assert source is not None and shape is not None
+    lum = 0.299 * source[..., 0:1] + 0.587 * source[..., 1:2] + 0.114 * source[..., 2:3]
+    threshold = int(np.median(lum[shape > 0]) * 255)
+    ranges = layer.blend_ranges
+    ranges.composite = BlendRangeChannel.from_values(this_layer_black=threshold)
+    layer.blend_ranges = ranges
+    _, _, alpha = composite(psd, viewport=layer.bbox, force=True)
+
+    visible = lum * 255 >= threshold
+    assert visible.any() and (~visible & (alpha_before > 0)).any()
+    np.testing.assert_allclose(alpha[visible], alpha_before[visible])
+    assert np.all(alpha[~visible] == 0)
