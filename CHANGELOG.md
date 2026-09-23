@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## Unreleased
+
+### Added
+
+- Added `is_following_end`, `follow_end()`, and `FollowChanged` message to `Log` and `RichLog`
+
+### Fixed
+
+- Fixed `RichLog` scrolling back to the end on write after the user scrolled up
+- Fixed `Log` and `RichLog` viewport jumping when `max_lines` pruned lines while not following the end
+- Fixed `RichLog.write(expand=True)` not justifying text with Rich 15, and expanded entries not updating on resize or `min_width` change
+
 ## [8.1.1] - 2026-03-10
 
 ### Fixed
