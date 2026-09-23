@@ -442,6 +442,11 @@ func (vm *VM) appendSlice(first int8, length int, slice reflect.Value) reflect.V
 			for i, j := 0, ol; i < length; i, j = i+1, j+1 {
 				slice.Index(j).SetString(regs[i])
 			}
+		case reflect.Func:
+			regs := vm.regs.general[vm.fp[3]+Addr(first):]
+			for i, j := 0, ol; i < length; i, j = i+1, j+1 {
+				slice.Index(j).Set(regs[i].Interface().(*callable).Value(vm.env))
+			}
 		default:
 			regs := vm.regs.general[vm.fp[3]+Addr(first):]
 			for i, j := 0, ol; i < length; i, j = i+1, j+1 {

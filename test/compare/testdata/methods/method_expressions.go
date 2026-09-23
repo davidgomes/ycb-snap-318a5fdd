@@ -2,7 +2,10 @@
 
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type Point struct{ X, Y int }
 
@@ -20,6 +23,17 @@ func (n Num) Plus(m ...Num) Num {
 }
 
 func pair() (Point, Point) { return Point{1, 1}, Point{2, 3} }
+
+type Rune rune
+
+func (r Rune) Up(c rune) rune { return c - 32 }
+
+type holder struct {
+	f func(Point) string
+	g func(*Point, int)
+}
+
+func get() func(Point) string { return Point.String }
 
 func apply(f func(Point, Point) Point, a, b Point) Point { return f(a, b) }
 
@@ -53,6 +67,23 @@ func main() {
 
 	fs := map[string]func(Point) string{"s": Point.String}
 	fmt.Println(fs["s"](Point{7, 8}))
+
+	lit := []func(Point) string{Point.String, get()}
+	lit = append(lit, Point.String)
+	fmt.Println(lit[0](Point{1, 0}), lit[1](Point{2, 0}), lit[2](Point{3, 0}), len(lit))
+	h := holder{f: Point.String, g: (*Point).Scale}
+	q := Point{1, 1}
+	h.g(&q, 4)
+	fmt.Println(h.f(q))
+	ch := make(chan func(Point) string, 1)
+	ch <- Point.String
+	fmt.Println((<-ch)(Point{5, 5}))
+	var i interface{} = Point.String
+	if f, ok := i.(func(Point) string); ok {
+		fmt.Println(f(Point{6, 6}))
+	}
+	func(f func(Point) string) { fmt.Println(f(Point{7, 7})) }(Point.String)
+	fmt.Println(strings.Map(Rune(0).Up, "abc"), Point.String(Point{8, 8})+"!")
 
 	defer (*Point).Scale(&p, 0)
 	defer fmt.Println(Point.String(p))
