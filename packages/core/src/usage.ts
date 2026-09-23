@@ -1,4 +1,6 @@
 import type { NonEmptyString } from "./nonempty.ts";
+import type { DependsOn } from "./option-dependency.ts";
+import { isConditionallyHidden } from "./option-dependency.ts";
 
 /**
  * Represents the name of a command-line option.  There are four types of
@@ -65,6 +67,22 @@ export type UsageTerm =
      * @since 0.9.0
      */
     readonly hidden?: boolean;
+    /**
+     * Conditional dependency copied from {@link OptionOptions.dependsOn}
+     * so wrappers such as `withDefault` keep it on the usage term.
+     * @since 0.11.0
+     */
+    readonly dependsOn?: DependsOn;
+    /**
+     * Object field that owns this option. Stamped by `object()`.
+     * @internal
+     */
+    readonly ownerKey?: string;
+    /**
+     * Set when help is rendered with a state that satisfies {@link dependsOn}.
+     * @internal
+     */
+    readonly dependencyMet?: boolean;
   }
   /**
    * A command term, which represents a subcommand in the command-line
@@ -492,12 +510,33 @@ function* formatUsageTerms(
 ): Generator<{ text: string; width: number }> {
   let i = 0;
   for (const t of terms) {
+    if (!usageTermVisible(t)) continue;
     if (i > 0) {
       yield { text: " ", width: 1 };
     }
     yield* formatUsageTermInternal(t, options);
     i++;
   }
+}
+
+/**
+ * Hides options whose dependencies are unsatisfied and not required.
+ * Required dependencies stay visible. Satisfied dependencies are marked
+ * with `dependencyMet` before formatting.
+ */
+function usageTermVisible(term: UsageTerm): boolean {
+  if (term.type === "option") return !isConditionallyHidden(term);
+  if (term.type === "argument" || term.type === "command") return !term.hidden;
+  if (term.type === "passthrough") return !term.hidden;
+  if (term.type === "optional" || term.type === "multiple") {
+    return term.terms.some((child) => usageTermVisible(child));
+  }
+  if (term.type === "exclusive") {
+    return term.terms.some((group) =>
+      group.some((child) => usageTermVisible(child))
+    );
+  }
+  return true;
 }
 
 /**
@@ -551,6 +590,7 @@ function* formatUsageTermInternal(
       width: term.metavar.length,
     };
   } else if (term.type === "option") {
+    if (isConditionallyHidden(term)) return;
     if (options?.onlyShortestOptions) {
       const shortestName = term.names.reduce((a, b) =>
         a.length <= b.length ? a : b
