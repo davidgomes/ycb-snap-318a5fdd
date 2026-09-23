@@ -31,7 +31,11 @@ type parserOptions struct {
 	unionDefs             []unionDef
 	customDefs            []customDef
 	elide                 []string
+	strict                bool
 }
+
+// strictAnalysisHook is installed by the analyze build tag to run grammar analysis in StrictMode.
+var strictAnalysisHook func(root node) error
 
 // A Parser for a particular grammar and lexer.
 type Parser[G any] struct {
@@ -134,6 +138,11 @@ func Build[G any](options ...Option) (parser *Parser[G], err error) {
 	p.typeNodes = context.typeNodes
 	p.typeNodes[p.rootType] = rootNode
 	p.setCaseInsensitiveTokens()
+	if p.strict && strictAnalysisHook != nil {
+		if err := strictAnalysisHook(rootNode); err != nil {
+			return nil, err
+		}
+	}
 	return p, nil
 }
 

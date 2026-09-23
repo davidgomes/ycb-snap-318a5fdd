@@ -130,3 +130,12 @@ func AllowTrailing(ok bool) ParseOption {
 		p.allowTrailing = ok
 	}
 }
+
+// StrictMode runs static grammar analysis at the end of Build and fails if any
+// conflict is detected. Analysis is only available when built with the "analyze" tag.
+func StrictMode() Option {
+	return func(p *parserOptions) error {
+		p.strict = true
+		return nil
+	}
+}
