@@ -286,3 +286,237 @@ type Exhaustive<output, inferredOutput> = {
     handler: (unexpectedValue: unknown) => PickReturnValue<output, otherOutput>
   ): PickReturnValue<output, Union<inferredOutput, otherOutput>>;
 };
+
+type MatchEachResult<output, inferredOutput> = PickReturnValue<
+  output,
+  inferredOutput
+>[];
+
+/**
+ * `.exhaustive()` for `matchEach`: every matching branch contributes an
+ * element, in declaration order.
+ */
+type ExhaustiveList<output, inferredOutput> = {
+  (): MatchEachResult<output, inferredOutput>;
+  <otherOutput>(
+    handler: (unexpectedValue: unknown) => PickReturnValue<output, otherOutput>
+  ): MatchEachResult<output, Union<inferredOutput, otherOutput>>;
+};
+
+/**
+ * #### MatchEach
+ * Pattern matching that evaluates every clause and collects each matching
+ * handler's result.
+ *
+ * `i` is the type `.with()` / `.when()` patterns are checked against. It stays
+ * stable across clauses so later branches still see the original input, and
+ * only changes when `.narrow()` is called.
+ *
+ * `remaining` is the exhaustiveness tracker (top-level cases are excluded as
+ * clauses are registered). `source` is the original subject type accepted by
+ * compiled functions; `.narrow()` does not shrink it.
+ */
+export type MatchEach<
+  i,
+  o,
+  handledCases extends any[] = [],
+  inferredOutput = never,
+  remaining = i,
+  source = i
+> = {
+  with<
+    const p extends Pattern<i>,
+    c,
+    value extends MatchedValue<i, InvertPattern<p, i>>
+  >(
+    pattern: IsNever<p> extends true ? Pattern<i> : p,
+    handler: (
+      selections: FindSelected<value, p>,
+      value: value
+    ) => PickReturnValue<o, c>
+  ): InvertPatternForExclude<p, value> extends infer excluded
+    ? MatchEach<
+        i,
+        o,
+        [...handledCases, excluded],
+        Union<inferredOutput, c>,
+        Exclude<remaining, excluded>,
+        source
+      >
+    : never;
+
+  with<
+    const p1 extends Pattern<i>,
+    const p2 extends Pattern<i>,
+    c,
+    p extends p1 | p2,
+    value extends p extends any ? MatchedValue<i, InvertPattern<p, i>> : never
+  >(
+    p1: p1,
+    p2: p2,
+    handler: (value: value) => PickReturnValue<o, c>
+  ): [
+    InvertPatternForExclude<p1, value>,
+    InvertPatternForExclude<p2, value>
+  ] extends [infer excluded1, infer excluded2]
+    ? MatchEach<
+        i,
+        o,
+        [...handledCases, excluded1, excluded2],
+        Union<inferredOutput, c>,
+        Exclude<remaining, excluded1 | excluded2>,
+        source
+      >
+    : never;
+
+  with<
+    const p1 extends Pattern<i>,
+    const p2 extends Pattern<i>,
+    const p3 extends Pattern<i>,
+    const ps extends readonly Pattern<i>[],
+    c,
+    p extends p1 | p2 | p3 | ps[number],
+    value extends MatchedValue<i, InvertPattern<p, i>>
+  >(
+    ...args: [
+      p1: p1,
+      p2: p2,
+      p3: p3,
+      ...patterns: ps,
+      handler: (value: value) => PickReturnValue<o, c>
+    ]
+  ): [
+    InvertPatternForExclude<p1, value>,
+    InvertPatternForExclude<p2, value>,
+    InvertPatternForExclude<p3, value>,
+    MakeTuples<ps, value>
+  ] extends [
+    infer excluded1,
+    infer excluded2,
+    infer excluded3,
+    infer excludedRest
+  ]
+    ? MatchEach<
+        i,
+        o,
+        [
+          ...handledCases,
+          excluded1,
+          excluded2,
+          excluded3,
+          ...Extract<excludedRest, any[]>
+        ],
+        Union<inferredOutput, c>,
+        Exclude<
+          remaining,
+          | excluded1
+          | excluded2
+          | excluded3
+          | Extract<excludedRest, any[]>[number]
+        >,
+        source
+      >
+    : never;
+
+  with<
+    const pat extends Pattern<i>,
+    pred extends (value: MatchedValue<i, InvertPattern<pat, i>>) => unknown,
+    c,
+    value extends GuardValue<pred>
+  >(
+    pattern: pat,
+    predicate: pred,
+    handler: (
+      selections: FindSelected<value, pat>,
+      value: value
+    ) => PickReturnValue<o, c>
+  ): pred extends (value: any) => value is infer narrowed
+    ? MatchEach<
+        i,
+        o,
+        [...handledCases, narrowed],
+        Union<inferredOutput, c>,
+        Exclude<remaining, narrowed>,
+        source
+      >
+    : MatchEach<
+        i,
+        o,
+        handledCases,
+        Union<inferredOutput, c>,
+        remaining,
+        source
+      >;
+
+  when<pred extends (value: i) => unknown, c, value extends GuardValue<pred>>(
+    predicate: pred,
+    handler: (value: value) => PickReturnValue<o, c>
+  ): pred extends (value: any) => value is infer narrowed
+    ? MatchEach<
+        i,
+        o,
+        [...handledCases, narrowed],
+        Union<inferredOutput, c>,
+        Exclude<remaining, narrowed>,
+        source
+      >
+    : MatchEach<
+        i,
+        o,
+        handledCases,
+        Union<inferredOutput, c>,
+        remaining,
+        source
+      >;
+
+  otherwise<c>(
+    handler: (value: remaining) => PickReturnValue<o, c>
+  ): MatchEachResult<o, Union<inferredOutput, c>>;
+
+  exhaustive: DeepExcludeAll<
+    remaining,
+    handledCases
+  > extends infer remainingCases
+    ? [remainingCases] extends [never]
+      ? ExhaustiveList<o, inferredOutput>
+      : NonExhaustiveError<remainingCases>
+    : never;
+
+  run(): MatchEachResult<o, inferredOutput>;
+
+  returnType: [inferredOutput] extends [never]
+    ? <output>() => MatchEach<i, output, handledCases, never, remaining, source>
+    : TSPatternError<'calling `.returnType<T>()` is only allowed directly after `matchEach(...)`.'>;
+
+  narrow(): MatchEach<
+    DeepExcludeAll<remaining, handledCases>,
+    o,
+    [],
+    inferredOutput,
+    DeepExcludeAll<remaining, handledCases>,
+    source
+  >;
+
+  /**
+   * Register a side-effect invoked once per result collected so far,
+   * in declaration order, when the expression is evaluated.
+   */
+  tap(
+    callback: (result: PickReturnValue<o, inferredOutput>) => void
+  ): MatchEach<i, o, handledCases, inferredOutput, remaining, source>;
+
+  toFunction(): (input: source) => MatchEachResult<o, inferredOutput>;
+
+  toExhaustiveFunction: DeepExcludeAll<
+    remaining,
+    handledCases
+  > extends infer remainingCases
+    ? [remainingCases] extends [never]
+      ? () => (input: source) => MatchEachResult<o, inferredOutput>
+      : NonExhaustiveError<remainingCases>
+    : never;
+
+  toPartialFunction(): (
+    input: source
+  ) => MatchEachResult<o, inferredOutput> | undefined;
+};
