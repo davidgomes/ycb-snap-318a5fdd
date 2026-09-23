@@ -20,6 +20,7 @@ macro_rules! box_tree {
     ($expr:expr) => ($expr);
 }
 
+mod coalescer;
 mod concatenator;
 mod factorizer;
 mod lister;
@@ -43,9 +44,12 @@ pub fn optimize(rules: Vec<Rule>) -> Vec<OptimizedRule> {
         .collect();
 
     let optimized_map = to_optimized_hash_map(&optimized);
+    let implicit_skip =
+        optimized_map.contains_key("WHITESPACE") || optimized_map.contains_key("COMMENT");
     optimized
         .into_iter()
         .map(|rule| restorer::restore_on_err(rule, &optimized_map))
+        .map(|rule| coalescer::coalesce(rule, implicit_skip))
         .collect()
 }
 
@@ -161,6 +165,12 @@ pub enum OptimizedExpr {
     NodeTag(Box<OptimizedExpr>, String),
     /// Restores an expression's checkpoint
     RestoreOnErr(Box<OptimizedExpr>),
+    /// Matches one character in any of the inclusive ranges, sorted and non-overlapping,
+    /// e.g. `'a'..'z' | "_"`
+    CharClass(Vec<(String, String)>),
+    /// Matches one character outside all of the inclusive ranges, sorted and non-overlapping,
+    /// e.g. `!("a" | "b") ~ ANY`
+    NegCharClass(Vec<(String, String)>),
 }
 
 impl OptimizedExpr {
@@ -337,8 +347,28 @@ impl core::fmt::Display for OptimizedExpr {
                 write!(f, "(#{} = {})", tag, expr)
             }
             OptimizedExpr::RestoreOnErr(expr) => core::fmt::Display::fmt(expr.as_ref(), f),
+            OptimizedExpr::CharClass(ranges) => write!(f, "({})", format_char_ranges(ranges)),
+            OptimizedExpr::NegCharClass(ranges) => {
+                write!(f, "(!({}) ~ ANY)", format_char_ranges(ranges))
+            }
         }
     }
+}
+
+fn format_char_ranges(ranges: &[(String, String)]) -> String {
+    ranges
+        .iter()
+        .map(|(start, end)| {
+            let start = start.chars().next().expect("Empty range start.");
+            let end = end.chars().next().expect("Empty range end.");
+            if start == end {
+                format!("{:?}", start.to_string())
+            } else {
+                format!("{:?}..{:?}", start, end)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 /// A top-down iterator over an `OptimizedExpr`.
@@ -414,10 +444,10 @@ mod tests {
                 ty: RuleType::Normal,
                 expr: box_tree!(Choice(
                     Choice(
-                        Choice(Str(String::from("a")), Str(String::from("b"))),
-                        Str(String::from("c"))
+                        Choice(Ident(String::from("a")), Ident(String::from("b"))),
+                        Ident(String::from("c"))
                     ),
-                    Str(String::from("d"))
+                    Ident(String::from("d"))
                 )),
             }]
         };
@@ -427,16 +457,74 @@ mod tests {
                 name: "rule".to_owned(),
                 ty: RuleType::Normal,
                 expr: box_tree!(Choice(
-                    Str(String::from("a")),
+                    Ident(String::from("a")),
                     Choice(
-                        Str(String::from("b")),
-                        Choice(Str(String::from("c")), Str(String::from("d")))
+                        Ident(String::from("b")),
+                        Choice(Ident(String::from("c")), Ident(String::from("d")))
                     )
                 )),
             }]
         };
 
         assert_eq!(optimize(rules), rotated);
+    }
+
+    #[test]
+    fn coalesce_char_class() {
+        let rules = {
+            use crate::ast::Expr::*;
+            vec![Rule {
+                name: "rule".to_owned(),
+                ty: RuleType::Normal,
+                expr: box_tree!(Choice(
+                    Choice(
+                        Choice(
+                            Range(String::from("a"), String::from("z")),
+                            Str(String::from("_"))
+                        ),
+                        Range(String::from("A"), String::from("Z"))
+                    ),
+                    Insens(String::from("q"))
+                )),
+            }]
+        };
+        let coalesced = vec![OptimizedRule {
+            name: "rule".to_owned(),
+            ty: RuleType::Normal,
+            expr: OptimizedExpr::CharClass(
+                [("A", "Z"), ("_", "_"), ("a", "z")]
+                    .iter()
+                    .map(|(start, end)| (start.to_string(), end.to_string()))
+                    .collect(),
+            ),
+        }];
+
+        assert_eq!(optimize(rules), coalesced);
+    }
+
+    #[test]
+    fn coalesce_neg_char_class() {
+        let rules = {
+            use crate::ast::Expr::*;
+            vec![Rule {
+                name: "rule".to_owned(),
+                ty: RuleType::Normal,
+                expr: box_tree!(Seq(
+                    NegPred(Choice(Str(String::from("\"")), Str(String::from("\\")))),
+                    Ident(String::from("ANY"))
+                )),
+            }]
+        };
+        let coalesced = vec![OptimizedRule {
+            name: "rule".to_owned(),
+            ty: RuleType::Normal,
+            expr: OptimizedExpr::NegCharClass(vec![
+                (String::from("\""), String::from("\"")),
+                (String::from("\\"), String::from("\\")),
+            ]),
+        }];
+
+        assert_eq!(optimize(rules), coalesced);
     }
 
     #[test]
@@ -1131,6 +1219,22 @@ mod tests {
                 )
                 .to_string(),
                 r#"(#X = (x ~ "y"))"#,
+            );
+        }
+
+        #[test]
+        fn char_class() {
+            let ranges = vec![
+                ("\n".to_owned(), "\n".to_owned()),
+                ("a".to_owned(), "z".to_owned()),
+            ];
+            assert_eq!(
+                OptimizedExpr::CharClass(ranges.clone()).to_string(),
+                r#"("\n" | 'a'..'z')"#,
+            );
+            assert_eq!(
+                OptimizedExpr::NegCharClass(ranges).to_string(),
+                r#"(!("\n" | 'a'..'z') ~ ANY)"#,
             );
         }
 

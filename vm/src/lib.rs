@@ -251,6 +251,10 @@ impl Vm {
             OptimizedExpr::RestoreOnErr(ref expr) => {
                 state.restore_on_err(|state| self.parse_expr(expr, state))
             }
+            OptimizedExpr::CharClass(ref ranges) => parse_char_class(ranges, state),
+            OptimizedExpr::NegCharClass(ref ranges) => state
+                .lookahead(false, |state| parse_char_class(ranges, state))
+                .and_then(|state| state.skip(1)),
         }
     }
 
@@ -300,4 +304,22 @@ impl Vm {
             }
         }
     }
+}
+
+// Matching range by range keeps parse-attempt tracking identical to the uncoalesced choice.
+fn parse_char_class<'a>(
+    ranges: &'a [(String, String)],
+    state: Box<ParserState<'a, &'a str>>,
+) -> ParseResult<Box<ParserState<'a, &'a str>>> {
+    ranges.iter().fold(Err(state), |result, (start, end)| {
+        result.or_else(|state| {
+            if start == end {
+                state.match_string(start)
+            } else {
+                let start = start.chars().next().expect("empty char literal");
+                let end = end.chars().next().expect("empty char literal");
+                state.match_range(start..end)
+            }
+        })
+    })
 }

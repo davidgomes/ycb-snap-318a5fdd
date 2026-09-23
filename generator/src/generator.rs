@@ -583,6 +583,8 @@ fn generate_expr(expr: OptimizedExpr) -> TokenStream {
                 state.restore_on_err(|state| #expr)
             }
         }
+        OptimizedExpr::CharClass(ranges) => generate_char_class(&ranges, false),
+        OptimizedExpr::NegCharClass(ranges) => generate_char_class(&ranges, true),
         #[cfg(feature = "grammar-extras")]
         OptimizedExpr::NodeTag(expr, tag) => match *expr {
             OptimizedExpr::Opt(expr) => {
@@ -774,6 +776,8 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
                 state.restore_on_err(|state| #expr)
             }
         }
+        OptimizedExpr::CharClass(ranges) => generate_char_class(&ranges, false),
+        OptimizedExpr::NegCharClass(ranges) => generate_char_class(&ranges, true),
         #[cfg(feature = "grammar-extras")]
         OptimizedExpr::NodeTag(expr, tag) => match *expr {
             OptimizedExpr::Opt(expr) => {
@@ -801,6 +805,36 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
                 }
             }
         },
+    }
+}
+
+fn generate_char_class(ranges: &[(String, String)], negated: bool) -> TokenStream {
+    // Matching range by range keeps parse-attempt tracking identical to the uncoalesced choice.
+    let mut alternatives = ranges.iter().map(|(start, end)| {
+        let start = start.chars().next().unwrap();
+        let end = end.chars().next().unwrap();
+        if start == end {
+            let string = start.to_string();
+            quote! { state.match_string(#string) }
+        } else {
+            quote! { state.match_range(#start..#end) }
+        }
+    });
+    let class = match alternatives.next() {
+        Some(head) => quote! {
+            #head #( .or_else(|state| #alternatives) )*
+        },
+        None => quote! { Err(state) },
+    };
+
+    if negated {
+        quote! {
+            state
+                .lookahead(false, |state| #class)
+                .and_then(|state| state.skip(1))
+        }
+    } else {
+        class
     }
 }
 
