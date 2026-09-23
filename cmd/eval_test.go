@@ -2122,6 +2122,46 @@ p contains __local0__1 if __local0__1 = input.v
 	}
 }
 
+func TestEvalPartialTemplateStringsSourceOutput(t *testing.T) {
+	files := map[string]string{
+		"test.rego": `package test
+
+greeting := $"hello {input.name}, you have {count(input.items)} items"
+
+items contains $"item {x}" if some x in input.items
+`,
+	}
+
+	expected := `# Query 1
+x = $"hello {input.name}, you have {count(input.items)} items"
+data.partial.test.items = y
+
+# Module 1
+package partial.test
+
+items contains __local7__2 if {
+	_ = input.items[__local1__2]
+	__local7__2 = $"item {input.items[__local1__2]}"
+}
+`
+
+	test.WithTempFS(files, func(path string) {
+		params := newEvalCommandParams()
+		_ = params.dataPaths.Set(filepath.Join(path, "test.rego"))
+		params.partial = true
+		_ = params.outputFormat.Set(formats.Source)
+
+		buf := new(bytes.Buffer)
+		if _, err := eval([]string{"x = data.test.greeting; y = data.test.items"}, params, buf, nil); err != nil {
+			t.Fatal("unexpected error:", err)
+		}
+
+		if diff := cmp.Diff(expected, buf.String()); diff != "" {
+			t.Error("output mismatch (-want +got):\n", diff)
+		}
+	})
+}
+
 func TestEvalDiscardOutput(t *testing.T) {
 	tests := map[string]struct {
 		query, format, expected string
