@@ -90,9 +90,12 @@ impl Executor {
     #[inline(never)]
     fn handle_break(state: &mut VmState, reason: Break) -> Result<Sp, ExecutionOutcome> {
         if let Some(trap_code) = reason.trap_code() {
-            return Err(ExecutionOutcome::from(trap_code));
+            return Err(ExecutionOutcome::from(super::super::coredump_trap(
+                state, trap_code,
+            )));
         }
-        state.execution_outcome()
+        let outcome = state.execution_outcome();
+        super::super::coredump_outcome(state, outcome)
     }
 
     #[cold]

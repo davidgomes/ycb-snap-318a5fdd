@@ -1,10 +1,6 @@
 use super::Func;
 use crate::{
-    AsContext,
-    AsContextMut,
-    Engine,
-    Error,
-    Val,
+    AsContext, AsContextMut, Engine, Error, Val,
     engine::{LiftFromCellsByValue, LoadByVal, Stack},
     func::FuncError,
     ir::SlotSpan,
@@ -81,6 +77,8 @@ impl ResumableHostTrapError {
 pub struct ResumableOutOfFuelError {
     /// The minimum required amount of fuel to progress execution.
     required_fuel: u64,
+    /// Coredump captured at the out-of-fuel trap, if generation is enabled.
+    coredump: Option<crate::coredump::Coredump>,
 }
 
 impl core::error::Error for ResumableOutOfFuelError {}
@@ -99,12 +97,25 @@ impl ResumableOutOfFuelError {
     /// Creates a new [`ResumableOutOfFuelError`].
     #[cold]
     pub(crate) fn new(required_fuel: u64) -> Self {
-        Self { required_fuel }
+        Self {
+            required_fuel,
+            coredump: None,
+        }
     }
 
-    /// Consumes `self` to return the underlying [`Error`].
-    pub(crate) fn required_fuel(self) -> u64 {
+    /// Returns the fuel required to resume execution.
+    pub(crate) fn required_fuel(&self) -> u64 {
         self.required_fuel
+    }
+
+    /// Stores a coredump captured for this out-of-fuel trap.
+    pub(crate) fn set_coredump(&mut self, coredump: crate::coredump::Coredump) {
+        self.coredump = Some(coredump);
+    }
+
+    /// Removes the captured coredump, if any.
+    pub(crate) fn take_coredump(self) -> Option<crate::coredump::Coredump> {
+        self.coredump
     }
 }
 

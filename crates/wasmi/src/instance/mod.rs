@@ -1,24 +1,9 @@
 pub(crate) use self::builder::InstanceEntityBuilder;
 pub use self::exports::{Export, ExportsIter, Extern, ExternType};
 use crate::{
-    AsContext,
-    AsContextMut,
-    ElementSegment,
-    Error,
-    Func,
-    Global,
-    Memory,
-    Module,
-    StoreContext,
-    Table,
-    TypedFunc,
-    WasmParams,
-    WasmResults,
-    collections::Map,
-    engine::DedupFuncType,
-    func::FuncError,
-    memory::DataSegment,
-    store::Stored,
+    AsContext, AsContextMut, ElementSegment, Error, Func, Global, Memory, Module, StoreContext,
+    Table, TypedFunc, WasmParams, WasmResults, collections::Map, engine::DedupFuncType,
+    func::FuncError, memory::DataSegment, store::Stored,
 };
 use alloc::{boxed::Box, sync::Arc};
 
@@ -40,6 +25,8 @@ pub struct InstanceEntity {
     exports: Map<Box<str>, Extern>,
     data_segments: Box<[DataSegment]>,
     elem_segments: Box<[ElementSegment]>,
+    /// Module name from the Wasm `name` section, or empty.
+    module_name: Box<str>,
 }
 
 impl InstanceEntity {
@@ -55,6 +42,7 @@ impl InstanceEntity {
             exports: Map::new(),
             data_segments: [].into(),
             elem_segments: [].into(),
+            module_name: Box::from(""),
         }
     }
 
@@ -104,6 +92,21 @@ impl InstanceEntity {
     }
 
     /// Returns the value exported to the given `name` if any.
+    /// Returns the linear memories of the instance, in index order.
+    pub(crate) fn memories(&self) -> &[Memory] {
+        &self.memories
+    }
+
+    /// Returns the globals of the instance, in index order.
+    pub(crate) fn globals(&self) -> &[Global] {
+        &self.globals
+    }
+
+    /// Returns the module name recorded for coredumps.
+    pub(crate) fn module_name(&self) -> &str {
+        &self.module_name
+    }
+
     pub fn get_export(&self, name: &str) -> Option<Extern> {
         self.exports.get(name).copied()
     }

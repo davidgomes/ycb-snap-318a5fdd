@@ -2,23 +2,12 @@ use super::state::{Inst, Ip, Mem0Len, Mem0Ptr, Sp, VmState, mem0_bytes};
 #[cfg(feature = "simd")]
 use crate::core::simd::ImmLaneIdx;
 use crate::{
-    Error,
-    Func,
-    Global,
-    Instance,
-    Memory,
-    Nullable,
-    RefType,
-    Table,
-    TrapCode,
-    V128,
+    Error, Func, Global, Instance, Memory, Nullable, RefType, Table, TrapCode, V128,
     core::{CoreElementSegment, CoreGlobal, CoreMemory, CoreTable, RawVal, WriteAs},
     engine::{
-        DedupFuncType,
-        EngineFunc,
+        DedupFuncType, EngineFunc,
         executor::{
-            LoadFromCellsByValue,
-            StoreToCells,
+            LoadFromCellsByValue, StoreToCells,
             handler::{Break, Control, Done, DoneReason},
         },
         utils::unreachable_unchecked,
@@ -498,7 +487,8 @@ pub fn call_host(
         .call_host_func(trampoline, instance, inout, call_hooks)
     {
         Ok(()) => {}
-        Err(StoreError::External(error)) => {
+        Err(StoreError::External(mut error)) => {
+            crate::engine::coredump::extend_trap(state.store, state.stack, state.code, &mut error);
             done!(state, DoneReason::host_error(error, func, params.span()))
         }
         Err(StoreError::Internal(error)) => unsafe {
@@ -528,7 +518,8 @@ pub fn return_call_host(
         .call_host_func(trampoline, Some(instance), inout, CallHooks::Call)
     {
         Ok(()) => {}
-        Err(StoreError::External(error)) => {
+        Err(StoreError::External(mut error)) => {
+            crate::engine::coredump::extend_trap(state.store, state.stack, state.code, &mut error);
             // Note: we won't allow resumption in case the execution would
             //       have returned with this the host function tail call.
             let reason = match control {

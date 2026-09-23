@@ -6,8 +6,7 @@ pub mod backend;
 pub use self::backend::{Done, Handler, execute_until_done, op_code_to_handler};
 use super::state::Ip;
 use crate::{
-    Error,
-    TrapCode,
+    Error, TrapCode,
     engine::{ResumableHostTrapError, ResumableOutOfFuelError},
 };
 use core::ops::ControlFlow;
@@ -87,7 +86,13 @@ impl ExecutionOutcome {
     pub fn into_non_resumable(self) -> Error {
         match self {
             Self::Host(error) => error.into_error(),
-            Self::OutOfFuel(_error) => Error::from(TrapCode::OutOfFuel),
+            Self::OutOfFuel(error) => {
+                let mut trap = Error::from(TrapCode::OutOfFuel);
+                if let Some(coredump) = error.take_coredump() {
+                    trap.set_coredump(coredump);
+                }
+                trap
+            }
             Self::Error(error) => error,
         }
     }

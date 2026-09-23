@@ -1,19 +1,9 @@
 use crate::{
-    Error,
-    Func,
-    TrapCode,
+    Error, Func, TrapCode,
     engine::{
-        ResumableHostTrapError,
-        ResumableOutOfFuelError,
-        StackConfig,
+        ResumableHostTrapError, ResumableOutOfFuelError, StackConfig,
         executor::{
-            Cell,
-            CellError,
-            CellsReader,
-            CellsWriter,
-            CodeMap,
-            InOutParams,
-            LoadFromCellsByValue,
+            Cell, CellError, CellsReader, CellsWriter, CodeMap, InOutParams, LoadFromCellsByValue,
             StoreToCells,
             handler::{
                 dispatch::{Control, ExecutionOutcome},
@@ -30,8 +20,7 @@ use alloc::vec::Vec;
 use core::{
     cmp,
     marker::PhantomData,
-    mem,
-    ops,
+    mem, ops,
     ptr::{self, NonNull},
     slice,
 };
@@ -364,6 +353,12 @@ impl Ip {
         Self { value }
     }
 
+    /// Returns the raw instruction pointer.
+    #[inline]
+    pub(crate) fn as_ptr(self) -> *const u8 {
+        self.value
+    }
+
     /// Returns a new [`Ip`] advanced by `delta` bytes.
     ///
     /// # Note
@@ -555,6 +550,28 @@ impl Stack {
         self.values
             .bytes_allocated()
             .saturating_add(self.frames.bytes_allocated())
+    }
+
+    /// Wasm frames from youngest (current) to oldest.
+    ///
+    /// Each entry is `(instruction pointer, frame start cell, instance)`.
+    pub(crate) fn wasm_frames_youngest_first(&self) -> Vec<(Ip, usize, Inst)> {
+        let frames = &self.frames.frames;
+        let mut current = self.frames.instance;
+        let mut out = Vec::with_capacity(frames.len());
+        for frame in frames.iter().rev() {
+            let Some(instance) = current else {
+                break;
+            };
+            out.push((frame.ip, frame.start.into_inner(), instance));
+            current = frame.instance.or(current);
+        }
+        out
+    }
+
+    /// Returns the cell at `index`.
+    pub(crate) fn cell(&self, index: usize) -> Option<Cell> {
+        self.values.cells.get(index).copied()
     }
 
     /// Synchronizes the [`Ip`] of the top-most function frame.
@@ -1151,7 +1168,7 @@ impl SpOffset {
 
     /// Returns the underlying `usize` index.
     #[inline]
-    fn into_inner(self) -> usize {
+    pub(crate) fn into_inner(self) -> usize {
         self.0
     }
 }

@@ -3,6 +3,7 @@
 mod block_type;
 mod code_map;
 mod config;
+mod coredump;
 mod executor;
 mod func_types;
 mod limits;
@@ -13,25 +14,13 @@ mod utils;
 pub(crate) use self::{
     block_type::BlockType,
     executor::{
-        Cell,
-        InOutParams,
-        InOutResults,
-        Inst,
-        LiftFromCells,
-        LiftFromCellsByValue,
-        LoadByVal,
-        LowerToCells,
-        Stack,
+        Cell, InOutParams, InOutResults, Inst, LiftFromCells, LiftFromCellsByValue, LoadByVal,
+        LowerToCells, Stack,
     },
     func_types::DedupFuncType,
     translator::{
-        FuncTranslationDriver,
-        FuncTranslator,
-        FuncTranslatorAllocations,
-        LazyFuncTranslator,
-        ValidatingFuncTranslator,
-        WasmTranslator,
-        required_cells_for_tys,
+        FuncTranslationDriver, FuncTranslator, FuncTranslatorAllocations, LazyFuncTranslator,
+        ValidatingFuncTranslator, WasmTranslator, required_cells_for_tys,
     },
 };
 use self::{
@@ -44,22 +33,14 @@ pub use self::{
     config::{CompilationMode, Config},
     limits::{EnforcedLimits, EnforcedLimitsError, StackConfig},
     resumable::{
-        ResumableCall,
-        ResumableCallHostTrap,
-        ResumableCallOutOfFuel,
-        ResumableHostTrapError,
-        ResumableOutOfFuelError,
-        TypedResumableCall,
-        TypedResumableCallHostTrap,
+        ResumableCall, ResumableCallHostTrap, ResumableCallOutOfFuel, ResumableHostTrapError,
+        ResumableOutOfFuelError, TypedResumableCall, TypedResumableCallHostTrap,
         TypedResumableCallOutOfFuel,
     },
     translator::TranslationError,
 };
 use crate::{
-    Error,
-    Func,
-    FuncType,
-    StoreContextMut,
+    Error, Func, FuncType, StoreContextMut,
     module::{FuncIdx, ModuleHeader},
 };
 use alloc::{

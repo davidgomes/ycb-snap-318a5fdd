@@ -16,43 +16,24 @@ use self::{
     layout::{StackLayout, StackSpace},
     locals::{LocalIdx, LocalsRegistry},
     stack::{
-        BlockControlFrame,
-        ControlFrame,
-        ControlFrameBase,
-        ControlFrameKind,
-        ElseControlFrame,
-        ElseReachability,
-        IfControlFrame,
-        IfReachability,
-        ImmediateOperand,
-        LocalOperand,
-        LoopControlFrame,
-        Operand,
-        Stack,
-        StackAllocations,
+        BlockControlFrame, ControlFrame, ControlFrameBase, ControlFrameKind, ElseControlFrame,
+        ElseReachability, IfControlFrame, IfReachability, ImmediateOperand, LocalOperand,
+        LoopControlFrame, Operand, Stack, StackAllocations,
     },
     utils::{Input, Reset, ReusableAllocations, UpdateResultSlot},
 };
 #[cfg(feature = "simd")]
 use crate::V128;
 use crate::{
-    Engine,
-    Error,
-    FuncType,
-    TrapCode,
-    ValType,
+    Engine, Error, FuncType, TrapCode, ValType,
     core::{FuelCostsProvider, IndexType, RawRef, Typed, TypedRawVal},
     engine::{
-        BlockType,
-        Cell,
-        CompiledFuncEntity,
-        TranslationError,
+        BlockType, Cell, CompiledFuncEntity, TranslationError,
+        code_map::CoredumpFuncInfo,
         translator::{
             WasmTranslator,
             comparator::{
-                LogicalizeCmpInstr,
-                NegateCmpInstr,
-                TryIntoCmpBranchInstr as _,
+                LogicalizeCmpInstr, NegateCmpInstr, TryIntoCmpBranchInstr as _,
                 UpdateBranchOffset as _,
             },
             func::stack::TempOperand,
@@ -60,17 +41,8 @@ use crate::{
         },
     },
     ir::{
-        self,
-        Address,
-        BoundedSlotSpan,
-        BranchOffset,
-        FixedSlotSpan,
-        Offset16,
-        Op,
-        Sign,
-        Slot,
-        SlotSpan,
-        index,
+        self, Address, BoundedSlotSpan, BranchOffset, FixedSlotSpan, Offset16, Op, Sign, Slot,
+        SlotSpan, index,
     },
     module::{FuncIdx, FuncTypeIdx, MemoryIdx, ModuleHeader, WasmiValueType},
 };
@@ -190,9 +162,19 @@ impl WasmTranslator<'_> for FuncTranslator {
         let Some(frame_size) = self.frame_size() else {
             return Err(Error::from(TranslationError::AllocatedTooManySlots));
         };
+        let coredump = if self.engine.config().get_generate_coredump() {
+            Some(CoredumpFuncInfo {
+                func_index: self.func.into_u32(),
+                local_tys: self.locals.copy_types().into_boxed_slice(),
+                local_offsets: self.layout.local_offsets().to_vec().into_boxed_slice(),
+            })
+        } else {
+            None
+        };
         finalize(CompiledFuncEntity::new(
             frame_size,
             self.instrs.encoded_ops(),
+            coredump,
         ));
         Ok(self.into_allocations())
     }

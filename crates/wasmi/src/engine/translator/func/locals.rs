@@ -44,6 +44,15 @@ impl LocalsRegistry {
         self.len_locals
     }
 
+    /// Copies the type of every registered local, parameters first.
+    pub fn copy_types(&self) -> Vec<ValType> {
+        let mut types = Vec::with_capacity(self.len_locals);
+        for index in 0..self.len_locals {
+            types.push(self.ty(LocalIdx::from(index as u32)));
+        }
+        types
+    }
+
     /// The maximum number of local variables per function.
     const LOCAL_VARIABLES_MAX: usize = 30_000;
 

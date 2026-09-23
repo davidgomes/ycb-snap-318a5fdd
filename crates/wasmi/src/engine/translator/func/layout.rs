@@ -1,7 +1,6 @@
 use super::{LocalIdx, Operand, Reset};
 use crate::{
-    Error,
-    ValType,
+    Error, ValType,
     engine::{
         TranslationError,
         translator::{func::LocalOperand, utils::required_cells_for_ty},
@@ -84,6 +83,11 @@ impl StackLayout {
     /// Returns the number of locals registers to `self`.
     fn len_locals(&self) -> usize {
         self.local_offsets.len()
+    }
+
+    /// Returns the cell offset of each local within the function frame.
+    pub fn local_offsets(&self) -> &[u16] {
+        &self.local_offsets
     }
 
     /// Slot `amount` local variables of common type `ty`.

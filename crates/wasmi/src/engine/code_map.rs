@@ -7,9 +7,7 @@
 
 use super::{FuncTranslationDriver, FuncTranslator, TranslationError, ValidatingFuncTranslator};
 use crate::{
-    Config,
-    Error,
-    TrapCode,
+    Config, Error, TrapCode, ValType,
     collections::arena::{Arena, ArenaKey},
     core::{Fuel, FuelCostsProvider},
     engine::{ResumableOutOfFuelError, utils::unreachable_unchecked},
@@ -432,6 +430,20 @@ impl CodeMap {
             }
         }
     }
+
+    /// Returns coredump metadata for the compiled function that contains `ip`.
+    pub(crate) fn coredump_info_for_ip(&self, ip: *const u8) -> Option<CoredumpFuncInfo> {
+        let funcs = self.funcs.lock();
+        for (_key, entity) in funcs.iter() {
+            let FuncEntity::Compiled(func) = entity else {
+                continue;
+            };
+            if let Some(info) = func.coredump_info_for_ip(ip) {
+                return Some(info.clone());
+            }
+        }
+        None
+    }
 }
 
 /// An internal function entity.
@@ -802,6 +814,19 @@ pub struct CompiledFuncEntity {
     /// This includes stack slots to store the function local constant values,
     /// function parameters, function locals and dynamically used stack slots.
     len_stack_slots: u16,
+    /// Local types and register offsets recorded when coredumps are enabled.
+    coredump: Option<CoredumpFuncInfo>,
+}
+
+/// Local layout of a compiled function, used to recover values for a coredump.
+#[derive(Debug, Clone)]
+pub struct CoredumpFuncInfo {
+    /// Wasm function index within the module, including imports.
+    pub func_index: u32,
+    /// Types of parameters followed by declared locals.
+    pub local_tys: Box<[ValType]>,
+    /// Cell offset of each local within the function frame.
+    pub local_offsets: Box<[u16]>,
 }
 
 impl CompiledFuncEntity {
@@ -811,7 +836,7 @@ impl CompiledFuncEntity {
     ///
     /// - If `ops` is empty.
     /// - If `ops` contains more than `i32::MAX` encoded bytes.
-    pub fn new(len_stack_slots: u16, ops: &[u8]) -> Self {
+    pub fn new(len_stack_slots: u16, ops: &[u8], coredump: Option<CoredumpFuncInfo>) -> Self {
         let ops: Pin<Box<[u8]>> = Pin::new(ops.into());
         assert!(
             !ops.is_empty(),
@@ -829,6 +854,18 @@ impl CompiledFuncEntity {
         Self {
             ops,
             len_stack_slots,
+            coredump,
+        }
+    }
+
+    /// Returns coredump metadata when `ip` points into this function.
+    pub(crate) fn coredump_info_for_ip(&self, ip: *const u8) -> Option<&CoredumpFuncInfo> {
+        let start = self.ops.as_ptr();
+        let end = unsafe { start.add(self.ops.len()) };
+        if ip >= start && ip < end {
+            self.coredump.as_ref()
+        } else {
+            None
         }
     }
 }

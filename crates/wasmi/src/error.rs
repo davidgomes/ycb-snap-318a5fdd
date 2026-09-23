@@ -1,11 +1,7 @@
 use super::errors::{
-    EnforcedLimitsError,
-    FuncError,
-    GlobalError,
-    InstantiationError,
-    IrError,
-    LinkerError,
+    EnforcedLimitsError, FuncError, GlobalError, InstantiationError, IrError, LinkerError,
 };
+use crate::coredump::Coredump;
 use crate::{
     TrapCode,
     engine::{ResumableHostTrapError, ResumableOutOfFuelError, TranslationError},
@@ -23,7 +19,16 @@ use wat::Error as WatError;
 #[derive(Debug)]
 pub struct Error {
     /// The underlying kind of the error and its specific information.
-    kind: Box<ErrorKind>,
+    inner: Box<ErrorInner>,
+}
+
+/// Storage for an [`Error`] kept behind a single allocation.
+#[derive(Debug)]
+struct ErrorInner {
+    /// The underlying kind of the error and its specific information.
+    kind: ErrorKind,
+    /// Wasm coredump bytes captured when a Wasm trap occurs.
+    coredump: Option<Coredump>,
 }
 
 #[test]
@@ -36,7 +41,10 @@ impl Error {
     /// Creates a new [`Error`] from the [`ErrorKind`].
     fn from_kind(kind: ErrorKind) -> Self {
         Self {
-            kind: Box::new(kind),
+            inner: Box::new(ErrorInner {
+                kind,
+                coredump: None,
+            }),
         }
     }
 
@@ -73,7 +81,30 @@ impl Error {
 
     /// Returns the [`ErrorKind`] of the [`Error`].
     pub fn kind(&self) -> &ErrorKind {
-        &self.kind
+        &self.inner.kind
+    }
+
+    /// Returns the raw Wasm coredump attached to this error, if any.
+    ///
+    /// Coredumps are produced only when [`Config::generate_coredump`](crate::Config::generate_coredump)
+    /// is enabled and the error originated from a Wasm trap.
+    pub fn coredump(&self) -> Option<&[u8]> {
+        self.inner.coredump.as_ref().map(Coredump::bytes)
+    }
+
+    /// Attaches a Wasm coredump to this error.
+    pub(crate) fn set_coredump(&mut self, coredump: Coredump) {
+        self.inner.coredump = Some(coredump);
+    }
+
+    /// Returns a mutable reference to the attached coredump, if any.
+    pub(crate) fn coredump_mut(&mut self) -> Option<&mut Coredump> {
+        self.inner.coredump.as_mut()
+    }
+
+    /// Removes the attached coredump, if any.
+    pub(crate) fn take_coredump(&mut self) -> Option<Coredump> {
+        self.inner.coredump.take()
     }
 
     /// Returns a reference to [`TrapCode`] if [`Error`] is a [`TrapCode`].
@@ -96,7 +127,8 @@ impl Error {
     where
         T: HostError,
     {
-        self.kind
+        self.inner
+            .kind
             .as_host()
             .and_then(<dyn HostError + 'static>::downcast_ref)
     }
@@ -109,7 +141,8 @@ impl Error {
     where
         T: HostError,
     {
-        self.kind
+        self.inner
+            .kind
             .as_host_mut()
             .and_then(<dyn HostError + 'static>::downcast_mut)
     }
@@ -122,7 +155,8 @@ impl Error {
     where
         T: HostError,
     {
-        self.kind
+        self.inner
+            .kind
             .into_host()
             .and_then(|error| error.downcast().ok())
             .map(|boxed| *boxed)
@@ -146,7 +180,7 @@ impl core::error::Error for Error {}
 
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(&self.kind, f)
+        Display::fmt(self.kind(), f)
     }
 }
 

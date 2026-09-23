@@ -76,7 +76,10 @@ pub fn execute_until_done(
     let handler = fetch_handler(ip);
     let Control::Break(reason) = handler(state, ip, sp, mem0, mem0_len, instance);
     if let Some(trap_code) = reason.trap_code() {
-        return Err(ExecutionOutcome::from(trap_code));
+        return Err(ExecutionOutcome::from(super::super::coredump_trap(
+            state, trap_code,
+        )));
     }
-    state.execution_outcome()
+    let outcome = state.execution_outcome();
+    super::super::coredump_outcome(state, outcome)
 }
