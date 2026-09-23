@@ -26,13 +26,14 @@ type Output struct {
 	w       io.Writer
 	environ Environ
 
-	assumeTTY bool
-	unsafe    bool
-	cache     bool
-	fgSync    *sync.Once
-	fgColor   Color
-	bgSync    *sync.Once
-	bgColor   Color
+	assumeTTY      bool
+	unsafe         bool
+	cache          bool
+	preserveResets bool
+	fgSync         *sync.Once
+	fgColor        Color
+	bgSync         *sync.Once
+	bgColor        Color
 }
 
 // Environ is an interface for getting environment variables.
@@ -120,6 +121,14 @@ func WithTTY(v bool) OutputOption {
 	}
 }
 
+// WithPreserveResets sets the default PreserveResets flag for styles created
+// by this Output.
+func WithPreserveResets(v bool) OutputOption {
+	return func(o *Output) {
+		o.preserveResets = v
+	}
+}
+
 // WithUnsafe returns a new OutputOption with unsafe mode enabled. Unsafe mode doesn't
 // check whether or not the terminal is a TTY.
 //
@@ -202,4 +211,28 @@ func (o Output) Write(p []byte) (int, error) {
 // WriteString writes the given string to the output.
 func (o Output) WriteString(s string) (int, error) {
 	return o.Write([]byte(s))
+}
+
+// String returns a new Style for this output. The style inherits the output's
+// PreserveResets default.
+func (o Output) String(s ...string) Style {
+	st := o.Profile.String(s...)
+	if o.preserveResets {
+		st = st.PreserveResets()
+	}
+	return st
+}
+
+// Truncate shortens s to width visible columns.
+// Preserve-resets is enabled when it is the output default or opts asks for it.
+// In the Ascii profile the result is plain text (Tail still applies) and no
+// ANSI sequences are emitted.
+func (o Output) Truncate(s string, width int, opts TruncateOptions) string {
+	if o.Profile == Ascii {
+		return TruncateANSI(StripANSI(s), width, TruncateOptions{Tail: opts.Tail})
+	}
+	if o.preserveResets {
+		opts.PreserveResets = true
+	}
+	return TruncateANSI(s, width, opts)
 }

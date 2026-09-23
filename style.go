@@ -1,9 +1,9 @@
 package termenv
 
 import (
-	"fmt"
 	"strings"
 
+	"github.com/muesli/termenv/ansi"
 	"github.com/rivo/uniseg"
 )
 
@@ -24,7 +24,8 @@ const (
 type Style struct {
 	profile Profile
 	string
-	styles []string
+	styles         []string
+	preserveResets bool
 }
 
 // String returns a new Style.
@@ -53,7 +54,31 @@ func (t Style) Styled(s string) string {
 		return s
 	}
 
-	return fmt.Sprintf("%s%sm%s%sm", CSI, seq, s, CSI+ResetSeq)
+	open := CSI + seq + "m"
+	if t.preserveResets {
+		s = reopenAfterResets(s, open)
+	}
+	return open + s + CSI + ResetSeq + "m"
+}
+
+// PreserveResets re-opens this style after each reset sequence in the text.
+func (t Style) PreserveResets() Style {
+	t.preserveResets = true
+	return t
+}
+
+// Truncate shortens the styled string to width visible columns.
+// In the Ascii profile the result is plain text and Tail is ignored.
+func (t Style) Truncate(width int, opts TruncateOptions) string {
+	if t.profile == Ascii {
+		return TruncateANSI(StripANSI(t.string), width, TruncateOptions{})
+	}
+	// Styled already re-opens after resets when the style flag is set.
+	// Keep opts.PreserveResets only when that expansion has not run.
+	if t.preserveResets {
+		opts.PreserveResets = false
+	}
+	return TruncateANSI(t.Styled(t.string), width, opts)
 }
 
 // Foreground sets a foreground color.
@@ -123,4 +148,25 @@ func (t Style) CrossOut() Style {
 // Width returns the width required to print all runes in Style.
 func (t Style) Width() int {
 	return uniseg.StringWidth(t.string)
+}
+
+// reopenAfterResets repeats open after every reset run that is followed by
+// more content.
+func reopenAfterResets(s, open string) string {
+	tokens := ansi.Tokenize(s)
+	var b strings.Builder
+	pending := false
+	for _, tok := range tokens {
+		if tok.Type == ansi.TokenReset {
+			b.WriteString(tok.Raw)
+			pending = true
+			continue
+		}
+		if pending {
+			b.WriteString(open)
+			pending = false
+		}
+		b.WriteString(tok.Raw)
+	}
+	return b.String()
 }
