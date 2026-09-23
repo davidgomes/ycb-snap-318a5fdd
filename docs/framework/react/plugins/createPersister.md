@@ -116,6 +116,8 @@ For example `Object.entries(localStorage)` for `localStorage` or `entries` from 
 This function can be used to restore queries that are currently stored by persister.  
 For example when your app is starting up in offline mode, or you want all or only specific data from previous session to be immediately available without intermediate `loading` state.
 
+Restored queries keep their full persisted state (status, errors, failure counts, timestamps and invalidation). If a query already exists in the cache, data and error are merged independently, each taking whichever side was updated more recently.
+
 The filter object supports the following properties:
 
 - `queryKey?: QueryKey`
@@ -140,6 +142,10 @@ The filter object supports the following properties:
 
 For this function to work, your storage must expose `entries` method that would return a `key-value tuple array`.  
 For example `Object.entries(localStorage)` for `localStorage` or `entries` from `idb-keyval`.
+
+## Custom persisters
+
+A custom `persister` can return `createPersisterRestoreResult({ data, state })` (exported from `@tanstack/query-core` and every adapter) to signal that it restored a persisted snapshot instead of fetching. The query then adopts `state` as-is (with `fetchStatus` set to `idle`) rather than treating the result as a fresh successful fetch, and the `QueryCache` `onSuccess` / `onSettled` callbacks are not called.
 
 ## API
 
