@@ -263,6 +263,10 @@ Usage:
 Flags:
       --avg-wage int                       average wage value used for basic COCOMO calculation (default 56286)
       --binary                             disable binary file detection
+      --bounded-memory                     hold at most --bounded-memory-max-in-memory-files per-file records in memory, spilling the rest to --bounded-memory-dir
+      --bounded-memory-dir string          directory to spill per-file records to, created if missing and excluded from counting (required with --bounded-memory)
+      --bounded-memory-max-in-memory-files int   maximum number of per-file records held in memory at once, must be > 0 (required with --bounded-memory)
+      --bounded-memory-stats               print a bounded-memory: statistics line to stderr
       --by-file                            display output for every file
   -m, --character                          calculate max and mean characters per line
       --ci                                 enable CI output settings where stdout is ASCII
@@ -1222,6 +1226,8 @@ To help identify this issue run scc like so `scc -v .` and look for the message 
 If you are running `scc` in a low memory environment < 512 MB of RAM you may need to set `--file-gc-count` to a lower value such as `0` to force the garbage collector to be on at all times.
 
 A sign that this is required will be `scc` crashing with panic errors.
+
+For very large runs, especially with `--format-multi` or `--by-file`, the per-file results can be capped in memory with `--bounded-memory --bounded-memory-dir /tmp/scc-spill --bounded-memory-max-in-memory-files 10000`. Any records over the limit are spilled to that directory and read back while formatting. The json, json2, csv and csv-stream output is identical to a normal run, and tabular/wide totals are unchanged. When used with `--format-multi`, csv-stream writes to its named destination rather than always to stdout. Add `--bounded-memory-stats` to print the number of spills and the peak records held in memory to stderr. Spill files are left in the directory after the run.
 
 ### Tests
 
