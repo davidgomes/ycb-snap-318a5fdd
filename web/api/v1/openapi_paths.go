@@ -448,6 +448,18 @@ func (*OpenAPIBuilder) statusWALReplayPath() *v3.PathItem {
 	}
 }
 
+func (*OpenAPIBuilder) statusReloadPath() *v3.PathItem {
+	return &v3.PathItem{
+		Get: &v3.Operation{
+			OperationId: "get-status-reload",
+			Summary:     "Get status reload",
+			Description: "Returns the outcome of the most recent configuration reload attempt, as recorded by the transactional-reload-config feature. The outcome is persisted in the storage directory and survives restarts.",
+			Tags:        []string{"status"},
+			Responses:   responsesWithErrorExamples("StatusReloadOutputBody", statusReloadResponseExamples(), errorResponseExamples(), "Reload status retrieved successfully.", "Error retrieving reload status."),
+		},
+	}
+}
+
 func (*OpenAPIBuilder) adminDeleteSeriesPath() *v3.PathItem {
 	params := []*v3.Parameter{
 		queryParamWithExample("match[]", "Series selectors to identify series to delete.", true, base.CreateSchemaProxy(&base.Schema{

@@ -58,6 +58,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 	"github.com/prometheus/prometheus/tsdb"
+	"github.com/prometheus/prometheus/util/reloadstatus"
 	"github.com/prometheus/prometheus/util/stats"
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/prometheus/prometheus/util/testutil"
@@ -4285,6 +4286,47 @@ func TestServeTSDBBlocks(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resultData.Blocks, 1)
 	require.Equal(t, blockMeta, resultData.Blocks[0])
+}
+
+func TestServeReloadStatus(t *testing.T) {
+	api := &API{}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status/reload", http.NoBody)
+
+	result := api.serveReloadStatus(req)
+	require.Nil(t, result.err)
+	require.Equal(t, reloadstatus.NewStatus(""), result.data)
+
+	api.SetReloadStatusFunc(func() reloadstatus.Status {
+		return reloadstatus.Status{
+			LastReloadID:       "2026-09-23T11:12:13.5Z",
+			ErrorCategory:      reloadstatus.ErrorCategoryRollback,
+			ErrorMessage:       "rules failed; rollback failed",
+			AppliedReloaders:   []string{"db_storage", "scrape"},
+			RollbackAttempted:  true,
+			RollbackSuccessful: false,
+			FailedReloader:     "rules",
+			ReloaderTimingsMs:  map[string]int64{"db_storage": 1, "scrape": 2, "rules": 3},
+		}
+	})
+	result = api.serveReloadStatus(req)
+	require.Nil(t, result.err)
+
+	b, err := JSONCodec{}.Encode(&Response{Status: statusSuccess, Data: result.data})
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"status": "success",
+		"data": {
+			"last_reload_id": "2026-09-23T11:12:13.5Z",
+			"last_reload_successful": false,
+			"error_category": "rollback_error",
+			"error_message": "rules failed; rollback failed",
+			"applied_reloaders": ["db_storage", "scrape"],
+			"rollback_attempted": true,
+			"rollback_successful": false,
+			"failed_reloader": "rules",
+			"reloader_timings_ms": {"db_storage": 1, "scrape": 2, "rules": 3}
+		}
+	}`, string(b))
 }
 
 func TestRespondError(t *testing.T) {

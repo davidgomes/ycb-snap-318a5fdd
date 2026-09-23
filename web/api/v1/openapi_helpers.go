@@ -168,6 +168,25 @@ func timestampSchema() *base.SchemaProxy {
 	})
 }
 
+func stringEnumSchemaWithDescription(description string, values ...string) *base.SchemaProxy {
+	nodes := make([]*yaml.Node, 0, len(values))
+	for _, v := range values {
+		nodes = append(nodes, &yaml.Node{Kind: yaml.ScalarNode, Value: v})
+	}
+	return base.CreateSchemaProxy(&base.Schema{
+		Type:        []string{"string"},
+		Enum:        nodes,
+		Description: description,
+	})
+}
+
+func booleanSchemaWithDescription(description string) *base.SchemaProxy {
+	return base.CreateSchemaProxy(&base.Schema{
+		Type:        []string{"boolean"},
+		Description: description,
+	})
+}
+
 func stringSchemaWithConstValue(value string) *base.SchemaProxy {
 	node := &yaml.Node{Kind: yaml.ScalarNode, Value: value}
 	return base.CreateSchemaProxy(&base.Schema{

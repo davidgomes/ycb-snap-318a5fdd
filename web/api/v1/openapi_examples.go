@@ -886,6 +886,53 @@ func statusWALReplayResponseExamples() *orderedmap.Map[string, *base.Example] {
 	return examples
 }
 
+// statusReloadResponseExamples returns examples for /status/reload response.
+func statusReloadResponseExamples() *orderedmap.Map[string, *base.Example] {
+	examples := orderedmap.New[string, *base.Example]()
+
+	examples.Set("reloadSucceeded", &base.Example{
+		Summary: "Successful configuration reload",
+		Value: createYAMLNode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"last_reload_id":         "2026-01-02T13:37:00.123456789Z",
+				"last_reload_successful": true,
+				"error_category":         "none",
+				"error_message":          "",
+				"applied_reloaders":      []string{"db_storage", "remote_storage", "web_handler", "query_engine", "scrape", "scrape_sd", "notify", "notify_sd", "rules", "tracing"},
+				"rollback_attempted":     false,
+				"rollback_successful":    false,
+				"failed_reloader":        "",
+				"reloader_timings_ms": map[string]int64{
+					"db_storage": 0, "remote_storage": 1, "web_handler": 0, "query_engine": 0, "scrape": 3,
+					"scrape_sd": 1, "notify": 0, "notify_sd": 0, "rules": 12, "tracing": 0,
+				},
+			},
+		}),
+	})
+	examples.Set("reloadRolledBack", &base.Example{
+		Summary: "Failed configuration reload rolled back to the last known-good configuration",
+		Value: createYAMLNode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"last_reload_id":         "2026-01-02T13:37:00.123456789Z",
+				"last_reload_successful": false,
+				"error_category":         "apply_error",
+				"error_message":          "reloader \"query_engine\" failed to apply the new configuration (--config.file=\"/etc/prometheus/prometheus.yml\"): open /var/log/prometheus/query.log: permission denied",
+				"applied_reloaders":      []string{"db_storage", "remote_storage", "web_handler"},
+				"rollback_attempted":     true,
+				"rollback_successful":    true,
+				"failed_reloader":        "query_engine",
+				"reloader_timings_ms": map[string]int64{
+					"db_storage": 0, "remote_storage": 1, "web_handler": 0, "query_engine": 0,
+				},
+			},
+		}),
+	})
+
+	return examples
+}
+
 // deleteSeriesResponseExamples returns examples for /admin/tsdb/delete_series response.
 func deleteSeriesResponseExamples() *orderedmap.Map[string, *base.Example] {
 	examples := orderedmap.New[string, *base.Example]()

@@ -59,6 +59,7 @@ import (
 	"github.com/prometheus/prometheus/util/features"
 	"github.com/prometheus/prometheus/util/httputil"
 	"github.com/prometheus/prometheus/util/notifications"
+	"github.com/prometheus/prometheus/util/reloadstatus"
 	"github.com/prometheus/prometheus/util/stats"
 )
 
@@ -261,6 +262,8 @@ type API struct {
 	openAPIBuilder  *OpenAPIBuilder
 
 	parser parser.Parser
+
+	reloadStatus func() reloadstatus.Status
 }
 
 // NewAPI returns an initialized API type.
@@ -381,6 +384,13 @@ func (api *API) ClearCodecs() {
 	api.codecs = nil
 }
 
+// SetReloadStatusFunc sets the function reporting the outcome of the most recent
+// configuration reload attempt. If it is nil, the status reported before the first
+// reload attempt is served.
+func (api *API) SetReloadStatusFunc(f func() reloadstatus.Status) {
+	api.reloadStatus = f
+}
+
 func setUnavailStatusOnTSDBNotReady(r apiFuncResult) apiFuncResult {
 	if r.err != nil && errors.Is(r.err.err, tsdb.ErrNotReady) {
 		r.err.typ = errorUnavailable
@@ -459,6 +469,7 @@ func (api *API) Register(r *route.Router) {
 	r.Get("/status/flags", wrap(api.serveFlags))
 	r.Get("/status/tsdb", wrapAgent(api.serveTSDBStatus))
 	r.Get("/status/tsdb/blocks", wrapAgent(api.serveTSDBBlocks))
+	r.Get("/status/reload", wrap(api.serveReloadStatus))
 	r.Get("/features", wrap(api.features))
 	r.Get("/status/walreplay", api.serveWALReplayStatus)
 	r.Get("/notifications", api.notifications)
@@ -1811,6 +1822,13 @@ func (api *API) serveConfig(*http.Request) apiFuncResult {
 
 func (api *API) serveFlags(*http.Request) apiFuncResult {
 	return apiFuncResult{api.flagsMap, nil, nil, nil}
+}
+
+func (api *API) serveReloadStatus(*http.Request) apiFuncResult {
+	if api.reloadStatus == nil {
+		return apiFuncResult{reloadstatus.NewStatus(""), nil, nil, nil}
+	}
+	return apiFuncResult{api.reloadStatus(), nil, nil, nil}
 }
 
 // featuresData wraps feature flags data to provide custom JSON marshaling without HTML escaping.

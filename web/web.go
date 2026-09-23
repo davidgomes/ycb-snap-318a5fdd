@@ -63,6 +63,7 @@ import (
 	"github.com/prometheus/prometheus/util/httputil"
 	"github.com/prometheus/prometheus/util/netconnlimit"
 	"github.com/prometheus/prometheus/util/notifications"
+	"github.com/prometheus/prometheus/util/reloadstatus"
 	api_v1 "github.com/prometheus/prometheus/web/api/v1"
 	"github.com/prometheus/prometheus/web/ui"
 )
@@ -310,6 +311,10 @@ type Options struct {
 	Registerer      prometheus.Registerer
 	FeatureRegistry features.Collector
 
+	// ReloadStatus reports the outcome of the most recent configuration reload
+	// attempt. If nil, the status reported before the first reload attempt is served.
+	ReloadStatus func() reloadstatus.Status
+
 	// Parser is the PromQL parser used for parsing query expressions.
 	Parser parser.Parser
 }
@@ -427,6 +432,7 @@ func New(logger *slog.Logger, o *Options) *Handler {
 		},
 		o.Parser,
 	)
+	h.apiV1.SetReloadStatusFunc(o.ReloadStatus)
 
 	if r := o.FeatureRegistry; r != nil {
 		// Set dynamic API features (based on configuration).
