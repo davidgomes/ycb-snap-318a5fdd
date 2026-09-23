@@ -2,7 +2,41 @@ package notifications
 
 import (
 	"testing"
+
+	"github.com/Owloops/updo/alerts"
 )
+
+func TestDecisionMessage(t *testing.T) {
+	tests := []struct {
+		decision alerts.Decision
+		want     string
+	}{
+		{decision: alerts.Decision{Event: alerts.EventTargetDown}, want: "API is down!"},
+		{decision: alerts.Decision{Event: alerts.EventTargetRecovered}, want: "API is back up!"},
+		{decision: alerts.Decision{Event: alerts.EventTargetDegraded, Reason: "slow"}, want: "API is degraded: slow"},
+		{decision: alerts.Decision{Event: alerts.EventTargetHealthy}, want: "API is healthy again"},
+		{decision: alerts.Decision{Event: alerts.EventSSLExpiring, Reason: "expires soon"}, want: "API: expires soon"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.decision.Event.String(), func(t *testing.T) {
+			if got := decisionMessage(tc.decision, "API"); got != tc.want {
+				t.Errorf("decisionMessage() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHandleAlertDecisionSkipsUndeliverable(t *testing.T) {
+	for _, decision := range []alerts.Decision{
+		{State: alerts.StateDown},
+		{Event: alerts.EventTargetDown, State: alerts.StateDown, Suppressed: true},
+	} {
+		if err := HandleAlertDecision(decision, "API", "https://api.example.com"); err != nil {
+			t.Errorf("HandleAlertDecision(%+v) = %v, want nil", decision, err)
+		}
+	}
+}
 
 func TestHandleAlertsLogic(t *testing.T) {
 	tests := []struct {

@@ -188,6 +188,70 @@ func TestDiscordFormatter_Format(t *testing.T) {
 	}
 }
 
+func TestFormatterSeverityColors(t *testing.T) {
+	tests := []struct {
+		event        string
+		slackColor   string
+		discordColor int
+	}{
+		{event: "target_down", slackColor: _colorDanger, discordColor: _discordColorRed},
+		{event: "target_up", slackColor: _colorGood, discordColor: _discordColorGreen},
+		{event: "target_recovered", slackColor: _colorGood, discordColor: _discordColorGreen},
+		{event: "target_healthy", slackColor: _colorGood, discordColor: _discordColorGreen},
+		{event: "target_degraded", slackColor: _colorWarning, discordColor: _discordColorYellow},
+		{event: "ssl_expiring", slackColor: _colorWarning, discordColor: _discordColorYellow},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.event, func(t *testing.T) {
+			payload := WebhookPayload{
+				Event:     tt.event,
+				Target:    "API",
+				URL:       "https://api.example.com",
+				Timestamp: time.Date(2025, 10, 7, 12, 0, 0, 0, time.UTC),
+				Reason:    "because",
+				Region:    "us-east-1",
+			}
+
+			slackData, err := (&SlackFormatter{}).Format(payload)
+			if err != nil {
+				t.Fatalf("SlackFormatter.Format() error = %v", err)
+			}
+			var slack slackMessage
+			if err := json.Unmarshal(slackData, &slack); err != nil {
+				t.Fatalf("Failed to unmarshal Slack payload: %v", err)
+			}
+			if slack.Attachments[0].Color != tt.slackColor {
+				t.Errorf("slack color = %v, want %v", slack.Attachments[0].Color, tt.slackColor)
+			}
+			if !hasSlackField(slack.Attachments[0].Fields, "Reason", "because") || !hasSlackField(slack.Attachments[0].Fields, "Region", "us-east-1") {
+				t.Errorf("slack fields missing reason/region: %+v", slack.Attachments[0].Fields)
+			}
+
+			discordData, err := (&DiscordFormatter{}).Format(payload)
+			if err != nil {
+				t.Fatalf("DiscordFormatter.Format() error = %v", err)
+			}
+			var discord discordMessage
+			if err := json.Unmarshal(discordData, &discord); err != nil {
+				t.Fatalf("Failed to unmarshal Discord payload: %v", err)
+			}
+			if discord.Embeds[0].Color != tt.discordColor {
+				t.Errorf("discord color = %v, want %v", discord.Embeds[0].Color, tt.discordColor)
+			}
+		})
+	}
+}
+
+func hasSlackField(fields []slackField, title, value string) bool {
+	for _, field := range fields {
+		if field.Title == title && field.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSelectFormatter(t *testing.T) {
 	tests := []struct {
 		name     string

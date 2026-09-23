@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/Owloops/updo/alerts"
 )
 
 func TestSendWebhook(t *testing.T) {
@@ -213,6 +215,159 @@ func TestHandleWebhookAlert(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHandleWebhookDecision(t *testing.T) {
+	downDecision := alerts.Decision{
+		Event:               alerts.EventTargetDown,
+		State:               alerts.StateDown,
+		PreviousState:       alerts.StateHealthy,
+		Reason:              "failed 3 checks in a row",
+		ConsecutiveFailures: 3,
+		SSLDaysRemaining:    42,
+	}
+
+	tests := []struct {
+		name       string
+		decision   alerts.Decision
+		expectCall bool
+	}{
+		{name: "emitted event is sent", decision: downDecision, expectCall: true},
+		{name: "no event is not sent", decision: alerts.Decision{State: alerts.StateDown, PreviousState: alerts.StateDown}},
+		{name: "suppressed event is not sent", decision: func() alerts.Decision {
+			d := downDecision
+			d.Suppressed = true
+			return d
+		}()},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int
+			var received WebhookPayload
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+					t.Errorf("Failed to decode webhook payload: %v", err)
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			err := HandleWebhookDecision(server.URL, server.Client(), tc.decision, "API", "https://api.example.com", 1500*time.Millisecond, 503, "Non-success status code: 503", "eu-west-1")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if (calls > 0) != tc.expectCall {
+				t.Fatalf("Expected webhook call: %v, got %d calls", tc.expectCall, calls)
+			}
+			if !tc.expectCall {
+				return
+			}
+
+			want := WebhookPayload{
+				Event:               "target_down",
+				Target:              "API",
+				URL:                 "https://api.example.com",
+				ResponseTimeMs:      1500,
+				StatusCode:          503,
+				Error:               "Non-success status code: 503",
+				State:               "down",
+				PreviousState:       "healthy",
+				Reason:              "failed 3 checks in a row",
+				ConsecutiveFailures: 3,
+				SSLExpiryDays:       42,
+				Region:              "eu-west-1",
+			}
+			received.Timestamp = time.Time{}
+			if received != want {
+				t.Errorf("payload = %+v, want %+v", received, want)
+			}
+		})
+	}
+}
+
+func TestHandleWebhookDecisionEmptyURL(t *testing.T) {
+	decision := alerts.Decision{Event: alerts.EventTargetDown, State: alerts.StateDown, Reason: "down"}
+	if err := HandleWebhookDecision("", nil, decision, "API", "https://api.example.com", 0, 0, "", ""); err != nil {
+		t.Errorf("Expected no error for empty webhook URL, got %v", err)
+	}
+}
+
+func TestHandleWebhookDecisionWithHeaders(t *testing.T) {
+	var receivedHeaders http.Header
+	var received map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("Failed to decode webhook payload: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	decision := alerts.Decision{
+		Event:         alerts.EventTargetRecovered,
+		State:         alerts.StateHealthy,
+		PreviousState: alerts.StateDown,
+		Reason:        "succeeded 1 check in a row",
+	}
+
+	headers := []string{"Authorization: Bearer secret", "X-Service: updo"}
+	if err := HandleWebhookDecisionWithHeaders(server.URL, headers, decision, "", "https://api.example.com", 100*time.Millisecond, 200, "", ""); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if got := receivedHeaders.Get("Authorization"); got != "Bearer secret" {
+		t.Errorf("Authorization header = %q, want %q", got, "Bearer secret")
+	}
+	if got := receivedHeaders.Get("X-Service"); got != "updo" {
+		t.Errorf("X-Service header = %q, want %q", got, "updo")
+	}
+	if received["target"] != "https://api.example.com" {
+		t.Errorf("target = %v, want URL fallback", received["target"])
+	}
+	if received["event"] != "target_recovered" {
+		t.Errorf("event = %v, want target_recovered", received["event"])
+	}
+
+	for _, key := range []string{"state", "previous_state", "reason", "consecutive_failures", "consecutive_recoveries", "latency_breaches", "ssl_expiry_days", "region"} {
+		if _, ok := received[key]; !ok {
+			t.Errorf("expected %q in payload even when zero-valued", key)
+		}
+	}
+}
+
+func TestHandleWebhookDecisionWithHeadersSkipsSuppressed(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	decision := alerts.Decision{Event: alerts.EventTargetDegraded, State: alerts.StateDegraded, Reason: "slow", Suppressed: true}
+	if err := HandleWebhookDecisionWithHeaders(server.URL, nil, decision, "API", "https://api.example.com", 0, 200, "", ""); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if called {
+		t.Error("Suppressed decisions must not be delivered")
+	}
+}
+
+func TestHandleWebhookDecisionReturnsDeliveryError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	decision := alerts.Decision{Event: alerts.EventSSLExpiring, State: alerts.StateHealthy, Reason: "expiring"}
+	if err := HandleWebhookDecision(server.URL, server.Client(), decision, "API", "https://api.example.com", 0, 200, "", ""); err == nil {
+		t.Error("Expected an error when the webhook endpoint fails")
 	}
 }
 
