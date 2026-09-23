@@ -2570,6 +2570,92 @@ If the ``_counts`` table ever becomes out-of-sync with the actual table counts y
 
     db.reset_counts()
 
+.. _python_api_safe_import:
+
+Safe imports with checkpoints and invariants
+============================================
+
+Safe import mode lets you roll back bulk imports that fail part way through, or that leave a table in a state that breaks your assumptions about its data. A rollback restores the database to exactly the state it was in before the operation, including any tables, columns, indexes or triggers that were created or altered. See :ref:`cli_safe_import` for the equivalent CLI commands.
+
+Checkpoints
+-----------
+
+Enable safe import mode for a database, then create a checkpoint before making changes. The enabled setting is stored in the database:
+
+.. code-block:: python
+
+    db.enable_safe_import()
+
+    checkpoint_id = db.create_import_checkpoint()
+    db.table("dogs").insert_all(dogs, alter=True)
+    if something_went_wrong:
+        db.rollback_to_checkpoint(checkpoint_id)
+    else:
+        db.commit_checkpoint(checkpoint_id)
+    db.cleanup_checkpoint(checkpoint_id)
+
+``create_import_checkpoint()`` raises ``sqlite_utils.db.SafeImportNotEnabledError`` if safe import mode has not been enabled. Use ``db.disable_safe_import()`` to turn it off again.
+
+A checkpoint can be committed or rolled back once - further calls raise ``CheckpointNotActiveError``. ``cleanup_checkpoint()`` removes the checkpoint entirely, after which using its ID raises ``CheckpointNotFoundError``, as does using an ID that never existed.
+
+Checkpoints can be nested. Committing or rolling back a checkpoint also finalizes any checkpoints that were created after it.
+
+Import invariants
+-----------------
+
+Import invariants are SQL checks associated with a table which are stored in the database. ``add_import_invariant()`` returns an ID for the new invariant:
+
+.. code-block:: python
+
+    invariant_id = db.add_import_invariant("dogs", "age >= 0")
+    db.add_import_invariant("dogs", "count(*) <= 1000")
+    db.add_import_invariant("dogs", "select count(*) = 0 from dogs where name is null")
+
+Invariants are evaluated like this:
+
+- SQL that starts with ``SELECT`` is executed, and the invariant passes if the first column of the first row is truthy.
+- An expression that uses an aggregate function such as ``count()``, ``sum()``, ``avg()``, ``min()`` or ``max()`` is evaluated once for the whole table.
+- Any other expression must be true for every row in the table.
+
+.. code-block:: python
+
+    db.list_import_invariants("dogs")
+    # [{"id": "inv_...", "expression": "age >= 0"}, ...]
+
+    db.validate_import_invariants("dogs")
+    # {"valid": False, "failures": [
+    #     {"id": "inv_...", "expression": "age >= 0", "error": "2 rows failed invariant"}
+    # ]}
+
+    db.remove_import_invariant("dogs", invariant_id)
+
+Safe operations
+---------------
+
+These methods run inside a checkpoint and then validate the invariants for the table. Changes are committed only if the operation succeeds and every invariant passes, otherwise the database is rolled back:
+
+.. code-block:: python
+
+    db.safe_bulk_insert("dogs", records, alter=True)
+    db.safe_bulk_upsert("dogs", records, pk="id")
+    db.import_csv("dogs", "dogs.csv", safe_mode=True)
+    db.import_json("dogs", records_or_json_string, safe_mode=True)
+
+Additional keyword arguments are passed to ``table.insert_all()`` or ``table.upsert_all()``. ``import_csv()`` accepts a path or a text file-like object and detects column types when it creates a new table. ``import_json()`` accepts a list of dictionaries, a dictionary, a JSON string, a path or a file-like object. Without ``safe_mode=True`` these two methods perform a regular import.
+
+Each method returns ``{"success": True}`` if the changes were committed. Otherwise it returns a dictionary like this, where ``failures`` lists failed invariants and is empty if the failure was caused by an error such as a constraint violation:
+
+.. code-block:: python
+
+    {
+        "success": False,
+        "checkpoint_id": "checkpoint_...",
+        "failures": [{"id": "inv_...", "expression": "age >= 0", "error": "..."}],
+        "error_report": "Import invariant validation failed, ...",
+    }
+
+Pass ``strict=True`` to raise an exception after rolling back instead. Invariant failures raise ``sqlite_utils.db.InvariantValidationError``, which has ``.failures`` and ``.checkpoint_id`` attributes. Other errors are raised unchanged.
+
 .. _python_api_create_index:
 
 Creating indexes

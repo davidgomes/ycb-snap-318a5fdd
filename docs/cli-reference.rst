@@ -48,7 +48,13 @@ This page lists the ``--help`` for every ``sqlite-utils`` CLI sub-command.
         "create-index": "cli_create_index",
         "enable-wal": "cli_wal",
         "enable-counts": "cli_enable_counts",
-        "bulk": "cli_bulk",
+        "enable-safe-import": "cli_safe_import",
+        "disable-safe-import": "cli_safe_import",
+        "add-import-invariant": "cli_safe_import",
+        "remove-import-invariant": "cli_safe_import",
+        "list-import-invariants": "cli_safe_import",
+        "validate-import-invariants": "cli_safe_import",
+        "bulk": ["cli_bulk", "cli_safe_import"],
         "create-database": "cli_create_database",
         "create-table": "cli_create_table",
         "drop-table": "cli_drop_table",
@@ -291,6 +297,8 @@ See :ref:`cli_inserting_data`, :ref:`cli_insert_csv_tsv`, :ref:`cli_insert_unstr
       --load-extension TEXT     Path to SQLite extension, with optional :entrypoint
       --silent                  Do not show progress bar
       --strict                  Apply STRICT mode to created table
+      --safe-mode               Roll back all changes unless the operation succeeds
+                                and import invariants pass
       --ignore                  Ignore records if pk already exists
       --replace                 Replace records if pk already exists
       --truncate                Truncate table before inserting records, if table
@@ -349,6 +357,8 @@ See :ref:`cli_upsert`.
       --load-extension TEXT     Path to SQLite extension, with optional :entrypoint
       --silent                  Do not show progress bar
       --strict                  Apply STRICT mode to created table
+      --safe-mode               Roll back all changes unless the operation succeeds
+                                and import invariants pass
       -h, --help                Show this message and exit.
 
 
@@ -357,7 +367,7 @@ See :ref:`cli_upsert`.
 bulk
 ====
 
-See :ref:`cli_bulk`.
+See :ref:`cli_bulk`, :ref:`cli_safe_import`.
 
 ::
 
@@ -393,6 +403,8 @@ See :ref:`cli_bulk`.
       --no-headers           CSV file has no header row
       --encoding TEXT        Character encoding for input, defaults to utf-8
       --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      --safe-mode            Roll back all changes unless the operation succeeds and
+                             import invariants pass
       -h, --help             Show this message and exit.
 
 
@@ -1313,6 +1325,148 @@ reset-counts
       Example:
 
           sqlite-utils reset-counts chickens.db
+
+    Options:
+      --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      -h, --help             Show this message and exit.
+
+
+.. _cli_ref_enable_safe_import:
+
+enable-safe-import
+==================
+
+See :ref:`cli_safe_import`.
+
+::
+
+    Usage: sqlite-utils enable-safe-import [OPTIONS] PATH
+
+      Enable safe import mode, allowing import checkpoints to be created
+
+      Example:
+
+          sqlite-utils enable-safe-import chickens.db
+
+    Options:
+      --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      -h, --help             Show this message and exit.
+
+
+.. _cli_ref_disable_safe_import:
+
+disable-safe-import
+===================
+
+See :ref:`cli_safe_import`.
+
+::
+
+    Usage: sqlite-utils disable-safe-import [OPTIONS] PATH
+
+      Disable safe import mode
+
+      Example:
+
+          sqlite-utils disable-safe-import chickens.db
+
+    Options:
+      --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      -h, --help             Show this message and exit.
+
+
+.. _cli_ref_add_import_invariant:
+
+add-import-invariant
+====================
+
+See :ref:`cli_safe_import`.
+
+::
+
+    Usage: sqlite-utils add-import-invariant [OPTIONS] PATH TABLE SQL
+
+      Add an invariant that must hold for TABLE after a --safe-mode import
+
+      SQL can be a SELECT query, which passes if the first column of the first row
+      is truthy, or an expression. Aggregate expressions are evaluated once for the
+      table, other expressions must be true for every row.
+
+      Outputs the ID of the new invariant.
+
+      Example:
+
+          sqlite-utils add-import-invariant chickens.db chickens 'age >= 0'
+          sqlite-utils add-import-invariant chickens.db chickens 'count(*) < 1000'
+
+    Options:
+      --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      -h, --help             Show this message and exit.
+
+
+.. _cli_ref_remove_import_invariant:
+
+remove-import-invariant
+=======================
+
+See :ref:`cli_safe_import`.
+
+::
+
+    Usage: sqlite-utils remove-import-invariant [OPTIONS] PATH TABLE INVARIANT_ID
+
+      Remove an import invariant from TABLE
+
+      Example:
+
+          sqlite-utils remove-import-invariant chickens.db chickens inv_0a1b2c3d4e5f
+
+    Options:
+      --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      -h, --help             Show this message and exit.
+
+
+.. _cli_ref_list_import_invariants:
+
+list-import-invariants
+======================
+
+See :ref:`cli_safe_import`.
+
+::
+
+    Usage: sqlite-utils list-import-invariants [OPTIONS] PATH TABLE
+
+      List the import invariants for TABLE, showing the ID and SQL of each one
+
+      Example:
+
+          sqlite-utils list-import-invariants chickens.db chickens
+
+    Options:
+      --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      -h, --help             Show this message and exit.
+
+
+.. _cli_ref_validate_import_invariants:
+
+validate-import-invariants
+==========================
+
+See :ref:`cli_safe_import`.
+
+::
+
+    Usage: sqlite-utils validate-import-invariants [OPTIONS] PATH TABLE
+
+      Check the import invariants for TABLE against its current contents
+
+      Reports PASS or FAIL, listing any failing invariants. Always exits with status
+      0.
+
+      Example:
+
+          sqlite-utils validate-import-invariants chickens.db chickens
 
     Options:
       --load-extension TEXT  Path to SQLite extension, with optional :entrypoint

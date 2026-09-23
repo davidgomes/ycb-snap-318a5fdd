@@ -2630,6 +2630,62 @@ If the ``_counts`` table ever becomes out-of-sync with the actual table counts y
 
     sqlite-utils reset-counts mydb.db
 
+.. _cli_safe_import:
+
+Safe import mode
+================
+
+Bulk imports that fail part way through, or that write data which breaks your assumptions about a table, can leave a database in an inconsistent state. Safe import mode protects against this: the ``insert``, ``upsert`` and ``bulk`` commands accept a ``--safe-mode`` option which captures a checkpoint of the whole database before making any changes, then checks the table's **import invariants** once the operation completes. Changes are only committed if the operation succeeded and every invariant passed - otherwise the database is rolled back to exactly the state it was in before, including any tables, columns, indexes or triggers that the operation created. See :ref:`python_api_safe_import` for the equivalent Python API.
+
+Safe import mode can be enabled or disabled for a database. This setting is stored in the database itself and is required before checkpoints can be created using the Python API:
+
+.. code-block:: bash
+
+    sqlite-utils enable-safe-import mydb.db
+    sqlite-utils disable-safe-import mydb.db
+
+Import invariants are SQL checks that are stored in the database and associated with a table. Use ``add-import-invariant`` to add one - the ID of the new invariant will be output:
+
+.. code-block:: bash
+
+    sqlite-utils add-import-invariant mydb.db products 'price >= 0'
+    sqlite-utils add-import-invariant mydb.db products 'count(*) <= 10000'
+    sqlite-utils add-import-invariant mydb.db products \
+      'select count(*) = 0 from products where name is null'
+
+Invariants are evaluated like this:
+
+- SQL that starts with ``SELECT`` is executed, and the invariant passes if the first column of the first row is truthy.
+- An expression that uses an aggregate function such as ``count()``, ``sum()``, ``avg()``, ``min()`` or ``max()`` is evaluated once for the whole table.
+- Any other expression must be true for every row in the table.
+
+Use ``list-import-invariants`` to see the ID and SQL of each invariant for a table, and ``remove-import-invariant`` to remove one by ID:
+
+.. code-block:: bash
+
+    sqlite-utils list-import-invariants mydb.db products
+    sqlite-utils remove-import-invariant mydb.db products inv_0a1b2c3d4e5f
+
+``validate-import-invariants`` checks the invariants against the current contents of a table. It outputs ``PASS`` or ``FAIL`` followed by the ID, SQL and error for each failing invariant, and always exits with a status of 0:
+
+.. code-block:: bash
+
+    sqlite-utils validate-import-invariants mydb.db products
+
+Pass ``--safe-mode`` to ``insert``, ``upsert`` or ``bulk`` to run them safely. The command exits with a status of 0 only if the changes were committed, otherwise it rolls back and exits with an error listing the invariants that failed:
+
+.. code-block:: bash
+
+    sqlite-utils insert mydb.db products products.csv --csv --safe-mode
+    sqlite-utils upsert mydb.db products products.json --pk id --safe-mode
+    sqlite-utils bulk mydb.db \
+      'update products set price = :price where id = :id' \
+      prices.json --safe-mode
+
+In safe mode the ``--csv``, ``--tsv`` and ``--nl`` format options are optional: if none are provided the format is inferred from the file extension, or from the content of the file.
+
+``insert`` and ``upsert`` validate the invariants for the table being written to. ``bulk`` validates the table targeted by an ``INSERT``, ``UPDATE``, ``REPLACE`` or ``DELETE`` statement, or every table that has invariants if the target table cannot be determined.
+
 .. _cli_analyze:
 
 Optimizing index usage with ANALYZE
