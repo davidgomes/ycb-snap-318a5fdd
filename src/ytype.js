@@ -19,6 +19,7 @@ import {
   getItemCleanStart,
   noAttributionsManager,
   transact,
+  recordLocalMapWrite,
   ContentDoc, UpdateEncoderV1, UpdateEncoderV2, Doc, Snapshot, Transaction, EventHandler, YEvent, Item, createAttributionFromAttributionItems, AbstractAttributionManager // eslint-disable-line
 } from './internals.js'
 
@@ -1740,6 +1741,9 @@ export const typeListDelete = (transaction, parent, index, length) => {
 export const typeMapDelete = (transaction, parent, key) => {
   const c = parent._map.get(key)
   if (c !== undefined) {
+    if (!c.deleted && transaction.doc.mapConflictPolicy !== 'allow') {
+      recordLocalMapWrite(transaction, parent, key, 'delete', c.lastId, c, c.content)
+    }
     c.delete(transaction)
   }
 }
@@ -1785,7 +1789,11 @@ export const typeMapSet = (transaction, parent, key, value) => {
         }
     }
   }
-  new Item(createID(ownClientId, getState(doc.store, ownClientId)), left, left && left.lastId, null, null, parent, key, content).integrate(transaction, 0)
+  const id = createID(ownClientId, getState(doc.store, ownClientId))
+  if (doc.mapConflictPolicy !== 'allow') {
+    recordLocalMapWrite(transaction, parent, key, 'set', id, left, content)
+  }
+  new Item(id, left, left && left.lastId, null, null, parent, key, content).integrate(transaction, 0)
 }
 
 /**

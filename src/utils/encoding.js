@@ -37,7 +37,9 @@ import {
   createIdSet,
   BlockSet, IdSet, IdSetDecoderV2, Doc, Transaction, GC, Item, StructStore, // eslint-disable-line
   createID,
-  IdRange
+  IdRange,
+  checkUpdateMapConflicts,
+  addRemoteMapWrites
 } from '../internals.js'
 
 import * as encoding from 'lib0/encoding'
@@ -422,7 +424,8 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
     if (retry) {
       const update = /** @type {{update: Uint8Array}} */ (store.pendingStructs).update
       store.pendingStructs = null
-      applyUpdateV2(transaction.doc, update)
+      const pendingDecoder = decoding.createDecoder(update)
+      readUpdateV2(pendingDecoder, transaction.doc, undefined, new UpdateDecoderV2(pendingDecoder))
     }
   }, transactionOrigin, false)
 
@@ -453,7 +456,16 @@ export const readUpdate = (decoder, ydoc, transactionOrigin) => readUpdateV2(dec
  */
 export const applyUpdateV2 = (ydoc, update, transactionOrigin, YDecoder = UpdateDecoderV2) => {
   const decoder = decoding.createDecoder(update)
-  readUpdateV2(decoder, ydoc, transactionOrigin, new YDecoder(decoder))
+  if (ydoc.mapConflictPolicy === 'allow') {
+    readUpdateV2(decoder, ydoc, transactionOrigin, new YDecoder(decoder))
+    return
+  }
+  // runs before the update is integrated, so that 'error' mode rejects the whole update
+  const remoteMapWrites = checkUpdateMapConflicts(ydoc, update, YDecoder)
+  transact(ydoc, transaction => {
+    addRemoteMapWrites(transaction, remoteMapWrites)
+    readUpdateV2(decoder, ydoc, transactionOrigin, new YDecoder(decoder))
+  }, transactionOrigin, false)
 }
 
 /**
