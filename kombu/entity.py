@@ -832,6 +832,59 @@ class Queue(MaybeChannelBound):
             expiring_queue = False
         return not expiring_queue and not self.auto_delete
 
+    @property
+    def is_single_active_consumer(self):
+        """True when ``x-single-active-consumer`` is set on the queue."""
+        arguments = self.queue_arguments or {}
+        value = arguments.get('x-single-active-consumer')
+        if isinstance(value, str):
+            return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+        return bool(value)
+
+    @property
+    def consumer_priority(self):
+        """Consumer ``x-priority`` (default 0)."""
+        arguments = self.consumer_arguments or {}
+        value = arguments.get('x-priority', 0)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def with_consumer_priority(cls, name, exchange, priority=0, **kwargs):
+        """Return a queue whose consumers use `priority` (``x-priority``)."""
+        consumer_arguments = dict(kwargs.pop('consumer_arguments', None) or {})
+        consumer_arguments['x-priority'] = priority
+        return cls(
+            name, exchange, consumer_arguments=consumer_arguments, **kwargs,
+        )
+
+    @classmethod
+    def with_single_active_consumer(cls, name, exchange, durable=True,
+                                    **kwargs):
+        """Return a durable single-active-consumer queue."""
+        queue_arguments = dict(kwargs.pop('queue_arguments', None) or {})
+        queue_arguments['x-single-active-consumer'] = True
+        return cls(
+            name, exchange, durable=durable,
+            queue_arguments=queue_arguments, **kwargs,
+        )
+
+    @classmethod
+    def with_priority_and_sac(cls, name, exchange, priority=0, durable=True,
+                              **kwargs):
+        """Return a SAC queue whose consumers use `priority`."""
+        consumer_arguments = dict(kwargs.pop('consumer_arguments', None) or {})
+        queue_arguments = dict(kwargs.pop('queue_arguments', None) or {})
+        consumer_arguments['x-priority'] = priority
+        queue_arguments['x-single-active-consumer'] = True
+        return cls(
+            name, exchange, durable=durable,
+            consumer_arguments=consumer_arguments,
+            queue_arguments=queue_arguments, **kwargs,
+        )
+
     @classmethod
     def from_dict(cls, queue, **options):
         binding_key = options.get('binding_key') or options.get('routing_key')

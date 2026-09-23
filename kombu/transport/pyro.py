@@ -125,6 +125,9 @@ class Transport(virtual.Transport):
     def __init__(self, client, **kwargs):
         super().__init__(client, **kwargs)
         self.state = self.global_state
+        # Registrations are connection-scoped. The shared broker keeps
+        # queues and SAC flags, but not consumers from a previous connection.
+        self.state.clear_consumer_state()
 
     def _open(self):
         logger.debug("trying Pyro nameserver to find the broker daemon")
