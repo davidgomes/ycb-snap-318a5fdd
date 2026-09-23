@@ -97,7 +97,7 @@ Chrome, Chrome Canary, Chromium, Firefox, IE, Opera, PhantomJS, Safari, Safari T
     phantomjs_launch_script:     [String]  path of custom phantomjs launch script
     proxies                      [Object]  path to options including `onlyContentTypes` and https://github.com/nodejitsu/node-http-proxy#options
     reporter:                    [String]  name of the reporter to be used in ci mode ("tap" (default), "xunit", "dot", "teamcity") or an object implementing https://github.com/testem/testem/blob/master/docs/custom_reporter.md
-    report_file:                 [String]  file to write test results to (stdout)
+    report_file:                 [String]  file to write test results to (stdout). Supports `<launcher>` (one file per launcher), `<date>` (YYYY-MM-DD) and `<timestamp>` (YYYY-MM-DD_HH-MM-SS) templates
     route or routes:             [Object]  overrides for assets paths
     socket_heartbeat_timeout     [Number]  heartbeat timeout on browser socket in seconds (defaults to `browser_disconnect_timeout` if `browser_disconnect_timeout` is provided. Else, 5s)
     src_files:                   [Array]   string or array list of files or file patterns to use
@@ -109,6 +109,7 @@ Chrome, Chrome Canary, Chromium, Firefox, IE, Opera, PhantomJS, Safari, Safari T
     stdout_stream                [Stream]  the stdout stream to use (defaults to `process.stdout`)
     tap_failed_tests_only        [Boolean] log only failed tests (`not ok`) in TAP reporting
     tap_quiet_logs               [Boolean] whether to suppress non-failing console logs (_not_ pass/fail info) in TAP reporting
+    tap_show_launcher_summary    [Boolean] append per-launcher pass/fail/skip counts to the TAP summary
     timeout:                     [Number]  timeout for a browser
     unsafe_file_serving:         [Boolean] allow serving directories that are not in your CWD (false)
     url:                         [String]  url server runs at (http://{host}:{port}/)
@@ -116,6 +117,7 @@ Chrome, Chrome Canary, Chromium, Firefox, IE, Opera, PhantomJS, Safari, Safari T
     watch_files:                 [Array]   string or array list of files or file patterns to watch changes of (defaults to `src_files`)
     xunit_exclude_stack:         [Boolean] whether to exclude stack traces in xunit reporter
     xunit_intermediate_output    [Boolean] print tap output for the xunit reporter (false)
+    xunit_include_launcher_properties [Boolean] include launcher metadata as `<properties>` in xunit output (false)
 
 ### HTTPS:
 
