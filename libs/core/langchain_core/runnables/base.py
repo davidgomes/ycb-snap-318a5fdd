@@ -104,6 +104,7 @@ if TYPE_CHECKING:
         CallbackManagerForChainRun,
     )
     from langchain_core.prompts.base import BasePromptTemplate
+    from langchain_core.runnables.coalesce import CoalesceBackend
     from langchain_core.runnables.fallbacks import (
         RunnableWithFallbacks as RunnableWithFallbacksT,
     )
@@ -1919,6 +1920,45 @@ class Runnable(ABC, Generic[Input, Output]):
             wait_exponential_jitter=wait_exponential_jitter,
             max_attempt_number=stop_after_attempt,
             exponential_jitter_params=exponential_jitter_params,
+        )
+
+    def with_coalesce(
+        self,
+        *,
+        backend: CoalesceBackend | None = None,
+    ) -> Runnable[Input, Output]:
+        """Create a new `Runnable` that coalesces concurrent identical requests.
+
+        While an execution for a given input is in flight, further calls with an
+        equal input wait for it and receive the same result (or error) instead of
+        running again. The key depends on the input value only; config and kwargs
+        are ignored. Once the execution completes, the next call runs fresh.
+
+        Args:
+            backend: Backend holding in-flight state. Share one backend between
+                wrappers to coalesce across them. Defaults to a new
+                `InMemoryCoalesceBackend`.
+
+        Returns:
+            A new `Runnable` with request coalescing.
+
+        Example:
+            ```python
+            from langchain_core.runnables import RunnableLambda
+
+            runnable = RunnableLambda(lambda x: x * 2).with_coalesce()
+            runnable.batch([1, 1, 2])  # the underlying lambda runs twice
+            ```
+        """
+        # Import locally to prevent circular import
+        from langchain_core.runnables.coalesce import (  # noqa: PLC0415
+            InMemoryCoalesceBackend,
+            RunnableCoalesce,
+        )
+
+        return RunnableCoalesce(
+            bound=self,
+            backend=backend if backend is not None else InMemoryCoalesceBackend(),
         )
 
     def map(self) -> Runnable[list[Input], list[Output]]:
