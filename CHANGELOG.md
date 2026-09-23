@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+- sqlfmt now formats `create table` statements that define columns (including `create table if not exists`). Each column definition and table constraint gets its own indented line, and `partition by`, `cluster by`, and `options` clauses follow the closing paren. `create table ... as select`, `create table ... like`, and other variants are not supported and are still passed through unchanged.
+- adds the `sqlfmt.ddl` module, with `parse_ddl_table`, which returns the columns and table constraints defined by a `create table` statement.
+
 ## [0.29.0] - 2026-01-12
 
 ## Breaking changes
