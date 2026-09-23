@@ -11,7 +11,7 @@ autoload -U is-at-least
 
 _fd() {
   local curcontext="$curcontext" no='!' ret=1
-  local -a context line state state_descr _arguments_options fd_types fd_args
+  local -a context line state state_descr _arguments_options fd_types fd_sort_fields fd_args
   local -A opt_args
 
   if is-at-least 5.2; then
@@ -30,6 +30,21 @@ _fd() {
     {c,char-device}'\:"character devices"'
     {s,socket}'\:"sockets"'
     {p,pipe}'\:"named pipes (FIFOs)"'
+  )
+
+  fd_sort_fields=(
+    'path\:"the path of the entry"'
+    'name\:"the file name (basename)"'
+    'extension\:"the file extension"'
+    'size\:"the size of regular files"'
+    'modified\:"the last modification time"'
+    'created\:"the creation time"'
+    'accessed\:"the last access time"'
+    'depth\:"the depth below the search path"'
+    'type\:"the entry type"'
+    'name-length\:"the length of the file name"'
+    'path-length\:"the length of the path"'
+    'random\:"a pseudo-random order"'
   )
 
   # Do not complete rare options unless either the current prefix
@@ -88,11 +103,21 @@ _fd() {
     '(long-listing)'{-0,--print0}'[separate search results by the null character]'
 
     + '(long-listing)' # long-listing output
-    '(abs-path null-sep max-results exec-cmds)'{-l,--list-details}'[use a long listing format with file metadata]'
+    '(abs-path null-sep max-results exec-cmds sort)'{-l,--list-details}'[use a long listing format with file metadata]'
 
     + '(max-results)' # max number of results
     '(long-listing exec-cmds)--max-results=[limit number of search results to given count and quit]:count'
     '(long-listing exec-cmds)-1[limit to a single search result and quit]'
+
+    + sort # sort search results
+    "(long-listing exec-cmds)*--sort=[sort search results by the given field]:field:(($fd_sort_fields))"
+    '(long-listing exec-cmds)--reverse[reverse the sort order]'
+    '(long-listing exec-cmds --files-first)--dirs-first[sort directories before other entries]'
+    '(long-listing exec-cmds --dirs-first)--files-first[sort regular files before other entries]'
+    '(long-listing exec-cmds)--sort-case-sensitive[compare text sort keys case-sensitively]'
+    '(long-listing exec-cmds)--sort-missing-last[sort entries with missing values last]'
+    '(long-listing exec-cmds)--sort-natural[compare numbers in text sort keys numerically]'
+    '(long-listing exec-cmds)--sort-seed=[set the seed for --sort random]:seed'
 
     + '(fs-errors)' # file-system errors
     $no'--show-errors[enable the display of filesystem errors]'
@@ -145,8 +170,8 @@ _fd() {
     {-j+,--threads=}'[set the number of threads for searching and executing]:number of threads'
 
     + '(exec-cmds)' # execute command
-    '(long-listing max-results)'{-x+,--exec=}'[execute command for each search result]:command: _command_names -e:*\;::program arguments: _normal'
-    '(long-listing max-results)'{-X+,--exec-batch=}'[execute command for all search results at once]:command: _command_names -e:*\;::program arguments: _normal'
+    '(long-listing max-results sort)'{-x+,--exec=}'[execute command for each search result]:command: _command_names -e:*\;::program arguments: _normal'
+    '(long-listing max-results sort)'{-X+,--exec-batch=}'[execute command for all search results at once]:command: _command_names -e:*\;::program arguments: _normal'
     '(long-listing max-results)--batch-size=[max number of args for each -X call]:size'
 
     + other

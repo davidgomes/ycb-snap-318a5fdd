@@ -151,6 +151,71 @@ Limit the number of search results to 'count' and quit immediately.
 .B \-1
 Limit the search to a single result and quit immediately. This is an alias for '--max-results=1'.
 .TP
+.BI "\-\-sort " field
+Sort the search results by the given field. This option can be specified multiple times:
+keys are applied from left to right, and later keys break ties between entries that compare
+equal on all previous keys. Entries that are equal on every key are ordered by their path, so
+the output is always deterministic. All search results are collected before anything is
+printed. When combined with '\-\-max\-results', the limit is applied after sorting.
+Sorting cannot be combined with '\-\-exec', '\-\-exec\-batch' or '\-\-list\-details'.
+Possible values are:
+.RS
+.IP path
+the path of the entry
+.IP name
+the file name (basename)
+.IP extension
+the file extension (missing if there is none)
+.IP size
+the size of regular files (missing for all other entries)
+.IP modified
+the last modification time
+.IP created
+the creation time
+.IP accessed
+the last access time
+.IP depth
+the depth below the search path
+.IP type
+the entry type, in the order: directories, symlinks, regular files, others
+.IP name-length
+the length of the file name
+.IP path-length
+the length of the path
+.IP random
+a pseudo-random order (see '\-\-sort\-seed')
+.RE
+.IP
+The following options require '\-\-sort':
+.TP
+.B \-\-reverse
+Reverse the final sorted order of the search results, including '\-\-dirs\-first'/'\-\-files\-first'
+grouping.
+.TP
+.B \-\-dirs\-first
+List directories before all other entries. Within each group, entries are ordered by the
+\&'\-\-sort' keys. Cannot be combined with '\-\-files\-first'.
+.TP
+.B \-\-files\-first
+List regular files before all other entries. Within each group, entries are ordered by the
+\&'\-\-sort' keys. Cannot be combined with '\-\-dirs\-first'.
+.TP
+.B \-\-sort\-case\-sensitive
+Compare text sort keys (path, name, extension) case-sensitively. By default, they are compared
+case-insensitively.
+.TP
+.B \-\-sort\-missing\-last
+Sort entries that have no value for a sort key (e.g. no extension, or the size of a directory)
+after entries that have one. By default, they are sorted first.
+.TP
+.B \-\-sort\-natural
+Compare text sort keys (path, name, extension) in natural order, where embedded runs of digits
+are compared numerically, e.g. 'file9' < 'file10' < 'file20'.
+.TP
+.BI "\-\-sort\-seed " seed
+Seed for '\-\-sort random'. Using the same seed produces the same order on every run. By
+default, a seed derived from the current time is used.
+.TP
 .B \-q, \-\-quiet
 When the flag is present, the program does not print anything and will instead exit with a code of 0 if there is at least one search result.
 Otherwise, the exit code will be 1.
