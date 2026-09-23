@@ -104,6 +104,20 @@ Value of the global variables can be replaced using
 But it will return an error if you try to set the value of un-defined global
 variables _(e.g. trying to set the value of `x` in the example)_.  
 
+Script functions and closures obtained from global variables, their nested
+arrays and maps, module exports, or arguments of Go functions can be called
+from Go using `Call` method of the object. They run against the globals,
+imports and captured variables of the compiled script they were created in.
+When such a function is set into another `Compiled` instance (or copied by
+`Compiled.Clone`), it is bound to that instance instead: it keeps a copy of
+its captured variables as of the time of the transfer and resolves global
+variables by name against the new instance.
+
+```golang
+c, _ := tengo.NewScript([]byte(`add := func(a, b) { return a + b }`)).Run()
+res, err := c.Get("add").Object().Call(&tengo.Int{Value: 1}, &tengo.Int{Value: 2})
+```
+
 ### Type Conversion Table
 
 When adding a Variable
