@@ -49,6 +49,10 @@ var (
 	ErrRestoreWorktreeOnlyNotSupported = errors.New("worktree only is not supported")
 	// ErrSparseResetDirectoryNotFound is returned when a sparse-reset directory is not found.
 	ErrSparseResetDirectoryNotFound = errors.New("sparse-reset directory not found on commit")
+	// ErrUncommittedChanges is returned when merge is attempted with a dirty worktree or index.
+	ErrUncommittedChanges = errors.New("worktree contains uncommitted changes")
+	// ErrMergeConflicts is returned when a merge cannot be fully resolved automatically.
+	ErrMergeConflicts = errors.New("merge conflicts")
 )
 
 // Worktree represents a git worktree.
