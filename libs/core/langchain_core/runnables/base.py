@@ -104,6 +104,7 @@ if TYPE_CHECKING:
         CallbackManagerForChainRun,
     )
     from langchain_core.prompts.base import BasePromptTemplate
+    from langchain_core.runnables.coalesce import CoalesceBackend, RunnableCoalesce
     from langchain_core.runnables.fallbacks import (
         RunnableWithFallbacks as RunnableWithFallbacksT,
     )
@@ -1919,6 +1920,64 @@ class Runnable(ABC, Generic[Input, Output]):
             wait_exponential_jitter=wait_exponential_jitter,
             max_attempt_number=stop_after_attempt,
             exponential_jitter_params=exponential_jitter_params,
+        )
+
+    def with_coalesce(
+        self, *, backend: CoalesceBackend | None = None
+    ) -> RunnableCoalesce[Input, Output]:
+        """Create a new `Runnable` that coalesces concurrent identical calls.
+
+        While a call for a given input is in flight, other calls with an equal
+        input wait for it and receive its result (or error) instead of running
+        this `Runnable` again. Once the execution completes, the next call with
+        that input runs fresh: results are not cached.
+
+        Coalescing applies to `invoke`, `stream`, `batch`, `batch_as_completed`
+        and their async versions. Inputs are compared by value only: config and
+        call kwargs are ignored, and mappings match regardless of key order.
+
+        Args:
+            backend: Tracks in-flight executions. Wrappers that share a backend
+                coalesce with each other, so only share one between wrappers of
+                equivalent runnables. Defaults to a new `InMemoryCoalesceBackend`.
+
+        Returns:
+            A new `Runnable` that coalesces concurrent identical calls.
+
+        Example:
+            ```python
+            import time
+            from concurrent.futures import ThreadPoolExecutor
+
+            from langchain_core.runnables import RunnableLambda
+
+            calls = 0
+
+
+            def _lambda(x: int) -> int:
+                global calls
+                calls += 1
+                time.sleep(0.5)
+                return x * 2
+
+
+            runnable = RunnableLambda(_lambda).with_coalesce()
+            with ThreadPoolExecutor() as executor:
+                results = list(executor.map(runnable.invoke, [1, 1, 1]))
+
+            assert results == [2, 2, 2]
+            assert calls == 1
+            ```
+        """
+        # Import locally to prevent circular import
+        from langchain_core.runnables.coalesce import (  # noqa: PLC0415
+            InMemoryCoalesceBackend,
+            RunnableCoalesce,
+        )
+
+        return RunnableCoalesce(
+            bound=self,
+            backend=backend if backend is not None else InMemoryCoalesceBackend(),
         )
 
     def map(self) -> Runnable[list[Input], list[Output]]:
