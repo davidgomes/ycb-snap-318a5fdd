@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, final, overload
 
 from typing_extensions import Never, ParamSpec
 
-from returns.interfaces.specific import validated
+from returns.interfaces.specific.validated import ValidatedBased2
 from returns.primitives.container import BaseContainer, container_equality
 from returns.primitives.exceptions import UnwrapFailedError
 from returns.primitives.hkt import Kind2, SupportsKind2
@@ -25,7 +25,7 @@ _FuncParams = ParamSpec('_FuncParams')
 class Validated(  # type: ignore[type-var]
     BaseContainer,
     SupportsKind2['Validated', _ValueType_co, _ErrorType_co],
-    validated.ValidatedBased2[_ValueType_co, _ErrorType_co],
+    ValidatedBased2[_ValueType_co, _ErrorType_co],
     ABC,
 ):
     """
@@ -162,7 +162,7 @@ class Validated(  # type: ignore[type-var]
 
         """
 
-    def lash(
+    def lash(  # type: ignore[override]
         self,
         function: Callable[
             [tuple[_ErrorType_co, ...]],
@@ -383,14 +383,7 @@ class Validated(  # type: ignore[type-var]
           ... ) == Invalid(('a', 'b'))
 
         """
-        return first.apply(
-            second.map(
-                lambda second_value: lambda first_value: function(
-                    first_value,
-                    second_value,
-                ),
-            ),
-        )
+        return cls.combine_n((first, second), function)
 
     @classmethod
     def combine_n(
@@ -420,8 +413,8 @@ class Validated(  # type: ignore[type-var]
         """
         acc: Validated[tuple[Any, ...], _NewErrorType] = Valid(())
         for container in containers:
-            acc = acc.apply(container.map(_append_to_values))
-        return acc.map(lambda values: function(*values))
+            acc = acc.apply(container.map(_concat_value))
+        return acc.map(lambda collected: function(*collected))
 
 
 @final
@@ -444,7 +437,9 @@ class Invalid(Validated[Any, _ErrorType_co]):
 
         def alt(self, function):
             """Composes each error with a pure function."""
-            return Invalid(tuple(function(error) for error in self._inner_value))
+            return Invalid(
+                tuple(function(error) for error in self._inner_value),
+            )
 
         def map(self, function):
             """Does nothing for ``Invalid``."""
@@ -471,9 +466,9 @@ class Invalid(Validated[Any, _ErrorType_co]):
             """Returns default value for failed container."""
             return default_value
 
-    def swap(self):
-        """Errors swap to :class:`Valid`."""
-        return Valid(self._inner_value)
+        def swap(self):
+            """Errors swap to :class:`Valid`."""
+            return Valid(self._inner_value)
 
     def unwrap(self) -> Never:
         """Raises an exception, since it does not have a value inside."""
@@ -531,9 +526,9 @@ class Valid(Validated[_ValueType_co, Any]):
             """Returns the value for successful container."""
             return self._inner_value
 
-    def swap(self):
-        """Value swaps to :class:`Invalid` with a single error."""
-        return Invalid((self._inner_value,))
+        def swap(self):
+            """Value swaps to :class:`Invalid` with a single error."""
+            return Invalid((self._inner_value,))
 
     def unwrap(self) -> _ValueType_co:
         """Returns the unwrapped value from successful container."""
@@ -544,10 +539,10 @@ class Valid(Validated[_ValueType_co, Any]):
         raise UnwrapFailedError(self)
 
 
-def _append_to_values(
-    value: _NewValueType,
+def _concat_value(
+    current: _NewValueType,
 ) -> Callable[[tuple[Any, ...]], tuple[Any, ...]]:
-    return lambda collected: (*collected, value)
+    return lambda collected: (*collected, current)
 
 
 # Decorators:

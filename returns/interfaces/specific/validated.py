@@ -130,6 +130,20 @@ class ValidatedLikeN(
         """Swaps a value into a single error and errors into a value."""
 
     @abstractmethod
+    def lash(  # type: ignore[override]
+        self: _ValidatedLikeType,
+        function: Callable[
+            [tuple[_SecondType, ...]],
+            KindN[_ValidatedLikeType, _FirstType, _UpdatedType, _ThirdType],
+        ],
+    ) -> KindN[_ValidatedLikeType, _FirstType, _UpdatedType, _ThirdType]:
+        """
+        Composes failed container with a function that returns a container.
+
+        Unlike other failables, the function receives all errors at once.
+        """
+
+    @abstractmethod
     def bind_validated(
         self: _ValidatedLikeType,
         function: Callable[
