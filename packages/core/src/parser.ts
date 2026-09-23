@@ -1,5 +1,6 @@
 import type { DocEntry, DocFragments, DocPage, DocSection } from "./doc.ts";
 import { type Message, message } from "./message.ts";
+import { removeHiddenDependentOptions } from "./option-dependency.ts";
 import type { DependencyRegistryLike } from "./registry-types.ts";
 import { normalizeUsage, type Usage, type UsageTerm } from "./usage.ts";
 import type { ValueParserResult } from "./valueparser.ts";
@@ -1000,7 +1001,19 @@ function buildDocPage(
   if (entries.length > 0) {
     sections.push({ entries });
   }
-  const usage = [...normalizeUsage(parser.usage)];
+  const documentedOptionNames = new Set<string>();
+  for (const section of sections) {
+    for (const entry of section.entries) {
+      if (entry.term.type === "option") {
+        for (const name of entry.term.names) documentedOptionNames.add(name);
+      }
+    }
+  }
+  const usage = [
+    ...normalizeUsage(
+      removeHiddenDependentOptions(parser.usage, documentedOptionNames),
+    ),
+  ];
   let i = 0;
   for (const arg of args) {
     if (i >= usage.length) break;

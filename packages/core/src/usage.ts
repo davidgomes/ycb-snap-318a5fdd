@@ -1,4 +1,5 @@
 import type { NonEmptyString } from "./nonempty.ts";
+import type { OptionDependsOn } from "./option-dependency.ts";
 
 /**
  * Represents the name of a command-line option.  There are four types of
@@ -65,6 +66,13 @@ export type UsageTerm =
      * @since 0.9.0
      */
     readonly hidden?: boolean;
+    /**
+     * The options this option depends on.  Combinators such as `object()`
+     * read this to hide the option while the dependency is unsatisfied
+     * and to validate it.
+     * @since 0.10.0
+     */
+    readonly dependsOn?: OptionDependsOn;
   }
   /**
    * A command term, which represents a subcommand in the command-line

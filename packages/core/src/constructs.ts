@@ -11,6 +11,7 @@ import {
 } from "./dependency.ts";
 import { dispatchByMode, dispatchIterableByMode } from "./mode-dispatch.ts";
 import type { DocEntry, DocFragment, DocSection } from "./doc.ts";
+import { createObjectOptionDependencies } from "./option-dependency.ts";
 import {
   type Message,
   message,
@@ -2638,6 +2639,16 @@ export function object<
   for (const key of parserKeys) {
     initialState[key as string | symbol] = parsers[key].initialState;
   }
+  const optionDependencies = createObjectOptionDependencies(
+    parserPairs as [string | symbol, Parser<Mode, unknown, unknown>][],
+  );
+  const visibleParserPairs = (state: unknown) => {
+    if (optionDependencies == null) return parserPairs;
+    const hidden = optionDependencies.hiddenFields(state);
+    return parserPairs.filter(([field]) =>
+      !hidden.has(field as string | symbol)
+    );
+  };
 
   // Check for duplicate option names at construction time unless explicitly allowed
   if (!options.allowDuplicates) {
@@ -2758,7 +2769,9 @@ export function object<
     // If buffer is empty and no parser consumed input, check if all parsers can complete
     if (context.buffer.length === 0) {
       let allCanComplete = true;
+      const inactive = optionDependencies?.check(context.state).inactive;
       for (const [field, parser] of parserPairs) {
+        if (inactive?.has(field as string | symbol)) continue;
         const fieldState =
           (context.state && typeof context.state === "object" &&
               field in context.state)
@@ -2847,7 +2860,9 @@ export function object<
     // If buffer is empty and no parser consumed input, check if all parsers can complete
     if (context.buffer.length === 0) {
       let allCanComplete = true;
+      const inactive = optionDependencies?.check(context.state).inactive;
       for (const [field, parser] of parserPairs) {
+        if (inactive?.has(field as string | symbol)) continue;
         const fieldState =
           (context.state && typeof context.state === "object" &&
               field in context.state)
@@ -2898,6 +2913,11 @@ export function object<
       return dispatchByMode(
         combinedMode,
         () => {
+          const dependencyCheck = optionDependencies?.check(state);
+          if (dependencyCheck?.error != null) {
+            return { success: false as const, error: dependencyCheck.error };
+          }
+
           // Phase 1: Pre-complete fields with PendingDependencySourceState to get
           // DependencySourceState with default values. This is needed for
           // withDefault(option(..., dependencySource), defaultValue) pattern.
@@ -3003,11 +3023,19 @@ export function object<
             if (valueResult.success) {
               (result as Record<string | symbol, unknown>)[fieldKey] =
                 valueResult.value;
+            } else if (dependencyCheck?.inactive.has(fieldKey)) {
+              (result as Record<string | symbol, unknown>)[fieldKey] =
+                undefined;
             } else return { success: false as const, error: valueResult.error };
           }
           return { success: true as const, value: result };
         },
         async () => {
+          const dependencyCheck = optionDependencies?.check(state);
+          if (dependencyCheck?.error != null) {
+            return { success: false as const, error: dependencyCheck.error };
+          }
+
           // Phase 1: Pre-complete fields with PendingDependencySourceState
           const preCompletedState: Record<string | symbol, unknown> = {};
           const preCompletedKeys = new Set<string | symbol>();
@@ -3103,6 +3131,9 @@ export function object<
             if (valueResult.success) {
               (result as Record<string | symbol, unknown>)[fieldKey] =
                 valueResult.value;
+            } else if (dependencyCheck?.inactive.has(fieldKey)) {
+              (result as Record<string | symbol, unknown>)[fieldKey] =
+                undefined;
             } else return { success: false as const, error: valueResult.error };
           }
           return { success: true as const, value: result };
@@ -3113,10 +3144,11 @@ export function object<
       context: ParserContext<{ readonly [K in keyof T]: unknown }>,
       prefix: string,
     ) {
+      const pairs = visibleParserPairs(context.state);
       return dispatchIterableByMode(
         combinedMode,
         () => {
-          const syncParserPairs = parserPairs as [
+          const syncParserPairs = pairs as [
             string | symbol,
             Parser<"sync", unknown, unknown>,
           ][];
@@ -3126,7 +3158,7 @@ export function object<
           suggestObjectAsync(
             context,
             prefix,
-            parserPairs as [string | symbol, Parser<Mode, unknown, unknown>][],
+            pairs as [string | symbol, Parser<Mode, unknown, unknown>][],
           ),
       );
     },
@@ -3134,7 +3166,10 @@ export function object<
       state: DocState<{ readonly [K in keyof T]: unknown }>,
       defaultValue?: { readonly [K in keyof T]: unknown },
     ) {
-      const fragments = parserPairs.flatMap(([field, p]) => {
+      const pairs = visibleParserPairs(
+        state.kind === "available" ? state.state : undefined,
+      );
+      const fragments = pairs.flatMap(([field, p]) => {
         const fieldState: DocState<unknown> = state.kind === "unavailable"
           ? { kind: "unavailable" }
           : { kind: "available", state: state.state[field] };
