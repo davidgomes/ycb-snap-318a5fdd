@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -31,6 +33,254 @@ func runSCC(args ...string) (string, error) {
 	cmd := exec.Command(sccBinPath, args...)
 	res, err := cmd.CombinedOutput()
 	return string(res), err
+}
+
+func runSCCSplit(args ...string) (string, string, error) {
+	args = slices.Insert(args, 0, sccTestFlag)
+	cmd := exec.Command(sccBinPath, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+// boundedMemoryTree writes files with unique names and differing counts so that
+// every sorted output has a single correct order
+func boundedMemoryTree(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	templates := []struct{ ext, body string }{
+		{"go", "// comment\nfunc f() {\n\tif x {\n\t\treturn\n\t}\n}\n\n"},
+		{"py", "# comment\ndef f():\n    if x:\n        return\n\n"},
+		{"js", "/* comment */\nfunction f() {\n  if (x) { return }\n}\n"},
+		{"java", "// comment\nclass A {\n  void f() { if (x) { return; } }\n}\n\n\n"},
+	}
+	for i := range 40 {
+		tpl := templates[i%len(templates)]
+		sub := filepath.Join(dir, fmt.Sprintf("pkg%d", i%3))
+		if err := os.MkdirAll(sub, 0755); err != nil {
+			t.Fatal(err)
+		}
+		content := strings.Repeat(tpl.body, i+1)
+		if err := os.WriteFile(filepath.Join(sub, fmt.Sprintf("file%02d.%s", i, tpl.ext)), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func boundedMemoryArgs(dir string, maxFiles int) []string {
+	return []string{"--bounded-memory", "--bounded-memory-dir", dir, "--bounded-memory-max-in-memory-files", strconv.Itoa(maxFiles), "--bounded-memory-stats"}
+}
+
+var boundedMemoryStatsLine = regexp.MustCompile(`^bounded-memory: .*\bspills=(\d+)\b.*\bpeak_in_memory_files=(\d+)\b`)
+
+func boundedMemoryStats(t *testing.T, stderr string) (int, int) {
+	t.Helper()
+	var lines []string
+	for line := range strings.SplitSeq(stderr, "\n") {
+		if strings.HasPrefix(line, "bounded-memory:") {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) != 1 {
+		t.Fatalf("expected exactly one bounded-memory stderr line, got:\n%s", stderr)
+	}
+	m := boundedMemoryStatsLine.FindStringSubmatch(lines[0])
+	if m == nil {
+		t.Fatalf("unexpected bounded-memory line: %s", lines[0])
+	}
+	spills, _ := strconv.Atoi(m[1])
+	peak, _ := strconv.Atoi(m[2])
+	return spills, peak
+}
+
+func TestBoundedMemoryFormatMultiMatchesUnbounded(t *testing.T) {
+	tree := boundedMemoryTree(t)
+
+	for _, args := range [][]string{
+		{"--format-multi", "json:stdout,json2:stdout,csv:stdout"},
+		{"--format-multi", "csv:stdout", "--by-file"},
+		{"--format-multi", "csv:stdout", "--by-file", "-s", "lines"},
+		{"--format-multi", "tabular:stdout,wide:stdout,json2:stdout", "-s", "code"},
+		{"--format-multi", "tabular:stdout,wide:stdout", "--by-file", "-s", "name"},
+	} {
+		want, _, err := runSCCSplit(append(slices.Clone(args), tree)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, maxFiles := range []int{1, 3, 1000} {
+			spillDir := filepath.Join(t.TempDir(), "spill")
+			got, stderr, err := runSCCSplit(append(append(slices.Clone(args), boundedMemoryArgs(spillDir, maxFiles)...), tree)...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("%v max %d: bounded output differs\nwant:\n%s\ngot:\n%s", args, maxFiles, want, got)
+			}
+
+			spills, peak := boundedMemoryStats(t, stderr)
+			if peak != min(maxFiles, 40) {
+				t.Errorf("%v max %d: peak_in_memory_files=%d", args, maxFiles, peak)
+			}
+			if (spills > 0) != (maxFiles < 40) {
+				t.Errorf("%v max %d: spills=%d", args, maxFiles, spills)
+			}
+
+			entries, err := os.ReadDir(spillDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if maxFiles < 40 {
+				if len(entries) == 0 {
+					t.Fatalf("%v max %d: expected a spill file to remain", args, maxFiles)
+				}
+				for _, e := range entries {
+					info, err := e.Info()
+					if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+						t.Fatalf("%v max %d: expected a non-empty regular spill file, got %v", args, maxFiles, e)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestBoundedMemoryTabularTotals(t *testing.T) {
+	tree := boundedMemoryTree(t)
+	totals := regexp.MustCompile(`(?m)^Total .*$`)
+
+	for _, format := range []string{"tabular", "wide"} {
+		args := []string{"--format-multi", format + ":stdout", "--by-file", "-s", "blanks", tree}
+		want, _, err := runSCCSplit(args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _, err := runSCCSplit(append(boundedMemoryArgs(t.TempDir(), 1), args...)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w, g := totals.FindString(want), totals.FindString(got); w == "" || w != g {
+			t.Fatalf("%s totals differ, want %q got %q", format, w, g)
+		}
+	}
+}
+
+func TestBoundedMemoryCSVStream(t *testing.T) {
+	tree := boundedMemoryTree(t)
+
+	want, _, err := runSCCSplit("--format-multi", "csv-stream:stdout", "-s", "name", tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := filepath.Join(t.TempDir(), "out.csv")
+	got, _, err := runSCCSplit(append(boundedMemoryArgs(t.TempDir(), 1), "--format-multi", "csv-stream:"+out, "-s", "name", tree)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Errorf("csv-stream with a file destination should not write to stdout, got:\n%s", got)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != want {
+		t.Fatalf("csv-stream file differs from stdout csv-stream\nwant:\n%s\ngot:\n%s", want, b)
+	}
+
+	rows := strings.Split(strings.TrimSpace(want), "\n")[1:]
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		names = append(names, strings.Split(row, ",")[2])
+	}
+	if len(names) != 40 || !slices.IsSorted(names) {
+		t.Fatalf("csv-stream rows not sorted by name: %v", names)
+	}
+
+	got, _, err = runSCCSplit(append(boundedMemoryArgs(t.TempDir(), 2), "--format-multi", "csv-stream:stdout", "-s", "lines", tree)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []int
+	for _, row := range strings.Split(strings.TrimSpace(got), "\n")[1:] {
+		n, err := strconv.Atoi(strings.Split(row, ",")[3])
+		if err != nil {
+			t.Fatalf("bad row %q", row)
+		}
+		lines = append(lines, n)
+	}
+	if len(lines) != 40 || !slices.IsSortedFunc(lines, func(a, b int) int { return b - a }) {
+		t.Fatalf("csv-stream rows not sorted by lines: %v", lines)
+	}
+
+	unsorted, _, err := runSCCSplit("--format-multi", "csv-stream:stdout", tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err = runSCCSplit(append(boundedMemoryArgs(t.TempDir(), 1), "--format-multi", "csv-stream:stdout", tree)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRows := strings.Split(unsorted, "\n")
+	gotRows := strings.Split(got, "\n")
+	slices.Sort(wantRows)
+	slices.Sort(gotRows)
+	if !slices.Equal(wantRows, gotRows) {
+		t.Fatalf("csv-stream rows differ\nwant:\n%s\ngot:\n%s", unsorted, got)
+	}
+}
+
+func TestBoundedMemorySpillDirInsideScannedPath(t *testing.T) {
+	tree := boundedMemoryTree(t)
+	want, _, err := runSCCSplit("-f", "json", tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	spillDir := filepath.Join(tree, "spill", "here")
+	got, stderr, err := runSCCSplit(append(boundedMemoryArgs(spillDir, 1), "-f", "json", tree)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("spill directory was counted\nwant:\n%s\ngot:\n%s", want, got)
+	}
+	if spills, _ := boundedMemoryStats(t, stderr); spills == 0 {
+		t.Fatal("expected spilling")
+	}
+
+	if err := os.WriteFile(filepath.Join(spillDir, "counted.go"), []byte("package main\n\nfunc main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err = runSCCSplit(append(boundedMemoryArgs(spillDir, 1), "-f", "json", tree)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("file in the spill directory was counted\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestBoundedMemoryValidation(t *testing.T) {
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"--bounded-memory", "--bounded-memory-max-in-memory-files", "5"},
+		{"--bounded-memory", "--bounded-memory-dir", dir},
+		{"--bounded-memory", "--bounded-memory-dir", dir, "--bounded-memory-max-in-memory-files", "0"},
+		{"--bounded-memory", "--bounded-memory-dir", dir, "--bounded-memory-max-in-memory-files", "-2"},
+	} {
+		_, stderr, err := runSCCSplit(append(args, "examples/language")...)
+		if err == nil {
+			t.Errorf("%v: expected a non-zero exit", args)
+		}
+		if !strings.Contains(stderr, "--bounded-memory") {
+			t.Errorf("%v: expected an error explaining the problem, got %q", args, stderr)
+		}
+	}
 }
 
 func TestNoGitIgnore(t *testing.T) {
