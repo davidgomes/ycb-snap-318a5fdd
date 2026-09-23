@@ -991,10 +991,50 @@ You can also set it as a percentage of the parent size.
 ##### display
 
 Type: `string`\
-Allowed values: `flex` `none`\
+Allowed values: `flex` `grid` `none`\
 Default: `flex`
 
-Set this property to `none` to hide the element.
+`flex` lays children out with flexbox. `grid` places them on rows and columns. `none` hides the element.
+
+##### gridTemplateColumns
+
+Type: `string`
+
+Column tracks for `display="grid"`, separated by spaces. A track is a fixed number (`10`), a fractional unit (`1fr`), `auto`, or `minmax(min, max)`. `min` is a fixed number. `max` is a fixed number or an `fr` unit. After every track minimum is satisfied, leftover space is shared by `fr` maximums in proportion to their flex factors. `repeat()`, named lines, and `grid-auto-flow` are not supported.
+
+```jsx
+<Box display="grid" width={12} gridTemplateColumns="minmax(2, 1fr) minmax(2, 2fr)">
+	<Text>A</Text>
+	<Text>B</Text>
+</Box>
+```
+
+##### gridTemplateRows
+
+Type: `string`
+
+Row tracks for `display="grid"`, using the same syntax as `gridTemplateColumns`. When omitted, one `auto` row is created for each occupied row.
+
+##### gridColumn
+
+Type: `number` `string`
+
+Column placement for a grid child. A number is a 1-based column index. `"start / end"` selects grid lines and does not include the end line.
+
+```jsx
+<Box display="grid" gridTemplateColumns="2 2 2">
+	<Box gridColumn="1 / 3"><Text>A</Text></Box>
+	<Text>B</Text>
+</Box>
+```
+
+##### gridRow
+
+Type: `number` `string`
+
+Row placement for a grid child. A number is a 1-based row index. `"start / end"` selects grid lines and does not include the end line.
+
+`gap`, `columnGap`, and `rowGap` insert space between grid tracks.
 
 ##### overflowX
 
