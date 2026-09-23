@@ -37,6 +37,7 @@ FUNCTION_REMAPPINGS = {
     "trim": "btrim",
     "str_split": "split",
     "regexp_matches": "regexp",
+    "percentile_cont": "percentile",
 }
 
 

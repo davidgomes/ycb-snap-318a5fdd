@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from narwhals._expression_parsing import ExprKind, ExprNode, evaluate_nodes
 from narwhals._utils import (
+    _validate_quantile_arguments,
     _validate_rolling_arguments,
     ensure_type,
     flatten,
@@ -2132,6 +2133,250 @@ class Expr:
                 "rolling_std",
                 ddof=ddof,
                 window_size=window_size,
+                min_samples=min_samples,
+                center=center,
+            )
+        )
+
+    def rolling_min(
+        self, window_size: int, *, min_samples: int | None = None, center: bool = False
+    ) -> Self:
+        """Apply a rolling min (moving min) over the values.
+
+        A window of length `window_size` will traverse the values. The resulting values
+        will be aggregated to their min.
+
+        The window at a given row will include the row itself and the `window_size - 1`
+        elements before it.
+
+        Info:
+            For lazy backends, this operation must be followed by `Expr.over` with
+            `order_by` specified, see [order-dependence](../concepts/order_dependence.md).
+
+        Arguments:
+            window_size: The length of the window in number of elements. It must be a
+                strictly positive integer.
+            min_samples: The number of values in the window that should be non-null before
+                computing a result. If set to `None` (default), it will be set equal to
+                `window_size`. If provided, it must be a strictly positive integer, and
+                less than or equal to `window_size`.
+            center: Set the labels at the center of the window.
+
+        Examples:
+            >>> import pandas as pd
+            >>> import narwhals as nw
+            >>> df_native = pd.DataFrame({"a": [1.0, 2.0, None, 4.0]})
+            >>> df = nw.from_native(df_native)
+            >>> df.with_columns(
+            ...     a_rolling_min=nw.col("a").rolling_min(window_size=3, min_samples=1)
+            ... )
+            ┌─────────────────────┐
+            | Narwhals DataFrame  |
+            |---------------------|
+            |     a  a_rolling_min|
+            |0  1.0            1.0|
+            |1  2.0            1.0|
+            |2  NaN            1.0|
+            |3  4.0            2.0|
+            └─────────────────────┘
+        """
+        window_size, min_samples = _validate_rolling_arguments(
+            window_size=window_size, min_samples=min_samples
+        )
+        return self._append_node(
+            ExprNode(
+                ExprKind.ORDERABLE_WINDOW,
+                "rolling_min",
+                window_size=window_size,
+                min_samples=min_samples,
+                center=center,
+            )
+        )
+
+    def rolling_max(
+        self, window_size: int, *, min_samples: int | None = None, center: bool = False
+    ) -> Self:
+        """Apply a rolling max (moving max) over the values.
+
+        A window of length `window_size` will traverse the values. The resulting values
+        will be aggregated to their max.
+
+        The window at a given row will include the row itself and the `window_size - 1`
+        elements before it.
+
+        Info:
+            For lazy backends, this operation must be followed by `Expr.over` with
+            `order_by` specified, see [order-dependence](../concepts/order_dependence.md).
+
+        Arguments:
+            window_size: The length of the window in number of elements. It must be a
+                strictly positive integer.
+            min_samples: The number of values in the window that should be non-null before
+                computing a result. If set to `None` (default), it will be set equal to
+                `window_size`. If provided, it must be a strictly positive integer, and
+                less than or equal to `window_size`.
+            center: Set the labels at the center of the window.
+
+        Examples:
+            >>> import pandas as pd
+            >>> import narwhals as nw
+            >>> df_native = pd.DataFrame({"a": [1.0, 2.0, None, 4.0]})
+            >>> df = nw.from_native(df_native)
+            >>> df.with_columns(
+            ...     a_rolling_max=nw.col("a").rolling_max(window_size=3, min_samples=1)
+            ... )
+            ┌─────────────────────┐
+            | Narwhals DataFrame  |
+            |---------------------|
+            |     a  a_rolling_max|
+            |0  1.0            1.0|
+            |1  2.0            2.0|
+            |2  NaN            2.0|
+            |3  4.0            4.0|
+            └─────────────────────┘
+        """
+        window_size, min_samples = _validate_rolling_arguments(
+            window_size=window_size, min_samples=min_samples
+        )
+        return self._append_node(
+            ExprNode(
+                ExprKind.ORDERABLE_WINDOW,
+                "rolling_max",
+                window_size=window_size,
+                min_samples=min_samples,
+                center=center,
+            )
+        )
+
+    def rolling_median(
+        self, window_size: int, *, min_samples: int | None = None, center: bool = False
+    ) -> Self:
+        """Apply a rolling median (moving median) over the values.
+
+        A window of length `window_size` will traverse the values. The resulting values
+        will be aggregated to their median.
+
+        The window at a given row will include the row itself and the `window_size - 1`
+        elements before it.
+
+        Info:
+            For lazy backends, this operation must be followed by `Expr.over` with
+            `order_by` specified, see [order-dependence](../concepts/order_dependence.md).
+
+        Arguments:
+            window_size: The length of the window in number of elements. It must be a
+                strictly positive integer.
+            min_samples: The number of values in the window that should be non-null before
+                computing a result. If set to `None` (default), it will be set equal to
+                `window_size`. If provided, it must be a strictly positive integer, and
+                less than or equal to `window_size`.
+            center: Set the labels at the center of the window.
+
+        Examples:
+            >>> import pandas as pd
+            >>> import narwhals as nw
+            >>> df_native = pd.DataFrame({"a": [1.0, 2.0, None, 4.0]})
+            >>> df = nw.from_native(df_native)
+            >>> df.with_columns(
+            ...     a_rolling_median=nw.col("a").rolling_median(
+            ...         window_size=3, min_samples=1
+            ...     )
+            ... )
+            ┌────────────────────────┐
+            |   Narwhals DataFrame   |
+            |------------------------|
+            |     a  a_rolling_median|
+            |0  1.0               1.0|
+            |1  2.0               1.5|
+            |2  NaN               1.5|
+            |3  4.0               3.0|
+            └────────────────────────┘
+        """
+        window_size, min_samples = _validate_rolling_arguments(
+            window_size=window_size, min_samples=min_samples
+        )
+        return self._append_node(
+            ExprNode(
+                ExprKind.ORDERABLE_WINDOW,
+                "rolling_median",
+                window_size=window_size,
+                min_samples=min_samples,
+                center=center,
+            )
+        )
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod = "linear",
+        min_samples: int | None = None,
+        center: bool = False,
+    ) -> Self:
+        """Apply a rolling quantile (moving quantile) over the values.
+
+        A window of length `window_size` will traverse the values. The resulting values
+        will be aggregated to their quantile.
+
+        The window at a given row will include the row itself and the `window_size - 1`
+        elements before it.
+
+        Info:
+            For lazy backends, this operation must be followed by `Expr.over` with
+            `order_by` specified, see [order-dependence](../concepts/order_dependence.md).
+
+        Note:
+            - pandas and Polars may have implementation differences for a given
+                interpolation method.
+            - SQL-like backends only support `interpolation='linear'`.
+            - DuckDB does not support `percentile_cont` as a windowed aggregate
+                function, hence this method is not available for the DuckDB backend.
+
+        Arguments:
+            window_size: The length of the window in number of elements. It must be a
+                strictly positive integer.
+            quantile: Quantile between 0.0 and 1.0.
+            interpolation: Interpolation method to use when the quantile lies between
+                two data points. One of `'linear'`, `'lower'`, `'higher'`, `'nearest'`,
+                `'midpoint'`.
+            min_samples: The number of values in the window that should be non-null before
+                computing a result. If set to `None` (default), it will be set equal to
+                `window_size`. If provided, it must be a strictly positive integer, and
+                less than or equal to `window_size`.
+            center: Set the labels at the center of the window.
+
+        Examples:
+            >>> import pandas as pd
+            >>> import narwhals as nw
+            >>> df_native = pd.DataFrame({"a": [1.0, 2.0, None, 4.0]})
+            >>> df = nw.from_native(df_native)
+            >>> df.with_columns(
+            ...     a_rolling_quantile=nw.col("a").rolling_quantile(
+            ...         window_size=3, quantile=0.25, min_samples=1
+            ...     )
+            ... )
+            ┌──────────────────────────┐
+            |    Narwhals DataFrame    |
+            |--------------------------|
+            |     a  a_rolling_quantile|
+            |0  1.0                1.00|
+            |1  2.0                1.25|
+            |2  NaN                1.25|
+            |3  4.0                2.50|
+            └──────────────────────────┘
+        """
+        window_size, min_samples = _validate_rolling_arguments(
+            window_size=window_size, min_samples=min_samples
+        )
+        _validate_quantile_arguments(quantile=quantile, interpolation=interpolation)
+        return self._append_node(
+            ExprNode(
+                ExprKind.ORDERABLE_WINDOW,
+                "rolling_quantile",
+                window_size=window_size,
+                quantile=quantile,
+                interpolation=interpolation,
                 min_samples=min_samples,
                 center=center,
             )

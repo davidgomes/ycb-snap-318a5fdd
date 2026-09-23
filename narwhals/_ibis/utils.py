@@ -104,6 +104,7 @@ FUNCTION_REMAPPING = {
     "to_date": "date",
     "bool_and": "all",
     "bool_or": "any",
+    "percentile_cont": "quantile",
 }
 
 

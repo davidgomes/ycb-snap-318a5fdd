@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from narwhals._polars.series import PolarsSeries
     from narwhals._typing import NoDefault
     from narwhals._utils import Version
-    from narwhals.typing import IntoDType, ModeKeepStrategy
+    from narwhals.typing import IntoDType, ModeKeepStrategy, RollingInterpolationMethod
 
 
 class PolarsExpr:
@@ -205,6 +205,42 @@ class PolarsExpr:
     def rolling_mean(self, window_size: int, *, min_samples: int, center: bool) -> Self:
         kwds = self._renamed_min_periods(min_samples)
         native = self.native.rolling_mean(window_size=window_size, center=center, **kwds)
+        return self._with_native(native)
+
+    def rolling_min(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        kwds = self._renamed_min_periods(min_samples)
+        native = self.native.rolling_min(window_size=window_size, center=center, **kwds)
+        return self._with_native(native)
+
+    def rolling_max(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        kwds = self._renamed_min_periods(min_samples)
+        native = self.native.rolling_max(window_size=window_size, center=center, **kwds)
+        return self._with_native(native)
+
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        kwds = self._renamed_min_periods(min_samples)
+        native = self.native.rolling_median(
+            window_size=window_size, center=center, **kwds
+        )
+        return self._with_native(native)
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        kwds = self._renamed_min_periods(min_samples)
+        native = self.native.rolling_quantile(
+            quantile=quantile,
+            interpolation=interpolation,
+            window_size=window_size,
+            center=center,
+            **kwds,
+        )
         return self._with_native(native)
 
     def map_batches(

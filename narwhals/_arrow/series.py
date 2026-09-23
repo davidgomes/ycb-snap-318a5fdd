@@ -1007,6 +1007,90 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
             ** 0.5
         )
 
+    def rolling_min(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self.rolling_quantile(
+            window_size,
+            quantile=0.0,
+            interpolation="lower",
+            min_samples=min_samples,
+            center=center,
+        )
+
+    def rolling_max(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self.rolling_quantile(
+            window_size,
+            quantile=1.0,
+            interpolation="higher",
+            min_samples=min_samples,
+            center=center,
+        )
+
+    def rolling_median(
+        self, window_size: int, *, min_samples: int, center: bool
+    ) -> Self:
+        return self.rolling_quantile(
+            window_size,
+            quantile=0.5,
+            interpolation="linear",
+            min_samples=min_samples,
+            center=center,
+        )
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        import numpy as np  # ignore-banned-import
+
+        n = len(self)
+        end = (window_size - 1) // 2 if center else 0
+        # Row `i` holds the positions of the elements in the window of the `i`-th element.
+        positions = np.arange(n)[:, None] + np.arange(end - window_size + 1, end + 1)
+        windows = self.native.take(
+            pa.array(positions.ravel(), mask=((positions < 0) | (positions >= n)).ravel())
+        )
+
+        # Sort values within each window. Nulls are placed last (the default), so the
+        # `k`-th smallest valid value of window `i` is at `i * window_size + k`.
+        sorted_windows = windows.take(
+            pc.sort_indices(
+                pa.table(
+                    {"window": np.repeat(np.arange(n), window_size), "value": windows}
+                ),
+                sort_keys=[("window", "ascending"), ("value", "ascending")],
+            )
+        )
+
+        valid_count = pc.is_valid(windows).to_numpy().reshape(n, window_size).sum(axis=1)
+        is_masked = valid_count < min_samples
+        rank = quantile * np.maximum(valid_count - 1, 0)
+
+        def value_at(index: _1DArray) -> ChunkedArrayAny:
+            flat_index = np.arange(n) * window_size + index.astype(np.int64)
+            return sorted_windows.take(pa.array(flat_index, mask=is_masked))
+
+        if interpolation == "lower":
+            result = value_at(np.floor(rank))
+        elif interpolation == "higher":
+            result = value_at(np.ceil(rank))
+        elif interpolation == "nearest":
+            # `np.round` rounds half to even, matching `pc.quantile` and pandas.
+            result = value_at(np.round(rank))
+        else:
+            lower = pc.cast(value_at(np.floor(rank)), pa.float64())
+            higher = pc.cast(value_at(np.ceil(rank)), pa.float64())
+            if interpolation == "midpoint":
+                result = pc.divide(pc.add(lower, higher), lit(2.0))
+            else:
+                fraction = chunked_array(pa.array(rank - np.floor(rank)))
+                result = pc.add(lower, pc.multiply(pc.subtract(higher, lower), fraction))
+        return self._with_native(result)
+
     def rank(self, method: RankMethod, *, descending: bool) -> Self:
         if method == "average":
             msg = (
