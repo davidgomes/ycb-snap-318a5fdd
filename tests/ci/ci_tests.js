@@ -475,6 +475,46 @@ describe('ci mode app', function() {
       };
       assert.match(app.getExitCode(), /No tests found\./);
     });
+
+    it('returns a bail error if the reporter bailed', function() {
+      var app = new App(new Config('ci'));
+      app.reporter = {
+        hasPassed: function() {
+          return false;
+        },
+        hasTests: function() {
+          return true;
+        },
+        hasBailed: function() {
+          return true;
+        },
+        bailReason: 'it breaks',
+        getBailReport: function() {
+          return { testsRanBeforeBail: 3 };
+        }
+      };
+      var err = app.getExitCode();
+
+      assert.equal(err.message, 'Bail out! it breaks (3 tests ran before bail)');
+      assert.notMatch(err.message, /Not all tests passed/);
+      assert.isTrue(err.hideFromReporter);
+    });
+
+    it('returns the normal failure if the reporter did not bail', function() {
+      var app = new App(new Config('ci'));
+      app.reporter = {
+        hasPassed: function() {
+          return false;
+        },
+        hasTests: function() {
+          return true;
+        },
+        hasBailed: function() {
+          return false;
+        }
+      };
+      assert.match(app.getExitCode(), /Not all tests passed/);
+    });
   });
 
   it('handles todos correctly', function(done) {

@@ -1213,4 +1213,129 @@ describe('test reporters', function() {
     });
 
   });
+
+  describe('bail summary', function() {
+    var stream, bailInfo;
+
+    beforeEach(function() {
+      stream = new PassThrough();
+      bailInfo = {
+        reason: 'it breaks \'things\'',
+        launcher: 'phantomjs',
+        failureCount: 2,
+        testsRanBeforeBail: 3,
+        suppressedAfterBail: 4
+      };
+    });
+
+    function reportFailures(reporter) {
+      reporter.report('phantomjs', { name: 'it works', passed: true });
+      reporter.report('phantomjs', { name: 'it fails', passed: false, error: { message: 'nope' } });
+      reporter.report('phantomjs', { name: bailInfo.reason, passed: false, error: { message: 'nope' } });
+    }
+
+    it('tap reporter writes Bail out! and the bail counts', function() {
+      var reporter = new TapReporter(false, stream, new Config('ci', {}));
+      reportFailures(reporter);
+      reporter.reportBail(bailInfo);
+      reporter.finish();
+
+      var output = stream.read().toString();
+      assert.match(output, /\nBail out! it breaks 'things' \(2 test failures\)\n1\.\.3\n/);
+      assert.match(output, /# fail {2}2\n# bailed\n# ran before bail 3\n# suppressed 4\n$/);
+      assert.notMatch(output, /# ok/);
+    });
+
+    it('tap reporter writes no bail summary without bail info', function() {
+      var reporter = new TapReporter(false, stream, new Config('ci', {}));
+      reportFailures(reporter);
+      reporter.finish();
+
+      var output = stream.read().toString();
+      assert.notMatch(output, /Bail out!/);
+      assert.notMatch(output, /# bailed/);
+    });
+
+    it('dot reporter writes Bail out! and the bail counts', function() {
+      var reporter = new DotReporter(false, stream);
+      reportFailures(reporter);
+      reporter.reportBail(bailInfo);
+      reporter.finish();
+
+      var output = stream.read().toString();
+      assert.match(output, /\n\nBail out! it breaks 'things' \(2 test failures\)\n\[duration - [0-9]+ ms\]\n/);
+      assert.match(output, /# fail {2}2\n# bailed\n# ran before bail 3\n# suppressed 4\n/);
+    });
+
+    it('teamcity reporter emits an error message, build statistics and a build problem', function() {
+      var reporter = new TeamcityReporter(false, stream);
+      reportFailures(reporter);
+      reporter.reportBail(bailInfo);
+      reporter.finish();
+
+      var output = stream.read().toString();
+      assert.include(output, '##teamcity[message text=\'Bail out! it breaks |\'things|\' (2 test failures)\' status=\'ERROR\']\n');
+      assert.include(output, '##teamcity[buildStatisticValue key=\'bailedTests\' value=\'2\']\n');
+      assert.include(output, '##teamcity[buildStatisticValue key=\'testsBeforeBail\' value=\'3\']\n');
+      assert.include(output, '##teamcity[buildStatisticValue key=\'suppressedAfterBail\' value=\'4\']\n');
+      assert.include(output, '##teamcity[buildProblem description=\'Bail out! it breaks |\'things|\' (2 test failures)\']\n');
+      assert.isBelow(output.indexOf('buildProblem'), output.indexOf('testSuiteFinished'));
+    });
+
+    it('teamcity reporter emits no bail lines without bail info', function() {
+      var reporter = new TeamcityReporter(false, stream);
+      reportFailures(reporter);
+      reporter.finish();
+
+      var output = stream.read().toString();
+      assert.notMatch(output, /Bail out!|buildStatisticValue|buildProblem/);
+    });
+
+    it('xunit reporter adds an error, errors attribute, properties and system-out', function() {
+      var reporter = new XUnitReporter(false, stream, new Config('ci', {}));
+      reportFailures(reporter);
+      reporter.reportBail(bailInfo);
+      reporter.finish();
+
+      var output = stream.read().toString();
+      assertXmlIsValid(output);
+
+      var doc = new XmlDom.DOMParser().parseFromString(output, 'text/xml');
+      var suite = doc.documentElement;
+      assert.equal(suite.getAttribute('errors'), '1');
+      assert.equal(suite.getAttribute('tests'), '3');
+
+      var properties = Array.prototype.slice.call(suite.getElementsByTagName('property')).map(function(node) {
+        return [node.getAttribute('name'), node.getAttribute('value')];
+      });
+      assert.deepEqual(properties, [
+        ['bailReason', 'it breaks \'things\''],
+        ['testsBeforeBail', '3'],
+        ['suppressedAfterBail', '4']
+      ]);
+
+      var suiteErrors = Array.prototype.filter.call(suite.childNodes, function(node) {
+        return node.nodeName === 'error';
+      });
+      assert.lengthOf(suiteErrors, 1);
+      assert.equal(suiteErrors[0].getAttribute('message'), 'Bail out! it breaks \'things\' (2 test failures)');
+
+      var systemOut = suite.getElementsByTagName('system-out')[0];
+      assert.equal(systemOut.textContent, [
+        'Bail out! it breaks \'things\' (2 test failures)',
+        '# bailed',
+        '# ran before bail 3',
+        '# suppressed 4'
+      ].join('\n'));
+    });
+
+    it('xunit reporter adds no bail elements without bail info', function() {
+      var reporter = new XUnitReporter(false, stream, new Config('ci', {}));
+      reportFailures(reporter);
+      reporter.finish();
+
+      var output = stream.read().toString();
+      assert.notMatch(output, /errors=|<properties|<system-out|Bail out!/);
+    });
+  });
 });

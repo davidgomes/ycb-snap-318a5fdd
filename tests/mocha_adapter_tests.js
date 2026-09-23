@@ -360,5 +360,59 @@ describe('mochaAdapter', function() {
         });
       });
     });
+
+    describe('when Testem is not defined', function() {
+      it('should report results as usual', function() {
+        expect(typeof Testem).to.equal('undefined');
+
+        runner.emit('fail', tests.failed, {message: 'msg', stack: 'trace'});
+
+        expect(_emit).to.have.been.calledWith('test-result');
+      });
+    });
+
+    describe('when Testem has been aborted', function() {
+      beforeEach(function() {
+        replaceGlobals({ Testem: { aborted: false } }, globals);
+      });
+
+      it('should suppress events and signal "all-test-results" once', function() {
+        global.Testem.aborted = true;
+
+        runner.emit('start', {}, null);
+        runner.emit('fail', tests.failed, {message: 'msg', stack: 'trace'});
+        runner.emit('test end', tests.passed, null);
+        runner.emit('end', {}, null);
+
+        expect(_emit).to.have.been.calledOnceWithExactly('all-test-results');
+        expect(_setTimeout).not.to.have.been.called();
+      });
+
+      it('should still call the original emit', function() {
+        global.Testem.aborted = true;
+
+        runner.emit('start', test, err);
+
+        expect(originalEmit).to.have.been.calledWith('start', test, err);
+      });
+
+      it('should guard deferred "test end" callbacks', function() {
+        runner.emit('test end', tests.passed, null);
+        global.Testem.aborted = true;
+
+        _setTimeout.lastCall.args[0]();
+        runner.emit('end', {}, null);
+
+        expect(_emit).to.have.been.calledOnceWithExactly('all-test-results');
+      });
+
+      it('should not signal "all-test-results" again after the run ended', function() {
+        runner.emit('end', {}, null);
+        global.Testem.aborted = true;
+        runner.emit('start', {}, null);
+
+        expect(_emit).to.have.been.calledOnceWithExactly('all-test-results');
+      });
+    });
   });
 });

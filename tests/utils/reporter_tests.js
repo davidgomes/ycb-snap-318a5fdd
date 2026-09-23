@@ -5,6 +5,8 @@ const expect = require('chai').expect;
 const sinon = require('sinon');
 const tmp = require('tmp');
 const fs = require('fs');
+const log = require('npmlog');
+const EventEmitter = require('events').EventEmitter;
 const PassThrough = require('stream').PassThrough;
 
 const tmpNameAsync = Bluebird.promisify(tmp.tmpName);
@@ -377,6 +379,311 @@ describe('Reporter', function() {
       reporter.report('test', {});
 
       expect(reporter.hasTests()).to.be.true();
+    });
+  });
+
+  describe('bail_on_test_failure', function() {
+    function bailApp(bailOnTestFailure, subReporter) {
+      return {
+        config: {
+          get: function(key) {
+            switch (key) {
+              case 'reporter':
+                return subReporter || new FakeReporter();
+              case 'bail_on_test_failure':
+                return bailOnTestFailure;
+            }
+          }
+        }
+      };
+    }
+
+    function fail(name) {
+      return { name: name, passed: false, error: { message: name + ' failed' } };
+    }
+
+    function pass(name) {
+      return { name: name, passed: true };
+    }
+
+    describe('config validation', function() {
+      let warn;
+
+      beforeEach(function() {
+        warn = sandbox.stub(log, 'warn');
+      });
+
+      it('is disabled by default', function() {
+        let reporter = new Reporter(bailApp(undefined), stream);
+
+        reporter.report('Chrome', fail('a'));
+        reporter.report('Chrome', fail('b'));
+
+        expect(reporter.hasBailed()).to.be.false();
+        expect(warn).not.to.have.been.called();
+      });
+
+      it('is disabled when false without warning', function() {
+        let reporter = new Reporter(bailApp(false), stream);
+
+        reporter.report('Chrome', fail('a'));
+
+        expect(reporter.hasBailed()).to.be.false();
+        expect(warn).not.to.have.been.called();
+      });
+
+      it('bails on the first failure when true', function() {
+        let reporter = new Reporter(bailApp(true), stream);
+
+        reporter.report('Chrome', fail('a'));
+
+        expect(reporter.hasBailed()).to.be.true();
+      });
+
+      it('bails on the Nth failure for a positive integer N', function() {
+        let reporter = new Reporter(bailApp(3), stream);
+
+        reporter.report('Chrome', fail('a'));
+        reporter.report('Chrome', fail('b'));
+        expect(reporter.hasBailed()).to.be.false();
+
+        reporter.report('Chrome', fail('c'));
+        expect(reporter.hasBailed()).to.be.true();
+        expect(reporter.bailReason).to.equal('c');
+      });
+
+      [0, -1, 1.5, '2', 'true', NaN].forEach(function(value) {
+        it(`warns and disables bailing for ${String(value)} (${typeof value})`, function() {
+          let reporter = new Reporter(bailApp(value), stream);
+
+          reporter.report('Chrome', fail('a'));
+          reporter.report('Chrome', fail('b'));
+
+          expect(reporter.hasBailed()).to.be.false();
+          expect(warn).to.have.been.calledOnce();
+          expect(warn).to.have.been.calledWith('bail_on_test_failure');
+        });
+      });
+    });
+
+    describe('bailing', function() {
+      let subReporter, reporter;
+
+      beforeEach(function() {
+        subReporter = new FakeReporter();
+        reporter = new Reporter(bailApp(2, subReporter), stream);
+      });
+
+      it('is an EventEmitter', function() {
+        expect(reporter).to.be.an.instanceof(EventEmitter);
+      });
+
+      it('does not count skipped or todo results as failures', function() {
+        reporter.report('Chrome', { name: 'skipped', passed: false, skipped: true });
+        reporter.report('Chrome', { name: 'todo', passed: false, todo: true });
+        reporter.report('Chrome', fail('a'));
+
+        expect(reporter.hasBailed()).to.be.false();
+        expect(reporter.bailReason).to.be.null();
+      });
+
+      it('records the failing test name as bailReason', function() {
+        reporter.report('Chrome', fail('a'));
+        reporter.report('Firefox', fail('b'));
+
+        expect(reporter.hasBailed()).to.be.true();
+        expect(reporter.bailReason).to.equal('b');
+      });
+
+      it('emits test-failure once with the launcher name and result when bailing', function() {
+        let listener = sinon.spy();
+        reporter.on('test-failure', listener);
+
+        let bailingResult = fail('b');
+        reporter.report('Chrome', fail('a'));
+        expect(listener).not.to.have.been.called();
+
+        reporter.report('Firefox', bailingResult);
+        reporter.report('Firefox', fail('c'));
+
+        expect(listener).to.have.been.calledOnce();
+        expect(listener).to.have.been.calledWithExactly('Firefox', bailingResult);
+      });
+
+      it('forwards the bailing result but gates subsequent results from sub-reporters', function() {
+        reporter.report('Chrome', pass('a'));
+        reporter.report('Chrome', fail('b'));
+        reporter.report('Chrome', fail('c'));
+        reporter.report('Chrome', pass('d'));
+        reporter.report('Chrome', fail('e'));
+
+        expect(subReporter.results.map(r => r.result.name)).to.deep.equal(['a', 'b', 'c']);
+      });
+
+      it('passes bail info to sub-reporters on finish', function() {
+        subReporter.reportBail = sinon.spy();
+
+        reporter.report('Chrome', pass('a'));
+        reporter.report('Chrome', fail('b'));
+        reporter.report('Firefox', fail('c'));
+        reporter.report('Chrome', pass('d'));
+        reporter.finish();
+
+        expect(subReporter.reportBail).to.have.been.calledOnceWith({
+          reason: 'c',
+          launcher: 'Firefox',
+          failureCount: 2,
+          testsRanBeforeBail: 3,
+          suppressedAfterBail: 1
+        });
+      });
+
+      it('does not pass bail info to sub-reporters when it did not bail', function() {
+        subReporter.reportBail = sinon.spy();
+
+        reporter.report('Chrome', fail('a'));
+        reporter.finish();
+
+        expect(subReporter.reportBail).not.to.have.been.called();
+      });
+    });
+
+    describe('getBailReport', function() {
+      let reporter;
+
+      beforeEach(function() {
+        reporter = new Reporter(bailApp(3), stream);
+      });
+
+      it('returns an empty report before bailing', function() {
+        expect(reporter.hasBailed()).to.be.false();
+        expect(reporter.bailReason).to.be.null();
+        expect(reporter.getBailReport()).to.deep.equal({
+          testsRanBeforeBail: 0,
+          bailLauncher: null,
+          failuresByLauncher: {},
+          failedTests: []
+        });
+      });
+
+      it('reports failures per launcher and the failed test names', function() {
+        reporter.report('Chrome', pass('a'));
+        reporter.report('Chrome', fail('b'));
+        reporter.report('Firefox', { name: 'skipped', skipped: true });
+        reporter.report('Firefox', fail('c'));
+        reporter.report('Chrome', fail('d'));
+        reporter.report('Firefox', fail('after bail'));
+
+        let report = reporter.getBailReport();
+
+        expect(report).to.deep.equal({
+          testsRanBeforeBail: 5,
+          bailLauncher: 'Chrome',
+          failuresByLauncher: { Chrome: 2, Firefox: 1 },
+          failedTests: ['b', 'c', 'd']
+        });
+        expect(Object.getPrototypeOf(report.failuresByLauncher)).to.equal(Object.prototype);
+      });
+
+      it('returns copies of the tracked state', function() {
+        reporter.report('Chrome', fail('a'));
+
+        let report = reporter.getBailReport();
+        report.failedTests.push('mutated');
+        report.failuresByLauncher.Chrome = 99;
+
+        expect(reporter.getBailReport().failedTests).to.deep.equal(['a']);
+        expect(reporter.getBailReport().failuresByLauncher).to.deep.equal({ Chrome: 1 });
+      });
+    });
+
+    describe('resetBailState', function() {
+      it('clears all bail state', function() {
+        let reporter = new Reporter(bailApp(1), stream);
+
+        reporter.report('Chrome', fail('a'));
+        reporter.report('Chrome', fail('b'));
+        reporter.resetBailState();
+
+        expect(reporter.hasBailed()).to.be.false();
+        expect(reporter.bailReason).to.be.null();
+        expect(reporter.getBailReport()).to.deep.equal({
+          testsRanBeforeBail: 0,
+          bailLauncher: null,
+          failuresByLauncher: {},
+          failedTests: []
+        });
+      });
+
+      it('forwards results again and can bail again', function() {
+        let subReporter = new FakeReporter();
+        let reporter = new Reporter(bailApp(1, subReporter), stream);
+        let listener = sinon.spy();
+        reporter.on('test-failure', listener);
+
+        reporter.report('Chrome', fail('a'));
+        reporter.report('Chrome', pass('gated'));
+        reporter.resetBailState();
+        reporter.report('Firefox', pass('b'));
+        reporter.report('Firefox', fail('c'));
+
+        expect(subReporter.results.map(r => r.result.name)).to.deep.equal(['b', 'c']);
+        expect(listener).to.have.been.calledTwice();
+        expect(reporter.bailReason).to.equal('c');
+        expect(reporter.getBailReport()).to.deep.equal({
+          testsRanBeforeBail: 2,
+          bailLauncher: 'Firefox',
+          failuresByLauncher: { Firefox: 1 },
+          failedTests: ['c']
+        });
+      });
+
+      it('makes sub-reporter output reflect only post-reset activity', function() {
+        let reporter = new Reporter(bailApp(1, 'tap'), stream);
+
+        reporter.report('Chrome', fail('a'));
+        reporter.report('Chrome', pass('gated'));
+        reporter.resetBailState();
+        stream.read();
+
+        reporter.report('Chrome', pass('b'));
+        reporter.finish();
+
+        let output = stream.read().toString();
+        expect(output).to.contain('ok 1 Chrome - [undefined ms] - b');
+        expect(output).to.match(/# tests 1\n/);
+        expect(output).to.match(/# pass {2}1\n/);
+        expect(output).to.match(/# ok/);
+        expect(output).not.to.contain('Bail out!');
+        expect(output).not.to.contain('# bailed');
+      });
+    });
+
+    it('writes the bail summary to the TAP output', function() {
+      let reporter = new Reporter(bailApp(1, 'tap'), stream);
+
+      reporter.report('Chrome', pass('a'));
+      reporter.report('Chrome', fail('b'));
+      reporter.report('Chrome', pass('c'));
+      reporter.report('Chrome', fail('d'));
+      reporter.finish();
+
+      let lines = stream.read().toString().split('\n');
+      let bailLine = lines.indexOf('Bail out! b (1 test failure)');
+
+      expect(bailLine).to.be.above(-1);
+      expect(lines.slice(bailLine + 1)).to.deep.equal([
+        '1..2',
+        '# tests 2',
+        '# pass  1',
+        '# skip  0',
+        '# todo  0',
+        '# fail  1',
+        '# bailed',
+        '# ran before bail 2',
+        '# suppressed 2',
+        ''
+      ]);
     });
   });
 });

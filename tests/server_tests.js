@@ -7,6 +7,8 @@ const request = require('request');
 const cheerio = require('cheerio');
 const fs = require('fs');
 const expect = require('chai').expect;
+const sinon = require('sinon');
+const ioClient = require('socket.io-client');
 const http = require('http');
 const https = require('https');
 const ws = require('ws');
@@ -583,6 +585,57 @@ describe('Server', function() {
       request(baseUrl + '../public/.eslintrc.js', function(err, res) {
         expect(res.statusCode).to.eq(403);
         done();
+      });
+    });
+  });
+
+  describe('abort broadcast', function() {
+    beforeEach(function() {
+      server = new Server(new Config('dev', { port: 0, cwd: 'tests' }));
+    });
+
+    it('tolerates an uninitialized io', function() {
+      expect(server.io).to.be.undefined();
+      expect(() => server.broadcastAbort()).not.to.throw();
+    });
+
+    it('emits abort-tests once until reset', function() {
+      let emit = sinon.spy();
+      server.io = { emit: emit };
+
+      server.broadcastAbort();
+      server.broadcastAbort();
+      expect(emit).to.have.been.calledOnceWithExactly('abort-tests');
+
+      server.resetAbort();
+      server.broadcastAbort();
+      expect(emit).to.have.been.calledTwice();
+    });
+
+    describe('with a connected client', function() {
+      let client;
+
+      beforeEach(function(done) {
+        server.once('server-start', function() {
+          client = ioClient(`http://localhost:${server.server.address().port}`);
+          client.once('connect', function() {
+            done();
+          });
+        });
+        server.start();
+      });
+
+      afterEach(function(done) {
+        client.close();
+        server.stop(done);
+      });
+
+      it('broadcasts abort-tests to the client', function(done) {
+        client.once('abort-tests', function() {
+          done();
+        });
+
+        server.broadcastAbort();
       });
     });
   });

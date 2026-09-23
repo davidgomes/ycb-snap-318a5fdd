@@ -334,6 +334,52 @@ describe('tap process test runner', function() {
     });
   });
 
+  describe('abort', function() {
+    var runner, reporter, launcher;
+
+    beforeEach(function() {
+      reporter = new FakeReporter();
+      var config = new Config('ci', {
+        reporter: reporter
+      });
+
+      var settings = {
+        exe: 'node',
+        args: [path.join(__dirname, '../fixtures/processes/echo.js')],
+        protocol: 'tap'
+      };
+      launcher = new Launcher('tap', settings, config);
+      runner = new TapProcessTestRunner(launcher, reporter);
+    });
+
+    it('kills the process, finishes the run and suppresses subsequent results and errors', function() {
+      var started = runner.start();
+
+      return new Promise(function(resolve) {
+        launcher.processCtl.once('processStarted', function(process) {
+          process.process.stdin.write('TAP version 13\nok 1 before abort\nok 2 flushed once the process exits\n');
+          resolve();
+        });
+      }).then(function() {
+        return new Promise(function(resolve) {
+          setTimeout(resolve, 200);
+        });
+      }).then(function() {
+        var first = runner.abort();
+        expect(runner.abort()).to.equal(first);
+        return first;
+      }).then(function() {
+        return started;
+      }).then(function() {
+        runner.onTestResult({ name: 'after abort', passed: 0, failed: 1 });
+        runner.onProcessError(new Error('boom'));
+
+        expect(runner.finished).to.be.true();
+        expect(reporter.results.map(function(r) { return r.result.name; })).to.deep.equal(['before abort']);
+      });
+    });
+  });
+
   describe('onProcessError', function() {
     var reporter, config;
 

@@ -105,6 +105,42 @@ describe('ProcessTestRunner', function() {
     });
   });
 
+  describe('abort', function() {
+    var runner;
+
+    beforeEach(function() {
+      var settings = {
+        exe: 'node',
+        args: [path.join(__dirname, '../fixtures/processes/just-running.js')]
+      };
+      var launcher = new Launcher('node-running', settings, config);
+      runner = new ProcessTestRunner(launcher, reporter);
+    });
+
+    it('kills the process, finishes the run and suppresses the result', function() {
+      var started = runner.start();
+
+      return new Promise(function(resolve) {
+        runner.launcher.processCtl.once('processStarted', resolve);
+      }).then(function() {
+        return runner.abort();
+      }).then(function() {
+        return started;
+      }).then(function() {
+        expect(runner.finished).to.be.true();
+        expect(reporter.results).to.deep.equal([]);
+      });
+    });
+
+    it('is idempotent and returns the same promise', function() {
+      var first = runner.abort();
+      var second = runner.abort();
+
+      expect(first).to.equal(second);
+      return first;
+    });
+  });
+
   it('handles non existing processes', function(done) {
     var settings = {
       exe: 'nope-not-existing'

@@ -4,6 +4,7 @@ const expect = require('chai').expect;
 const sinon = require('sinon');
 const fireworm = require('fireworm');
 const Bluebird = require('bluebird');
+const path = require('path');
 
 const Config = require('../lib/config');
 const App = require('../lib/app');
@@ -282,6 +283,163 @@ describe('App', function() {
     it('calls on_exit hook on failure and waits for it to finish', function(done) {
       finish = done;
       sandbox.stub(app, 'waitForTests').usingPromise(Bluebird.Promise).rejects();
+      app.start();
+    });
+  });
+
+  describe('abortRunners', function() {
+    let runners;
+
+    beforeEach(function() {
+      config = new Config('dev', {}, {
+        reporter: new FakeReporter()
+      });
+      app = new App(config);
+      runners = [
+        { abort: sandbox.stub().usingPromise(Bluebird.Promise).resolves() },
+        { abort: sandbox.stub().usingPromise(Bluebird.Promise).resolves() },
+        { exit: sandbox.stub() }
+      ];
+      app.runners = runners;
+      sandbox.stub(app.server, 'broadcastAbort');
+    });
+
+    it('broadcasts the abort and aborts all runners', function() {
+      return app.abortRunners().then(function() {
+        expect(app.server.broadcastAbort).to.have.been.calledOnce();
+        expect(runners[0].abort).to.have.been.calledOnce();
+        expect(runners[1].abort).to.have.been.calledOnce();
+        expect(runners[2].exit).not.to.have.been.called();
+      });
+    });
+
+    it('is idempotent', function() {
+      let first = app.abortRunners();
+      let second = app.abortRunners();
+
+      expect(second).to.equal(first);
+      expect(app.server.broadcastAbort).to.have.been.calledOnce();
+      expect(runners[0].abort).to.have.been.calledOnce();
+      return second;
+    });
+
+    it('does not start runners once aborted', function() {
+      let runner = { start: sandbox.stub().usingPromise(Bluebird.Promise).resolves() };
+      app.runners = [runner];
+      app.abortRunners();
+
+      return Bluebird.using(RunTimeout.with(0), function(timeout) {
+        return app.singleRun(timeout);
+      }).then(function() {
+        expect(runner.start).not.to.have.been.called();
+      });
+    });
+  });
+
+  describe('resetBailState', function() {
+    beforeEach(function() {
+      config = new Config('dev', {}, {
+        reporter: new FakeReporter()
+      });
+      app = new App(config);
+      app.reporter = { resetBailState: sandbox.spy() };
+      app.runners = [{ abort: sandbox.stub().usingPromise(Bluebird.Promise).resolves() }];
+      sandbox.stub(app.server, 'broadcastAbort');
+      sandbox.spy(app.server, 'resetAbort');
+    });
+
+    it('resets the reporter, abort tracking and the server broadcast state', function() {
+      app.abortRunners();
+      app.resetBailState();
+
+      expect(app.reporter.resetBailState).to.have.been.calledOnce();
+      expect(app.server.resetAbort).to.have.been.calledOnce();
+
+      app.abortRunners();
+      expect(app.server.broadcastAbort).to.have.been.calledTwice();
+      expect(app.runners[0].abort).to.have.been.calledTwice();
+    });
+
+    it('works before the reporter is created', function() {
+      delete app.reporter;
+
+      expect(() => app.resetBailState()).not.to.throw();
+      expect(app.server.resetAbort).to.have.been.calledOnce();
+    });
+  });
+
+  describe('bailing on test failure', function() {
+    afterEach(function(done) {
+      app.exit(null, function() {
+        done();
+      });
+    });
+
+    it('aborts the runners when the reporter bails', function(done) {
+      config = new Config('dev', {}, {
+        reporter: new FakeReporter()
+      });
+      app = new App(config, function() {});
+      app.start(function() {
+        sandbox.stub(app, 'abortRunners');
+
+        app.reporter.emit('test-failure', 'Chrome', { name: 'failed test' });
+
+        expect(app.abortRunners).to.have.been.calledOnce();
+        done();
+      });
+    });
+
+    it('resets the bail state when a new run starts after an abort', function(done) {
+      config = new Config('dev', {}, {
+        reporter: new FakeReporter()
+      });
+      app = new App(config, function() {});
+      app.start(function() {
+        app.abortRunners();
+        sandbox.spy(app, 'resetBailState');
+
+        app.runTests().then(function() {
+          expect(app.resetBailState).to.have.been.calledOnce();
+          expect(app.runnersAborted).to.be.false();
+          done();
+        }).catch(done);
+      });
+    });
+  });
+
+  describe('bail_on_test_failure in ci mode', function() {
+    it('stops the run on the first failure and exits with a bail error', function(done) {
+      let reporter = new FakeReporter();
+      let tapFailures = {
+        exe: 'node',
+        args: [path.join(__dirname, 'fixtures/processes/tap-failures.js')],
+        protocol: 'tap'
+      };
+      config = new Config('ci', {
+        port: 0,
+        cwd: path.join('tests/fixtures/basic_test'),
+        launchers: {
+          FirstTap: tapFailures,
+          SecondTap: tapFailures
+        },
+        launch_in_ci: ['FirstTap', 'SecondTap'],
+        bail_on_test_failure: true,
+        reporter: reporter
+      });
+
+      app = new App(config, function(exitCode) {
+        try {
+          expect(exitCode).to.equal(1);
+          expect(reporter.results.map(r => r.result.name)).to.deep.equal(['first failure']);
+          expect(app.reporter.hasBailed()).to.be.true();
+          expect(app.reporter.getBailReport().bailLauncher).to.equal('FirstTap');
+          expect(app.getExitCode().message).to.equal('Bail out! first failure (1 test ran before bail)');
+          done();
+        } catch (e) {
+          done(e);
+        }
+      });
       app.start();
     });
   });

@@ -528,4 +528,65 @@ describe('browser test runner', function() {
       runner.finish();
     });
   });
+
+  describe('abort', function() {
+    let reporter, launcher, runner, socket;
+
+    beforeEach(function() {
+      reporter = new FakeReporter();
+      let config = new Config('ci', { reporter: reporter });
+      launcher = new Launcher('ci', { protocol: 'browser' }, config);
+      runner = new BrowserTestRunner(launcher, reporter, 1, false, config);
+      socket = new FakeSocket();
+      runner.tryAttach('browser', launcher.id, socket);
+    });
+
+    it('emits abort-tests via the socket once and returns the same promise', function() {
+      let abortTests = sinon.spy();
+      socket.on('abort-tests', abortTests);
+
+      let first = runner.abort();
+      let second = runner.abort();
+
+      expect(first).to.equal(second);
+      expect(first.then).to.be.a('function');
+
+      return first.then(function() {
+        expect(abortTests).to.have.been.calledOnce();
+      });
+    });
+
+    it('resolves a pending start', function() {
+      let started = runner.start();
+
+      runner.abort();
+
+      return started.then(function() {
+        expect(runner.finished).to.be.true();
+      });
+    });
+
+    it('suppresses all subsequent results and errors', function() {
+      reporter.reportMetadata = sinon.spy();
+
+      return runner.abort().then(function() {
+        socket.emit('test-result', { failed: 1, name: 'after abort' });
+        socket.emit('test-metadata', 'tag', 'metadata');
+        socket.emit('all-test-results');
+        runner.onGlobalError('something went wrong', 'http://example.com', 123);
+        runner.reportResults(new Error('Browser timeout exceeded: 10s'), 0);
+
+        expect(reporter.results).to.have.length(0);
+        expect(reporter.reportMetadata).not.to.have.been.called();
+      });
+    });
+
+    it('resolves without a socket', function() {
+      let unattached = new BrowserTestRunner(launcher, reporter, 2, false, launcher.config);
+
+      return unattached.abort().then(function() {
+        expect(unattached.aborted).to.be.true();
+      });
+    });
+  });
 });

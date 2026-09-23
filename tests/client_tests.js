@@ -107,4 +107,71 @@ describe('Testem Client', function() {
     });
     Testem.runAfterTests();
   });
+
+  describe('handleAbortTests', function() {
+    let postMessage;
+
+    beforeEach(function() {
+      Testem.aborted = false;
+      Testem._isIframeReady = true;
+      postMessage = sinon.spy();
+      Testem.iframe = {
+        contentWindow: {
+          postMessage: postMessage
+        }
+      };
+    });
+
+    afterEach(function() {
+      Testem.aborted = false;
+      delete Testem.iframe;
+    });
+
+    function sentEvents() {
+      return postMessage.args.map(function(args) {
+        return JSON.parse(args[0]).data[0];
+      });
+    }
+
+    it('starts off not aborted', function() {
+      expect(Testem.aborted).to.be.false();
+    });
+
+    it('sets aborted and directly emits abort-tests and after-tests-complete', function() {
+      Testem.handleAbortTests();
+
+      expect(Testem.aborted).to.be.true();
+      expect(sentEvents()).to.deep.equal(['abort-tests', 'after-tests-complete']);
+    });
+
+    it('blocks further emitMessage calls', function() {
+      Testem.handleAbortTests();
+      Testem.emitMessage('test-result', { name: 'after abort' });
+      Testem.emitMessage('all-test-results');
+
+      expect(sentEvents()).to.deep.equal(['abort-tests', 'after-tests-complete']);
+    });
+
+    it('only emits once when called repeatedly', function() {
+      Testem.handleAbortTests();
+      Testem.handleAbortTests();
+
+      expect(sentEvents()).to.deep.equal(['abort-tests', 'after-tests-complete']);
+    });
+
+    it('enqueues the abort messages until the iframe is ready', function() {
+      Testem._isIframeReady = false;
+      Testem.emitMessageQueue = [];
+
+      Testem.handleAbortTests();
+
+      expect(postMessage).not.to.have.been.called();
+      expect(Testem.emitMessageQueue.map(function(message) {
+        return message.emitArgs[0];
+      })).to.deep.equal(['abort-tests', 'after-tests-complete']);
+
+      Testem.drainMessageQueue();
+      expect(sentEvents()).to.deep.equal(['abort-tests', 'after-tests-complete']);
+    });
+  });
 });
