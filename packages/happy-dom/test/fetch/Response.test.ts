@@ -12,8 +12,10 @@ import File from '../../src/file/File.js';
 import FormData from '../../src/form-data/FormData.js';
 import type Document from '../../src/nodes/document/Document.js';
 import Window from '../../src/window/Window.js';
+import Browser from '../../src/browser/Browser.js';
 import * as PropertySymbol from '../../src/PropertySymbol.js';
 import { ReadableStream } from 'stream/web';
+import type { ReadableStreamDefaultController } from 'stream/web';
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 
 describe('Response', () => {
@@ -144,6 +146,26 @@ describe('Response', () => {
 				}, 50);
 			});
 		});
+
+		it('Rejects with an "AbortError" if the window is closed while reading the body.', async () => {
+			const response = new window.Response(new ReadableStream());
+			const promise = response.arrayBuffer().catch((error) => error);
+
+			await window.happyDOM.close();
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Returns the body of a fully buffered response after the window has been closed.', async () => {
+			const response = new window.Response('Hello World');
+
+			await window.happyDOM.close();
+
+			const arrayBuffer = await response.arrayBuffer();
+			expect(Buffer.from(arrayBuffer).toString()).toBe('Hello World');
+		});
 	});
 
 	describe('blob()', () => {
@@ -193,6 +215,17 @@ describe('Response', () => {
 				}, 50);
 			});
 		});
+
+		it('Rejects with an "AbortError" if the window is closed while reading the body.', async () => {
+			const response = new window.Response(new ReadableStream());
+			const promise = response.blob().catch((error) => error);
+
+			await window.happyDOM.close();
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
 	});
 
 	describe('buffer()', () => {
@@ -236,6 +269,17 @@ describe('Response', () => {
 				}, 50);
 			});
 		});
+
+		it('Rejects with an "AbortError" if the window is closed while reading the body.', async () => {
+			const response = new window.Response(new ReadableStream());
+			const promise = response.buffer().catch((error) => error);
+
+			await window.happyDOM.close();
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
 	});
 
 	describe('text()', () => {
@@ -275,6 +319,106 @@ describe('Response', () => {
 					resolve(null);
 				}, 50);
 			});
+		});
+
+		it('Rejects with an "AbortError" if the window is closed while reading the body.', async () => {
+			const response = new window.Response(new ReadableStream());
+			const promise = response.text().catch((error) => error);
+
+			await window.happyDOM.close();
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+			expect(response.bodyUsed).toBe(true);
+		});
+
+		it('Rejects with an "AbortError" if the window is closed before the stream has ended.', async () => {
+			let streamController: ReadableStreamDefaultController | null = null;
+			const response = new window.Response(
+				new ReadableStream({
+					start(controller) {
+						streamController = controller;
+					}
+				})
+			);
+			const promise = response.text().catch((error) => error);
+			const closePromise = window.happyDOM.close();
+
+			streamController!.close();
+
+			await closePromise;
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Rejects with an "AbortError" if the page is closed while reading the body.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const response = new page.mainFrame.window.Response(new ReadableStream());
+			const promise = response.text().catch((error) => error);
+
+			await page.close();
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Rejects with an "AbortError" if the browser is closed while reading the body.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const response = new page.mainFrame.window.Response(new ReadableStream());
+			const promise = response.text().catch((error) => error);
+
+			await browser.close();
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Rejects with an "AbortError" if the page navigates while reading the body.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const response = new page.mainFrame.window.Response(new ReadableStream());
+			const promise = response.text().catch((error) => error);
+
+			await page.goto('about:blank');
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+
+			await browser.close();
+		});
+
+		it('Rejects with an "AbortError" if the body is streamed and the window has been closed.', async () => {
+			const response = new window.Response(new ReadableStream());
+
+			await window.happyDOM.close();
+
+			const error = await response.text().catch((error) => error);
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Returns the body of a fully buffered response after the window has been closed.', async () => {
+			const response = new window.Response('Hello World');
+
+			await window.happyDOM.close();
+
+			expect(await response.text()).toBe('Hello World');
+		});
+
+		it('Returns an empty string for a response without body after the window has been closed.', async () => {
+			const response = new window.Response(null);
+
+			await window.happyDOM.close();
+
+			expect(await response.text()).toBe('');
 		});
 	});
 
@@ -317,6 +461,17 @@ describe('Response', () => {
 					resolve(null);
 				}, 50);
 			});
+		});
+
+		it('Rejects with an "AbortError" if the window is closed while reading the body.', async () => {
+			const response = new window.Response(new ReadableStream());
+			const promise = response.json().catch((error) => error);
+
+			await window.happyDOM.close();
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 		});
 	});
 
@@ -486,6 +641,47 @@ describe('Response', () => {
 					resolve(null);
 				}, 50);
 			});
+		});
+
+		it('Rejects with an "AbortError" if the window is closed while parsing multipart content.', async () => {
+			const response = new window.Response(new ReadableStream(), {
+				headers: { 'Content-Type': 'multipart/form-data; boundary=test' }
+			});
+			const promise = response.formData().catch((error) => error);
+
+			await window.happyDOM.close();
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
+
+		it('Rejects with an "AbortError" if the page navigates while parsing multipart content.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const response = new page.mainFrame.window.Response(new ReadableStream(), {
+				headers: { 'Content-Type': 'multipart/form-data; boundary=test' }
+			});
+			const promise = response.formData().catch((error) => error);
+
+			await page.goto('about:blank');
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+
+			await browser.close();
+		});
+
+		it('Returns FormData for fully buffered multipart content after the window has been closed.', async () => {
+			const formData = new window.FormData();
+			formData.append('key1', 'value1');
+			const response = new window.Response(formData);
+
+			await window.happyDOM.close();
+
+			const formDataResponse = await response.formData();
+			expect(formDataResponse.get('key1')).toBe('value1');
 		});
 	});
 

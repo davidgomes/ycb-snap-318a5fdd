@@ -1,4 +1,5 @@
 import Window from '../../src/window/Window.js';
+import Browser from '../../src/browser/Browser.js';
 import type Document from '../../src/nodes/document/Document.js';
 import Request from '../../src/fetch/Request.js';
 import URL from '../../src/url/URL.js';
@@ -633,6 +634,20 @@ describe('Request', () => {
 				}, 50);
 			});
 		});
+
+		it('Rejects with an "AbortError" if the window is closed while reading the body.', async () => {
+			const request = new window.Request(TEST_URL, {
+				method: 'POST',
+				body: new ReadableStream()
+			});
+			const promise = request.buffer().catch((error) => error);
+
+			await window.happyDOM.close();
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+		});
 	});
 
 	describe('text()', () => {
@@ -665,6 +680,49 @@ describe('Request', () => {
 					resolve(null);
 				}, 50);
 			});
+		});
+
+		it('Rejects with an "AbortError" if the window is closed while reading the body.', async () => {
+			const request = new window.Request(TEST_URL, {
+				method: 'POST',
+				body: new ReadableStream()
+			});
+			const promise = request.text().catch((error) => error);
+
+			await window.happyDOM.close();
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+			expect(request.signal.aborted).toBe(true);
+		});
+
+		it('Rejects with an "AbortError" if the page navigates while reading the body.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const request = new page.mainFrame.window.Request(TEST_URL, {
+				method: 'POST',
+				body: new ReadableStream()
+			});
+			const promise = request.text().catch((error) => error);
+
+			await page.goto('about:blank');
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
+
+			await browser.close();
+		});
+
+		it('Rejects with an "AbortError" if the window has been closed.', async () => {
+			const request = new window.Request(TEST_URL, { method: 'POST', body: 'Hello World' });
+
+			await window.happyDOM.close();
+
+			const error = await request.text().catch((error) => error);
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 		});
 	});
 
@@ -838,6 +896,21 @@ describe('Request', () => {
 					resolve(null);
 				}, 50);
 			});
+		});
+
+		it('Rejects with an "AbortError" if the window is closed while parsing multipart content.', async () => {
+			const request = new window.Request(TEST_URL, {
+				method: 'POST',
+				body: new ReadableStream()
+			});
+			request[PropertySymbol.contentType] = 'multipart/form-data; boundary=test';
+			const promise = request.formData().catch((error) => error);
+
+			await window.happyDOM.close();
+
+			const error = await promise;
+			expect(error).toBeInstanceOf(DOMException);
+			expect(error.name).toBe(DOMExceptionNameEnum.abortError);
 		});
 	});
 

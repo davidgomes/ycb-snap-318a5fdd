@@ -417,6 +417,31 @@ Task #1
 			expect(page.mainFrame.window).not.toBe(oldWindow);
 		});
 
+		it('Clears timers scheduled by the previous window after it has been replaced.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const oldWindow = page.mainFrame.window;
+			let isTimeoutCalled = false;
+			let isIntervalCalled = false;
+
+			// Child frames are destroyed before the previous window, which keeps it alive for a while after navigating.
+			BrowserFrameFactory.createChildFrame(page.mainFrame);
+
+			const navigation = page.mainFrame.goto('about:blank');
+
+			oldWindow.setTimeout(() => (isTimeoutCalled = true), 20);
+			oldWindow.setInterval(() => (isIntervalCalled = true), 20);
+
+			await navigation;
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			expect(oldWindow.closed).toBe(true);
+			expect(isTimeoutCalled).toBe(false);
+			expect(isIntervalCalled).toBe(false);
+
+			await browser.close();
+		});
+
 		it('Aborts request if it times out.', async () => {
 			const browser = new Browser();
 			const page = browser.newPage();
