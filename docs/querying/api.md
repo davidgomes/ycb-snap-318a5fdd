@@ -1353,6 +1353,42 @@ NOTE: The exact returned runtime properties may change without notice between Pr
 
 *New in v2.14*
 
+### Reload Status
+
+The following endpoint returns the outcome of the most recent configuration
+reload attempt recorded by the experimental
+[transactional reload](../feature_flags.md#transactional-reload-config) mode:
+
+```
+GET /api/v1/status/reload
+```
+
+The outcome is persisted in `reload_status.json` in the storage directory and is
+therefore still reported after a restart. Before any reload attempt was recorded,
+`last_reload_id` is empty and `error_category` is `none`. `error_category` is one
+of `none`, `load_error`, `apply_error` or `rollback_error`.
+
+```bash
+curl http://localhost:9090/api/v1/status/reload
+```
+
+```json
+{
+  "status": "success",
+  "data": {
+    "last_reload_id": "2026-01-02T13:37:00.123456789Z",
+    "last_reload_successful": false,
+    "error_category": "apply_error",
+    "error_message": "failed to apply configuration in reloader \"rules\" ...",
+    "applied_reloaders": ["db_storage", "remote_storage", "web_handler", "query_engine", "scrape", "scrape_sd", "notify", "notify_sd"],
+    "rollback_attempted": true,
+    "rollback_successful": true,
+    "failed_reloader": "rules",
+    "reloader_timings_ms": {"db_storage": 0.01, "rules": 0.4}
+  }
+}
+```
+
 ### Build Information
 
 The following endpoint returns various build information properties about the Prometheus server:
