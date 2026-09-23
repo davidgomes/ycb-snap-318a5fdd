@@ -2,6 +2,7 @@ package tengo
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"github.com/d5/tengo/v2/parser"
@@ -16,8 +17,77 @@ type frame struct {
 	basePointer int
 }
 
+// vmRuntime is the execution environment a compiled function is bound to: the
+// bytecode its instructions refer to and the globals it reads and writes.
+type vmRuntime struct {
+	bytecode  *Bytecode
+	globals   []Object
+	maxAllocs int64
+
+	constantsOnce sync.Once
+	constants     []Object
+}
+
+func newRuntime(bytecode *Bytecode, globals []Object, maxAllocs int64) *vmRuntime {
+	return &vmRuntime{
+		bytecode:  bytecode,
+		globals:   globals,
+		maxAllocs: maxAllocs,
+	}
+}
+
+// boundConstants returns the bytecode constants with every compiled function
+// bound to this runtime. Bound copies are cached so that function identity
+// stays stable across VM runs of the same runtime.
+func (rt *vmRuntime) boundConstants() []Object {
+	rt.constantsOnce.Do(func() {
+		rt.constants = make([]Object, len(rt.bytecode.Constants))
+		for i, c := range rt.bytecode.Constants {
+			if fn, ok := c.(*CompiledFunction); ok {
+				c = &CompiledFunction{
+					Instructions:  fn.Instructions,
+					NumLocals:     fn.NumLocals,
+					NumParameters: fn.NumParameters,
+					VarArgs:       fn.VarArgs,
+					SourceMap:     fn.SourceMap,
+					Free:          fn.Free,
+					rt:            rt,
+				}
+			}
+			rt.constants[i] = c
+		}
+	})
+	return rt.constants
+}
+
+func (rt *vmRuntime) sharesGlobals(globals []Object) bool {
+	return len(rt.globals) > 0 && len(globals) > 0 &&
+		&rt.globals[0] == &globals[0]
+}
+
+// canRunInline reports whether a function bound to other can execute in a VM
+// of rt, i.e. its instructions refer to the same constants and globals.
+func (rt *vmRuntime) canRunInline(other *vmRuntime) bool {
+	return other == nil || other == rt ||
+		(other.bytecode == rt.bytecode && other.sharesGlobals(rt.globals))
+}
+
+// call executes fn in a fresh VM of this runtime.
+func (rt *vmRuntime) call(fn *CompiledFunction, args []Object) (Object, error) {
+	v := newVM(rt, callEntryFunction)
+	return v.runCall(fn, args)
+}
+
+// callEntryFunction calls the function at stack[0] spreading the arguments
+// array at stack[1], so argument checks and variadic packing follow the exact
+// same path as an in-script call.
+var callEntryFunction = &CompiledFunction{
+	Instructions: []byte{parser.OpCall, 1, 1, parser.OpSuspend},
+}
+
 // VM is a virtual machine that executes the bytecode compiled by Compiler.
 type VM struct {
+	rt          *vmRuntime
 	constants   []Object
 	stack       [StackSize]Object
 	sp          int
@@ -43,16 +113,22 @@ func NewVM(
 	if globals == nil {
 		globals = make([]Object, GlobalsSize)
 	}
+	return newVM(newRuntime(bytecode, globals, maxAllocs),
+		bytecode.MainFunction)
+}
+
+func newVM(rt *vmRuntime, mainFn *CompiledFunction) *VM {
 	v := &VM{
-		constants:   bytecode.Constants,
+		rt:          rt,
+		constants:   rt.boundConstants(),
 		sp:          0,
-		globals:     globals,
-		fileSet:     bytecode.FileSet,
+		globals:     rt.globals,
+		fileSet:     rt.bytecode.FileSet,
 		framesIndex: 1,
 		ip:          -1,
-		maxAllocs:   maxAllocs,
+		maxAllocs:   rt.maxAllocs,
 	}
-	v.frames[0].fn = bytecode.MainFunction
+	v.frames[0].fn = mainFn
 	v.frames[0].ip = -1
 	v.curFrame = &v.frames[0]
 	v.curInsts = v.curFrame.fn.Instructions
@@ -76,22 +152,49 @@ func (v *VM) Run() (err error) {
 
 	v.run()
 	atomic.StoreInt64(&v.aborting, 0)
-	err = v.err
-	if err != nil {
-		filePos := v.fileSet.Position(
-			v.curFrame.fn.SourcePos(v.ip - 1))
-		err = fmt.Errorf("Runtime Error: %w\n\tat %s",
-			err, filePos)
-		for v.framesIndex > 1 {
-			v.framesIndex--
-			v.curFrame = &v.frames[v.framesIndex-1]
-			filePos = v.fileSet.Position(
-				v.curFrame.fn.SourcePos(v.curFrame.ip - 1))
-			err = fmt.Errorf("%w\n\tat %s", err, filePos)
-		}
-		return err
+	if v.err != nil {
+		return v.runtimeError(0)
 	}
 	return nil
+}
+
+// runCall executes fn with args from Go and returns its return value.
+func (v *VM) runCall(fn *CompiledFunction, args []Object) (Object, error) {
+	v.stack[0] = fn
+	v.stack[1] = &Array{Value: args}
+	v.sp = 2
+	v.curFrame = &(v.frames[0])
+	v.curInsts = v.curFrame.fn.Instructions
+	v.framesIndex = 1
+	v.ip = -1
+	v.allocs = v.maxAllocs + 1
+
+	v.run()
+	atomic.StoreInt64(&v.aborting, 0)
+	if v.err != nil {
+		// the entry frame has no source position; leave it out of the trace
+		return nil, v.runtimeError(1)
+	}
+	return v.stack[v.sp-1], nil
+}
+
+// runtimeError formats v.err with the source positions of the active call
+// frames, excluding the bottom numHidden frames.
+func (v *VM) runtimeError(numHidden int) error {
+	if v.framesIndex <= numHidden {
+		return fmt.Errorf("Runtime Error: %w", v.err)
+	}
+	filePos := v.fileSet.Position(
+		v.curFrame.fn.SourcePos(v.ip - 1))
+	err := fmt.Errorf("Runtime Error: %w\n\tat %s", v.err, filePos)
+	for v.framesIndex > numHidden+1 {
+		v.framesIndex--
+		v.curFrame = &v.frames[v.framesIndex-1]
+		filePos = v.fileSet.Position(
+			v.curFrame.fn.SourcePos(v.curFrame.ip - 1))
+		err = fmt.Errorf("%w\n\tat %s", err, filePos)
+	}
+	return err
 }
 
 func (v *VM) run() {
@@ -570,7 +673,8 @@ func (v *VM) run() {
 				}
 			}
 
-			if callee, ok := value.(*CompiledFunction); ok {
+			if callee, ok := value.(*CompiledFunction); ok &&
+				v.rt.canRunInline(callee.rt) {
 				if callee.VarArgs {
 					// if the closure is variadic,
 					// roll up all variadic parameters into an array
@@ -772,6 +876,7 @@ func (v *VM) run() {
 				VarArgs:       fn.VarArgs,
 				SourceMap:     fn.SourceMap,
 				Free:          free,
+				rt:            v.rt,
 			}
 			v.allocs--
 			if v.allocs == 0 {

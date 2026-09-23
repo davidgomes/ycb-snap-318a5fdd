@@ -133,12 +133,19 @@ func (s *Script) Compile() (*Compiled, error) {
 			return nil, fmt.Errorf("exceeding constant objects limit: %d", cnt)
 		}
 	}
-	return &Compiled{
+	compiled := &Compiled{
 		globalIndexes: globalIndexes,
 		bytecode:      bytecode,
 		globals:       globals,
 		maxAllocs:     s.maxAllocs,
-	}, nil
+	}
+	compiled.rt = newRuntime(bytecode, globals, s.maxAllocs)
+	for idx, g := range globals {
+		if g != nil {
+			globals[idx] = compiled.importObject(g)
+		}
+	}
+	return compiled, nil
 }
 
 // Run compiles and runs the scripts. Use returned compiled object to access
@@ -200,6 +207,12 @@ type Compiled struct {
 	globals       []Object
 	maxAllocs     int64
 	lock          sync.RWMutex
+
+	// rt binds functions created by this instance to its globals.
+	rt *vmRuntime
+	// foreignRuntimes bind functions transferred from instances with a
+	// different bytecode to this instance's globals, keyed by that bytecode.
+	foreignRuntimes map[*Bytecode]*vmRuntime
 }
 
 // Run executes the compiled script in the virtual machine.
@@ -207,7 +220,7 @@ func (c *Compiled) Run() error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	v := newVM(c.rt, c.bytecode.MainFunction)
 	return v.Run()
 }
 
@@ -216,7 +229,7 @@ func (c *Compiled) RunContext(ctx context.Context) (err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	v := newVM(c.rt, c.bytecode.MainFunction)
 	ch := make(chan error, 1)
 	go func() {
 		defer func() {
@@ -265,13 +278,197 @@ func (c *Compiled) Clone() *Compiled {
 		globals:       make([]Object, len(c.globals)),
 		maxAllocs:     c.maxAllocs,
 	}
+	clone.rt = newRuntime(c.bytecode, clone.globals, c.maxAllocs)
 	// copy global objects
+	t := newTransfer(clone)
 	for idx, g := range c.globals {
 		if g != nil {
-			clone.globals[idx] = g.Copy()
+			clone.globals[idx] = t.object(g)
 		}
 	}
 	return clone
+}
+
+// runtimeFor returns the runtime that binds functions compiled into bytecode
+// to the globals of c.
+func (c *Compiled) runtimeFor(bytecode *Bytecode) *vmRuntime {
+	if bytecode == c.bytecode {
+		return c.rt
+	}
+	if rt, ok := c.foreignRuntimes[bytecode]; ok {
+		return rt
+	}
+	if c.foreignRuntimes == nil {
+		c.foreignRuntimes = make(map[*Bytecode]*vmRuntime)
+	}
+	rt := newRuntime(bytecode, c.globals, c.maxAllocs)
+	c.foreignRuntimes[bytecode] = rt
+	return rt
+}
+
+// importObject prepares a value to be stored in the globals of c. Values that
+// reach functions bound to another instance are deep-copied so that those
+// functions are rebound to c and their captured variables are snapshotted;
+// all other values are stored as they are.
+func (c *Compiled) importObject(o Object) Object {
+	if !reachesForeignFunction(o, c.globals, make(map[Object]bool)) {
+		return o
+	}
+	return newTransfer(c).object(o)
+}
+
+func reachesForeignFunction(
+	o Object,
+	globals []Object,
+	visited map[Object]bool,
+) bool {
+	switch o.(type) {
+	case *CompiledFunction, *Array, *ImmutableArray, *Map, *ImmutableMap,
+		*Error:
+		if visited[o] {
+			return false
+		}
+		visited[o] = true
+	}
+	switch o := o.(type) {
+	case *CompiledFunction:
+		if o.rt != nil && !o.rt.sharesGlobals(globals) {
+			return true
+		}
+		for _, p := range o.Free {
+			if p != nil && p.Value != nil &&
+				reachesForeignFunction(*p.Value, globals, visited) {
+				return true
+			}
+		}
+	case *Array:
+		for _, e := range o.Value {
+			if reachesForeignFunction(e, globals, visited) {
+				return true
+			}
+		}
+	case *ImmutableArray:
+		for _, e := range o.Value {
+			if reachesForeignFunction(e, globals, visited) {
+				return true
+			}
+		}
+	case *Map:
+		for _, e := range o.Value {
+			if reachesForeignFunction(e, globals, visited) {
+				return true
+			}
+		}
+	case *ImmutableMap:
+		for _, e := range o.Value {
+			if reachesForeignFunction(e, globals, visited) {
+				return true
+			}
+		}
+	case *Error:
+		return reachesForeignFunction(o.Value, globals, visited)
+	}
+	return false
+}
+
+// transfer deep-copies values into a destination Compiled. Functions bound to
+// another instance are rebound to the destination globals, and their captured
+// variables are copied as they are at transfer time. Shared captures, shared
+// containers and cycles are preserved within a single transfer.
+type transfer struct {
+	dst    *Compiled
+	copies map[Object]Object
+}
+
+func newTransfer(dst *Compiled) *transfer {
+	return &transfer{dst: dst, copies: make(map[Object]Object)}
+}
+
+func (t *transfer) object(o Object) Object {
+	if o == nil {
+		return nil
+	}
+	switch o.(type) {
+	case *CompiledFunction, *Array, *ImmutableArray, *Map, *ImmutableMap,
+		*Error:
+		if c, ok := t.copies[o]; ok {
+			return c
+		}
+	}
+	switch o := o.(type) {
+	case *CompiledFunction:
+		if o.rt == nil {
+			return o.Copy()
+		}
+		if o.rt.sharesGlobals(t.dst.globals) {
+			return o
+		}
+		fn := &CompiledFunction{
+			Instructions:  o.Instructions,
+			NumLocals:     o.NumLocals,
+			NumParameters: o.NumParameters,
+			VarArgs:       o.VarArgs,
+			SourceMap:     o.SourceMap,
+			Free:          make([]*ObjectPtr, len(o.Free)),
+			rt:            t.dst.runtimeFor(o.rt.bytecode),
+		}
+		t.copies[o] = fn
+		for i, p := range o.Free {
+			fn.Free[i] = t.freeVar(p)
+		}
+		return fn
+	case *Array:
+		arr := &Array{Value: make([]Object, len(o.Value))}
+		t.copies[o] = arr
+		for i, e := range o.Value {
+			arr.Value[i] = t.object(e)
+		}
+		return arr
+	case *ImmutableArray:
+		arr := &ImmutableArray{Value: make([]Object, len(o.Value))}
+		t.copies[o] = arr
+		for i, e := range o.Value {
+			arr.Value[i] = t.object(e)
+		}
+		return arr
+	case *Map:
+		m := &Map{Value: make(map[string]Object, len(o.Value))}
+		t.copies[o] = m
+		for k, e := range o.Value {
+			m.Value[k] = t.object(e)
+		}
+		return m
+	case *ImmutableMap:
+		m := &ImmutableMap{Value: make(map[string]Object, len(o.Value))}
+		t.copies[o] = m
+		for k, e := range o.Value {
+			m.Value[k] = t.object(e)
+		}
+		return m
+	case *Error:
+		e := &Error{}
+		t.copies[o] = e
+		e.Value = t.object(o.Value)
+		return e
+	default:
+		return o.Copy()
+	}
+}
+
+func (t *transfer) freeVar(p *ObjectPtr) *ObjectPtr {
+	if p == nil {
+		return nil
+	}
+	if c, ok := t.copies[p]; ok {
+		return c.(*ObjectPtr)
+	}
+	var val Object
+	np := &ObjectPtr{Value: &val}
+	t.copies[p] = np
+	if p.Value != nil {
+		val = t.object(*p.Value)
+	}
+	return np
 }
 
 // IsDefined returns true if the variable name is defined (has value) before or
@@ -342,6 +539,6 @@ func (c *Compiled) Set(name string, value interface{}) error {
 	if !ok {
 		return fmt.Errorf("'%s' is not defined", name)
 	}
-	c.globals[idx] = obj
+	c.globals[idx] = c.importObject(obj)
 	return nil
 }

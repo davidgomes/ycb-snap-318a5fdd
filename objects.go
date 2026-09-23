@@ -576,6 +576,20 @@ type CompiledFunction struct {
 	VarArgs       bool
 	SourceMap     map[int]parser.Pos
 	Free          []*ObjectPtr
+	rt            *vmRuntime
+}
+
+// Call executes the function from Go with the globals, constants and captured
+// variables of the compiled script it belongs to. The function must have been
+// produced by a VM (e.g. obtained from a compiled script's globals, a module
+// export, or a callback argument).
+func (o *CompiledFunction) Call(args ...Object) (Object, error) {
+	if o.rt == nil {
+		return nil, fmt.Errorf(
+			"%w: compiled function is not bound to a runtime",
+			ErrNotImplemented)
+	}
+	return o.rt.call(o, args)
 }
 
 // TypeName returns the name of the type.
@@ -600,7 +614,9 @@ func (o *CompiledFunction) Copy() Object {
 		NumLocals:     o.NumLocals,
 		NumParameters: o.NumParameters,
 		VarArgs:       o.VarArgs,
+		SourceMap:     o.SourceMap,
 		Free:          append([]*ObjectPtr{}, o.Free...), // DO NOT Copy() of elements; these are variable pointers
+		rt:            o.rt,
 	}
 }
 
