@@ -2,11 +2,12 @@ import asyncio
 import json
 import logging
 from contextlib import suppress
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 from graphql import ExecutionResult
 
 from ..graphql_request import GraphQLRequest
+from ..incremental import IncrementalExecutionResult, is_incremental_payload
 from .common.adapters.connection import AdapterConnection
 from .common.base import SubscriptionTransportBase
 from .exceptions import (
@@ -17,6 +18,26 @@ from .exceptions import (
 )
 
 log = logging.getLogger("gql.transport.websockets")
+
+
+def _payload_to_execution_result(payload: Dict[str, Any]) -> ExecutionResult:
+    """Convert the payload of a data message to an ExecutionResult.
+
+    Payloads of an incremental delivery (@defer and @stream) are converted
+    to an IncrementalExecutionResult instead.
+    """
+
+    if is_incremental_payload(payload):
+        return IncrementalExecutionResult.from_payload(payload)
+
+    if "errors" not in payload and "data" not in payload:
+        raise ValueError("payload does not contain 'data' or 'errors' fields")
+
+    return ExecutionResult(
+        errors=payload.get("errors"),
+        data=payload.get("data"),
+        extensions=payload.get("extensions"),
+    )
 
 
 class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
@@ -256,6 +277,26 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
         if self.subprotocol == self.APOLLO_SUBPROTOCOL:
             await self._send_connection_terminate_message()
 
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+    ) -> AsyncGenerator[ExecutionResult, None]:
+        """Execute a request which may contain :code:`@defer` or :code:`@stream`
+        directives and yield each payload received from the server
+        until the operation is complete.
+
+        Don't call this method directly on the transport, instead use
+        :code:`execute_incremental` on a session.
+        """
+
+        generator = self.subscribe(request)
+
+        try:
+            async for result in generator:
+                yield result
+        finally:
+            await generator.aclose()
+
     def _parse_answer_graphqlws(
         self, json_answer: Dict[str, Any]
     ) -> Tuple[str, Optional[int], Optional[ExecutionResult]]:
@@ -297,16 +338,7 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
                         if not isinstance(payload, dict):
                             raise ValueError("payload is not a dict")
 
-                        if "errors" not in payload and "data" not in payload:
-                            raise ValueError(
-                                "payload does not contain 'data' or 'errors' fields"
-                            )
-
-                        execution_result = ExecutionResult(
-                            errors=payload.get("errors"),
-                            data=payload.get("data"),
-                            extensions=payload.get("extensions"),
-                        )
+                        execution_result = _payload_to_execution_result(payload)
 
                         # Saving answer_type as 'data' to be understood with superclass
                         answer_type = "data"
@@ -368,16 +400,7 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
 
                     if answer_type == "data":
 
-                        if "errors" not in payload and "data" not in payload:
-                            raise ValueError(
-                                "payload does not contain 'data' or 'errors' fields"
-                            )
-
-                        execution_result = ExecutionResult(
-                            errors=payload.get("errors"),
-                            data=payload.get("data"),
-                            extensions=payload.get("extensions"),
-                        )
+                        execution_result = _payload_to_execution_result(payload)
 
                     elif answer_type == "error":
 
