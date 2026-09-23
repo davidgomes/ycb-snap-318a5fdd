@@ -306,9 +306,7 @@ function activate(group: ToolbarGroup, toolbar: Toolbar) {
   if (!isLive(toolbar)) return;
   group.active = toolbar;
   prune(group);
-  const fileInput = group.container.querySelector(
-    'input.ql-image[type=file]',
-  );
+  const fileInput = group.container.querySelector('input.ql-image[type=file]');
   const uploader = (toolbar.quill as any).uploader;
   if (fileInput != null && uploader?.options?.mimetypes) {
     fileInput.setAttribute('accept', uploader.options.mimetypes.join(', '));
