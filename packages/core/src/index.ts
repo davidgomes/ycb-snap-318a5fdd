@@ -27,6 +27,7 @@ export type {
 } from './query/types';
 export { $queryRef } from './query/symbols';
 export { relation } from './relation/relation';
+export type { Deferred } from './world/deferred';
 /** @experimental This API is experimental and may change or be removed in future versions. */
 export { ordered } from './relation/ordered';
 /** @experimental This API is experimental and may change or be removed in future versions. */

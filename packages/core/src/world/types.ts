@@ -2,6 +2,7 @@ import { ActionInstance } from '../actions/types';
 import type { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
+import type { Deferred, DeferredBuffer } from './deferred';
 import type {
     Query,
     QueryInstance,
@@ -43,6 +44,7 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    deferredStack: DeferredBuffer[];
 };
 
 export type World = {
@@ -50,6 +52,7 @@ export type World = {
     readonly isInitialized: boolean;
     readonly entities: Entity[];
     readonly traits: Set<Trait>;
+    readonly deferred: Deferred;
     [$internal]: WorldInternal;
     init(...traits: ConfigurableTrait[]): void;
     spawn(...traits: ConfigurableTrait[]): Entity;

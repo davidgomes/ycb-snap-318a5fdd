@@ -10,6 +10,7 @@ import type { Relation, RelationPair } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
 import { addTrait, getTrait, hasTrait, removeTrait, setTrait } from '../trait/trait';
 import type { ConfigurableTrait, Trait } from '../trait/types';
+import { deferredGet, deferredHas, flushEntity, hasPendingCommands } from '../world/deferred';
 import { destroyEntity, getEntityWorld } from './entity';
 import type { Entity } from './types';
 import { isEntityAlive } from './utils/entity-index';
@@ -17,24 +18,33 @@ import { getEntityGeneration, getEntityId } from './utils/pack-entity';
 
 // @ts-expect-error
 Number.prototype.add = function (this: Entity, ...traits: ConfigurableTrait[]) {
-    return addTrait(getEntityWorld(this), this, ...traits);
+    const world = getEntityWorld(this);
+    if (world[$internal].deferredStack.length && hasPendingCommands(world, this)) flushEntity(world, this);
+    return addTrait(world, this, ...traits);
 };
 
 // @ts-expect-error
 Number.prototype.remove = function (this: Entity, ...traits: (Trait | RelationPair)[]) {
-    return removeTrait(getEntityWorld(this), this, ...traits);
+    const world = getEntityWorld(this);
+    if (world[$internal].deferredStack.length && hasPendingCommands(world, this)) flushEntity(world, this);
+    return removeTrait(world, this, ...traits);
 };
 
 // @ts-expect-error
 Number.prototype.has = function (this: Entity, trait: Trait | RelationPair) {
     const world = getEntityWorld(this);
+    if (world[$internal].deferredStack.length && hasPendingCommands(world, this)) {
+        return deferredHas(world, this, trait);
+    }
     if (isRelationPair(trait)) return hasRelationPair(world, this, trait);
     return /* @inline @pure */ hasTrait(world, this, trait);
 };
 
 // @ts-expect-error
 Number.prototype.destroy = function (this: Entity) {
-    return destroyEntity(getEntityWorld(this), this);
+    const world = getEntityWorld(this);
+    if (world[$internal].deferredStack.length && hasPendingCommands(world, this)) flushEntity(world, this);
+    return destroyEntity(world, this);
 };
 
 // @ts-expect-error
@@ -44,7 +54,11 @@ Number.prototype.changed = function (this: Entity, trait: Trait) {
 
 // @ts-expect-error
 Number.prototype.get = function (this: Entity, trait: Trait | RelationPair) {
-    return getTrait(getEntityWorld(this), this, trait);
+    const world = getEntityWorld(this);
+    if (world[$internal].deferredStack.length && hasPendingCommands(world, this)) {
+        return deferredGet(world, this, trait);
+    }
+    return getTrait(world, this, trait);
 };
 
 // @ts-expect-error
@@ -54,7 +68,9 @@ Number.prototype.set = function (
     value: any,
     triggerChanged = true
 ) {
-    setTrait(getEntityWorld(this), this, trait, value, triggerChanged);
+    const world = getEntityWorld(this);
+    if (world[$internal].deferredStack.length && hasPendingCommands(world, this)) flushEntity(world, this);
+    setTrait(world, this, trait, value, triggerChanged);
 };
 
 //@ts-expect-error

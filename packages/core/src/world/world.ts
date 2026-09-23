@@ -22,6 +22,7 @@ import type {
     TraitValue,
 } from '../trait/types';
 import { universe } from '../universe/universe';
+import { createDeferred } from './deferred';
 import type { World, WorldInternal, WorldOptions } from './types';
 import { allocateWorldId, releaseWorldId } from './utils/world-index';
 
@@ -54,6 +55,7 @@ export function createWorld(
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
+            deferredStack: [],
         } as WorldInternal,
 
         traits: new Set<Trait>(),
@@ -125,6 +127,7 @@ export function createWorld(
         reset() {
             lazyTraits = undefined;
             const ctx = world[$internal];
+            ctx.deferredStack.length = 0;
 
             // Destroy all entities so any cleanup is done.
             world.entities.forEach((entity) => {
@@ -352,6 +355,12 @@ export function createWorld(
             };
         },
     } as World;
+
+    const deferred = createDeferred(world);
+    Object.defineProperty(world, 'deferred', {
+        get: () => deferred,
+        enumerable: true,
+    });
 
     // Read-only properties via getters
     Object.defineProperty(world, 'id', {

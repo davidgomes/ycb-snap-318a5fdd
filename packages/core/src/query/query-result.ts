@@ -8,6 +8,7 @@ import { getStore } from '../trait/trait';
 import type { Trait } from '../trait/types';
 import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
+import { popDeferredScope, pushDeferredScope } from '../world/deferred';
 import { isModifier } from './modifier';
 import { setChanged } from './modifiers/changed';
 import type {
@@ -192,6 +193,16 @@ export function createQueryResult<T extends QueryParameter[]>(
             return results;
         },
     });
+
+    const updateEach = results.updateEach;
+    results.updateEach = function (this: typeof results, callback, options) {
+        pushDeferredScope(world);
+        try {
+            return updateEach.call(this, callback, options);
+        } finally {
+            popDeferredScope(world);
+        }
+    };
 
     return results;
 }
