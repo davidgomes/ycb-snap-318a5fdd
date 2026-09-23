@@ -11,6 +11,7 @@ mod fmt;
 mod hyperlink;
 mod output;
 mod regex_helper;
+mod sort;
 mod walk;
 
 use std::env;
@@ -325,6 +326,21 @@ fn construct_config(mut opts: Opts, pattern_regexps: &[String]) -> Result<Config
         path_separator,
         actual_path_separator,
         max_results: opts.max_results(),
+        sort: (!opts.sort.is_empty()).then(|| sort::SortConfig {
+            keys: opts.sort.clone(),
+            reverse: opts.reverse,
+            dirs_first: opts.dirs_first,
+            files_first: opts.files_first,
+            case_sensitive: opts.sort_case_sensitive,
+            missing_last: opts.sort_missing_last,
+            natural: opts.sort_natural,
+            seed: opts.sort_seed.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0)
+            }),
+        }),
         strip_cwd_prefix: opts.strip_cwd_prefix(|| !(opts.null_separator || has_command)),
         ignore_contain: opts.ignore_contain,
     })

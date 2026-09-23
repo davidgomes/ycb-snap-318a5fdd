@@ -125,6 +125,9 @@ pub struct Config {
     /// The maximum number of search results
     pub max_results: Option<usize>,
 
+    /// Sorting options, if `--sort` was given
+    pub sort: Option<crate::sort::SortConfig>,
+
     /// Whether or not to strip the './' prefix for search results
     pub strip_cwd_prefix: bool,
 

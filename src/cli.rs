@@ -14,6 +14,7 @@ use normpath::PathExt;
 use crate::error::print_error;
 use crate::exec::CommandSet;
 use crate::filesystem;
+pub use crate::sort::SortKey;
 #[cfg(unix)]
 use crate::filter::OwnerFilter;
 use crate::filter::SizeFilter;
@@ -27,7 +28,8 @@ use crate::filter::SizeFilter;
     max_term_width = 98,
     args_override_self = true,
     group(ArgGroup::new("execs").args(&["exec", "exec_batch", "list_details"]).conflicts_with_all(&[
-            "max_results", "quiet", "max_one_result"])),
+            "max_results", "quiet", "max_one_result", "sort", "reverse", "dirs_first", "files_first",
+            "sort_case_sensitive", "sort_missing_last", "sort_natural", "sort_seed"])),
 )]
 pub struct Opts {
     /// Include hidden directories and files in the search results (default:
@@ -565,6 +567,51 @@ pub struct Opts {
         long_help
     )]
     max_one_result: bool,
+
+    /// Sort the search results by the given field. Can be repeated; later keys
+    /// break ties from earlier keys. Remaining ties are broken by path.
+    #[arg(
+        long,
+        value_name = "field",
+        action = ArgAction::Append,
+        hide_short_help = true,
+        help = "Sort results by the given field (repeatable)",
+        long_help
+    )]
+    pub sort: Vec<SortKey>,
+
+    /// Reverse the final sorted order.
+    #[arg(long, requires = "sort", hide_short_help = true)]
+    pub reverse: bool,
+
+    /// List directories before all other entries.
+    #[arg(
+        long,
+        requires = "sort",
+        conflicts_with = "files_first",
+        hide_short_help = true
+    )]
+    pub dirs_first: bool,
+
+    /// List regular files before all other entries.
+    #[arg(long, requires = "sort", hide_short_help = true)]
+    pub files_first: bool,
+
+    /// Compare text sort fields case-sensitively.
+    #[arg(long, requires = "sort", hide_short_help = true)]
+    pub sort_case_sensitive: bool,
+
+    /// Place entries with missing sort values last.
+    #[arg(long, requires = "sort", hide_short_help = true)]
+    pub sort_missing_last: bool,
+
+    /// Compare embedded digit runs in text sort fields numerically.
+    #[arg(long, requires = "sort", hide_short_help = true)]
+    pub sort_natural: bool,
+
+    /// Seed for '--sort random', making the shuffle reproducible.
+    #[arg(long, value_name = "n", requires = "sort", hide_short_help = true)]
+    pub sort_seed: Option<u64>,
 
     /// When the flag is present, the program does not print anything and will
     /// return with an exit code of 0 if there is at least one match. Otherwise, the

@@ -205,6 +205,11 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                                 return Err(ExitCode::HasResults(true));
                             }
 
+                            if self.config.sort.is_some() {
+                                self.buffer.push(dir_entry);
+                                continue;
+                            }
+
                             match self.mode {
                                 ReceiverMode::Buffering => {
                                     self.buffer.push(dir_entry);
@@ -238,7 +243,11 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                self.stream()?;
+                if self.config.sort.is_some() {
+                    self.mode = ReceiverMode::Streaming;
+                } else {
+                    self.stream()?;
+                }
             }
             Err(RecvTimeoutError::Disconnected) => {
                 return self.stop();
@@ -280,7 +289,12 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
 
     /// Stop looping.
     fn stop(&mut self) -> Result<(), ExitCode> {
-        if self.mode == ReceiverMode::Buffering {
+        if let Some(sort) = &self.config.sort {
+            let buffer = mem::take(&mut self.buffer);
+            self.buffer = sort.sort(buffer, self.config.max_results);
+            self.num_results = self.buffer.len();
+            self.stream()?;
+        } else if self.mode == ReceiverMode::Buffering {
             self.buffer.sort();
             self.stream()?;
         }
