@@ -51,6 +51,11 @@ func WalkerForDocComment(v DocCommentVisitor) linter.FileWalker {
 	return &docCommentWalker{visitor: v}
 }
 
+// WalkerForDocLink returns file walker implementation for DocLinkVisitor.
+func WalkerForDocLink(v DocLinkVisitor) linter.FileWalker {
+	return &docLinkWalker{visitor: v}
+}
+
 // WalkerForLocalDef returns file walker implementation for LocalDefVisitor.
 func WalkerForLocalDef(v LocalDefVisitor, info *types.Info) linter.FileWalker {
 	return &localDefWalker{visitor: v, info: info}
