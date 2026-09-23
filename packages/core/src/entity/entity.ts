@@ -12,8 +12,16 @@ import { getEntityId, getEntityWorldId } from './utils/pack-entity';
 import './entity-methods-patch';
 
 export function createEntity(world: World, ...traits: ConfigurableTrait[]): Entity {
+    const entity = allocateEntity(world[$internal].entityIndex);
+    initEntity(world, entity, ...traits);
+    return entity;
+}
+
+/**
+ * Registers an allocated entity with the world's queries and adds its traits.
+ */
+export function initEntity(world: World, entity: Entity, ...traits: ConfigurableTrait[]) {
     const ctx = world[$internal];
-    const entity = allocateEntity(ctx.entityIndex);
 
     for (const query of ctx.notQueries) {
         const match = query.check(world, entity);
@@ -24,8 +32,6 @@ export function createEntity(world: World, ...traits: ConfigurableTrait[]): Enti
 
     ctx.entityTraits.set(entity, new Set());
     addTrait(world, entity, ...traits);
-
-    return entity;
 }
 
 const cachedSet = new Set<Entity>();

@@ -1,4 +1,5 @@
 import { $internal } from '../common';
+import { acquireCommandBuffer, createDeferred, resetDeferredScopes } from '../deferred/deferred';
 import { createEntity, destroyEntity } from '../entity/entity';
 import type { Entity } from '../entity/types';
 import { createEntityIndex, getAliveEntities, isEntityAlive } from '../entity/utils/entity-index';
@@ -54,6 +55,7 @@ export function createWorld(
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
+            deferredScopes: [acquireCommandBuffer()],
         } as WorldInternal,
 
         traits: new Set<Trait>(),
@@ -125,6 +127,8 @@ export function createWorld(
         reset() {
             lazyTraits = undefined;
             const ctx = world[$internal];
+
+            resetDeferredScopes(world);
 
             // Destroy all entities so any cleanup is done.
             world.entities.forEach((entity) => {
@@ -201,7 +205,7 @@ export function createWorld(
                             relation as Relation<Trait>,
                             target as Entity
                         );
-                        return createRelationOnlyQueryResult(entities.slice() as Entity[]);
+                        return createRelationOnlyQueryResult(world, entities.slice() as Entity[]);
                     }
                 }
 
@@ -364,6 +368,10 @@ export function createWorld(
     });
     Object.defineProperty(world, 'entities', {
         get: () => getAliveEntities(world[$internal].entityIndex),
+        enumerable: true,
+    });
+    Object.defineProperty(world, 'deferred', {
+        value: createDeferred(world),
         enumerable: true,
     });
 

@@ -1,5 +1,6 @@
 import { ActionInstance } from '../actions/types';
 import type { $internal } from '../common';
+import type { CommandBuffer, DeferredCommands } from '../deferred/types';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
 import type {
@@ -43,6 +44,8 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    /** Deferred command buffers. The first is the root, each `updateEach` pushes another. */
+    deferredScopes: CommandBuffer[];
 };
 
 export type World = {
@@ -50,6 +53,8 @@ export type World = {
     readonly isInitialized: boolean;
     readonly entities: Entity[];
     readonly traits: Set<Trait>;
+    /** Batches structural changes and executes them on flush or when `updateEach` exits. */
+    readonly deferred: DeferredCommands;
     [$internal]: WorldInternal;
     init(...traits: ConfigurableTrait[]): void;
     spawn(...traits: ConfigurableTrait[]): Entity;

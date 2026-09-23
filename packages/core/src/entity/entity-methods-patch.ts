@@ -4,6 +4,12 @@
 // that the methods are only called on entities.
 
 import { $internal } from '../common';
+import {
+    flushPendingCommandsFor,
+    hasPendingCommands,
+    previewGet,
+    previewHas,
+} from '../deferred/deferred';
 import { setChanged } from '../query/modifiers/changed';
 import { getFirstRelationTarget, getRelationTargets, hasRelationPair } from '../relation/relation';
 import type { Relation, RelationPair } from '../relation/types';
@@ -17,24 +23,31 @@ import { getEntityGeneration, getEntityId } from './utils/pack-entity';
 
 // @ts-expect-error
 Number.prototype.add = function (this: Entity, ...traits: ConfigurableTrait[]) {
-    return addTrait(getEntityWorld(this), this, ...traits);
+    const world = getEntityWorld(this);
+    flushPendingCommandsFor(world, this);
+    return addTrait(world, this, ...traits);
 };
 
 // @ts-expect-error
 Number.prototype.remove = function (this: Entity, ...traits: (Trait | RelationPair)[]) {
-    return removeTrait(getEntityWorld(this), this, ...traits);
+    const world = getEntityWorld(this);
+    flushPendingCommandsFor(world, this);
+    return removeTrait(world, this, ...traits);
 };
 
 // @ts-expect-error
 Number.prototype.has = function (this: Entity, trait: Trait | RelationPair) {
     const world = getEntityWorld(this);
+    if (hasPendingCommands(world)) return previewHas(world, this, trait);
     if (isRelationPair(trait)) return hasRelationPair(world, this, trait);
     return /* @inline @pure */ hasTrait(world, this, trait);
 };
 
 // @ts-expect-error
 Number.prototype.destroy = function (this: Entity) {
-    return destroyEntity(getEntityWorld(this), this);
+    const world = getEntityWorld(this);
+    flushPendingCommandsFor(world, this);
+    return destroyEntity(world, this);
 };
 
 // @ts-expect-error
@@ -44,7 +57,9 @@ Number.prototype.changed = function (this: Entity, trait: Trait) {
 
 // @ts-expect-error
 Number.prototype.get = function (this: Entity, trait: Trait | RelationPair) {
-    return getTrait(getEntityWorld(this), this, trait);
+    const world = getEntityWorld(this);
+    if (hasPendingCommands(world)) return previewGet(world, this, trait);
+    return getTrait(world, this, trait);
 };
 
 // @ts-expect-error
@@ -54,7 +69,9 @@ Number.prototype.set = function (
     value: any,
     triggerChanged = true
 ) {
-    setTrait(getEntityWorld(this), this, trait, value, triggerChanged);
+    const world = getEntityWorld(this);
+    flushPendingCommandsFor(world, this);
+    setTrait(world, this, trait, value, triggerChanged);
 };
 
 //@ts-expect-error

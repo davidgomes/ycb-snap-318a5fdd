@@ -1,6 +1,7 @@
 export { createActions } from './actions/create-actions';
 export type { Actions, ActionsInitializer, ActionRecord } from './actions/types';
 export { $internal } from './common';
+export type { DeferredCommands } from './deferred/types';
 export type { Entity } from './entity/types';
 export { unpackEntity } from './entity/utils/pack-entity';
 export { createAdded } from './query/modifiers/added';
