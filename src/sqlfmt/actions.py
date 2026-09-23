@@ -164,6 +164,46 @@ def handle_semicolon(
     )
 
 
+def handle_create_table(
+    analyzer: "Analyzer",
+    source_string: str,
+    match: re.Match,
+) -> None:
+    """Lex a parenthesized CREATE TABLE with DDL rules.
+
+    CREATE TABLE AS SELECT and CREATE TABLE ... LIKE keep the unsupported
+    pass-through behavior.
+    """
+    from sqlfmt.rules.ddl import DDL
+    from sqlfmt.rules.unsupported import UNSUPPORTED
+
+    keyword_end = match.end(1)
+    if _is_parenthesized_create_table(source_string, keyword_end):
+        lex_ruleset(analyzer, source_string, match, DDL)
+    else:
+        lex_ruleset(analyzer, source_string, match, UNSUPPORTED)
+
+
+def _is_parenthesized_create_table(source_string: str, pos: int) -> bool:
+    ws = r"(?:(?:\s|--[^\n]*|/\*.*?\*/|#[^\n]*)*)"
+    name = (
+        r"(?:\{\{.*?\}\}|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`"
+        r"|\[[^\]]+\]|[A-Za-z_][\w$]*)"
+    )
+    qualified = rf"{name}(?:{ws}\.{ws}{name})*"
+    matched = re.match(ws + qualified + ws, source_string[pos:], re.IGNORECASE | re.DOTALL)
+    if not matched:
+        return False
+    rest = source_string[pos + matched.end() :]
+    if re.match(r"(?:as|like)\b", rest, re.IGNORECASE):
+        return False
+    if not rest.startswith("("):
+        return False
+    if re.match(ws + r"like\b", rest[1:], re.IGNORECASE | re.DOTALL):
+        return False
+    return True
+
+
 def handle_ddl_as(
     analyzer: "Analyzer",
     source_string: str,

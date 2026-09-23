@@ -39,6 +39,13 @@ ALTER_DROP_FUNCTION = r"(alter|drop)\s+function(\s+if\s+exists)?"
 CREATE_WAREHOUSE = r"create(\s+or\s+replace)?\s+warehouse(\s+if\s+not\s+exists)?"
 ALTER_WAREHOUSE = r"alter\s+warehouse(\s+if\s+exists)?"
 
+CREATE_TABLE = (
+    r"create(?:\s+or\s+replace)?"
+    r"(?:(?:\s+(?:global|local))?(?:\s+temp(?:orary)?)?"
+    r"(?:\s+(?:unlogged|transient|external|secure|volatile|iceberg|dynamic))?)?"
+    r"\s+table(?:\s+if\s+not\s+exists)?"
+)
+
 CREATE_CLONABLE = (
     r"create(\s+or\s+replace)?\s+"
     + group(

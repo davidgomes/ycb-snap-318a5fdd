@@ -30,7 +30,9 @@ class NodeManager:
             value = token.token
         else:
             prev_token, extra_whitespace = get_previous_token(previous_node)
-            prefix = self.whitespace(token, prev_token, extra_whitespace)
+            prefix = self.whitespace(
+                token, prev_token, extra_whitespace, previous_node
+            )
             value = self.standardize_value(token)
 
         return Node(
@@ -156,6 +158,7 @@ class NodeManager:
         token: Token,
         previous_token: Optional[Token],
         extra_whitespace: bool,
+        previous_node: Optional[Node] = None,
     ) -> str:
         """
         Returns the proper whitespace before the token literal, to be set as the
@@ -216,6 +219,14 @@ class NodeManager:
                 TokenType.BRACKET_CLOSE,
             )
         ):
+            # The column list of CREATE TABLE follows the table name, but it is
+            # not a function call: "create table films (" keeps a space.
+            if (
+                token.token == "("
+                and previous_node is not None
+                and self._is_create_table_column_list(previous_node)
+            ):
+                return SPACE
             return NO_SPACE
         # open square brackets that follow colons are escaped databricks
         # variant cols
@@ -224,6 +235,16 @@ class NodeManager:
             and token.token == "["
             and previous_token
             and previous_token.type is TokenType.COLON
+        ):
+            return NO_SPACE
+        # options(...) is a post-body clause, not a function call, but it keeps
+        # the bracket tight against the keyword.
+        elif (
+            token.type is TokenType.BRACKET_OPEN
+            and token.token == "("
+            and previous_token
+            and previous_token.type is TokenType.WORD_OPERATOR
+            and previous_token.token.lower() == "options"
         ):
             return NO_SPACE
         # need a space before any other open bracket
@@ -243,6 +264,32 @@ class NodeManager:
                 return NO_SPACE
         else:
             return SPACE
+
+    def _is_create_table_column_list(self, previous_node: Node) -> bool:
+        """True when previous_node is the table name of a depth-0 CREATE TABLE."""
+        if previous_node.depth != (0, 0):
+            return False
+        values: List[str] = []
+        node: Optional[Node] = previous_node
+        steps = 0
+        while node is not None and steps < 40:
+            if not node.is_newline and not node.is_jinja:
+                values.append(node.value.lower())
+            node = node.previous_node
+            steps += 1
+        values.reverse()
+        try:
+            table_at = len(values) - 1 - values[::-1].index("table")
+        except ValueError:
+            return False
+        if "create" not in values[:table_at]:
+            return False
+        after = values[table_at + 1 :]
+        if after[:3] == ["if", "not", "exists"]:
+            after = after[3:]
+        if not after or after[-1] in {"as", "like"}:
+            return False
+        return all(part != "(" for part in after)
 
     def standardize_value(self, token: Token) -> str:
         """
