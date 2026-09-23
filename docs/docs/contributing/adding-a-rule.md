@@ -316,12 +316,12 @@ Here are all the properties that can be specified in the constructor of a rule:
 | `descriptionKey` | The object property representation of the value in [en.ts](https://github.com/platers/obsidian-linter/blob/master/src/lang/locale/en.ts) that has the text for the description of the rule. The value should be in the format `rules.rule-alias.description`. | Y | `rules.yaml-key-sort.description` |
 | `type` | The type of the rule which determines where in the settings it shows up and whether to test it with YAML frontmatter added as part of the example tests. | Y | `RuleType.YAML` |
 | `hasSpecialExecutionOrder` | Specifies whether this rule will be manually executed in either the before or after Linter rules in [rules-runner.ts](https://github.com/platers/obsidian-linter/blob/master/src/rules-runner.ts). Its default value is `false`. | N | `true` |
-| `ruleIgnoreTypes` | The list of ignore types which can be found in [ignore-types.ts](https://github.com/platers/obsidian-linter/blob/master/src/utils/ignore-types.ts) that should be ignored for all the logic of the rule. This is useful for ignoring things like code blocks or YAML frontmatter. It default to an empty array (`[]`). Do not put `IgnoreTypes.customIgnore` in this list as it is automatically added to all rules except for `RuleType.PASTE`. | N | `[IgnoreTypes.code, IgnoreTypes.math, IgnoreTypes.yaml, IgnoreTypes.link, IgnoreTypes.wikiLink, IgnoreTypes.tag],` |
+| `ruleIgnoreTypes` | The list of ignore types which can be found in [ignore-types.ts](https://github.com/platers/obsidian-linter/blob/master/src/utils/ignore-types.ts) that should be ignored for all the logic of the rule. This is useful for ignoring things like code blocks or YAML frontmatter. It default to an empty array (`[]`). Do not put `IgnoreTypes.customIgnore` in this list as a custom ignore for the rule itself is automatically added to all rules except for `RuleType.PASTE`. | N | `[IgnoreTypes.code, IgnoreTypes.math, IgnoreTypes.yaml, IgnoreTypes.link, IgnoreTypes.wikiLink, IgnoreTypes.tag],` |
 
 ### The Rule Logic
 
-The rule logic of all rules is applied after the types specified in `ruleIgnoreTypes` and the added value of
-`IgnoreTypes.customIgnore` is applied. Once those types of elements in the file have been ignored, the rule logic
+The rule logic of all rules is applied after the types specified in `ruleIgnoreTypes` and the added custom ignore
+for the rule are applied. Once those types of elements in the file have been ignored, the rule logic
 can safely be applied.
 
 The logic of a rule goes in the `apply` function. You may add as many helper functions to the rule class as you need.
