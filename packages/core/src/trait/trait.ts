@@ -1,3 +1,6 @@
+import { addAspect, removeAspect } from '../aspect/aspect';
+import type { Aspect } from '../aspect/types';
+import { isAspect } from '../aspect/utils/is-aspect';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -48,6 +51,11 @@ import type {
 const tagSchema = Object.freeze({});
 let traitId = 0;
 
+/** Aspects draw from the same ID space so query hashes never collide with traits. */
+export function createTraitId() {
+    return traitId++;
+}
+
 function createTrait(schema?: undefined | Record<string, never>): TagTrait;
 function createTrait<S extends Schema>(schema: S): Trait<Norm<S>>;
 function createTrait<S extends Schema>(schema: S = tagSchema as S): Trait<Norm<S>> {
@@ -57,7 +65,7 @@ function createTrait<S extends Schema>(schema: S = tagSchema as S): Trait<Norm<S
 
     validateSchema(schema);
 
-    const id = traitId++;
+    const id = createTraitId();
     const Trait = Object.assign((params: TraitValue<Norm<S>>) => [Trait, params], {
         [$internal]: {
             id: id,
@@ -136,6 +144,16 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
         // Handle relation pairs
         if (isRelationPair(config)) {
             addRelationPair(world, entity, config);
+            continue;
+        }
+
+        if (isAspect(config)) {
+            addAspect(world, entity, config);
+            continue;
+        }
+
+        if (Array.isArray(config) && isAspect(config[0])) {
+            addAspect(world, entity, config[0], config[1] as Record<string, any> | undefined);
             continue;
         }
 
@@ -224,12 +242,21 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
     for (const sub of instance.addSubscriptions) sub(entity, target);
 }
 
-export function removeTrait(world: World, entity: Entity, ...traits: (Trait | RelationPair)[]) {
+export function removeTrait(
+    world: World,
+    entity: Entity,
+    ...traits: (Trait | RelationPair | Aspect)[]
+) {
     for (let i = 0; i < traits.length; i++) {
         const trait = traits[i];
 
         if (isRelationPair(trait)) {
             removeRelationPair(world, entity, trait);
+            continue;
+        }
+
+        if (isAspect(trait)) {
+            removeAspect(world, entity, trait);
             continue;
         }
 

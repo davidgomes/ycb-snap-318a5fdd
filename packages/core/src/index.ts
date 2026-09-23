@@ -1,5 +1,14 @@
 export { createActions } from './actions/create-actions';
 export type { Actions, ActionsInitializer, ActionRecord } from './actions/types';
+export { createAspect } from './aspect/aspect';
+export type {
+    Aspect,
+    AspectInput,
+    AspectRecord,
+    AspectTuple,
+    AspectValue,
+    SetAspectCallback,
+} from './aspect/types';
 export { $internal } from './common';
 export type { Entity } from './entity/types';
 export { unpackEntity } from './entity/utils/pack-entity';

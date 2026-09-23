@@ -1,3 +1,12 @@
+import {
+    beginAspectChangeBatch,
+    endAspectChangeBatch,
+    getAspectStores,
+    readAspect,
+    writeAspectConstituent,
+} from '../aspect/aspect';
+import type { Aspect } from '../aspect/types';
+import { isAspect } from '../aspect/utils/is-aspect';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -25,10 +34,12 @@ export function createQueryResult<T extends QueryParameter[]>(
     query: QueryInstance,
     params: QueryParameter[]
 ): QueryResult<T> {
+    // Holds aspects alongside traits when hasAspects is true. Aspect slots store an
+    // array of constituent stores. Paths that assume plain traits only run otherwise.
     const traits: Trait[] = [];
     const stores: Store<any>[] = [];
 
-    getQueryStores(params, traits, stores, world);
+    let hasAspects = getQueryStores(params, traits, stores, world);
 
     const results = Object.assign(entities, {
         readEach(
@@ -41,7 +52,8 @@ export function createQueryResult<T extends QueryParameter[]>(
                 const eid = getEntityId(entity);
 
                 // Create snapshots without atomic tracking
-                createSnapshots(eid, traits, stores, state);
+                if (hasAspects) createSnapshotsWithAspects(eid, traits, stores, state);
+                else createSnapshots(eid, traits, stores, state);
 
                 callback(state, entity, i);
             }
@@ -53,6 +65,19 @@ export function createQueryResult<T extends QueryParameter[]>(
             callback: (state: InstancesFromParameters<T>, entity: Entity, index: number) => void,
             options: QueryResultOptions = { changeDetection: 'auto' }
         ) {
+            if (hasAspects) {
+                updateEachWithAspects(
+                    world,
+                    query,
+                    entities,
+                    traits,
+                    stores,
+                    callback as (state: any[], entity: Entity, index: number) => void,
+                    options.changeDetection ?? 'auto'
+                );
+                return results;
+            }
+
             const state = Array.from({ length: traits.length });
 
             // Inline all three permutations of updateEach for performance.
@@ -107,10 +132,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                 }
 
                 // Trigger change events for each entity that was modified.
-                for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
-                }
+                triggerChanged(world, changedPairs);
             } else if (options.changeDetection === 'always') {
                 const changedPairs: [Entity, Trait][] = [];
                 const atomicSnapshots: any[] = [];
@@ -147,10 +169,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                 }
 
                 // Trigger change events for each entity that was modified.
-                for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
-                }
+                triggerChanged(world, changedPairs);
             } else if (options.changeDetection === 'never') {
                 for (let i = 0; i < entities.length; i++) {
                     const entity = entities[i];
@@ -181,7 +200,7 @@ export function createQueryResult<T extends QueryParameter[]>(
         select<U extends QueryParameter[]>(...params: U): QueryResult<U> {
             traits.length = 0;
             stores.length = 0;
-            getQueryStores(params, traits, stores, world);
+            hasAspects = getQueryStores(params, traits, stores, world);
             return results as unknown as QueryResult<U>;
         },
 
@@ -243,14 +262,145 @@ export function createQueryResult<T extends QueryParameter[]>(
     }
 }
 
+function triggerChanged(world: World, changedPairs: [Entity, Trait][]) {
+    beginAspectChangeBatch();
+    try {
+        for (let i = 0; i < changedPairs.length; i++) {
+            const [entity, trait] = changedPairs[i];
+            setChanged(world, entity, trait);
+        }
+    } finally {
+        endAspectChangeBatch();
+    }
+}
+
+function createSnapshotsWithAspects(
+    entityId: number,
+    traits: (Trait | Aspect)[],
+    stores: any[],
+    state: any[]
+) {
+    for (let i = 0; i < traits.length; i++) {
+        const trait = traits[i];
+        state[i] = isAspect(trait)
+            ? readAspect(entityId, trait, stores[i])
+            : trait[$internal].get(entityId, stores[i]);
+    }
+}
+
+/**
+ * updateEach for results containing aspects. Aspect slots hold a merged object whose
+ * fields are distributed back to each constituent store, with per-trait change detection.
+ */
+function updateEachWithAspects(
+    world: World,
+    query: QueryInstance,
+    entities: Entity[],
+    traits: (Trait | Aspect)[],
+    stores: any[],
+    callback: (state: any[], entity: Entity, index: number) => void,
+    changeDetection: 'always' | 'auto' | 'never'
+) {
+    const state: any[] = Array.from({ length: traits.length });
+    const atomicSnapshots: any[] = [];
+    const changedPairs: [Entity, Trait][] = [];
+    const ctx = world[$internal];
+
+    const isDetected = (trait: Trait) =>
+        changeDetection === 'always' ||
+        (changeDetection === 'auto' &&
+            (ctx.trackedTraits.has(trait) ||
+                (query.hasChangedModifiers && query.changedTraits.has(trait))));
+
+    // Per slot: a boolean for traits, a boolean per constituent for aspects.
+    const detected = traits.map((trait) =>
+        isAspect(trait) ? trait.traits.map(isDetected) : isDetected(trait)
+    );
+
+    for (let i = 0; i < entities.length; i++) {
+        const entity = entities[i];
+        const eid = getEntityId(entity);
+
+        for (let j = 0; j < traits.length; j++) {
+            const trait = traits[j];
+            if (isAspect(trait)) {
+                state[j] = readAspect(eid, trait, stores[j]);
+            } else {
+                const traitCtx = trait[$internal];
+                const value = traitCtx.get(eid, stores[j]);
+                state[j] = value;
+                atomicSnapshots[j] = traitCtx.type === 'aos' && detected[j] ? { ...value } : null;
+            }
+        }
+
+        callback(state, entity, i);
+
+        // Skip if the entity has been destroyed.
+        if (!world.has(entity)) continue;
+
+        for (let j = 0; j < traits.length; j++) {
+            const trait = traits[j];
+
+            if (isAspect(trait)) {
+                const constituents = trait.traits;
+                const fields = trait[$internal].fields;
+                const constituentStores = stores[j];
+                const constituentDetected = detected[j] as boolean[];
+
+                for (let k = 0; k < constituents.length; k++) {
+                    if (fields[k].length === 0) continue;
+                    const changed = writeAspectConstituent(
+                        eid,
+                        constituents[k],
+                        fields[k],
+                        constituentStores[k],
+                        state[j]
+                    );
+                    if (changed && constituentDetected[k]) changedPairs.push([entity, constituents[k]]);
+                }
+                continue;
+            }
+
+            const traitCtx = trait[$internal];
+            const newValue = state[j];
+
+            if (!detected[j]) {
+                traitCtx.fastSet(eid, stores[j], newValue);
+                continue;
+            }
+
+            let changed = traitCtx.fastSetWithChangeDetection(eid, stores[j], newValue);
+            if (!changed && traitCtx.type === 'aos') {
+                changed = !shallowEqual(newValue, atomicSnapshots[j]);
+            }
+            if (changed) changedPairs.push([entity, trait]);
+        }
+    }
+
+    triggerChanged(world, changedPairs);
+}
+
+/**
+ * Collect the traits and stores for query result data slots.
+ * Returns true if any slot is an aspect.
+ */
 /* @inline */ export function getQueryStores<T extends QueryParameter[]>(
     params: T,
-    traits: Trait[],
-    stores: Store<any>[],
+    traits: (Trait | Aspect)[],
+    stores: any[],
     world: World
-) {
+): boolean {
+    let hasAspects = false;
+
     for (let i = 0; i < params.length; i++) {
         const param = params[i];
+
+        if (isAspect(param)) {
+            traits.push(param);
+            stores.push(getAspectStores(world, param));
+            hasAspects = true;
+            continue;
+        }
 
         // Handle relation pairs
         if (isRelationPair(param)) {
@@ -270,6 +420,12 @@ export function createQueryResult<T extends QueryParameter[]>(
 
             const modifierTraits = param.traits;
             for (const trait of modifierTraits) {
+                if (isAspect(trait)) {
+                    traits.push(trait);
+                    stores.push(getAspectStores(world, trait));
+                    hasAspects = true;
+                    continue;
+                }
                 if (trait[$internal].type === 'tag') continue; // Skip tags
                 traits.push(trait);
                 stores.push(getStore(world, trait));
@@ -281,6 +437,8 @@ export function createQueryResult<T extends QueryParameter[]>(
             stores.push(getStore(world, trait));
         }
     }
+
+    return hasAspects;
 }
 
 export function createEmptyQueryResult(): QueryResult<QueryParameter[]> {

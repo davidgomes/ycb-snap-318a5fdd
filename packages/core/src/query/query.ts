@@ -1,3 +1,5 @@
+import type { Aspect } from '../aspect/types';
+import { isAspect } from '../aspect/utils/is-aspect';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -6,7 +8,7 @@ import type { Relation } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
 import { registerTrait, trait } from '../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../trait/trait-instance';
-import type { TagTrait, Trait } from '../trait/types';
+import type { TagTrait, Trait, TraitInstance } from '../trait/types';
 import { universe } from '../universe/universe';
 import { SparseSet } from '../utils/sparse-set';
 import type { World } from '../world';
@@ -14,6 +16,7 @@ import { getTrackingType, isModifier, isOrWithModifiers, isTrackingModifier } fr
 import { createQueryResult } from './query-result';
 import { $queryRef } from './symbols';
 import {
+    type AspectBitmasks,
     type EventType,
     type Modifier,
     type Query,
@@ -127,25 +130,25 @@ function processTrackingModifier(
     if (!trackingType) return;
 
     const id = modifier.id;
-    // Key includes logic so Changed(A) at top-level stays separate from Or(Changed(A))
-    const key = `${trackingType}-${id}-${logic}`;
 
-    // Find or create tracking group
-    let group = groupsMap.get(key);
-    if (!group) {
-        group = {
-            logic,
-            type: trackingType,
-            id,
-            bitmasks: [],
-            trackers: [],
-        };
-        groupsMap.set(key, group);
-        query.trackingGroups.push(group);
-    }
+    const getGroup = (key: string, aspect: boolean): TrackingGroup => {
+        let group = groupsMap.get(key);
+        if (!group) {
+            group = {
+                logic,
+                type: trackingType,
+                id,
+                bitmasks: [],
+                trackers: [],
+                aspect,
+            };
+            groupsMap.set(key, group);
+            query.trackingGroups.push(group);
+        }
+        return group;
+    };
 
-    // Register traits and build bitmasks
-    for (const trait of modifier.traits) {
+    const addTraitToGroup = (group: TrackingGroup, trait: Trait) => {
         if (!hasTraitInstance(ctx.traitInstances, trait)) registerTrait(world, trait);
         const instance = getTraitInstance(ctx.traitInstances, trait)!;
         query.traits.push(trait);
@@ -162,9 +165,45 @@ function processTrackingModifier(
             query.changedTraits.add(trait);
             query.hasChangedModifiers = true;
         }
+    };
+
+    const traits = modifier.traits.filter((input) => !isAspect(input)) as Trait[];
+
+    // An empty Or group would never be satisfied, so only create it when there are traits.
+    if (traits.length > 0 || !modifier.traits.some(isAspect)) {
+        // Key includes logic so Changed(A) at top-level stays separate from Or(Changed(A))
+        const group = getGroup(`${trackingType}-${id}-${logic}`, false);
+        for (const trait of traits) addTraitToGroup(group, trait);
+    }
+
+    // Each aspect gets its own group since it matches on the transition of all its constituents.
+    for (const input of modifier.traits) {
+        if (!isAspect(input)) continue;
+        const group = getGroup(`${trackingType}-${id}-${logic}-aspect-${input.id}`, true);
+        for (const trait of input.traits) addTraitToGroup(group, trait);
     }
 
     query.isTracking = true;
+}
+
+function createAspectBitmasks(
+    world: World,
+    aspect: Aspect,
+    ctx: World[typeof $internal],
+    instances: TraitInstance[]
+): AspectBitmasks {
+    const bitmasks: AspectBitmasks = [];
+
+    for (const trait of aspect.traits) {
+        if (!hasTraitInstance(ctx.traitInstances, trait)) registerTrait(world, trait);
+        const instance = getTraitInstance(ctx.traitInstances, trait)!;
+        instances.push(instance);
+
+        const genId = instance.generationId;
+        bitmasks[genId] = (bitmasks[genId] || 0) | instance.bitflag;
+    }
+
+    return bitmasks;
 }
 
 export function createQueryInstance<T extends QueryParameter[]>(
@@ -185,6 +224,8 @@ export function createQueryInstance<T extends QueryParameter[]>(
         },
         staticBitmasks: [],
         trackingGroups: [],
+        aspectNotGroups: [],
+        aspectOrGroups: [],
         generations: [],
         entities: new SparseSet(),
         isTracking: false,
@@ -214,9 +255,22 @@ export function createQueryInstance<T extends QueryParameter[]>(
     // Map for grouping tracking modifiers by (type, id, logic)
     const trackingGroupsMap = new Map<string, TrackingGroup>();
 
+    // Constituent instances of aspects inside Not/Or modifiers
+    const aspectInstances: TraitInstance[] = [];
+
     // Process all parameters
     for (let i = 0; i < parameters.length; i++) {
         const parameter = parameters[i];
+
+        // An aspect requires all of its constituents
+        if (isAspect(parameter)) {
+            for (const t of parameter.traits) {
+                if (!hasTraitInstance(ctx.traitInstances, t)) registerTrait(world, t);
+                query.traitInstances.required.push(getTraitInstance(ctx.traitInstances, t)!);
+                query.traits.push(t);
+            }
+            continue;
+        }
 
         // Handle relation pairs
         if (isRelationPair(parameter)) {
@@ -234,7 +288,8 @@ export function createQueryInstance<T extends QueryParameter[]>(
         }
 
         if (isModifier(parameter)) {
-            const traits = parameter.traits;
+            const traits = parameter.traits.filter((t) => !isAspect(t)) as Trait[];
+            const aspects = parameter.traits.filter(isAspect);
 
             // Register traits
             for (let j = 0; j < traits.length; j++) {
@@ -246,11 +301,21 @@ export function createQueryInstance<T extends QueryParameter[]>(
                 query.traitInstances.forbidden.push(
                     ...traits.map((t) => getTraitInstance(ctx.traitInstances, t)!)
                 );
+                for (const aspect of aspects) {
+                    query.aspectNotGroups.push(
+                        createAspectBitmasks(world, aspect, ctx, aspectInstances)
+                    );
+                }
             } else if (parameter.type === 'or') {
                 // Handle regular traits in Or
                 query.traitInstances.or.push(
                     ...traits.map((t) => getTraitInstance(ctx.traitInstances, t)!)
                 );
+                for (const aspect of aspects) {
+                    query.aspectOrGroups.push(
+                        createAspectBitmasks(world, aspect, ctx, aspectInstances)
+                    );
+                }
 
                 // Handle nested tracking modifiers in Or
                 if (isOrWithModifiers(parameter)) {
@@ -282,6 +347,7 @@ export function createQueryInstance<T extends QueryParameter[]>(
         ...query.traitInstances.required,
         ...query.traitInstances.forbidden,
         ...query.traitInstances.or,
+        ...aspectInstances,
     ];
 
     // Create an array of all trait generations
@@ -360,8 +426,33 @@ export function createQueryInstance<T extends QueryParameter[]>(
                 const eid = getEntityId(entity);
                 let matches = logic === 'and'; // AND starts true, OR starts false
 
+                if (group.aspect) {
+                    let wasComplete = true;
+                    let isComplete = true;
+                    let anyChanged = false;
+
+                    for (let genId = 0; genId < bitmasks.length; genId++) {
+                        const mask = bitmasks[genId];
+                        if (!mask) continue;
+
+                        const oldMask = snapshot[genId]?.[eid] || 0;
+                        const currentMask = ctx.entityMasks[genId]?.[eid] || 0;
+
+                        if ((oldMask & mask) !== mask) wasComplete = false;
+                        if ((currentMask & mask) !== mask) isComplete = false;
+                        if ((changedMask[genId]?.[eid] ?? 0) & mask) anyChanged = true;
+                    }
+
+                    matches =
+                        type === 'add'
+                            ? !wasComplete && isComplete
+                            : type === 'remove'
+                              ? wasComplete && !isComplete
+                              : isComplete && anyChanged;
+                }
+
                 // Check each generation that has bitmasks
-                for (let genId = 0; genId < bitmasks.length; genId++) {
+                for (let genId = 0; !group.aspect && genId < bitmasks.length; genId++) {
                     const mask = bitmasks[genId];
                     if (!mask) continue;
 

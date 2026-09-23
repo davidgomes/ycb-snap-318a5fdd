@@ -1,10 +1,12 @@
 import { Brand } from '../common';
-import { Trait } from '../trait/types';
-import { EventType, Modifier, OrModifier, QueryParameter } from './types';
+import { EventType, Modifier, ModifierInput, OrModifier, QueryParameter } from './types';
 
 export const $modifier = Symbol('modifier');
 
-export function createModifier<TTrait extends Trait[] = Trait[], TType extends string = string>(
+export function createModifier<
+    TTrait extends ModifierInput[] = ModifierInput[],
+    TType extends string = string,
+>(
     type: TType,
     id: number,
     traits: TTrait

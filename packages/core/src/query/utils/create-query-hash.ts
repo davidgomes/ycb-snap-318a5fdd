@@ -1,3 +1,4 @@
+import type { Aspect } from '../../aspect/types';
 import { $internal } from '../../common';
 import { isRelationPair } from '../../relation/utils/is-relation';
 import type { Relation } from '../../relation/types';
@@ -35,7 +36,8 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
                 sortedIDs[cursor++] = modifierId * 100000 + traitId;
             }
         } else {
-            const traitId = (param as Trait).id;
+            // Aspect IDs share the trait ID space so they can be hashed the same way.
+            const traitId = (param as Trait | Aspect).id;
             sortedIDs[cursor++] = traitId;
         }
     }

@@ -1,3 +1,4 @@
+import type { Aspect, AspectRecord } from '../aspect/types';
 import type { Entity } from '../entity/types';
 import type { RelationPair } from '../relation/types';
 import { AoSFactory } from '../storage';
@@ -15,7 +16,7 @@ import { $modifier } from './modifier';
 import { $parameters, $queryRef } from './symbols';
 
 export type QueryModifier = (...components: Trait[]) => Modifier;
-export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier>;
+export type QueryParameter = Trait | RelationPair | Aspect | ReturnType<QueryModifier>;
 export type QuerySubscriber = (entity: Entity) => void;
 export type QueryUnsubscriber = () => void;
 
@@ -42,7 +43,9 @@ type UnwrapModifierData<T> = T extends Modifier<infer C> ? C : never;
 
 export type StoresFromParameters<T extends QueryParameter[]> = T extends [infer First, ...infer Rest]
     ? [
-          ...(First extends Trait
+          ...(First extends Aspect<infer U>
+              ? [StoresFromParameters<U>]
+              : First extends Trait
               ? [ExtractStore<First>]
               : First extends Modifier
                 ? StoresFromParameters<UnwrapModifierData<First>>
@@ -56,7 +59,9 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
     ...infer Rest,
 ]
     ? [
-          ...(First extends Trait
+          ...(First extends Aspect
+              ? [AspectRecord<First>]
+              : First extends Trait
               ? IsTag<First> extends false
                   ? ExtractSchema<First> extends AoSFactory
                       ? [ReturnType<ExtractSchema<First>>]
@@ -72,7 +77,7 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
     : [];
 
 export type IsNotModifier<T> =
-    T extends Modifier<Trait[], infer TType> ? (TType extends 'not' ? true : false) : false;
+    T extends Modifier<ModifierInput[], infer TType> ? (TType extends 'not' ? true : false) : false;
 
 export type QueryHash = string;
 
@@ -87,7 +92,10 @@ export type Query<T extends QueryParameter[] = QueryParameter[]> = {
     readonly [$parameters]: T;
 };
 
-export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = string> = {
+/** Inputs a modifier can wrap. Aspects are expanded to their constituents during query creation. */
+export type ModifierInput = Trait | Aspect;
+
+export type Modifier<TTrait extends ModifierInput[] = ModifierInput[], TType extends string = string> = {
     [$modifier]: true;
     type: TType;
     id: number;
@@ -96,7 +104,7 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
 };
 
 /** Parameter types that can be passed to Or modifier */
-export type OrParameter = Trait | Modifier;
+export type OrParameter = Trait | Aspect | Modifier;
 
 /** Or modifier that can contain both traits and nested modifiers */
 export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
@@ -108,7 +116,7 @@ export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
 
 /** Extract traits from Or parameters (filters out modifiers) */
 type ExtractTraitsFromOrParams<T extends OrParameter[]> = T extends [infer First, ...infer Rest]
-    ? First extends Trait
+    ? First extends Trait | Aspect
         ? Rest extends OrParameter[]
             ? [First, ...ExtractTraitsFromOrParams<Rest>]
             : [First]
@@ -132,7 +140,16 @@ export type TrackingGroup = {
     bitmasks: (number | undefined)[];
     /** Per-entity tracker state indexed by [generationId][entityId] */
     trackers: (number[] | undefined)[];
+    /**
+     * Whether the group tracks an aspect. Aspect groups match on transitions of the
+     * whole aspect: Added when it becomes complete, Removed when it stops being
+     * complete and Changed when any constituent changes while complete.
+     */
+    aspect: boolean;
 };
+
+/** Constituent bitmasks of an aspect indexed by generationId. */
+export type AspectBitmasks = (number | undefined)[];
 
 export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     version: number;
@@ -155,6 +172,10 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     }[];
     /** Unified tracking groups with explicit AND/OR logic */
     trackingGroups: TrackingGroup[];
+    /** Aspects inside Not modifiers. The entity must be missing at least one constituent of each. */
+    aspectNotGroups: AspectBitmasks[];
+    /** Aspects inside Or modifiers. Any complete aspect satisfies the Or constraint. */
+    aspectOrGroups: AspectBitmasks[];
     generations: number[];
     entities: SparseSet;
     isTracking: boolean;

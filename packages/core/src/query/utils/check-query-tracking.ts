@@ -3,6 +3,11 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import {
+    checkAspectConstraints,
+    isAspectGroupSatisfied,
+    updateAspectTrackers,
+} from './check-aspects';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -36,6 +41,19 @@ export function checkQueryTracking(
     // Early exit: no traits to check
     if (traitInstancesAll.length === 0) return false;
 
+    // Aspect trackers are updated before any early exit so they always reflect the
+    // aspect's own history, independent of other constraints or group order.
+    let hasAspectTracking = false;
+    for (let i = 0; i < trackingGroupsLen; i++) {
+        const group = trackingGroups[i];
+        if (!group.aspect) continue;
+        hasAspectTracking = true;
+        updateAspectTrackers(group, entityMasks, eid, eventType, eventGenerationId, eventBitflag);
+    }
+
+    const hasAspectGroups = query.aspectNotGroups.length > 0 || query.aspectOrGroups.length > 0;
+    const checkOrPerGeneration = query.aspectOrGroups.length === 0;
+
     // 1. Check static constraints (required/forbidden/or)
     for (let i = 0; i < generationsLen; i++) {
         const generationId = generations[i];
@@ -57,8 +75,10 @@ export function checkQueryTracking(
         if (required && (entityMask & required) !== required) return false;
 
         // Check Or traits
-        if (or !== 0 && (entityMask & or) === 0) return false;
+        if (checkOrPerGeneration && or !== 0 && (entityMask & or) === 0) return false;
     }
+
+    if (hasAspectGroups && !checkAspectConstraints(query, entityMasks, eid)) return false;
 
     // 2. Process tracking groups - update trackers and check cross-event invalidation
     // Also track OR group state to avoid second loop when possible
@@ -71,6 +91,17 @@ export function checkQueryTracking(
         const groupLogic = group.logic;
         const groupBitmasks = group.bitmasks;
         const groupBitmask = groupBitmasks[eventGenerationId];
+
+        if (hasAspectTracking && group.aspect) {
+            const satisfied = isAspectGroupSatisfied(group, entityMasks, eid);
+            if (groupLogic === 'or') {
+                hasOrGroup = true;
+                if (satisfied) anyOrMatched = true;
+            } else if (!satisfied) {
+                return false;
+            }
+            continue;
+        }
 
         // Check if this event affects this group's traits
         if (groupBitmask && (groupBitmask & eventBitflag)) {
