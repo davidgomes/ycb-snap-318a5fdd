@@ -33,6 +33,42 @@ class Buffer(object):
         self.data = [] # Buffer
         self.size = 0  # Length
         self.buffer_fill_size = buffer_fill_size
+        self._high_water = None
+        self._low_water = None
+
+    def set_watermarks(self, high=None, low=None):
+        """Sets the high and low water marks used for flow control.
+
+        >>> b = Buffer()
+        >>> b.set_watermarks(high=4, low=2)
+        >>> b.add(b'abcd')
+        >>> b.over_high_water, b.under_low_water
+        (True, False)
+        >>> b.set_watermarks(high=1, low=2)
+        Traceback (most recent call last):
+        ...
+        ValueError: low water mark must not exceed high water mark
+        """
+        if high is not None and low is not None and low > high:
+            raise ValueError("low water mark must not exceed high water mark")
+        self._high_water = high
+        self._low_water = low
+
+    @property
+    def high_water(self):
+        return self._high_water
+
+    @property
+    def low_water(self):
+        return self._low_water
+
+    @property
+    def over_high_water(self):
+        return self._high_water is not None and self.size >= self._high_water
+
+    @property
+    def under_low_water(self):
+        return self._low_water is not None and self.size <= self._low_water
 
     def __len__(self):
         """
