@@ -1,5 +1,5 @@
 import type { Entity } from '../entity/types';
-import type { RelationPair } from '../relation/types';
+import type { RelationPair, RelationTarget } from '../relation/types';
 import { AoSFactory } from '../storage';
 import type {
     ExtractSchema,
@@ -93,6 +93,18 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /**
+     * Parallel to `traits`. A defined target means that slot is tracked as a relation
+     * pair (`'*'` is every target) instead of as a trait bitmask.
+     */
+    pairTargets?: readonly (RelationTarget | undefined)[];
+};
+
+/** One relation pair monitored by a tracking group. */
+export type PairFilter = {
+    trait: Trait;
+    traitId: number;
+    target: RelationTarget;
 };
 
 /** Parameter types that can be passed to Or modifier */
@@ -132,6 +144,10 @@ export type TrackingGroup = {
     bitmasks: (number | undefined)[];
     /** Per-entity tracker state indexed by [generationId][entityId] */
     trackers: (number[] | undefined)[];
+    /** Pair-level filters. Within an AND group every pair must match; OR groups match any. */
+    pairs?: PairFilter[];
+    /** entity -> relationTraitId -> target -> flags */
+    pairState?: Map<Entity, Map<number, Map<Entity, number>>>;
 };
 
 export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
@@ -165,6 +181,8 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     removeSubscriptions: Set<QuerySubscriber>;
     /** Relation pairs for target-specific queries */
     relationFilters?: RelationPair[];
+    /** entity -> relationTraitId -> target last touched with a positive pair flag */
+    pairFocus?: Map<Entity, Map<number, Entity>>;
     run: (world: World, params: QueryParameter[]) => QueryResult<T>;
     add: (entity: Entity) => void;
     remove: (world: World, entity: Entity) => void;

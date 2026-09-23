@@ -73,6 +73,8 @@ export function createWorld(
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
+            pairEvents: new Map(),
+            removedPairData: new Map(),
         } as WorldInternal,
 
         traits: new Set<Trait>(),
@@ -172,7 +174,16 @@ export function createWorld(
             ctx.trackingSnapshots.clear();
             ctx.dirtyMasks.clear();
             ctx.changedMasks.clear();
+            ctx.pairEvents.clear();
+            ctx.removedPairData.clear();
             ctx.trackedTraits.clear();
+
+            // Tracking modifiers outlive reset. Rebuild empty masks for every id
+            // allocated so far so the same factories keep observing this world.
+            const cursor = getTrackingCursor();
+            for (let i = 0; i < cursor; i++) {
+                setTrackingMasks(world, i);
+            }
 
             // Create new world entity.
             ctx.worldEntity = createEntity(world, IsExcluded);

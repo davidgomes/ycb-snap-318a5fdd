@@ -1,16 +1,18 @@
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
-import { isRelation } from '../../relation/utils/is-relation';
+import { hasRelationToTarget } from '../../relation/relation';
 import { hasTrait, registerTrait } from '../../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../../trait/trait-instance';
-import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
+import type { Trait } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
 import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
+import { recordPairEvent } from '../utils/pair-tracking';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
+import { normalizeTrackingInputs, type TrackingInput, type TrackingTraits } from './tracking-inputs';
 
 export function createChanged() {
     const id = createTrackingId();
@@ -20,13 +22,14 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends TrackingInput[]>(
         ...inputs: T
-    ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`changed-${id}`, id, traits);
+    ): Modifier<TrackingTraits<T>, `changed-${number}`> => {
+        const { traits, pairTargets } = normalizeTrackingInputs(inputs);
+        return createModifier(`changed-${id}`, id, traits, pairTargets) as Modifier<
+            TrackingTraits<T>,
+            `changed-${number}`
+        >;
     };
 }
 
@@ -81,6 +84,12 @@ export function setChanged(world: World, entity: Entity, trait: Trait) {
 }
 
 export function setPairChanged(world: World, entity: Entity, trait: Trait, target: Entity) {
+    if (!hasTrait(world, entity, trait)) return;
+
+    const relation = trait[$internal].relation;
+    if (relation && !hasRelationToTarget(world, relation, entity, target)) return;
+    if (relation) recordPairEvent(world, entity, relation, target, 'change');
+
     const data = markChanged(world, entity, trait);
     if (!data) return;
     for (const sub of data.changeSubscriptions) sub(entity, target);

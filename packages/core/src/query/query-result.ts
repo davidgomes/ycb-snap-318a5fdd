@@ -1,15 +1,17 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
+import { getRelationData, setRelationData } from '../relation/relation';
+import type { Relation, RelationTarget } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
-import type { Relation } from '../relation/types';
 import { Store } from '../storage';
 import { getStore } from '../trait/trait';
 import type { Trait } from '../trait/types';
 import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
-import { isModifier } from './modifier';
-import { setChanged } from './modifiers/changed';
+import { isModifier, isOrWithModifiers } from './modifier';
+import { setChanged, setPairChanged } from './modifiers/changed';
+import { getRemovedPairData } from './utils/pair-tracking';
 import type {
     InstancesFromParameters,
     QueryInstance,
@@ -23,12 +25,14 @@ export function createQueryResult<T extends QueryParameter[]>(
     world: World,
     entities: Entity[],
     query: QueryInstance,
-    params: QueryParameter[]
+    params: QueryParameter[],
+    iterationTargets?: Map<Entity, Map<number, Entity>>
 ): QueryResult<T> {
     const traits: Trait[] = [];
     const stores: Store<any>[] = [];
+    const columnTargets: (RelationTarget | undefined)[] = [];
 
-    getQueryStores(params, traits, stores, world);
+    getQueryStores(params, traits, stores, world, columnTargets);
 
     const results = Object.assign(entities, {
         readEach(
@@ -41,7 +45,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                 const eid = getEntityId(entity);
 
                 // Create snapshots without atomic tracking
-                createSnapshots(eid, traits, stores, state);
+                createSnapshots(entity, eid, traits, stores, state, world, columnTargets, iterationTargets);
 
                 callback(state, entity, i);
             }
@@ -57,7 +61,7 @@ export function createQueryResult<T extends QueryParameter[]>(
 
             // Inline all three permutations of updateEach for performance.
             if (options.changeDetection === 'auto') {
-                const changedPairs: [Entity, Trait][] = [];
+                const changedPairs: (readonly [Entity, Trait] | readonly [Entity, Trait, Entity])[] = [];
                 const atomicSnapshots: any[] = [];
                 const trackedIndices: number[] = [];
                 const untrackedIndices: number[] = [];
@@ -68,7 +72,17 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const entity = entities[i];
                     const eid = getEntityId(entity);
 
-                    createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
+                    createSnapshotsWithAtomic(
+                        entity,
+                        eid,
+                        traits,
+                        stores,
+                        state,
+                        atomicSnapshots,
+                        world,
+                        columnTargets,
+                        iterationTargets
+                    );
                     callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
@@ -77,6 +91,22 @@ export function createQueryResult<T extends QueryParameter[]>(
                     // Commit all changes back to the stores for tracked traits.
                     for (let j = 0; j < trackedIndices.length; j++) {
                         const index = trackedIndices[j];
+                        const pairTarget = columnTargets[index];
+                        if (pairTarget !== undefined) {
+                            const target = commitPairColumn(
+                                world,
+                                entity,
+                                traits[index],
+                                pairTarget,
+                                state[index],
+                                atomicSnapshots[index],
+                                iterationTargets,
+                                true
+                            );
+                            if (target !== undefined) changedPairs.push([entity, traits[index], target]);
+                            continue;
+                        }
+
                         const trait = traits[index];
                         const ctx = trait[$internal];
                         const newValue = state[index];
@@ -99,6 +129,20 @@ export function createQueryResult<T extends QueryParameter[]>(
                     // Commit all changes back to the stores for untracked traits.
                     for (let j = 0; j < untrackedIndices.length; j++) {
                         const index = untrackedIndices[j];
+                        const pairTarget = columnTargets[index];
+                        if (pairTarget !== undefined) {
+                            commitPairColumn(
+                                world,
+                                entity,
+                                traits[index],
+                                pairTarget,
+                                state[index],
+                                atomicSnapshots[index],
+                                iterationTargets,
+                                false
+                            );
+                            continue;
+                        }
                         const trait = traits[index];
                         const ctx = trait[$internal];
                         const store = stores[index];
@@ -107,19 +151,26 @@ export function createQueryResult<T extends QueryParameter[]>(
                 }
 
                 // Trigger change events for each entity that was modified.
-                for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
-                }
+                signalChangedPairs(world, changedPairs);
             } else if (options.changeDetection === 'always') {
-                const changedPairs: [Entity, Trait][] = [];
+                const changedPairs: (readonly [Entity, Trait] | readonly [Entity, Trait, Entity])[] = [];
                 const atomicSnapshots: any[] = [];
 
                 for (let i = 0; i < entities.length; i++) {
                     const entity = entities[i];
                     const eid = getEntityId(entity);
 
-                    createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
+                    createSnapshotsWithAtomic(
+                        entity,
+                        eid,
+                        traits,
+                        stores,
+                        state,
+                        atomicSnapshots,
+                        world,
+                        columnTargets,
+                        iterationTargets
+                    );
                     callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
@@ -127,6 +178,22 @@ export function createQueryResult<T extends QueryParameter[]>(
 
                     // Commit all changes back to the stores.
                     for (let j = 0; j < traits.length; j++) {
+                        const pairTarget = columnTargets[j];
+                        if (pairTarget !== undefined) {
+                            const target = commitPairColumn(
+                                world,
+                                entity,
+                                traits[j],
+                                pairTarget,
+                                state[j],
+                                atomicSnapshots[j],
+                                iterationTargets,
+                                true
+                            );
+                            if (target !== undefined) changedPairs.push([entity, traits[j], target]);
+                            continue;
+                        }
+
                         const trait = traits[j];
                         const ctx = trait[$internal];
                         const newValue = state[j];
@@ -146,16 +213,12 @@ export function createQueryResult<T extends QueryParameter[]>(
                     }
                 }
 
-                // Trigger change events for each entity that was modified.
-                for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
-                }
+                signalChangedPairs(world, changedPairs);
             } else if (options.changeDetection === 'never') {
                 for (let i = 0; i < entities.length; i++) {
                     const entity = entities[i];
                     const eid = getEntityId(entity);
-                    createSnapshots(eid, traits, stores, state);
+                    createSnapshots(entity, eid, traits, stores, state, world, columnTargets, iterationTargets);
                     callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
@@ -163,6 +226,20 @@ export function createQueryResult<T extends QueryParameter[]>(
 
                     // Commit all changes back to the stores.
                     for (let j = 0; j < traits.length; j++) {
+                        const pairTarget = columnTargets[j];
+                        if (pairTarget !== undefined) {
+                            commitPairColumn(
+                                world,
+                                entity,
+                                traits[j],
+                                pairTarget,
+                                state[j],
+                                undefined,
+                                iterationTargets,
+                                false
+                            );
+                            continue;
+                        }
                         const trait = traits[j];
                         const ctx = trait[$internal];
                         ctx.fastSet(eid, stores[j], state[j]);
@@ -181,7 +258,8 @@ export function createQueryResult<T extends QueryParameter[]>(
         select<U extends QueryParameter[]>(...params: U): QueryResult<U> {
             traits.length = 0;
             stores.length = 0;
-            getQueryStores(params, traits, stores, world);
+            columnTargets.length = 0;
+            getQueryStores(params, traits, stores, world, columnTargets);
             return results as unknown as QueryResult<U>;
         },
 
@@ -213,33 +291,152 @@ export function createQueryResult<T extends QueryParameter[]>(
     }
 }
 
-/* @inline */ function createSnapshots(
-    entityId: number,
-    traits: Trait[],
-    stores: Store<any>[],
-    state: any[]
+function signalChangedPairs(
+    world: World,
+    changedPairs: readonly (readonly [Entity, Trait] | readonly [Entity, Trait, Entity])[]
 ) {
-    for (let i = 0; i < traits.length; i++) {
-        const trait = traits[i];
-        const ctx = trait[$internal];
-        const value = ctx.get(entityId, stores[i]);
-        state[i] = value;
+    for (let i = 0; i < changedPairs.length; i++) {
+        const change = changedPairs[i];
+        if (change.length === 3) setPairChanged(world, change[0], change[1], change[2]);
+        else setChanged(world, change[0], change[1]);
     }
 }
 
-/* @inline */ function createSnapshotsWithAtomic(
+function resolvePairTarget(
+    spec: RelationTarget,
+    entity: Entity,
+    traitId: number,
+    iterationTargets?: Map<Entity, Map<number, Entity>>
+): Entity | undefined {
+    if (typeof spec === 'number') return spec;
+    if (spec === '*') return iterationTargets?.get(entity)?.get(traitId);
+    return undefined;
+}
+
+function readColumn(
+    world: World,
+    entity: Entity,
+    entityId: number,
+    trait: Trait,
+    store: Store<any>,
+    spec: RelationTarget | undefined,
+    iterationTargets?: Map<Entity, Map<number, Entity>>
+) {
+    if (spec === undefined) return trait[$internal].get(entityId, store);
+
+    const relation = trait[$internal].relation;
+    if (!relation) return trait[$internal].get(entityId, store);
+
+    const target = resolvePairTarget(spec, entity, trait.id, iterationTargets);
+    if (typeof target !== 'number') return trait[$internal].get(entityId, store);
+
+    const live = getRelationData(world, entity, relation, target);
+    if (live !== undefined) return live;
+    return getRemovedPairData(world, entity, trait.id, target);
+}
+
+/** Writes per-target relation data. Returns the target when a tracked change was committed. */
+function commitPairColumn(
+    world: World,
+    entity: Entity,
+    trait: Trait,
+    spec: RelationTarget,
+    value: unknown,
+    previous: unknown,
+    iterationTargets: Map<Entity, Map<number, Entity>> | undefined,
+    signal: boolean
+): Entity | undefined {
+    const relation = trait[$internal].relation;
+    if (!relation) return undefined;
+
+    const target = resolvePairTarget(spec, entity, trait.id, iterationTargets);
+    if (typeof target !== 'number') return undefined;
+
+    const changed = !shallowEqual(value, previous);
+    if (signal && !changed) return undefined;
+
+    setRelationData(world, entity, relation, target, (value ?? {}) as Record<string, unknown>);
+    return signal && changed ? target : undefined;
+}
+
+/* @inline */ function createSnapshots(
+    entity: Entity,
     entityId: number,
     traits: Trait[],
     stores: Store<any>[],
     state: any[],
-    atomicSnapshots: any[]
+    world: World,
+    columnTargets: (RelationTarget | undefined)[],
+    iterationTargets?: Map<Entity, Map<number, Entity>>
+) {
+    for (let i = 0; i < traits.length; i++) {
+        state[i] = readColumn(
+            world,
+            entity,
+            entityId,
+            traits[i],
+            stores[i],
+            columnTargets[i],
+            iterationTargets
+        );
+    }
+}
+
+/* @inline */ function createSnapshotsWithAtomic(
+    entity: Entity,
+    entityId: number,
+    traits: Trait[],
+    stores: Store<any>[],
+    state: any[],
+    atomicSnapshots: any[],
+    world: World,
+    columnTargets: (RelationTarget | undefined)[],
+    iterationTargets?: Map<Entity, Map<number, Entity>>
 ) {
     for (let j = 0; j < traits.length; j++) {
         const trait = traits[j];
-        const ctx = trait[$internal];
-        const value = ctx.get(entityId, stores[j]);
+        const value = readColumn(
+            world,
+            entity,
+            entityId,
+            trait,
+            stores[j],
+            columnTargets[j],
+            iterationTargets
+        );
         state[j] = value;
-        atomicSnapshots[j] = ctx.type === 'aos' ? { ...value } : null;
+        if (columnTargets[j] !== undefined) {
+            atomicSnapshots[j] = value && typeof value === 'object' ? { ...value } : value;
+        } else {
+            atomicSnapshots[j] = trait[$internal].type === 'aos' ? { ...value } : null;
+        }
+    }
+}
+
+function appendModifierColumns(
+    modifier: QueryParameter,
+    traits: Trait[],
+    stores: Store<any>[],
+    world: World,
+    columnTargets?: (RelationTarget | undefined)[]
+) {
+    if (!isModifier(modifier) || modifier.type === 'not') return;
+
+    if (isOrWithModifiers(modifier)) {
+        const nested = modifier.modifiers;
+        for (let i = 0; i < nested.length; i++) {
+            appendModifierColumns(nested[i], traits, stores, world, columnTargets);
+        }
+    }
+
+    const modifierTraits = modifier.traits;
+    const pairTargets = modifier.pairTargets;
+    for (let j = 0; j < modifierTraits.length; j++) {
+        const trait = modifierTraits[j];
+        if (trait[$internal].type === 'tag') continue;
+        traits.push(trait);
+        stores.push(getStore(world, trait));
+        columnTargets?.push(pairTargets?.[j]);
     }
 }
 
@@ -247,7 +444,8 @@ export function createQueryResult<T extends QueryParameter[]>(
     params: T,
     traits: Trait[],
     stores: Store<any>[],
-    world: World
+    world: World,
+    columnTargets?: (RelationTarget | undefined)[]
 ) {
     for (let i = 0; i < params.length; i++) {
         const param = params[i];
@@ -260,25 +458,19 @@ export function createQueryResult<T extends QueryParameter[]>(
             if (baseTrait[$internal].type !== 'tag') {
                 traits.push(baseTrait);
                 stores.push(getStore(world, baseTrait));
+                columnTargets?.push(undefined);
             }
             continue;
         }
 
         if (isModifier(param)) {
-            // Skip not modifier.
-            if (param.type === 'not') continue;
-
-            const modifierTraits = param.traits;
-            for (const trait of modifierTraits) {
-                if (trait[$internal].type === 'tag') continue; // Skip tags
-                traits.push(trait);
-                stores.push(getStore(world, trait));
-            }
+            appendModifierColumns(param, traits, stores, world, columnTargets);
         } else {
             const trait = param as Trait;
             if (trait[$internal].type === 'tag') continue; // Skip tags
             traits.push(trait);
             stores.push(getStore(world, trait));
+            columnTargets?.push(undefined);
         }
     }
 }

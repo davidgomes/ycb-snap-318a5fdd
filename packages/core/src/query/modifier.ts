@@ -1,4 +1,5 @@
 import { Brand } from '../common';
+import type { RelationTarget } from '../relation/types';
 import { Trait } from '../trait/types';
 import { EventType, Modifier, OrModifier, QueryParameter } from './types';
 
@@ -7,15 +8,22 @@ export const $modifier = Symbol('modifier');
 export function createModifier<TTrait extends Trait[] = Trait[], TType extends string = string>(
     type: TType,
     id: number,
-    traits: TTrait
+    traits: TTrait,
+    pairTargets?: readonly (RelationTarget | undefined)[]
 ): Modifier<TTrait, TType> {
-    return {
+    const modifier: Modifier<TTrait, TType> = {
         [$modifier]: true,
         type,
         id,
         traits,
         traitIds: traits.map((trait) => trait.id),
-    } as const;
+    };
+
+    if (pairTargets?.some((target) => target !== undefined)) {
+        modifier.pairTargets = pairTargets;
+    }
+
+    return modifier;
 }
 
 export /* @inline @pure */ function isModifier(param: QueryParameter): param is Modifier {

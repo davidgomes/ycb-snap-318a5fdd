@@ -95,6 +95,16 @@ const movedEntities = world.query(Changed(Position))
 const updatedChildren = world.query(Changed(ChildOf))
 ```
 
+**Relation pairs.** Pass a `RelationPair` to track one target. `'*'` is a wildcard and includes non-first additions and non-last removals. `entity.changed(ChildOf(parent))` signals that pair. Add and remove of the same target in one observation window cancel. Pair modifiers compose with `Or`, and a pair modifier plus a normal trait parameter must both match.
+
+```typescript
+const newChildren = world.query(Added(ChildOf(parent)))
+const detached = world.query(Removed(ChildOf('*')))
+const eitherParent = world.query(Or(Added(ChildOf(parentA)), Added(ChildOf(parentB))))
+
+child.changed(ChildOf(parent))
+```
+
 **Logical AND (default):**
 
 When multiple traits are passed to a tracking modifier, it uses logical AND. Only entities where **all** specified traits match the condition are returned:

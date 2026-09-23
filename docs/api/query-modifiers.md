@@ -40,8 +40,12 @@ const Added = createAdded()
 // Track entities that added the Position trait
 const newPositions = world.query(Added(Position))
 
-// Track entities that added a ChildOf relation
+// Track entities that added a ChildOf relation (first target only)
 const newChildren = world.query(Added(ChildOf))
+
+// Track a specific pair, or any target with '*'
+const newSiblings = world.query(Added(ChildOf(parent)))
+const anyChild = world.query(Added(ChildOf('*')))
 
 // Track entities where BOTH Position AND Velocity were added
 const fullyAdded = world.query(Added(Position, Velocity))

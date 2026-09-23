@@ -3,6 +3,7 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import { trackingGroupSatisfied } from './pair-tracking';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -103,37 +104,12 @@ export function checkQueryTracking(
             }
         }
 
-        // 3. Verify tracking group satisfaction (merged into same loop)
+        // 3. Verify tracking group satisfaction (trait bits and pair flags).
         if (groupLogic === 'or') {
             hasOrGroup = true;
-            if (!anyOrMatched) {
-                // Check if any trait in OR group has been tracked
-                const groupTrackers = group.trackers;
-                const bitmaskLen = groupBitmasks.length;
-                for (let genId = 0; genId < bitmaskLen; genId++) {
-                    const mask = groupBitmasks[genId];
-                    if (!mask) continue;
-                    const trackerArr = groupTrackers[genId];
-                    const tracker = trackerArr ? (trackerArr[eid] | 0) : 0;
-                    if (tracker & mask) {
-                        anyOrMatched = true;
-                        break;
-                    }
-                }
-            }
-        } else {
-            // AND group: all traits must be tracked
-            const groupTrackers = group.trackers;
-            const bitmaskLen = groupBitmasks.length;
-            for (let genId = 0; genId < bitmaskLen; genId++) {
-                const mask = groupBitmasks[genId];
-                if (!mask) continue;
-                const trackerArr = groupTrackers[genId];
-                const tracker = trackerArr ? (trackerArr[eid] | 0) : 0;
-                if ((tracker & mask) !== mask) {
-                    return false;
-                }
-            }
+            if (!anyOrMatched && trackingGroupSatisfied(group, entity)) anyOrMatched = true;
+        } else if (!trackingGroupSatisfied(group, entity)) {
+            return false;
         }
     }
 

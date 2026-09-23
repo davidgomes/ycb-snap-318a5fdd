@@ -2,6 +2,7 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { setChanged, setPairChanged } from '../query/modifiers/changed';
+import { recordPairEvent } from '../query/utils/pair-tracking';
 import { checkQueryTrackingWithRelations } from '../query/utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
 import { getOrderedTraitRelation, isOrderedTrait, setupOrderedTraitSync } from '../relation/ordered';
@@ -200,6 +201,8 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
             if (instance) {
                 for (const sub of instance.removeSubscriptions) sub(entity, oldTarget);
             }
+            const removedData = getRelationData(world, entity, relation, oldTarget);
+            recordPairEvent(world, entity, relation, oldTarget, 'remove', removedData);
             removeRelationTarget(world, relation, entity, oldTarget);
         }
     }
@@ -222,6 +225,7 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
     // Fire add subscription for this pair
     instance = instance ?? getTraitInstance(world[$internal].traitInstances, relationTrait)!;
     for (const sub of instance.addSubscriptions) sub(entity, target);
+    recordPairEvent(world, entity, relation, target, 'add');
 }
 
 export function removeTrait(world: World, entity: Entity, ...traits: (Trait | RelationPair)[]) {
@@ -240,13 +244,15 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
         if (traitCtx.relation) {
             // Relation trait: emit per-pair removes, then teardown
             const instance = getTraitInstance(world[$internal].traitInstances, trait);
-            if (instance) {
-                const targets = getRelationTargets(world, traitCtx.relation, entity);
-                for (const t of targets) {
+            const relation = traitCtx.relation;
+            const targets = getRelationTargets(world, relation, entity);
+            for (const t of targets) {
+                if (instance) {
                     for (const sub of instance.removeSubscriptions) sub(entity, t);
                 }
+                recordPairEvent(world, entity, relation, t, 'remove', getRelationData(world, entity, relation, t));
             }
-            removeAllRelationTargets(world, traitCtx.relation, entity);
+            removeAllRelationTargets(world, relation, entity);
         } else {
             // Regular trait: emit generic remove
             const instance = getTraitInstance(world[$internal].traitInstances, trait);
@@ -270,11 +276,19 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
     const instance = getTraitInstance(world[$internal].traitInstances, relationTrait);
 
     if (target === '*') {
-        if (instance) {
-            const targets = getRelationTargets(world, relation, entity);
-            for (const t of targets) {
+        const targets = getRelationTargets(world, relation, entity);
+        for (const t of targets) {
+            if (instance) {
                 for (const sub of instance.removeSubscriptions) sub(entity, t);
             }
+            recordPairEvent(
+                world,
+                entity,
+                relation,
+                t,
+                'remove',
+                getRelationData(world, entity, relation, t)
+            );
         }
         removeAllRelationTargets(world, relation, entity);
         removeTraitFromEntity(world, entity, relationTrait);
@@ -282,9 +296,20 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
     }
 
     if (typeof target === 'number') {
+        if (!hasRelationToTarget(world, relation, entity, target)) return;
+
         if (instance) {
             for (const sub of instance.removeSubscriptions) sub(entity, target);
         }
+
+        recordPairEvent(
+            world,
+            entity,
+            relation,
+            target,
+            'remove',
+            getRelationData(world, entity, relation, target)
+        );
 
         const { removedIndex, wasLastTarget } = removeRelationTarget(world, relation, entity, target);
         if (removedIndex === -1) return;
@@ -304,11 +329,21 @@ export function cleanupRelationTarget(
     target: Entity
 ): void {
     const relationTrait = relation[$internal].trait;
+    if (!hasRelationToTarget(world, relation, entity, target)) return;
 
     const instance = getTraitInstance(world[$internal].traitInstances, relationTrait);
     if (instance) {
         for (const sub of instance.removeSubscriptions) sub(entity, target);
     }
+
+    recordPairEvent(
+        world,
+        entity,
+        relation,
+        target,
+        'remove',
+        getRelationData(world, entity, relation, target)
+    );
 
     const { removedIndex, wasLastTarget } = removeRelationTarget(world, relation, entity, target);
     if (removedIndex === -1) return;

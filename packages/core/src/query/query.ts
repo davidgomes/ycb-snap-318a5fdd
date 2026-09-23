@@ -27,6 +27,13 @@ import { checkQuery } from './utils/check-query';
 import { checkQueryTracking } from './utils/check-query-tracking';
 import { checkQueryWithRelations } from './utils/check-query-with-relations';
 import { createQueryHash } from './utils/create-query-hash';
+import {
+    closePairObservationWindow,
+    entityMatchesPairQuery,
+    queryHasPairTracking,
+    seedPairGroups,
+    snapshotPairFocus,
+} from './utils/pair-tracking';
 
 export const IsExcluded: TagTrait = trait();
 
@@ -41,9 +48,12 @@ export function runQuery<T extends QueryParameter[]>(
     // with both trait and relation filters applied. Just return the pre-filtered entities.
     const entities = query.entities.dense.slice() as Entity[];
 
+    const iterationTargets = snapshotPairFocus(query, entities);
+
     // Clear so it can accumulate again.
     if (query.isTracking) {
         query.entities.clear();
+        if (queryHasPairTracking(query)) closePairObservationWindow(query, entities);
         // PERF: Use indexed loop instead of for...of
         const len = entities.length;
         for (let i = 0; i < len; i++) {
@@ -51,7 +61,7 @@ export function runQuery<T extends QueryParameter[]>(
         }
     }
 
-    return createQueryResult(world, entities, query, params);
+    return createQueryResult(world, entities, query, params, iterationTargets);
 }
 
 export function addEntityToQuery(query: QueryInstance, entity: Entity) {
@@ -144,8 +154,11 @@ function processTrackingModifier(
         query.trackingGroups.push(group);
     }
 
-    // Register traits and build bitmasks
-    for (const trait of modifier.traits) {
+    // Register traits and build bitmasks. Pair slots stay off the bitmask so
+    // non-first additions and non-last removals are not collapsed to trait level.
+    const pairTargets = modifier.pairTargets;
+    for (let t = 0; t < modifier.traits.length; t++) {
+        const trait = modifier.traits[t];
         if (!hasTraitInstance(ctx.traitInstances, trait)) registerTrait(world, trait);
         const instance = getTraitInstance(ctx.traitInstances, trait)!;
         query.traits.push(trait);
@@ -153,15 +166,22 @@ function processTrackingModifier(
         // Add to traitInstances.all for query registration
         query.traitInstances.all.push(instance);
 
-        // Build bitmasks by generation
-        const genId = instance.generationId;
-        group.bitmasks[genId] = (group.bitmasks[genId] || 0) | instance.bitflag;
-
-        // Track changed traits for change detection in query-result
         if (trackingType === 'change') {
             query.changedTraits.add(trait);
             query.hasChangedModifiers = true;
         }
+
+        const pairTarget = pairTargets?.[t];
+        if (pairTarget !== undefined) {
+            if (!group.pairs) group.pairs = [];
+            group.pairs.push({ trait, traitId: trait.id, target: pairTarget });
+            if (!group.pairState) group.pairState = new Map();
+            continue;
+        }
+
+        // Build bitmasks by generation
+        const genId = instance.generationId;
+        group.bitmasks[genId] = (group.bitmasks[genId] || 0) | instance.bitflag;
     }
 
     query.isTracking = true;
@@ -343,8 +363,22 @@ export function createQueryInstance<T extends QueryParameter[]>(
         }
     }
 
+    // Spawn checks `query.check`. Pair queries must not match on static masks alone,
+    // or every new entity would enter Added/Removed/Changed pair queries.
+    if (queryHasPairTracking(query)) {
+        query.check = (checkWorld, checkEntity) =>
+            entityMatchesPairQuery(checkWorld, query, checkEntity, 'current');
+    }
+
     // Populate query with initial matching entities
-    if (query.trackingGroups.length > 0) {
+    if (query.trackingGroups.length > 0 && queryHasPairTracking(query)) {
+        seedPairGroups(world, query);
+        const entities = ctx.entityIndex.dense;
+        for (let i = 0; i < entities.length; i++) {
+            const entity = entities[i];
+            if (entityMatchesPairQuery(world, query, entity, 'initial')) query.add(entity);
+        }
+    } else if (query.trackingGroups.length > 0) {
         // For tracking queries, check each entity against tracking groups
         for (const group of query.trackingGroups) {
             const { type, id, logic, bitmasks } = group;

@@ -43,6 +43,10 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    /** trackingId -> entity -> relationTraitId -> target -> flags */
+    pairEvents: Map<number, Map<Entity, Map<number, Map<Entity, number>>>>;
+    /** entity -> relationTraitId -> target -> snapshot taken before the pair was removed */
+    removedPairData: Map<Entity, Map<number, Map<Entity, unknown>>>;
 };
 
 export type World = {

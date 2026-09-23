@@ -228,14 +228,22 @@ const updated = world.query(Changed(ChildOf))
 ```
 
 
-> [!IMPORTANT]  
-> Tracking modifiers do not accept pairs directly such as `Changed(ChildOf(parent))`. Instead, pass the base relation to the modifier and add the pair as a separate query parameter to filter by target.
-
+Tracking modifiers also accept pairs. `'*'` is a wildcard for every target. A second target added to an existing relation, or one target removed while others remain, is visible at pair level. Replacing an exclusive target emits both a removal of the old pair and an addition of the new one. Add and remove of the same target cancel when they happen in the same observation window.
 
 ```js
 const parent = world.spawn()
 
-// Filter changed entities by a specific target
+const newChildren = world.query(Added(ChildOf(parent)))
+const detached = world.query(Removed(ChildOf('*')))
+
+child.changed(ChildOf(parent))
+```
+
+Trait-level tracking can still be combined with a relation filter:
+
+```js
+const parent = world.spawn()
+
 const changedChildren = world.query(Changed(ChildOf), ChildOf(parent))
 ```
 

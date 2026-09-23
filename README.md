@@ -364,13 +364,23 @@ const orphaned = world.query(Removed(ChildOf))
 const updated = world.query(Changed(ChildOf))
 ```
 
-> 👉 **Note**<br>
-> Tracking modifiers do not accept pairs directly such as `Changed(ChildOf(parent))`. Instead, pass the base relation to the modifier and add the pair as a separate query parameter to filter by target.
+Pass a relation pair to track one target. `'*'` matches every target of that relation, including pairs added or removed while the relation trait is already on the entity. Add and remove of the same target in one observation window cancel each other out.
 
 ```js
 const parent = world.spawn()
 
-// Filter changed entities by a specific target
+// This child gained ChildOf(parent), even if it already had other parents
+const newChildren = world.query(Added(ChildOf(parent)))
+
+// Any ChildOf target was removed
+const detached = world.query(Removed(ChildOf('*')))
+
+// Manual pair signal, same as entity.set on that pair
+child.changed(ChildOf(parent))
+```
+
+```js
+// Still valid: trait-level tracking plus a relation filter
 const changedChildren = world.query(Changed(ChildOf), ChildOf(parent))
 ```
 
