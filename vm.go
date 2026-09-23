@@ -90,16 +90,34 @@ func newBinder(env *globalEnv) *binder {
 // globals. Otherwise it returns a deep copy of o's arrays, maps and errors
 // with those functions rebound.
 func (b *binder) bind(o Object) Object {
+	switch o.(type) {
+	case *CompiledFunction, *Array, *ImmutableArray, *Map, *ImmutableMap,
+		*Error:
+	default:
+		return o
+	}
 	if !b.reachesForeign(o, make(map[Object]bool)) {
 		return o
 	}
 	return b.copy(o)
 }
 
+// foreign reports whether fn is bound to globals other than those of b.env.
+func (b *binder) foreign(fn *CompiledFunction) bool {
+	if fn.rt == nil {
+		return false
+	}
+	g1, g2 := fn.rt.globals, b.env.globals
+	if len(g1) == 0 || len(g2) == 0 {
+		return len(g1) != len(g2)
+	}
+	return &g1[0] != &g2[0]
+}
+
 func (b *binder) reachesForeign(o Object, seen map[Object]bool) bool {
 	switch o := o.(type) {
 	case *CompiledFunction:
-		return o.rt != nil && o.rt.env != b.env
+		return b.foreign(o)
 	case *Array:
 		return b.elemsReachForeign(o, o.Value, seen)
 	case *ImmutableArray:
@@ -151,7 +169,7 @@ func (b *binder) valuesReachForeign(
 func (b *binder) copy(o Object) Object {
 	switch o := o.(type) {
 	case *CompiledFunction:
-		if o.rt == nil || o.rt.env == b.env {
+		if !b.foreign(o) {
 			return o
 		}
 		if c, ok := b.objs[o]; ok {
@@ -254,7 +272,14 @@ func NewVM(
 	if globals == nil {
 		globals = make([]Object, GlobalsSize)
 	}
-	return newVM(newGlobalEnv(globals, maxAllocs).runtime(bytecode))
+	env := newGlobalEnv(globals, maxAllocs)
+	b := newBinder(env)
+	for idx, g := range globals {
+		if g != nil {
+			globals[idx] = b.bind(g)
+		}
+	}
+	return newVM(env.runtime(bytecode))
 }
 
 func newVM(rt *vmRuntime) *VM {
@@ -290,6 +315,7 @@ func (v *VM) Run() (err error) {
 	v.framesIndex = 1
 	v.ip = -1
 	v.allocs = v.maxAllocs + 1
+	v.err = nil
 
 	env := v.curFrame.rt.env
 	outer := env.vm
@@ -317,16 +343,40 @@ var callTrampoline = &CompiledFunction{
 // globals of the called function.
 var idleVMs = sync.Pool{New: func() interface{} { return new(VM) }}
 
+// call calls fn, which runs against the globals of e, from Go. Without a VM
+// running against them, an idle VM stands in as the running VM for the
+// duration of the call, so calls nested through Go share its frames and
+// allocation limit.
+func (e *globalEnv) call(fn *CompiledFunction, args []Object) (Object, error) {
+	if e.vm != nil {
+		return e.vm.invoke(fn, args)
+	}
+	v := idleVMs.Get().(*VM)
+	v.maxAllocs = e.maxAllocs
+	v.allocs = v.maxAllocs + 1
+	e.vm = v
+	defer func() {
+		e.vm = nil
+		idleVMs.Put(v)
+	}()
+	return v.invoke(fn, args)
+}
+
 // invoke calls fn with args on top of the current state of the VM, and returns
-// once the call returns. The state of the VM is restored afterwards, so this
-// can run while the VM is calling out to Go code.
+// once the call returns. The state of the VM is restored afterwards, even if
+// the call panics, so this can run while the VM is calling out to Go code.
 func (v *VM) invoke(fn *CompiledFunction, args []Object) (Object, error) {
 	if v.framesIndex >= MaxFrames || v.sp+len(args)+2 > StackSize {
-		return nil, &runtimeError{err: ErrStackOverflow}
+		return nil, &runtimeError{err: ErrStackOverflow, call: true}
 	}
 	sp, ip, framesIndex := v.sp, v.ip, v.framesIndex
 	curFrame, curInsts := v.curFrame, v.curInsts
 	constants, globals := v.constants, v.globals
+	defer func() {
+		v.sp, v.ip, v.framesIndex = sp, ip, framesIndex
+		v.curFrame, v.curInsts = curFrame, curInsts
+		v.constants, v.globals = constants, globals
+	}()
 
 	callArgs := make([]Object, len(args))
 	for i, arg := range args {
@@ -352,26 +402,20 @@ func (v *VM) invoke(fn *CompiledFunction, args []Object) (Object, error) {
 
 	v.run()
 
-	var ret Object
-	var err error
 	switch {
 	case v.err != nil:
 		if v.err == ErrObjectAllocLimit {
 			// the limit stays exhausted for the code that made the call
 			v.allocs = 1
 		}
-		err = v.runtimeError(v.err, framesIndex+1)
+		err := v.runtimeError(v.err, framesIndex+1)
+		err.call = true
 		v.err = nil
+		return nil, err
 	case atomic.LoadInt64(&v.aborting) != 0:
-		err = ErrVMAborted
-	default:
-		ret = v.stack[sp]
+		return nil, ErrVMAborted
 	}
-
-	v.sp, v.ip, v.framesIndex = sp, ip, framesIndex
-	v.curFrame, v.curInsts = curFrame, curInsts
-	v.constants, v.globals = constants, globals
-	return ret, err
+	return v.stack[sp], nil
 }
 
 // runtimeError is an error raised while executing compiled code, with the
@@ -379,6 +423,7 @@ func (v *VM) invoke(fn *CompiledFunction, args []Object) (Object, error) {
 type runtimeError struct {
 	err   error
 	trace []parser.SourceFilePos
+	call  bool // raised by a call from Go
 }
 
 func (e *runtimeError) Error() string {
@@ -397,11 +442,11 @@ func (e *runtimeError) Unwrap() error {
 }
 
 // runtimeError attaches to err the source positions of the frames from the
-// current one down to the frame at index bottom. A runtime error returned by
-// Go code, such as a callback passing on the error of a compiled function it
-// called, gets its trace extended instead, so it reads as if the call was made
-// from the script.
-func (v *VM) runtimeError(err error, bottom int) error {
+// current one down to the frame at index bottom. The error of a call from Go
+// passed on by Go code, such as a callback returning the error of a compiled
+// function it called, gets its trace extended instead, so it reads as if the
+// call was made from the script.
+func (v *VM) runtimeError(err error, bottom int) *runtimeError {
 	var trace []parser.SourceFilePos
 	for i := v.framesIndex - 1; i >= bottom; i-- {
 		f := &v.frames[i]
@@ -412,7 +457,7 @@ func (v *VM) runtimeError(err error, bottom int) error {
 		trace = append(trace,
 			f.rt.bytecode.FileSet.Position(f.fn.SourcePos(ip-1)))
 	}
-	if inner, ok := err.(*runtimeError); ok {
+	if inner, ok := err.(*runtimeError); ok && inner.call {
 		n := len(inner.trace)
 		return &runtimeError{
 			err:   inner.err,

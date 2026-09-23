@@ -957,6 +957,30 @@ func TestCallFromGo(t *testing.T) {
 					return nil, nil
 				},
 			},
+			"recover": &tengo.UserFunction{
+				Name: "recover",
+				Value: func(args ...tengo.Object) (ret tengo.Object, err error) {
+					defer func() {
+						if r := recover(); r != nil {
+							ret = &tengo.String{Value: fmt.Sprint(r)}
+						}
+					}()
+					return args[0].Call(args[1:]...)
+				},
+			},
+			"panic": &tengo.UserFunction{
+				Name: "panic",
+				Value: func(args ...tengo.Object) (tengo.Object, error) {
+					panic("boom")
+				},
+			},
+			"run": &tengo.UserFunction{
+				Name: "run",
+				Value: func(args ...tengo.Object) (tengo.Object, error) {
+					_, err := tengo.NewScript([]byte(`1 + "a"`)).Run()
+					return nil, err
+				},
+			},
 		},
 	})
 
@@ -998,12 +1022,60 @@ call(f, 1)`, opts,
 	expectError(t, `call := import("go").call; f := func() { return call(f) }; f()`,
 		opts, "Runtime Error: stack overflow")
 
+	// the error of an unrelated script is not taken for one of this script
+	expectError(t, `import("go").run()`, opts,
+		"Runtime Error: Runtime Error: invalid operation: int + string")
+
+	// a call interrupted by a recovered panic leaves the VM usable
+	expectRun(t, `g := import("go")
+a := 1
+r := g.recover(func(x) { return g.panic(x) }, 5)
+out = [r, a + 1]`, opts, ARR{"boom", 2})
+
 	// nested calls count toward the allocation limit of the script
 	expectError(t, `swallow := import("go").swallow
 swallow(func() { for i := 0; i < 100; i++ { [i] } })
 out = [1]`, opts.MaxAllocs(50).Skip2ndPass(),
 		"Runtime Error: object allocation limit exceeded")
 	require.True(t, errors.Is(swallowed, tengo.ErrObjectAllocLimit))
+}
+
+func TestVMGlobals(t *testing.T) {
+	symbols := tengo.NewSymbolTable()
+	compileSrc := func(src string) *tengo.Bytecode {
+		file := parse(t, src)
+		c := tengo.NewCompiler(file.InputFile, symbols, nil, nil, nil)
+		require.NoError(t, c.Compile(file))
+		return c.Bytecode()
+	}
+
+	// functions in globals given to a VM run against those globals
+	globals := make([]tengo.Object, tengo.GlobalsSize)
+	prelude := compileSrc(`n := 0; bump := func() { n++; return n }`)
+	require.NoError(t, tengo.NewVM(prelude, globals, -1).Run())
+	request := compileSrc(`out := bump()`)
+	n, _, _ := symbols.Resolve("n", false)
+	out, _, _ := symbols.Resolve("out", false)
+	for i := 0; i < 2; i++ {
+		reqGlobals := append([]tengo.Object(nil), globals...)
+		require.NoError(t, tengo.NewVM(request, reqGlobals, -1).Run())
+		require.Equal(t, int64(1), tengo.ToInterface(reqGlobals[out.Index]))
+	}
+	require.Equal(t, int64(0), tengo.ToInterface(globals[n.Index]))
+
+	// VMs sharing globals share them with their functions too
+	require.NoError(t, tengo.NewVM(request, globals, -1).Run())
+	require.NoError(t, tengo.NewVM(request, globals, -1).Run())
+	require.Equal(t, int64(2), tengo.ToInterface(globals[out.Index]))
+
+	// an error of a previous run does not leak into the next one
+	x := symbols.Define("x")
+	v := tengo.NewVM(compileSrc(`out = x + 1`), globals, -1)
+	globals[x.Index] = tengo.UndefinedValue
+	require.Error(t, v.Run())
+	globals[x.Index] = &tengo.Int{Value: 1}
+	require.NoError(t, v.Run())
+	require.Equal(t, int64(2), tengo.ToInterface(globals[out.Index]))
 }
 
 func TestChar(t *testing.T) {

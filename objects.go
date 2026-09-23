@@ -632,22 +632,15 @@ func (o *CompiledFunction) Equals(_ Object) bool {
 // made from the script, and returns runtime errors formatted the same way.
 //
 // When called while that script is running, typically from a Go function the
-// script called, the call runs on the running VM, sharing its allocation
-// limit and abort state. Like the script itself, calls must not be made
-// concurrently from multiple goroutines; use Compiled.Clone for that.
+// script called, the call runs on the running VM, sharing its call depth,
+// allocation limit and abort state. Calls nested through Go functions inside a
+// call from Go share them the same way. Like the script itself, calls must not
+// be made concurrently from multiple goroutines; use Compiled.Clone for that.
 func (o *CompiledFunction) Call(args ...Object) (Object, error) {
 	if o.rt == nil {
 		return nil, errUnboundFunction
 	}
-	if v := o.rt.env.vm; v != nil {
-		return v.invoke(o, args)
-	}
-	v := idleVMs.Get().(*VM)
-	v.maxAllocs = o.rt.env.maxAllocs
-	v.allocs = v.maxAllocs + 1
-	ret, err := v.invoke(o, args)
-	idleVMs.Put(v)
-	return ret, err
+	return o.rt.env.call(o, args)
 }
 
 // SourcePos returns the source position of the instruction at ip.

@@ -808,6 +808,23 @@ out := bad(1)`)).Run()
 	defer cancel()
 	require.Equal(t, context.DeadlineExceeded, c.RunContext(ctx))
 	require.True(t, errors.Is(callErr, tengo.ErrVMAborted))
+
+	// calls nested through Go inside a call from Go share its call depth and
+	// allocation limit, as they would inside a run of the script
+	s := tengo.NewScript([]byte(`
+depth := func(n) { if n == 0 { return 0 }; return 1 + apply(depth, n - 1) }
+loop := func() { return apply(loop) }
+alloc := func(n) { if n == 0 { return 0 }; [1]; [2]; return apply(alloc, n - 1) }
+`))
+	require.NoError(t, s.Add("apply", apply))
+	s.SetMaxAllocs(50)
+	c, err = s.Run()
+	require.NoError(t, err)
+	compiledCall(t, c.Get("depth").Object(), ARR{10}, 10)
+	_, err = c.Get("loop").Object().Call()
+	require.True(t, errors.Is(err, tengo.ErrStackOverflow))
+	_, err = c.Get("alloc").Object().Call(&tengo.Int{Value: 40})
+	require.True(t, errors.Is(err, tengo.ErrObjectAllocLimit))
 }
 
 func TestCompiledFunction_CallSourceModule(t *testing.T) {
