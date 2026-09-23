@@ -1,6 +1,7 @@
 package blob
 
 import (
+	stdctx "context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,12 +10,14 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/caarlos0/log"
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/extrafiles"
+	"github.com/goreleaser/goreleaser/v2/internal/retry"
 	"github.com/goreleaser/goreleaser/v2/internal/semerrgroup"
 	"github.com/goreleaser/goreleaser/v2/internal/tmpl"
 	"github.com/goreleaser/goreleaser/v2/pkg/config"
@@ -98,34 +101,16 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 		return err
 	}
 
-	up := &productionUploader{
-		cacheControl:       conf.CacheControl,
-		contentDisposition: conf.ContentDisposition,
-	}
-	if conf.Provider == "s3" && conf.ACL != "" {
-		up.beforeWrite = func(asFunc func(any) bool) error {
-			req := &s3.PutObjectInput{}
-			if !asFunc(&req) {
-				return errors.New("could not apply before write")
-			}
-			acl := types.ObjectCannedACL(conf.ACL)
-			switch acl {
-			case types.ObjectCannedACLPrivate,
-				types.ObjectCannedACLPublicRead,
-				types.ObjectCannedACLPublicReadWrite,
-				types.ObjectCannedACLAuthenticatedRead,
-				types.ObjectCannedACLAwsExecRead,
-				types.ObjectCannedACLBucketOwnerRead,
-				types.ObjectCannedACLBucketOwnerFullControl:
-				req.ACL = acl
-				return nil
-			default:
-				return fmt.Errorf("invalid ACL %q", conf.ACL)
-			}
+	up := newUploader(conf)
+	instance := blobInstance(conf, bucketURL)
+	if err := retry.Do(ctx, conf.Retry, func(int) error {
+		return up.Open(ctx, bucketURL)
+	}, isTransient, func(attempt int, _ error) time.Duration {
+		return retry.Cap(retry.Backoff(conf.Retry.Delay, attempt), conf.Retry.MaxDelay)
+	}); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
 		}
-	}
-
-	if err := up.Open(ctx, bucketURL); err != nil {
 		return handleError(err, bucketURL)
 	}
 	defer up.Close()
@@ -137,7 +122,7 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 			dataFile := artifact.Path
 			uploadFile := path.Join(dir, artifact.Name)
 
-			return uploadData(ctx, conf, up, dataFile, uploadFile, bucketURL)
+			return uploadData(ctx, conf, up, dataFile, uploadFile, bucketURL, instance)
 		})
 	}
 
@@ -148,7 +133,7 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 	for name, fullpath := range files {
 		g.Go(func() error {
 			uploadFile := path.Join(dir, name)
-			return uploadData(ctx, conf, up, fullpath, uploadFile, bucketURL)
+			return uploadData(ctx, conf, up, fullpath, uploadFile, bucketURL, instance)
 		})
 	}
 
@@ -182,16 +167,121 @@ func artifactList(ctx *context.Context, conf config.Blob) []*artifact.Artifact {
 	)).List()
 }
 
-func uploadData(ctx *context.Context, conf config.Blob, up uploader, dataFile, uploadFile, bucketURL string) error {
-	data, err := getData(ctx, conf, dataFile)
-	if err != nil {
-		return err
+func blobInstance(conf config.Blob, bucketURL string) string {
+	if u, err := url.Parse(bucketURL); err == nil && u.Scheme != "" && u.Host != "" {
+		return u.Scheme + "://" + u.Host
 	}
+	return conf.Provider + "://" + conf.Bucket
+}
 
-	if err := up.Upload(ctx, uploadFile, data); err != nil {
+func uploadData(ctx *context.Context, conf config.Blob, up uploader, dataFile, uploadFile, bucketURL, instance string) error {
+	err := retry.Do(ctx, conf.Retry, func(attempt int) error {
+		if cerr := ctx.Err(); cerr != nil {
+			recordBlobAttempt(ctx, instance, uploadFile, attempt, cerr)
+			return cerr
+		}
+		// Read the artifact on every attempt so a retry sends the full object.
+		data, err := getData(ctx, conf, dataFile)
+		if err != nil {
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+			recordBlobAttempt(ctx, instance, uploadFile, attempt, err)
+			return err
+		}
+		err = up.Upload(ctx, uploadFile, data)
+		if err != nil && ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		recordBlobAttempt(ctx, instance, uploadFile, attempt, err)
+		return err
+	}, isTransient, func(attempt int, _ error) time.Duration {
+		return retry.Cap(retry.Backoff(conf.Retry.Delay, attempt), conf.Retry.MaxDelay)
+	})
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		return handleError(err, bucketURL)
 	}
 	return nil
+}
+
+func recordBlobAttempt(ctx *context.Context, instance, target string, attempt int, err error) {
+	entry := context.PublishAttempt{
+		Publisher: "blob",
+		Instance:  instance,
+		Target:    target,
+		Attempt:   attempt,
+		Status:    "success",
+	}
+	if err != nil {
+		entry.Status = "failure"
+		entry.Error = err.Error()
+	}
+	ctx.RecordPublishAttempt(entry)
+}
+
+type transient interface {
+	Timeout() bool
+	Temporary() bool
+}
+
+type timeoutter interface{ Timeout() bool }
+type temporary interface{ Temporary() bool }
+
+// isTransient reports whether err exposes Timeout or Temporary and that method returns true.
+func isTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, stdctx.Canceled) || errors.Is(err, stdctx.DeadlineExceeded) {
+		return false
+	}
+	var both transient
+	if errors.As(err, &both) {
+		return both.Timeout() || both.Temporary()
+	}
+	var to timeoutter
+	if errors.As(err, &to) && to.Timeout() {
+		return true
+	}
+	var tmp temporary
+	return errors.As(err, &tmp) && tmp.Temporary()
+}
+
+var newUploader = func(conf config.Blob) uploader {
+	return &productionUploader{
+		cacheControl:       conf.CacheControl,
+		contentDisposition: conf.ContentDisposition,
+		beforeWrite:        s3BeforeWrite(conf),
+	}
+}
+
+func s3BeforeWrite(conf config.Blob) func(asFunc func(any) bool) error {
+	if conf.Provider != "s3" || conf.ACL == "" {
+		return nil
+	}
+	return func(asFunc func(any) bool) error {
+		req := &s3.PutObjectInput{}
+		if !asFunc(&req) {
+			return errors.New("could not apply before write")
+		}
+		acl := types.ObjectCannedACL(conf.ACL)
+		switch acl {
+		case types.ObjectCannedACLPrivate,
+			types.ObjectCannedACLPublicRead,
+			types.ObjectCannedACLPublicReadWrite,
+			types.ObjectCannedACLAuthenticatedRead,
+			types.ObjectCannedACLAwsExecRead,
+			types.ObjectCannedACLBucketOwnerRead,
+			types.ObjectCannedACLBucketOwnerFullControl:
+			req.ACL = acl
+			return nil
+		default:
+			return fmt.Errorf("invalid ACL %q", conf.ACL)
+		}
+	}
 }
 
 // errorContains check if error contains specific string.

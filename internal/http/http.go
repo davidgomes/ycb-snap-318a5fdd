@@ -4,17 +4,21 @@ package http
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	h "net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/caarlos0/log"
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/extrafiles"
 	"github.com/goreleaser/goreleaser/v2/internal/pipe"
+	"github.com/goreleaser/goreleaser/v2/internal/retry"
 	"github.com/goreleaser/goreleaser/v2/internal/semerrgroup"
 	"github.com/goreleaser/goreleaser/v2/internal/tmpl"
 	"github.com/goreleaser/goreleaser/v2/pkg/config"
@@ -308,13 +312,6 @@ func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact
 		return fmt.Errorf("%s: %s: error while building target URL: %w", upload.Name, kind, err)
 	}
 
-	// Handle the artifact
-	asset, err := assetOpen(kind, artifact)
-	if err != nil {
-		return err
-	}
-	defer asset.ReadCloser.Close()
-
 	// target url need to contain the artifact name unless the custom
 	// artifact name is used
 	if !upload.CustomArtifactName {
@@ -333,38 +330,154 @@ func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact
 		}
 		headers[name] = resolvedValue
 	}
-	if upload.ChecksumHeader != "" {
-		sum, err := artifact.Checksum("sha256")
-		if err != nil {
-			return err
-		}
-		headers[upload.ChecksumHeader] = sum
-	}
-
 	log.WithField("instance", upload.Name).
 		WithField("mode", upload.Mode).
 		WithField("file", artifact.Name).
 		Info("uploading")
 
-	res, err := uploadAssetToServer(ctx, upload, targetURL, username, secret, headers, asset, check)
+	client, err := getHTTPClient(upload)
 	if err != nil {
-		return fmt.Errorf("%s: %s: upload failed: %w", upload.Name, kind, err)
-	}
-	if err := res.Body.Close(); err != nil {
-		log.WithError(err).Warn("failed to close response body")
+		return err
 	}
 
+	err = retry.Do(ctx, upload.Retry, func(attempt int) error {
+		if cerr := ctx.Err(); cerr != nil {
+			ctx.RecordPublishAttempt(publishAttempt(kind, upload.Name, targetURL, attempt, cerr))
+			return cerr
+		}
+		body, err := assetOpen(kind, artifact)
+		if err != nil {
+			ctx.RecordPublishAttempt(publishAttempt(kind, upload.Name, targetURL, attempt, err))
+			return err
+		}
+		defer body.ReadCloser.Close()
+
+		attemptHeaders := make(map[string]string, len(headers)+1)
+		for name, value := range headers {
+			attemptHeaders[name] = value
+		}
+		if upload.ChecksumHeader != "" {
+			sum, err := artifact.Checksum("sha256")
+			if err != nil {
+				ctx.RecordPublishAttempt(publishAttempt(kind, upload.Name, targetURL, attempt, err))
+				return err
+			}
+			attemptHeaders[upload.ChecksumHeader] = sum
+		}
+
+		res, err := uploadAssetToServer(ctx, client, upload, targetURL, username, secret, attemptHeaders, body, check)
+		if res != nil && res.Body != nil {
+			if cerr := res.Body.Close(); cerr != nil {
+				log.WithError(cerr).Warn("failed to close response body")
+			}
+		}
+		if err != nil && ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		ctx.RecordPublishAttempt(publishAttempt(kind, upload.Name, targetURL, attempt, err))
+		return err
+	}, isRetriableHTTP, func(attempt int, err error) time.Duration {
+		return httpRetryDelay(upload.Retry, attempt, err)
+	})
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
+		if strings.Contains(err.Error(), "the asset to upload can't be a directory") {
+			return err
+		}
+		return fmt.Errorf("%s: %s: upload failed: %w", upload.Name, kind, err)
+	}
 	return nil
 }
 
+func publishAttempt(kind, instance, target string, attempt int, err error) context.PublishAttempt {
+	entry := context.PublishAttempt{
+		Publisher: kind,
+		Instance:  instance,
+		Target:    target,
+		Attempt:   attempt,
+		Status:    "success",
+	}
+	if err != nil {
+		entry.Status = "failure"
+		entry.Error = err.Error()
+	}
+	return entry
+}
+
+func httpRetryDelay(cfg config.Retry, attempt int, err error) time.Duration {
+	wait := retry.Backoff(cfg.Delay, attempt)
+	var se *statusError
+	if errors.As(err, &se) && se.hasRetryAfter && (se.code == h.StatusTooManyRequests || se.code == h.StatusServiceUnavailable) {
+		if se.retryAfter > wait {
+			wait = se.retryAfter
+		}
+	}
+	return retry.Cap(wait, cfg.MaxDelay)
+}
+
+func isRetriableHTTP(err error) bool {
+	if err == nil {
+		return false
+	}
+	var se *statusError
+	if errors.As(err, &se) {
+		switch se.code {
+		case h.StatusRequestTimeout, h.StatusTooManyRequests, h.StatusInternalServerError, h.StatusBadGateway, h.StatusServiceUnavailable, h.StatusGatewayTimeout:
+			return true
+		default:
+			return false
+		}
+	}
+	var te *transportError
+	return errors.As(err, &te)
+}
+
+// statusError is an HTTP response the publisher treated as a failure.
+type statusError struct {
+	code          int
+	err           error
+	retryAfter    time.Duration
+	hasRetryAfter bool
+}
+
+func (e *statusError) Error() string { return e.err.Error() }
+func (e *statusError) Unwrap() error { return e.err }
+
+// transportError is a client-side failure before an HTTP status was received.
+type transportError struct{ err error }
+
+func (e *transportError) Error() string { return e.err.Error() }
+func (e *transportError) Unwrap() error { return e.err }
+
+func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(value); err == nil && secs >= 0 {
+		return time.Duration(secs) * time.Second, true
+	}
+	when, err := h.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+	d := when.Sub(now)
+	if d < 0 {
+		return 0, true
+	}
+	return d, true
+}
+
 // uploadAssetToServer uploads the asset file to target.
-func uploadAssetToServer(ctx *context.Context, upload *config.Upload, target, username, secret string, headers map[string]string, a *asset, check ResponseChecker) (*h.Response, error) {
+func uploadAssetToServer(ctx *context.Context, client *h.Client, upload *config.Upload, target, username, secret string, headers map[string]string, a *asset, check ResponseChecker) (*h.Response, error) {
 	req, err := newUploadRequest(ctx, upload.Method, target, username, secret, headers, a)
 	if err != nil {
 		return nil, err
 	}
 
-	return executeHTTPRequest(ctx, upload, req, check)
+	return executeHTTPRequest(ctx, client, req, check)
 }
 
 // newUploadRequest creates a new h.Request for uploading.
@@ -418,11 +531,7 @@ func getHTTPClient(upload *config.Upload) (*h.Client, error) {
 }
 
 // executeHTTPRequest processes the http call with respect of context ctx.
-func executeHTTPRequest(ctx *context.Context, upload *config.Upload, req *h.Request, check ResponseChecker) (*h.Response, error) {
-	client, err := getHTTPClient(upload)
-	if err != nil {
-		return nil, err
-	}
+func executeHTTPRequest(ctx *context.Context, client *h.Client, req *h.Request, check ResponseChecker) (*h.Response, error) {
 	log.Debugf("executing request: %s %s (headers: %v)", req.Method, req.URL, req.Header)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -433,7 +542,7 @@ func executeHTTPRequest(ctx *context.Context, upload *config.Upload, req *h.Requ
 			return nil, ctx.Err()
 		default:
 		}
-		return nil, err
+		return nil, &transportError{err: err}
 	}
 
 	defer resp.Body.Close()
@@ -442,8 +551,23 @@ func executeHTTPRequest(ctx *context.Context, upload *config.Upload, req *h.Requ
 	if err != nil {
 		// even though there was an error, we still return the response
 		// in case the caller wants to inspect it further
-		return resp, err
+		return resp, annotateStatus(resp, err)
 	}
 
 	return resp, err
+}
+
+func annotateStatus(resp *h.Response, err error) error {
+	if resp == nil || err == nil {
+		return err
+	}
+	se := &statusError{code: resp.StatusCode, err: err}
+	switch resp.StatusCode {
+	case h.StatusTooManyRequests, h.StatusServiceUnavailable:
+		if d, ok := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()); ok {
+			se.retryAfter = d
+			se.hasRetryAfter = true
+		}
+	}
+	return se
 }

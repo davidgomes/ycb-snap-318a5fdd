@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	stdctx "context"
 	"crypto/tls"
 	"encoding/pem"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/pipe"
@@ -713,6 +715,191 @@ func cert(srv *httptest.Server) string {
 		Bytes: srv.Certificate().Raw,
 	}
 	return string(pem.EncodeToMemory(block))
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	d, ok := parseRetryAfter("2", now)
+	require.True(t, ok)
+	require.Equal(t, 2*time.Second, d)
+
+	d, ok = parseRetryAfter(now.Add(3*time.Second).Format(http.TimeFormat), now)
+	require.True(t, ok)
+	require.Equal(t, 3*time.Second, d)
+
+	d, ok = parseRetryAfter(now.Add(-time.Second).Format(http.TimeFormat), now)
+	require.True(t, ok)
+	require.Equal(t, time.Duration(0), d)
+
+	_, ok = parseRetryAfter("nope", now)
+	require.False(t, ok)
+	_, ok = parseRetryAfter("", now)
+	require.False(t, ok)
+}
+
+func TestUploadRetryAndAttempts(t *testing.T) {
+	payload := []byte("artifact-bytes")
+	var calls atomic.Int32
+	var got [][]byte
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		mu.Lock()
+		got = append(got, body)
+		mu.Unlock()
+		n := calls.Add(1)
+		switch {
+		case strings.Contains(r.URL.Path, "limited"):
+			w.WriteHeader(http.StatusBadRequest)
+		case strings.Contains(r.URL.Path, "later") && n == 1:
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+		case n < 3:
+			w.WriteHeader(http.StatusBadGateway)
+		default:
+			w.WriteHeader(http.StatusCreated)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	assetOpen = func(string, *artifact.Artifact) (*asset, error) {
+		return &asset{ReadCloser: io.NopCloser(bytes.NewReader(payload)), Size: int64(len(payload))}, nil
+	}
+	t.Cleanup(assetOpenReset)
+
+	ctx := testctx.WrapWithCfg(t.Context(), config.Project{ProjectName: "p"})
+	dir := t.TempDir()
+	t.Chdir(dir)
+	extraPath := "notes.txt"
+	require.NoError(t, os.WriteFile(extraPath, payload, 0o644))
+	ctx.Artifacts.Add(&artifact.Artifact{
+		Name: "b.bin",
+		Path: extraPath,
+		Type: artifact.UploadableBinary,
+	})
+	ctx.Artifacts.Add(&artifact.Artifact{
+		Name: "a.bin",
+		Path: extraPath,
+		Type: artifact.UploadableBinary,
+	})
+
+	check := func(r *http.Response) error {
+		if r.StatusCode/100 == 2 {
+			return nil
+		}
+		return fmt.Errorf("status %d", r.StatusCode)
+	}
+	upload := config.Upload{
+		Name:   "prod",
+		Mode:   ModeBinary,
+		Target: srv.URL + "/dest/",
+		Retry:  config.Retry{Attempts: 3, Delay: time.Millisecond, MaxDelay: 5 * time.Millisecond},
+		ExtraFiles: []config.ExtraFile{{
+			Glob: extraPath,
+		}},
+	}
+	require.NoError(t, Upload(ctx, []config.Upload{upload}, "upload", check))
+
+	mu.Lock()
+	bodies := append([][]byte(nil), got...)
+	mu.Unlock()
+	require.NotEmpty(t, bodies)
+	for _, body := range bodies {
+		require.Equal(t, payload, body)
+	}
+
+	attempts := ctx.Extra[context.PublishAttemptsKey].([]context.PublishAttempt)
+	require.GreaterOrEqual(t, len(attempts), 3)
+	for i := 1; i < len(attempts); i++ {
+		prev, cur := attempts[i-1], attempts[i]
+		require.False(t, prev.Publisher > cur.Publisher)
+		if prev.Publisher == cur.Publisher && prev.Instance == cur.Instance && prev.Target == cur.Target {
+			require.LessOrEqual(t, prev.Attempt, cur.Attempt)
+		}
+	}
+	var sawFail, sawOK bool
+	for _, a := range attempts {
+		require.Equal(t, "upload", a.Publisher)
+		require.Equal(t, "prod", a.Instance)
+		require.NotEmpty(t, a.Target)
+		if a.Status == "failure" {
+			require.NotEmpty(t, a.Error)
+			sawFail = true
+		} else {
+			require.Empty(t, a.Error)
+			require.Equal(t, "success", a.Status)
+			sawOK = true
+		}
+	}
+	require.True(t, sawFail)
+	require.True(t, sawOK)
+
+	// Non-retriable status is a single failure.
+	ctx2 := testctx.WrapWithCfg(t.Context(), config.Project{})
+	ctx2.Artifacts.Add(&artifact.Artifact{Name: "a.bin", Path: extraPath, Type: artifact.UploadableBinary})
+	limited := upload
+	limited.Target = srv.URL + "/limited/"
+	limited.ExtraFiles = nil
+	err := Upload(ctx2, []config.Upload{limited}, "upload", check)
+	require.Error(t, err)
+	limitedAttempts := ctx2.Extra[context.PublishAttemptsKey].([]context.PublishAttempt)
+	require.Len(t, limitedAttempts, 1)
+	require.Equal(t, "failure", limitedAttempts[0].Status)
+
+	// Retry-After is honored, then capped by max_delay.
+	var hits atomic.Int32
+	var first, second time.Time
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, payload, body)
+		n := hits.Add(1)
+		if n == 1 {
+			first = time.Now()
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		second = time.Now()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(slow.Close)
+	ctx3 := testctx.WrapWithCfg(t.Context(), config.Project{})
+	ctx3.Artifacts.Add(&artifact.Artifact{Name: "a.bin", Path: extraPath, Type: artifact.UploadableBinary})
+	capped := upload
+	capped.ExtraFiles = nil
+	capped.Target = slow.URL + "/"
+	capped.Retry = config.Retry{Attempts: 2, Delay: 50 * time.Millisecond, MaxDelay: 80 * time.Millisecond}
+	require.NoError(t, Upload(ctx3, []config.Upload{capped}, "artifactory", check))
+	require.Equal(t, int32(2), hits.Load())
+	gap := second.Sub(first)
+	require.GreaterOrEqual(t, gap, 60*time.Millisecond)
+	require.Less(t, gap, 500*time.Millisecond)
+	artAttempts := ctx3.Extra[context.PublishAttemptsKey].([]context.PublishAttempt)
+	require.Equal(t, "artifactory", artAttempts[0].Publisher)
+	require.Equal(t, 1, artAttempts[0].Attempt)
+	require.Equal(t, "failure", artAttempts[0].Status)
+	require.Equal(t, "success", artAttempts[1].Status)
+
+	cancelCtx, cancel := stdctx.WithCancel(t.Context())
+	ctx4 := testctx.WrapWithCfg(cancelCtx, config.Project{})
+	ctx4.Artifacts.Add(&artifact.Artifact{Name: "a.bin", Path: extraPath, Type: artifact.UploadableBinary})
+	blocker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusGatewayTimeout)
+		cancel()
+	}))
+	t.Cleanup(blocker.Close)
+	canceled := upload
+	canceled.ExtraFiles = nil
+	canceled.Target = blocker.URL + "/"
+	canceled.Retry = config.Retry{Attempts: 5, Delay: time.Second, MaxDelay: time.Second}
+	err = Upload(ctx4, []config.Upload{canceled}, "upload", check)
+	require.ErrorIs(t, err, stdctx.Canceled)
+	cancelAttempts := ctx4.Extra[context.PublishAttemptsKey].([]context.PublishAttempt)
+	require.Len(t, cancelAttempts, 1)
+	require.Equal(t, "failure", cancelAttempts[0].Status)
 }
 
 func TestManyUploads(t *testing.T) {

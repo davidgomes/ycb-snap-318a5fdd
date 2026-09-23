@@ -11,7 +11,9 @@ import (
 	"maps"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
@@ -112,6 +114,12 @@ type Context struct {
 	Skips             map[string]bool
 
 	NotifiedDeprecations map[string]struct{}
+
+	// Extra holds pipeline metadata. publish_attempts records each
+	// upload, artifactory, and blob publish attempt.
+	Extra map[string]any
+
+	publishMu *sync.Mutex
 }
 
 type Runtime struct {
@@ -148,7 +156,49 @@ func Wrap(ctx stdctx.Context, config config.Project) *Context {
 			Goos:   runtime.GOOS,
 			Goarch: runtime.GOARCH,
 		},
+		Extra:     map[string]any{},
+		publishMu: &sync.Mutex{},
 	}
+}
+
+const PublishAttemptsKey = "publish_attempts"
+
+// PublishAttempt is one try to publish a single artifact.
+type PublishAttempt struct {
+	Publisher string `json:"publisher"`
+	Instance  string `json:"instance"`
+	Target    string `json:"target"`
+	Attempt   int    `json:"attempt"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
+
+// RecordPublishAttempt appends one attempt and keeps extra.publish_attempts
+// ordered by publisher, instance, target, then attempt.
+func (ctx *Context) RecordPublishAttempt(attempt PublishAttempt) {
+	if ctx.publishMu == nil {
+		ctx.publishMu = &sync.Mutex{}
+	}
+	ctx.publishMu.Lock()
+	defer ctx.publishMu.Unlock()
+	if ctx.Extra == nil {
+		ctx.Extra = map[string]any{}
+	}
+	attempts, _ := ctx.Extra[PublishAttemptsKey].([]PublishAttempt)
+	attempts = append(attempts, attempt)
+	sort.Slice(attempts, func(i, j int) bool {
+		if attempts[i].Publisher != attempts[j].Publisher {
+			return attempts[i].Publisher < attempts[j].Publisher
+		}
+		if attempts[i].Instance != attempts[j].Instance {
+			return attempts[i].Instance < attempts[j].Instance
+		}
+		if attempts[i].Target != attempts[j].Target {
+			return attempts[i].Target < attempts[j].Target
+		}
+		return attempts[i].Attempt < attempts[j].Attempt
+	})
+	ctx.Extra[PublishAttemptsKey] = attempts
 }
 
 // ToEnv converts a list of strings to an Env (aka a map[string]string).
