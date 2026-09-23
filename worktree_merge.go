@@ -306,16 +306,17 @@ func (w *Worktree) writeMergeHead(h plumbing.Hash) error {
 // readMergeHeads returns the commits recorded in MERGE_HEAD, if any.
 func (w *Worktree) readMergeHeads() ([]plumbing.Hash, error) {
 	data, err := util.ReadFile(w.Filesystem, mergeHeadPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-
 	if err != nil {
+		if w.isMergeHeadMissing(err) {
+			return nil, nil
+		}
+
 		return nil, err
 	}
 
-	var heads []plumbing.Hash
-	for _, line := range strings.Fields(string(data)) {
+	lines := strings.Fields(string(data))
+	heads := make([]plumbing.Hash, 0, len(lines))
+	for _, line := range lines {
 		h, ok := plumbing.FromHex(line)
 		if !ok {
 			return nil, fmt.Errorf("invalid commit %q in %s", line, mergeHeadPath)
@@ -329,11 +330,23 @@ func (w *Worktree) readMergeHeads() ([]plumbing.Hash, error) {
 
 func (w *Worktree) removeMergeHead() error {
 	err := w.Filesystem.Remove(mergeHeadPath)
-	if errors.Is(err, os.ErrNotExist) {
+	if err != nil && w.isMergeHeadMissing(err) {
 		return nil
 	}
 
 	return err
+}
+
+// isMergeHeadMissing reports whether err, returned while accessing MERGE_HEAD,
+// means that it does not exist. Linked worktrees and submodules have a .git
+// file rather than a directory, so they cannot hold a MERGE_HEAD.
+func (w *Worktree) isMergeHeadMissing(err error) bool {
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+
+	fi, statErr := w.Filesystem.Lstat(GitDirName)
+	return statErr == nil && !fi.IsDir()
 }
 
 // commitFiles returns every non-tree entry reachable from the tree of c,
@@ -628,12 +641,16 @@ func mergeLines(base, ours, theirs, oursLabel, theirsLabel string) (merged strin
 			if o < len(oursHunks) && oursHunks[o].baseStart <= end {
 				end = max(end, oursHunks[o].baseEnd)
 				o++
-			} else if t < len(theirsHunks) && theirsHunks[t].baseStart <= end {
+				continue
+			}
+
+			if t < len(theirsHunks) && theirsHunks[t].baseStart <= end {
 				end = max(end, theirsHunks[t].baseEnd)
 				t++
-			} else {
-				break
+				continue
 			}
+
+			break
 		}
 
 		writeLines(&out, baseLines[pos:start])
