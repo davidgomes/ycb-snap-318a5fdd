@@ -528,6 +528,9 @@
 					},
 					"extra_files_only": {
 						"type": "boolean"
+					},
+					"retry": {
+						"$ref": "#/$defs/Retry"
 					}
 				},
 				"additionalProperties": false,
@@ -5022,6 +5025,9 @@
 								"type": "boolean"
 							}
 						]
+					},
+					"retry": {
+						"$ref": "#/$defs/Retry"
 					},
 					"password": {
 						"type": "string"

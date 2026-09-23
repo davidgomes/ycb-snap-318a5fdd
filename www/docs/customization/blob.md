@@ -127,9 +127,38 @@ blobs:
 
     # Upload only the files defined in extra_files.
     extra_files_only: true
+
+    # Retry failed bucket opens and uploads.
+    #
+    # Each artifact (extra files included) is retried on its own, and every
+    # retry uploads the whole file again.
+    # Only transient errors are retried, that is, errors reporting themselves
+    # as timeouts or temporary.
+    #
+    # <!-- md:inline_version v2.15-unreleased -->.
+    retry:
+      # Maximum number of attempts, including the first one.
+      #
+      # Default: 1 (no retries).
+      attempts: 5
+
+      # Delay before the first retry, doubled on every subsequent retry.
+      #
+      # Default: 0.
+      delay: 1s
+
+      # Maximum delay between attempts.
+      #
+      # Default: 0 (no limit).
+      max_delay: 30s
 ```
 
 <!-- md:templates -->
+
+Every upload attempt is recorded in the artifact's `publish_attempts` extra
+field, in the `artifacts.json` file.
+Retries of opening the bucket are not recorded.
+See [Artifacts](artifacts.md#publish-attempts) for more details.
 
 ## Authentication
 

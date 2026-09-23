@@ -271,11 +271,41 @@ artifactories:
     #
     # <!-- md:inline_version v2.1 -->.
     extra_files_only: true
+
+    # Retry failed uploads.
+    #
+    # Each artifact (extra files included) is retried on its own, and every
+    # retry sends the whole file again.
+    # Uploads are retried on connection errors, and on HTTP status codes 408,
+    # 429, 500, 502, 503, and 504.
+    # On 429 and 503, a valid 'Retry-After' header is honored: the wait is the
+    # biggest between it and the exponential backoff, capped by 'max_delay'.
+    #
+    # <!-- md:inline_version v2.15-unreleased -->.
+    retry:
+      # Maximum number of attempts, including the first one.
+      #
+      # Default: 1 (no retries).
+      attempts: 5
+
+      # Delay before the first retry, doubled on every subsequent retry.
+      #
+      # Default: 0.
+      delay: 1s
+
+      # Maximum delay between attempts.
+      #
+      # Default: 0 (no limit).
+      max_delay: 30s
 ```
 
 <!-- md:pro -->
 
 These settings should allow you to push your artifacts into multiple
 **Artifactory** instances.
+
+Every upload attempt is recorded in the artifact's `publish_attempts` extra
+field, in the `artifacts.json` file.
+See [Artifacts](artifacts.md#publish-attempts) for more details.
 
 <!-- md:templates -->

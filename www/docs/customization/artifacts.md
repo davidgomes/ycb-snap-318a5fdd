@@ -93,6 +93,52 @@ The most common fields are:
     configuration. The fields listed above are the most commonly used ones
     across multiple artifact types.
 
+## Publish attempts
+
+<!-- md:version v2.15-unreleased -->
+
+Artifacts published by [`uploads`](upload.md),
+[`artifactories`](artifactory.md), or [`blobs`](blob.md) have every publish
+attempt recorded in the `publish_attempts` extra field, including the retries.
+
+Each entry has the following fields:
+
+| Field       | Description                                                                                        |
+| ----------- | -------------------------------------------------------------------------------------------------- |
+| `publisher` | `upload`, `artifactory`, or `blob`                                                                 |
+| `instance`  | The configured `name` for uploads and artifactories, or `provider://bucket` for blobs              |
+| `target`    | The URL the artifact was uploaded to for uploads and artifactories, or the object's path for blobs |
+| `attempt`   | The attempt number, starting at 1                                                                  |
+| `status`    | `success` or `failure`                                                                             |
+| `error`     | The error of a failed attempt (omitted when successful)                                            |
+
+Entries are sorted by `publisher`, `instance`, `target`, and `attempt`.
+
+```json
+{
+  "name": "myapp_1.0.0_linux_amd64.tar.gz",
+  "extra": {
+    "publish_attempts": [
+      {
+        "publisher": "upload",
+        "instance": "production",
+        "target": "https://some.server/myapp/1.0.0/myapp_1.0.0_linux_amd64.tar.gz",
+        "attempt": 1,
+        "status": "failure",
+        "error": "unexpected http response status: 503 Service Unavailable"
+      },
+      {
+        "publisher": "upload",
+        "instance": "production",
+        "target": "https://some.server/myapp/1.0.0/myapp_1.0.0_linux_amd64.tar.gz",
+        "attempt": 2,
+        "status": "success"
+      }
+    ]
+  }
+}
+```
+
 ## Example
 
 Here's an example of what an artifact entry looks like:
