@@ -177,6 +177,14 @@ class StencilPass(object):
              stencil_ir, parfor_vars, in_args, index_offsets, stencil_func,
              arg_to_arr_dict)
 
+        # Non-constant boundary modes visit the whole axis. Constant axes keep
+        # the kernel footprint so the border can be filled with cval.
+        boundary_modes = stencil_func.resolve_modes(ndims)
+        for _dim, _mode in enumerate(boundary_modes):
+            if _mode != 'constant':
+                start_lengths[_dim] = 0
+                end_lengths[_dim] = 0
+
         if config.DEBUG_ARRAY_OPT >= 1:
             print("stencil_blocks after replace stencil accesses")
             print("start_lengths:", start_lengths)
@@ -675,14 +683,30 @@ class StencilPass(object):
                     else:
                         # getitem returns an array
                         getitem_return_typ = self.typemap[stmt.value.value.name]
-                    # new getitem with the new index var
-                    getitem_call = ir.Expr.getitem(stmt.value.value, ind_var,
-                                                                            loc)
-                    self.calltypes[getitem_call] = signature(
-                        getitem_return_typ,
-                        self.typemap[stmt.value.value.name],
-                        self.typemap[ind_var.name])
-                    stmt.value = getitem_call
+                    boundary_modes = stencil_func.resolve_modes(ndims)
+                    use_boundary = any(m != 'constant' for m in boundary_modes)
+                    if use_boundary:
+                        if getitem_return_typ != self.typemap[
+                                stmt.value.value.name].dtype:
+                            raise NumbaValueError(
+                                "Stencil boundary modes are not supported "
+                                "with slice indexing.")
+                        from numba.stencils.stencil import (
+                            emit_stencil_boundary_load)
+                        cval = stencil_func.options.get('cval', 0)
+                        stmt.value = emit_stencil_boundary_load(
+                            self.typingctx, self.typemap, self.calltypes,
+                            new_body, scope, loc, stmt.value.value, index_vars,
+                            boundary_modes, cval)
+                    else:
+                        # new getitem with the new index var
+                        getitem_call = ir.Expr.getitem(stmt.value.value, ind_var,
+                                                                                loc)
+                        self.calltypes[getitem_call] = signature(
+                            getitem_return_typ,
+                            self.typemap[stmt.value.value.name],
+                            self.typemap[ind_var.name])
+                        stmt.value = getitem_call
 
                 new_body.append(stmt)
             block.body = new_body

@@ -234,12 +234,30 @@ class InlineClosureCallPass(object):
                     "stencil index_offsets option should be a tuple"
                     " with constant structure such as (offset, )"
                 )
-        sf = StencilFunc(kernel_ir, 'constant', options)
+        from numba.stencils.stencil import _normalize_stencil_mode
+        mode_val = options.pop('mode', 'constant')
+        if not isinstance(mode_val, (str, tuple, list)):
+            mode_val = self._resolve_stencil_mode_const(mode_val)
+        mode, mode_broadcast = _normalize_stencil_mode(mode_val)
+        sf = StencilFunc(kernel_ir, mode, mode_broadcast, options)
         sf.kws = expr.kws # hack to keep variables live
         sf_global = ir.Global('stencil', sf, expr.loc)
         self.func_ir._definitions[lhs.name] = [sf_global]
         instr.value = sf_global
         return True
+
+    def _resolve_stencil_mode_const(self, mode_var):
+        """Resolve a stencil mode keyword to a string or tuple of strings."""
+        defn = get_definition(self.func_ir, mode_var)
+        if isinstance(defn, ir.Const):
+            return defn.value
+        require(hasattr(defn, 'items'))
+        items = []
+        for item in defn.items:
+            item_def = get_definition(self.func_ir, item)
+            require(isinstance(item_def, ir.Const))
+            items.append(item_def.value)
+        return tuple(items)
 
     def _fix_stencil_neighborhood(self, options):
         """

@@ -3219,5 +3219,181 @@ class TestManyStencils(TestStencilBase):
                                                  'cval':cval})
 
 
+def _py_map_index(idx, size, mode):
+    if mode == 'wrap':
+        return idx % size
+    if mode == 'nearest':
+        if idx < 0:
+            return 0
+        if idx >= size:
+            return size - 1
+        return idx
+    if mode == 'reflect':
+        if idx < 0:
+            idx = -idx
+        elif idx >= size:
+            idx = 2 * size - idx - 2
+    elif mode == 'symmetric':
+        if idx < 0:
+            idx = -idx - 1
+        elif idx >= size:
+            idx = 2 * size - idx - 1
+    return idx
+
+
+def _py_load(arr, index, modes, cval):
+    mapped = []
+    for dim, (idx, mode) in enumerate(zip(index, modes)):
+        if mode == 'constant':
+            if idx < 0 or idx >= arr.shape[dim]:
+                return cval
+            mapped.append(idx)
+        else:
+            m = _py_map_index(idx, arr.shape[dim], mode)
+            if mode in ('reflect', 'symmetric') and (m < 0 or m >= arr.shape[dim]):
+                return cval
+            mapped.append(m)
+    return arr[tuple(mapped)]
+
+
+class TestStencilBoundaryMode(unittest.TestCase):
+    def test_invalid_mode(self):
+        with self.assertRaises(NumbaValueError) as e:
+            @stencil('periodic')
+            def kernel(a):
+                return a[0]
+        self.assertIn('Unsupported mode style', str(e.exception))
+
+        with self.assertRaises(NumbaValueError) as e:
+            @stencil(mode=('wrap', 'nope'))
+            def kernel2(a):
+                return a[0, 0]
+        self.assertIn('Unsupported mode style', str(e.exception))
+
+    def test_mode_rank_mismatch(self):
+        @stencil(mode=('wrap', 'nearest'))
+        def kernel(a):
+            return a[-1] + a[1]
+
+        with self.assertRaises(NumbaValueError) as e:
+            kernel(np.arange(5.))
+        self.assertIn('dimensional mode specified', str(e.exception))
+
+    def test_wrap_nearest_reflect_symmetric_1d(self):
+        arr = np.array([1., 2., 4., 8.])
+
+        def kernel_body(a):
+            return a[-1] + 10 * a[1]
+
+        for mode in ('wrap', 'nearest', 'reflect', 'symmetric'):
+            kernel = stencil(mode)(kernel_body)
+            got = kernel(arr)
+
+            def ref(a, idx, extra):
+                return (_py_load(a, (idx[0] - 1,), (mode,), 0)
+                        + 10 * _py_load(a, (idx[0] + 1,), (mode,), 0))
+
+            expected = np.empty_like(arr)
+            for i in range(arr.shape[0]):
+                expected[i] = ref(arr, (i,), ())
+            np.testing.assert_allclose(got, expected)
+
+            @njit
+            def run(a):
+                return kernel(a)
+
+            np.testing.assert_allclose(run(arr), expected)
+
+    def test_reflect_still_oob_uses_cval(self):
+        arr = np.array([10., 20., 30., 40.])
+
+        @stencil('reflect', cval=-7.)
+        def kernel(a):
+            return a[-4]
+
+        got = kernel(arr)
+        # i=0 -> index -4 reflects to 4, which is still OOB
+        self.assertEqual(got[0], -7.)
+        self.assertEqual(got[1], 40.)
+        self.assertEqual(got[2], 30.)
+        self.assertEqual(got[3], 20.)
+
+        @stencil('symmetric', cval=-3.)
+        def kernel_s(a):
+            return a[6]
+
+        got_s = kernel_s(arr)
+        # i=0 -> 6 reflects to 1; i=2 -> 8 reflects to -1 -> cval
+        self.assertEqual(got_s[0], 20.)
+        self.assertEqual(got_s[1], 10.)
+        self.assertEqual(got_s[2], -3.)
+        self.assertEqual(got_s[3], -3.)
+
+    def test_per_dimension_modes(self):
+        arr = np.arange(12.).reshape(3, 4)
+
+        @stencil(mode=('wrap', 'nearest'))
+        def kernel(a):
+            return a[-1, 1]
+
+        got = kernel(arr)
+        expected = np.empty_like(arr)
+        for i, j in np.ndindex(*arr.shape):
+            expected[i, j] = _py_load(arr, (i - 1, j + 1),
+                                      ('wrap', 'nearest'), 0)
+        np.testing.assert_allclose(got, expected)
+
+    def test_mode_with_cval_neighborhood_and_standard_indexing(self):
+        weights = np.array([5., 7.])
+
+        @stencil('wrap', cval=0.0, standard_indexing=('b',))
+        def kernel(a, b):
+            return a[-1] + b[0]
+
+        arr = np.array([1., 2., 3., 4.])
+        got = kernel(arr, weights)
+        expected = np.array([4. + 5., 1. + 5., 2. + 5., 3. + 5.])
+        np.testing.assert_allclose(got, expected)
+
+        @stencil(mode='nearest', neighborhood=((-2, 2),), cval=0.0)
+        def kernel_n(a):
+            return a[-2] + a[2]
+
+        got_n = kernel_n(arr)
+        expected_n = np.empty_like(arr)
+        for i in range(arr.shape[0]):
+            expected_n[i] = (_py_load(arr, (i - 2,), ('nearest',), 0)
+                             + _py_load(arr, (i + 2,), ('nearest',), 0))
+        np.testing.assert_allclose(got_n, expected_n)
+
+        @stencil(cval=4.0)
+        def kernel_c(a):
+            return a[-1] + a[1]
+
+        got_c = kernel_c(arr)
+        self.assertEqual(got_c[0], 4.0)
+        self.assertEqual(got_c[-1], 4.0)
+        self.assertEqual(got_c[1], arr[0] + arr[2])
+
+    @skip_unsupported
+    def test_mode_parallel(self):
+        arr = np.array([1., 2., 4., 8.])
+
+        @stencil('symmetric')
+        def kernel(a):
+            return a[-1] + a[1]
+
+        @njit(parallel=True)
+        def run(a):
+            return kernel(a)
+
+        got = run(arr)
+        expected = np.empty_like(arr)
+        for i in range(arr.shape[0]):
+            expected[i] = (_py_load(arr, (i - 1,), ('symmetric',), 0)
+                           + _py_load(arr, (i + 1,), ('symmetric',), 0))
+        np.testing.assert_allclose(got, expected)
+
+
 if __name__ == "__main__":
     unittest.main()

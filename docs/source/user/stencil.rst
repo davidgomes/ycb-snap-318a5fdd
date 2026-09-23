@@ -137,9 +137,8 @@ Stencil decorator options
 =========================
 
 .. note::
-   The stencil decorator may be augmented in the future to provide additional
-   mechanisms for border handling. At present, only one behaviour is
-   implemented, ``"constant"`` (see ``func_or_mode`` below for details).
+   Out-of-bounds stencil accesses are controlled by the boundary ``mode``.
+   The default is ``"constant"`` (see :ref:`stencil-mode`).
 
 .. _stencil-neighborhood:
 
@@ -172,23 +171,43 @@ specified neighborhood, **the behavior is undefined.**
 
 .. _stencil-mode:
 
-``func_or_mode``
-----------------
+``func_or_mode`` and ``mode``
+----------------------------
 
-The optional ``func_or_mode`` parameter controls how the border of the output array
-is handled.  Currently, there is only one supported value, ``"constant"``.
-In ``constant`` mode, the stencil kernel is not applied in cases where
-the kernel would access elements outside the valid range of the input
-array.  In such cases, those elements in the output array are assigned
-to a constant value, as specified by the ``cval`` parameter.
+The optional ``func_or_mode`` argument, or the ``mode`` keyword, controls how
+out-of-bounds accesses are handled.  A single string applies to every
+dimension.  A tuple supplies one mode per dimension and must have the same
+length as the array rank::
+
+    @stencil('wrap')
+    def kernel_wrap(a):
+        return a[-1] + a[1]
+
+    @stencil(mode=('wrap', 'nearest'))
+    def kernel_mixed(a):
+        return a[-1, 1]
+
+Supported values are:
+
+* ``constant`` (the default). The stencil kernel is not applied where it would
+  read outside the array. Those output elements are set to ``cval``.
+* ``wrap``. Indices wrap around to the opposite edge (circular).
+* ``nearest``. Indices are clamped to the nearest edge element.
+* ``reflect``. Indices are mirrored without repeating the edge element. If the
+  reflected index is still outside the array, that access yields ``cval``.
+* ``symmetric``. Indices are mirrored and the edge element is repeated. If the
+  reflected index is still outside the array, that access yields ``cval``.
+
+An invalid mode raises ``NumbaValueError``. Passing a mode tuple whose length
+does not match the input array dimensionality also raises ``NumbaValueError``.
 
 ``cval``
 --------
 
-The optional cval parameter defaults to zero but can be set to any
-desired value, which is then used for the border of the output array
-if the ``func_or_mode`` parameter is set to ``constant``.  The cval parameter is
-ignored in all other modes.  The type of the cval parameter must match
+The optional cval parameter defaults to zero.  It is written into output
+elements that ``constant`` mode does not compute, and it is also the value
+returned for an individual ``reflect`` or ``symmetric`` access that is still
+out of bounds after one reflection.  The type of the cval parameter must match
 the return type of the stencil kernel.  If the user wishes the output
 array to be constructed from a particular type then they should ensure
 that the stencil kernel returns that type.
