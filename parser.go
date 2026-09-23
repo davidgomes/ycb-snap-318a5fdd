@@ -31,7 +31,11 @@ type parserOptions struct {
 	unionDefs             []unionDef
 	customDefs            []customDef
 	elide                 []string
+	strictMode            bool
 }
+
+// strictModeCheck is installed by the analyze build tag.
+var strictModeCheck func(p *parserOptions) error
 
 // A Parser for a particular grammar and lexer.
 type Parser[G any] struct {
@@ -134,6 +138,11 @@ func Build[G any](options ...Option) (parser *Parser[G], err error) {
 	p.typeNodes = context.typeNodes
 	p.typeNodes[p.rootType] = rootNode
 	p.setCaseInsensitiveTokens()
+	if p.strictMode && strictModeCheck != nil {
+		if err := strictModeCheck(&p.parserOptions); err != nil {
+			return nil, err
+		}
+	}
 	return p, nil
 }
 
