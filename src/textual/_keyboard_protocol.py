@@ -121,3 +121,21 @@ FUNCTIONAL_KEYS = {
     "57453u": "iso_level3_shift",
     "57454u": "iso_level5_shift",
 }
+
+# Modifier keys report their own identity; the modifier bit is redundant.
+MODIFIER_FUNCTIONAL_KEYS = {
+    "left_shift",
+    "left_control",
+    "left_alt",
+    "left_super",
+    "left_hyper",
+    "left_meta",
+    "right_shift",
+    "right_control",
+    "right_alt",
+    "right_super",
+    "right_hyper",
+    "right_meta",
+    "iso_level3_shift",
+    "iso_level5_shift",
+}

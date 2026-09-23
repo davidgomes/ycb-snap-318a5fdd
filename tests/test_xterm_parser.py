@@ -204,6 +204,82 @@ def test_keys(parser, sequence: str, key: str) -> None:
     assert event.key == key
 
 
+def test_kitty_shift_only_printable_preserves_character(parser):
+    events = list(parser.feed("\x1b[65;2u"))
+    event = events[0]
+    assert event.key in {"A", "shift+a"}
+    assert event.character == "A"
+    assert event.modifiers == ("shift",)
+    assert event.base_key == "a"
+    assert event.phase == "press"
+    assert event.is_press
+    assert event.shift
+    assert not event.ctrl
+
+
+def test_kitty_press_repeat_release(parser):
+    press, repeat, release = (
+        list(parser.feed(sequence))[0]
+        for sequence in ("\x1b[97u", "\x1b[97;1:2u", "\x1b[97;1:3u")
+    )
+    assert (press.phase, repeat.phase, release.phase) == ("press", "repeat", "release")
+    assert press.is_press and repeat.is_repeat and release.is_release
+    assert press.base_key == repeat.base_key == release.base_key == "a"
+    assert press.modifiers == repeat.modifiers == release.modifiers == ()
+
+
+def test_kitty_non_shift_modified_printable_has_no_character(parser):
+    event = list(parser.feed("\x1b[65;4u"))[0]
+    assert event.key == "alt+shift+a"
+    assert event.character is None
+    assert event.modifiers == ("alt", "shift")
+    assert event.base_key == "a"
+
+
+def test_kitty_text_reporting_keeps_metadata(parser):
+    event = list(parser.feed("\x1b[97;2;65u"))[0]
+    assert event.key in {"A", "shift+a"}
+    assert event.character == "A"
+    assert event.modifiers == ("shift",)
+    assert event.base_key == "a"
+
+
+def test_kitty_keycode_zero_uses_text(parser):
+    event = list(parser.feed("\x1b[0;;65u"))[0]
+    assert event.key == "A"
+    assert event.character == "A"
+
+
+def test_kitty_alternate_key_matches_shifted_form(parser):
+    event = list(parser.feed("\x1b[61:43;5u"))[0]
+    assert event.shifted_key == "plus"
+    assert event.modifiers == ("ctrl",)
+    assert "ctrl+plus" in event.aliases
+    assert event.character is None
+
+
+def test_legacy_alt_prefixed_named_keys(parser):
+    cases = [
+        ("\x1b\r", "alt+enter", "\r"),
+        ("\x1b ", "alt+space", " "),
+        ("\x1b\x08", "alt+backspace", "\x08"),
+        ("\x1b\x01", "alt+ctrl+a", "\x01"),
+    ]
+    for sequence, key, character in cases:
+        sequence_parser = XTermParser()
+        events = []
+        events.extend(sequence_parser.feed(sequence))
+        events.extend(sequence_parser.feed(""))
+        event = events[0]
+        assert event.key == key
+        assert event.character == character
+        if key == "alt+ctrl+a":
+            assert event.modifiers == ("alt", "ctrl")
+            assert event.base_key == "a"
+        if key == "alt+space":
+            assert event.character == " "
+
+
 @pytest.mark.parametrize(
     "sequence, event_type, shift, meta",
     [

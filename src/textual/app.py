@@ -109,6 +109,7 @@ from textual.geometry import Offset, Region, Size
 from textual.keys import (
     REPLACED_KEYS,
     _character_to_key,
+    _get_key_aliases,
     _get_unicode_name_from_key,
     _normalize_key_list,
     format_key,
@@ -3833,6 +3834,30 @@ class App(Generic[ReturnType], DOMNode):
         """
         self.post_message(events.Key(key, None))
 
+    async def _check_event_bindings(
+        self, event: events.Key, priority: bool = False
+    ) -> bool:
+        """Match a key event against bindings, including alternate-key aliases.
+
+        Built-in aliases such as ``enter`` / ``ctrl+m`` are left to key handlers.
+        Alternate Kitty names (for example ``ctrl+plus``) are included so
+        shifted-form shortcuts keep matching.
+
+        Args:
+            event: The key event.
+            priority: If ``True`` check from ``App`` down, otherwise from focused up.
+
+        Returns:
+            True if a binding handled the key.
+        """
+        builtin_aliases = set(_get_key_aliases(event.key))
+        for key in event.aliases:
+            if key != event.key and key in builtin_aliases:
+                continue
+            if await self._check_bindings(key, priority=priority):
+                return True
+        return False
+
     async def _check_bindings(self, key: str, priority: bool = False) -> bool:
         """Handle a key press.
 
@@ -4002,7 +4027,7 @@ class App(Generic[ReturnType], DOMNode):
                         self.screen._clear_tooltip()
                     except NoScreen:
                         pass
-                if not await self._check_bindings(event.key, priority=True):
+                if not await self._check_event_bindings(event, priority=True):
                     forward_target = self.focused or self.screen
                     forward_target._forward_event(event)
             else:
@@ -4208,7 +4233,7 @@ class App(Generic[ReturnType], DOMNode):
         message.stop()
 
     async def _on_key(self, event: events.Key) -> None:
-        if not (await self._check_bindings(event.key)):
+        if not (await self._check_event_bindings(event)):
             await dispatch_key(self, event)
 
     async def _on_resize(self, event: events.Resize) -> None:
