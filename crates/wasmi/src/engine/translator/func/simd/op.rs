@@ -1,7 +1,6 @@
 use super::IntoLaneIdx;
 use crate::{
-    V128,
-    ValType,
+    V128, ValType,
     core::{Typed, simd},
     engine::translator::{func::op::LoadOperator, utils::ToBits},
     ir::{Offset16, Op, Slot, index::Memory},

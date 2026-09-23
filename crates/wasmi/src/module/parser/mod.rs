@@ -1,40 +1,21 @@
 use super::{
-    CustomSectionsBuilder,
-    ElementSegment,
-    FuncIdx,
-    ModuleBuilder,
-    ModuleHeader,
+    CustomSectionsBuilder, ElementSegment, FuncIdx, ModuleBuilder, ModuleHeader,
     builder::ModuleHeaderBuilder,
     export::ExternIdx,
     global::Global,
     import::{FuncTypeIdx, Import},
-    utils::FromWasmparser as _,
+    utils::{FromWasmparser as _, WasmiValueType},
 };
 use crate::{
-    Engine,
-    Error,
-    FuncType,
-    MemoryType,
-    TableType,
+    Engine, Error, FuncType, MemoryType, TableType, ValType,
     engine::{EnforcedLimitsError, EngineFunc},
 };
-use alloc::boxed::Box;
-use core::ops::Range;
+use alloc::{boxed::Box, vec::Vec};
+use core::{iter, ops::Range};
 use wasmparser::{
-    CustomSectionReader,
-    DataSectionReader,
-    ElementSectionReader,
-    Encoding,
-    ExportSectionReader,
-    FunctionBody,
-    FunctionSectionReader,
-    GlobalSectionReader,
-    ImportSectionReader,
-    MemorySectionReader,
-    Parser as WasmParser,
-    Payload,
-    TableSectionReader,
-    TypeSectionReader,
+    CustomSectionReader, DataSectionReader, ElementSectionReader, Encoding, ExportSectionReader,
+    FunctionBody, FunctionSectionReader, GlobalSectionReader, ImportSectionReader,
+    MemorySectionReader, Parser as WasmParser, Payload, TableSectionReader, TypeSectionReader,
     Validator,
 };
 
@@ -53,6 +34,12 @@ pub struct ModuleParser {
     parser: WasmParser,
     /// The number of compiled or processed functions.
     engine_funcs: u32,
+    /// The declared local variable types of all internal functions.
+    ///
+    /// # Note
+    ///
+    /// This is only populated if coredump generation is enabled.
+    func_locals: Vec<Box<[ValType]>>,
 }
 
 impl ModuleParser {
@@ -65,6 +52,7 @@ impl ModuleParser {
             validator: None,
             parser,
             engine_funcs: 0,
+            func_locals: Vec::new(),
         }
     }
 
@@ -492,6 +480,9 @@ impl ModuleParser {
         header: &ModuleHeader,
     ) -> Result<(), Error> {
         let (func, engine_func) = self.next_func(header);
+        if self.engine.config().get_generate_coredump() {
+            self.func_locals.push(Self::read_func_locals(&func_body));
+        }
         let module = header.clone();
         let offset = func_body.get_binary_reader().original_position();
         let func_to_validate = match &mut self.validator {
@@ -501,6 +492,27 @@ impl ModuleParser {
         self.engine
             .translate_func(func, engine_func, offset, bytes, module, func_to_validate)?;
         Ok(())
+    }
+
+    /// Returns the declared local variable types of the `func_body`.
+    ///
+    /// # Note
+    ///
+    /// Malformed local declarations yield no locals since those are reported
+    /// by Wasm validation which might happen lazily.
+    fn read_func_locals(func_body: &FunctionBody) -> Box<[ValType]> {
+        let mut locals = Vec::new();
+        let Ok(reader) = func_body.get_locals_reader() else {
+            return Box::from([]);
+        };
+        for local in reader {
+            let Ok((amount, ty)) = local else {
+                return Box::from([]);
+            };
+            let ty = WasmiValueType::from(ty).into_inner();
+            locals.extend(iter::repeat_n(ty, amount as usize));
+        }
+        locals.into()
     }
 
     /// Process a single Wasm custom section.

@@ -1,19 +1,9 @@
 use crate::{
-    Error,
-    Func,
-    TrapCode,
+    Error, Func, TrapCode,
     engine::{
-        ResumableHostTrapError,
-        ResumableOutOfFuelError,
-        StackConfig,
+        ResumableHostTrapError, ResumableOutOfFuelError, StackConfig,
         executor::{
-            Cell,
-            CellError,
-            CellsReader,
-            CellsWriter,
-            CodeMap,
-            InOutParams,
-            LoadFromCellsByValue,
+            Cell, CellError, CellsReader, CellsWriter, CodeMap, InOutParams, LoadFromCellsByValue,
             StoreToCells,
             handler::{
                 dispatch::{Control, ExecutionOutcome},
@@ -30,8 +20,7 @@ use alloc::vec::Vec;
 use core::{
     cmp,
     marker::PhantomData,
-    mem,
-    ops,
+    mem, ops,
     ptr::{self, NonNull},
     slice,
 };
@@ -582,6 +571,28 @@ impl Stack {
         (ip, sp, instance)
     }
 
+    /// Returns the Wasm function frames of `self` ordered from youngest to oldest.
+    pub fn frame_snapshots(&self) -> Vec<FrameSnapshot<'_>> {
+        let cells = &self.values.cells[..];
+        let mut instance = self.frames.instance;
+        self.frames
+            .frames
+            .iter()
+            .rev()
+            .map(|frame| {
+                let snapshot = FrameSnapshot {
+                    ip: frame.ip.value as usize,
+                    instance: instance.map(|instance| instance.value.as_ptr().cast_const()),
+                    cells: cells.get(frame.start.into_inner()..).unwrap_or(&[]),
+                };
+                if let Some(caller_instance) = frame.instance {
+                    instance = Some(caller_instance);
+                }
+                snapshot
+            })
+            .collect()
+    }
+
     /// Prepares `self` for a host function tail call.
     pub fn return_prepare_host_frame<'a>(
         &'a mut self,
@@ -654,6 +665,17 @@ impl Stack {
         let start = self.frames.replace(callee_ip, callee_instance)?;
         self.values.replace(start, callee_size, callee_params)
     }
+}
+
+/// A Wasm function frame of a [`Stack`] as captured for coredumps.
+#[derive(Debug, Copy, Clone)]
+pub struct FrameSnapshot<'a> {
+    /// The address of the last synchronized instruction of the frame.
+    pub ip: usize,
+    /// The [`InstanceEntity`] used by the frame if known.
+    pub instance: Option<*const InstanceEntity>,
+    /// The cells of the frame, starting with its function parameters and locals.
+    pub cells: &'a [Cell],
 }
 
 /// The value stack.

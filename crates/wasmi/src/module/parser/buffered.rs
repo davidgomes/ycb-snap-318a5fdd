@@ -1,11 +1,8 @@
 use super::{
-    CustomSectionsBuilder,
-    ModuleBuilder,
-    ModuleHeader,
-    ModuleHeaderBuilder,
-    ModuleParser,
+    CustomSectionsBuilder, ModuleBuilder, ModuleHeader, ModuleHeaderBuilder, ModuleParser,
 };
 use crate::{Error, Module};
+use core::mem;
 use wasmparser::{Chunk, Payload, Validator};
 
 impl ModuleParser {
@@ -169,7 +166,8 @@ impl ModuleParser {
                 _ => break,
             }
         }
-        Ok(ModuleBuilder::new(header, custom_sections))
+        let func_locals = mem::take(&mut self.func_locals);
+        Ok(ModuleBuilder::new(header, custom_sections, func_locals))
     }
 
     /// Parse the Wasm data section and finalize parsing.

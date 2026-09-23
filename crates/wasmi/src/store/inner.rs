@@ -1,28 +1,13 @@
 use crate::{
-    DataSegmentEntity,
-    ElementSegment,
-    Engine,
-    Error,
-    Func,
-    FuncEntity,
-    FuncType,
-    Global,
-    Instance,
-    InstanceEntity,
-    Memory,
-    Table,
+    DataSegmentEntity, ElementSegment, Engine, Error, Func, FuncEntity, FuncType, Global, Instance,
+    InstanceEntity, Memory, Table,
     collections::arena::{Arena, ArenaKey},
     core::{CoreElementSegment, CoreGlobal, CoreMemory, CoreTable, Fuel},
     engine::DedupFuncType,
     memory::DataSegment,
     reftype::{ExternRef, ExternRefEntity},
     store::{
-        AsStoreId as _,
-        Handle,
-        RawHandle,
-        Stored,
-        error::InternalStoreError,
-        handle_arena_err,
+        AsStoreId as _, Handle, RawHandle, Stored, error::InternalStoreError, handle_arena_err,
         id::StoreId,
     },
 };
@@ -129,6 +114,13 @@ impl StoreInner {
     /// Returns the number of instances allocated to the [`StoreInner`].
     pub fn len_instances(&self) -> usize {
         self.instances.len()
+    }
+
+    /// Returns an iterator over all [`Instance`]s of the [`StoreInner`] and their [`InstanceEntity`].
+    pub fn instances(&self) -> impl Iterator<Item = (Instance, &InstanceEntity)> {
+        self.instances
+            .iter()
+            .map(|(key, entity)| (Instance::from_raw(self.id.wrap(key)), entity))
     }
 
     /// Returns the number of tables allocated to the [`StoreInner`].

@@ -7,9 +7,7 @@
 
 use super::{FuncTranslationDriver, FuncTranslator, TranslationError, ValidatingFuncTranslator};
 use crate::{
-    Config,
-    Error,
-    TrapCode,
+    Config, Error, TrapCode,
     collections::arena::{Arena, ArenaKey},
     core::{Fuel, FuelCostsProvider},
     engine::{ResumableOutOfFuelError, utils::unreachable_unchecked},
@@ -17,7 +15,7 @@ use crate::{
     ir::index::InternalFunc,
     module::{FuncIdx, ModuleHeader},
 };
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 use core::{
     fmt,
     mem::{self, MaybeUninit},
@@ -275,6 +273,21 @@ impl CodeMap {
             module.clone(),
             func_to_validate,
         ));
+    }
+
+    /// Returns the address ranges of the encoded ops of all compiled functions sorted by address.
+    pub fn compiled_func_ranges(&self) -> Vec<(Range<usize>, EngineFunc)> {
+        let funcs = self.funcs.lock();
+        let mut ranges = funcs
+            .iter()
+            .filter_map(|(func, entity)| {
+                let ops = entity.get_compiled()?.ops();
+                let start = ops.as_ptr() as usize;
+                Some((start..start + ops.len(), func))
+            })
+            .collect::<Vec<_>>();
+        ranges.sort_unstable_by_key(|(range, _)| range.start);
+        ranges
     }
 
     /// Returns the [`FuncEntity`] of the [`EngineFunc`].

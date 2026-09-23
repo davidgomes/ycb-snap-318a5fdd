@@ -34,17 +34,11 @@ pub(crate) use self::{
     utils::WasmiValueType,
 };
 use crate::{
-    Engine,
-    Error,
-    ExternType,
-    FuncType,
-    GlobalType,
-    MemoryType,
-    TableType,
+    Engine, Error, ExternType, FuncType, GlobalType, MemoryType, TableType, ValType,
     collections::Map,
     engine::{DedupFuncType, EngineFunc, EngineFuncSpan, EngineFuncSpanIter, EngineWeak},
 };
-use alloc::{boxed::Box, sync::Arc};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::{iter, slice::Iter as SliceIter};
 use wasmparser::{FuncValidatorAllocations, Parser, ValidPayload, Validator};
 
@@ -61,6 +55,12 @@ struct ModuleInner {
     header: ModuleHeader,
     data_segments: DataSegments,
     custom_sections: CustomSections,
+    /// The declared local variable types of all internal functions.
+    ///
+    /// # Note
+    ///
+    /// This is only populated if coredump generation is enabled.
+    func_locals: Box<[Box<[ValType]>]>,
 }
 
 /// A parsed and validated WebAssembly module header.
@@ -129,7 +129,6 @@ impl ModuleHeader {
     }
 
     /// Returns the [`FuncIdx`] for the given [`EngineFunc`].
-    #[expect(unused)]
     pub fn get_func_index(&self, func: EngineFunc) -> Option<FuncIdx> {
         let position = self.inner.engine_funcs.position(func)?;
         let len_imports = self.inner.imports.len_funcs as u32;
@@ -448,6 +447,45 @@ impl Module {
     #[inline]
     pub fn custom_sections(&self) -> CustomSectionsIter<'_> {
         self.inner.custom_sections.iter()
+    }
+
+    /// Returns `true` if `self` and `other` refer to the same [`Module`].
+    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    /// Returns the module name of the Wasm `name` custom section if any.
+    pub(crate) fn name(&self) -> Option<&str> {
+        let section = self
+            .custom_sections()
+            .find(|section| section.name() == "name")?;
+        let reader = wasmparser::BinaryReader::new(section.data(), 0);
+        for name in wasmparser::NameSectionReader::new(reader) {
+            if let Ok(wasmparser::Name::Module { name, .. }) = name {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    /// Returns the [`FuncIdx`] and the types of all locals of the internal function `func`.
+    ///
+    /// The returned local types include the function parameters followed by
+    /// the declared local variables.
+    ///
+    /// Returns `None` if `func` is not an internal function of `self`.
+    pub(crate) fn func_locals(&self, func: EngineFunc) -> Option<(FuncIdx, Vec<ValType>)> {
+        let header = &self.inner.header;
+        let func_idx = header.get_func_index(func)?;
+        let position = header.inner.engine_funcs.position(func)?;
+        let dedup = header.get_type_of_func(func_idx);
+        let mut locals = self
+            .engine()
+            .resolve_func_type(dedup, |func_type| func_type.params().to_vec());
+        if let Some(declared) = self.inner.func_locals.get(position as usize) {
+            locals.extend_from_slice(declared);
+        }
+        Some((func_idx, locals))
     }
 }
 

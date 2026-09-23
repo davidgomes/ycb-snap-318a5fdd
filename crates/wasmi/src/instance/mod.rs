@@ -1,24 +1,9 @@
 pub(crate) use self::builder::InstanceEntityBuilder;
 pub use self::exports::{Export, ExportsIter, Extern, ExternType};
 use crate::{
-    AsContext,
-    AsContextMut,
-    ElementSegment,
-    Error,
-    Func,
-    Global,
-    Memory,
-    Module,
-    StoreContext,
-    Table,
-    TypedFunc,
-    WasmParams,
-    WasmResults,
-    collections::Map,
-    engine::DedupFuncType,
-    func::FuncError,
-    memory::DataSegment,
-    store::Stored,
+    AsContext, AsContextMut, ElementSegment, Error, Func, Global, Memory, Module, StoreContext,
+    Table, TypedFunc, WasmParams, WasmResults, collections::Map, engine::DedupFuncType,
+    func::FuncError, memory::DataSegment, store::Stored,
 };
 use alloc::{boxed::Box, sync::Arc};
 
@@ -40,6 +25,12 @@ pub struct InstanceEntity {
     exports: Map<Box<str>, Extern>,
     data_segments: Box<[DataSegment]>,
     elem_segments: Box<[ElementSegment]>,
+    /// The instantiated [`Module`].
+    ///
+    /// # Note
+    ///
+    /// This is only `Some` if coredump generation is enabled.
+    module: Option<Module>,
 }
 
 impl InstanceEntity {
@@ -55,6 +46,7 @@ impl InstanceEntity {
             exports: Map::new(),
             data_segments: [].into(),
             elem_segments: [].into(),
+            module: None,
         }
     }
 
@@ -106,6 +98,21 @@ impl InstanceEntity {
     /// Returns the value exported to the given `name` if any.
     pub fn get_export(&self, name: &str) -> Option<Extern> {
         self.exports.get(name).copied()
+    }
+
+    /// Returns the instantiated [`Module`] if it has been recorded.
+    pub fn module(&self) -> Option<&Module> {
+        self.module.as_ref()
+    }
+
+    /// Returns the linear memories of the [`InstanceEntity`].
+    pub fn memories(&self) -> &[Memory] {
+        &self.memories
+    }
+
+    /// Returns the global variables of the [`InstanceEntity`].
+    pub fn globals(&self) -> &[Global] {
+        &self.globals
     }
 
     /// Returns an iterator over the exports of the [`Instance`].

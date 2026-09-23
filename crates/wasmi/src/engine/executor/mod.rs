@@ -1,35 +1,17 @@
 pub use self::{
     handler::{
-        Cell,
-        CellError,
-        CellsReader,
-        CellsWriter,
-        ExecutionOutcome,
-        Inst,
-        LiftFromCells,
-        LiftFromCellsByValue,
-        LoadByVal,
-        LoadFromCellsByValue,
-        LowerToCells,
-        Stack,
-        StoreToCells,
-        op_code_to_handler,
-        resume_wasm_func_call,
+        Cell, CellError, CellsReader, CellsWriter, ExecutionOutcome, FrameSnapshot, Inst,
+        LiftFromCells, LiftFromCellsByValue, LoadByVal, LoadFromCellsByValue, LowerToCells, Stack,
+        StoreToCells, op_code_to_handler, resume_wasm_func_call,
     },
     inout::{InOutParams, InOutResults},
 };
 use super::code_map::CodeMap;
 use crate::{
-    Error,
-    Func,
-    FuncEntity,
-    Store,
-    StoreContextMut,
+    Error, Func, FuncEntity, Store, StoreContextMut,
+    coredump::CoreDump,
     engine::{
-        EngineInner,
-        ResumableCallBase,
-        ResumableCallHostTrap,
-        ResumableCallOutOfFuel,
+        EngineInner, ResumableCallBase, ResumableCallHostTrap, ResumableCallOutOfFuel,
         executor::handler::{init_host_func_call, init_wasm_func_call},
     },
     ir::SlotSpan,
@@ -58,11 +40,48 @@ impl EngineInner {
         Results: LiftFromCells,
     {
         let mut stack = self.stacks.lock().reuse_or_new();
-        let value = EngineExecutor::new(&self.code_map, &mut stack)
-            .execute_root_func(ctx.store, func, params, results)
-            .map_err(ExecutionOutcome::into_non_resumable)?;
+        let outcome = EngineExecutor::new(&self.code_map, &mut stack).execute_root_func(
+            &mut *ctx.store,
+            func,
+            params,
+            results,
+        );
+        let value = match outcome {
+            Ok(value) => value,
+            Err(outcome) => {
+                let is_wasm_trap = !matches!(outcome, ExecutionOutcome::Host(_));
+                let mut error = outcome.into_non_resumable();
+                self.attach_coredump(ctx.store, &stack, &mut error, is_wasm_trap);
+                return Err(error);
+            }
+        };
         self.stacks.lock().recycle(stack);
         Ok(value)
+    }
+
+    /// Attaches a coredump of the Wasm frames on the `stack` to `error` if enabled.
+    ///
+    /// - If `error` already carries a coredump from an inner Wasm execution it is extended.
+    /// - Otherwise a new coredump is only generated if `is_wasm_trap` is `true`.
+    fn attach_coredump<T>(
+        &self,
+        store: &Store<T>,
+        stack: &Stack,
+        error: &mut Error,
+        is_wasm_trap: bool,
+    ) {
+        if !self.config.get_generate_coredump() {
+            return;
+        }
+        let frames = stack.frame_snapshots();
+        CoreDump::attach(
+            &self.config,
+            &store.inner,
+            &self.code_map,
+            &frames,
+            error,
+            is_wasm_trap,
+        );
     }
 
     /// Executes the given [`Func`] resumably with the given `params` and returns the `results`.
@@ -89,7 +108,8 @@ impl EngineInner {
             .execute_root_func(store, func, params, results);
         let value = match outcome {
             Ok(value) => value,
-            Err(ExecutionOutcome::Host(error)) => {
+            Err(ExecutionOutcome::Host(mut error)) => {
+                self.attach_coredump(store, &stack, error.host_error_mut(), false);
                 let host_func = *error.host_func();
                 let caller_results = *error.caller_results();
                 let host_error = error.into_error();
@@ -111,7 +131,8 @@ impl EngineInner {
                     required_fuel,
                 )));
             }
-            Err(ExecutionOutcome::Error(error)) => {
+            Err(ExecutionOutcome::Error(mut error)) => {
+                self.attach_coredump(store, &stack, &mut error, true);
                 self.stacks.lock().recycle(stack);
                 return Err(error);
             }
@@ -140,10 +161,13 @@ impl EngineInner {
     {
         let caller_results = invocation.caller_results();
         let mut executor = EngineExecutor::new(&self.code_map, invocation.common.stack_mut());
-        let outcome = executor.resume_func_host_trap(ctx.store, params, caller_results, results);
+        let outcome =
+            executor.resume_func_host_trap(&mut *ctx.store, params, caller_results, results);
         let results = match outcome {
             Ok(results) => results,
-            Err(ExecutionOutcome::Host(error)) => {
+            Err(ExecutionOutcome::Host(mut error)) => {
+                let stack = invocation.common.stack_mut();
+                self.attach_coredump(ctx.store, stack, error.host_error_mut(), false);
                 let host_func = *error.host_func();
                 let caller_results = *error.caller_results();
                 invocation.update(host_func, error.into_error(), caller_results);
@@ -154,7 +178,9 @@ impl EngineInner {
                 let invocation = invocation.update_to_out_of_fuel(required_fuel);
                 return Ok(ResumableCallBase::OutOfFuel(invocation));
             }
-            Err(ExecutionOutcome::Error(error)) => {
+            Err(ExecutionOutcome::Error(mut error)) => {
+                let stack = invocation.common.stack_mut();
+                self.attach_coredump(ctx.store, stack, &mut error, true);
                 self.stacks.lock().recycle(invocation.common.take_stack());
                 return Err(error);
             }
@@ -180,10 +206,12 @@ impl EngineInner {
         Results: LiftFromCells,
     {
         let mut executor = EngineExecutor::new(&self.code_map, invocation.common.stack_mut());
-        let outcome = executor.resume_func_out_of_fuel(ctx.store, results);
+        let outcome = executor.resume_func_out_of_fuel(&mut *ctx.store, results);
         let results = match outcome {
             Ok(results) => results,
-            Err(ExecutionOutcome::Host(error)) => {
+            Err(ExecutionOutcome::Host(mut error)) => {
+                let stack = invocation.common.stack_mut();
+                self.attach_coredump(ctx.store, stack, error.host_error_mut(), false);
                 let host_func = *error.host_func();
                 let caller_results = *error.caller_results();
                 let invocation =
@@ -194,7 +222,9 @@ impl EngineInner {
                 invocation.update(error.required_fuel());
                 return Ok(ResumableCallBase::OutOfFuel(invocation));
             }
-            Err(ExecutionOutcome::Error(error)) => {
+            Err(ExecutionOutcome::Error(mut error)) => {
+                let stack = invocation.common.stack_mut();
+                self.attach_coredump(ctx.store, stack, &mut error, true);
                 self.stacks.lock().recycle(invocation.common.take_stack());
                 return Err(error);
             }

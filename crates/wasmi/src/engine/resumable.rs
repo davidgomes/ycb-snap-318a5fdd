@@ -1,10 +1,6 @@
 use super::Func;
 use crate::{
-    AsContext,
-    AsContextMut,
-    Engine,
-    Error,
-    Val,
+    AsContext, AsContextMut, Engine, Error, Val,
     engine::{LiftFromCellsByValue, LoadByVal, Stack},
     func::FuncError,
     ir::SlotSpan,
@@ -63,6 +59,16 @@ impl ResumableHostTrapError {
     /// Consumes `self` to return the underlying [`Error`].
     pub(crate) fn into_error(self) -> Error {
         self.host_error
+    }
+
+    /// Returns a shared reference to the underlying [`Error`].
+    pub(crate) fn host_error(&self) -> &Error {
+        &self.host_error
+    }
+
+    /// Returns an exclusive reference to the underlying [`Error`].
+    pub(crate) fn host_error_mut(&mut self) -> &mut Error {
+        &mut self.host_error
     }
 
     /// Returns the [`Func`] of the [`ResumableHostTrapError`].

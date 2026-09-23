@@ -1,17 +1,7 @@
 use super::InstanceEntity;
 use crate::{
-    ElementSegment,
-    Extern,
-    ExternType,
-    Func,
-    Global,
-    Memory,
-    Module,
-    Table,
-    collections::Map,
-    engine::DedupFuncType,
-    memory::DataSegment,
-    module::FuncIdx,
+    ElementSegment, Extern, ExternType, Func, Global, Memory, Module, Table, collections::Map,
+    engine::DedupFuncType, memory::DataSegment, module::FuncIdx,
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
@@ -27,6 +17,7 @@ pub struct InstanceEntityBuilder {
     exports: Map<Box<str>, Extern>,
     data_segments: Vec<DataSegment>,
     elem_segments: Vec<ElementSegment>,
+    module: Option<Module>,
 }
 
 impl InstanceEntityBuilder {
@@ -67,6 +58,11 @@ impl InstanceEntityBuilder {
             exports: Map::default(),
             data_segments: Vec::new(),
             elem_segments: Vec::new(),
+            module: module
+                .engine()
+                .config()
+                .get_generate_coredump()
+                .then(|| module.clone()),
         }
     }
 
@@ -194,6 +190,7 @@ impl InstanceEntityBuilder {
             exports: self.exports,
             data_segments: self.data_segments.into(),
             elem_segments: self.elem_segments.into(),
+            module: self.module,
         }
     }
 }
