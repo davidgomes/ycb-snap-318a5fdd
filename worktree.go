@@ -49,6 +49,13 @@ var (
 	ErrRestoreWorktreeOnlyNotSupported = errors.New("worktree only is not supported")
 	// ErrSparseResetDirectoryNotFound is returned when a sparse-reset directory is not found.
 	ErrSparseResetDirectoryNotFound = errors.New("sparse-reset directory not found on commit")
+	// ErrUncommittedChanges is returned when a merge is attempted while the
+	// worktree or the index still contains changes that have not been committed.
+	ErrUncommittedChanges = errors.New("worktree contains uncommitted changes")
+	// ErrMergeConflicts is returned when a merge cannot be completed
+	// automatically. Conflicting paths are left in the index (stages 1/2/3)
+	// and in the worktree, and .git/MERGE_HEAD records the target commit.
+	ErrMergeConflicts = errors.New("merge conflicts")
 )
 
 // Worktree represents a git worktree.
@@ -1269,6 +1276,12 @@ func rmFileAndDirsIfEmpty(fs billy.Filesystem, name string) error {
 // `dir` is empty
 // returns true if the directory was removed
 func removeDirIfEmpty(fs billy.Filesystem, dir string) (bool, error) {
+	// The worktree root cannot be removed. Callers that delete the last file
+	// walk up to "." and must stop there.
+	if dir == "." || dir == "" || dir == string(filepath.Separator) {
+		return false, nil
+	}
+
 	files, err := fs.ReadDir(dir)
 	if err != nil {
 		return false, err

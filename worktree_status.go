@@ -462,7 +462,9 @@ func (w *Worktree) AddGlob(pattern string) error {
 // the file added is different from the index.
 // if s status is nil will skip the status check and update the index anyway
 func (w *Worktree) doAddFile(idx *index.Index, s Status, path string, ignorePattern []gitignore.Pattern) (added bool, h plumbing.Hash, err error) {
-	if s != nil && s.File(path).Worktree == Unmodified {
+	// Re-staging a conflicted path always replaces stages 1/2/3, even when the
+	// worktree bytes happen to match one of those stages.
+	if s != nil && s.File(path).Worktree == Unmodified && !indexHasUnmerged(idx, path) {
 		return false, h, nil
 	}
 	if len(ignorePattern) > 0 {
@@ -567,16 +569,27 @@ func (w *Worktree) fillEncodedObjectFromSymlink(dst io.Writer, path string, _ os
 }
 
 func (w *Worktree) addOrUpdateFileToIndex(idx *index.Index, filename string, h plumbing.Hash) error {
-	e, err := idx.Entry(filename)
-	if err != nil && !errors.Is(err, index.ErrEntryNotFound) {
-		return err
+	// Drop conflict stages 1/2/3. Keep an existing stage-0 entry so its
+	// metadata is updated in place, matching a normal add.
+	filename = filepath.ToSlash(filename)
+	var stage0 *index.Entry
+	kept := make([]*index.Entry, 0, len(idx.Entries))
+	for _, e := range idx.Entries {
+		if e.Name != filename {
+			kept = append(kept, e)
+			continue
+		}
+		if e.Stage == 0 && stage0 == nil {
+			stage0 = e
+		}
 	}
-
-	if errors.Is(err, index.ErrEntryNotFound) {
+	idx.Entries = kept
+	if stage0 == nil {
 		return w.doAddFileToIndex(idx, filename, h)
 	}
-
-	return w.doUpdateFileToIndex(e, filename, h)
+	idx.Entries = append(idx.Entries, stage0)
+	stage0.Stage = 0
+	return w.doUpdateFileToIndex(stage0, filename, h)
 }
 
 func (w *Worktree) doAddFileToIndex(idx *index.Index, filename string, h plumbing.Hash) error {
@@ -684,12 +697,49 @@ func (w *Worktree) doRemoveFile(idx *index.Index, path string) (plumbing.Hash, e
 }
 
 func (w *Worktree) deleteFromIndex(idx *index.Index, path string) (plumbing.Hash, error) {
-	e, err := idx.Remove(path)
-	if err != nil {
-		return plumbing.ZeroHash, err
+	var h plumbing.Hash
+	found := false
+	for {
+		e, err := idx.Remove(path)
+		if errors.Is(err, index.ErrEntryNotFound) {
+			break
+		}
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		if !found || e.Stage == 0 {
+			h = e.Hash
+			found = true
+		}
 	}
+	if !found {
+		return plumbing.ZeroHash, index.ErrEntryNotFound
+	}
+	return h, nil
+}
 
-	return e.Hash, nil
+// indexHasUnmerged reports whether path has any conflict stage (1, 2, or 3).
+func indexHasUnmerged(idx *index.Index, path string) bool {
+	path = filepath.ToSlash(path)
+	for _, e := range idx.Entries {
+		if e.Name == path && e.Stage != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// removeAllIndexEntries deletes every index entry for path, regardless of stage.
+func removeAllIndexEntries(idx *index.Index, path string) error {
+	for {
+		_, err := idx.Remove(path)
+		if errors.Is(err, index.ErrEntryNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 func (w *Worktree) deleteFromFilesystem(path string) error {
