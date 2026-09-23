@@ -293,6 +293,29 @@ Output task information in JSON format (use with `--list` or `--list-all`).
 task --list --json
 ```
 
+#### `--graph`
+
+Show the dependency graph of the given tasks (or the `default` task) instead of
+running them. Both `deps` entries and task-calling `cmds` are included, and
+namespaced tasks use their fully qualified names.
+
+```bash
+task build --graph
+task build --graph --format dot | dot -Tsvg > graph.svg
+task generate --graph --format text --reverse
+```
+
+- `--format <format>` - Output format: `json` (default), `dot` or `text`.
+- `--reverse` - Invert the graph to show every task in the Taskfile that
+  depends on the given tasks.
+- `--no-status` - Don't check whether tasks are up-to-date. Removes
+  `up_to_date` from the JSON output and the dashed style from DOT nodes.
+
+The JSON output contains `roots`, `nodes`, `edges`, `depth_groups` (level 0
+holds tasks without dependencies, level 1 tasks that only depend on level 0,
+and so on) and `longest_path`. An error is returned if a task doesn't exist or
+if the graph contains a cycle.
+
 #### `--sort <mode>`
 
 Change task listing order. Available modes:
@@ -385,6 +408,7 @@ Task uses specific exit codes to indicate different types of errors:
 - **205** - Task cancelled by user
 - **206** - Missing required variables
 - **207** - Variable has incorrect value
+- **208** - Dependency cycle found (when using `--graph`)
 
 ::: info
 
