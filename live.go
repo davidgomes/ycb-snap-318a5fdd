@@ -38,14 +38,17 @@ import (
 //	session, _ := client.Live.Connect(ctx, model, &genai.LiveConnectConfig{}).
 type Live struct {
 	apiClient *apiClient
+
+	functionCalls functionCallAccumulator
 }
 
 // Preview. Session represents an active, real-time WebSocket connection to the
 // Generative AI API. It provides methods for sending client messages and
 // receiving server messages over the established connection.
 type Session struct {
-	conn      *websocket.Conn
-	apiClient *apiClient
+	conn          *websocket.Conn
+	apiClient     *apiClient
+	functionCalls functionCallAccumulator
 }
 
 // Preview. Connect establishes a WebSocket connection to the specified
@@ -320,6 +323,13 @@ func (s *Session) Receive() (*LiveServerMessage, error) {
 	err = mapToStruct(responseMap, message)
 	if err != nil {
 		return nil, err
+	}
+	if message.ToolCall != nil {
+		for _, fc := range message.ToolCall.FunctionCalls {
+			if err := s.functionCalls.apply(fc); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return message, err
 }
