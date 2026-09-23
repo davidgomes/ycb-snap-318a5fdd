@@ -569,12 +569,12 @@ func (s *MuxSession) lookup(sid uint32) *MuxStream {
 }
 
 func (s *MuxSession) removeStream(st *MuxStream) {
+	atomic.AddUint64(&DefaultSnmp.MuxStreamsClosed, 1)
 	s.mu.Lock()
 	if s.streams[st.id] == st {
 		delete(s.streams, st.id)
 	}
 	s.mu.Unlock()
-	atomic.AddUint64(&DefaultSnmp.MuxStreamsClosed, 1)
 }
 
 func (s *MuxSession) handleSettings(recvWindow, sendWindow int) {
@@ -602,16 +602,17 @@ func (s *MuxSession) handleSYN(sid uint32, priority uint8) {
 		s.mu.Unlock()
 		return
 	}
-	st := newMuxStream(s, sid, priority, min(s.config.SendWindow, s.peerRecvWindow))
-	select {
-	case s.chAccepts <- st:
-		s.streams[sid] = st
-		s.mu.Unlock()
-		atomic.AddUint64(&DefaultSnmp.MuxStreamsOpened, 1)
-	default:
+	// recvLoop is the only producer, so a free slot cannot be taken before the send below.
+	if len(s.chAccepts) == cap(s.chAccepts) {
 		s.mu.Unlock()
 		s.sendControl(muxCmdFIN, sid, nil) // accept backlog full: refuse the stream
+		return
 	}
+	st := newMuxStream(s, sid, priority, min(s.config.SendWindow, s.peerRecvWindow))
+	s.streams[sid] = st
+	atomic.AddUint64(&DefaultSnmp.MuxStreamsOpened, 1)
+	s.chAccepts <- st
+	s.mu.Unlock()
 }
 
 // handlePSH buffers inbound data; it reports false if the peer overran the stream window.
