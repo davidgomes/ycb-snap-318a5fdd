@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from mnamer import tty
+from mnamer import daemon, tty
 from mnamer.const import SYSTEM, USAGE, VERSION
 from mnamer.exceptions import (
     MnamerAbortException,
@@ -21,6 +21,8 @@ class Frontend(ABC):
 
     def __init__(self, settings: SettingStore):
         self.settings = settings
+        if daemon.is_requested(settings):
+            raise SystemExit(daemon.run(settings))
         self.targets = Target.populate_paths(self.settings)
         tty.configure(self.settings)
         self._handle_directives()
