@@ -38,6 +38,27 @@ export const createEntityIndex = (worldId: number): EntityIndex => ({
  * @param index - The EntityIndex to add to.
  * @returns The new or recycled packed entity.
  */
+/**
+ * Allocates an entity with a specific ID.
+ * If that ID is already alive, the existing entity is returned.
+ */
+export const allocateEntityWithId = (index: EntityIndex, id: number): Entity => {
+    const denseIndex = index.sparse[id];
+    if (denseIndex !== undefined && denseIndex < index.aliveCount) {
+        const existing = index.dense[denseIndex];
+        if (getEntityId(existing) === id) return existing;
+    }
+
+    if (id >= index.maxId) index.maxId = id + 1;
+
+    const entity = packEntity(index.worldId, 0, id);
+    index.dense.push(entity);
+    index.sparse[id] = index.aliveCount;
+    index.aliveCount++;
+
+    return entity;
+};
+
 export const allocateEntity = (index: EntityIndex): Entity => {
     if (index.aliveCount < index.dense.length) {
         // Recycle entity

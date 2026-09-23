@@ -21,6 +21,7 @@ import type {
     TraitRecord,
     TraitValue,
 } from '../trait/types';
+import { rollbackWorld, snapshotWorld } from '../snapshot/snapshot';
 import { universe } from '../universe/universe';
 import type { World, WorldInternal, WorldOptions } from './types';
 import { allocateWorldId, releaseWorldId } from './utils/world-index';
@@ -139,6 +140,14 @@ export function createWorld(
             // Clean up universe side effects.
             releaseWorldId(universe.worldIndex, id);
             universe.worlds[id] = null;
+        },
+
+        snapshot(registry) {
+            return snapshotWorld(world, registry);
+        },
+
+        rollback(registry, checkpoint) {
+            return rollbackWorld(world, registry, checkpoint);
         },
 
         reset() {
