@@ -41,6 +41,7 @@ True
 | `enter` | `None` | Callback(s) to run when entering this state. See {ref}`state-actions`. |
 | `exit` | `None` | Callback(s) to run when leaving this state. See {ref}`state-actions`. |
 | `invoke` | `None` | Background work spawned on entry, cancelled on exit. See {ref}`invoke-actions`. |
+| `data` | `None` | Mapping of variable names to defaults owned by the state. See {ref}`state-data`. |
 
 ```py
 >>> class CampaignMachine(StateChart):
@@ -55,6 +56,69 @@ True
 >>> sm.send("produce")
 >>> list(sm.configuration_values)
 [2]
+
+```
+
+
+(state-data)=
+
+## State data
+
+A state can own a `data` mapping. The machine stores those values **per instance**:
+entering the state builds a fresh copy of the defaults, and leaving the state
+removes them. Re-entering resets the data. Callables in the mapping are factories
+called on every entry. Use {class}`~statemachine.DataVar` when you need a type
+check or when the default itself should be a callable.
+
+Callbacks receive a `state_data` argument. It merges data from the state and its
+ancestors; the state's own keys win. Parallel regions do not see each other's data.
+`on_enter` and `on_exit` both run while the state's data is still available.
+
+```py
+>>> from statemachine import DataVar, State, StateChart
+
+>>> class Counter(StateChart):
+...     idle = State(
+...         initial=True,
+...         data={"n": 0, "items": list, "label": DataVar(default="box", type=str)},
+...     )
+...     done = State(final=True)
+...     finish = idle.to(done)
+...
+...     def on_enter_idle(self, state_data):
+...         state_data["n"] += 1
+
+>>> sm = Counter()
+>>> sm.get_state_data(sm.idle)["n"]
+1
+>>> sm.get_state_data("idle")["items"]
+[]
+>>> sm.get_state_data("idle")["label"]
+'box'
+>>> sm.set_state_data("idle", "n", 5)
+>>> sm.state_data_values["idle"]["n"]
+5
+
+```
+
+{meth}`~statemachine.StateChart.get_data_changes` lists assignments from the current
+macrostep (`state_id`, `key`, `old_value`, `new_value`). The list is cleared when the
+next external event starts.
+
+Compound and parallel states accept `data` as a class keyword:
+
+```py
+>>> class Nest(StateChart):
+...     class group(State.Compound, data={"level": "parent"}):
+...         child = State(initial=True, data={"name": "child"})
+...     done = State(final=True)
+...     leave = group.to(done)
+...
+...     def on_enter_child(self, state_data):
+...         self.seen = dict(state_data)
+
+>>> Nest().seen == {"level": "parent", "name": "child"}
+True
 
 ```
 

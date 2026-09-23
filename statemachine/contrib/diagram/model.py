@@ -41,6 +41,7 @@ class DiagramState:
     is_active: bool = False
     is_parallel_area: bool = False
     is_initial: bool = False
+    data_vars: List[str] = field(default_factory=list)
 
 
 @dataclass

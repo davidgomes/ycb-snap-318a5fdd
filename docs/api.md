@@ -31,6 +31,20 @@
     :members:
 ```
 
+## DataVar
+
+```{eval-rst}
+.. autoclass:: statemachine.state_data.DataVar
+    :members:
+```
+
+## DataChangeInfo
+
+```{eval-rst}
+.. autoclass:: statemachine.state_data.DataChangeInfo
+    :members:
+```
+
 ## HistoryState
 
 ```{versionadded} 3.0.0

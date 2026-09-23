@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from dataclasses import field
+from typing import Any
 from typing import Dict
 from typing import List
 from typing import Literal
@@ -144,6 +145,7 @@ class State:
     history: Dict[str, "HistoryState"] = field(default_factory=dict)
     donedata: "DoneData | None" = None
     invocations: List[InvokeDefinition] = field(default_factory=list)
+    data: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -173,3 +175,4 @@ class StateMachineDefinition:
     states: Dict[str, State] = field(default_factory=dict)
     initial_states: List[str] = field(default_factory=list)
     datamodel: "DataModel | None" = None
+    root_data: Dict[str, Any] = field(default_factory=dict)

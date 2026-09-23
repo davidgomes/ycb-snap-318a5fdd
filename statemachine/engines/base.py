@@ -98,6 +98,7 @@ class BaseEngine:
         self._log_id = f"[{type(sm).__name__}]"
         self._debug = logger.debug if logger.isEnabledFor(logging.DEBUG) else lambda *a, **k: None
         self._root_parallel_final_pending: "State | None" = None
+        self._data_restore_map: Dict[str, dict] = {}
 
     def empty(self):  # pragma: no cover
         return self.external_queue.is_empty()
@@ -421,10 +422,14 @@ class BaseEngine:
         return result
 
     def _get_args_kwargs(
-        self, transition: Transition, trigger_data: TriggerData, target: "State | None" = None
+        self,
+        transition: Transition,
+        trigger_data: TriggerData,
+        target: "State | None" = None,
+        scope_state: "State | None" = None,
     ):
         # Generate a unique key for the cache, the cache is invalidated once per loop
-        cache_key = (id(transition), id(trigger_data), id(target))
+        cache_key = (id(transition), id(trigger_data), id(target), id(scope_state))
 
         # Check the cache for existing results
         if cache_key in self._cache:
@@ -434,6 +439,8 @@ class BaseEngine:
         if target:
             event_data.state = target
             event_data.target = target
+        if scope_state is not None:
+            event_data.scope_state = scope_state
 
         args, kwargs = event_data.args, event_data.extended_kwargs
 
@@ -482,6 +489,7 @@ class BaseEngine:
                     [s.id for s in history_value],
                 )
                 self.sm.history_values[history.id] = history_value
+                self.sm._save_history_data(history.id, history_value)
 
         return ordered_states, result
 
@@ -502,12 +510,16 @@ class BaseEngine:
             if info.state is not None:  # pragma: no branch
                 self._invoke_manager.cancel_for_state(info.state)
 
-            args, kwargs = self._get_args_kwargs(info.transition, trigger_data)
+            args, kwargs = self._get_args_kwargs(
+                info.transition, trigger_data, scope_state=info.state
+            )
 
             # Execute `onexit` handlers — same per-block error isolation as onentry.
             if info.state is not None:  # pragma: no branch
                 self._debug("%s Exiting state: %s", self._log_id, info.state)
                 self.sm._callbacks.call(info.state.exit.key, *args, on_error=on_error, **kwargs)
+                self.sm._refresh_history_data_for_state(info.state.id)
+                self.sm._deactivate_state_data(info.state)
 
             self._remove_state_from_configuration(info.state)
 
@@ -549,6 +561,7 @@ class BaseEngine:
         states_to_enter = OrderedSet[StateTransition]()
         states_for_default_entry = OrderedSet[StateTransition]()
         default_history_content: Dict[str, Any] = {}
+        self._data_restore_map = {}
 
         self.compute_entry_set(
             enabled_transitions, states_to_enter, states_for_default_entry, default_history_content
@@ -665,6 +678,7 @@ class BaseEngine:
         for info in ordered_states:
             target = info.state
             transition = info.transition
+            self.sm._activate_state_data(target, self._data_restore_map)
             args, kwargs = self._get_args_kwargs(
                 transition,
                 trigger_data,
@@ -771,6 +785,13 @@ class BaseEngine:
             parent_id = state.parent and state.parent.id
             default_history_content[parent_id] = [info]
             if state.id in self.sm.history_values:
+                self._data_restore_map.update(
+                    {
+                        remembered.id: self.sm._history_data.get(state.id, {})[remembered.id]
+                        for remembered in self.sm.history_values[state.id]
+                        if remembered.id in self.sm._history_data.get(state.id, {})
+                    }
+                )
                 self._debug(
                     "%s History state '%s.%s' %s restoring: '%s'",
                     self._log_id,

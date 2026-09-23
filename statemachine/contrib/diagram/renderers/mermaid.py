@@ -176,6 +176,7 @@ class MermaidRenderer:
             lines.append(f'{pad}state "{state.name}" as {state.id}')
 
         actions = [a for a in state.actions if a.type != ActionType.INTERNAL or a.body]
+        self._render_data_note(state, lines, indent)
         if actions:
             for action in actions:
                 lines.append(f"{pad}{state.id} : {self._format_action(action)}")
@@ -194,6 +195,7 @@ class MermaidRenderer:
 
         if state.type == StateType.PARALLEL:
             lines.append(f'{pad}state "{state.name}" as {state.id} {{')
+            self._render_data_note(state, lines, indent + 1)
             regions = [c for c in state.children if c.is_parallel_area or c.children]
             for i, region in enumerate(regions):
                 if i > 0:
@@ -206,6 +208,8 @@ class MermaidRenderer:
                 lines.append(f'{pad}state "{label}" as {state.id} {{')
             else:
                 lines.append(f"{pad}state {state.id} {{")
+
+            self._render_data_note(state, lines, indent + 1)
 
             initial_child = next((c for c in state.children if c.is_initial), None)
             if initial_child:
@@ -324,6 +328,14 @@ class MermaidRenderer:
             lines.append(f"{pad}{source} --> {target} : {label}")
         else:
             lines.append(f"{pad}{source} --> {target}")
+
+    @staticmethod
+    def _render_data_note(state: DiagramState, lines: List[str], indent: int) -> None:
+        if not state.data_vars:
+            return
+        pad = "    " * indent
+        joined = ", ".join(state.data_vars)
+        lines.append(f"{pad}{state.id} : data: {joined}")
 
     @staticmethod
     def _format_action(action: DiagramAction) -> str:

@@ -66,6 +66,9 @@ class EventData:
     target: "State | None" = field(init=False)
     """The destination :ref:`State` of the :ref:`transition`, or ``None`` for targetless."""
 
+    scope_state: "State | None" = field(default=None, init=False)
+    """State whose data is visible to callbacks, when it differs from ``state``."""
+
     def __post_init__(self):
         self.state = self.transition.source
         self.source = self.transition.source
@@ -91,4 +94,6 @@ class EventData:
         kwargs["state"] = self.state
         kwargs["source"] = self.source
         kwargs["target"] = self.target
+        scope = self.scope_state if self.scope_state is not None else self.state
+        kwargs["state_data"] = self.machine._scoped_state_data(scope)
         return kwargs

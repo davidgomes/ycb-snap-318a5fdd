@@ -1,3 +1,4 @@
+import copy
 import warnings
 from inspect import isawaitable
 from typing import TYPE_CHECKING
@@ -33,6 +34,10 @@ from .i18n import _
 from .model import Model
 from .signature import SignatureAdapter
 from .state import InstanceState
+from .state_data import DataChangeInfo
+from .state_data import DataVar
+from .state_data import ObservedStateData
+from .state_data import ScopedStateData
 from .utils import run_async_from_sync
 
 if TYPE_CHECKING:
@@ -148,6 +153,9 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         self.history_values: Dict[
             str, List[State]
         ] = {}  # Mapping of compound states to last active state(s).
+        self._state_data: Dict[str, ObservedStateData] = {}
+        self._data_changes: List[DataChangeInfo] = []
+        self._history_data: Dict[str, Dict[str, dict]] = {}
         self.state_field = state_field
         self.start_configuration_values = (
             [start_value] if start_value is not None else list(self.start_configuration_values)
@@ -257,6 +265,7 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         self._callbacks = CallbacksRegistry()
         self._config = self._build_configuration()
         self._listeners = {}
+        self._rebind_state_data()
 
         # _listeners already contained both class-level and runtime listeners
         # when serialized, so just re-register them all.
@@ -497,6 +506,139 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
     def cancel_event(self, send_id: str):
         """Cancel all the delayed events with the given ``send_id``."""
         self._engine.cancel_event(send_id)
+
+    def _definition_for(self, state: "State | str") -> "State | None":
+        if isinstance(state, str):
+            instance_state = self._config._instance_states.get(state)
+            if not isinstance(instance_state, InstanceState):
+                return None
+            return instance_state._state
+        if isinstance(state, InstanceState):
+            return state._state
+        return state
+
+    def _scoped_state_data(self, state: "State | None") -> ScopedStateData:
+        """Merged ancestor data visible to a callback running in ``state``."""
+        return ScopedStateData(self, state)
+
+    def _record_data_change(self, state_id: str, key: str, old_value: Any, new_value: Any) -> None:
+        self._data_changes.append(
+            DataChangeInfo(state_id=state_id, key=key, old_value=old_value, new_value=new_value)
+        )
+
+    def _install_state_data(
+        self,
+        state_id: str,
+        decl: Dict[str, DataVar],
+        snapshot: "dict | None",
+    ) -> None:
+        observed = ObservedStateData(state_id, decl, self)
+        observed._recording = False
+        for key, var in decl.items():
+            if snapshot is not None and key in snapshot:
+                value = copy.deepcopy(snapshot[key])
+                var.check_type(value, key=key)
+                observed[key] = value
+            else:
+                observed[key] = var.produce()
+        observed._recording = True
+        self._state_data[state_id] = observed
+
+    def _activate_state_data(self, state: "State | None", restore_map: Dict[str, dict]) -> None:
+        if state is None:
+            return
+        definition = state._state if isinstance(state, InstanceState) else state
+        decl = definition._data_vars
+        if not decl:
+            return
+        snapshot = restore_map.pop(definition.id, None)
+        self._install_state_data(definition.id, decl, snapshot)
+
+    def _deactivate_state_data(self, state: "State | None") -> None:
+        if state is None:
+            return
+        self._state_data.pop(state.id, None)
+
+    def _save_history_data(self, history_id: str, states: List["State"]) -> None:
+        snaps: Dict[str, dict] = {}
+        for remembered in states:
+            data = self._state_data.get(remembered.id)
+            if data is None:
+                continue
+            snaps[remembered.id] = copy.deepcopy(dict(data))
+        self._history_data[history_id] = snaps
+
+    def _refresh_history_data_for_state(self, state_id: str) -> None:
+        data = self._state_data.get(state_id)
+        if data is None:
+            return
+        snap = copy.deepcopy(dict(data))
+        for snaps in self._history_data.values():
+            if state_id in snaps:
+                snaps[state_id] = snap
+
+    def _rebind_state_data(self) -> None:
+        """Restore observer wrappers after pickle or deepcopy."""
+        raw = getattr(self, "_state_data", None) or {}
+        if not hasattr(self, "_data_changes"):
+            self._data_changes = []
+        if not hasattr(self, "_history_data"):
+            self._history_data = {}
+        rebound: Dict[str, ObservedStateData] = {}
+        for state_id, data in raw.items():
+            definition = self._definition_for(state_id)
+            if definition is None:
+                continue
+            observed = ObservedStateData(state_id, definition._data_vars, self)
+            observed._recording = False
+            observed.update(dict(data))
+            observed._recording = True
+            rebound[state_id] = observed
+        self._state_data = rebound
+
+    def get_state_data(self, state: "State | str") -> "dict | None":
+        """Return the live data mapping for an active state, or ``None``.
+
+        Args:
+            state: A :class:`~statemachine.state.State`, an instance proxy, or a state id.
+        """
+        definition = self._definition_for(state)
+        if definition is None:
+            return None
+        return self._state_data.get(definition.id)
+
+    def set_state_data(self, state: "State | str", key: str, value: Any) -> None:
+        """Assign ``key`` on an active state's data.
+
+        Raises:
+            InvalidDefinition: If the state is inactive, ``key`` was not declared,
+                or ``value`` violates a :class:`~statemachine.state_data.DataVar` type.
+        """
+        definition = self._definition_for(state)
+        if definition is None or definition.id not in self._state_data:
+            state_id = state if isinstance(state, str) else state.id
+            raise InvalidDefinition(
+                _("Cannot set data on inactive state {state!r}.").format(state=state_id)
+            )
+        if key not in definition._data_vars:
+            raise InvalidDefinition(
+                _("Data key {key!r} is not declared on state {state!r}.").format(
+                    key=key, state=definition.id
+                )
+            )
+        self._state_data[definition.id][key] = value
+
+    def get_data_changes(self) -> List[DataChangeInfo]:
+        """Return data assignments recorded since the current macrostep started.
+
+        The list is cleared when the next external event begins a macrostep.
+        """
+        return list(self._data_changes)
+
+    @property
+    def state_data_values(self) -> Dict[str, dict]:
+        """Snapshot of active state data, keyed by state id."""
+        return {state_id: copy.deepcopy(dict(data)) for state_id, data in self._state_data.items()}
 
     @property
     def is_terminated(self):

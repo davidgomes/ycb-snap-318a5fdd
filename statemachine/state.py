@@ -13,6 +13,7 @@ from .event import _expand_event_id
 from .exceptions import InvalidDefinition
 from .i18n import _
 from .invoke import normalize_invoke_callbacks
+from .state_data import normalize_data_decl
 from .transition import Transition
 from .transition_list import TransitionList
 
@@ -134,6 +135,10 @@ class State:
             See :ref:`actions`.
         exit: One or more callbacks assigned to be executed when the state is exited.
             See :ref:`actions`.
+        data: Optional mapping of string keys to default values owned by this state.
+            On entry each value is copied (callables and :class:`~statemachine.state_data.DataVar`
+            factories are called). On exit the mapping is removed. Values are stored on the
+            machine instance, not on the shared :class:`State`.
 
     State is a core component on how this library implements an expressive API to declare
     StateMachines.
@@ -214,6 +219,7 @@ class State:
         exit: Any = None,
         invoke: Any = None,
         donedata: Any = None,
+        data: Any = None,
         _callbacks: Any = None,
     ):
         self.name = name
@@ -226,6 +232,7 @@ class State:
         self._final = final
         self.is_active = False
         self._id: str = ""
+        self._data_vars = normalize_data_decl(data)
         self._callbacks = _callbacks
         self.parent: "State | None" = None
         self.transitions = TransitionList()

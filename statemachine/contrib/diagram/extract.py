@@ -89,6 +89,7 @@ def _extract_state(
         children.append(_extract_state(history_state, machine, getter, active_values))
 
     actions = _extract_state_actions(state, getter)
+    data_vars = list(getattr(state, "_data_vars", {}) or {})
 
     return DiagramState(
         id=state.id,
@@ -99,6 +100,7 @@ def _extract_state(
         is_active=is_active,
         is_parallel_area=is_parallel_area,
         is_initial=getattr(state, "initial", False),
+        data_vars=data_vars,
     )
 
 

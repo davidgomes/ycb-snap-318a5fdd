@@ -103,6 +103,12 @@ class SCXMLProcessor:
             insert_pos = 1
 
         # Process datamodel (initial variables)
+        if definition.root_data:
+            current = dict(initial_state.get("data") or {})
+            merged = dict(definition.root_data)
+            merged.update(current)
+            initial_state["data"] = merged
+
         if definition.datamodel:
             datamodel = create_datamodel_action_callable(definition.datamodel)
             if datamodel:  # pragma: no branch – parse_datamodel guarantees non-empty
@@ -206,6 +212,9 @@ class SCXMLProcessor:
 
         if state.history:
             state_dict["history"] = self._process_history(state.history)
+
+        if state.data:
+            state_dict["data"] = dict(state.data)
 
         return state_dict
 

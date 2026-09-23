@@ -1,5 +1,8 @@
+import ast
 import re
 import xml.etree.ElementTree as ET
+from typing import Any
+from typing import Dict
 from typing import List
 from typing import Literal
 from typing import Set
@@ -60,6 +63,7 @@ def parse_scxml(scxml_content: str) -> StateMachineDefinition:  # noqa: C901
     all_initial_states = set(initial_states)
 
     definition = StateMachineDefinition(name=name, initial_states=initial_states)
+    definition.root_data = parse_literal_data(scxml)
 
     # Parse datamodel
     datamodel = parse_datamodel(scxml)
@@ -85,6 +89,28 @@ def parse_scxml(scxml_content: str) -> StateMachineDefinition:  # noqa: C901
         definition.states[first_state].initial = True
 
     return definition
+
+
+def parse_literal_data(elem: ET.Element) -> Dict[str, Any]:
+    """Parse direct ``<datamodel>/<data id expr>`` children as Python literals.
+
+    ``expr`` values that are not Python literals are skipped. Nested states keep
+    their own datamodels; only elements parented by ``elem`` are considered.
+    """
+    data: Dict[str, Any] = {}
+    for child in list(elem):
+        if child.tag != "datamodel":
+            continue
+        for data_elem in child.findall("data"):
+            data_id = data_elem.attrib.get("id")
+            expr = data_elem.attrib.get("expr")
+            if not data_id or expr is None:
+                continue
+            try:
+                data[data_id] = ast.literal_eval(expr)
+            except (ValueError, SyntaxError):
+                continue
+    return data
 
 
 def _find_own_datamodel_elements(root: ET.Element) -> List[ET.Element]:
@@ -222,6 +248,8 @@ def parse_state(  # noqa: C901
     # Parse invoke elements
     for invoke_elem in state_elem.findall("invoke"):
         state.invocations.append(parse_invoke(invoke_elem))
+
+    state.data = parse_literal_data(state_elem)
 
     # Parse donedata (only valid on final states)
     if is_final:

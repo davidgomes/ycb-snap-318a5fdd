@@ -72,9 +72,13 @@ class AsyncEngine(BaseEngine):
     # --- Callback dispatch overrides (async versions of BaseEngine methods) ---
 
     async def _get_args_kwargs(
-        self, transition: "Transition", trigger_data: TriggerData, target: "State | None" = None
+        self,
+        transition: "Transition",
+        trigger_data: TriggerData,
+        target: "State | None" = None,
+        scope_state: "State | None" = None,
     ):
-        cache_key = (id(transition), id(trigger_data), id(target))
+        cache_key = (id(transition), id(trigger_data), id(target), id(scope_state))
 
         if cache_key in self._cache:
             return self._cache[cache_key]
@@ -83,6 +87,8 @@ class AsyncEngine(BaseEngine):
         if target:
             event_data.state = target
             event_data.target = target
+        if scope_state is not None:
+            event_data.scope_state = scope_state
 
         args, kwargs = event_data.args, event_data.extended_kwargs
 
@@ -174,13 +180,17 @@ class AsyncEngine(BaseEngine):
             if info.state is not None:  # pragma: no branch
                 self._invoke_manager.cancel_for_state(info.state)
 
-            args, kwargs = await self._get_args_kwargs(info.transition, trigger_data)
+            args, kwargs = await self._get_args_kwargs(
+                info.transition, trigger_data, scope_state=info.state
+            )
 
             if info.state is not None:  # pragma: no branch
                 self._debug("%s Exiting state: %s", self._log_id, info.state)
                 await self.sm._callbacks.async_call(
                     info.state.exit.key, *args, on_error=on_error, **kwargs
                 )
+                self.sm._refresh_history_data_for_state(info.state.id)
+                self.sm._deactivate_state_data(info.state)
 
             self._remove_state_from_configuration(info.state)
 
@@ -226,6 +236,7 @@ class AsyncEngine(BaseEngine):
         for info in ordered_states:
             target = info.state
             transition = info.transition
+            self.sm._activate_state_data(target, self._data_restore_map)
             args, kwargs = await self._get_args_kwargs(
                 transition,
                 trigger_data,
@@ -424,6 +435,7 @@ class AsyncEngine(BaseEngine):
                         break
 
                     self._macrostep_count += 1
+                    self.sm._data_changes.clear()
                     self._microstep_count = 0
                     self._debug(
                         "%s macrostep %d: event=%s",
