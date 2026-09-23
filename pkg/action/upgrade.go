@@ -101,6 +101,12 @@ type Upgrade struct {
 	ReuseValues bool
 	// ResetThenReuseValues will reset the values to the chart's built-ins then merge with user's last supplied values.
 	ResetThenReuseValues bool
+	// MergeStrategies overrides Chart.yaml helm.sh/merge-strategy annotations.
+	// Each entry is path=append or path=merge.
+	MergeStrategies []string
+	// MergeKeys overrides Chart.yaml helm.sh/merge-key annotations.
+	// Each entry is path=key. The key may be a dotted field path.
+	MergeKeys []string
 	// MaxHistory limits the maximum number of revisions saved per release
 	MaxHistory int
 	// RollbackOnFailure enables rolling back the upgraded release on failure
@@ -267,7 +273,8 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 	}
 
 	// determine if values will be reused
-	vals, err = u.reuseValues(chart, currentRelease, vals)
+	var skipStrategies bool
+	vals, skipStrategies, err = u.reuseValues(chart, currentRelease, vals)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -291,7 +298,11 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 	if err != nil {
 		return nil, nil, false, err
 	}
-	valuesToRender, err := util.ToRenderValuesWithSchemaValidation(chart, vals, options, caps, u.SkipSchemaValidation)
+	valuesToRender, err := util.ToRenderValuesWithSchemaValidationAndOverrides(chart, vals, options, caps, u.SkipSchemaValidation, util.MergeOverrides{
+		MergeStrategies: u.MergeStrategies,
+		MergeKeys:       u.MergeKeys,
+		Disable:         skipStrategies,
+	})
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -601,11 +612,16 @@ func (u *Upgrade) failRelease(rel *release.Release, created kube.ResourceList, e
 //
 // This is skipped if the u.ResetValues flag is set, in which case the
 // request values are not altered.
-func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, newVals map[string]any) (map[string]any, error) {
+func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, newVals map[string]any) (map[string]any, bool, error) {
 	if u.ResetValues {
-		// If ResetValues is set, we completely ignore current.Config.
+		// ResetValues ignores strategies and the previous release's config.
 		u.cfg.Logger().Debug("resetting values to the chart's original version")
-		return newVals, nil
+		return newVals, true, nil
+	}
+
+	annotations := map[string]string(nil)
+	if chart.Metadata != nil {
+		annotations = chart.Metadata.Annotations
 	}
 
 	// If the ReuseValues flag is set, we always copy the old values over the new config's values.
@@ -615,30 +631,37 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 		// We have to regenerate the old coalesced values:
 		oldVals, err := util.CoalesceValues(current.Chart, current.Config)
 		if err != nil {
-			return nil, fmt.Errorf("failed to rebuild old values: %w", err)
+			return nil, false, fmt.Errorf("failed to rebuild old values: %w", err)
 		}
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		// Append keeps old config elements before new values.
+		// Skip strategies on the later render pass: chart values are already
+		// the previously coalesced result, so applying them again would
+		// duplicate array elements.
+		newVals = util.CoalesceTablesWithStrategies(newVals, current.Config, annotations, u.MergeStrategies, u.MergeKeys)
 
 		chart.Values = oldVals
 
-		return newVals, nil
+		return newVals, true, nil
 	}
 
 	// If the ResetThenReuseValues flag is set, we use the new chart's values, but we copy the old config's values over the new config's values.
 	if u.ResetThenReuseValues {
 		u.cfg.Logger().Debug("merging values from old release to new values")
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		// Old config is merged onto the new CLI values here. The render pass
+		// then coalesces that result onto the new chart defaults, so chart
+		// defaults stay the base and strategies still apply.
+		newVals = util.CoalesceTablesWithStrategies(newVals, current.Config, annotations, u.MergeStrategies, u.MergeKeys)
 
-		return newVals, nil
+		return newVals, false, nil
 	}
 
 	if len(newVals) == 0 && len(current.Config) > 0 {
 		u.cfg.Logger().Debug("copying values from old release", "name", current.Name, "version", current.Version)
 		newVals = current.Config
 	}
-	return newVals, nil
+	return newVals, false, nil
 }
 
 func validateManifest(c kube.Interface, manifest []byte, openAPIValidation bool) error {

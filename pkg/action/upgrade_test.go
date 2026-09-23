@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/cli-runtime/pkg/resource"
 
+	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/kube"
 	kubefake "helm.sh/helm/v4/pkg/kube/fake"
@@ -394,6 +395,84 @@ func TestUpgradeRelease_ResetThenReuseValues(t *testing.T) {
 		is.Equal(common.StatusDeployed, updatedRes.Info.Status)
 		is.Equal(expectedValues, updatedRes.Config)
 		is.Equal(newChartValues, updatedRes.Chart.Values)
+	})
+}
+
+func TestUpgradeRelease_MergeStrategies(t *testing.T) {
+	is := assert.New(t)
+	req := require.New(t)
+
+	annotations := map[string]string{
+		"helm.sh/merge-strategy/tags": "append",
+	}
+
+	makeChart := func() *chart.Chart {
+		ch := buildChartWithTemplates([]*chartcommon.File{
+			{Name: "templates/tags", Data: []byte("tags: {{ toJson .Values.tags }}\n")},
+		}, withValues(map[string]any{"tags": []any{"a"}}))
+		ch.Metadata.Annotations = annotations
+		return ch
+	}
+	oldConfig := func() map[string]any {
+		return map[string]any{"tags": []any{"b"}}
+	}
+	newValues := func() map[string]any {
+		return map[string]any{"tags": []any{"c"}}
+	}
+
+	t.Run("reuse values appends old config before new values", func(t *testing.T) {
+		upAction := upgradeAction(t)
+		rel := releaseStub()
+		rel.Name = "merge-reuse"
+		rel.Info.Status = common.StatusDeployed
+		rel.Chart = makeChart()
+		rel.Config = oldConfig()
+		req.NoError(upAction.cfg.Releases.Create(rel))
+
+		upAction.ReuseValues = true
+		resi, err := upAction.Run(rel.Name, makeChart(), newValues())
+		req.NoError(err)
+		res, err := releaserToV1Release(resi)
+		req.NoError(err)
+		is.Equal([]any{"b", "c"}, res.Config["tags"])
+		is.Contains(res.Manifest, `["b","c"]`)
+	})
+
+	t.Run("reset values ignores strategies", func(t *testing.T) {
+		upAction := upgradeAction(t)
+		rel := releaseStub()
+		rel.Name = "merge-reset"
+		rel.Info.Status = common.StatusDeployed
+		rel.Chart = makeChart()
+		rel.Config = oldConfig()
+		req.NoError(upAction.cfg.Releases.Create(rel))
+
+		upAction.ResetValues = true
+		resi, err := upAction.Run(rel.Name, makeChart(), newValues())
+		req.NoError(err)
+		res, err := releaserToV1Release(resi)
+		req.NoError(err)
+		is.Equal([]any{"c"}, res.Config["tags"])
+		is.Contains(res.Manifest, `["c"]`)
+	})
+
+	t.Run("reset then reuse keeps chart defaults as the base", func(t *testing.T) {
+		upAction := upgradeAction(t)
+		rel := releaseStub()
+		rel.Name = "merge-reset-reuse"
+		rel.Info.Status = common.StatusDeployed
+		rel.Chart = makeChart()
+		rel.Config = oldConfig()
+		req.NoError(upAction.cfg.Releases.Create(rel))
+
+		upAction.ResetThenReuseValues = true
+		upAction.MergeStrategies = []string{"tags=append"}
+		resi, err := upAction.Run(rel.Name, makeChart(), newValues())
+		req.NoError(err)
+		res, err := releaserToV1Release(resi)
+		req.NoError(err)
+		is.Equal([]any{"b", "c"}, res.Config["tags"])
+		is.Contains(res.Manifest, `["a","b","c"]`)
 	})
 }
 

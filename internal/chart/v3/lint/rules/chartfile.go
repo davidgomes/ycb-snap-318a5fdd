@@ -29,6 +29,8 @@ import (
 	chart "helm.sh/helm/v4/internal/chart/v3"
 	"helm.sh/helm/v4/internal/chart/v3/lint/support"
 	chartutil "helm.sh/helm/v4/internal/chart/v3/util"
+	"helm.sh/helm/v4/pkg/chart/common"
+	commonutil "helm.sh/helm/v4/pkg/chart/common/util"
 )
 
 // Chartfile runs a set of linter rules related to Chart.yaml file
@@ -67,6 +69,17 @@ func Chartfile(linter *support.Linter) {
 	linter.RunLinterRule(support.ErrorSev, chartFileName, validateChartIconURL(chartFile))
 	linter.RunLinterRule(support.ErrorSev, chartFileName, validateChartType(chartFile))
 	linter.RunLinterRule(support.ErrorSev, chartFileName, validateChartDependencies(chartFile))
+	for _, err := range commonutil.LintMergeStrategyAnnotations(chartFile.Annotations, loadChartDefaultValues(linter.ChartDir)) {
+		linter.RunLinterRule(support.WarningSev, chartFileName, err)
+	}
+}
+
+func loadChartDefaultValues(chartDir string) map[string]any {
+	vals, err := common.ReadValuesFile(filepath.Join(chartDir, "values.yaml"))
+	if err != nil {
+		return map[string]any{}
+	}
+	return vals
 }
 
 func validateChartVersionType(data map[string]any) error {

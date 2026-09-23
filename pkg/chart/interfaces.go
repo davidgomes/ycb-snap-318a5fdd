@@ -36,6 +36,9 @@ type Accessor interface {
 	Values() map[string]any
 	Schema() []byte
 	Deprecated() bool
+	// Annotations returns chart metadata annotations, including
+	// helm.sh/merge-strategy and helm.sh/merge-key entries.
+	Annotations() map[string]string
 }
 
 type DependencyAccessor interface {

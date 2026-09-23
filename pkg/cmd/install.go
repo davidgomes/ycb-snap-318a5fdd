@@ -253,6 +253,8 @@ func runInstall(args []string, client *action.Install, valueOpts *values.Options
 
 	p := getter.All(settings)
 	vals, err := valueOpts.MergeValues(p)
+	client.MergeStrategies = valueOpts.MergeStrategies
+	client.MergeKeys = valueOpts.MergeKeys
 	if err != nil {
 		return nil, err
 	}

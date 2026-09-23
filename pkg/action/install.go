@@ -129,7 +129,13 @@ type Install struct {
 	UseReleaseName bool
 	// TakeOwnership will ignore the check for helm annotations and take ownership of the resources.
 	TakeOwnership bool
-	PostRenderer  postrenderer.PostRenderer
+	// MergeStrategies overrides Chart.yaml helm.sh/merge-strategy annotations.
+	// Each entry is path=append or path=merge.
+	MergeStrategies []string
+	// MergeKeys overrides Chart.yaml helm.sh/merge-key annotations.
+	// Each entry is path=key. The key may be a dotted field path.
+	MergeKeys    []string
+	PostRenderer postrenderer.PostRenderer
 	// Lock to control raceconditions when the process receives a SIGTERM
 	Lock           sync.Mutex
 	goroutineCount atomic.Int32
@@ -358,7 +364,10 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 		IsInstall: !isUpgrade,
 		IsUpgrade: isUpgrade,
 	}
-	valuesToRender, err := util.ToRenderValuesWithSchemaValidation(chrt, vals, options, caps, i.SkipSchemaValidation)
+	valuesToRender, err := util.ToRenderValuesWithSchemaValidationAndOverrides(chrt, vals, options, caps, i.SkipSchemaValidation, util.MergeOverrides{
+		MergeStrategies: i.MergeStrategies,
+		MergeKeys:       i.MergeKeys,
+	})
 	if err != nil {
 		return nil, err
 	}
