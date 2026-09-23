@@ -328,6 +328,126 @@ class SettingStore:
             help="--test: mocks the renaming and moving of files",
         ).as_dict(),
     )
+    daemon: str | None = dataclasses.field(
+        default=None,
+        metadata=SettingSpec(
+            choices=["start", "stop", "status", "logs", "stats", "restart"],
+            dest="daemon",
+            flags=["--daemon"],
+            group=SettingType.DIRECTIVE,
+            help=(
+                "--daemon={start,stop,status,logs,stats,restart}: "
+                "control the watch daemon"
+            ),
+        ).as_dict(),
+    )
+    daemon_run_once: bool = dataclasses.field(
+        default=False,
+        metadata=SettingSpec(
+            action="store_true",
+            dest="daemon_run_once",
+            flags=["--daemon-run-once", "--daemon_run_once"],
+            group=SettingType.DIRECTIVE,
+            help="--daemon-run-once: scan watch paths once and exit",
+        ).as_dict(),
+    )
+    dry_run: bool = dataclasses.field(
+        default=False,
+        metadata=SettingSpec(
+            action="store_true",
+            dest="dry_run",
+            flags=["--dry-run", "--dry_run"],
+            group=SettingType.DIRECTIVE,
+            help="--dry-run: report daemon moves without changing files",
+        ).as_dict(),
+    )
+    validate_daemon_config: bool = dataclasses.field(
+        default=False,
+        metadata=SettingSpec(
+            action="store_true",
+            dest="validate_daemon_config",
+            flags=["--validate-daemon-config", "--validate_daemon_config"],
+            group=SettingType.DIRECTIVE,
+            help="--validate-daemon-config: check --daemon-config and exit",
+        ).as_dict(),
+    )
+    daemon_state: str = dataclasses.field(
+        default="daemon-state.json",
+        metadata=SettingSpec(
+            dest="daemon_state",
+            flags=["--daemon-state", "--daemon_state"],
+            group=SettingType.DIRECTIVE,
+            help="--daemon-state=<PATH>: daemon state file (default daemon-state.json)",
+        ).as_dict(),
+    )
+    daemon_config: str | None = dataclasses.field(
+        default=None,
+        metadata=SettingSpec(
+            dest="daemon_config",
+            flags=["--daemon-config", "--daemon_config"],
+            group=SettingType.DIRECTIVE,
+            help="--daemon-config=<PATH>: JSON file describing watch directories",
+        ).as_dict(),
+    )
+    watch: list[str] = dataclasses.field(
+        default_factory=list,
+        metadata=SettingSpec(
+            dest="watch",
+            flags=["--watch"],
+            group=SettingType.DIRECTIVE,
+            help="--watch=<PATH,...>: directories to scan (non-recursive)",
+            nargs="+",
+        ).as_dict(),
+    )
+    stability_interval_ms: int = dataclasses.field(
+        default=0,
+        metadata=SettingSpec(
+            dest="stability_interval_ms",
+            flags=["--stability-interval-ms", "--stability_interval_ms"],
+            group=SettingType.DIRECTIVE,
+            help="--stability-interval-ms=<MS>: delay between file size checks",
+            typevar=int,
+        ).as_dict(),
+    )
+    stability_checks: int = dataclasses.field(
+        default=1,
+        metadata=SettingSpec(
+            dest="stability_checks",
+            flags=["--stability-checks", "--stability_checks"],
+            group=SettingType.DIRECTIVE,
+            help="--stability-checks=<N>: size samples required before a move",
+            typevar=int,
+        ).as_dict(),
+    )
+    batch_size: int | None = dataclasses.field(
+        default=None,
+        metadata=SettingSpec(
+            dest="batch_size",
+            flags=["--batch-size", "--batch_size"],
+            group=SettingType.DIRECTIVE,
+            help="--batch-size=<N>: max files to move per cycle (0 moves none)",
+            typevar=int,
+        ).as_dict(),
+    )
+    lines: int | None = dataclasses.field(
+        default=None,
+        metadata=SettingSpec(
+            dest="lines",
+            flags=["--lines"],
+            group=SettingType.DIRECTIVE,
+            help="--lines=<N>: number of daemon log lines to print",
+            typevar=int,
+        ).as_dict(),
+    )
+    notify_webhook: str | None = dataclasses.field(
+        default=None,
+        metadata=SettingSpec(
+            dest="notify_webhook",
+            flags=["--notify-webhook", "--notify_webhook"],
+            group=SettingType.DIRECTIVE,
+            help="--notify-webhook=<URL>: POST after a move (failures are ignored)",
+        ).as_dict(),
+    )
 
     # config-only attributes ---------------------------------------------------
 
@@ -417,7 +537,9 @@ class SettingStore:
 
     def bulk_apply(self, d: dict[str, Any]):
         for k, v in d.items():
-            if v:
+            # Keep falsy values like False and [] from clobbering defaults, but
+            # apply numeric 0 so flags such as --batch-size 0 take effect.
+            if v or (isinstance(v, int) and not isinstance(v, bool)):
                 setattr(self, k, v)
 
     def load(self) -> None:

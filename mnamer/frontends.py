@@ -65,6 +65,15 @@ class Frontend(ABC):
 
 class Cli(Frontend):
     def __init__(self, settings: SettingStore):
+        from mnamer.daemon import daemon_requested
+
+        if daemon_requested(settings):
+            self.settings = settings
+            self.targets = []
+            self.success_count = 0
+            self._daemon = True
+            return
+        self._daemon = False
         super().__init__(settings)
         if not settings.targets:
             tty.error(USAGE)
@@ -76,6 +85,11 @@ class Cli(Frontend):
         return len(self.targets)
 
     def launch(self) -> None:
+        if getattr(self, "_daemon", False):
+            from mnamer.daemon import dispatch
+
+            dispatch(self.settings)
+            return
         tty.msg("Starting mnamer", MessageType.HEADING)
         self._ensure_targets()
         self._process_targets()

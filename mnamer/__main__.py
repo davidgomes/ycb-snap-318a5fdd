@@ -18,6 +18,11 @@ def main():  # pragma: no cover
     except MnamerException as e:
         tty.error(e)
         raise SystemExit(2) from None
+    from mnamer.daemon import daemon_requested, dispatch
+
+    if daemon_requested(settings):
+        dispatch(settings)
+        return
     try:
         frontend = Cli(settings)
         frontend.launch()
