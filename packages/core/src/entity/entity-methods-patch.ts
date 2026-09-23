@@ -4,6 +4,7 @@
 // that the methods are only called on entities.
 
 import { $internal } from '../common';
+import { reevaluatePredicates } from '../predicate/predicate';
 import { setChanged } from '../query/modifiers/changed';
 import { getFirstRelationTarget, getRelationTargets, hasRelationPair } from '../relation/relation';
 import type { Relation, RelationPair } from '../relation/types';
@@ -39,7 +40,9 @@ Number.prototype.destroy = function (this: Entity) {
 
 // @ts-expect-error
 Number.prototype.changed = function (this: Entity, trait: Trait) {
-    return setChanged(getEntityWorld(this), this, trait);
+    const world = getEntityWorld(this);
+    reevaluatePredicates(world, this, trait);
+    return setChanged(world, this, trait);
 };
 
 // @ts-expect-error

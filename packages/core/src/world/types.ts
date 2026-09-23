@@ -2,6 +2,7 @@ import { ActionInstance } from '../actions/types';
 import type { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
+import type { PredicateInstance } from '../predicate/types';
 import type {
     Query,
     QueryInstance,
@@ -43,6 +44,9 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    /** Predicate re-evaluation is deferred while greater than 0 */
+    predicateDeferDepth: number;
+    pendingPredicates: Set<PredicateInstance>;
 };
 
 export type World = {

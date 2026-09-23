@@ -1,6 +1,8 @@
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
+import type { Predicate } from '../../predicate/types';
+import { isPredicate } from '../../predicate/utils/is-predicate';
 import { isRelation } from '../../relation/utils/is-relation';
 import { hasTrait, registerTrait } from '../../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../../trait/trait-instance';
@@ -20,11 +22,11 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends (TraitOrRelation | Predicate)[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
         const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
+            isRelation(input) || isPredicate(input) ? input[$internal].trait : input
         ) as ExtractTraits<T>;
         return createModifier(`changed-${id}`, id, traits);
     };

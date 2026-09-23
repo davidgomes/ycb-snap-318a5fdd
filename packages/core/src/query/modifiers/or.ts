@@ -1,3 +1,5 @@
+import { $internal } from '../../common';
+import { isPredicate } from '../../predicate/utils/is-predicate';
 import type { Trait } from '../../trait/types';
 import type { Modifier, OrModifier, OrParameter } from '../types';
 import { $modifier, createModifier } from '../modifier';
@@ -10,6 +12,8 @@ export const Or = <T extends OrParameter[]>(...params: T): OrModifier<T> => {
     for (const param of params) {
         if ((param as Modifier)[$modifier]) {
             modifiers.push(param as Modifier);
+        } else if (isPredicate(param)) {
+            traits.push(param[$internal].trait);
         } else {
             traits.push(param as Trait);
         }

@@ -1,9 +1,11 @@
 import type { Entity } from '../entity/types';
+import type { Predicate } from '../predicate/types';
 import type { RelationPair } from '../relation/types';
 import { AoSFactory } from '../storage';
 import type {
     ExtractSchema,
     ExtractStore,
+    ExtractTrait,
     IsTag,
     Trait,
     TraitInstance,
@@ -15,7 +17,7 @@ import { $modifier } from './modifier';
 import { $parameters, $queryRef } from './symbols';
 
 export type QueryModifier = (...components: Trait[]) => Modifier;
-export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier>;
+export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier> | Predicate;
 export type QuerySubscriber = (entity: Entity) => void;
 export type QueryUnsubscriber = () => void;
 
@@ -96,7 +98,7 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
 };
 
 /** Parameter types that can be passed to Or modifier */
-export type OrParameter = Trait | Modifier;
+export type OrParameter = Trait | Modifier | Predicate;
 
 /** Or modifier that can contain both traits and nested modifiers */
 export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
@@ -108,10 +110,10 @@ export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
 
 /** Extract traits from Or parameters (filters out modifiers) */
 type ExtractTraitsFromOrParams<T extends OrParameter[]> = T extends [infer First, ...infer Rest]
-    ? First extends Trait
+    ? First extends Trait | Predicate
         ? Rest extends OrParameter[]
-            ? [First, ...ExtractTraitsFromOrParams<Rest>]
-            : [First]
+            ? [ExtractTrait<First>, ...ExtractTraitsFromOrParams<Rest>]
+            : [ExtractTrait<First>]
         : Rest extends OrParameter[]
           ? ExtractTraitsFromOrParams<Rest>
           : []
@@ -124,8 +126,11 @@ type ExtractTraitsFromOrParams<T extends OrParameter[]> = T extends [infer First
 export type TrackingGroup = {
     /** Whether all traits must match (and) or any trait can match (or) */
     logic: 'and' | 'or';
-    /** The type of tracking event */
-    type: 'add' | 'remove' | 'change';
+    /**
+     * The type of tracking event.
+     * Toggle tracks both adds and removes, used for predicate truthiness transitions.
+     */
+    type: EventType | 'toggle';
     /** Tracking modifier ID for snapshot/mask lookups */
     id: number;
     /** Bitmasks indexed by generationId */

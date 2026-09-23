@@ -1,5 +1,6 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
+import type { Predicate, PredicateInstance } from '../predicate/types';
 import type { QueryInstance } from '../query/types';
 import type { Relation, RelationPair } from '../relation/types';
 import type { AoSFactory, Schema, Store, StoreType } from '../storage';
@@ -93,6 +94,8 @@ export interface TraitInstance<T extends Trait = Trait, S extends Schema = Extra
     notQueries: Set<QueryInstance>;
     /** Queries that filter by this relation (only for relation traits) */
     relationQueries: Set<QueryInstance>;
+    /** Predicates that depend on this trait */
+    predicates: PredicateInstance[];
     schema: S;
     changeSubscriptions: Set<(entity: Entity, target?: Entity) => void>;
     addSubscriptions: Set<(entity: Entity, target?: Entity) => void>;
@@ -107,10 +110,17 @@ export interface TraitInstance<T extends Trait = Trait, S extends Schema = Extra
 
 export type TraitOrRelation = Trait | Relation<Trait>;
 
-/** Extracts the underlying Trait from a TraitOrRelation (Relations contain a Trait) */
-export type ExtractTrait<T> = T extends Relation<infer TTrait> ? TTrait : T;
+/**
+ * Extracts the underlying Trait from a TraitOrRelation (Relations contain a Trait).
+ * Predicates are backed by a tag trait.
+ */
+export type ExtractTrait<T> = T extends Relation<infer TTrait>
+    ? TTrait
+    : T extends Predicate
+      ? TagTrait
+      : T;
 
 /** Maps a tuple of TraitOrRelation to their underlying Traits */
-export type ExtractTraits<T extends TraitOrRelation[]> = {
+export type ExtractTraits<T extends (TraitOrRelation | Predicate)[]> = {
     [K in keyof T]: ExtractTrait<T[K]>;
 };

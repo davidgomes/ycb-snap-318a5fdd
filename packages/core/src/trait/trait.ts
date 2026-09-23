@@ -1,6 +1,7 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
+import { isPredicateTrait, reevaluatePredicates, setupPredicate } from '../predicate/predicate';
 import { setChanged, setPairChanged } from '../query/modifiers/changed';
 import { checkQueryTrackingWithRelations } from '../query/utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
@@ -104,6 +105,7 @@ export function registerTrait(world: World, trait: Trait) {
         trackingQueries: new Set(),
         notQueries: new Set(),
         relationQueries: new Set(),
+        predicates: [],
         schema: trait.schema,
         changeSubscriptions: new Set(),
         addSubscriptions: new Set(),
@@ -122,6 +124,9 @@ export function registerTrait(world: World, trait: Trait) {
 
     // Setup ordered trait sync if this is an ordered trait
     if (isOrderedTrait(trait)) setupOrderedTraitSync(world, trait);
+
+    // Setup the predicate if this trait backs one
+    if (isPredicateTrait(trait)) setupPredicate(world, trait);
 }
 
 function getOrderedTrait(world: World, entity: Entity, trait: OrderedRelation): OrderedList {
@@ -418,6 +423,7 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
     value instanceof Function && (value = value(ctx.get(index, store)));
 
     ctx.set(index, store, value);
+    reevaluatePredicates(world, entity, trait);
     triggerChanged && setChanged(world, entity, trait);
 }
 
@@ -531,4 +537,6 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
 
     // Remove trait from entity internally
     ctx.entityTraits.get(entity)!.delete(trait);
+
+    reevaluatePredicates(world, entity, trait);
 }

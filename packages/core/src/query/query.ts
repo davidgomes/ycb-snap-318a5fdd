@@ -1,6 +1,8 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
+import { isPredicateTrait } from '../predicate/predicate';
+import { isPredicate } from '../predicate/utils/is-predicate';
 import { hasRelationPair } from '../relation/relation';
 import type { Relation } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
@@ -127,22 +129,6 @@ function processTrackingModifier(
     if (!trackingType) return;
 
     const id = modifier.id;
-    // Key includes logic so Changed(A) at top-level stays separate from Or(Changed(A))
-    const key = `${trackingType}-${id}-${logic}`;
-
-    // Find or create tracking group
-    let group = groupsMap.get(key);
-    if (!group) {
-        group = {
-            logic,
-            type: trackingType,
-            id,
-            bitmasks: [],
-            trackers: [],
-        };
-        groupsMap.set(key, group);
-        query.trackingGroups.push(group);
-    }
 
     // Register traits and build bitmasks
     for (const trait of modifier.traits) {
@@ -153,12 +139,31 @@ function processTrackingModifier(
         // Add to traitInstances.all for query registration
         query.traitInstances.all.push(instance);
 
+        // A predicate changes when its trait is added or removed, never when it is set
+        const type = trackingType === 'change' && isPredicateTrait(trait) ? 'toggle' : trackingType;
+        // Key includes logic so Changed(A) at top-level stays separate from Or(Changed(A))
+        const key = `${type}-${id}-${logic}`;
+
+        // Find or create tracking group
+        let group = groupsMap.get(key);
+        if (!group) {
+            group = {
+                logic,
+                type,
+                id,
+                bitmasks: [],
+                trackers: [],
+            };
+            groupsMap.set(key, group);
+            query.trackingGroups.push(group);
+        }
+
         // Build bitmasks by generation
         const genId = instance.generationId;
         group.bitmasks[genId] = (group.bitmasks[genId] || 0) | instance.bitflag;
 
         // Track changed traits for change detection in query-result
-        if (trackingType === 'change') {
+        if (type === 'change') {
             query.changedTraits.add(trait);
             query.hasChangedModifiers = true;
         }
@@ -216,7 +221,9 @@ export function createQueryInstance<T extends QueryParameter[]>(
 
     // Process all parameters
     for (let i = 0; i < parameters.length; i++) {
-        const parameter = parameters[i];
+        const param = parameters[i];
+        // Predicates are matched through the tag trait they keep on matching entities
+        const parameter = isPredicate(param) ? param[$internal].trait : param;
 
         // Handle relation pairs
         if (isRelationPair(parameter)) {
@@ -387,6 +394,9 @@ export function createQueryInstance<T extends QueryParameter[]>(
                                 break;
                             case 'change':
                                 traitMatches = ((changedMask[genId]?.[eid] ?? 0) & bit) === bit;
+                                break;
+                            case 'toggle':
+                                traitMatches = ((dirtyMask[genId]?.[eid] ?? 0) & bit) === bit;
                                 break;
                         }
 

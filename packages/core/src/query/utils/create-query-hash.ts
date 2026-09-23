@@ -1,4 +1,5 @@
 import { $internal } from '../../common';
+import { isPredicate } from '../../predicate/utils/is-predicate';
 import { isRelationPair } from '../../relation/utils/is-relation';
 import type { Relation } from '../../relation/types';
 import type { Trait } from '../../trait/types';
@@ -34,6 +35,8 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
                 const traitId = traitIds[i];
                 sortedIDs[cursor++] = modifierId * 100000 + traitId;
             }
+        } else if (isPredicate(param)) {
+            sortedIDs[cursor++] = param[$internal].trait.id;
         } else {
             const traitId = (param as Trait).id;
             sortedIDs[cursor++] = traitId;
