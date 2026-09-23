@@ -78,6 +78,7 @@ impl StructuralDependencies {
             }) {
                 continue;
             }
+            // Whether a match relies on structure depends on the selector, not the element
             if !dependencies
                 .iter()
                 .any(|(_, dependency)| dependency.is_structural())
