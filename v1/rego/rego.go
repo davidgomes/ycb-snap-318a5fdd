@@ -102,6 +102,7 @@ type EvalContext struct {
 	txn                         storage.Transaction
 	instrument                  bool
 	instrumentation             *topdown.Instrumentation
+	ruleProfile                 bool
 	partialNamespace            string
 	queryTracers                []topdown.QueryTracer
 	compiledQuery               compiledQuery
@@ -435,6 +436,7 @@ func (pq preparedQuery) newEvalContext(ctx context.Context, options []EvalOption
 		txn:                      nil,
 		instrument:               false,
 		instrumentation:          nil,
+		ruleProfile:              pq.r.ruleProfile,
 		partialNamespace:         pq.r.partialNamespace,
 		queryTracers:             nil,
 		unknowns:                 pq.r.unknowns,
@@ -632,6 +634,7 @@ type Rego struct {
 	trace                       bool
 	instrumentation             *topdown.Instrumentation
 	instrument                  bool
+	ruleProfile                 bool
 	capture                     map[*ast.Expr]ast.Var // map exprs to generated capture vars
 	termVarID                   int
 	dump                        io.Writer
@@ -2285,6 +2288,8 @@ func (r *Rego) eval(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
 		q = q.WithQueryTracer(ectx.queryTracers[i])
 	}
 
+	q, profile := withRuleProfiler(q, ectx)
+
 	if ectx.parsedInput != nil {
 		q = q.WithInput(ast.NewTerm(ectx.parsedInput))
 	}
@@ -2327,6 +2332,12 @@ func (r *Rego) eval(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
 
 	if len(rs) == 0 {
 		return nil, nil
+	}
+
+	if profile != nil {
+		for i := range rs {
+			rs[i].Profile = profile
+		}
 	}
 
 	return rs, nil
