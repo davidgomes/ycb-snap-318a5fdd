@@ -1,5 +1,9 @@
 # Changelog
 
+## unreleased
+
+- [ENHANCEMENT] PromQL: `sort_by_label` and `sort_by_label_desc` order mixed label values with a typed total order (numbers, durations, bytes, semantic versions, IPs, CIDRs, and timestamps) and break ties with natural string order.
+
 ## 3.10.0 / 2026-02-24
 
 Prometheus now offers a distroless Docker image variant alongside the default

@@ -750,6 +750,26 @@ load 5m
 	node_uname_info{job="node_exporter", instance="4m600", release="1.2.3"} 0+10x10
 	node_uname_info{job="node_exporter", instance="4m5", release="1.11.3"} 0+10x10
 	node_uname_info{job="node_exporter", instance="4m1000", release="1.111.3"} 0+10x10
+	typed_labels{k=" +Inf"} 0+10x10
+	typed_labels{k="+Inf"} 0+10x10
+	typed_labels{k="100"} 0+10x10
+	typed_labels{k="100.0"} 0+10x10
+	typed_labels{k="1e+06"} 0+10x10
+	typed_labels{k="-Inf"} 0+10x10
+	typed_labels{k="1s"} 0+10x10
+	typed_labels{k="90m"} 0+10x10
+	typed_labels{k="1KiB"} 0+10x10
+	typed_labels{k="1.2.3"} 0+10x10
+	typed_labels{k="v1.2.3"} 0+10x10
+	typed_labels{k="10.0.0.1"} 0+10x10
+	typed_labels{k="2001:db8::1"} 0+10x10
+	typed_labels{k="10.0.0.0/8"} 0+10x10
+	typed_labels{k="10.0.0.0/16"} 0+10x10
+	typed_labels{k="2020-01-02T00:00:00Z"} 0+10x10
+	typed_labels{k="1e"} 0+10x10
+	typed_labels{k="NaN"} 0+10x10
+	typed_labels{k="a"} 0+10x10
+	typed_labels{k="b"} 0+10x10
 
 eval instant at 50m sort_by_label(http_requests, "instance")
 	expect ordered
@@ -879,6 +899,52 @@ eval instant at 50m sort_by_label(node_uname_info, "release")
 	node_uname_info{job="node_exporter", instance="4m600", release="1.2.3"} 100
 	node_uname_info{job="node_exporter", instance="4m5", release="1.11.3"} 100
 	node_uname_info{job="node_exporter", instance="4m1000", release="1.111.3"} 100
+
+eval instant at 50m sort_by_label(typed_labels, "k")
+	expect ordered
+	typed_labels{k=" +Inf"} 100
+	typed_labels{k="+Inf"} 100
+	typed_labels{k="100"} 100
+	typed_labels{k="100.0"} 100
+	typed_labels{k="1e+06"} 100
+	typed_labels{k="-Inf"} 100
+	typed_labels{k="1s"} 100
+	typed_labels{k="90m"} 100
+	typed_labels{k="1KiB"} 100
+	typed_labels{k="1.2.3"} 100
+	typed_labels{k="v1.2.3"} 100
+	typed_labels{k="10.0.0.1"} 100
+	typed_labels{k="2001:db8::1"} 100
+	typed_labels{k="10.0.0.0/8"} 100
+	typed_labels{k="10.0.0.0/16"} 100
+	typed_labels{k="2020-01-02T00:00:00Z"} 100
+	typed_labels{k="1e"} 100
+	typed_labels{k="NaN"} 100
+	typed_labels{k="a"} 100
+	typed_labels{k="b"} 100
+
+eval instant at 50m sort_by_label_desc(typed_labels, "k")
+	expect ordered
+	typed_labels{k="b"} 100
+	typed_labels{k="a"} 100
+	typed_labels{k="NaN"} 100
+	typed_labels{k="1e"} 100
+	typed_labels{k="2020-01-02T00:00:00Z"} 100
+	typed_labels{k="10.0.0.0/16"} 100
+	typed_labels{k="10.0.0.0/8"} 100
+	typed_labels{k="2001:db8::1"} 100
+	typed_labels{k="10.0.0.1"} 100
+	typed_labels{k="v1.2.3"} 100
+	typed_labels{k="1.2.3"} 100
+	typed_labels{k="1KiB"} 100
+	typed_labels{k="90m"} 100
+	typed_labels{k="1s"} 100
+	typed_labels{k="-Inf"} 100
+	typed_labels{k="1e+06"} 100
+	typed_labels{k="100.0"} 100
+	typed_labels{k="100"} 100
+	typed_labels{k="+Inf"} 100
+	typed_labels{k=" +Inf"} 100
 
 # Tests for double_exponential_smoothing
 clear
