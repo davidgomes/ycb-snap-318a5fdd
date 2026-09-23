@@ -361,6 +361,64 @@ export class AggregateFunctionBuilder<DB, TB extends keyof DB, O = unknown>
   }
 
   /**
+   * Adds `respect nulls` immediately after the function arguments and before
+   * `within group`, `filter`, or `over`.
+   *
+   * Used with value functions such as `firstValue`, `lastValue`, `nthValue`,
+   * `lag` and `lead`.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * eb.fn.firstValue<string>('first_name').respectNulls().over((ob) => ob.orderBy('id'))
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * first_value("first_name") respect nulls over(order by "id")
+   * ```
+   */
+  respectNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNulls(
+        this.#props.aggregateFunctionNode,
+        'respect',
+      ),
+    })
+  }
+
+  /**
+   * Adds `ignore nulls` immediately after the function arguments and before
+   * `within group`, `filter`, or `over`.
+   *
+   * Used with value functions such as `firstValue`, `lastValue`, `nthValue`,
+   * `lag` and `lead`.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * eb.fn.lag<string>('first_name', 1).ignoreNulls().over((ob) => ob.orderBy('id'))
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * lag("first_name", $1) ignore nulls over(order by "id")
+   * ```
+   */
+  ignoreNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNulls(
+        this.#props.aggregateFunctionNode,
+        'ignore',
+      ),
+    })
+  }
+
+  /**
    * Adds an `over` clause (window functions) after the function.
    *
    * ### Examples

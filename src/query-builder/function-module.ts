@@ -2,6 +2,8 @@ import { ExpressionWrapper } from '../expression/expression-wrapper.js'
 import type { Expression } from '../expression/expression.js'
 import { AggregateFunctionNode } from '../operation-node/aggregate-function-node.js'
 import { FunctionNode } from '../operation-node/function-node.js'
+import type { OperationNode } from '../operation-node/operation-node.js'
+import { ValueNode } from '../operation-node/value-node.js'
 import type {
   ExtractTypeFromCoalesce1,
   ExtractTypeFromCoalesce3,
@@ -13,6 +15,7 @@ import {
   type ExtractTypeFromReferenceExpression,
   type ReferenceExpression,
   type StringReference,
+  parseReferenceExpression,
   parseReferenceExpressionOrList,
   type ExtractTypeFromStringReference,
 } from '../parser/reference-parser.js'
@@ -769,6 +772,138 @@ export interface FunctionModule<DB, TB extends keyof DB> {
         ? Simplify<ShallowDehydrateObject<O>>
         : never
   >
+
+  /**
+   * Calls the `grouping` function for one grouping column.
+   *
+   * `grouping` returns 1 when the column is null because of a super-aggregate
+   * row produced by `cube`, `rollup` or `grouping sets`, and 0 otherwise.
+   *
+   * ```ts
+   * eb.fn.grouping<number>('gender').as('gender_grouping')
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * grouping("gender") as "gender_grouping"
+   * ```
+   */
+  grouping<
+    O extends number | string | bigint = number | string | bigint,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+  ): ExpressionWrapper<DB, TB, O>
+
+  /**
+   * Calls the `row_number` window function.
+   *
+   * ```ts
+   * eb.fn.rowNumber<number>().over((ob) => ob.orderBy('id')).as('row_num')
+   * ```
+   */
+  rowNumber<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `rank` window function.
+   */
+  rank<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `dense_rank` window function.
+   */
+  denseRank<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `percent_rank` window function.
+   */
+  percentRank<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `cume_dist` window function.
+   */
+  cumeDist<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `ntile` window function.
+   *
+   * `buckets` is a `number` or `bigint` and is sent as a query parameter.
+   */
+  ntile<O extends number | string | bigint = number | string | bigint>(
+    buckets: number | bigint,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `first_value` window function.
+   */
+  firstValue<
+    O = unknown,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `last_value` window function.
+   */
+  lastValue<
+    O = unknown,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `nth_value` window function.
+   *
+   * `n` is a `number` or `bigint` and is sent as a query parameter.
+   */
+  nthValue<
+    O = unknown,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+    n: number | bigint,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `lag` window function.
+   *
+   * `offset` and `defaultValue` are `number` or `bigint` query parameters.
+   */
+  lag<
+    O = unknown,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `lead` window function.
+   *
+   * `offset` and `defaultValue` are `number` or `bigint` query parameters.
+   */
+  lead<
+    O = unknown,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): AggregateFunctionBuilder<DB, TB, O>
 }
 
 export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
@@ -860,5 +995,121 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
         ]),
       )
     },
+
+    grouping<
+      O extends number | string | bigint = number | string | bigint,
+      RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+    >(column: RE): ExpressionWrapper<DB, TB, O> {
+      return fn('grouping', [column])
+    },
+
+    rowNumber<
+      O extends number | string | bigint = number | string | bigint,
+    >(): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('row_number')
+    },
+
+    rank<
+      O extends number | string | bigint = number | string | bigint,
+    >(): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('rank')
+    },
+
+    denseRank<
+      O extends number | string | bigint = number | string | bigint,
+    >(): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('dense_rank')
+    },
+
+    percentRank<
+      O extends number | string | bigint = number | string | bigint,
+    >(): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('percent_rank')
+    },
+
+    cumeDist<
+      O extends number | string | bigint = number | string | bigint,
+    >(): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('cume_dist')
+    },
+
+    ntile<O extends number | string | bigint = number | string | bigint>(
+      buckets: number | bigint,
+    ): AggregateFunctionBuilder<DB, TB, O> {
+      return aggregate('ntile', [ValueNode.create(buckets)])
+    },
+
+    firstValue<
+      O = unknown,
+      RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+    >(expr: RE): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('first_value', [expr])
+    },
+
+    lastValue<
+      O = unknown,
+      RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+    >(expr: RE): AggregateFunctionBuilder<DB, TB, O> {
+      return agg('last_value', [expr])
+    },
+
+    nthValue<
+      O = unknown,
+      RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+    >(expr: RE, n: number | bigint): AggregateFunctionBuilder<DB, TB, O> {
+      return aggregate('nth_value', [
+        parseReferenceExpression(expr),
+        ValueNode.create(n),
+      ])
+    },
+
+    lag<
+      O = unknown,
+      RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+    >(
+      expr: RE,
+      offset?: number | bigint,
+      defaultValue?: number | bigint,
+    ): AggregateFunctionBuilder<DB, TB, O> {
+      return aggregate('lag', valueAccessorArgs(expr, offset, defaultValue))
+    },
+
+    lead<
+      O = unknown,
+      RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+    >(
+      expr: RE,
+      offset?: number | bigint,
+      defaultValue?: number | bigint,
+    ): AggregateFunctionBuilder<DB, TB, O> {
+      return aggregate('lead', valueAccessorArgs(expr, offset, defaultValue))
+    },
   })
+
+  function aggregate<O>(
+    name: string,
+    args: readonly OperationNode[],
+  ): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      aggregateFunctionNode: AggregateFunctionNode.create(name, args),
+    })
+  }
+
+  function valueAccessorArgs(
+    expr: ReferenceExpression<DB, TB>,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ) {
+    const args = [parseReferenceExpression(expr)]
+
+    if (offset !== undefined) {
+      args.push(ValueNode.create(offset))
+    }
+
+    if (defaultValue !== undefined) {
+      args.push(ValueNode.create(defaultValue))
+    }
+
+    return args
+  }
 }

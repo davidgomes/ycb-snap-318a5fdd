@@ -72,6 +72,8 @@ import type { ExplainNode } from './explain-node.js'
 import type { SchemableIdentifierNode } from './schemable-identifier-node.js'
 import type { DefaultInsertValueNode } from './default-insert-value-node.js'
 import type { AggregateFunctionNode } from './aggregate-function-node.js'
+import type { FrameBoundNode } from './frame-bound-node.js'
+import type { FrameNode } from './frame-node.js'
 import type { OverNode } from './over-node.js'
 import type { PartitionByNode } from './partition-by-node.js'
 import type { PartitionByItemNode } from './partition-by-item-node.js'
@@ -219,6 +221,8 @@ export class OperationNodeTransformer {
     DefaultInsertValueNode: this.transformDefaultInsertValue.bind(this),
     AggregateFunctionNode: this.transformAggregateFunction.bind(this),
     OverNode: this.transformOver.bind(this),
+    FrameNode: this.transformFrame.bind(this),
+    FrameBoundNode: this.transformFrameBound.bind(this),
     PartitionByNode: this.transformPartitionBy.bind(this),
     PartitionByItemNode: this.transformPartitionByItem.bind(this),
     SetOperationNode: this.transformSetOperation.bind(this),
@@ -1071,6 +1075,7 @@ export class OperationNodeTransformer {
       withinGroup: this.transformNode(node.withinGroup, queryId),
       filter: this.transformNode(node.filter, queryId),
       over: this.transformNode(node.over, queryId),
+      nulls: node.nulls,
     })
   }
 
@@ -1079,6 +1084,28 @@ export class OperationNodeTransformer {
       kind: 'OverNode',
       orderBy: this.transformNode(node.orderBy, queryId),
       partitionBy: this.transformNode(node.partitionBy, queryId),
+      frame: this.transformNode(node.frame, queryId),
+    })
+  }
+
+  protected transformFrame(node: FrameNode, queryId?: QueryId): FrameNode {
+    return requireAllProps({
+      kind: 'FrameNode',
+      mode: node.mode,
+      start: this.transformNode(node.start, queryId),
+      end: this.transformNode(node.end, queryId),
+      exclusion: node.exclusion,
+    })
+  }
+
+  protected transformFrameBound(
+    node: FrameBoundNode,
+    queryId?: QueryId,
+  ): FrameBoundNode {
+    return requireAllProps({
+      kind: 'FrameBoundNode',
+      bound: node.bound,
+      offset: this.transformNode(node.offset, queryId),
     })
   }
 

@@ -14,6 +14,11 @@ import {
   type PartitionByExpressionOrList,
 } from '../parser/partition-by-parser.js'
 import { freeze } from '../util/object-utils.js'
+import {
+  FrameBuilder,
+  type FrameExtentBuilder,
+  type FrameStartBuilder,
+} from './frame-builder.js'
 import type { OrderByInterface } from './order-by-interface.js'
 
 export class OverBuilder<DB, TB extends keyof DB>
@@ -127,6 +132,85 @@ export class OverBuilder<DB, TB extends keyof DB>
       overNode: OverNode.cloneWithPartitionByItems(
         this.#props.overNode,
         parsePartitionBy(partitionBy),
+      ),
+    })
+  }
+
+  /**
+   * Adds a `rows` frame to the `over` clause.
+   *
+   * Numeric offsets are query parameters. Pass an {@link Expression} to inline SQL.
+   *
+   * ```ts
+   * eb.fn.sum<number>('price').over((ob) =>
+   *   ob.orderBy('id').rows((fb) => fb.preceding(1))
+   * )
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * sum("price") over(order by "id" rows $1 preceding)
+   * ```
+   */
+  rows(cb: (fb: FrameStartBuilder) => FrameExtentBuilder): OverBuilder<DB, TB> {
+    return this.#frame('rows', cb)
+  }
+
+  /**
+   * Adds a `range` frame to the `over` clause.
+   *
+   * ```ts
+   * eb.fn.sum<number>('price').over((ob) =>
+   *   ob.orderBy('id').range((fb) =>
+   *     fb.betweenUnboundedPreceding().andCurrentRow()
+   *   )
+   * )
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * sum("price") over(order by "id" range between unbounded preceding and current row)
+   * ```
+   */
+  range(
+    cb: (fb: FrameStartBuilder) => FrameExtentBuilder,
+  ): OverBuilder<DB, TB> {
+    return this.#frame('range', cb)
+  }
+
+  /**
+   * Adds a `groups` frame to the `over` clause.
+   *
+   * ```ts
+   * eb.fn.sum<number>('price').over((ob) =>
+   *   ob.orderBy('id').groups((fb) =>
+   *     fb.betweenCurrentRow().andUnboundedFollowing().excludeGroup()
+   *   )
+   * )
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * sum("price") over(order by "id" groups between current row and unbounded following exclude group)
+   * ```
+   */
+  groups(
+    cb: (fb: FrameStartBuilder) => FrameExtentBuilder,
+  ): OverBuilder<DB, TB> {
+    return this.#frame('groups', cb)
+  }
+
+  #frame(
+    mode: 'rows' | 'range' | 'groups',
+    cb: (fb: FrameStartBuilder) => FrameExtentBuilder,
+  ): OverBuilder<DB, TB> {
+    return new OverBuilder({
+      overNode: OverNode.cloneWithFrame(
+        this.#props.overNode,
+        cb(new FrameBuilder({ mode })).toOperationNode(),
       ),
     })
   }

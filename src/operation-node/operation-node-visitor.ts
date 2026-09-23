@@ -74,6 +74,8 @@ import type { ExplainNode } from './explain-node.js'
 import type { SchemableIdentifierNode } from './schemable-identifier-node.js'
 import type { DefaultInsertValueNode } from './default-insert-value-node.js'
 import type { AggregateFunctionNode } from './aggregate-function-node.js'
+import type { FrameBoundNode } from './frame-bound-node.js'
+import type { FrameNode } from './frame-node.js'
 import type { OverNode } from './over-node.js'
 import type { PartitionByNode } from './partition-by-node.js'
 import type { PartitionByItemNode } from './partition-by-item-node.js'
@@ -184,6 +186,8 @@ export abstract class OperationNodeVisitor {
     DefaultInsertValueNode: this.visitDefaultInsertValue.bind(this),
     AggregateFunctionNode: this.visitAggregateFunction.bind(this),
     OverNode: this.visitOver.bind(this),
+    FrameNode: this.visitFrame.bind(this),
+    FrameBoundNode: this.visitFrameBound.bind(this),
     PartitionByNode: this.visitPartitionBy.bind(this),
     PartitionByItemNode: this.visitPartitionByItem.bind(this),
     SetOperationNode: this.visitSetOperation.bind(this),
@@ -301,6 +305,8 @@ export abstract class OperationNodeVisitor {
   protected abstract visitDefaultInsertValue(node: DefaultInsertValueNode): void
   protected abstract visitAggregateFunction(node: AggregateFunctionNode): void
   protected abstract visitOver(node: OverNode): void
+  protected abstract visitFrame(node: FrameNode): void
+  protected abstract visitFrameBound(node: FrameBoundNode): void
   protected abstract visitPartitionBy(node: PartitionByNode): void
   protected abstract visitPartitionByItem(node: PartitionByItemNode): void
   protected abstract visitSetOperation(node: SetOperationNode): void
