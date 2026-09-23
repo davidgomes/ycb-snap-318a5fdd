@@ -63,7 +63,7 @@ CREATE_TABLE = (
 )
 _TABLE_NAME_PART = group(r"\w+", r'"[^"]*"', r"`[^`]*`", r"\{\{.*?\}\}")
 # matches the table name and opening paren of a create table statement,
-# unless the parens contain LIKE
+# unless the parens start with LIKE
 CREATE_TABLE_BODY_LOOKAHEAD = (
     r"(?=\s+"
     + _TABLE_NAME_PART

@@ -425,7 +425,6 @@ class DdlFormatter:
         runs = self._split_jinja_statements(nodes)
         if len(runs) == 1 and self._is_too_long(runs[0], previous_node):
             if kind == "header" and len(runs[0]) > 2:
-                # put the table name on its own line
                 runs = [runs[0][:1], runs[0][1:]]
             elif kind == "item" and _is_keyword(runs[0][0], TABLE_CONSTRAINT_KEYWORDS):
                 runs = self._split_table_constraint(runs[0])
