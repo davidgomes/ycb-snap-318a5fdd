@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "wasm")]
 use tsify::Tsify;
 
-use crate::error::JobsError;
+use crate::{error::JobsError, utils::structural_dependencies::StructuralDependencies};
 
 #[cfg_attr(feature = "wasm", derive(Tsify))]
 #[cfg_attr(feature = "napi", napi(object))]
@@ -33,6 +33,9 @@ use crate::error::JobsError;
 ///
 /// This job should never visually change the document.
 ///
+/// Groups that a stylesheet's selector relies on for its structure, such as the parent of an
+/// element matching `g > path` or `:first-child`, are preserved.
+///
 /// # Errors
 ///
 /// Never.
@@ -45,15 +48,30 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
 
     fn prepare(
         &self,
-        _document: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        document: &Element<'input, 'arena>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
-        Ok(if self.0 {
-            PrepareOutcome::none
-        } else {
-            PrepareOutcome::skip
-        })
+        if !self.0 {
+            return Ok(PrepareOutcome::skip);
+        }
+        context.query_has_stylesheet(document);
+        State {
+            structural_dependencies: StructuralDependencies::new(
+                document,
+                &context.query_has_stylesheet_result,
+            ),
+        }
+        .start_with_context(document, context)?;
+        Ok(PrepareOutcome::skip)
     }
+}
+
+struct State {
+    structural_dependencies: StructuralDependencies,
+}
+
+impl<'input, 'arena> Visitor<'input, 'arena> for State {
+    type Error = JobsError<'input>;
 
     fn exit_element(
         &self,
@@ -70,8 +88,12 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
         if !is_element!(element, G) || !element.has_child_elements() {
             return Ok(());
         }
+        if self.structural_dependencies.prevents_flatten(element) {
+            log::debug!("collapse_groups: not collapsing: structure used by selector");
+            return Ok(());
+        }
 
-        move_attributes_to_child(element);
+        move_attributes_to_child(element, &self.structural_dependencies);
         flatten_when_all_attributes_moved(element);
         Ok(())
     }
@@ -83,7 +105,7 @@ impl Default for CollapseGroups {
     }
 }
 
-fn move_attributes_to_child(element: &Element) {
+fn move_attributes_to_child(element: &Element, structural_dependencies: &StructuralDependencies) {
     log::debug!("collapse_groups: move_attributes_to_child");
 
     let mut children = element.children_iter();
@@ -110,6 +132,9 @@ fn move_attributes_to_child(element: &Element) {
         return;
     } else if is_node_with_filter(element) {
         log::debug!("collapse_groups: not moving attrs: filter");
+        return;
+    } else if structural_dependencies.prevents_attribute_change(&first_child) {
+        log::debug!("collapse_groups: not moving attrs: child's attrs used by selector");
         return;
     }
 
