@@ -63,7 +63,7 @@ func (p *PublishAttempts) Record(a *Artifact, publisher, instance, target string
 	}
 	if err != nil {
 		pa.Status = PublishAttemptFailure
-		pa.Error = err.Error()
+		pa.Error = cmp.Or(err.Error(), "unknown error")
 	}
 
 	p.mu.Lock()

@@ -112,6 +112,17 @@ func TestPublishAttemptsDeterministic(t *testing.T) {
 	}
 }
 
+func TestPublishAttemptsEmptyError(t *testing.T) {
+	a := &Artifact{Name: "a"}
+	var attempts PublishAttempts
+	attempts.Record(a, "blob", "s3://bucket", "dir/a", 1, errors.New(""))
+	attempts.Apply()
+	got := MustExtra[[]PublishAttempt](*a, ExtraPublishAttempts)
+	require.Len(t, got, 1)
+	require.Equal(t, PublishAttemptFailure, got[0].Status)
+	require.Equal(t, "unknown error", got[0].Error)
+}
+
 func TestPublishAttemptJSON(t *testing.T) {
 	a := &Artifact{Name: "a"}
 	var attempts PublishAttempts

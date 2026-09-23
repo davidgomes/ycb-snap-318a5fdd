@@ -713,7 +713,10 @@ func TestRunPipe_Retry(t *testing.T) {
 		requireMethodPut(t, r)
 		requireHeader(t, r, "X-Checksum-SHA256", hex.EncodeToString(sum[:]))
 		bts, err := io.ReadAll(r.Body)
-		require.NoError(t, err)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		mu.Lock()
 		bodies = append(bodies, string(bts))
 		n := len(bodies)

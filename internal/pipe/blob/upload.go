@@ -146,13 +146,16 @@ func doUpload(ctx *context.Context, conf config.Blob, attempts *artifact.Publish
 		}
 	}
 
+	var openErr error
 	if err := retry.Do(ctx, conf.Retry, isTransient, func(attempt int) error {
 		if attempt > 1 {
 			log.WithField("bucket", instance).
 				WithField("attempt", attempt).
+				WithError(openErr).
 				Warn("retrying to open bucket")
 		}
-		return up.Open(ctx, bucketURL)
+		openErr = up.Open(ctx, bucketURL)
+		return openErr
 	}); err != nil {
 		return handleError(err, bucketURL)
 	}
