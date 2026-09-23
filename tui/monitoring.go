@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Owloops/updo/alerts"
 	"github.com/Owloops/updo/aws"
 	"github.com/Owloops/updo/config"
 	"github.com/Owloops/updo/metrics"
@@ -87,7 +88,14 @@ func StartMonitoring(targets []config.Target, options Options) {
 	monitors := make(map[string]*stats.Monitor, len(allKeys))
 	sequences := make(map[string]*int, len(allKeys))
 	alertStates := make(map[string]*bool, len(allKeys))
-	webhookAlertStates := make(map[string]*bool, len(allKeys))
+	trackers := make(map[string]*alerts.Tracker, len(allKeys))
+
+	for i, target := range targets {
+		policy := target.AlertPolicy.ToAlertsPolicy()
+		for _, key := range stats.GetAllKeysForTarget(target, options.Regions, i) {
+			trackers[key.String()] = alerts.NewTracker(policy)
+		}
+	}
 
 	for _, key := range allKeys {
 		monitor, err := stats.NewMonitor()
@@ -97,10 +105,8 @@ func StartMonitoring(targets []config.Target, options Options) {
 		monitors[key.String()] = monitor
 		seq := 0
 		alert := false
-		webhookAlert := false
 		sequences[key.String()] = &seq
 		alertStates[key.String()] = &alert
-		webhookAlertStates[key.String()] = &webhookAlert
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -113,7 +119,7 @@ func StartMonitoring(targets []config.Target, options Options) {
 		wg.Add(1)
 		go func(t config.Target, index int) {
 			defer wg.Done()
-			monitorTargetTUI(ctx, t, index, monitors, sequences, alertStates, webhookAlertStates, dataChannel, options)
+			monitorTargetTUI(ctx, t, index, monitors, sequences, alertStates, trackers, dataChannel, options)
 		}(target, i)
 	}
 
@@ -261,7 +267,7 @@ func StartMonitoring(targets []config.Target, options Options) {
 	}
 }
 
-func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int, monitors map[string]*stats.Monitor, sequences map[string]*int, alertStates map[string]*bool, webhookAlertStates map[string]*bool, dataChannel chan<- TargetData, options Options) {
+func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int, monitors map[string]*stats.Monitor, sequences map[string]*int, alertStates map[string]*bool, trackers map[string]*alerts.Tracker, dataChannel chan<- TargetData, options Options) {
 	ticker := time.NewTicker(target.GetRefreshInterval())
 	defer ticker.Stop()
 
@@ -345,15 +351,14 @@ func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int
 								errorMsg = "Request failed"
 							}
 						}
-						if webhookAlertSent, exists := webhookAlertStates[targetKeyStr]; exists {
-							if err := notifications.HandleWebhookAlert(target.WebhookURL, target.WebhookHeaders, lambdaResult.Result.IsUp, webhookAlertSent, target.Name, lambdaResult.Result.URL, lambdaResult.Result.ResponseTime, lambdaResult.Result.StatusCode, errorMsg); err != nil {
-								dataChannel <- TargetData{
-									Target:       target,
-									Result:       lambdaResult.Result,
-									Stats:        stats.Stats{},
-									TargetKey:    targetKey,
-									WebhookError: err,
-								}
+						decision := evaluateTargetAlert(trackers[targetKeyStr], lambdaResult.Result, target)
+						if err := notifyWebhookDecision(target, decision, lambdaResult.Result, errorMsg, lambdaResult.Region); err != nil {
+							dataChannel <- TargetData{
+								Target:       target,
+								Result:       lambdaResult.Result,
+								Stats:        stats.Stats{},
+								TargetKey:    targetKey,
+								WebhookError: err,
 							}
 						}
 					}
@@ -399,25 +404,14 @@ func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int
 					if !result.IsUp {
 						errorMsg = fmt.Sprintf("Status code: %d", result.StatusCode)
 					}
-					if webhookAlertSent, exists := webhookAlertStates[targetKeyStr]; exists {
-						if err := notifications.HandleWebhookAlert(
-							target.WebhookURL,
-							target.WebhookHeaders,
-							result.IsUp,
-							webhookAlertSent,
-							target.Name,
-							target.URL,
-							result.ResponseTime,
-							result.StatusCode,
-							errorMsg,
-						); err != nil {
-							dataChannel <- TargetData{
-								Target:       target,
-								Result:       result,
-								Stats:        stats.Stats{},
-								TargetKey:    targetKey,
-								WebhookError: err,
-							}
+					decision := evaluateTargetAlert(trackers[targetKeyStr], result, target)
+					if err := notifyWebhookDecision(target, decision, result, errorMsg, ""); err != nil {
+						dataChannel <- TargetData{
+							Target:       target,
+							Result:       result,
+							Stats:        stats.Stats{},
+							TargetKey:    targetKey,
+							WebhookError: err,
 						}
 					}
 				}
@@ -449,4 +443,43 @@ func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int
 			}
 		}
 	}
+}
+
+func evaluateTargetAlert(tracker *alerts.Tracker, result net.WebsiteCheckResult, target config.Target) alerts.Decision {
+	if tracker == nil {
+		tracker = alerts.NewTracker(target.AlertPolicy.ToAlertsPolicy())
+	}
+	checkedAt := result.LastCheckTime
+	if checkedAt.IsZero() {
+		checkedAt = time.Now()
+	}
+	return tracker.Evaluate(alerts.Check{
+		IsUp:             result.IsUp,
+		ResponseTime:     result.ResponseTime,
+		SSLDaysRemaining: sslDaysRemaining(target, result.URL),
+	}, checkedAt)
+}
+
+func sslDaysRemaining(target config.Target, checkedURL string) int {
+	if target.AlertPolicy.SSLExpiryThresholdDays <= 0 {
+		return -1
+	}
+	if checkedURL == "" {
+		checkedURL = target.URL
+	}
+	return net.GetSSLCertExpiry(checkedURL)
+}
+
+func notifyWebhookDecision(target config.Target, decision alerts.Decision, result net.WebsiteCheckResult, errorMsg string, region string) error {
+	if target.WebhookURL == "" {
+		return nil
+	}
+	checkedURL := result.URL
+	if checkedURL == "" {
+		checkedURL = target.URL
+	}
+	if len(target.WebhookHeaders) > 0 {
+		return notifications.HandleWebhookDecisionWithHeaders(target.WebhookURL, target.WebhookHeaders, decision, target.Name, checkedURL, result.ResponseTime, result.StatusCode, errorMsg, region)
+	}
+	return notifications.HandleWebhookDecision(target.WebhookURL, nil, decision, target.Name, checkedURL, result.ResponseTime, result.StatusCode, errorMsg, region)
 }
