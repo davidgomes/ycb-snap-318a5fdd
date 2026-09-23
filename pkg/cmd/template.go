@@ -17,7 +17,6 @@ limitations under the License.
 package cmd
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -117,32 +116,32 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			// We ignore a potential error here because, when the --debug flag was specified,
 			// we always want to print the YAML, even if it is not valid. The error is still returned afterwards.
 			if rel != nil {
-				var manifests bytes.Buffer
-				fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
-				if !client.DisableHooks {
+				var manifests string
+				if client.OutputDir == "" {
+					stream, err := manifestStream(rel)
+					if err != nil {
+						return err
+					}
+					manifests = withoutExcludedHooks(stream, rel.Hooks, client.DisableHooks, skipTests)
+				} else if !client.DisableHooks {
 					fileWritten := make(map[string]bool)
 					for _, m := range rel.Hooks {
 						if skipTests && isTestHook(m) {
 							continue
 						}
-						if client.OutputDir == "" {
-							fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", m.Path, m.Manifest)
-						} else {
-							newDir := client.OutputDir
-							if client.UseReleaseName {
-								newDir = filepath.Join(client.OutputDir, client.ReleaseName)
-							}
-							_, err := os.Stat(filepath.Join(newDir, m.Path))
-							if err == nil {
-								fileWritten[m.Path] = true
-							}
-
-							err = writeToFile(newDir, m.Path, m.Manifest, fileWritten[m.Path])
-							if err != nil {
-								return err
-							}
+						newDir := client.OutputDir
+						if client.UseReleaseName {
+							newDir = filepath.Join(client.OutputDir, client.ReleaseName)
+						}
+						_, err := os.Stat(filepath.Join(newDir, m.Path))
+						if err == nil {
+							fileWritten[m.Path] = true
 						}
 
+						err = writeToFile(newDir, m.Path, m.Manifest, fileWritten[m.Path])
+						if err != nil {
+							return err
+						}
 					}
 				}
 
@@ -151,7 +150,7 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 				if len(showFiles) > 0 {
 					// This is necessary to ensure consistent manifest ordering when using --show-only
 					// with globs or directory names.
-					splitManifests := releaseutil.SplitManifests(manifests.String())
+					splitManifests := releaseutil.SplitManifests(manifests)
 					manifestsKeys := make([]string, 0, len(splitManifests))
 					for k := range splitManifests {
 						manifestsKeys = append(manifestsKeys, k)
@@ -194,7 +193,7 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 						fmt.Fprintf(out, "---\n%s\n", m)
 					}
 				} else {
-					fmt.Fprintf(out, "%s", manifests.String())
+					fmt.Fprintln(out, strings.TrimSuffix(manifests, "\n"))
 				}
 			}
 
@@ -227,6 +226,28 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 
 func isTestHook(h *release.Hook) bool {
 	return slices.Contains(h.Events, release.HookTest)
+}
+
+// withoutExcludedHooks drops from the manifest stream all hooks when
+// disableHooks is set, or test hooks when skipTests is set.
+func withoutExcludedHooks(stream string, hooks []*release.Hook, disableHooks, skipTests bool) string {
+	excluded := make(map[releaseutil.StreamDocument]bool)
+	for _, h := range hooks {
+		if disableHooks || (skipTests && isTestHook(h)) {
+			excluded[releaseutil.StreamDocument{Source: h.Path, Content: strings.TrimSpace(h.Manifest)}] = true
+		}
+	}
+	if len(excluded) == 0 {
+		return stream
+	}
+
+	var docs []releaseutil.StreamDocument
+	for _, d := range releaseutil.ParseManifestStream(stream) {
+		if !excluded[d] {
+			docs = append(docs, d)
+		}
+	}
+	return releaseutil.FormatManifestStream(docs)
 }
 
 // The following functions (writeToFile, createOrOpenFile, and ensureDirectoryForFile)

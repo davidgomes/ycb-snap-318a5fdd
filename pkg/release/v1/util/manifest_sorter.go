@@ -47,6 +47,7 @@ type manifestFile struct {
 type result struct {
 	hooks   []*release.Hook
 	generic []Manifest
+	stream  []StreamDocument
 }
 
 // TODO: Refactor this out. It's here because naming conventions were not followed through.
@@ -74,7 +75,15 @@ var events = map[string]release.HookEvent{
 //
 // Files that do not parse into the expected format are simply placed into a map and
 // returned.
-func SortManifests(files map[string]string, _ common.VersionSet, ordering KindSortOrder) ([]*release.Hook, []Manifest, error) {
+func SortManifests(files map[string]string, apis common.VersionSet, ordering KindSortOrder) ([]*release.Hook, []Manifest, error) {
+	hooks, manifests, _, err := SortManifestsWithStream(files, apis, ordering)
+	return hooks, manifests, err
+}
+
+// SortManifestsWithStream behaves like SortManifests, and additionally returns
+// every hook and non-hook document in the order it was rendered: ordered by
+// file path, then top-to-bottom within each file.
+func SortManifestsWithStream(files map[string]string, _ common.VersionSet, ordering KindSortOrder) ([]*release.Hook, []Manifest, []StreamDocument, error) {
 	result := &result{}
 
 	var sortedFilePaths []string
@@ -102,11 +111,11 @@ func SortManifests(files map[string]string, _ common.VersionSet, ordering KindSo
 		}
 
 		if err := manifestFile.sort(result); err != nil {
-			return result.hooks, result.generic, err
+			return result.hooks, result.generic, result.stream, err
 		}
 	}
 
-	return sortHooksByKind(result.hooks, ordering), sortManifestsByKind(result.generic, ordering), nil
+	return sortHooksByKind(result.hooks, ordering), sortManifestsByKind(result.generic, ordering), result.stream, nil
 }
 
 // sort takes a manifestFile object which may contain multiple resource definition
@@ -153,21 +162,13 @@ func (file *manifestFile) sort(result *result) error {
 		}
 
 		if !hasAnyAnnotation(entry) {
-			result.generic = append(result.generic, Manifest{
-				Name:    file.path,
-				Content: m,
-				Head:    &entry,
-			})
+			result.addGeneric(file.path, m, &entry)
 			continue
 		}
 
 		hookTypes, ok := entry.Metadata.Annotations[release.HookAnnotation]
 		if !ok {
-			result.generic = append(result.generic, Manifest{
-				Name:    file.path,
-				Content: m,
-				Head:    &entry,
-			})
+			result.addGeneric(file.path, m, &entry)
 			continue
 		}
 
@@ -201,6 +202,7 @@ func (file *manifestFile) sort(result *result) error {
 		}
 
 		result.hooks = append(result.hooks, h)
+		result.stream = append(result.stream, StreamDocument{Source: file.path, Content: m, Head: &entry, Hook: h})
 
 		operateAnnotationValues(entry, release.HookDeleteAnnotation, func(value string) {
 			h.DeletePolicies = append(h.DeletePolicies, release.HookDeletePolicy(value))
@@ -212,6 +214,15 @@ func (file *manifestFile) sort(result *result) error {
 	}
 
 	return nil
+}
+
+func (r *result) addGeneric(path, content string, head *SimpleHead) {
+	r.generic = append(r.generic, Manifest{
+		Name:    path,
+		Content: content,
+		Head:    head,
+	})
+	r.stream = append(r.stream, StreamDocument{Source: path, Content: content, Head: head})
 }
 
 // hasAnyAnnotation returns true if the given entry has any annotations at all.

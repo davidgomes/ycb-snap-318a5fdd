@@ -227,7 +227,13 @@ func (s statusPrinter) WriteTable(out io.Writer) error {
 		_, _ = fmt.Fprintln(out)
 	}
 
-	if strings.EqualFold(rel.Info.Description, "Dry run complete") || s.debug {
+	if strings.EqualFold(rel.Info.Description, "Dry run complete") {
+		stream, err := manifestStream(rel)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(out, "MANIFEST:\n%s", stream)
+	} else if s.debug {
 		_, _ = fmt.Fprintln(out, "HOOKS:")
 		for _, h := range rel.Hooks {
 			_, _ = fmt.Fprintf(out, "---\n# Source: %s\n%s\n", h.Path, h.Manifest)

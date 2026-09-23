@@ -25,7 +25,6 @@ import (
 
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/cmd/require"
-	"helm.sh/helm/v4/pkg/release"
 )
 
 var getManifestHelp = `
@@ -34,6 +33,9 @@ This command fetches the generated manifest for a given release.
 A manifest is a YAML-encoded representation of the Kubernetes resources that
 were generated from this release's chart(s). If a chart is dependent on other
 charts, those resources will also be included in the manifest.
+
+The manifest is emitted as a single stream including hooks, ordered by the
+path of the template that rendered each resource.
 `
 
 func newGetManifestCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
@@ -55,11 +57,11 @@ func newGetManifestCmd(cfg *action.Configuration, out io.Writer) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			rac, err := release.NewAccessor(res)
+			stream, err := manifestStream(res)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(out, rac.Manifest())
+			fmt.Fprint(out, stream)
 			return nil
 		},
 	}

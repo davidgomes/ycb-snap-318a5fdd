@@ -41,6 +41,10 @@ type Release struct {
 	Manifest string `json:"manifest,omitempty"`
 	// Hooks are all of the hooks declared for this release.
 	Hooks []*Hook `json:"hooks,omitempty"`
+	// ManifestStream is the unified stream of all rendered documents, hooks
+	// included, ordered by Source path and then by position within each
+	// template. It is only populated for dry-run releases, and is not persisted.
+	ManifestStream string `json:"-"`
 	// Version is an int which represents the revision of the release.
 	Version int `json:"version,omitempty"`
 	// Namespace is the kubernetes namespace of the release.
