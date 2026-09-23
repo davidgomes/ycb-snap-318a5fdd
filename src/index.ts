@@ -12,6 +12,16 @@ import {
   walker,
 } from './plainer.js';
 import { copy } from 'copy-anything';
+import {
+  normalizeErrorStackOptions,
+  NormalizedErrorStackOptions,
+} from './error-options.js';
+import { ErrorClassRegistry, Processor } from './error-class-registry.js';
+
+export interface ErrorCauseState {
+  terminal: WeakSet<object>;
+  depth: WeakMap<object, number>;
+}
 
 export default class SuperJSON {
   /**
@@ -20,17 +30,44 @@ export default class SuperJSON {
   private readonly dedupe: boolean;
 
   /**
-   * @param dedupeReferentialEqualities  If true, SuperJSON will make sure only one instance of referentially equal objects are serialized and the rest are replaced with `null`.
+   * Normalized once at construction. `undefined` keeps legacy Error behavior.
    */
+  readonly errorStack: NormalizedErrorStackOptions | undefined;
+
+  readonly errorClassRegistry = new ErrorClassRegistry();
+
+  /** Per-serialize bookkeeping so cause depth does not leak across calls. */
+  errorCauseState?: ErrorCauseState;
+
   constructor({
     dedupe = false,
+    errorStack,
   }: {
     dedupe?: boolean;
+    errorStack?: unknown;
   } = {}) {
     this.dedupe = dedupe;
+    this.errorStack = normalizeErrorStackOptions(errorStack);
+  }
+
+  registerErrorStackProcessor(className: string, fn: Processor): void {
+    this.errorClassRegistry.register(className, fn);
   }
 
   serialize(object: SuperJSONValue): SuperJSONResult {
+    const previousCauseState = this.errorCauseState;
+    this.errorCauseState = {
+      terminal: new WeakSet(),
+      depth: new WeakMap(),
+    };
+    try {
+      return this.serializeInner(object);
+    } finally {
+      this.errorCauseState = previousCauseState;
+    }
+  }
+
+  private serializeInner(object: SuperJSONValue): SuperJSONResult {
     const identities = new Map<any, any[][]>();
     const output = walker(object, identities, this, this.dedupe);
     const res: SuperJSONResult = {
