@@ -34,7 +34,9 @@ import {
   diffUpdateV2,
   convertUpdateFormatV2ToV1,
   readBlockSet,
+  readIdSet,
   createIdSet,
+  trackRemoteMapWrites,
   BlockSet, IdSet, IdSetDecoderV2, Doc, Transaction, GC, Item, StructStore, // eslint-disable-line
   createID,
   IdRange
@@ -345,8 +347,6 @@ export const writeStructsFromTransaction = (encoder, transaction) => writeStruct
  */
 export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = new UpdateDecoderV2(decoder)) =>
   transact(ydoc, transaction => {
-    // force that transaction.local is set to non-local
-    transaction.local = false
     let retry = false
     const doc = transaction.doc
     const store = doc.store
@@ -366,6 +366,20 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
     })
     // remove known items from ss
     ss.exclude(knownState)
+    /**
+     * @type {UpdateDecoderV1 | UpdateDecoderV2}
+     */
+    let dsDecoder = structDecoder
+    if (doc.mapConflictPolicy !== 'allow') {
+      // map conflicts must be detected before anything is integrated, so the delete set is read upfront
+      const ds = readIdSet(structDecoder)
+      trackRemoteMapWrites(transaction, ss, ds)
+      const dsEncoder = new UpdateEncoderV2()
+      writeIdSet(dsEncoder, ds)
+      dsDecoder = new UpdateDecoderV2(decoding.createDecoder(dsEncoder.toUint8Array()))
+    }
+    // force that transaction.local is set to non-local
+    transaction.local = false
     // console.log('time to read structs: ', performance.now() - start) // @todo remove
     // start = performance.now()
     // console.log('time to merge: ', performance.now() - start) // @todo remove
@@ -395,7 +409,7 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
     }
     // console.log('time to integrate: ', performance.now() - start) // @todo remove
     // start = performance.now()
-    const dsRest = readAndApplyDeleteSet(structDecoder, transaction, store)
+    const dsRest = readAndApplyDeleteSet(dsDecoder, transaction, store)
     if (store.pendingDs) {
       // @todo we could make a lower-bound state-vector check as we do above
       const pendingDSUpdate = new UpdateDecoderV2(decoding.createDecoder(store.pendingDs))

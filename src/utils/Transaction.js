@@ -11,7 +11,8 @@ import {
   createID,
   iterateStructsByIdSet,
   ContentFormat,
-  IdSet, UpdateEncoderV1, UpdateEncoderV2, GC, StructStore, AbstractStruct, YEvent, Doc // eslint-disable-line
+  collectMapConflicts,
+  IdSet, UpdateEncoderV1, UpdateEncoderV2, GC, StructStore, AbstractStruct, YEvent, Doc, MapWriteLog // eslint-disable-line
 } from '../internals.js'
 
 import { YType } from '../ytype.js' // eslint-disable-line
@@ -130,6 +131,12 @@ export class Transaction {
      */
     this._needFormattingCleanup = false
     this._done = false
+    /**
+     * Map writes of this transaction. Only tracked if `doc.mapConflictPolicy` is not "allow".
+     *
+     * @type {MapWriteLog|null}
+     */
+    this._mapWrites = null
   }
 
   /**
@@ -507,6 +514,7 @@ const cleanupTransactions = (transactionCleanups, i) => {
     const mergeStructs = transaction._mergeStructs
     // insertIntoIdSet(store.ds, ds)
     try {
+      collectMapConflicts(transaction)
       doc.emit('beforeObserverCalls', [transaction, doc])
       /**
        * An array of event callbacks.

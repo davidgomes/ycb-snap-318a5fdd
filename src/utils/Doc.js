@@ -6,6 +6,8 @@ import {
   StructStore,
   transact,
   applyUpdate,
+  validateMapConflictPolicy,
+  summarizeMapConflicts,
   ContentDoc, Item, Transaction, // eslint-disable-line
   encodeStateAsUpdate
 } from '../internals.js'
@@ -31,6 +33,10 @@ export const generateNewClientId = random.uint32
  * @property {boolean} [DocOpts.isSuggestionDoc] Set to true if this document merely suggests
  * changes. If this flag is not set in a suggestion document, automatic formatting changes will be
  * displayed as suggestions, which might not be intended.
+ * @property {import('./MapConflicts.js').MapConflictPolicy} [DocOpts.mapConflictPolicy='allow'] How several sets, or a set and a
+ * delete, of the same map key within a single transaction or update are handled. "allow" applies
+ * them normally, "collect" records them (see `getMapConflicts()`), and "error" throws a
+ * `MapConflictError` before the conflicting write or update is applied.
  */
 
 /**
@@ -57,7 +63,7 @@ export class Doc extends ObservableV2 {
   /**
    * @param {DocOpts} opts configuration
    */
-  constructor ({ guid = random.uuidv4(), collectionid = null, gc = true, gcFilter = () => true, meta = null, autoLoad = false, shouldLoad = true, isSuggestionDoc = false } = {}) {
+  constructor ({ guid = random.uuidv4(), collectionid = null, gc = true, gcFilter = () => true, meta = null, autoLoad = false, shouldLoad = true, isSuggestionDoc = false, mapConflictPolicy = 'allow' } = {}) {
     super()
     this.gc = gc
     this.gcFilter = gcFilter
@@ -66,6 +72,14 @@ export class Doc extends ObservableV2 {
     this.collectionid = collectionid
     this.isSuggestionDoc = isSuggestionDoc
     this.cleanupFormatting = !isSuggestionDoc
+    /**
+     * @type {import('./MapConflicts.js').MapConflictPolicy}
+     */
+    this.mapConflictPolicy = validateMapConflictPolicy(mapConflictPolicy)
+    /**
+     * @type {Array<import('./MapConflicts.js').MapConflict>}
+     */
+    this._mapConflicts = []
     /**
      * @type {Map<string, YType>}
      */
@@ -168,6 +182,32 @@ export class Doc extends ObservableV2 {
 
   getSubdocGuids () {
     return new Set(array.from(this.subdocs).map(doc => doc.guid))
+  }
+
+  /**
+   * Conflicting map writes recorded with `mapConflictPolicy: 'collect'`, in the order in which
+   * they were detected.
+   *
+   * @return {Array<import('./MapConflicts.js').MapConflict>}
+   */
+  getMapConflicts () {
+    return this._mapConflicts.slice()
+  }
+
+  /**
+   * Counts the recorded map conflicts by type, key, parent, and source.
+   *
+   * @return {import('./MapConflicts.js').MapConflictSummary}
+   */
+  getMapConflictSummary () {
+    return summarizeMapConflicts(this._mapConflicts)
+  }
+
+  /**
+   * Forget all recorded map conflicts.
+   */
+  clearMapConflicts () {
+    this._mapConflicts = []
   }
 
   /**
