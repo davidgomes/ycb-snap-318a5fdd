@@ -272,6 +272,24 @@ KEY_DISPLAY_ALIASES = {
 
 ASCII_KEY_NAMES = {"\t": "tab"}
 
+KEY_MODIFIERS = ("shift", "alt", "ctrl", "super", "hyper", "meta")
+"""Modifier names, in the bit order used by the Kitty keyboard protocol."""
+
+
+def _split_key_modifiers(key: str) -> tuple[tuple[str, ...], str]:
+    """Split a key in to its modifiers and the key without modifiers.
+
+    Args:
+        key: A key, e.g. `"ctrl+shift+a"`.
+
+    Returns:
+        A tuple of the sorted modifiers, and the key without modifiers.
+    """
+    *modifiers, base_key = key.split("+")
+    if base_key and all(modifier in KEY_MODIFIERS for modifier in modifiers):
+        return tuple(sorted(set(modifiers))), base_key
+    return (), key
+
 
 def _get_unicode_name_from_key(key: str) -> str:
     """Get the best guess for the Unicode name of the char corresponding to the key.

@@ -15,15 +15,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Type, TypeVar
+from typing import TYPE_CHECKING, Iterable, Type, TypeVar
 
 import rich.repr
 from rich.style import Style
-from typing_extensions import Self
+from typing_extensions import Literal, Self
 
 from textual._types import CallbackType
 from textual.geometry import Offset, Size
-from textual.keys import _get_key_aliases
+from textual.keys import _get_key_aliases, _split_key_modifiers
 from textual.message import Message
 
 MouseEventT = TypeVar("MouseEventT", bound="MouseEvent")
@@ -257,6 +257,12 @@ class InputEvent(Event):
     """Base class for input events."""
 
 
+KeyPhase = Literal["press", "repeat", "release"]
+"""The phase of a key event."""
+
+_KEY_PHASES: frozenset[str] = frozenset(("press", "repeat", "release"))
+
+
 @rich.repr.auto
 class Key(InputEvent):
     """Sent when the user hits a key on the keyboard.
@@ -264,14 +270,45 @@ class Key(InputEvent):
     - [X] Bubbles
     - [ ] Verbose
 
+    Terminals only report repeat and release phases, shifted keys, and base layout keys
+    when the relevant [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
+    enhancements are enabled.
+
     Args:
         key: The key that was pressed.
         character: A printable character or `None` if it is not printable.
+        phase: The phase of the key event: `"press"`, `"repeat"`, or `"release"`.
+        modifiers: Modifiers held with the key, or `None` to derive them from `key`.
+        base_key: The key without modifiers, or `None` to derive it from `key`.
+        shifted_key: The key the terminal reports as produced with shift, if known.
+        base_layout_key: The key at the same position on a standard (PC-101) layout, if known.
     """
 
-    __slots__ = ["key", "character", "aliases"]
+    __slots__ = [
+        "key",
+        "character",
+        "aliases",
+        "phase",
+        "modifiers",
+        "base_key",
+        "shifted_key",
+        "base_layout_key",
+    ]
 
-    def __init__(self, key: str, character: str | None) -> None:
+    def __init__(
+        self,
+        key: str,
+        character: str | None,
+        phase: KeyPhase = "press",
+        modifiers: Iterable[str] | None = None,
+        base_key: str | None = None,
+        shifted_key: str | None = None,
+        base_layout_key: str | None = None,
+    ) -> None:
+        if phase not in _KEY_PHASES:
+            raise ValueError(
+                f"phase must be 'press', 'repeat', or 'release'; not {phase!r}"
+            )
         super().__init__()
         self.key = key
         """The key that was pressed."""
@@ -279,8 +316,35 @@ class Key(InputEvent):
             (key if len(key) == 1 else None) if character is None else character
         )
         """A printable character or ``None`` if it is not printable."""
+        key_modifiers, unmodified_key = _split_key_modifiers(key)
+        self.phase: KeyPhase = phase
+        """The phase of the key event: `"press"`, `"repeat"`, or `"release"`."""
+        self.modifiers: tuple[str, ...] = (
+            key_modifiers if modifiers is None else tuple(sorted(set(modifiers)))
+        )
+        """Sorted modifiers held with the key, e.g. `("ctrl", "shift")`."""
+        self.base_key: str = unmodified_key if base_key is None else base_key
+        """The key without modifiers applied, e.g. `"a"` for `"ctrl+shift+a"`."""
+        self.shifted_key = shifted_key
+        """The key the terminal reports as produced with shift (e.g. `"plus"`), or `None` if not known."""
+        self.base_layout_key = base_layout_key
+        """The key at the same position on a standard (PC-101) layout, or `None` if not known."""
         self.aliases: list[str] = _get_key_aliases(key)
         """The aliases for the key, including the key itself."""
+        if (
+            shifted_key is not None
+            and "shift" in self.modifiers
+            and shifted_key.lower() != self.base_key
+        ):
+            # e.g. "ctrl+shift+equals_sign" may also be matched as "ctrl+plus"
+            shifted_alias = "+".join(
+                [
+                    *(modifier for modifier in self.modifiers if modifier != "shift"),
+                    shifted_key,
+                ]
+            )
+            if shifted_alias not in self.aliases:
+                self.aliases.append(shifted_alias)
 
     def __rich_repr__(self) -> rich.repr.Result:
         yield "key", self.key
@@ -288,6 +352,56 @@ class Key(InputEvent):
         yield "name", self.name
         yield "is_printable", self.is_printable
         yield "aliases", self.aliases, [self.key]
+        yield "phase", self.phase, "press"
+        yield "modifiers", self.modifiers, ()
+        yield "base_key", self.base_key, self.key
+        yield "shifted_key", self.shifted_key, None
+        yield "base_layout_key", self.base_layout_key, None
+
+    @property
+    def is_press(self) -> bool:
+        """Is this a key press event?"""
+        return self.phase == "press"
+
+    @property
+    def is_repeat(self) -> bool:
+        """Is this a key repeat event (the key is being held down)?"""
+        return self.phase == "repeat"
+
+    @property
+    def is_release(self) -> bool:
+        """Is this a key release event?"""
+        return self.phase == "release"
+
+    @property
+    def shift(self) -> bool:
+        """Was the shift modifier held?"""
+        return "shift" in self.modifiers
+
+    @property
+    def alt(self) -> bool:
+        """Was the alt (option) modifier held?"""
+        return "alt" in self.modifiers
+
+    @property
+    def ctrl(self) -> bool:
+        """Was the ctrl modifier held?"""
+        return "ctrl" in self.modifiers
+
+    @property
+    def super(self) -> bool:
+        """Was the super (Windows / command) modifier held?"""
+        return "super" in self.modifiers
+
+    @property
+    def hyper(self) -> bool:
+        """Was the hyper modifier held?"""
+        return "hyper" in self.modifiers
+
+    @property
+    def meta(self) -> bool:
+        """Was the meta modifier held?"""
+        return "meta" in self.modifiers
 
     @property
     def name(self) -> str:
@@ -303,10 +417,14 @@ class Key(InputEvent):
     def is_printable(self) -> bool:
         """Check if the key is printable (produces a unicode character).
 
+        Release events never produce a character, so are not printable.
+
         Returns:
             `True` if the key is printable.
         """
-        return False if self.character is None else self.character.isprintable()
+        if self.character is None or self.is_release:
+            return False
+        return self.character.isprintable()
 
 
 def _key_to_identifier(key: str) -> str:
