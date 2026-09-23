@@ -314,6 +314,18 @@ impl<'input, 'arena> Selector {
 impl<'i> selectors::parser::Parser<'i> for Parser {
     type Impl = SelectorImpl;
     type Error = SelectorParseErrorKind<'i>;
+
+    fn parse_is_and_where(&self) -> bool {
+        true
+    }
+
+    fn parse_has(&self) -> bool {
+        true
+    }
+
+    fn parse_nth_child_of(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Clone)]
@@ -346,7 +358,9 @@ impl selectors::Element for SelectElement<'_, '_> {
     type Impl = SelectorImpl;
 
     fn opaque(&self) -> selectors::OpaqueElement {
-        selectors::OpaqueElement::new(self)
+        // The wrapper is rebuilt while matching relative selectors (`:has()`,
+        // sibling chains). Identity has to be the arena node, not this wrapper.
+        selectors::OpaqueElement::new(self.element.0)
     }
 
     fn parent_element(&self) -> Option<Self> {

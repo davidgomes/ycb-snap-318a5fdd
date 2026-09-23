@@ -1,0 +1,15 @@
+---
+source: crates/oxvg_optimiser/src/jobs/remove_empty_containers.rs
+assertion_line: 225
+expression: "test_config(r#\"{ \"removeEmptyContainers\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Preserve the empty sibling a selector matches, and drop unrelated empty groups -->\n    <style>\n        .sib + circle { fill: blue }\n        g:has(+ rect) { fill: red }\n    </style>\n    <g class=\"sib\"/>\n    <circle r=\"1\"/>\n    <g/>\n    <rect width=\"1\" height=\"1\"/>\n    <g/>\n</svg>\"#),)?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Preserve the empty sibling a selector matches, and drop unrelated empty groups -->
+    <style>
+        .sib+circle{fill:#00f}g:has(+rect){fill:red}
+    </style>
+    <g class="sib"/>
+    <circle r="1"/>
+    <g/>
+    <rect width="1" height="1"/>
+</svg>

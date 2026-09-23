@@ -1,11 +1,11 @@
 //! Visitors for traversing and manipulating nodes of an xml document
-use std::{cell::RefCell, path::PathBuf};
+use std::{cell::RefCell, collections::HashSet, path::PathBuf};
 
 use lightningcss::rules::CssRuleList;
 
 use crate::{
     arena::Allocator,
-    element::Element,
+    element::{Element, HashableElement},
     is_element,
     node::{self, Ref},
     style,
@@ -50,6 +50,11 @@ pub struct Context<'input, 'arena, 'i> {
     pub flags: ContextFlags,
     /// Info about how the program is using the document
     pub info: &'i Info<'input, 'arena>,
+    /// Elements whose structure a selector match depends on.
+    ///
+    /// Recorded from the document before a rewrite so later passes can refuse to
+    /// flatten or remove just those elements.
+    structural_anchors: RefCell<HashSet<HashableElement<'input, 'arena>>>,
 }
 
 impl<'input, 'arena, 'i> Context<'input, 'arena, 'i> {
@@ -66,7 +71,22 @@ impl<'input, 'arena, 'i> Context<'input, 'arena, 'i> {
             root,
             flags,
             info,
+            structural_anchors: RefCell::new(HashSet::new()),
         }
+    }
+
+    /// Records that a structure-sensitive selector depends on `element`.
+    pub fn mark_structural_anchor(&self, element: &Element<'input, 'arena>) {
+        self.structural_anchors
+            .borrow_mut()
+            .insert(HashableElement::new(element.clone()));
+    }
+
+    /// Whether a rewrite must leave `element` in place to preserve selector matches.
+    pub fn is_structural_anchor(&self, element: &Element<'input, 'arena>) -> bool {
+        self.structural_anchors
+            .borrow()
+            .contains(&HashableElement::new(element.clone()))
     }
 
     /// Queries whether a `<script>` element is within the document

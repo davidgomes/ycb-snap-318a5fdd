@@ -10,6 +10,8 @@ use serde_with::skip_serializing_none;
 
 use crate::error::JobsError;
 
+mod structural_selectors;
+
 #[cfg(feature = "wasm")]
 use tsify::Tsify;
 

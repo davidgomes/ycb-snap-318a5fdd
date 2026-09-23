@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "wasm")]
 use tsify::Tsify;
 
-use crate::error::JobsError;
+use crate::{error::JobsError, jobs::structural_selectors};
 
 #[cfg_attr(feature = "wasm", derive(Tsify))]
 #[cfg_attr(feature = "napi", napi(object))]
@@ -43,6 +43,7 @@ impl<'input, 'arena> Visitor<'input, 'arena> for RemoveEmptyContainers {
         Ok(if self.0 {
             context.query_has_stylesheet(document);
             context.query_has_script(document);
+            structural_selectors::record(document, context);
             PrepareOutcome::none
         } else {
             PrepareOutcome::skip
@@ -82,6 +83,9 @@ impl<'input, 'arena> Visitor<'input, 'arena> for RemoveEmptyContainers {
             if has_computed_style!(computed_styles, Filter) {
                 return Ok(());
             }
+        }
+        if context.is_structural_anchor(element) {
+            return Ok(());
         }
 
         element.remove();
@@ -215,6 +219,24 @@ fn remove_empty_containers() -> anyhow::Result<()> {
     </mask>
     <text x="16" y="16" style="mask: url(#b)">•ᴗ•</text>
 </svg>"##
+        ),
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "removeEmptyContainers": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Preserve the empty sibling a selector matches, and drop unrelated empty groups -->
+    <style>
+        .sib + circle { fill: blue }
+        g:has(+ rect) { fill: red }
+    </style>
+    <g class="sib"/>
+    <circle r="1"/>
+    <g/>
+    <rect width="1" height="1"/>
+    <g/>
+</svg>"#
         ),
     )?);
 

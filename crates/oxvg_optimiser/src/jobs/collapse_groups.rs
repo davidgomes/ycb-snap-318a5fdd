@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "wasm")]
 use tsify::Tsify;
 
-use crate::error::JobsError;
+use crate::{error::JobsError, jobs::structural_selectors};
 
 #[cfg_attr(feature = "wasm", derive(Tsify))]
 #[cfg_attr(feature = "napi", napi(object))]
@@ -45,10 +45,12 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
 
     fn prepare(
         &self,
-        _document: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        document: &Element<'input, 'arena>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
         Ok(if self.0 {
+            context.query_has_stylesheet(document);
+            structural_selectors::record(document, context);
             PrepareOutcome::none
         } else {
             PrepareOutcome::skip
@@ -58,7 +60,7 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
     fn exit_element(
         &self,
         element: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<(), Self::Error> {
         let Some(parent) = Element::parent_element(element) else {
             return Ok(());
@@ -68,6 +70,10 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
             return Ok(());
         }
         if !is_element!(element, G) || !element.has_child_elements() {
+            return Ok(());
+        }
+        if context.is_structural_anchor(element) {
+            log::debug!("collapse_groups: not collapsing: structural selector");
             return Ok(());
         }
 
@@ -489,6 +495,42 @@ fn collapse_groups() -> anyhow::Result<()> {
         </g>
     </g>
     <circle cx="25" cy="15" r="10" stroke="black" stroke-width=".1" fill="none"/>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Preserve only the groups a structural selector actually matches through -->
+    <style>
+        #alpha * rect { fill: green }
+        #beta rect { fill: gold }
+        g &gt; path { fill: red }
+        circle:first-child { fill: blue }
+    </style>
+    <g id="alpha">
+        <g>
+            <rect width="1" height="1"/>
+        </g>
+    </g>
+    <g id="beta">
+        <g>
+            <rect width="1" height="1"/>
+        </g>
+    </g>
+    <g>
+        <g>
+            <path d="M0 0"/>
+        </g>
+    </g>
+    <g>
+        <circle r="1"/>
+    </g>
+    <g>
+        <rect width="1" height="1"/>
+    </g>
 </svg>"#
         )
     )?);
