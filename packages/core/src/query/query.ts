@@ -11,6 +11,7 @@ import { universe } from '../universe/universe';
 import { SparseSet } from '../utils/sparse-set';
 import type { World } from '../world';
 import { getTrackingType, isModifier, isOrWithModifiers, isTrackingModifier } from './modifier';
+import { $predicate, filterByPredicates, isPredicate } from './predicate';
 import { createQueryResult } from './query-result';
 import { $queryRef } from './symbols';
 import {
@@ -39,7 +40,7 @@ export function runQuery<T extends QueryParameter[]>(
 
     // With hybrid bitmask strategy, query.entities is already incrementally maintained
     // with both trait and relation filters applied. Just return the pre-filtered entities.
-    const entities = query.entities.dense.slice() as Entity[];
+    let entities = query.entities.dense.slice() as Entity[];
 
     // Clear so it can accumulate again.
     if (query.isTracking) {
@@ -49,6 +50,10 @@ export function runQuery<T extends QueryParameter[]>(
         for (let i = 0; i < len; i++) {
             query.resetTrackingBitmasks(entities[i]);
         }
+    }
+
+    if (query.predicateTerms.length) {
+        entities = filterByPredicates(world, entities, query.predicateTerms);
     }
 
     return createQueryResult(world, entities, query, params);
@@ -194,6 +199,7 @@ export function createQueryInstance<T extends QueryParameter[]>(
         addSubscriptions: new Set<QuerySubscriber>(),
         removeSubscriptions: new Set<QuerySubscriber>(),
         relationFilters: [],
+        predicateTerms: [],
 
         run: (world: World, params: QueryParameter[]) => runQuery(world, query, params),
         add: (entity: Entity) => addEntityToQuery(query, entity),
@@ -230,6 +236,32 @@ export function createQueryInstance<T extends QueryParameter[]>(
             query.traitInstances.required.push(getTraitInstance(ctx.traitInstances, baseTrait)!);
             query.traits.push(baseTrait);
 
+            continue;
+        }
+
+        if (isPredicate(parameter)) {
+            const { kind, deps } = parameter[$predicate];
+            for (const t of deps) {
+                if (!hasTraitInstance(ctx.traitInstances, t)) registerTrait(world, t);
+                if (kind === 'is') {
+                    query.traitInstances.required.push(getTraitInstance(ctx.traitInstances, t)!);
+                    query.traits.push(t);
+                }
+            }
+            query.predicateTerms.push({ type: 'predicate', predicate: parameter, previous: new Set() });
+            continue;
+        }
+
+        if (
+            isModifier(parameter) &&
+            isOrWithModifiers(parameter) &&
+            parameter.modifiers.some(isPredicate)
+        ) {
+            const predicates = parameter.modifiers.filter(isPredicate);
+            for (const t of [...parameter.traits, ...predicates.flatMap((p) => p[$predicate].deps)]) {
+                if (!hasTraitInstance(ctx.traitInstances, t)) registerTrait(world, t);
+            }
+            query.predicateTerms.push({ type: 'or', traits: parameter.traits, predicates });
             continue;
         }
 

@@ -8,6 +8,7 @@ import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
 import { createModifier } from '../modifier';
+import { isPredicate, type Predicate, wrapPredicate } from '../predicate';
 import type { Modifier } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
@@ -20,14 +21,21 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    function modifier<T extends Trait[]>(predicate: Predicate<T>): Predicate<T, 'changed'>;
+    function modifier<T extends TraitOrRelation[]>(
         ...inputs: T
-    ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
+    ): Modifier<ExtractTraits<T>, `changed-${number}`>;
+    function modifier(...inputs: any[]): any {
+        if (inputs.length === 1 && isPredicate(inputs[0])) {
+            return wrapPredicate(inputs[0], 'changed', id);
+        }
         const traits = inputs.map((input) =>
             isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
+        ) as Trait[];
         return createModifier(`changed-${id}`, id, traits);
-    };
+    }
+
+    return modifier;
 }
 
 /** @inline */

@@ -2,7 +2,8 @@ import { $internal } from '../../common';
 import { isRelationPair } from '../../relation/utils/is-relation';
 import type { Relation } from '../../relation/types';
 import type { Trait } from '../../trait/types';
-import { isModifier } from '../modifier';
+import { isModifier, isOrWithModifiers } from '../modifier';
+import { isPredicate } from '../predicate';
 import type { QueryHash, QueryParameter } from '../types';
 
 const sortedIDs = new Float64Array(1024); // Use Float64 for larger IDs with relation encoding
@@ -29,6 +30,13 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
         } else if (isModifier(param)) {
             const modifierId = param.id;
             const traitIds = param.traitIds;
+
+            if (isPredicate(param)) sortedIDs[cursor++] = modifierId * 100000;
+            if (isOrWithModifiers(param)) {
+                for (const nested of param.modifiers) {
+                    if (isPredicate(nested)) sortedIDs[cursor++] = modifierId * 100000 + nested.id;
+                }
+            }
 
             for (let i = 0; i < traitIds.length; i++) {
                 const traitId = traitIds[i];

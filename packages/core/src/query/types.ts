@@ -12,6 +12,7 @@ import type {
 import type { SparseSet } from '../utils/sparse-set';
 import type { World } from '../world';
 import { $modifier } from './modifier';
+import type { PredicateTerm } from './predicate';
 import { $parameters, $queryRef } from './symbols';
 
 export type QueryModifier = (...components: Trait[]) => Modifier;
@@ -165,6 +166,8 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     removeSubscriptions: Set<QuerySubscriber>;
     /** Relation pairs for target-specific queries */
     relationFilters?: RelationPair[];
+    /** Value-based predicate terms evaluated when the query runs */
+    predicateTerms: PredicateTerm[];
     run: (world: World, params: QueryParameter[]) => QueryResult<T>;
     add: (entity: Entity) => void;
     remove: (world: World, entity: Entity) => void;
