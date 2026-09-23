@@ -213,6 +213,79 @@ class _StoredCookie(typing.NamedTuple):
         )
 
 
+def _parse_set_cookie(set_cookie: str, url: URL, now: float) -> _StoredCookie | None:
+    """
+    Parse a single cookie set by a response to `url`, following the parsing and
+    storage models from RFC 6265, sections 5.2 and 5.3.
+
+    Returns `None` if the cookie is malformed, or must otherwise be ignored.
+    """
+    if _CONTROL_CHARACTERS.search(set_cookie):
+        return None
+
+    name_value, *attributes = set_cookie.split(";")
+    name, separator, value = name_value.partition("=")
+    name, value = name.strip(_WHITESPACE), value.strip(_WHITESPACE)
+    if not separator or not name:
+        return None
+
+    domain: str | None = None
+    path: str | None = None
+    max_age: int | None = None
+    expires: float | None = None
+    secure = False
+    for attribute in attributes:
+        attribute_name, _, attribute_value = attribute.partition("=")
+        attribute_name = attribute_name.strip(_WHITESPACE).lower()
+        attribute_value = attribute_value.strip(_WHITESPACE)
+        if not attribute_value and attribute_name in _VALUE_REQUIRED:
+            return None
+        if attribute_name == "domain":
+            domain = _normalize_domain(attribute_value)
+        elif attribute_name == "path":
+            path = attribute_value
+        elif attribute_name == "max-age":
+            if _MAX_AGE.fullmatch(attribute_value):
+                max_age = int(attribute_value)
+        elif attribute_name == "expires":
+            parsed_expires = _parse_cookie_date(attribute_value)
+            if parsed_expires is not None:
+                expires = parsed_expires
+        elif attribute_name == "secure":
+            secure = True
+
+    request_host = url.raw_host.decode("ascii")
+    if domain and not _domain_match(request_host, domain):
+        return None
+
+    request_path = url.raw_path.decode("ascii").partition("?")[0]
+    cookie_path = path if path and path.startswith("/") else _default_path(request_path)
+
+    prefix = name.lower()
+    if prefix.startswith(("__secure-", "__host-")):
+        if not secure or url.scheme != "https":
+            return None
+    if prefix.startswith("__host-"):
+        if domain is not None or path is None or cookie_path != "/":
+            return None
+
+    if max_age is not None:
+        try:
+            expires = now + max_age
+        except OverflowError:  # An absurdly large number of seconds.
+            expires = None if max_age > 0 else now
+
+    return _StoredCookie(
+        name=name,
+        value=value,
+        domain=domain or request_host,
+        path=cookie_path,
+        host_only=not domain,
+        secure=secure,
+        expires=expires,
+    )
+
+
 class CookieStore(typing.MutableMapping[str, str]):
     """
     HTTP Cookies, as a mutable mapping, with deterministic RFC 6265 handling
@@ -246,9 +319,13 @@ class CookieStore(typing.MutableMapping[str, str]):
         """
         url = response.request.url
         now = time.time()
+        cookies = []
         for header in response.headers.get_list("set-cookie"):
             for set_cookie in _COOKIE_SEPARATOR.split(header):
-                self._extract_cookie(set_cookie, url, now)
+                cookie = _parse_set_cookie(set_cookie, url, now)
+                if cookie is not None:
+                    cookies.append(cookie)
+        self._store(cookies, now)
 
     def set_cookie_header(self, request: Request) -> None:
         """
@@ -279,7 +356,7 @@ class CookieStore(typing.MutableMapping[str, str]):
         Cookies set without a domain are sent to any host.
         """
         cookie = _StoredCookie(name, value, _normalize_domain(domain), path)
-        self._store(cookie, time.time())
+        self._store([cookie], time.time())
 
     def get(  # type: ignore
         self,
@@ -319,104 +396,30 @@ class CookieStore(typing.MutableMapping[str, str]):
     def update(self, cookies: CookieTypes | None = None) -> None:  # type: ignore
         from ._models import Cookies
 
-        now = time.time()
         if cookies is None:
             return
         elif isinstance(cookies, CookieStore):
-            for cookie in cookies._live_cookies():
-                self._store(cookie, now)
+            new_cookies = cookies._live_cookies()
         elif isinstance(cookies, (Cookies, CookieJar)):
             jar = cookies.jar if isinstance(cookies, Cookies) else cookies
-            for jar_cookie in jar:
-                self._store(_StoredCookie.from_cookiejar(jar_cookie), now)
+            new_cookies = [_StoredCookie.from_cookiejar(cookie) for cookie in jar]
         else:
             items = cookies.items() if isinstance(cookies, Mapping) else cookies
-            for name, value in items:
-                self.set(name, value)
+            new_cookies = [_StoredCookie(name, value, "", "/") for name, value in items]
+        self._store(new_cookies, time.time())
 
-    def _extract_cookie(self, set_cookie: str, url: URL, now: float) -> None:
-        """
-        Store a single cookie, following the parsing and storage models from
-        RFC 6265, sections 5.2 and 5.3. Malformed cookies are ignored.
-        """
-        if _CONTROL_CHARACTERS.search(set_cookie):
-            return
-
-        name_value, *attributes = set_cookie.split(";")
-        name, separator, value = name_value.partition("=")
-        name, value = name.strip(_WHITESPACE), value.strip(_WHITESPACE)
-        if not separator or not name:
-            return
-
-        domain: str | None = None
-        path: str | None = None
-        max_age: int | None = None
-        expires: float | None = None
-        secure = False
-        for attribute in attributes:
-            attribute_name, _, attribute_value = attribute.partition("=")
-            attribute_name = attribute_name.strip(_WHITESPACE).lower()
-            attribute_value = attribute_value.strip(_WHITESPACE)
-            if not attribute_value and attribute_name in _VALUE_REQUIRED:
-                return
-            if attribute_name == "domain":
-                domain = _normalize_domain(attribute_value)
-            elif attribute_name == "path":
-                path = attribute_value
-            elif attribute_name == "max-age":
-                if _MAX_AGE.fullmatch(attribute_value):
-                    max_age = int(attribute_value)
-            elif attribute_name == "expires":
-                parsed_expires = _parse_cookie_date(attribute_value)
-                if parsed_expires is not None:
-                    expires = parsed_expires
-            elif attribute_name == "secure":
-                secure = True
-
-        request_host = url.raw_host.decode("ascii")
-        if domain and not _domain_match(request_host, domain):
-            return
-
-        request_path = url.raw_path.decode("ascii").partition("?")[0]
-        cookie_path = (
-            path if path and path.startswith("/") else _default_path(request_path)
-        )
-
-        prefix = name.lower()
-        if prefix.startswith(("__secure-", "__host-")):
-            if not secure or url.scheme != "https":
-                return
-        if prefix.startswith("__host-"):
-            if domain is not None or path is None or cookie_path != "/":
-                return
-
-        if max_age is not None:
-            try:
-                expires = now + max_age
-            except OverflowError:  # An absurdly large number of seconds.
-                expires = None if max_age > 0 else now
-
-        cookie = _StoredCookie(
-            name=name,
-            value=value,
-            domain=domain or request_host,
-            path=cookie_path,
-            host_only=not domain,
-            secure=secure,
-            expires=expires,
-        )
-        self._store(cookie, now)
-
-    def _store(self, cookie: _StoredCookie, now: float) -> None:
+    def _store(self, cookies: typing.Iterable[_StoredCookie], now: float) -> None:
         self._remove_expired(now)
-        # A replaced cookie is treated as newly created, so it moves to the end.
-        self._cookies.pop(cookie.key, None)
-        if cookie.is_expired(now):
-            return
-        self._cookies[cookie.key] = cookie
+        for cookie in cookies:
+            # A replaced cookie is treated as newly created, so it moves to the end.
+            self._cookies.pop(cookie.key, None)
+            if not cookie.is_expired(now):
+                self._cookies[cookie.key] = cookie
+                self._evict(cookie.domain)
 
+    def _evict(self, domain: str) -> None:
         if self._max_cookies_per_domain is not None:
-            same_domain = [key for key in self._cookies if key[1] == cookie.domain]
+            same_domain = [key for key in self._cookies if key[1] == domain]
             excess = len(same_domain) - self._max_cookies_per_domain
             for key in same_domain[: max(excess, 0)]:
                 del self._cookies[key]
