@@ -1904,6 +1904,43 @@ time.clock(input.y, time.clock(input.x))
 	}
 }
 
+func TestEvalPartialTemplateStringsSourceOutput(t *testing.T) {
+	files := map[string]string{
+		"test.rego": `package test
+
+p := $"outer {$"inner {input.z}"} {count(input.arr)}"
+
+q := $"hello {input.x}!"
+`,
+	}
+
+	expected := `# Query 1
+$"outer {$"inner {input.z}"} {count(input.arr)}" = x
+data.partial.test.q = y
+
+# Module 1
+package partial.test
+
+q := $"hello {input.x}!"
+`
+
+	test.WithTempFS(files, func(path string) {
+		params := newEvalCommandParams()
+		params.partial = true
+		params.disableInlining = []string{"data.test.q"}
+		params.dataPaths = newrepeatedStringFlag([]string{path})
+		_ = params.outputFormat.Set(formats.Source)
+
+		var buf bytes.Buffer
+		if _, err := eval([]string{"x = data.test.p; y = data.test.q"}, params, &buf, nil); err != nil {
+			t.Fatal("unexpected error:", err)
+		}
+		if diff := cmp.Diff(expected, buf.String()); diff != "" {
+			t.Error("output mismatch (-want +got):\n", diff)
+		}
+	})
+}
+
 func TestEvalPartialOutput_RegoVersion(t *testing.T) {
 	tests := []struct {
 		note                string
