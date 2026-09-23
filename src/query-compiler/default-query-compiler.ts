@@ -89,7 +89,7 @@ import type { ExplainNode } from '../operation-node/explain-node.js'
 import type { SchemableIdentifierNode } from '../operation-node/schemable-identifier-node.js'
 import type { DefaultInsertValueNode } from '../operation-node/default-insert-value-node.js'
 import type { AggregateFunctionNode } from '../operation-node/aggregate-function-node.js'
-import type { OverNode } from '../operation-node/over-node.js'
+import type { OverFrameBound, OverNode } from '../operation-node/over-node.js'
 import type { PartitionByNode } from '../operation-node/partition-by-node.js'
 import type { PartitionByItemNode } from '../operation-node/partition-by-item-node.js'
 import { SetOperationNode } from '../operation-node/set-operation-node.js'
@@ -794,6 +794,21 @@ export class DefaultQueryCompiler
   }
 
   protected override visitGroupByItem(node: GroupByItemNode): void {
+    if (node.modifier === 'cube' || node.modifier === 'rollup') {
+      this.append(node.modifier)
+      this.append('(')
+      this.visitNode(node.groupBy)
+      this.append(')')
+      return
+    }
+
+    if (node.modifier === 'grouping sets') {
+      this.append('grouping sets(')
+      this.visitNode(node.groupBy)
+      this.append(')')
+      return
+    }
+
     this.visitNode(node.groupBy)
   }
 
@@ -1488,6 +1503,11 @@ export class DefaultQueryCompiler
 
     this.append(')')
 
+    if (node.nulls) {
+      this.append(' ')
+      this.append(node.nulls)
+    }
+
     if (node.withinGroup) {
       this.append(' within group (')
       this.visitNode(node.withinGroup)
@@ -1521,7 +1541,39 @@ export class DefaultQueryCompiler
       this.visitNode(node.orderBy)
     }
 
+    if (node.frame) {
+      if (node.partitionBy || node.orderBy) {
+        this.append(' ')
+      }
+
+      this.append(node.frame.mode)
+      this.append(' ')
+
+      if (node.frame.end) {
+        this.append('between ')
+        this.#visitFrameBound(node.frame.start)
+        this.append(' and ')
+        this.#visitFrameBound(node.frame.end)
+      } else {
+        this.#visitFrameBound(node.frame.start)
+      }
+
+      if (node.frame.exclusion) {
+        this.append(' exclude ')
+        this.append(node.frame.exclusion)
+      }
+    }
+
     this.append(')')
+  }
+
+  #visitFrameBound(bound: OverFrameBound): void {
+    if (bound.kind === 'preceding' || bound.kind === 'following') {
+      this.visitNode(bound.offset!)
+      this.append(' ')
+    }
+
+    this.append(bound.kind)
   }
 
   protected override visitPartitionBy(node: PartitionByNode): void {

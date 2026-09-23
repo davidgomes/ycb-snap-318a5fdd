@@ -45,7 +45,13 @@ import type { Compilable } from '../util/compilable.js'
 import type { QueryExecutor } from '../query-executor/query-executor.js'
 import type { QueryId } from '../util/query-id.js'
 import { asArray, freeze } from '../util/object-utils.js'
-import { type GroupByArg, parseGroupBy } from '../parser/group-by-parser.js'
+import {
+  type GroupByArg,
+  type GroupByExpression,
+  parseGroupBy,
+  parseGroupByCubeOrRollup,
+  parseGroupByGroupingSets,
+} from '../parser/group-by-parser.js'
 import type { KyselyPlugin } from '../plugin/kysely-plugin.js'
 import type { WhereInterface } from './where-interface.js'
 import {
@@ -1086,6 +1092,78 @@ export interface SelectQueryBuilder<DB, TB extends keyof DB, O>
    */
   groupBy<GE extends GroupByArg<DB, TB, O>>(
     groupBy: GE,
+  ): SelectQueryBuilder<DB, TB, O>
+
+  /**
+   * Adds a `group by cube(...)` item to the query.
+   *
+   * Composes with {@link groupBy}, {@link groupByRollup} and {@link groupByGroupingSets}.
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select(['first_name', 'last_name'])
+   *   .groupByCube('first_name', 'last_name')
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "first_name", "last_name"
+   * from "person"
+   * group by cube("first_name", "last_name")
+   * ```
+   */
+  groupByCube(
+    ...columns: ReadonlyArray<GroupByExpression<DB, TB, O>>
+  ): SelectQueryBuilder<DB, TB, O>
+
+  /**
+   * Adds a `group by rollup(...)` item to the query.
+   *
+   * Composes with {@link groupBy}, {@link groupByCube} and {@link groupByGroupingSets}.
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select(['first_name', 'last_name'])
+   *   .groupByRollup('first_name', 'last_name')
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "first_name", "last_name"
+   * from "person"
+   * group by rollup("first_name", "last_name")
+   * ```
+   */
+  groupByRollup(
+    ...columns: ReadonlyArray<GroupByExpression<DB, TB, O>>
+  ): SelectQueryBuilder<DB, TB, O>
+
+  /**
+   * Adds a `group by grouping sets(...)` item to the query.
+   *
+   * Each set is wrapped in parentheses. An empty set becomes `()`.
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select(['first_name', 'last_name'])
+   *   .groupByGroupingSets(['first_name', 'last_name'], ['first_name'], [])
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "first_name", "last_name"
+   * from "person"
+   * group by grouping sets(("first_name", "last_name"), ("first_name"), ())
+   * ```
+   */
+  groupByGroupingSets(
+    ...sets: ReadonlyArray<ReadonlyArray<GroupByExpression<DB, TB, O>>>
   ): SelectQueryBuilder<DB, TB, O>
 
   orderBy<OE extends OrderByExpression<DB, TB, O>>(
@@ -2418,6 +2496,42 @@ class SelectQueryBuilderImpl<
       queryNode: SelectQueryNode.cloneWithGroupByItems(
         this.#props.queryNode,
         parseGroupBy(groupBy),
+      ),
+    })
+  }
+
+  groupByCube(
+    ...columns: ReadonlyArray<GroupByExpression<DB, TB, O>>
+  ): SelectQueryBuilder<DB, TB, O> {
+    return new SelectQueryBuilderImpl({
+      ...this.#props,
+      queryNode: SelectQueryNode.cloneWithGroupByItems(
+        this.#props.queryNode,
+        parseGroupByCubeOrRollup('cube', columns),
+      ),
+    })
+  }
+
+  groupByRollup(
+    ...columns: ReadonlyArray<GroupByExpression<DB, TB, O>>
+  ): SelectQueryBuilder<DB, TB, O> {
+    return new SelectQueryBuilderImpl({
+      ...this.#props,
+      queryNode: SelectQueryNode.cloneWithGroupByItems(
+        this.#props.queryNode,
+        parseGroupByCubeOrRollup('rollup', columns),
+      ),
+    })
+  }
+
+  groupByGroupingSets(
+    ...sets: ReadonlyArray<ReadonlyArray<GroupByExpression<DB, TB, O>>>
+  ): SelectQueryBuilder<DB, TB, O> {
+    return new SelectQueryBuilderImpl({
+      ...this.#props,
+      queryNode: SelectQueryNode.cloneWithGroupByItems(
+        this.#props.queryNode,
+        parseGroupByGroupingSets(sets),
       ),
     })
   }

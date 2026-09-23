@@ -15,6 +15,10 @@ import {
 } from '../parser/partition-by-parser.js'
 import { freeze } from '../util/object-utils.js'
 import type { OrderByInterface } from './order-by-interface.js'
+import {
+  OverFrameBuilder,
+  type CompletedOverFrame,
+} from './over-frame-builder.js'
 
 export class OverBuilder<DB, TB extends keyof DB>
   implements OrderByInterface<DB, TB, {}>, OperationNodeSource
@@ -127,6 +131,85 @@ export class OverBuilder<DB, TB extends keyof DB>
       overNode: OverNode.cloneWithPartitionByItems(
         this.#props.overNode,
         parsePartitionBy(partitionBy),
+      ),
+    })
+  }
+
+  /**
+   * Adds a `rows` frame extent to the `over` clause.
+   *
+   * ```ts
+   * eb.fn.sum<number>('salary').over((ob) =>
+   *   ob.orderBy('hired_at').rows((fb) =>
+   *     fb.betweenUnboundedPreceding().andCurrentRow()
+   *   )
+   * )
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * sum("salary") over(order by "hired_at" rows between unbounded preceding and current row)
+   * ```
+   */
+  rows(
+    extent: (fb: OverFrameBuilder) => CompletedOverFrame,
+  ): OverBuilder<DB, TB> {
+    return this.#frame('rows', extent)
+  }
+
+  /**
+   * Adds a `range` frame extent to the `over` clause.
+   *
+   * ```ts
+   * eb.fn.sum<number>('salary').over((ob) =>
+   *   ob.orderBy('salary').range((fb) => fb.unboundedPreceding())
+   * )
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * sum("salary") over(order by "salary" range unbounded preceding)
+   * ```
+   */
+  range(
+    extent: (fb: OverFrameBuilder) => CompletedOverFrame,
+  ): OverBuilder<DB, TB> {
+    return this.#frame('range', extent)
+  }
+
+  /**
+   * Adds a `groups` frame extent to the `over` clause.
+   *
+   * ```ts
+   * eb.fn.sum<number>('salary').over((ob) =>
+   *   ob.orderBy('department').groups((fb) =>
+   *     fb.betweenPreceding(1).andCurrentRow()
+   *   )
+   * )
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * sum("salary") over(order by "department" groups between $1 preceding and current row)
+   * ```
+   */
+  groups(
+    extent: (fb: OverFrameBuilder) => CompletedOverFrame,
+  ): OverBuilder<DB, TB> {
+    return this.#frame('groups', extent)
+  }
+
+  #frame(
+    mode: 'rows' | 'range' | 'groups',
+    extent: (fb: OverFrameBuilder) => CompletedOverFrame,
+  ): OverBuilder<DB, TB> {
+    return new OverBuilder({
+      overNode: OverNode.cloneWithFrame(
+        this.#props.overNode,
+        extent(new OverFrameBuilder(mode)).toFrame(),
       ),
     })
   }

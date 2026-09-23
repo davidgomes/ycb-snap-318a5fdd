@@ -14,6 +14,7 @@ export interface AggregateFunctionNode extends OperationNode {
   readonly withinGroup?: OrderByNode
   readonly filter?: WhereNode
   readonly over?: OverNode
+  readonly nulls?: 'respect nulls' | 'ignore nulls'
 }
 
 type AggregateFunctionNodeFactory = Readonly<{
@@ -41,6 +42,10 @@ type AggregateFunctionNodeFactory = Readonly<{
   cloneWithOver(
     aggregateFunctionNode: AggregateFunctionNode,
     over?: OverNode,
+  ): Readonly<AggregateFunctionNode>
+  cloneWithNulls(
+    aggregateFunctionNode: AggregateFunctionNode,
+    nulls: 'respect nulls' | 'ignore nulls',
   ): Readonly<AggregateFunctionNode>
 }>
 
@@ -109,6 +114,13 @@ export const AggregateFunctionNode: AggregateFunctionNodeFactory =
       return freeze({
         ...aggregateFunctionNode,
         over,
+      })
+    },
+
+    cloneWithNulls(aggregateFunctionNode, nulls) {
+      return freeze({
+        ...aggregateFunctionNode,
+        nulls,
       })
     },
   })

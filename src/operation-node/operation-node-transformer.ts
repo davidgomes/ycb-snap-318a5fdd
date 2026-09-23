@@ -576,6 +576,7 @@ export class OperationNodeTransformer {
     return requireAllProps<GroupByItemNode>({
       kind: 'GroupByItemNode',
       groupBy: this.transformNode(node.groupBy, queryId),
+      modifier: node.modifier,
     })
   }
 
@@ -1071,6 +1072,7 @@ export class OperationNodeTransformer {
       withinGroup: this.transformNode(node.withinGroup, queryId),
       filter: this.transformNode(node.filter, queryId),
       over: this.transformNode(node.over, queryId),
+      nulls: node.nulls,
     })
   }
 
@@ -1079,6 +1081,22 @@ export class OperationNodeTransformer {
       kind: 'OverNode',
       orderBy: this.transformNode(node.orderBy, queryId),
       partitionBy: this.transformNode(node.partitionBy, queryId),
+      frame: node.frame
+        ? {
+            mode: node.frame.mode,
+            start: {
+              kind: node.frame.start.kind,
+              offset: this.transformNode(node.frame.start.offset, queryId),
+            },
+            end: node.frame.end
+              ? {
+                  kind: node.frame.end.kind,
+                  offset: this.transformNode(node.frame.end.offset, queryId),
+                }
+              : undefined,
+            exclusion: node.frame.exclusion,
+          }
+        : undefined,
     })
   }
 

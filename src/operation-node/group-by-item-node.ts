@@ -1,14 +1,20 @@
 import { freeze } from '../util/object-utils.js'
 import type { OperationNode } from './operation-node.js'
 
+export type GroupByModifier = 'cube' | 'rollup' | 'grouping sets'
+
 export interface GroupByItemNode extends OperationNode {
   readonly kind: 'GroupByItemNode'
   readonly groupBy: OperationNode
+  readonly modifier?: GroupByModifier
 }
 
 type GroupByItemNodeFactory = Readonly<{
   is(node: OperationNode): node is GroupByItemNode
-  create(groupBy: OperationNode): Readonly<GroupByItemNode>
+  create(
+    groupBy: OperationNode,
+    modifier?: GroupByModifier,
+  ): Readonly<GroupByItemNode>
 }>
 
 /**
@@ -20,10 +26,11 @@ export const GroupByItemNode: GroupByItemNodeFactory =
       return node.kind === 'GroupByItemNode'
     },
 
-    create(groupBy) {
+    create(groupBy, modifier) {
       return freeze({
         kind: 'GroupByItemNode',
         groupBy,
+        modifier,
       })
     },
   })

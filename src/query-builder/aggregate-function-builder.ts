@@ -103,6 +103,55 @@ export class AggregateFunctionBuilder<DB, TB extends keyof DB, O = unknown>
   }
 
   /**
+   * Adds `respect nulls` after the function call.
+   *
+   * This keeps null arguments when computing value functions such as
+   * `first_value`, `last_value`, `nth_value`, `lag` and `lead`.
+   *
+   * ```ts
+   * eb.fn.firstValue<string>('name').respectNulls().over((ob) => ob.orderBy('id'))
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * first_value("name") respect nulls over(order by "id")
+   * ```
+   */
+  respectNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNulls(
+        this.#props.aggregateFunctionNode,
+        'respect nulls',
+      ),
+    })
+  }
+
+  /**
+   * Adds `ignore nulls` after the function call.
+   *
+   * ```ts
+   * eb.fn.lag<string>('name', 1).ignoreNulls()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * lag("name", $1) ignore nulls
+   * ```
+   */
+  ignoreNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNulls(
+        this.#props.aggregateFunctionNode,
+        'ignore nulls',
+      ),
+    })
+  }
+
+  /**
    * Adds an `order by` clause inside the aggregate function.
    *
    * ### Examples
