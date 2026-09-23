@@ -49,7 +49,7 @@ class DataVar:
     >>> DataVar(1, factory=list)
     Traceback (most recent call last):
     ...
-    statemachine.exceptions.InvalidDefinition: DataVar accepts either 'default' or 'factory', not both.
+    statemachine.exceptions.InvalidDefinition: DataVar accepts either 'default' or 'factory', ...
 
     """
 
@@ -63,11 +63,11 @@ class DataVar:
         factory: "Callable[[], Any] | None" = None,
     ):
         if default is not _MISSING and factory is not None:
-            raise InvalidDefinition(
-                _("DataVar accepts either 'default' or 'factory', not both.")
-            )
+            raise InvalidDefinition(_("DataVar accepts either 'default' or 'factory', not both."))
         if factory is not None and not callable(factory):
-            raise InvalidDefinition(_("DataVar 'factory' must be callable, got {!r}.").format(factory))
+            raise InvalidDefinition(
+                _("DataVar 'factory' must be callable, got {!r}.").format(factory)
+            )
 
         self.default: Any = None if default is _MISSING else default
         self.type = type
@@ -136,17 +136,14 @@ def normalize_data(data: Any) -> Dict[str, DataVar]:
     >>> normalize_data(["count"])
     Traceback (most recent call last):
     ...
-    statemachine.exceptions.InvalidDefinition: State 'data' must be a dict mapping string keys to default values, got ['count'].
+    statemachine.exceptions.InvalidDefinition: State 'data' must be a dict mapping string keys ...
 
     """
     if data is None:
         return {}
     if not isinstance(data, Mapping):
-        raise InvalidDefinition(
-            _("State 'data' must be a dict mapping string keys to default values, got {!r}.").format(
-                data
-            )
-        )
+        msg = _("State 'data' must be a dict mapping string keys to default values, got {!r}.")
+        raise InvalidDefinition(msg.format(data))
 
     result: Dict[str, DataVar] = {}
     for key, value in data.items():
@@ -206,9 +203,7 @@ class StateDataStore:
         elif state.id not in self._active:
             # A state entered again without being exited (e.g. an internal
             # self-transition) keeps its data.
-            self._active[state.id] = {
-                key: var.new_value(key) for key, var in declarations.items()
-            }
+            self._active[state.id] = {key: var.new_value(key) for key, var in declarations.items()}
 
     def exit(self, state: "State") -> None:
         self._active.pop(state.id, None)

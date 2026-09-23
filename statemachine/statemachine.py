@@ -136,6 +136,7 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
     _protected_attrs: set
     _specs: CallbackSpecList
     _class_listeners: List[Any]
+    _state_data: StateDataStore
     prepare: SpecListGrouper
 
     def __init__(
@@ -172,8 +173,9 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         # after state machine creation.
         self._engine = self._get_engine()
         self._engine.start(**kwargs)
+        states_map = self.states_map
         self._state_data.ensure(
-            self.states_map[value] for value in self.configuration_values if value in self.states_map
+            states_map[value] for value in self.configuration_values if value in states_map
         )
 
     def _get_engine(self):

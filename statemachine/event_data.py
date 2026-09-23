@@ -84,7 +84,7 @@ class EventData:
     @property
     def state_data(self) -> "ScopedStateData":
         """The data visible from :attr:`state`, merged with its active ancestors."""
-        return self.machine._state_data.scope(self.state)
+        return self.trigger_data.machine._state_data.scope(self.state)
 
     @property
     def extended_kwargs(self):
