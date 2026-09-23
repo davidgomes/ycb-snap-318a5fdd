@@ -100,6 +100,7 @@ Check out 👉 [Type-Level TypeScript](https://type-level-typescript.com/), an o
   - [`.exhaustive`](#exhaustive)
   - [`.otherwise`](#otherwise)
   - [`.narrow`](#narrow)
+  - [`matchEach`](#matcheach)
   - [`isMatching`](#ismatching)
   - [Patterns](#patterns)
     - [Literals](#literals)
@@ -675,6 +676,61 @@ const result = match(input)
     // | { color: 'red'; size: 'large' }
     // | { color: 'blue'; size: 'small' }
   });
+```
+
+### `matchEach`
+
+```ts
+matchEach(value)
+  .with(...)
+  .with(...)
+  .exhaustive(); // returns an array
+```
+
+`match` stops at the first matching pattern. `matchEach` evaluates **every** clause and returns an array with the results of all matching handlers, in the order clauses were declared.
+
+It supports the same builder API as `match` (`.with`, `.when`, `.returnType`, `.narrow`), but every pattern is checked against the original input type, since all clauses are evaluated.
+
+```ts
+const tags = (n: number) =>
+  matchEach(n)
+    .with(P.number.positive(), () => 'positive')
+    .with(P.number.int(), () => 'integer')
+    .with(0, () => 'zero')
+    .otherwise(() => 'other');
+
+tags(2); // => ['positive', 'integer']
+tags(0); // => ['integer', 'zero']
+tags(-0.5); // => ['other']
+```
+
+- `.run()` and `.exhaustive()` return the results, and throw a `NonExhaustiveError` if no pattern matched. `.exhaustive()` also checks exhaustiveness at compile time, and accepts an optional fallback handler, whose result is returned in a single-element array if no pattern matched.
+- `.otherwise(handler)` returns `[handler(value)]` if no pattern matched, and the results of matching handlers otherwise.
+- `.tap(callback)` registers a side effect. When the expression is evaluated, the callback is called once for each result collected by the clauses declared before it. It doesn't change the results.
+
+#### Compiling a reusable function
+
+Call `matchEach` without a value, passing the input type (and optionally the output type) as type parameters, to compile the clauses into a reusable function:
+
+```ts
+const tags = matchEach<number, string>()
+  .with(P.number.positive(), () => 'positive')
+  .with(P.number.int(), () => 'integer')
+  .toPartialFunction();
+
+tags(2); // => ['positive', 'integer']
+tags(-0.5); // => undefined
+```
+
+- `.toFunction()` returns an `(input) => output[]` function, which throws a `NonExhaustiveError` if no pattern matches.
+- `.toExhaustiveFunction()` does the same, but also checks exhaustiveness at compile time.
+- `.toPartialFunction()` returns an `(input) => output[] | undefined` function, which returns `undefined` if no pattern matches.
+
+#### Signature
+
+```ts
+function matchEach<TInput, TOutput>(input: TInput): MatchEach<TInput, TOutput>;
+function matchEach<TInput, TOutput>(): MatchEach<TInput, TOutput>;
 ```
 
 ### `isMatching`
