@@ -791,6 +791,66 @@ func TestParseVariadicFunctionWithArgs(t *testing.T) {
 	expectParseError(t, "a = func(...args, invalid) { return args }")
 }
 
+func TestParseDestructuring(t *testing.T) {
+	expectParseString(t, "[a, b] := x", "[a, b] := x")
+	expectParseString(t, "[] := x", "[] := x")
+	expectParseString(t, "{} := x", "{} := x")
+	expectParseString(t, "{x, y: b} := m", "{x, y: b} := m")
+	expectParseString(t, `{x: a = 50, "a b": c} := m`,
+		"{x: a = 50, a b: c} := m")
+	expectParseString(t, "{x = 1 + 2} := m", "{x = (1 + 2)} := m")
+	expectParseString(t, "[a, [b, c = a], {d}, ...e] := x",
+		"[a, [b, c = a], {d}, ...e] := x")
+	expectParseString(t, "[\n\ta,\n\tb = 2\n] := x", "[a, b = 2] := x")
+	expectParseString(t, "if [a, b] := f(); a { b }",
+		"if [a, b] := f(); a {b}")
+
+	// only a pattern followed by ':=' or '=' is a destructuring
+	expectParseString(t, "[a, b] = x", "[a, b] = x")
+	expectParseString(t, "[a, ...b] := x", "[a, ...b] := x")
+	expectParseString(t, "{...r} := x", "{...r} := x")
+
+	// existing literal syntax is unchanged
+	expectParseString(t, "[a, b]", "[a, b]")
+	expectParseString(t, "{a: b}", "{a: b}")
+	expectParseString(t, "[a, b][0] = 1", "[a, b][0] = 1")
+	expectParseString(t, "{a: b}.a", "{a: b}.a")
+	expectParseString(t, "[1, 2] = x", "[1, 2] = x")
+	expectParseString(t, "x := [a, b]", "x := [a, b]")
+
+	// function parameters
+	expectParseString(t, "f := func([a, b = 1], {x: y}, c, ...d) {}",
+		"f := func([a, b = 1], {x: y}, c, ...d) {}")
+	expectParseString(t, "f := func({x}) {}", "f := func({x}) {}")
+
+	expectParseError(t, "[a, b,] := x")
+	expectParseError(t, "{a, b,} := x")
+	expectParseError(t, `{"a"} := x`)
+	expectParseError(t, "[a = ] := x")
+	expectParseError(t, "[...a = 1] := x")
+	expectParseError(t, "[...[a]] := x")
+	expectParseError(t, "x := {a = 1}")
+	expectParseError(t, "x := [...a]")
+	expectParseError(t, "f := func([a, 1]) {}")
+	expectParseError(t, "f := func(...[a]) {}")
+
+	file, err := parseSource("test", []byte("[a, {b: c = 1}] := x"), nil)
+	require.NoError(t, err)
+	stmt := file.Stmts[0].(*AssignStmt)
+	require.Equal(t, token.Define, stmt.Token)
+	require.Equal(t, Pos(17), stmt.TokenPos)
+	arr := stmt.LHS[0].(*ArrayPattern)
+	require.Equal(t, Pos(1), arr.Pos())
+	require.Equal(t, Pos(16), arr.End())
+	require.Equal(t, 2, len(arr.Elements))
+	m := arr.Elements[1].Target.(*MapPattern)
+	require.Equal(t, Pos(5), m.Pos())
+	require.Equal(t, "b", m.Elements[0].Key)
+	require.Equal(t, Pos(6), m.Elements[0].KeyPos)
+	require.Equal(t, "c", m.Elements[0].Target.(*Ident).Name)
+	require.Equal(t, int64(1), m.Elements[0].Default.(*IntLit).Value)
+}
+
 func TestParseIf(t *testing.T) {
 	expectParse(t, "if a == 5 {}", func(p pfn) []Stmt {
 		return stmts(

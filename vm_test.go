@@ -3634,6 +3634,115 @@ func TestSpread(t *testing.T) {
 		"Runtime Error: wrong number of arguments: want=3, got=2")
 }
 
+func TestDestructuring(t *testing.T) {
+	// array patterns
+	expectRun(t, `[a, b, c] := [1, 2, 3]; out = [c, b, a]`, nil, ARR{3, 2, 1})
+	expectRun(t, `[a, b, c] := [1]; out = [a, b, c]`,
+		nil, ARR{1, tengo.UndefinedValue, tengo.UndefinedValue})
+	expectRun(t, `[a] := [1, 2, 3]; out = a`, nil, 1)
+	expectRun(t, `[a, b] := immutable([1, 2]); out = a + b`, nil, 3)
+	expectRun(t, `[] := [1, 2]; out = 1`, nil, 1)
+	expectRun(t, `[_, _, c] := [1, 2, 3]; out = c`, nil, 3)
+
+	// map patterns
+	expectRun(t, `{x, y} := {x: 1, y: 2}; out = [x, y]`, nil, ARR{1, 2})
+	expectRun(t, `{x: a, y: b} := {x: 1, y: 2}; out = [a, b]`, nil, ARR{1, 2})
+	expectRun(t, `{x: a = 50} := {}; out = a`, nil, 50)
+	expectRun(t, `{x: a = 50} := {x: 5}; out = a`, nil, 5)
+	expectRun(t, `{x = 50} := {}; out = x`, nil, 50)
+	expectRun(t, `{"a b": c} := {"a b": 3}; out = c`, nil, 3)
+	expectRun(t, `{z} := {x: 1}; out = z`, nil, tengo.UndefinedValue)
+	expectRun(t, `{x} := immutable({x: 1}); out = x`, nil, 1)
+	expectRun(t, `{} := {x: 1}; out = 1`, nil, 1)
+
+	// nested patterns and rest elements
+	expectRun(t, `[a, [b, c], {d: [e]}] := [1, [2, 3], {d: [4]}]
+out = [a, b, c, e]`, nil, ARR{1, 2, 3, 4})
+	expectRun(t, `{p: {q}} := {p: {q: 7}}; out = q`, nil, 7)
+	expectRun(t, `[a, ...r] := [1, 2, 3]; out = [a, r]`,
+		nil, ARR{1, ARR{2, 3}})
+	expectRun(t, `[a, b, ...r] := [1]; out = [a, b, r]`,
+		nil, ARR{1, tengo.UndefinedValue, ARR{}})
+	expectRun(t, `[...r] := immutable([1, 2]); r[0] = 5; out = r`,
+		nil, ARR{5, 2})
+	expectRun(t, `x := [1, 2, 3]; [...r] := x; r[0] = 9; out = x`,
+		nil, ARR{1, 2, 3})
+
+	// defaults apply only to missing positions/keys, lazily, in order
+	expectRun(t, `[a = 1, b = 2] := [undefined]; out = [a, b]`,
+		nil, ARR{tengo.UndefinedValue, 2})
+	expectRun(t, `{x = 1} := {x: undefined}; out = x`,
+		nil, tengo.UndefinedValue)
+	expectRun(t, `
+n := 0
+f := func() { n++; return n }
+[a = f(), b = f(), c = f()] := [10]
+out = [a, b, c, n]`, nil, ARR{10, 1, 2, 2})
+	expectRun(t, `[a, b = a * 2, {c = b + 1}] := [3]; out = [a, b, c]`,
+		nil, ARR{3, 6, 7})
+	expectRun(t, `[a, [b, ...c], {d}] := [1]; out = [a, b, c, d]`,
+		nil, ARR{1, tengo.UndefinedValue, ARR{}, tengo.UndefinedValue})
+	expectRun(t, `{x = 1} := undefined; out = x`, nil, 1)
+	expectRun(t, `[a, b = a * 2, {c = b + 1} = {}] := [3]; out = [a, b, c]`,
+		nil, ARR{3, 6, 7})
+	expectRun(t, `[[a, b] = [1, 2]] := []; out = a + b`, nil, 3)
+
+	// scoping
+	expectRun(t, `a := 1; if true { [a, b] := [2, 3] }; out = a`, nil, 1)
+	expectRun(t, `if [a, b] := [true, 5]; a { out = b }`, nil, 5)
+	expectRun(t, `
+f := func() {
+	[a, b = a + 1] := [1]
+	g := func() { return a + b }
+	return g()
+}
+out = f()`, nil, 3)
+	expectRun(t, `
+out = 0
+for [a, b] := [0, 3]; a < b; a++ { out += a }`, nil, 3)
+
+	// function parameters
+	expectRun(t, `f := func([a, b]) { return a + b }; out = f([1, 2])`, nil, 3)
+	expectRun(t, `f := func({x, y: z = 5}) { return [x, z] }; out = f({x: 1})`,
+		nil, ARR{1, 5})
+	expectRun(t, `
+f := func(a, [b, ...c], {d = a}, ...e) { return [a, b, c, d, e] }
+out = f(1, [2, 3], {}, 4, 5)`, nil, ARR{1, 2, ARR{3}, 1, ARR{4, 5}})
+	expectRun(t, `
+f := func([a, b], n) { return n == 0 ? a : f([b, a + b], n - 1) }
+out = f([0, 1], 10)`, nil, 55)
+	expectRun(t, `
+f := func([a]) { return func() { return a } }
+out = f([4])()`, nil, 4)
+
+	// literal syntax is unchanged
+	expectRun(t, `out = [1, 2][1]`, nil, 2)
+	expectRun(t, `out = {a: 1}.a`, nil, 1)
+	expectRun(t, `x := [7]; [x][0]; {k: x}.k; out = [x][0][0]`, nil, 7)
+
+	// errors
+	expectError(t, `[...a, b] := [1, 2]`, nil, "rest element must be last")
+	expectError(t, `[a, [...b, c]] := [1, [2]]`, nil,
+		"rest element must be last")
+	expectError(t, `f := func([...a, b]) {}`, nil,
+		"rest element must be last")
+	expectError(t, `{...r} := {}`, nil,
+		"rest element is not supported in map patterns")
+	expectError(t, `a := 1; b := 2; [a, b] = [3, 4]`, nil,
+		"cannot use destructuring with =")
+	expectError(t, `x := 1; {x} = {x: 2}`, nil,
+		"cannot use destructuring with =")
+	expectError(t, `x := 1; [x] := [2]`, nil, "'x' redeclared in this block")
+	expectError(t, `[a, a] := [1, 2]`, nil, "'a' redeclared in this block")
+	expectError(t, `[a, b = c, c] := [1]`, nil, "unresolved reference 'c'")
+	expectError(t, `[a] := 1`, nil,
+		"Runtime Error: cannot destructure int as array")
+	expectError(t, `{a} := [1]`, nil,
+		"Runtime Error: cannot destructure array as map")
+	expectError(t, `f := func([a]) {}; f({})`, nil,
+		"Runtime Error: cannot destructure map as array")
+}
+
 func TestSliceIndex(t *testing.T) {
 	expectError(t, `undefined[:1]`, nil, "Runtime Error: not indexable")
 	expectError(t, `123[-1:2]`, nil, "Runtime Error: not indexable")
