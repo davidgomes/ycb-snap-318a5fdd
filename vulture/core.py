@@ -7,7 +7,7 @@ from fnmatch import fnmatch, fnmatchcase
 from functools import partial
 from pathlib import Path
 
-from vulture import lines, noqa, utils
+from vulture import cache, lines, noqa, utils
 from vulture.config import InputError, make_config
 from vulture.reachability import Reachability
 from vulture.utils import ExitCode
@@ -191,9 +191,18 @@ class Vulture(ast.NodeVisitor):
     """Find dead code."""
 
     def __init__(
-        self, verbose=False, ignore_names=None, ignore_decorators=None
+        self,
+        verbose=False,
+        ignore_names=None,
+        ignore_decorators=None,
+        cache_dir=None,
+        cache_settings=None,
     ):
         self.verbose = verbose
+        self.cache_dir = cache_dir
+        self.cache_settings = cache.canonicalize_settings(cache_settings)
+        self._cache_stats = {"scanned": set(), "reused": set()}
+        self._cache_data = None
 
         def get_list(typ):
             return utils.LoggingList(typ, self.verbose)
@@ -276,41 +285,262 @@ class Vulture(ast.NodeVisitor):
             return _match(path, exclude, case=False)
 
         paths = [Path(path) for path in paths]
+        if self.cache_dir is None:
+            self._scavenge_files(paths, exclude_path)
+            return
 
+        with cache._FileLock(self.cache_dir):
+            try:
+                self._scavenge_cached(paths, exclude_path)
+            except KeyboardInterrupt:
+                self._save_cache()
+                raise
+
+    def _scavenge_files(self, paths, exclude_path):
         for module in utils.get_modules(paths):
             if exclude_path(module):
                 self._log("Excluded:", module)
                 continue
-
             self._log("Scanning:", module)
-            try:
-                module_string = utils.read_file(module)
-            except utils.VultureInputException as err:
-                self._log(
-                    f"Error: Could not read file {module} - {err}\n"
-                    f"Try to change the encoding to UTF-8.",
-                    file=sys.stderr,
-                    force=True,
-                )
-                self.exit_code = ExitCode.InvalidInput
-            else:
-                self.scan(module_string, filename=module)
+            self._scan_path(module, module)
 
+        self._scan_whitelists(exclude_path, use_cache=False)
+
+    def _scavenge_cached(self, paths, exclude_path):
+        loaded = cache.load_cache(self.cache_dir)
+        if loaded is None or not cache.signature_matches(
+            loaded, self.cache_settings
+        ):
+            self._cache_data = cache.empty_cache(self.cache_settings)
+        else:
+            self._cache_data = loaded
+
+        modules = []
+        for module in utils.get_modules(paths):
+            if exclude_path(module):
+                self._log("Excluded:", module)
+                continue
+            modules.append(module)
+
+        hash_cache = {}
+        candidates = {}
+        for module in modules:
+            candidates[cache.normalize_path(module)] = module
+        for whitelist in self._whitelist_files():
+            candidates[cache.normalize_path(whitelist)] = whitelist
+
+        stored = self._cache_data["modules"]
+        rescan = cache.files_to_rescan(stored, candidates, hash_cache)
+        self._rescan = rescan
+        self._pending_imports = {}
+        self._name_to_paths = self._module_name_index(paths, modules)
+
+        for module in modules:
+            key = cache.normalize_path(module)
+            if key in rescan or key not in stored:
+                self._log("Scanning:", module)
+                self._scan_and_store(
+                    key,
+                    module,
+                    module,
+                    cache.module_name_for(module, paths),
+                    cache.is_package_init(module),
+                )
+                self._cache_stats["scanned"].add(key)
+            else:
+                self._log("Reusing cached analysis:", module)
+                self._restore_entry(stored[key])
+                self._cache_stats["reused"].add(key)
+
+        self._scan_whitelists(exclude_path, use_cache=True)
+        self._finalize_cache_entries()
+        cache.prune_missing_modules(stored)
+        self._save_cache()
+
+    def _module_name_index(self, roots, modules):
+        index = {}
+        for module in modules:
+            name = cache.module_name_for(module, roots)
+            index.setdefault(name, set()).add(cache.normalize_path(module))
+        stored = self._cache_data["modules"] if self._cache_data else {}
+        for key, entry in stored.items():
+            if not isinstance(entry, dict) or not Path(key).exists():
+                continue
+            name = entry.get("module_name") or ""
+            if name:
+                index.setdefault(name, set()).add(key)
+        return index
+
+    def _whitelist_files(self):
+        import vulture
+
+        directory = Path(vulture.__file__).resolve().parent / "whitelists"
+        if not directory.is_dir():
+            return []
+        return sorted(directory.glob("*_whitelist.py"))
+
+    def _whitelist_index(self):
+        index = {}
+        for path in self._whitelist_files():
+            name = path.name[: -len("_whitelist.py")]
+            index[name] = path
+        return index
+
+    def _scan_whitelists(self, exclude_path, use_cache):
         unique_imports = {item.name for item in self.defined_imports}
+        whitelist_index = self._whitelist_index() if use_cache else {}
         for import_name in unique_imports:
             path = Path("whitelists") / (import_name + "_whitelist.py")
             if exclude_path(path):
                 self._log("Excluded whitelist:", path)
-            else:
-                try:
-                    module_data = pkgutil.get_data("vulture", str(path))
-                    self._log("Included whitelist:", path)
-                except OSError:
-                    # Most imported modules don't have a whitelist.
+                continue
+            real = whitelist_index.get(import_name)
+            if use_cache and real is not None:
+                key = cache.normalize_path(real)
+                stored = self._cache_data["modules"]
+                if key not in self._rescan and key in stored:
+                    self._log("Reusing cached whitelist:", path)
+                    self._restore_entry(stored[key])
+                    self._cache_stats["reused"].add(key)
                     continue
-                assert module_data is not None
-                module_string = module_data.decode("utf-8")
-                self.scan(module_string, filename=path)
+                self._log("Included whitelist:", path)
+                self._scan_and_store(key, real, path, "", False)
+                self._cache_stats["scanned"].add(key)
+                continue
+
+            module_string = _load_whitelist(path)
+            if module_string is None:
+                continue
+            self._log("Included whitelist:", path)
+            self._scan_path(path, path, source=module_string)
+
+    def _scan_path(self, source_path, display_path, source=None):
+        try:
+            module_string = (
+                source
+                if source is not None
+                else utils.read_file(source_path)
+            )
+        except utils.VultureInputException as err:
+            self._log(
+                f"Error: Could not read file {source_path} - {err}\n"
+                f"Try to change the encoding to UTF-8.",
+                file=sys.stderr,
+                force=True,
+            )
+            self.exit_code = ExitCode.InvalidInput
+            return False
+        self.scan(module_string, filename=display_path)
+        return True
+
+    def _scan_and_store(
+        self, key, source_path, display_path, module_name, is_init
+    ):
+        before = self._collection_lengths()
+        before_hook = getattr(self.used_names, "on_add", None)
+        captured = set()
+        self.used_names.on_add = captured.add
+        self._current_imports = []
+        self._current_module_name = module_name
+        self._current_is_init = is_init
+        try:
+            ok = self._scan_path(source_path, display_path)
+        finally:
+            self.used_names.on_add = before_hook
+        if not ok:
+            return
+        try:
+            source_sha = cache.file_sha256(source_path)
+        except OSError:
+            source_sha = ""
+        entry = {
+            "source_sha256": source_sha,
+            "module_name": module_name,
+            "imports": self._absolute_imports(),
+            "depends_on": {},
+            "used_names": sorted(captured),
+            "items": self._items_since(before),
+        }
+        entry["analysis_hash"] = cache.analysis_hash(entry)
+        self._cache_data["modules"][key] = entry
+        self._pending_imports[key] = entry["imports"]
+
+    def _absolute_imports(self):
+        names = []
+        for item in getattr(self, "_current_imports", []):
+            if isinstance(item, tuple):
+                level, module = item
+                resolved = cache.resolve_relative(
+                    self._current_module_name,
+                    self._current_is_init,
+                    level,
+                    module,
+                )
+                if resolved:
+                    names.append(resolved)
+            else:
+                names.append(item)
+        return names
+
+    def _collection_lengths(self):
+        return {
+            name: len(getattr(self, name)) for name in _DEFINED_COLLECTIONS
+        }
+
+    def _items_since(self, before):
+        items = {}
+        for name in _DEFINED_COLLECTIONS:
+            collection = getattr(self, name)
+            items[collection.typ] = [
+                _serialize_item(item) for item in collection[before[name] :]
+            ]
+        return items
+
+    def _restore_entry(self, entry):
+        for typ, serialized in entry.get("items", {}).items():
+            collection = _COLLECTION_BY_TYPE.get(typ)
+            if collection is None:
+                continue
+            target = getattr(self, collection)
+            for payload in serialized:
+                list.append(target, _deserialize_item(payload))
+        for name in entry.get("used_names", []):
+            set.add(self.used_names, name)
+
+    def _finalize_cache_entries(self):
+        stored = self._cache_data["modules"]
+        whitelist_by_top = self._whitelist_index()
+        for key in list(self._pending_imports):
+            entry = stored.get(key)
+            if isinstance(entry, dict):
+                entry["analysis_hash"] = cache.analysis_hash(entry)
+        for key, imports in self._pending_imports.items():
+            entry = stored.get(key)
+            if not isinstance(entry, dict):
+                continue
+            depends = cache.dependency_paths(
+                imports, self._name_to_paths, whitelist_by_top
+            )
+            depends.discard(key)
+            entry["depends_on"] = {
+                dep: stored.get(dep, {}).get("analysis_hash", "")
+                if isinstance(stored.get(dep), dict)
+                else ""
+                for dep in sorted(depends)
+            }
+
+    def _save_cache(self):
+        if self.cache_dir is None or self._cache_data is None:
+            return
+        payload = {
+            "signature": self._cache_data.get("signature")
+            or cache.runtime_signature(),
+            "settings": cache.canonicalize_settings(
+                self._cache_data.get("settings", self.cache_settings)
+            ),
+            "modules": self._cache_data.get("modules", {}),
+        }
+        cache.save_cache(self.cache_dir, payload)
 
     def get_unused_code(
         self, min_confidence=0, sort_by_size=False
@@ -596,9 +826,23 @@ class Vulture(ast.NodeVisitor):
             )
 
     def visit_Import(self, node):
+        imports = getattr(self, "_current_imports", None)
+        if imports is not None:
+            for alias in node.names:
+                imports.append(alias.name)
         self._add_aliases(node)
 
     def visit_ImportFrom(self, node):
+        imports = getattr(self, "_current_imports", None)
+        if imports is not None and node.module != "__future__":
+            if node.level:
+                if node.module:
+                    imports.append((node.level, node.module))
+                else:
+                    for alias in node.names:
+                        imports.append((node.level, alias.name))
+            elif node.module:
+                imports.append(node.module)
         if node.module != "__future__":
             self._add_aliases(node)
 
@@ -661,6 +905,75 @@ class Vulture(ast.NodeVisitor):
                 self.visit(value)
 
 
+_DEFINED_COLLECTIONS = (
+    "defined_attrs",
+    "defined_classes",
+    "defined_funcs",
+    "defined_imports",
+    "defined_methods",
+    "defined_props",
+    "defined_vars",
+    "unreachable_code",
+)
+
+_COLLECTION_BY_TYPE = {}
+
+
+def _serialize_item(item):
+    return {
+        "name": item.name,
+        "typ": item.typ,
+        "filename": str(item.filename),
+        "first_lineno": item.first_lineno,
+        "last_lineno": item.last_lineno,
+        "message": item.message,
+        "confidence": item.confidence,
+    }
+
+
+def _deserialize_item(payload):
+    return Item(
+        payload["name"],
+        payload["typ"],
+        Path(payload["filename"]),
+        payload["first_lineno"],
+        payload["last_lineno"],
+        message=payload.get("message", ""),
+        confidence=payload.get("confidence", DEFAULT_CONFIDENCE),
+    )
+
+
+def _load_whitelist(path):
+    try:
+        module_data = pkgutil.get_data("vulture", str(path))
+    except OSError:
+        # Most imported modules don't have a whitelist.
+        return None
+    if module_data is None:
+        return None
+    return module_data.decode("utf-8")
+
+
+def _init_collection_index():
+    if _COLLECTION_BY_TYPE:
+        return
+    # Typ strings match LoggingList labels created in Vulture.__init__.
+    mapping = {
+        "attribute": "defined_attrs",
+        "class": "defined_classes",
+        "function": "defined_funcs",
+        "import": "defined_imports",
+        "method": "defined_methods",
+        "property": "defined_props",
+        "variable": "defined_vars",
+        "unreachable_code": "unreachable_code",
+    }
+    _COLLECTION_BY_TYPE.update(mapping)
+
+
+_init_collection_index()
+
+
 def main():
     try:
         config = make_config()
@@ -668,10 +981,21 @@ def main():
         print(e, file=sys.stderr)
         sys.exit(ExitCode.InvalidCmdlineArguments)
 
+    if config["cache_clear"]:
+        cache.clear_cache(config["cache_dir"])
+
+    cache_dir = config["cache_dir"] if config["cache"] else None
+    cache_settings = {
+        "exclude": config["exclude"],
+        "ignore_decorators": config["ignore_decorators"],
+        "ignore_names": config["ignore_names"],
+    }
     vulture = Vulture(
         verbose=config["verbose"],
         ignore_names=config["ignore_names"],
         ignore_decorators=config["ignore_decorators"],
+        cache_dir=cache_dir,
+        cache_settings=cache_settings,
     )
     vulture.scavenge(config["paths"], exclude=config["exclude"])
     sys.exit(

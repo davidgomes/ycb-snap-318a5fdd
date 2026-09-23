@@ -79,6 +79,13 @@ make some modifications.
 We collect whitelists for common Python modules and packages in
 `vulture/whitelists/` (pull requests are welcome).
 
+#### Incremental cache
+
+Pass `--cache` to reuse results from the previous run. Vulture re-analyzes
+only files that changed and files that transitively import them. The cache
+is stored in `.vulture-cache/` (override with `--cache-dir PATH`).
+`--cache-clear` deletes the contents of that directory before scanning.
+
 #### Ignoring files
 
 If you want to ignore a whole file or directory, use the `--exclude` parameter

@@ -130,6 +130,16 @@ class LoggingSet(set):
         self._verbose = verbose
 
     def add(self, name):
+        hook = getattr(self, "on_add", None)
+        if hook is not None:
+            hook(name)
         if self._verbose:
             print(f'use {self.typ} "{name}"')
         super().add(name)
+
+    def __ior__(self, other):
+        hook = getattr(self, "on_add", None)
+        if hook is not None:
+            for name in other:
+                hook(name)
+        return super().__ior__(other)
