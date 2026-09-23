@@ -27,7 +27,11 @@ import { checkQueryTracking } from './utils/check-query-tracking';
 import { checkQueryTrackingState } from './utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from './utils/check-query-with-relations';
 import { createQueryHash } from './utils/create-query-hash';
-import { prunePairTrackers, seedPairTrackers } from './utils/pair-tracking';
+import {
+    prunePairTrackers,
+    resolveWildcardPairTargets,
+    seedPairTrackers,
+} from './utils/pair-tracking';
 
 export const IsExcluded: TagTrait = trait();
 
@@ -41,10 +45,12 @@ export function runQuery<T extends QueryParameter[]>(
     // With hybrid bitmask strategy, query.entities is already incrementally maintained
     // with both trait and relation filters applied. Just return the pre-filtered entities.
     const entities = query.entities.dense.slice() as Entity[];
+    let wildcardPairTargets: Map<string, Map<Entity, Entity>> | undefined;
 
     // Clear so it can accumulate again.
     if (query.isTracking) {
         query.entities.clear();
+        wildcardPairTargets = resolveWildcardPairTargets(query, entities);
         // PERF: Use indexed loop instead of for...of
         const len = entities.length;
         for (let i = 0; i < len; i++) {
@@ -53,7 +59,7 @@ export function runQuery<T extends QueryParameter[]>(
         prunePairTrackers(query);
     }
 
-    return createQueryResult(world, entities, query, params);
+    return createQueryResult(world, entities, query, params, wildcardPairTargets);
 }
 
 export function addEntityToQuery(query: QueryInstance, entity: Entity) {

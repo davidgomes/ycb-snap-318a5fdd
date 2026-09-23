@@ -1152,6 +1152,32 @@ describe('Relation pair tracking modifiers', () => {
         });
     });
 
+    it('should resolve the matched target data when iterating wildcard pair tracked traits', () => {
+        const gold = world.spawn();
+        const silver = world.spawn();
+        const inventory = world.spawn(Contains(gold, { amount: 1 }), Contains(silver, { amount: 2 }));
+
+        world.query(Changed(Contains('*')));
+        inventory.set(Contains(silver), { amount: 3 });
+
+        world.query(Changed(Contains('*'))).updateEach(([contains]) => {
+            expect(contains.amount).toBe(3);
+            contains.amount = 30;
+        });
+
+        expect(inventory.get(Contains(silver))!.amount).toBe(30);
+        expect(inventory.get(Contains(gold))!.amount).toBe(1);
+
+        // The write is flagged for the matched target only.
+        expect(world.query(Changed(Contains(gold)))).toHaveLength(0);
+        const changed = world.query(Changed(Contains('*')));
+        expect(changed.slice()).toEqual([inventory]);
+
+        const amounts: number[] = [];
+        changed.readEach(([contains]) => amounts.push(contains.amount));
+        expect(amounts).toEqual([30]);
+    });
+
     it('should write per-target relation data back when updating pair tracked traits', () => {
         const gold = world.spawn();
         const silver = world.spawn();

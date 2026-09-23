@@ -185,6 +185,56 @@ function seedPairState(
     (entityStates[index] ??= new Map()).set(target, state);
 }
 
+/** Key for the targets resolved for `'*'` pairs of a modifier, see `resolveWildcardPairTargets` */
+export function getWildcardPairKey(modifierId: number, relationTraitId: number) {
+    return `${modifierId}:${relationTraitId}`;
+}
+
+/**
+ * For each `'*'` pair tracked by a query, find the target that satisfied it for each entity.
+ * Must run before the trackers of the entities are reset.
+ */
+export function resolveWildcardPairTargets(
+    query: QueryInstance,
+    entities: readonly Entity[]
+): Map<string, Map<Entity, Entity>> | undefined {
+    let resolved: Map<string, Map<Entity, Entity>> | undefined;
+    const groups = query.trackingGroups;
+
+    for (let i = 0; i < groups.length; i++) {
+        const group = groups[i];
+        // Only top level modifiers contribute traits to iterate.
+        if (group.logic !== 'and') continue;
+
+        const pairs = group.pairs;
+        const state = getPairState(group.type);
+
+        for (let j = 0; j < pairs.length; j++) {
+            const { relation, target } = pairs[j][$internal];
+            if (target !== '*') continue;
+
+            const key = getWildcardPairKey(group.id, relation[$internal].trait.id);
+            if (resolved?.has(key)) continue;
+
+            const byEntity = new Map<Entity, Entity>();
+            for (let k = 0; k < entities.length; k++) {
+                const entity = entities[k];
+                const states = group.pairTrackers.get(getEntityId(entity))?.[j];
+                if (!states) continue;
+                for (const [t, value] of states) {
+                    if (value !== state) continue;
+                    byEntity.set(entity, t);
+                    break;
+                }
+            }
+
+            (resolved ??= new Map()).set(key, byEntity);
+        }
+    }
+
+    return resolved;
+}
+
 /**
  * End the observation window of a query's pair trackers. Events that don't satisfy their group
  * only exist to cancel opposite events within the window, so they are dropped.
