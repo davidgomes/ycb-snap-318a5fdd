@@ -140,6 +140,80 @@ interface SequenceOptions {
    * @default 'stack'
    */
   hooks?: SequenceHooks
+  /**
+   * Algorithm used to distribute test files between shards.
+   * - `hash` distributes files by the hash of their path
+   * - `time` uses recorded durations to balance shards (longest processing time first)
+   * - `round-robin` deals files sorted by duration in a bouncing order
+   * - `affinity` pins files to shards using `shardAffinityRules`
+   * @default 'hash'
+   */
+  shardStrategy?: ShardStrategy
+  /**
+   * Shorthand for `shardStrategy: 'time'`. Ignored if another strategy is set.
+   * @default false
+   */
+  balanceShardsByTime?: boolean
+  /**
+   * Record file durations into `durationHistoryPath` after the test run.
+   * @default false
+   */
+  recordFileDurations?: boolean
+  /**
+   * Sort files by the recorded duration, longest first.
+   * @default false
+   */
+  durationBasedSorting?: boolean
+  /**
+   * Observations older than this value (in milliseconds) are ignored. `0` disables expiration.
+   * @default 0
+   */
+  durationHistoryTTL?: number
+  /**
+   * Path to the duration history file, relative to the project root.
+   * @default 'duration-history.json'
+   */
+  durationHistoryPath?: string
+  /**
+   * Maximum number of observations stored per file.
+   * @default 1
+   */
+  durationHistoryMaxRuns?: number
+  /**
+   * How to combine multiple observations of a file into a single duration.
+   * @default 'latest'
+   */
+  durationSmoothing?: DurationSmoothing
+  /**
+   * Rules that pin files matching a glob pattern to a specific (0-based) shard index.
+   * Used by the `affinity` strategy.
+   * @default []
+   */
+  shardAffinityRules?: ShardAffinityRule[]
+  /**
+   * Warn if the ratio between the lightest and the heaviest shard is lower than this value.
+   * `0` disables the warning.
+   * @default 0
+   */
+  rebalanceThreshold?: number
+  /**
+   * Files slower than this value (in milliseconds) get a shard of their own. `0` disables isolation.
+   * @default 0
+   */
+  isolateSlowThreshold?: number
+  /**
+   * Strategy used by duration-aware sharding when there is no duration history.
+   * @default 'hash'
+   */
+  durationFallbackStrategy?: DurationFallbackStrategy
+}
+
+export type ShardStrategy = 'hash' | 'time' | 'round-robin' | 'affinity'
+export type DurationSmoothing = 'latest' | 'average' | 'p95' | 'median'
+export type DurationFallbackStrategy = 'hash' | 'equal-split'
+export interface ShardAffinityRule {
+  pattern: string
+  shardIndex: number
 }
 
 export type DepsOptimizationOptions = Omit<
@@ -1189,6 +1263,18 @@ export interface ResolvedConfig
     concurrent?: boolean
     seed: number
     groupOrder: number
+    shardStrategy: ShardStrategy
+    balanceShardsByTime: boolean
+    recordFileDurations: boolean
+    durationBasedSorting: boolean
+    durationHistoryTTL: number
+    durationHistoryPath: string
+    durationHistoryMaxRuns: number
+    durationSmoothing: DurationSmoothing
+    shardAffinityRules: ShardAffinityRule[]
+    rebalanceThreshold: number
+    isolateSlowThreshold: number
+    durationFallbackStrategy: DurationFallbackStrategy
   }
 
   typecheck: Omit<TypecheckConfig, 'enabled'> & {

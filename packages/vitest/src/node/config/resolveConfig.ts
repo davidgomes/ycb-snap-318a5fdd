@@ -774,6 +774,7 @@ export function resolveConfig(
   }
   resolved.sequence.groupOrder ??= 0
   resolved.sequence.hooks ??= 'stack'
+  resolveDurationSequenceOptions(resolved.sequence)
   // Set seed if either files or tests are shuffled
   if (resolved.sequence.sequencer === RandomSequencer || resolved.sequence.shuffle) {
     resolved.sequence.seed ??= Date.now()
@@ -977,6 +978,105 @@ export function resolveCoverageReporters(configReporters: NonNullable<BaseCovera
   }
 
   return resolvedReporters
+}
+
+const shardStrategies = ['hash', 'time', 'round-robin', 'affinity']
+const durationSmoothings = ['latest', 'average', 'p95', 'median']
+const durationFallbackStrategies = ['hash', 'equal-split']
+
+function resolveDurationSequenceOptions(sequence: ResolvedConfig['sequence']) {
+  const fail = (option: string, expected: string, value: unknown): never => {
+    throw new Error(
+      `"sequence.${option}" must be ${expected}, received ${JSON.stringify(value)}.`,
+    )
+  }
+  const oneOf = (values: string[]) => `one of ${values.map(v => `"${v}"`).join(', ')}`
+
+  if (sequence.shardStrategy !== undefined && !shardStrategies.includes(sequence.shardStrategy)) {
+    fail('shardStrategy', oneOf(shardStrategies), sequence.shardStrategy)
+  }
+  for (const option of ['balanceShardsByTime', 'recordFileDurations', 'durationBasedSorting'] as const) {
+    if (sequence[option] !== undefined && typeof sequence[option] !== 'boolean') {
+      fail(option, 'a boolean', sequence[option])
+    }
+  }
+  const { durationHistoryTTL, durationHistoryPath, durationHistoryMaxRuns } = sequence
+  if (
+    durationHistoryTTL !== undefined
+    && (typeof durationHistoryTTL !== 'number' || !Number.isFinite(durationHistoryTTL) || durationHistoryTTL < 0)
+  ) {
+    fail('durationHistoryTTL', 'a finite number greater than or equal to 0', durationHistoryTTL)
+  }
+  if (
+    durationHistoryPath !== undefined
+    && (typeof durationHistoryPath !== 'string' || !durationHistoryPath || durationHistoryPath.trim() !== durationHistoryPath)
+  ) {
+    fail('durationHistoryPath', 'a non-empty string without leading or trailing whitespace', durationHistoryPath)
+  }
+  if (
+    durationHistoryMaxRuns !== undefined
+    && (!Number.isInteger(durationHistoryMaxRuns) || durationHistoryMaxRuns < 1)
+  ) {
+    fail('durationHistoryMaxRuns', 'an integer greater than or equal to 1', durationHistoryMaxRuns)
+  }
+  if (sequence.durationSmoothing !== undefined && !durationSmoothings.includes(sequence.durationSmoothing)) {
+    fail('durationSmoothing', oneOf(durationSmoothings), sequence.durationSmoothing)
+  }
+  if (sequence.shardAffinityRules !== undefined) {
+    if (!Array.isArray(sequence.shardAffinityRules)) {
+      fail('shardAffinityRules', 'an array', sequence.shardAffinityRules)
+    }
+    sequence.shardAffinityRules.forEach((rule, index) => {
+      if (
+        !rule
+        || typeof rule !== 'object'
+        || typeof rule.pattern !== 'string'
+        || !Number.isInteger(rule.shardIndex)
+        || rule.shardIndex < 0
+      ) {
+        fail(
+          `shardAffinityRules[${index}]`,
+          'an object with a string "pattern" and an integer "shardIndex" greater than or equal to 0',
+          rule,
+        )
+      }
+    })
+  }
+  const { rebalanceThreshold, isolateSlowThreshold } = sequence
+  if (
+    rebalanceThreshold !== undefined
+    && (typeof rebalanceThreshold !== 'number' || Number.isNaN(rebalanceThreshold) || rebalanceThreshold < 0 || rebalanceThreshold > 1)
+  ) {
+    fail('rebalanceThreshold', 'a number between 0 and 1', rebalanceThreshold)
+  }
+  if (
+    isolateSlowThreshold !== undefined
+    && (typeof isolateSlowThreshold !== 'number' || Number.isNaN(isolateSlowThreshold) || isolateSlowThreshold < 0)
+  ) {
+    fail('isolateSlowThreshold', 'a number greater than or equal to 0', isolateSlowThreshold)
+  }
+  if (
+    sequence.durationFallbackStrategy !== undefined
+    && !durationFallbackStrategies.includes(sequence.durationFallbackStrategy)
+  ) {
+    fail('durationFallbackStrategy', oneOf(durationFallbackStrategies), sequence.durationFallbackStrategy)
+  }
+
+  sequence.balanceShardsByTime ??= false
+  sequence.shardStrategy ??= sequence.balanceShardsByTime ? 'time' : 'hash'
+  if (sequence.shardStrategy !== 'time') {
+    sequence.balanceShardsByTime = false
+  }
+  sequence.recordFileDurations ??= false
+  sequence.durationBasedSorting ??= false
+  sequence.durationHistoryTTL ??= 0
+  sequence.durationHistoryPath ??= 'duration-history.json'
+  sequence.durationHistoryMaxRuns ??= 1
+  sequence.durationSmoothing ??= 'latest'
+  sequence.shardAffinityRules ??= []
+  sequence.rebalanceThreshold ??= 0
+  sequence.isolateSlowThreshold ??= 0
+  sequence.durationFallbackStrategy ??= 'hash'
 }
 
 function isChromiumName(provider: string, name: string) {
