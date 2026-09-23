@@ -1561,6 +1561,101 @@ This command takes the same options as the ``sqlite-utils insert`` command - so 
 
 By default all of the SQL queries will be executed in a single transaction. To commit every 20 records, use ``--batch-size 20``.
 
+.. _cli_safe_import:
+
+Safe imports
+============
+
+A bulk import that fails part of the way through can leave a database in an inconsistent state, with some rows written and others missing. The ``--safe-mode`` option to ``insert``, ``upsert`` and ``bulk`` protects against this.
+
+In safe mode a checkpoint of the entire database is taken before any changes are made. If the import fails for any reason - or if any of the table's import invariants (described below) do not hold once the data has been written - the database is rolled back to its exact state from before the operation, including any tables, columns, indexes or triggers that were created along the way. The command then exits with a non-zero exit code and an error report. It exits with ``0`` only if the changes were committed.
+
+.. code-block:: bash
+
+    sqlite-utils insert dogs.db dogs dogs.csv --safe-mode
+
+The input format flags are optional in safe mode: if none of ``--csv``, ``--tsv`` or ``--nl`` are provided the format is detected from the file extension or its content.
+
+``bulk --safe-mode`` works with any SQL statement, including ``UPDATE``. Since that SQL could modify any table, the invariants for every table that has them are checked afterwards:
+
+.. code-block:: bash
+
+    echo '[{"id": 1, "age": -3}]' | \
+        sqlite-utils bulk dogs.db 'update dogs set age = :age where id = :id' - --safe-mode
+
+.. _cli_import_invariants:
+
+Import invariants
+-----------------
+
+Import invariants are rules that a table must satisfy after every safe import. They are stored in the database itself, in a ``_sqlite_utils_import_invariants`` table, so they apply to every future safe import into that table.
+
+Use ``add-import-invariant`` to add one. It outputs the ID of the new invariant:
+
+.. code-block:: bash
+
+    sqlite-utils add-import-invariant dogs.db dogs 'age >= 0'
+
+.. code-block:: output
+
+    inv_3f2a9c1b04de
+
+The SQL can take three forms:
+
+- A ``SELECT`` query. The invariant passes if the first column of the first row returned is truthy, for example ``select count(*) = count(distinct name) from dogs``.
+- An aggregate expression using functions such as ``count()``, ``sum()``, ``avg()``, ``min()`` or ``max()``. This is evaluated once against the whole table, for example ``count(*) <= 1000``.
+- Any other expression, which must be true for every row in the table, for example ``age >= 0`` or ``name is not null``.
+
+To list the invariants for a table, showing the ID and SQL of each one:
+
+.. code-block:: bash
+
+    sqlite-utils list-import-invariants dogs.db dogs
+
+.. code-block:: output
+
+    inv_3f2a9c1b04de	age >= 0
+    inv_8d0c21e7aa5f	count(*) <= 1000
+
+Add ``--json`` to get the list as JSON instead.
+
+To check the current contents of a table against its invariants:
+
+.. code-block:: bash
+
+    sqlite-utils validate-import-invariants dogs.db dogs
+
+.. code-block:: output
+
+    FAIL: 1 of 2 import invariants failed for table dogs
+      inv_3f2a9c1b04de: age >= 0
+        1 row violates this invariant
+
+The output starts with ``PASS`` or ``FAIL`` and lists the ID of each failing invariant. This command always exits with ``0``, whatever the result. Use ``--json`` to get the result as a JSON object with ``valid`` and ``failures`` keys.
+
+To remove an invariant, pass its ID:
+
+.. code-block:: bash
+
+    sqlite-utils remove-import-invariant dogs.db dogs inv_3f2a9c1b04de
+
+Enabling safe import mode
+-------------------------
+
+The checkpoint methods in the Python API, described in :ref:`python_api_safe_import`, only work once safe import mode has been enabled. You can record that it should be enabled for a database file like this:
+
+.. code-block:: bash
+
+    sqlite-utils enable-safe-import dogs.db
+
+And turn it off again with:
+
+.. code-block:: bash
+
+    sqlite-utils disable-safe-import dogs.db
+
+This setting is not needed to use ``--safe-mode``, which always creates its own checkpoint.
+
 .. _cli_insert_files:
 
 Inserting data from files

@@ -291,6 +291,9 @@ See :ref:`cli_inserting_data`, :ref:`cli_insert_csv_tsv`, :ref:`cli_insert_unstr
       --load-extension TEXT     Path to SQLite extension, with optional :entrypoint
       --silent                  Do not show progress bar
       --strict                  Apply STRICT mode to created table
+      --safe-mode               Roll back all changes if the import fails or breaks
+                                an import invariant. Input format is detected if not
+                                specified
       --ignore                  Ignore records if pk already exists
       --replace                 Replace records if pk already exists
       --truncate                Truncate table before inserting records, if table
@@ -349,6 +352,9 @@ See :ref:`cli_upsert`.
       --load-extension TEXT     Path to SQLite extension, with optional :entrypoint
       --silent                  Do not show progress bar
       --strict                  Apply STRICT mode to created table
+      --safe-mode               Roll back all changes if the import fails or breaks
+                                an import invariant. Input format is detected if not
+                                specified
       -h, --help                Show this message and exit.
 
 
@@ -393,6 +399,9 @@ See :ref:`cli_bulk`.
       --no-headers           CSV file has no header row
       --encoding TEXT        Character encoding for input, defaults to utf-8
       --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      --safe-mode            Roll back all changes if the import fails or breaks an
+                             import invariant. Input format is detected if not
+                             specified
       -h, --help             Show this message and exit.
 
 
@@ -1317,6 +1326,131 @@ reset-counts
     Options:
       --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
       -h, --help             Show this message and exit.
+
+
+.. _cli_ref_enable_safe_import:
+
+enable-safe-import
+==================
+
+::
+
+    Usage: sqlite-utils enable-safe-import [OPTIONS] PATH
+
+      Enable safe import mode for a database, allowing checkpoints to be created
+
+      Example:
+
+          sqlite-utils enable-safe-import chickens.db
+
+    Options:
+      -h, --help  Show this message and exit.
+
+
+.. _cli_ref_disable_safe_import:
+
+disable-safe-import
+===================
+
+::
+
+    Usage: sqlite-utils disable-safe-import [OPTIONS] PATH
+
+      Disable safe import mode for a database
+
+      Example:
+
+          sqlite-utils disable-safe-import chickens.db
+
+    Options:
+      -h, --help  Show this message and exit.
+
+
+.. _cli_ref_add_import_invariant:
+
+add-import-invariant
+====================
+
+::
+
+    Usage: sqlite-utils add-import-invariant [OPTIONS] PATH TABLE SQL
+
+      Add an invariant that must hold after every safe import into a table, and
+      output its ID
+
+      SQL can be a SELECT query that returns a truthy value, or an expression.
+      Aggregate expressions are evaluated once for the table, other expressions must
+      be true for every row.
+
+      Examples:
+
+          sqlite-utils add-import-invariant chickens.db chickens 'age >= 0'
+          sqlite-utils add-import-invariant chickens.db chickens 'count(*) < 1000'
+
+    Options:
+      -h, --help  Show this message and exit.
+
+
+.. _cli_ref_remove_import_invariant:
+
+remove-import-invariant
+=======================
+
+::
+
+    Usage: sqlite-utils remove-import-invariant [OPTIONS] PATH TABLE INVARIANT_ID
+
+      Remove an import invariant from a table
+
+      Example:
+
+          sqlite-utils remove-import-invariant chickens.db chickens inv_3f2a9c1b04de
+
+    Options:
+      -h, --help  Show this message and exit.
+
+
+.. _cli_ref_list_import_invariants:
+
+list-import-invariants
+======================
+
+::
+
+    Usage: sqlite-utils list-import-invariants [OPTIONS] PATH TABLE
+
+      List the import invariants for a table, one per line as ID then SQL
+
+      Example:
+
+          sqlite-utils list-import-invariants chickens.db chickens
+
+    Options:
+      --json      Output as JSON
+      -h, --help  Show this message and exit.
+
+
+.. _cli_ref_validate_import_invariants:
+
+validate-import-invariants
+==========================
+
+::
+
+    Usage: sqlite-utils validate-import-invariants [OPTIONS] PATH TABLE
+
+      Check the import invariants for a table against its current data
+
+      Outputs PASS or FAIL along with the IDs of any failing invariants. The exit
+      code is 0 either way.
+
+      Example:
+
+          sqlite-utils validate-import-invariants chickens.db chickens
+
+    Options:
+      --json      Output as JSON
+      -h, --help  Show this message and exit.
 
 
 .. _cli_ref_duplicate:

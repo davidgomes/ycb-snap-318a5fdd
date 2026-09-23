@@ -999,6 +999,73 @@ Alternative upserts using INSERT OR IGNORE
 
 Upserts use ``INSERT INTO ... ON CONFLICT SET``. Prior to ``sqlite-utils 4.0`` these used a sequence of ``INSERT OR IGNORE`` followed by an ``UPDATE``. This older method is still used for SQLite 3.23.1 and earlier. You can force the older implementation by passing ``use_old_upsert=True`` to the ``Database()`` constructor.
 
+.. _python_api_safe_import:
+
+Safe imports
+============
+
+Safe imports write data, check that the table still satisfies its import invariants and only commit if everything succeeded. On any failure the database is rolled back to its exact state before the operation, including any tables, columns, indexes or triggers that were created. See also :ref:`cli_safe_import`.
+
+.. code-block:: python
+
+    db.add_import_invariant("dogs", "age >= 0")
+    result = db.safe_bulk_insert("dogs", [{"id": 1, "age": 3}, {"id": 2, "age": -1}], pk="id")
+    # {"success": False, "checkpoint_id": "checkpoint_...", "failures": [...], "error_report": "..."}
+
+On success these methods return ``{"success": True}``. On failure they return a dictionary with ``"success": False``, the ``checkpoint_id`` that was rolled back to, a list of ``failures`` (one for each failing invariant - empty if the import itself raised an error) and a human readable ``error_report``.
+
+Pass ``strict=True`` to raise an exception instead, after the rollback. Invariant failures raise ``sqlite_utils.db.ImportValidationError``, any other error is re-raised.
+
+The available methods are:
+
+- ``db.safe_bulk_insert(table, records, strict=False, **kwargs)`` - extra keyword arguments are passed to :ref:`insert_all() <python_api_bulk_inserts>`.
+- ``db.safe_bulk_upsert(table, records, pk, strict=False, **kwargs)``
+- ``db.import_csv(table, source, safe_mode=False, strict=False)`` - ``source`` is a path or a file-like object. Column types are detected for new tables.
+- ``db.import_json(table, data, safe_mode=False, strict=False)`` - ``data`` can be a list of dictionaries, a JSON string or a file-like object.
+
+``import_csv()`` and ``import_json()`` only use safe mode if ``safe_mode=True``.
+
+.. _python_api_import_invariants:
+
+Import invariants
+-----------------
+
+Invariants are stored in the database, so they persist between connections:
+
+.. code-block:: python
+
+    invariant_id = db.add_import_invariant("dogs", "age >= 0")
+    db.list_import_invariants("dogs")
+    # [{"id": "inv_...", "expression": "age >= 0"}]
+    db.validate_import_invariants("dogs")
+    # {"valid": True, "failures": []}
+    db.remove_import_invariant("dogs", invariant_id)
+
+If the SQL starts with ``SELECT`` it is executed and the first column of the first row must be truthy. Otherwise it is treated as an expression: aggregate expressions such as ``count(*) < 1000`` are evaluated once for the table, while other expressions must be true for every row. Each failure is a ``{"id": ..., "expression": ..., "error": ...}`` dictionary.
+
+.. _python_api_import_checkpoints:
+
+Checkpoints
+-----------
+
+Checkpoints can also be managed directly, once safe import mode has been enabled:
+
+.. code-block:: python
+
+    db.enable_safe_import()
+    checkpoint_id = db.create_import_checkpoint()
+    db["dogs"].insert({"id": 3, "age": 5})
+    db["dogs"].create_index(["age"])
+    db.rollback_to_checkpoint(checkpoint_id)  # or db.commit_checkpoint(checkpoint_id)
+    db.cleanup_checkpoint(checkpoint_id)
+
+A checkpoint stores a complete copy of the database, so rolling back works even if the changes since then have been committed. Creating a checkpoint commits any transaction that is open on the connection.
+
+- ``create_import_checkpoint()`` raises ``SafeImportNotEnabledError`` if safe import mode is not enabled. ``enable_safe_import(persist=True)`` records the setting in the database file.
+- Checkpoints can be nested. Committing or rolling back a checkpoint also finalizes any checkpoints that were created after it, like SQL savepoints.
+- Committing or rolling back an already finalized checkpoint raises ``CheckpointNotActiveError``.
+- Using an unknown checkpoint, or one that has been removed with ``cleanup_checkpoint()``, raises ``CheckpointNotFoundError``.
+
 .. _python_api_convert:
 
 Converting data in columns
