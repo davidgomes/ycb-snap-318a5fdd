@@ -692,6 +692,7 @@ class InteractiveShell(SingletonConfigurable):
         # `ipykernel.kernelapp`.
         self.trio_runner = None
         self.showing_traceback = False
+        self._session_bundle = None
 
     @property
     def user_ns(self):
@@ -1954,6 +1955,56 @@ class InteractiveShell(SingletonConfigurable):
         self.configurables.append(self.history_manager)
 
     #-------------------------------------------------------------------------
+    # Things related to session bundles
+    #-------------------------------------------------------------------------
+
+    def start_session_bundle(self, path, *, overwrite=False, redact=None) -> str:
+        """Start recording executed cells to a session bundle at ``path``.
+
+        Parameters
+        ----------
+        path : str or path-like
+            Where to write the ``.ipybundle`` archive.
+        overwrite : bool
+            Replace an existing bundle at ``path`` instead of raising
+            :class:`FileExistsError`.
+        redact : list of str, optional
+            Literal strings replaced by ``<redacted>`` in recorded events.
+
+        Returns
+        -------
+        The absolute path of the bundle, as a string.
+        """
+        from IPython.core.sessionbundle import SessionBundleRecorder
+
+        if self._session_bundle is not None and self._session_bundle.active:
+            raise RuntimeError(
+                "A session bundle is already being recorded to "
+                f"{str(self._session_bundle.path)!r}; stop it first."
+            )
+        recorder = SessionBundleRecorder(
+            self, path, overwrite=overwrite, redact=redact
+        )
+        recorder.start()
+        self._session_bundle = recorder
+        return str(recorder.path)
+
+    def stop_session_bundle(self) -> str:
+        """Stop the active session bundle recording and return its path."""
+        recorder = self._session_bundle
+        if recorder is None or not recorder.active:
+            raise RuntimeError("No session bundle is being recorded.")
+        self._session_bundle = None
+        return str(recorder.stop())
+
+    def session_bundle_status(self) -> dict:
+        """Return ``{"recording": bool, "path": str | None}``."""
+        recorder = self._session_bundle
+        if recorder is None or not recorder.active:
+            return {"recording": False, "path": None}
+        return {"recording": True, "path": str(recorder.path)}
+
+    #-------------------------------------------------------------------------
     # Things related to exception handling and tracebacks (not debugging)
     #-------------------------------------------------------------------------
 
@@ -2431,7 +2482,7 @@ class InteractiveShell(SingletonConfigurable):
             m.ConfigMagics, m.DisplayMagics, m.ExecutionMagics,
             m.ExtensionMagics, m.HistoryMagics, m.LoggingMagics,
             m.NamespaceMagics, m.OSMagics, m.PackagingMagics,
-            m.PylabMagics, m.ScriptMagics,
+            m.PylabMagics, m.ScriptMagics, m.SessionBundleMagics,
         )
         self.register_magics(m.AsyncMagics)
 
