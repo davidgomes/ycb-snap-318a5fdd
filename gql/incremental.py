@@ -10,7 +10,12 @@ import copy
 import logging
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from graphql import ExecutionResult
+from graphql import (
+    ExecutionResult,
+    GraphQLDeferDirective,
+    GraphQLSchema,
+    GraphQLStreamDirective,
+)
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +70,26 @@ class IncrementalExecutionResult(ExecutionResult):
             f"extensions={self.extensions!r}, has_next={self.has_next!r}, "
             f"incremental={self.incremental!r})"
         )
+
+
+def add_incremental_directives(schema: GraphQLSchema) -> GraphQLSchema:
+    """Return the schema, or a copy of the schema including the @defer and
+    @stream directives if they are not already defined."""
+    directive_names = {directive.name for directive in schema.directives}
+
+    missing_directives = [
+        directive
+        for directive in (GraphQLDeferDirective, GraphQLStreamDirective)
+        if directive.name not in directive_names
+    ]
+
+    if not missing_directives:
+        return schema
+
+    schema_kwargs = schema.to_kwargs()
+    schema_kwargs["directives"] = (*schema.directives, *missing_directives)
+
+    return GraphQLSchema(**schema_kwargs)
 
 
 def is_incremental_payload(payload: Dict[str, Any]) -> bool:

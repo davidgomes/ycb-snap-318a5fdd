@@ -39,7 +39,11 @@ from tenacity import (
 )
 
 from .graphql_request import GraphQLRequest, support_deprecated_request
-from .incremental import IncrementalDataMerger, IncrementalExecutionResult
+from .incremental import (
+    IncrementalDataMerger,
+    IncrementalExecutionResult,
+    add_incremental_directives,
+)
 from .transport.async_transport import AsyncTransport
 from .transport.exceptions import TransportConnectionFailed, TransportQueryError
 from .transport.local_schema import LocalSchemaTransport
@@ -157,6 +161,10 @@ class Client:
         self.batch_interval = batch_interval
         self.batch_max = batch_max
 
+        # Client schema and the same schema including the @defer and @stream
+        # directives, used to validate incremental requests
+        self._incremental_schema: Optional[Tuple[GraphQLSchema, GraphQLSchema]] = None
+
     @property
     def batching_enabled(self) -> bool:
         return self.batch_interval != 0
@@ -168,6 +176,28 @@ class Client:
         ), "Cannot validate the document locally, you need to pass a schema."
 
         validation_errors = validate(self.schema, request.document)
+        if validation_errors:
+            raise validation_errors[0]
+
+    def validate_incremental(self, request: GraphQLRequest) -> None:
+        """Validate the request, allowing the @defer and @stream directives
+        even if they are not defined in the client schema.
+
+        :meta private:
+        """
+        assert (
+            self.schema
+        ), "Cannot validate the document locally, you need to pass a schema."
+
+        if self._incremental_schema is None or self._incremental_schema[0] is not (
+            self.schema
+        ):
+            self._incremental_schema = (
+                self.schema,
+                add_incremental_directives(self.schema),
+            )
+
+        validation_errors = validate(self._incremental_schema[1], request.document)
         if validation_errors:
             raise validation_errors[0]
 
@@ -1761,7 +1791,7 @@ class AsyncClientSession:
 
         # Validate document
         if self.client.schema:
-            self.client.validate(request)
+            self.client.validate_incremental(request)
 
             # Parse variable values for custom scalars if requested
             if request.variable_values is not None:
