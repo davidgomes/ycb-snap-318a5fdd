@@ -41,6 +41,7 @@ True
 | `enter` | `None` | Callback(s) to run when entering this state. See {ref}`state-actions`. |
 | `exit` | `None` | Callback(s) to run when leaving this state. See {ref}`state-actions`. |
 | `invoke` | `None` | Background work spawned on entry, cancelled on exit. See {ref}`invoke-actions`. |
+| `data` | `None` | Mapping of keys to defaults owned by this state. See {ref}`state-data`. |
 
 ```py
 >>> class CampaignMachine(StateChart):
@@ -55,6 +56,49 @@ True
 >>> sm.send("produce")
 >>> list(sm.configuration_values)
 [2]
+
+```
+
+
+(state-data)=
+
+## State data
+
+A state can own data. The mapping is declared on the state and stored on each
+state machine instance. Entering the state creates a fresh copy of the defaults
+(callables are factories). Leaving the state removes it, and entering again
+starts over.
+
+:class:`~statemachine.state_data.DataVar` replaces a plain default when you need
+a factory or a type check. Callbacks receive the merged scope as ``state_data``:
+ancestor values are included, and the current state shadows its ancestors.
+Parallel regions do not see each other.
+
+```py
+>>> from statemachine import DataVar, State, StateChart
+
+>>> class Counter(StateChart):
+...     idle = State(initial=True, data={"n": 0})
+...     done = State(final=True, data={"n": DataVar(default=1, type=int)})
+...     finish = idle.to(done)
+...     def on_enter_done(self, state_data):
+...         state_data["n"] = state_data["n"] + 1
+
+>>> sm = Counter()
+>>> sm.get_state_data("idle")["n"]
+0
+>>> sm.send("finish")
+>>> sm.get_state_data("idle") is None
+True
+>>> sm.get_state_data(sm.done)["n"]
+2
+>>> change = sm.get_data_changes()[0]
+>>> change.key
+'n'
+>>> change.old_value
+1
+>>> change.new_value
+2
 
 ```
 

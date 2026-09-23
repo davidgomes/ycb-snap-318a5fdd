@@ -1,5 +1,8 @@
+import ast
 import re
 import xml.etree.ElementTree as ET
+from typing import Any
+from typing import Dict
 from typing import List
 from typing import Literal
 from typing import Set
@@ -65,6 +68,7 @@ def parse_scxml(scxml_content: str) -> StateMachineDefinition:  # noqa: C901
     datamodel = parse_datamodel(scxml)
     if datamodel:
         definition.datamodel = datamodel
+    definition.root_data = parse_direct_data_literals(scxml)
 
     # Parse states
     for state_elem in scxml:
@@ -138,6 +142,26 @@ def parse_datamodel(root: ET.Element) -> "DataModel | None":
     return data_model if data_model.data or data_model.scripts else None
 
 
+def parse_direct_data_literals(element: ET.Element) -> Dict[str, Any]:
+    """Parse direct ``<datamodel>`` / ``<data id expr>`` children as Python literals.
+
+    Only ``expr`` values that :func:`ast.literal_eval` accepts are included.
+    Expressions and elements without an ``expr`` are left to the runtime datamodel.
+    """
+    parsed: Dict[str, Any] = {}
+    for datamodel_elem in element.findall("datamodel"):
+        for data_elem in datamodel_elem.findall("data"):
+            data_id = data_elem.attrib.get("id")
+            expr = data_elem.attrib.get("expr")
+            if not data_id or expr is None:
+                continue
+            try:
+                parsed[data_id] = ast.literal_eval(expr)
+            except (ValueError, SyntaxError):
+                continue
+    return parsed
+
+
 def parse_history(state_elem: ET.Element) -> HistoryState:
     state_id = state_elem.get("id")
     if not state_id:
@@ -170,6 +194,7 @@ def parse_state(  # noqa: C901
 
     initial = state_id in initial_states
     state = State(id=state_id, initial=initial, final=is_final, parallel=is_parallel)
+    state.data = parse_direct_data_literals(state_elem)
 
     # Parse onentry actions
     for onentry_elem in state_elem.findall("onentry"):

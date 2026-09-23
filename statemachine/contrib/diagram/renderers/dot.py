@@ -271,7 +271,7 @@ class DotRenderer:
         fillcolor = self.config.state_active_fillcolor if state.is_active else "white"
         penwidth = self.config.state_active_penwidth if state.is_active else 2
 
-        if not actions:
+        if not actions and not state.data:
             # Simple state: native rounded rectangle
             node = pydot.Node(
                 state.id,
@@ -318,20 +318,31 @@ class DotRenderer:
         font_size = self.config.state_font_size
         action_font_size = self.config.transition_font_size
 
-        action_lines = "<br/>".join(
-            f'<font point-size="{action_font_size}">{_escape_html(self._format_action(a))}</font>'
-            for a in actions
-        )
+        sections: List[str] = []
+        if state.data:
+            data_lines = "<br/>".join(
+                f'<font point-size="{action_font_size}">{_escape_html(item)}</font>'
+                for item in state.data
+            )
+            sections.append(f'<tr><td align="left" cellpadding="6">{data_lines}</td></tr>')
+        if actions:
+            action_lines = "<br/>".join(
+                (
+                    f'<font point-size="{action_font_size}">'
+                    f"{_escape_html(self._format_action(action))}</font>"
+                )
+                for action in actions
+            )
+            sections.append(f'<tr><td align="left" cellpadding="6">{action_lines}</td></tr>')
 
+        body = "<hr/>".join(sections)
         return (
             f'<table border="0" cellborder="0" cellspacing="0" cellpadding="0">'
             f'<tr><td cellpadding="4">'
             f'<font point-size="{font_size}">{name}</font>'
             f"</td></tr>"
             f"<hr/>"
-            f'<tr><td align="left" cellpadding="6">'
-            f"{action_lines}"
-            f"</td></tr>"
+            f"{body}"
             f"</table>"
         )
 
@@ -414,14 +425,21 @@ class DotRenderer:
     def _build_compound_label(self, state: DiagramState) -> str:
         """Build HTML label for a compound/parallel subgraph."""
         name = _escape_html(state.name)
+        data_rows = [
+            f'<font point-size="{self.config.transition_font_size}">{_escape_html(item)}</font>'
+            for item in state.data
+        ]
         if state.type == StateType.PARALLEL:
-            return f"<b>{name}</b> &#9783;"
+            head = f"<b>{name}</b> &#9783;"
+            if not data_rows:
+                return head
+            return "<br/>".join([head, *data_rows])
 
         actions = [a for a in state.actions if a.type != ActionType.INTERNAL or a.body]
-        if not actions:
+        if not actions and not data_rows:
             return f"<b>{name}</b>"
 
-        rows = [f"<b>{name}</b>"]
+        rows = [f"<b>{name}</b>", *data_rows]
         for action in actions:
             action_text = _escape_html(self._format_action(action))
             rows.append(

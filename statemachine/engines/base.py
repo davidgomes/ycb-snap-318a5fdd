@@ -445,8 +445,15 @@ class BaseEngine:
         self._cache[cache_key] = (args, kwargs)
         return args, kwargs
 
+    def _with_state_data(self, kwargs: Dict[str, Any], state: "State | None") -> Dict[str, Any]:
+        """Copy ``kwargs`` and inject the data scope visible to ``state``."""
+        updated = dict(kwargs)
+        updated["state_data"] = self.sm.scoped_state_data(state)
+        return updated
+
     def _conditions_match(self, transition: Transition, trigger_data: TriggerData):
         args, kwargs = self._get_args_kwargs(transition, trigger_data)
+        kwargs = self._with_state_data(kwargs, transition.source)
         on_error = self._on_error_handler()
 
         self.sm._callbacks.call(transition.validators.key, *args, on_error=None, **kwargs)
@@ -465,7 +472,8 @@ class BaseEngine:
         result = OrderedSet([info.state for info in ordered_states if info.state])
         self._debug("%s States to exit: %s", self._log_id, result)
 
-        # Update history
+        # Update history and snapshot the data those states currently own.
+        self.sm._data.begin_history_save()
         for info in ordered_states:
             state = info.state
             for history in state.history:
@@ -482,6 +490,7 @@ class BaseEngine:
                     [s.id for s in history_value],
                 )
                 self.sm.history_values[history.id] = history_value
+                self.sm._data.save_history(history.id, history_value)
 
         return ordered_states, result
 
@@ -505,9 +514,14 @@ class BaseEngine:
             args, kwargs = self._get_args_kwargs(info.transition, trigger_data)
 
             # Execute `onexit` handlers — same per-block error isolation as onentry.
+            # Data stays available until the handlers return.
             if info.state is not None:  # pragma: no branch
                 self._debug("%s Exiting state: %s", self._log_id, info.state)
-                self.sm._callbacks.call(info.state.exit.key, *args, on_error=on_error, **kwargs)
+                exit_kwargs = self._with_state_data(kwargs, info.state)
+                self.sm._callbacks.call(
+                    info.state.exit.key, *args, on_error=on_error, **exit_kwargs
+                )
+                self.sm._data.deactivate(info.state)
 
             self._remove_state_from_configuration(info.state)
 
@@ -530,8 +544,10 @@ class BaseEngine:
                 target=target,
             )
             kwargs.update(kwargs_extra)
+            scope = target if target is not None else transition.source
+            call_kwargs = self._with_state_data(kwargs, scope)
 
-            result += self.sm._callbacks.call(get_key(transition), *args, **kwargs)
+            result += self.sm._callbacks.call(get_key(transition), *args, **call_kwargs)
 
         return result
 
@@ -549,6 +565,7 @@ class BaseEngine:
         states_to_enter = OrderedSet[StateTransition]()
         states_for_default_entry = OrderedSet[StateTransition]()
         default_history_content: Dict[str, Any] = {}
+        self.sm._data.pending_restore.clear()
 
         self.compute_entry_set(
             enabled_transitions, states_to_enter, states_for_default_entry, default_history_content
@@ -665,19 +682,21 @@ class BaseEngine:
         for info in ordered_states:
             target = info.state
             transition = info.transition
+            self._debug("%s Entering state: %s", self._log_id, target)
+            # Data is created before entry callbacks so on_enter observers can read it.
+            self.sm._data.activate(target)
+            self._add_state_to_configuration(target)
             args, kwargs = self._get_args_kwargs(
                 transition,
                 trigger_data,
                 target=target,
             )
-
-            self._debug("%s Entering state: %s", self._log_id, target)
-            self._add_state_to_configuration(target)
+            entry_kwargs = self._with_state_data(kwargs, target)
 
             # Execute `onentry` handlers — each handler is a separate block per
             # SCXML spec: errors in one block MUST NOT affect other blocks.
             on_entry_result = self.sm._callbacks.call(
-                target.enter.key, *args, on_error=on_error, **kwargs
+                target.enter.key, *args, on_error=on_error, **entry_kwargs
             )
 
             # Handle default initial states
@@ -685,7 +704,7 @@ class BaseEngine:
                 initial_transitions = [t for t in target.transitions if t.initial]
                 if len(initial_transitions) == 1:
                     result += self.sm._callbacks.call(
-                        initial_transitions[0].on.key, *args, **kwargs
+                        initial_transitions[0].on.key, *args, **entry_kwargs
                     )
 
             # Handle default history states
@@ -779,6 +798,8 @@ class BaseEngine:
                     state.type.value,
                     [s.id for s in self.sm.history_values[state.id]],
                 )
+                # Deep history lists every descendant; shallow lists direct children.
+                self.sm._data.queue_restore(state.id, self.sm.history_values[state.id])
                 for history_state in self.sm.history_values[state.id]:
                     info_to_add = StateTransition(transition=info.transition, state=history_state)
                     if state.type.is_deep:

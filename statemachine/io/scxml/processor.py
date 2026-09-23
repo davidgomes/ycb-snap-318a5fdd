@@ -102,6 +102,8 @@ class SCXMLProcessor:
             initial_state["enter"].insert(0, create_invoke_init_callable())  # type: ignore[union-attr]
             insert_pos = 1
 
+        self._apply_root_data(states_dict, getattr(definition, "root_data", None))
+
         # Process datamodel (initial variables)
         if definition.datamodel:
             datamodel = create_datamodel_action_callable(definition.datamodel)
@@ -163,6 +165,16 @@ class SCXMLProcessor:
 
         return states_dict
 
+    def _apply_root_data(self, states_dict: Dict[str, StateDefinition], root_data: Any) -> None:
+        """Attach document-level data literals to the initial top-level states."""
+        if not root_data:
+            return
+        initials = [item for item in states_dict.values() if item.get("initial")]
+        if not initials and states_dict:
+            initials = [next(iter(states_dict.values()))]
+        for initial_state in initials:
+            initial_state["data"] = {**root_data, **initial_state.get("data", {})}
+
     def _process_states(self, states: Dict[str, State]) -> Dict[str, StateDefinition]:
         states_dict: Dict[str, StateDefinition] = {}
         for state_id, state in states.items():
@@ -177,6 +189,8 @@ class SCXMLProcessor:
             state_dict["final"] = True
         if state.parallel:
             state_dict["parallel"] = True
+        if state.data:
+            state_dict["data"] = dict(state.data)
 
         # Process enter actions
         enter_callables: list = [

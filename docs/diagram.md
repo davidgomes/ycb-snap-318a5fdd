@@ -29,6 +29,9 @@ For other systems, see the [Graphviz downloads page](https://graphviz.org/downlo
 
 ## Generating diagrams
 
+States that declare ``data`` show those variables on the state label, in both
+the Graphviz and Mermaid renderings.
+
 Every state machine instance exposes a `_graph()` method that returns a
 [pydot.Dot](https://github.com/pydot/pydot) graph object:
 

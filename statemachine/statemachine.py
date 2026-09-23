@@ -33,11 +33,13 @@ from .i18n import _
 from .model import Model
 from .signature import SignatureAdapter
 from .state import InstanceState
+from .state import State
+from .state_data import DataChangeInfo
+from .state_data import StateData
 from .utils import run_async_from_sync
 
 if TYPE_CHECKING:
     from .event import Event
-    from .state import State
     from .states import States
 
 TModel = TypeVar("TModel")
@@ -148,6 +150,7 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         self.history_values: Dict[
             str, List[State]
         ] = {}  # Mapping of compound states to last active state(s).
+        self._data = StateData()
         self.state_field = state_field
         self.start_configuration_values = (
             [start_value] if start_value is not None else list(self.start_configuration_values)
@@ -362,6 +365,69 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         from .contrib.diagram import DotGraphMachine
 
         return DotGraphMachine(self).get_graph()
+
+    def _coerce_state(self, state: "State | str") -> State:
+        if isinstance(state, str):
+            match = next(
+                (candidate for candidate in self.states_map.values() if candidate.id == state),
+                None,
+            )
+            if match is None:
+                raise InvalidDefinition(_("Unknown state {state_id!r}.").format(state_id=state))
+            return match
+        if isinstance(state, InstanceState):
+            return state._state
+        if isinstance(state, State):
+            return state
+        raise InvalidDefinition(
+            _("Expected a state or state id, got {state!r}.").format(state=state)
+        )
+
+    def _state_is_active(self, state: State) -> bool:
+        return any(active.id == state.id for active in self.configuration)
+
+    def scoped_state_data(self, state: "State | None") -> Dict[str, Any]:
+        """Merged data visible to callbacks running in ``state``.
+
+        Ancestor data is included and the child's keys win on collision.
+        Parallel regions only see their own ancestors.
+        """
+        if state is None:
+            return {}
+        return self._data.scoped(state)
+
+    def get_state_data(self, state: "State | str") -> "Dict[str, Any] | None":
+        """Return the active data dict for ``state``, or ``None`` when it has none."""
+        resolved = self._coerce_state(state)
+        if not self._state_is_active(resolved):
+            return None
+        return self._data.values.get(resolved.id)
+
+    def set_state_data(self, state: "State | str", key: str, value: Any) -> None:
+        """Assign a declared data key on an active state.
+
+        Raises:
+            InvalidDefinition: The state is inactive, ``key`` was not declared,
+                or ``value`` fails a :class:`~statemachine.state_data.DataVar` type check.
+        """
+        resolved = self._coerce_state(state)
+        if not self._state_is_active(resolved):
+            raise InvalidDefinition(
+                _("State {state_id!r} is not active.").format(state_id=resolved.id)
+            )
+        self._data.set_value(resolved, key, value)
+
+    @property
+    def state_data_values(self) -> Dict[str, Dict[str, Any]]:
+        """Snapshot of active state data, keyed by state identifier."""
+        return self._data.snapshot()
+
+    def get_data_changes(self) -> List[DataChangeInfo]:
+        """Data assignments recorded during the current macrostep.
+
+        The list is cleared when the next macrostep begins.
+        """
+        return self._data.change_log()
 
     @property
     def configuration_values(self) -> OrderedSet[Any]:

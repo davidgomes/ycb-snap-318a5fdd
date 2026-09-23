@@ -89,12 +89,14 @@ def _extract_state(
         children.append(_extract_state(history_state, machine, getter, active_values))
 
     actions = _extract_state_actions(state, getter)
+    data = [var.annotation(key) for key, var in getattr(state, "_data_spec", {}).items()]
 
     return DiagramState(
         id=state.id,
         name=state.name,
         type=state_type,
         actions=actions,
+        data=data,
         children=children,
         is_active=is_active,
         is_parallel_area=is_parallel_area,

@@ -176,6 +176,7 @@ class MermaidRenderer:
             lines.append(f'{pad}state "{state.name}" as {state.id}')
 
         actions = [a for a in state.actions if a.type != ActionType.INTERNAL or a.body]
+        self._append_data_notes(state, lines, pad)
         if actions:
             for action in actions:
                 lines.append(f"{pad}{state.id} : {self._format_action(action)}")
@@ -194,6 +195,7 @@ class MermaidRenderer:
 
         if state.type == StateType.PARALLEL:
             lines.append(f'{pad}state "{state.name}" as {state.id} {{')
+            self._append_data_notes(state, lines, pad + "    ")
             regions = [c for c in state.children if c.is_parallel_area or c.children]
             for i, region in enumerate(regions):
                 if i > 0:
@@ -206,6 +208,7 @@ class MermaidRenderer:
                 lines.append(f'{pad}state "{label}" as {state.id} {{')
             else:
                 lines.append(f"{pad}state {state.id} {{")
+            self._append_data_notes(state, lines, pad + "    ")
 
             initial_child = next((c for c in state.children if c.is_initial), None)
             if initial_child:
@@ -226,6 +229,11 @@ class MermaidRenderer:
 
         if state.is_active:
             self._active_ids.append(state.id)
+
+    def _append_data_notes(self, state: DiagramState, lines: List[str], pad: str) -> None:
+        """Append one Mermaid note line per declared data variable."""
+        for item in state.data:
+            lines.append(f"{pad}{state.id} : {item}")
 
     def _collect_all_descendant_ids(self, states: List[DiagramState]) -> Set[str]:
         """Collect all state IDs in a subtree (direct children only for scope)."""
