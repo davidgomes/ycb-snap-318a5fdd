@@ -991,10 +991,48 @@ You can also set it as a percentage of the parent size.
 ##### display
 
 Type: `string`\
-Allowed values: `flex` `none`\
+Allowed values: `flex` `grid` `none`\
 Default: `flex`
 
-Set this property to `none` to hide the element.
+Set this property to `none` to hide the element. Set it to `grid` to lay out children in a grid (see [Grid](#grid)).
+
+#### Grid
+
+A `<Box display="grid">` places its children into the rows and columns defined by `gridTemplateColumns` and `gridTemplateRows`. The `gap`, `columnGap`, and `rowGap` properties set the spacing between grid tracks.
+
+```jsx
+<Box display="grid" gridTemplateColumns="10 1fr minmax(5, 2fr)" gap={1}>
+	<Text>Name</Text>
+	<Text>Description</Text>
+	<Box gridColumn={3} gridRow="1 / 3">
+		<Text>Spans two rows</Text>
+	</Box>
+</Box>
+```
+
+##### gridTemplateColumns
+
+Type: `string`
+
+Space-separated list of column sizes. Each size can be a fixed number, a fractional unit such as `1fr`, `auto` (sized to the content), or `minmax(min, max)`, where `min` is a fixed number and `max` is a fixed number or a fractional unit. Space left after all minimums are satisfied is distributed proportionally among `fr` sizes.
+
+##### gridTemplateRows
+
+Type: `string`
+
+Space-separated list of row sizes. Accepts the same values as `gridTemplateColumns`. When omitted, rows are created automatically as needed and sized to their content.
+
+##### gridColumn
+
+Type: `number` `string`
+
+Place a grid item in a column. Accepts a 1-based line index (for example, `2`) or a `'start / end'` string (for example, `'1 / 3'`).
+
+##### gridRow
+
+Type: `number` `string`
+
+Place a grid item in a row. Accepts a 1-based line index (for example, `2`) or a `'start / end'` string (for example, `'1 / 3'`).
 
 ##### overflowX
 
