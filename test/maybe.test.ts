@@ -1453,3 +1453,134 @@ describe('`Maybe` class', () => {
     });
   });
 });
+
+function counting<T>(values: readonly T[]): { iterable: Iterable<T>; count: () => number } {
+  let count = 0;
+  return {
+    count: () => count,
+    iterable: {
+      *[Symbol.iterator]() {
+        for (const value of values) {
+          count += 1;
+          yield value;
+        }
+      },
+    },
+  };
+}
+
+describe('`Maybe` iteration and collection', () => {
+  test('`Just` yields its value once and `Nothing` yields nothing', () => {
+    const iterator = maybe.just(5)[Symbol.iterator]();
+    expect(iterator.next()).toEqual({ done: false, value: 5 });
+    expect(iterator.next()).toEqual({ done: true, value: undefined });
+    expect([...maybe.nothing<number>()]).toEqual([]);
+    expect([...maybe.just(1), ...maybe.nothing<number>(), ...maybe.just(2)]).toEqual([1, 2]);
+  });
+
+  describe('`sequence`', () => {
+    test('collects every Just and stops at the first Nothing', () => {
+      const source = counting([maybe.just(1), maybe.nothing<number>(), maybe.just(2)]);
+      expect(maybe.sequence(source.iterable)).toEqual(maybe.nothing());
+      expect(source.count()).toBe(2);
+
+      const ok = counting([maybe.just('a'), maybe.just('b')]);
+      const sequenced = maybe.sequence(ok.iterable);
+      expect(sequenced).toEqual(maybe.just(['a', 'b']));
+      expectTypeOf(sequenced).toEqualTypeOf<Maybe<string[]>>();
+      expect(ok.count()).toBe(2);
+      expect(maybe.sequence<number>([])).toEqual(maybe.just([]));
+    });
+  });
+
+  describe('`traverse`', () => {
+    const render = (n: number) => (n === 0 ? maybe.nothing<string>() : maybe.just(String(n)));
+
+    test('stops pulling items and calling fn at the first Nothing', () => {
+      const seen: number[] = [];
+      const source = counting([1, 0, 2]);
+      const traversed = maybe.traverse(source.iterable, (n) => {
+        seen.push(n);
+        return render(n);
+      });
+      expect(traversed).toEqual(maybe.nothing());
+      expect(seen).toEqual([1, 0]);
+      expect(source.count()).toBe(2);
+      expectTypeOf(traversed).toEqualTypeOf<Maybe<string[]>>();
+    });
+
+    test('the curried form is traverse(fn)', () => {
+      const curried = maybe.traverse(render);
+      expectTypeOf(curried).toEqualTypeOf<(items: Iterable<number>) => Maybe<string[]>>();
+      expect(curried([1, 2])).toEqual(maybe.just(['1', '2']));
+    });
+  });
+
+  describe('`zip` and `zipWith`', () => {
+    test('pairs Justs and yields Nothing otherwise', () => {
+      expect(maybe.zip(maybe.just(1), maybe.just('a'))).toEqual(maybe.just([1, 'a']));
+      expect(maybe.zip(maybe.just(1))(maybe.just('a'))).toEqual(maybe.just([1, 'a']));
+      expect(maybe.zip(maybe.nothing<number>(), maybe.just('a'))).toEqual(maybe.nothing());
+      expect(maybe.zip(maybe.just(1), maybe.nothing<string>())).toEqual(maybe.nothing());
+      expect(maybe.zip(maybe.nothing<number>(), maybe.nothing<string>())).toEqual(maybe.nothing());
+    });
+
+    test('zipWith applies the combiner only when both are Just', () => {
+      let calls = 0;
+      const combine = (left: number, right: number) => {
+        calls += 1;
+        return left + right;
+      };
+
+      expect(maybe.zipWith(maybe.just(2), maybe.just(3), combine)).toEqual(maybe.just(5));
+      expect(maybe.zipWith(maybe.just(2), maybe.just(3))(combine)).toEqual(maybe.just(5));
+      expect(maybe.zipWith(maybe.just(2))(maybe.just(3))(combine)).toEqual(maybe.just(5));
+      expect(calls).toBe(3);
+
+      calls = 0;
+      expect(maybe.zipWith(maybe.nothing<number>(), maybe.just(3), combine)).toEqual(
+        maybe.nothing()
+      );
+      expect(maybe.zipWith(maybe.just(2), maybe.nothing<number>(), combine)).toEqual(
+        maybe.nothing()
+      );
+      expect(calls).toBe(0);
+    });
+  });
+
+  describe('`compact`, `filterMap`, and `firstJust`', () => {
+    test('compact drops Nothing', () => {
+      expect(maybe.compact([maybe.just(1), maybe.nothing<number>(), maybe.just(3)])).toEqual([
+        1, 3,
+      ]);
+      expect(maybe.compact<number>([])).toEqual([]);
+    });
+
+    test('filterMap drops Nothing and supports filterMap(fn)', () => {
+      const even = (n: number) => (n % 2 === 0 ? maybe.just(n * 10) : maybe.nothing<number>());
+      const seen: number[] = [];
+      expect(
+        maybe.filterMap([1, 2, 3, 4], (n) => {
+          seen.push(n);
+          return even(n);
+        })
+      ).toEqual([20, 40]);
+      expect(seen).toEqual([1, 2, 3, 4]);
+
+      const curried = maybe.filterMap(even);
+      expectTypeOf(curried).toEqualTypeOf<(items: Iterable<number>) => number[]>();
+      expect(curried([1, 2, 3, 4])).toEqual([20, 40]);
+    });
+
+    test('firstJust returns the first Just or Nothing', () => {
+      const found = maybe.just('yes');
+      const source = counting([maybe.nothing<string>(), found, maybe.just('later')]);
+      expect(maybe.firstJust(source.iterable)).toBe(found);
+      expect(source.count()).toBe(2);
+      expect(maybe.firstJust([maybe.nothing<string>(), maybe.nothing<string>()])).toEqual(
+        maybe.nothing()
+      );
+      expect(maybe.firstJust<string>([])).toEqual(maybe.nothing());
+    });
+  });
+});

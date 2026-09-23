@@ -13,7 +13,7 @@
  */
 
 import Result from './result.js';
-import Maybe from './maybe.js';
+import Maybe, { sequence as sequenceMaybe, traverse as traverseMaybe } from './maybe.js';
 import { curry1 } from './-private/utils.js';
 
 /**
@@ -159,4 +159,120 @@ export function toOkOrElseErr<T extends {}, E>(
  */
 export function fromResult<T extends {}>(result: Result<T, unknown>): Maybe<T> {
   return result.isOk ? Maybe.just(result.value) : Maybe.nothing<T>();
+}
+
+function maybeAllAsResult<T extends {}, E>(
+  errValue: E,
+  maybes: Iterable<Maybe<T>>
+): Result<T[], E> {
+  const sequenced = sequenceMaybe(maybes);
+  return sequenced.isJust ? Result.ok(sequenced.value) : Result.err(errValue);
+}
+
+/**
+  Sequence an iterable of {@linkcode Maybe}s into a {@linkcode Result}.
+
+  Every {@linkcode Just} becomes part of the `Ok` array. The first
+  {@linkcode Nothing} becomes `Err(errValue)`, and the iterable is not advanced
+  past that failure. An empty iterable produces `Ok([])`.
+
+  `sequenceMaybeAsResult(errValue)` returns a function that takes the iterable.
+
+  @param errValue The error used when a `Nothing` is encountered.
+  @param maybes The `Maybe`s to sequence.
+ */
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E,
+  maybes: Iterable<Maybe<T>>
+): Result<T[], E>;
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E
+): (maybes: Iterable<Maybe<T>>) => Result<T[], E>;
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E,
+  maybes?: Iterable<Maybe<T>>
+): Result<T[], E> | ((maybes: Iterable<Maybe<T>>) => Result<T[], E>) {
+  return curry1((items: Iterable<Maybe<T>>) => maybeAllAsResult(errValue, items), maybes);
+}
+
+function traverseMaybeAllAsResult<T, U extends {}, E>(
+  errValue: E,
+  items: Iterable<T>,
+  fn: (item: T) => Maybe<U>
+): Result<U[], E> {
+  const traversed = traverseMaybe(items, fn);
+  return traversed.isJust ? Result.ok(traversed.value) : Result.err(errValue);
+}
+
+/**
+  Map each item to a {@linkcode Maybe} and sequence the results into a
+  {@linkcode Result}.
+
+  `Nothing` becomes `Err(errValue)`. Iteration stops immediately after the first
+  `Nothing`, matching {@linkcode "maybe".traverse}.
+
+  The full form is `traverseMaybeAsResult(errValue, items, fn)`.
+  `traverseMaybeAsResult(errValue)` returns a function of `(items, fn)`.
+
+  @param errValue The error used when `fn` returns `Nothing`.
+  @param items Values to map.
+  @param fn Function that returns a `Maybe` for each item.
+ */
+export function traverseMaybeAsResult<T, U extends {}, E>(
+  errValue: E,
+  items: Iterable<T>,
+  fn: (item: T) => Maybe<U>
+): Result<U[], E>;
+export function traverseMaybeAsResult<E>(
+  errValue: E
+): <T, U extends {}>(items: Iterable<T>, fn: (item: T) => Maybe<U>) => Result<U[], E>;
+export function traverseMaybeAsResult<T, U extends {}, E>(
+  errValue: E,
+  items?: Iterable<T>,
+  fn?: (item: T) => Maybe<U>
+): Result<U[], E> | ((items: Iterable<T>, fn: (item: T) => Maybe<U>) => Result<U[], E>) {
+  if (items === undefined) {
+    return (nextItems: Iterable<T>, nextFn: (item: T) => Maybe<U>) =>
+      traverseMaybeAllAsResult(errValue, nextItems, nextFn);
+  }
+  return traverseMaybeAllAsResult(errValue, items, fn as (item: T) => Maybe<U>);
+}
+
+/**
+  Zip two {@linkcode Maybe}s into a {@linkcode Result} of a pair.
+
+  Both {@linkcode Just} values become `Ok([a, b])`. If either is
+  {@linkcode Nothing}, the result is `Err(errValue)`.
+
+  `zipMaybeAsResult(errValue)` returns a function of `(a, b)`.
+
+  @param errValue The error used when either `Maybe` is `Nothing`.
+  @param a The first `Maybe`.
+  @param b The second `Maybe`.
+ */
+export function zipMaybeAsResult<A extends {}, B extends {}, E>(
+  errValue: E,
+  a: Maybe<A>,
+  b: Maybe<B>
+): Result<[A, B], E>;
+export function zipMaybeAsResult<E>(
+  errValue: E
+): <A extends {}, B extends {}>(a: Maybe<A>, b: Maybe<B>) => Result<[A, B], E>;
+export function zipMaybeAsResult<A extends {}, B extends {}, E>(
+  errValue: E,
+  a?: Maybe<A>,
+  b?: Maybe<B>
+): Result<[A, B], E> | ((a: Maybe<A>, b: Maybe<B>) => Result<[A, B], E>) {
+  const op = (left: Maybe<A>, right: Maybe<B>): Result<[A, B], E> => {
+    if (left.isNothing || right.isNothing) {
+      return Result.err(errValue);
+    }
+    return Result.ok([left.value, right.value]);
+  };
+
+  if (a === undefined) {
+    return op;
+  }
+
+  return op(a, b as Maybe<B>);
 }
