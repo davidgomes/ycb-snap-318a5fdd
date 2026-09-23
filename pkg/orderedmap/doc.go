@@ -7,5 +7,8 @@ maintained (unlike the native Go map).
 
 This flavor of map is crucial in keeping the output of ytt deterministic and
 stable.
+
+Query and QueryOne evaluate JSONPath expressions against these maps, slices,
+and scalar values.
 */
 package orderedmap
