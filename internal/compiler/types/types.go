@@ -161,7 +161,10 @@ func ConvertibleTo(x, y reflect.Type) bool {
 // Implements reports whether x implements the interface type y.
 func Implements(x, y reflect.Type) bool {
 	if _, ok := x.(runtime.ScriggoType); ok {
-		return y.NumMethod() == 0
+		if y.Kind() != reflect.Interface {
+			return false
+		}
+		return scriggoImplements(x, y)
 	}
 	if _, ok := y.(runtime.ScriggoType); ok {
 		return true

@@ -421,6 +421,16 @@ func (fb *functionBuilder) addFunction(f *runtime.Function) int8 {
 	return int8(r)
 }
 
+// addFunctionDedup is like addFunction but reuses an existing entry for f.
+func (fb *functionBuilder) addFunctionDedup(f *runtime.Function) int8 {
+	for i, existing := range fb.fn.Functions {
+		if existing == f {
+			return int8(i)
+		}
+	}
+	return fb.addFunction(f)
+}
+
 // makeStringValue makes a new string value, returning it's index.
 func (fb *functionBuilder) makeStringValue(v string) int8 {
 	for i, vv := range fb.fn.Values.String {

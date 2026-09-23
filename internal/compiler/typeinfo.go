@@ -54,6 +54,10 @@ const (
 	methodValueInterface                   // Method value on an interface receiver.
 	methodCallConcrete                     // Method call on concrete receiver.
 	methodCallInterface                    // Method call on interface receiver.
+	methodValueScriggo                     // Method value on a Scriggo-defined receiver.
+	methodCallScriggo                      // Method call on a Scriggo-defined receiver.
+	methodExprScriggo                      // Method expression T.M or (*T).M with the declared receiver.
+	methodExprScriggoPtr                   // Method expression (*T).M where M has a value receiver.
 )
 
 // Nil reports whether it is the predeclared nil.

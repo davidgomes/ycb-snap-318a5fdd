@@ -10,6 +10,7 @@ import (
 	"reflect"
 
 	"github.com/open2b/scriggo/ast"
+	"github.com/open2b/scriggo/internal/compiler/types"
 	"github.com/open2b/scriggo/internal/runtime"
 )
 
@@ -732,6 +733,40 @@ func (em *emitter) emitSelector(v *ast.Selector, reg int8, dstType reflect.Type)
 		return
 	}
 
+	// Method expression on a Scriggo-defined type.
+	if ti.MethodType == methodExprScriggo || ti.MethodType == methodExprScriggoPtr {
+		if reg == 0 {
+			return
+		}
+		m := ti.value.(*types.Method)
+		fn := m.Fn
+		if ti.MethodType == methodExprScriggoPtr {
+			fn = em.valueMethodPointerExprFunc(m)
+		}
+		index := em.fb.addFunctionDedup(fn)
+		em.fb.emitLoadFunc(false, index, reg)
+		em.changeRegister(false, reg, reg, ti.Type, dstType)
+		return
+	}
+
+	// Method value on a Scriggo-defined receiver.
+	if ti.MethodType == methodValueScriggo {
+		expr := v.Expr
+		typ := em.typ(expr)
+		rcvr := em.emitExpr(expr, typ)
+		wrapped := em.fb.newRegister(reflect.Interface)
+		em.fb.emitTypify(false, typ, rcvr, wrapped)
+		if reg == 0 {
+			return
+		}
+		if kindToType(dstType.Kind()) != generalRegister {
+			panic(internalError("method value in non-general register"))
+		}
+		s := em.fb.makeStringValue(v.Ident)
+		em.fb.emitMethodValue(s, wrapped, reg, v.Pos())
+		return
+	}
+
 	// Method value on concrete and interface values.
 	if ti.MethodType == methodValueConcrete || ti.MethodType == methodValueInterface {
 		expr := v.Expr
@@ -917,6 +952,15 @@ func (em *emitter) emitUnaryOp(expr *ast.UnaryOperator, reg int8, regType reflec
 		case *ast.Identifier:
 			if em.fb.declaredInFunc(operand.Name) {
 				r := em.fb.scopeLookup(operand.Name)
+				// A Scriggo pointer stored in an interface must be wrapped so
+				// its method set is available at the call.
+				if regType.Kind() == reflect.Interface {
+					tmp := em.fb.newRegister(reflect.Ptr)
+					em.fb.emitNew(exprType, tmp)
+					em.fb.emitMove(false, -r, tmp, reflect.Ptr)
+					em.changeRegister(false, tmp, reg, exprType, regType)
+					return
+				}
 				em.fb.emitNew(em.types.PointerTo(exprType), reg)
 				em.fb.emitMove(false, -r, reg, regType.Kind())
 				return
@@ -1055,4 +1099,59 @@ func (em *emitter) emitUnaryOp(expr *ast.UnaryOperator, reg int8, regType reflec
 
 	}
 
+}
+
+// valueMethodPointerExprFunc returns the function used by the method
+// expression (*T).M when M has a value receiver. The returned function
+// dereferences its first argument and calls M.
+func (em *emitter) valueMethodPointerExprFunc(m *types.Method) *runtime.Function {
+	if m.PtrExprFn != nil {
+		return m.PtrExprFn
+	}
+	fn := newFunction("main", m.Name, m.PtrExprType, em.fb.getPath(), nil)
+	fb := newBuilder(fn, em.fb.getPath())
+	saved := em.fb
+	em.fb = fb
+
+	// Layout matches prepareFunctionBodyParameters: results, receiver, parameters.
+	outRegs := make([]int8, m.PtrExprType.NumOut())
+	for i := range outRegs {
+		outRegs[i] = fb.newRegister(m.PtrExprType.Out(i).Kind())
+	}
+	recvReg := fb.newRegister(reflect.Ptr)
+	nIn := m.PtrExprType.NumIn() - 1
+	inRegs := make([]int8, nIn)
+	inTypes := make([]reflect.Type, nIn)
+	for i := 0; i < nIn; i++ {
+		typ := m.PtrExprType.In(i + 1)
+		kind := typ.Kind()
+		if m.PtrExprType.IsVariadic() && i == nIn-1 {
+			kind = reflect.Slice
+			typ = reflect.SliceOf(typ.Elem())
+		}
+		inRegs[i] = fb.newRegister(kind)
+		inTypes[i] = typ
+	}
+
+	shift := fb.currentStackShift()
+	callOut := make([]int8, m.ExprType.NumOut())
+	for i := range callOut {
+		callOut[i] = fb.newRegister(m.ExprType.Out(i).Kind())
+	}
+	callRecv := fb.newRegister(m.Recv.Kind())
+	em.changeRegister(false, -recvReg, callRecv, m.Recv, m.Recv)
+	for i, r := range inRegs {
+		typ := inTypes[i]
+		cr := fb.newRegister(typ.Kind())
+		em.changeRegister(false, r, cr, typ, typ)
+	}
+	index := fb.addFunction(m.Fn)
+	fb.emitCallFunc(index, shift, nil)
+	for i, r := range outRegs {
+		em.changeRegister(false, callOut[i], r, m.ExprType.Out(i), m.PtrExprType.Out(i))
+	}
+	fb.end()
+	em.fb = saved
+	m.PtrExprFn = fn
+	return fn
 }

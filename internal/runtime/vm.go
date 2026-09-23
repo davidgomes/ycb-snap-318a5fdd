@@ -629,6 +629,7 @@ func create(env *env) *VM {
 func (vm *VM) startGoroutine() bool {
 	var fn *Function
 	var vars []reflect.Value
+	var bound *callable
 	call := vm.fn.Body[vm.pc]
 	switch call.Op {
 	case OpCallFunc:
@@ -644,12 +645,24 @@ func (vm *VM) startGoroutine() bool {
 		}
 		fn = f.fn
 		vars = f.vars
+		if f.hasBound {
+			bound = f
+		}
 	default:
 		return true
 	}
 	nvm := create(vm.env)
 	vm.pc++
 	off := vm.fn.Body[vm.pc]
+	if bound != nil {
+		saved := vm.fp
+		vm.fp[0] += Addr(off.Op)
+		vm.fp[1] += Addr(off.A)
+		vm.fp[2] += Addr(off.B)
+		vm.fp[3] += Addr(off.C)
+		insertBoundReceiver(vm, fn, concreteReceiver(bound.method, bound.bound))
+		vm.fp = saved
+	}
 	copy(nvm.regs.int, vm.regs.int[vm.fp[0]+Addr(off.Op):vm.fp[0]+127])
 	copy(nvm.regs.float, vm.regs.float[vm.fp[1]+Addr(off.A):vm.fp[1]+127])
 	copy(nvm.regs.string, vm.regs.string[vm.fp[2]+Addr(off.B):vm.fp[2]+127])
@@ -883,11 +896,30 @@ type callFrame struct {
 	numVariadic int8       // number of variadic arguments.
 }
 
+// ScriggoMethod describes a method declared in Scriggo so it can be called
+// through an interface value.
+type ScriggoMethod struct {
+	Fn        *Function
+	ValueRecv bool         // value receiver (as opposed to pointer receiver).
+	RecvGo    reflect.Type // Go type of the declared receiver.
+	Type      reflect.Type // signature without the receiver.
+}
+
+// ScriggoMethodSet is implemented by values stored in interfaces that carry a
+// Scriggo method set.
+type ScriggoMethodSet interface {
+	LookupScriggoMethod(name string) (ScriggoMethod, reflect.Value, bool)
+	ImplementsInterface(iface reflect.Type) bool
+}
+
 type callable struct {
-	value  reflect.Value   // reflect value.
-	fn     *Function       // function, if it is a Scriggo function.
-	native *NativeFunction // native function.
-	vars   []reflect.Value // non-local (global and closure) variables.
+	value    reflect.Value   // reflect value.
+	fn       *Function       // function, if it is a Scriggo function.
+	native   *NativeFunction // native function.
+	vars     []reflect.Value // non-local (global and closure) variables.
+	method   ScriggoMethod   // bound method, when hasBound is true.
+	bound    reflect.Value   // bound receiver.
+	hasBound bool
 }
 
 // Native returns the native function of a callable.
@@ -913,7 +945,19 @@ func (c *callable) Value(env *env) reflect.Value {
 	// It is a Scriggo function.
 	fn := c.fn
 	vars := c.vars
-	c.value = reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
+	mt := fn.Type
+	prepend := c.hasBound
+	bound := c.bound
+	method := c.method
+	if prepend {
+		mt = funcWithoutReceiver(fn.Type)
+	} else if st, ok := mt.(ScriggoType); ok {
+		mt = st.GoType()
+	}
+	c.value = reflect.MakeFunc(mt, func(args []reflect.Value) []reflect.Value {
+		if prepend {
+			args = append([]reflect.Value{concreteReceiver(method, bound)}, args...)
+		}
 		nvm := create(env)
 		if fn.Macro {
 			nvm.renderer = newRenderer(&strings.Builder{})
@@ -963,6 +1007,76 @@ func (c *callable) Value(env *env) reflect.Value {
 		return results
 	})
 	return c.value
+}
+
+// funcWithoutReceiver returns typ without its first parameter.
+func funcWithoutReceiver(typ reflect.Type) reflect.Type {
+	nIn := typ.NumIn() - 1
+	in := make([]reflect.Type, nIn)
+	for i := 0; i < nIn; i++ {
+		in[i] = goType(typ.In(i + 1))
+	}
+	out := make([]reflect.Type, typ.NumOut())
+	for i := range out {
+		out[i] = goType(typ.Out(i))
+	}
+	return reflect.FuncOf(in, out, typ.IsVariadic())
+}
+
+func goType(t reflect.Type) reflect.Type {
+	if st, ok := t.(ScriggoType); ok {
+		return st.GoType()
+	}
+	return t
+}
+
+// concreteReceiver returns the receiver value to pass to a Scriggo method.
+// Value methods promoted through a pointer are dereferenced.
+func concreteReceiver(m ScriggoMethod, recv reflect.Value) reflect.Value {
+	if m.ValueRecv && recv.IsValid() && recv.Kind() == reflect.Ptr && recv.Type() != m.RecvGo {
+		if recv.IsNil() {
+			panic(errNilPointer)
+		}
+		recv = recv.Elem()
+	}
+	return recv
+}
+
+// insertBoundReceiver inserts recv as the first input parameter of fn.
+// Registers currently hold the outputs and the arguments that follow the
+// receiver; arguments of recv's register class are shifted up by one.
+func insertBoundReceiver(vm *VM, fn *Function, recv reflect.Value) {
+	class := kindToType[recv.Kind()]
+	nOut := 0
+	for i := 0; i < fn.Type.NumOut(); i++ {
+		if kindToType[fn.Type.Out(i).Kind()] == class {
+			nOut++
+		}
+	}
+	// Arguments of this class, excluding the receiver itself.
+	nArgs := 0
+	for i := 1; i < fn.Type.NumIn(); i++ {
+		if kindToType[fn.Type.In(i).Kind()] == class {
+			nArgs++
+		}
+	}
+	for r := nOut + nArgs; r >= nOut+1; r-- {
+		moveRegister(vm, class, int8(r), int8(r+1))
+	}
+	vm.setFromReflectValue(int8(nOut+1), recv)
+}
+
+func moveRegister(vm *VM, class registerType, src, dst int8) {
+	switch class {
+	case intRegister:
+		vm.setInt(dst, vm.int(src))
+	case floatRegister:
+		vm.setFloat(dst, vm.float(src))
+	case stringRegister:
+		vm.setString(dst, vm.string(src))
+	default:
+		vm.setGeneral(dst, vm.general(src))
+	}
 }
 
 func packageName(pkg string) string {

@@ -168,6 +168,15 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 				var fn *runtime.Function
 				if emFn, ok := em.alreadyEmittedFuncs[fun]; ok {
 					fn = emFn
+				} else if fun.Receiver != nil {
+					if isBlankIdentifier(fun.Ident) {
+						continue
+					}
+					ti := em.ti(fun)
+					m := ti.value.(*types.Method)
+					fn = newFunction("main", m.Name, m.ExprType, path, fun.Pos())
+					m.Fn = fn
+					continue
 				} else {
 					if fun.Type.Macro {
 						fn = newMacro("main", fun.Ident.Name, fun.Type.Reflect, fun.Format, path, fun.Pos())
@@ -256,7 +265,13 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 				// Function has already been emitted, nothing to do.
 				continue
 			}
-			if n.Ident.Name == "init" {
+			if n.Receiver != nil {
+				ti := em.ti(n)
+				fn = ti.value.(*types.Method).Fn
+				if fn == nil {
+					continue
+				}
+			} else if n.Ident.Name == "init" {
 				fn = inits[initToBuild]
 				initToBuild++
 			} else {
@@ -267,7 +282,7 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 			// If this is the main function, functions that initialize variables
 			// must be called before executing every other statement of the main
 			// function.
-			if n.Ident.Name == "main" {
+			if n.Receiver == nil && n.Ident.Name == "main" {
 				// First: initialize the package variables.
 				if initVarsFn != nil {
 					iv, _ := em.fnStore.availableScriggoFn(em.pkg, "$initvars")
@@ -506,6 +521,15 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
 		}
 	}
 
+	// Reserve space for the receiver and eventually bind it.
+	if fn.Receiver != nil {
+		kind := em.typ(fn.Receiver.Type).Kind()
+		reg := em.fb.newRegister(kind)
+		if fn.Receiver.Ident != nil && !isBlankIdentifier(fn.Receiver.Ident) {
+			em.fb.bindVarReg(fn.Receiver.Ident.Name, reg)
+		}
+	}
+
 	// Reserve space for the input parameters and eventually bind them.
 	for i, inParam := range fn.Type.Parameters {
 		kind := em.typ(inParam.Type).Kind()
@@ -538,6 +562,16 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
 		}
 	}
 
+	// Rebind the receiver when its address is taken.
+	if fn.Receiver != nil && fn.Receiver.Ident != nil && em.varStore.mustBeDeclaredAsIndirect(fn.Receiver.Ident) {
+		reg := em.fb.scopeLookup(fn.Receiver.Ident.Name)
+		indirect := em.fb.newIndirectRegister()
+		typ := em.typ(fn.Receiver.Type)
+		em.fb.emitNew(typ, -indirect)
+		em.changeRegister(false, reg, indirect, typ, typ)
+		em.fb.bindVarReg(fn.Receiver.Ident.Name, indirect)
+	}
+
 	// Rebind input parameters that should be declared as indirect.
 	for _, param := range fn.Type.Parameters {
 		if em.varStore.mustBeDeclaredAsIndirect(param.Ident) {
@@ -564,6 +598,33 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
 func (em *emitter) emitCallNode(call *ast.Call, goStmt bool, deferStmt bool, toFormat ast.Format) ([]int8, []reflect.Type) {
 
 	funTi := em.ti(call.Func)
+
+	// Method call on a Scriggo-defined receiver.
+	if funTi.MethodType == methodCallScriggo {
+		m := funTi.value.(*types.Method)
+		rcv := call.Func.(*ast.Selector).Expr
+		args := make([]ast.Expression, len(call.Args)+1)
+		args[0] = rcv
+		copy(args[1:], call.Args)
+		stackShift := em.fb.currentStackShift()
+		opts := callOptions{
+			callHasDots: call.IsVariadic,
+		}
+		regs, types := em.prepareCallParameters(m.ExprType, args, opts)
+		index := em.fb.addFunctionDedup(m.Fn)
+		if goStmt {
+			em.fb.emitGo()
+		}
+		if deferStmt {
+			argShift := stackDifference(em.fb.currentStackShift(), stackShift)
+			reg := em.fb.newRegister(reflect.Func)
+			em.fb.emitLoadFunc(false, index, reg)
+			em.fb.emitDefer(reg, int8(runtime.NoVariadicArgs), stackShift, argShift, m.ExprType)
+			return regs, types
+		}
+		em.fb.emitCallFunc(index, stackShift, call.Pos())
+		return regs, types
+	}
 
 	// Method call on a interface value.
 	if funTi.MethodType == methodCallInterface {

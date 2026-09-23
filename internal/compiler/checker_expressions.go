@@ -1605,6 +1605,19 @@ func (tc *typechecker) checkCallExpression(expr *ast.Call) []*typeInfo {
 		t.MethodType = methodCallConcrete
 	case methodValueInterface:
 		t.MethodType = methodCallInterface
+	case methodValueScriggo:
+		t.MethodType = methodCallScriggo
+		// x.M, where x has type *T and M has a value receiver, is (*x).M.
+		// Dereference at the call so a nil pointer panics when the method is
+		// called. Method values keep the pointer and dereference later.
+		if sel, ok := expr.Func.(*ast.Selector); ok {
+			m := t.value.(*types.Method)
+			if recvTi := tc.compilation.typeInfos[sel.Expr]; recvTi != nil && !m.Pointer && recvTi.Type.Kind() == reflect.Ptr {
+				deref := ast.NewUnaryOperator(sel.Expr.Pos(), ast.OperatorPointer, sel.Expr)
+				tc.compilation.typeInfos[deref] = &typeInfo{Type: recvTi.Type.Elem()}
+				sel.Expr = deref
+			}
+		}
 	}
 
 	if t.Nil() {
@@ -2460,6 +2473,22 @@ func (tc *typechecker) checkMethodExpression(t *typeInfo, expr *ast.Selector) *t
 
 	name := expr.Ident
 
+	if m, ok := types.LookupMethod(t.Type, name); ok {
+		ft := m.ExprType
+		mt := methodExprScriggo
+		if t.Type.Kind() == reflect.Ptr && !m.Pointer {
+			ft = m.PtrExprType
+			mt = methodExprScriggoPtr
+		}
+		return &typeInfo{Type: ft, MethodType: mt, value: m}
+	}
+	if t.Type.Name() != "" && t.Type.Kind() != reflect.Ptr && t.Type.Kind() != reflect.Interface {
+		if _, ok := types.LookupMethod(tc.types.PointerTo(t.Type), name); ok {
+			panic(tc.errorf(expr, "invalid method expression %s (needs pointer receiver: (*%s).%s)",
+				expr, expr.Expr, expr.Ident))
+		}
+	}
+
 	method, ok := t.Type.MethodByName(name)
 	if !ok {
 		// Return a different error message if T is a defined non-pointer type
@@ -2510,6 +2539,29 @@ func (tc *typechecker) checkMethodValue(t *typeInfo, expr *ast.Selector) (*typeI
 	name := expr.Ident
 	typ := t.Type
 	kind := typ.Kind()
+
+	if m, ok := types.LookupMethod(typ, name); ok {
+		return &typeInfo{Type: m.Sig, MethodType: methodValueScriggo, value: m}, true
+	}
+	if kind != reflect.Interface && kind != reflect.Ptr {
+		pm, pok := types.LookupMethod(tc.types.PointerTo(typ), name)
+		if pok && pm.Pointer {
+			if !t.Addressable() {
+				panic(tc.errorf(expr, "cannot call pointer method %s on %s", name, typ))
+			}
+			if ident, ok := expr.Expr.(*ast.Identifier); ok {
+				if _, decl, ok := tc.scopes.LookupInFunc(ident.Name); ok {
+					tc.compilation.indirectVars[decl] = true
+				}
+			}
+			expr.Expr = ast.NewUnaryOperator(expr.Pos(), ast.OperatorAddress, expr.Expr)
+			tc.compilation.typeInfos[expr.Expr] = &typeInfo{
+				Type:       tc.types.PointerTo(typ),
+				MethodType: methodValueScriggo,
+			}
+			return &typeInfo{Type: pm.Sig, MethodType: methodValueScriggo, value: pm}, true
+		}
+	}
 
 	method, ok := t.Type.MethodByName(name)
 	if !ok {

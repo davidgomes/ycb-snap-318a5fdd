@@ -171,7 +171,11 @@ func (vm *VM) run() (Addr, bool) {
 					v, ok = w.Unwrap(v)
 				} else {
 					if t.Kind() == reflect.Interface {
-						ok = v.Type().Implements(t)
+						if impl, isImpl := v.Interface().(ScriggoMethodSet); isImpl {
+							ok = impl.ImplementsInterface(t)
+						} else {
+							ok = v.Type().Implements(t)
+						}
 					} else {
 						ok = v.Type() == t
 					}
@@ -303,6 +307,9 @@ func (vm *VM) run() (Addr, bool) {
 							vm.renderer = newRenderer(vm.renderer.out)
 						}
 					}
+				}
+				if f.hasBound {
+					insertBoundReceiver(vm, fn, concreteReceiver(f.method, f.bound))
 				}
 				vm.fn = fn
 				vm.vars = f.vars
@@ -1091,7 +1098,25 @@ func (vm *VM) run() (Addr, bool) {
 			if !receiver.IsValid() {
 				panic(errNilPointer)
 			}
+			if receiver.Kind() == reflect.Interface {
+				if receiver.IsNil() {
+					panic(errNilPointer)
+				}
+				receiver = receiver.Elem()
+			}
 			method := vm.stringk(b, true)
+			if ms, ok := receiver.Interface().(ScriggoMethodSet); ok {
+				if m, bound, ok := ms.LookupScriggoMethod(method); ok {
+					vm.setGeneral(c, reflect.ValueOf(&callable{
+						fn:       m.Fn,
+						vars:     vm.env.globals,
+						method:   m,
+						bound:    bound,
+						hasBound: true,
+					}))
+					break
+				}
+			}
 			vm.setGeneral(c, reflect.ValueOf(&callable{value: receiver.MethodByName(method)}))
 
 		// Move

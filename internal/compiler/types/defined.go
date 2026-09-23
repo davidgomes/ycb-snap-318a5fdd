@@ -27,6 +27,10 @@ type definedType struct {
 	// represents are identical (every defined type, in Go, is different from
 	// every other type).
 	sign *byte
+
+	// methods is the method set declared on this defined type. Every copy of
+	// the defined type shares the same table.
+	methods *methodTable
 }
 
 // DefinedOf returns the defined type with the given name and underlying type.
@@ -36,7 +40,7 @@ func (types *Types) DefinedOf(name string, underlyingType reflect.Type) reflect.
 	if name == "" {
 		panic(internalError("name cannot be empty"))
 	}
-	return definedType{Type: underlyingType, name: name, sign: new(byte)}
+	return definedType{Type: underlyingType, name: name, sign: new(byte), methods: &methodTable{}}
 }
 
 func (x definedType) Name() string {
@@ -55,9 +59,24 @@ func (x definedType) Implements(y reflect.Type) bool {
 	return Implements(x, y)
 }
 
-func (x definedType) MethodByName(string) (reflect.Method, bool) {
-	// TODO.
-	return reflect.Method{}, false
+func (x definedType) Method(i int) reflect.Method {
+	m := x.valueMethods()
+	if i < 0 || i >= len(m) {
+		panic("reflect: Method index out of range")
+	}
+	return methodAsReflect(m[i], false)
+}
+
+func (x definedType) MethodByName(name string) (reflect.Method, bool) {
+	m, ok := x.lookup(name, false)
+	if !ok {
+		return reflect.Method{}, false
+	}
+	return methodAsReflect(m, false), true
+}
+
+func (x definedType) NumMethod() int {
+	return len(x.valueMethods())
 }
 
 func (x definedType) String() string {
@@ -80,4 +99,10 @@ func (x definedType) GoType() reflect.Type {
 func (x definedType) Unwrap(v reflect.Value) (reflect.Value, bool) { return unwrap(x, v) }
 
 // Wrap implements the interface runtime.ScriggoType.
-func (x definedType) Wrap(v reflect.Value) reflect.Value { return wrap(x, v) }
+func (x definedType) Wrap(v reflect.Value) reflect.Value {
+	return reflect.ValueOf(emptyInterfaceProxy{
+		value:   v,
+		sign:    x,
+		methods: runtimeMethods(x, false),
+	})
+}

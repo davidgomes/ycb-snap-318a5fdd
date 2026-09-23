@@ -1120,6 +1120,13 @@ func (tc *typechecker) checkFunc(node *ast.Func) {
 	tc.scopes.Enter(node)
 	tc.addToAncestors(node)
 
+	// Named receivers are addressable variables of the method.
+	if node.Receiver != nil && node.Receiver.Ident != nil && !isBlankIdentifier(node.Receiver.Ident) {
+		ti := tc.checkType(node.Receiver.Type)
+		tc.scopes.Declare(node.Receiver.Ident.Name, &typeInfo{Type: ti.Type, Properties: propertyAddressable}, node.Receiver.Ident, nil)
+		tc.scopes.Use(node.Receiver.Ident.Name)
+	}
+
 	// Adds parameters to the function body scope.
 	t := node.Type.Reflect
 	for i := 0; i < t.NumIn(); i++ {
@@ -1182,6 +1189,131 @@ func (tc *typechecker) checkFunc(node *ast.Func) {
 	}
 	tc.ancestors = tc.ancestors[:len(tc.ancestors)-1]
 	tc.scopes.Exit()
+}
+
+// declareMethod declares a method on a type defined in the current package.
+func (tc *typechecker) declareMethod(f *ast.Func) {
+	if f.Type.Macro {
+		panic(tc.errorf(f, "invalid method declaration"))
+	}
+	recv := f.Receiver
+	if recv == nil || recv.Type == nil {
+		panic(tc.errorf(f, "method has no receiver"))
+	}
+	recvType := tc.checkType(recv.Type).Type
+	base, pointer := tc.receiverBase(recvType, recv.Type)
+	if f.Ident != nil && !isBlankIdentifier(f.Ident) && base.Kind() == reflect.Struct {
+		if structHasField(base, f.Ident.Name) {
+			panic(tc.errorf(f.Ident, "field and method with the same name %s", f.Ident.Name))
+		}
+	}
+	if recv.Ident != nil && !isBlankIdentifier(recv.Ident) {
+		name := recv.Ident.Name
+		for _, params := range [][]*ast.Parameter{f.Type.Parameters, f.Type.Result} {
+			for _, param := range params {
+				if param.Ident != nil && !isBlankIdentifier(param.Ident) && param.Ident.Name == name {
+					panic(tc.errorf(param.Ident, "duplicate argument %s", name))
+				}
+			}
+		}
+	}
+	sig := tc.checkType(f.Type).Type
+	if isBlankIdentifier(f.Ident) {
+		tc.compilation.typeInfos[f] = &typeInfo{Type: sig}
+		return
+	}
+	in := make([]reflect.Type, sig.NumIn()+1)
+	in[0] = recvType
+	for i := 0; i < sig.NumIn(); i++ {
+		in[i+1] = sig.In(i)
+	}
+	out := make([]reflect.Type, sig.NumOut())
+	for i := 0; i < sig.NumOut(); i++ {
+		out[i] = sig.Out(i)
+	}
+	exprType := tc.types.FuncOf(in, out, sig.IsVariadic())
+	var ptrExpr reflect.Type
+	if !pointer {
+		pin := make([]reflect.Type, len(in))
+		copy(pin, in)
+		pin[0] = tc.types.PointerTo(base)
+		ptrExpr = tc.types.FuncOf(pin, out, sig.IsVariadic())
+	}
+	m := &types.Method{
+		Name:        f.Ident.Name,
+		Pointer:     pointer,
+		Recv:        recvType,
+		RecvGo:      types.GoType(recvType),
+		Sig:         sig,
+		ExprType:    exprType,
+		PtrExprType: ptrExpr,
+		DeclPos:     f.Ident.Pos().String(),
+	}
+	if prev, ok := types.AddMethod(base, m); !ok {
+		panic(tc.errorf(f.Ident, "%s.%s redeclared in this block\n\t%s: other declaration of %s", base, m.Name, prev.DeclPos, m.Name))
+	}
+	tc.compilation.typeInfos[f] = &typeInfo{Type: exprType, value: m}
+}
+
+// receiverBase returns the defined base type of a method receiver and whether
+// the receiver is a pointer.
+func (tc *typechecker) receiverBase(recvType reflect.Type, expr ast.Expression) (reflect.Type, bool) {
+	base := recvType
+	pointer := false
+	if recvType.Name() == "" && recvType.Kind() == reflect.Ptr {
+		pointer = true
+		base = recvType.Elem()
+	}
+	if base.Kind() == reflect.Ptr || base.Kind() == reflect.Interface {
+		panic(tc.errorf(expr, "invalid receiver type %s (pointer or interface type)", base))
+	}
+	if !types.IsDefinedType(base) {
+		if base.Name() != "" {
+			panic(tc.errorf(expr, "cannot define new methods on non-local type %s", base))
+		}
+		panic(tc.errorf(expr, "invalid receiver type %s (%s is not a defined type)", recvType, base))
+	}
+	if _, local := tc.localDefined[base]; !local {
+		panic(tc.errorf(expr, "cannot define new methods on non-local type %s", base))
+	}
+	return base, pointer
+}
+
+// structHasField reports whether t, or a type embedded in t, has a field named name.
+func structHasField(t reflect.Type, name string) bool {
+	if name == "_" {
+		return false
+	}
+	var walk func(reflect.Type, []reflect.Type) bool
+	walk = func(t reflect.Type, seen []reflect.Type) bool {
+		if t.Kind() == reflect.Ptr {
+			t = t.Elem()
+		}
+		if t.Kind() != reflect.Struct {
+			return false
+		}
+		for _, s := range seen {
+			if s == t {
+				return false
+			}
+		}
+		seen = append(seen, t)
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			fname := f.Name
+			if decoded := decodeFieldName(fname); decoded != fname {
+				fname = decoded
+			}
+			if fname == name {
+				return true
+			}
+			if f.Anonymous && walk(f.Type, seen) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(t, nil)
 }
 
 // checkReturn type checks a return statement.
@@ -1332,6 +1464,7 @@ func (tc *typechecker) checkTypeDeclaration(node *ast.TypeDeclaration) (string, 
 	}
 	// Create a new Scriggo type.
 	defType := tc.types.DefinedOf(name, typ.Type)
+	tc.localDefined[defType] = struct{}{}
 	// Associate to
 	//
 	//    type T struct { .. }

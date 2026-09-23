@@ -593,13 +593,17 @@ func checkPackage(compilation *compilation, pkg *ast.Package, path string, impor
 			if f.Body == nil {
 				return tc.errorf(f.Ident.Pos(), "missing function body")
 			}
-			if f.Ident.Name == "init" || f.Ident.Name == "main" {
+			if f.Receiver == nil && (f.Ident.Name == "init" || f.Ident.Name == "main") {
 				if len(f.Type.Parameters) > 0 || len(f.Type.Result) > 0 {
 					return tc.errorf(f.Ident, "func %s must have no arguments and no return values", f.Ident.Name)
 				}
 			}
 			if f.Type.Macro && len(f.Type.Result) == 0 {
 				tc.makeMacroResultExplicit(f)
+			}
+			if f.Receiver != nil {
+				tc.declareMethod(f)
+				continue
 			}
 			// Function type must be checked for every function, including
 			// 'init's functions.

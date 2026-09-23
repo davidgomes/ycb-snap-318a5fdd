@@ -45,6 +45,31 @@ func (x ptrType) Implements(y reflect.Type) bool {
 	return Implements(x, y)
 }
 
+func (x ptrType) Method(i int) reflect.Method {
+	if d, ok := x.elem.(definedType); ok && d.methods != nil {
+		if i < 0 || i >= len(d.methods.list) {
+			panic("reflect: Method index out of range")
+		}
+		return methodAsReflect(d.methods.list[i], true)
+	}
+	return x.Type.Method(i)
+}
+
+func (x ptrType) MethodByName(name string) (reflect.Method, bool) {
+	m, ok := LookupMethod(x, name)
+	if !ok {
+		return x.Type.MethodByName(name)
+	}
+	return methodAsReflect(m, true), true
+}
+
+func (x ptrType) NumMethod() int {
+	if d, ok := x.elem.(definedType); ok && d.methods != nil {
+		return len(d.methods.list)
+	}
+	return x.Type.NumMethod()
+}
+
 func (x ptrType) Name() string {
 	return "" // composite types do not have a name.
 }
@@ -63,4 +88,10 @@ func (x ptrType) GoType() reflect.Type {
 func (x ptrType) Unwrap(v reflect.Value) (reflect.Value, bool) { return unwrap(x, v) }
 
 // Wrap implements the interface runtime.ScriggoType.
-func (x ptrType) Wrap(v reflect.Value) reflect.Value { return wrap(x, v) }
+func (x ptrType) Wrap(v reflect.Value) reflect.Value {
+	return reflect.ValueOf(emptyInterfaceProxy{
+		value:   v,
+		sign:    x,
+		methods: runtimeMethods(x, true),
+	})
+}

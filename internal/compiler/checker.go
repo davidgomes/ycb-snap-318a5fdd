@@ -165,6 +165,9 @@ type typechecker struct {
 	// mdConverter converts a Markdown source code to HTML.
 	mdConverter Converter
 
+	// localDefined contains types defined in the package being checked.
+	localDefined map[reflect.Type]struct{}
+
 	// structDeclPkg contains, for every struct literal and defined type with
 	// underlying type 'struct' denoted in Scriggo, the package in which it has
 	// been denoted.
@@ -218,6 +221,7 @@ func newTypechecker(compilation *compilation, path string, opts checkerOptions, 
 		iota:          -1,
 		types:         tt,
 		mdConverter:   opts.mdConverter,
+		localDefined:  map[reflect.Type]struct{}{},
 		structDeclPkg: map[reflect.Type]string{},
 		importer:      importer,
 		toBeEmitted:   true,

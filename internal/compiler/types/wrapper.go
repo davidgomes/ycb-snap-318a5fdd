@@ -21,8 +21,6 @@ func wrap(t runtime.ScriggoType, v reflect.Value) reflect.Value {
 	})
 }
 
-// TODO: currently unwrap always returns an empty interface wrapper. This will
-// change when methods declaration will be implemented in Scriggo.
 func unwrap(x runtime.ScriggoType, v reflect.Value) (reflect.Value, bool) {
 	p, ok := v.Interface().(emptyInterfaceProxy)
 	// Not a proxy.
@@ -36,9 +34,41 @@ func unwrap(x runtime.ScriggoType, v reflect.Value) (reflect.Value, bool) {
 	return p.value, true
 }
 
-// emptyInterfaceProxy is a proxy for values of types that have an empty
-// method set.
+// emptyInterfaceProxy is a proxy for a Scriggo value stored in an interface.
+// methods, when non-nil, is the method set used to dispatch calls that reach
+// the value through an interface.
 type emptyInterfaceProxy struct {
-	value reflect.Value
-	sign  runtime.ScriggoType
+	value   reflect.Value
+	sign    runtime.ScriggoType
+	methods map[string]runtime.ScriggoMethod
+}
+
+// LookupScriggoMethod implements runtime.ScriggoMethodSet.
+func (p emptyInterfaceProxy) LookupScriggoMethod(name string) (runtime.ScriggoMethod, reflect.Value, bool) {
+	if p.methods == nil {
+		return runtime.ScriggoMethod{}, reflect.Value{}, false
+	}
+	m, ok := p.methods[name]
+	if !ok || m.Fn == nil {
+		return runtime.ScriggoMethod{}, reflect.Value{}, false
+	}
+	return m, p.value, true
+}
+
+// ImplementsInterface implements runtime.ScriggoMethodSet.
+func (p emptyInterfaceProxy) ImplementsInterface(iface reflect.Type) bool {
+	if iface == nil || iface.Kind() != reflect.Interface {
+		return false
+	}
+	for i := 0; i < iface.NumMethod(); i++ {
+		im := iface.Method(i)
+		if im.PkgPath != "" {
+			return false
+		}
+		sm, ok := p.methods[im.Name]
+		if !ok || !signaturesMatch(sm.Type, im.Type) {
+			return false
+		}
+	}
+	return true
 }
