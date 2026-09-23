@@ -312,6 +312,10 @@ type Options struct {
 
 	// Parser is the PromQL parser used for parsing query expressions.
 	Parser parser.Parser
+
+	// ReloadStatus returns the most recent transactional reload outcome.
+	// When nil, the status endpoint reads persisted state from TSDBDir, if any.
+	ReloadStatus func() api_v1.ReloadStatus
 }
 
 // New initializes a new web Handler.
@@ -427,6 +431,9 @@ func New(logger *slog.Logger, o *Options) *Handler {
 		},
 		o.Parser,
 	)
+	if o.ReloadStatus != nil {
+		h.apiV1.SetReloadStatus(o.ReloadStatus)
+	}
 
 	if r := o.FeatureRegistry; r != nil {
 		// Set dynamic API features (based on configuration).

@@ -686,6 +686,54 @@ func statusConfigResponseExamples() *orderedmap.Map[string, *base.Example] {
 	return examples
 }
 
+// statusReloadResponseExamples returns examples for /status/reload response.
+func statusReloadResponseExamples() *orderedmap.Map[string, *base.Example] {
+	examples := orderedmap.New[string, *base.Example]()
+
+	examples.Set("beforeFirstReload", &base.Example{
+		Summary: "Before the first reload attempt",
+		Value: createYAMLNode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"last_reload_id":         "",
+				"last_reload_successful": false,
+				"error_category":         "none",
+				"error_message":          "",
+				"applied_reloaders":      []string{},
+				"rollback_attempted":     false,
+				"rollback_successful":    false,
+				"failed_reloader":        "",
+				"reloader_timings_ms":    map[string]int64{},
+			},
+		}),
+	})
+
+	examples.Set("applyErrorRolledBack", &base.Example{
+		Summary: "Apply failure rolled back to the last known-good configuration",
+		Value: createYAMLNode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"last_reload_id":         "2026-09-23T09:08:00Z",
+				"last_reload_successful": false,
+				"error_category":         "apply_error",
+				"error_message":          "failed to apply rules",
+				"applied_reloaders":      []string{"db_storage", "remote_storage", "web_handler"},
+				"rollback_attempted":     true,
+				"rollback_successful":    true,
+				"failed_reloader":        "rules",
+				"reloader_timings_ms": map[string]int64{
+					"db_storage":     3,
+					"remote_storage": 2,
+					"web_handler":    1,
+					"rules":          4,
+				},
+			},
+		}),
+	})
+
+	return examples
+}
+
 // statusRuntimeInfoResponseExamples returns examples for /status/runtimeinfo response.
 func statusRuntimeInfoResponseExamples() *orderedmap.Map[string, *base.Example] {
 	examples := orderedmap.New[string, *base.Example]()

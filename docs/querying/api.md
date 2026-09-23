@@ -1314,6 +1314,45 @@ curl http://localhost:9090/api/v1/status/flags
 
 *New in v2.2*
 
+### Reload
+
+The following endpoint returns the most recent transactional configuration
+reload outcome. It is available whether or not
+`--enable-feature=transactional-reload-config` is set. Before the first reload
+attempt the fields below are empty defaults and no status file has been written.
+
+```
+GET /api/v1/status/reload
+```
+
+```bash
+curl http://localhost:9090/api/v1/status/reload
+```
+
+```json
+{
+  "status": "success",
+  "data": {
+    "last_reload_id": "",
+    "last_reload_successful": false,
+    "error_category": "none",
+    "error_message": "",
+    "applied_reloaders": [],
+    "rollback_attempted": false,
+    "rollback_successful": false,
+    "failed_reloader": "",
+    "reloader_timings_ms": {}
+  }
+}
+```
+
+`last_reload_id` is an RFC3339 timestamp of the most recent attempt.
+`error_category` is one of `none`, `load_error`, `apply_error`, or
+`rollback_error`. When transactional reload is enabled, the same object is
+persisted as `reload_status.json` under the TSDB storage directory so it can
+be diagnosed after a restart. A missing or corrupt file does not prevent
+startup or this endpoint from responding.
+
 ### Runtime Information
 
 The following endpoint returns various runtime information properties about the Prometheus server:
@@ -1779,7 +1818,8 @@ curl http://localhost:9090/api/v1/features
     },
     "prometheus": {
       "agent_mode": false,
-      "auto_reload_config": false
+      "auto_reload_config": false,
+      "transactional_reload_config": false
     },
     "promql": {
       "anchored": false,

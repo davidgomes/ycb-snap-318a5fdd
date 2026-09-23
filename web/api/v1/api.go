@@ -261,6 +261,8 @@ type API struct {
 	openAPIBuilder  *OpenAPIBuilder
 
 	parser parser.Parser
+
+	reloadStatus func() ReloadStatus
 }
 
 // NewAPI returns an initialized API type.
@@ -454,6 +456,7 @@ func (api *API) Register(r *route.Router) {
 	r.Get("/metadata", wrap(api.metricMetadata))
 
 	r.Get("/status/config", wrap(api.serveConfig))
+	r.Get("/status/reload", wrap(api.serveReloadStatus))
 	r.Get("/status/runtimeinfo", wrap(api.serveRuntimeInfo))
 	r.Get("/status/buildinfo", wrap(api.serveBuildInfo))
 	r.Get("/status/flags", wrap(api.serveFlags))
@@ -1807,6 +1810,25 @@ func (api *API) serveConfig(*http.Request) apiFuncResult {
 		YAML: api.config().String(),
 	}
 	return apiFuncResult{cfg, nil, nil, nil}
+}
+
+// SetReloadStatus installs the provider for GET /api/v1/status/reload.
+func (api *API) SetReloadStatus(fn func() ReloadStatus) {
+	api.reloadStatus = fn
+}
+
+func (api *API) serveReloadStatus(*http.Request) apiFuncResult {
+	if api.reloadStatus != nil {
+		return apiFuncResult{api.reloadStatus(), nil, nil, nil}
+	}
+	if api.dbDir != "" {
+		status, err := LoadReloadStatus(api.dbDir)
+		if err != nil && api.logger != nil {
+			api.logger.Warn("Ignoring persisted reload status", "err", err)
+		}
+		return apiFuncResult{status, nil, nil, nil}
+	}
+	return apiFuncResult{EmptyReloadStatus(), nil, nil, nil}
 }
 
 func (api *API) serveFlags(*http.Request) apiFuncResult {

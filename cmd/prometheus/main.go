@@ -202,8 +202,9 @@ type flagConfig struct {
 	RemoteFlushDeadline         model.Duration
 	maxNotificationsSubscribers int
 
-	enableAutoReload   bool
-	autoReloadInterval model.Duration
+	enableAutoReload          bool
+	autoReloadInterval        model.Duration
+	enableTransactionalReload bool
 
 	maxprocsEnable bool
 	memlimitEnable bool
@@ -255,6 +256,9 @@ func (c *flagConfig) setFeatureListOptions(logger *slog.Logger) error {
 					c.autoReloadInterval, _ = model.ParseDuration("1s")
 				}
 				logger.Info("Enabled automatic configuration file reloading. Checking for configuration changes every", "interval", c.autoReloadInterval)
+			case "transactional-reload-config":
+				c.enableTransactionalReload = true
+				logger.Info("Experimental transactional configuration reload enabled")
 			case "concurrent-rule-eval":
 				c.enableConcurrentRuleEval = true
 				logger.Info("Experimental concurrent rule evaluation enabled.")
@@ -601,7 +605,7 @@ func main() {
 	a.Flag("scrape.discovery-reload-interval", "Interval used by scrape manager to throttle target groups updates.").
 		Hidden().Default("5s").SetValue(&cfg.scrape.DiscoveryReloadInterval)
 
-	a.Flag("enable-feature", "Comma separated feature names to enable. Valid options: exemplar-storage, expand-external-labels, memory-snapshot-on-shutdown, promql-per-step-stats, promql-experimental-functions, extra-scrape-metrics, auto-gomaxprocs, created-timestamp-zero-ingestion, concurrent-rule-eval, delayed-compaction, old-ui, otlp-deltatocumulative, promql-duration-expr, use-uncached-io, promql-extended-range-selectors, promql-binop-fill-modifiers. See https://prometheus.io/docs/prometheus/latest/feature_flags/ for more details.").
+	a.Flag("enable-feature", "Comma separated feature names to enable. Valid options: exemplar-storage, expand-external-labels, memory-snapshot-on-shutdown, promql-per-step-stats, promql-experimental-functions, extra-scrape-metrics, auto-gomaxprocs, created-timestamp-zero-ingestion, concurrent-rule-eval, delayed-compaction, old-ui, otlp-deltatocumulative, promql-duration-expr, use-uncached-io, promql-extended-range-selectors, promql-binop-fill-modifiers, transactional-reload-config. See https://prometheus.io/docs/prometheus/latest/feature_flags/ for more details.").
 		Default("").StringsVar(&cfg.featureList)
 
 	a.Flag("agent", "Run Prometheus in 'Agent mode'.").BoolVar(&agentMode)
@@ -863,6 +867,7 @@ func main() {
 	features.Set(features.Prometheus, "agent_mode", agentMode)
 	features.Set(features.Prometheus, "server_mode", !agentMode)
 	features.Set(features.Prometheus, "auto_reload_config", cfg.enableAutoReload)
+	features.Set(features.Prometheus, "transactional_reload_config", cfg.enableTransactionalReload)
 	features.Enable(features.Prometheus, labels.ImplementationName)
 	template.RegisterFeatures(features.DefaultRegistry)
 
@@ -1017,6 +1022,14 @@ func main() {
 
 		cfg.web.Flags[f.Name] = f.Value.String()
 	}
+
+	reloadCoord := newReloadCoordinator(cfg.enableTransactionalReload, localStoragePath, logger)
+	if err := reloadCoord.loadPersisted(); err != nil {
+		logger.Warn("Ignoring persisted reload status", "err", err)
+	} else if st := reloadCoord.Status(); st.LastReloadID != "" {
+		logger.Info("Loaded persisted reload status", "last_reload_id", st.LastReloadID, "successful", st.LastReloadSuccessful, "error_category", st.ErrorCategory)
+	}
+	cfg.web.ReloadStatus = reloadCoord.Status
 
 	// Depends on cfg.web.ScrapeManager so needs to be after cfg.web.ScrapeManager = scrapeManager.
 	webHandler := web.New(logger.With("component", "web"), &cfg.web)
@@ -1297,7 +1310,7 @@ func main() {
 				for {
 					select {
 					case <-hup:
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloadCoord, true, reloaders...); err != nil {
 							logger.Error("Error reloading config", "err", err)
 						} else if cfg.enableAutoReload {
 							checksum, err = config.GenerateChecksum(cfg.configFile)
@@ -1306,7 +1319,7 @@ func main() {
 							}
 						}
 					case rc := <-webHandler.Reload():
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloadCoord, true, reloaders...); err != nil {
 							logger.Error("Error reloading config", "err", err)
 							rc <- err
 						} else {
@@ -1331,7 +1344,7 @@ func main() {
 						}
 						logger.Info("Configuration file change detected, reloading the configuration.")
 
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloadCoord, true, reloaders...); err != nil {
 							logger.Error("Error reloading config", "err", err)
 						} else {
 							checksum = currentChecksum
@@ -1363,7 +1376,7 @@ func main() {
 					return nil
 				}
 
-				if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, func(bool) {}, reloaders...); err != nil {
+				if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, func(bool) {}, reloadCoord, false, reloaders...); err != nil {
 					return fmt.Errorf("error loading config from %q: %w", cfg.configFile, err)
 				}
 
@@ -1605,7 +1618,7 @@ type reloader struct {
 	reloader func(*config.Config) error
 }
 
-func reloadConfig(filename string, enableExemplarStorage bool, logger *slog.Logger, noStepSubqueryInterval *safePromQLNoStepSubqueryInterval, callback func(bool), rls ...reloader) (err error) {
+func reloadConfig(filename string, enableExemplarStorage bool, logger *slog.Logger, noStepSubqueryInterval *safePromQLNoStepSubqueryInterval, callback func(bool), coord *reloadCoordinator, recordOutcome bool, rls ...reloader) (err error) {
 	start := time.Now()
 	timingsLogger := logger
 	logger.Info("Loading configuration file", "filename", filename)
@@ -1623,7 +1636,12 @@ func reloadConfig(filename string, enableExemplarStorage bool, logger *slog.Logg
 
 	conf, err := config.LoadFile(filename, agentMode, logger)
 	if err != nil {
-		return fmt.Errorf("couldn't load configuration (--config.file=%q): %w", filename, err)
+		err = fmt.Errorf("couldn't load configuration (--config.file=%q): %w", filename, err)
+		// A load or parse failure does not change component state, so do not roll back.
+		if recordOutcome && coord != nil && coord.transactional {
+			coord.recordLoadFailure(err)
+		}
+		return err
 	}
 
 	if enableExemplarStorage {
@@ -1632,17 +1650,29 @@ func reloadConfig(filename string, enableExemplarStorage bool, logger *slog.Logg
 		}
 	}
 
-	failed := false
-	for _, rl := range rls {
-		rstart := time.Now()
-		if err := rl.reloader(conf); err != nil {
-			logger.Error("Failed to apply configuration", "err", err)
-			failed = true
+	if recordOutcome && coord != nil && coord.transactional {
+		var applyErr error
+		timingsLogger, applyErr = coord.apply(conf, rls, timingsLogger)
+		if applyErr != nil {
+			return fmt.Errorf("%w (--config.file=%q)", applyErr, filename)
 		}
-		timingsLogger = timingsLogger.With(rl.name, time.Since(rstart))
-	}
-	if failed {
-		return fmt.Errorf("one or more errors occurred while applying the new configuration (--config.file=%q)", filename)
+	} else {
+		failed := false
+		for _, rl := range rls {
+			rstart := time.Now()
+			if err := rl.reloader(conf); err != nil {
+				logger.Error("Failed to apply configuration", "err", err)
+				failed = true
+			}
+			timingsLogger = timingsLogger.With(rl.name, time.Since(rstart))
+		}
+		if failed {
+			return fmt.Errorf("one or more errors occurred while applying the new configuration (--config.file=%q)", filename)
+		}
+		// The initial successful load is the rollback target for later reload attempts.
+		if coord != nil && coord.transactional {
+			coord.rememberGood(conf)
+		}
 	}
 
 	updateGoGC(conf, logger)

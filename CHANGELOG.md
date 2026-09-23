@@ -25,6 +25,7 @@ User migrating from bind mounts might need to ajust permissions too, depending o
 - [FEATURE] AWS SD: Add MSK Role. #17600
 - [FEATURE] PromQL: Add `fill()` / `fill_left()` / `fill_right()` binop modifiers for specifying default values for missing series. #17644
 - [FEATURE] Web: Add OpenAPI 3.2 specification for the HTTP API at `/api/v1/openapi.yaml`. #17825
+- [FEATURE] Config: Add experimental `--enable-feature=transactional-reload-config` to reload components in sequence, roll back to the last known-good configuration when a later component fails, and expose the outcome at `GET /api/v1/status/reload` (persisted under the TSDB storage directory).
 - [FEATURE] Dockerfile: Add distroless image variant using UID/GID 65532 and no VOLUME declaration. Busybox image remains default. #17876
 - [FEATURE] Web: Add on-demand wall time profiling under `<URL>/debug/pprof/fgprof`. #18027
 - [ENHANCEMENT] PromQL: Add more detail to histogram quantile monotonicity info annotations. #15578
