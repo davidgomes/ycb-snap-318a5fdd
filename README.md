@@ -136,6 +136,31 @@ await ofetch("http://google.com/404", {
 });
 ```
 
+## ✔️ Circuit Breaker
+
+Use the `circuitBreaker` option to stop sending requests to an origin (e.g. `https://api.example.com`) after consecutive failures. It is disabled by default.
+
+Once `threshold` consecutive requests to an origin fail, the circuit opens and further requests to that origin reject immediately with a `Circuit breaker is open` error, without calling `fetch`. After `cooldown` milliseconds, up to `halfOpenMaxRequests` probe requests are let through: a successful probe closes the circuit, a failed one opens it again for another `cooldown`.
+
+A request counts as failed when it rejects due to a network error, a response parsing error or an exception thrown by an interceptor, or when the response status is included in `failureStatusCodes` (even with `ignoreResponseError`). Rejections for other statuses (like `404`) neither count as failures nor reset the count. Retries of the same call count as a single request.
+
+```ts
+await ofetch("/api", {
+  circuitBreaker: true, // threshold: 5, cooldown: 30000, halfOpenMaxRequests: 1
+});
+
+await ofetch("/api", {
+  circuitBreaker: {
+    threshold: 3, // consecutive failures before opening
+    cooldown: 10_000, // ms before allowing probe requests
+    halfOpenMaxRequests: 1, // concurrent probe requests
+    failureStatusCodes: [500, 502, 503, 504], // defaults to the retry status codes listed above
+  },
+});
+```
+
+Circuit state is kept per `ofetch` instance and shared with instances created from it using `ofetch.create()`.
+
 ## ✔️ Type Friendly
 
 The response can be type assisted:
