@@ -133,12 +133,14 @@ func (s *Script) Compile() (*Compiled, error) {
 			return nil, fmt.Errorf("exceeding constant objects limit: %d", cnt)
 		}
 	}
-	return &Compiled{
+	compiled := &Compiled{
 		globalIndexes: globalIndexes,
 		bytecode:      bytecode,
 		globals:       globals,
 		maxAllocs:     s.maxAllocs,
-	}, nil
+	}
+	compiled.runtime = newFnRuntime(bytecode.Constants, globals, bytecode.FileSet, s.maxAllocs)
+	return compiled, nil
 }
 
 // Run compiles and runs the scripts. Use returned compiled object to access
@@ -200,6 +202,7 @@ type Compiled struct {
 	globals       []Object
 	maxAllocs     int64
 	lock          sync.RWMutex
+	runtime       *fnRuntime
 }
 
 // Run executes the compiled script in the virtual machine.
@@ -207,7 +210,7 @@ func (c *Compiled) Run() error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	v := c.newVM()
 	return v.Run()
 }
 
@@ -216,7 +219,7 @@ func (c *Compiled) RunContext(ctx context.Context) (err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	v := c.newVM()
 	ch := make(chan error, 1)
 	go func() {
 		defer func() {
@@ -265,10 +268,19 @@ func (c *Compiled) Clone() *Compiled {
 		globals:       make([]Object, len(c.globals)),
 		maxAllocs:     c.maxAllocs,
 	}
-	// copy global objects
+	constants := c.bytecode.Constants
+	fileSet := c.bytecode.FileSet
+	maxAllocs := c.maxAllocs
+	if c.runtime != nil {
+		constants = c.runtime.constants
+		fileSet = c.runtime.fileSet
+		maxAllocs = c.runtime.maxAllocs
+	}
+	clone.runtime = newFnRuntime(constants, clone.globals, fileSet, maxAllocs)
+	// copy global objects and retarget every callable at the clone
 	for idx, g := range c.globals {
 		if g != nil {
-			clone.globals[idx] = g.Copy()
+			clone.globals[idx] = rebindToRuntime(g, clone.runtime, true)
 		}
 	}
 	return clone
@@ -342,6 +354,23 @@ func (c *Compiled) Set(name string, value interface{}) error {
 	if !ok {
 		return fmt.Errorf("'%s' is not defined", name)
 	}
+	if c.runtime != nil {
+		obj = rebindToRuntime(obj, c.runtime, false)
+	}
 	c.globals[idx] = obj
 	return nil
+}
+
+// newVM returns a VM bound to this compiled instance so functions created
+// while it runs call back into these globals.
+func (c *Compiled) newVM() *VM {
+	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	if c.runtime != nil {
+		v.runtime = c.runtime
+		v.constants = c.runtime.constants
+		v.globals = c.runtime.globals
+		v.fileSet = c.runtime.fileSet
+		v.maxAllocs = c.runtime.maxAllocs
+	}
+	return v
 }

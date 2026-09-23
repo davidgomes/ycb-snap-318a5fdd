@@ -576,6 +576,10 @@ type CompiledFunction struct {
 	VarArgs       bool
 	SourceMap     map[int]parser.Pos
 	Free          []*ObjectPtr
+	// runtime is the compiled script this value executes against.
+	// The VM sets it when the function becomes a live value. Clone and Set
+	// retarget it so transferred callables use the destination globals.
+	runtime *fnRuntime
 }
 
 // TypeName returns the name of the type.
@@ -600,7 +604,9 @@ func (o *CompiledFunction) Copy() Object {
 		NumLocals:     o.NumLocals,
 		NumParameters: o.NumParameters,
 		VarArgs:       o.VarArgs,
+		SourceMap:     o.SourceMap,
 		Free:          append([]*ObjectPtr{}, o.Free...), // DO NOT Copy() of elements; these are variable pointers
+		runtime:       o.runtime,
 	}
 }
 
@@ -624,6 +630,14 @@ func (o *CompiledFunction) SourcePos(ip int) parser.Pos {
 // CanCall returns whether the Object can be Called.
 func (o *CompiledFunction) CanCall() bool {
 	return true
+}
+
+// Call executes this compiled function outside the VM. Globals, imports,
+// closure captures, variadic arguments, recursion, and runtime errors match
+// an in-script call of the same value. Closures and composite values returned
+// by the call remain callable.
+func (o *CompiledFunction) Call(args ...Object) (Object, error) {
+	return callCompiledFunction(o, args...)
 }
 
 // Error represents an error value.

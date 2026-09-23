@@ -32,6 +32,7 @@ type VM struct {
 	maxAllocs   int64
 	allocs      int64
 	err         error
+	runtime     *fnRuntime
 }
 
 // NewVM creates a VM.
@@ -51,6 +52,7 @@ func NewVM(
 		framesIndex: 1,
 		ip:          -1,
 		maxAllocs:   maxAllocs,
+		runtime:     newFnRuntime(bytecode.Constants, globals, bytecode.FileSet, maxAllocs),
 	}
 	v.frames[0].fn = bytecode.MainFunction
 	v.frames[0].ip = -1
@@ -76,22 +78,40 @@ func (v *VM) Run() (err error) {
 
 	v.run()
 	atomic.StoreInt64(&v.aborting, 0)
-	err = v.err
-	if err != nil {
-		filePos := v.fileSet.Position(
-			v.curFrame.fn.SourcePos(v.ip - 1))
-		err = fmt.Errorf("Runtime Error: %w\n\tat %s",
-			err, filePos)
-		for v.framesIndex > 1 {
-			v.framesIndex--
-			v.curFrame = &v.frames[v.framesIndex-1]
-			filePos = v.fileSet.Position(
-				v.curFrame.fn.SourcePos(v.curFrame.ip - 1))
-			err = fmt.Errorf("%w\n\tat %s", err, filePos)
-		}
-		return err
+	return v.wrapRuntimeError()
+}
+
+// wrapRuntimeError formats a VM failure the same way an in-script call does.
+func (v *VM) wrapRuntimeError() error {
+	err := v.err
+	if err == nil {
+		return nil
 	}
-	return nil
+	filePos := v.framePosition(v.curFrame, v.ip-1)
+	err = fmt.Errorf("Runtime Error: %w\n\tat %s", err, filePos)
+	for v.framesIndex > 1 {
+		v.framesIndex--
+		v.curFrame = &v.frames[v.framesIndex-1]
+		filePos = v.framePosition(v.curFrame, v.curFrame.ip-1)
+		err = fmt.Errorf("%w\n\tat %s", err, filePos)
+	}
+	return err
+}
+
+func (v *VM) framePosition(f *frame, ip int) parser.SourceFilePos {
+	if f == nil || f.fn == nil {
+		return parser.SourceFilePos{}
+	}
+	// A function compiled into another script carries that script's file set.
+	// Caller frames keep the file set of the VM that is running them.
+	fileSet := v.fileSet
+	if f.fn.runtime != nil && f.fn.runtime.fileSet != nil {
+		fileSet = f.fn.runtime.fileSet
+	}
+	if fileSet == nil {
+		return parser.SourceFilePos{}
+	}
+	return fileSet.Position(f.fn.SourcePos(ip))
 }
 
 func (v *VM) run() {
@@ -103,7 +123,7 @@ func (v *VM) run() {
 			v.ip += 2
 			cidx := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
 
-			v.stack[v.sp] = v.constants[cidx]
+			v.stack[v.sp] = v.constantObject(cidx)
 			v.sp++
 		case parser.OpNull:
 			v.stack[v.sp] = UndefinedValue
@@ -675,6 +695,13 @@ func (v *VM) run() {
 			} else {
 				retVal = UndefinedValue
 			}
+			// A Go-side call uses the callee as frame 0. Stop there instead of
+			// popping into a non-existent caller. Script main never returns.
+			if v.framesIndex == 1 {
+				v.stack[0] = retVal
+				v.sp = 1
+				return
+			}
 			//v.sp--
 			v.framesIndex--
 			v.curFrame = &v.frames[v.framesIndex-1]
@@ -748,9 +775,23 @@ func (v *VM) run() {
 			v.ip += 3
 			constIndex := int(v.curInsts[v.ip-1]) | int(v.curInsts[v.ip-2])<<8
 			numFree := int(v.curInsts[v.ip])
-			fn, ok := v.constants[constIndex].(*CompiledFunction)
-			if !ok {
-				v.err = fmt.Errorf("not function: %s", fn.TypeName())
+			rt := v.activeRuntime()
+			constants := v.constants
+			if rt != nil {
+				constants = rt.constants
+			}
+			var fn *CompiledFunction
+			var cn Object
+			if constIndex >= 0 && constIndex < len(constants) {
+				cn = constants[constIndex]
+				fn, _ = cn.(*CompiledFunction)
+			}
+			if fn == nil {
+				typeName := "undefined"
+				if cn != nil {
+					typeName = cn.TypeName()
+				}
+				v.err = fmt.Errorf("not function: %s", typeName)
 				return
 			}
 			free := make([]*ObjectPtr, numFree)
@@ -772,6 +813,7 @@ func (v *VM) run() {
 				VarArgs:       fn.VarArgs,
 				SourceMap:     fn.SourceMap,
 				Free:          free,
+				runtime:       rt,
 			}
 			v.allocs--
 			if v.allocs == 0 {
