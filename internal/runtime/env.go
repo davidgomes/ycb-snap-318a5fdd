@@ -27,6 +27,10 @@ type env struct {
 	doneChan <-chan struct{}
 	doneCase reflect.SelectCase
 
+	// proxyMethods caches, for the Scriggo types, the groups of methods
+	// implemented by their proxies.
+	proxyMethods sync.Map
+
 	// Only the callPath field can be changed after the vm has been started
 	// and access to this field must be done with this mutex.
 	mu       sync.Mutex

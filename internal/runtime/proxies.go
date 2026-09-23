@@ -43,14 +43,22 @@ func (vm *VM) wrap(t ScriggoType, v reflect.Value) reflect.Value {
 		return t.Wrap(v)
 	}
 	var methods int
-	if hasMethod(ms, "Error", stringMethodType) {
-		methods |= errorMethods
+	if m, ok := vm.env.proxyMethods.Load(t); ok {
+		methods = m.(int)
+	} else {
+		if hasMethod(ms, "Error", stringMethodType) {
+			methods |= errorMethods
+		}
+		if hasMethod(ms, "String", stringMethodType) {
+			methods |= stringerMethods
+		}
+		if hasMethod(ms, "Len", lenMethodType) && hasMethod(ms, "Less", lessMethodType) && hasMethod(ms, "Swap", swapMethodType) {
+			methods |= sortMethods
+		}
+		vm.env.proxyMethods.Store(t, methods)
 	}
-	if hasMethod(ms, "String", stringMethodType) {
-		methods |= stringerMethods
-	}
-	if hasMethod(ms, "Len", lenMethodType) && hasMethod(ms, "Less", lessMethodType) && hasMethod(ms, "Swap", swapMethodType) {
-		methods |= sortMethods
+	if methods == 0 {
+		return t.Wrap(v)
 	}
 	p := methodProxy{value: v, sign: t, env: vm.env}
 	switch methods {
