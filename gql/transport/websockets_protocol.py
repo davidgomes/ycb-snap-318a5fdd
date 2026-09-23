@@ -19,6 +19,22 @@ from .exceptions import (
 log = logging.getLogger("gql.transport.websockets")
 
 
+class ExecutionResultWithIncrementalPayload(ExecutionResult):
+    """ExecutionResult that also keeps the original transport payload."""
+
+    __slots__ = ("incremental_payload",)
+
+    def __init__(
+        self,
+        data: Optional[Any] = None,
+        errors: Optional[Any] = None,
+        extensions: Optional[Any] = None,
+        incremental_payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(data=data, errors=errors, extensions=extensions)
+        self.incremental_payload = incremental_payload
+
+
 class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
     """:ref:`Async Transport <async_transports>` used to execute GraphQL queries on
     remote servers with websocket connection.
@@ -297,15 +313,21 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
                         if not isinstance(payload, dict):
                             raise ValueError("payload is not a dict")
 
-                        if "errors" not in payload and "data" not in payload:
+                        if (
+                            "errors" not in payload
+                            and "data" not in payload
+                            and "incremental" not in payload
+                            and "hasNext" not in payload
+                        ):
                             raise ValueError(
                                 "payload does not contain 'data' or 'errors' fields"
                             )
 
-                        execution_result = ExecutionResult(
+                        execution_result = ExecutionResultWithIncrementalPayload(
                             errors=payload.get("errors"),
                             data=payload.get("data"),
                             extensions=payload.get("extensions"),
+                            incremental_payload=payload,
                         )
 
                         # Saving answer_type as 'data' to be understood with superclass
@@ -368,15 +390,21 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
 
                     if answer_type == "data":
 
-                        if "errors" not in payload and "data" not in payload:
+                        if (
+                            "errors" not in payload
+                            and "data" not in payload
+                            and "incremental" not in payload
+                            and "hasNext" not in payload
+                        ):
                             raise ValueError(
                                 "payload does not contain 'data' or 'errors' fields"
                             )
 
-                        execution_result = ExecutionResult(
+                        execution_result = ExecutionResultWithIncrementalPayload(
                             errors=payload.get("errors"),
                             data=payload.get("data"),
                             extensions=payload.get("extensions"),
+                            incremental_payload=payload,
                         )
 
                     elif answer_type == "error":

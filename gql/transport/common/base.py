@@ -355,6 +355,36 @@ class SubscriptionTransportBase(AsyncTransport):
 
         return first_result
 
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute a query and yield each websocket payload for incremental delivery.
+
+        ``next``/``data`` messages are forwarded as the original payload dict,
+        including ``incremental`` and ``hasNext``. Generation stops when a
+        payload has ``hasNext`` false or omitted, or when the server completes.
+        """
+        generator = self.subscribe(
+            request,
+            send_stop=False,
+        )
+
+        try:
+            async for result in generator:
+                payload = getattr(result, "incremental_payload", None)
+                if not isinstance(payload, dict):
+                    payload = {
+                        "data": result.data,
+                        "errors": result.errors,
+                        "extensions": result.extensions,
+                    }
+                yield payload
+                if not payload.get("hasNext", False):
+                    break
+        finally:
+            await generator.aclose()
+
     async def connect(self) -> None:
         """Coroutine which will:
 

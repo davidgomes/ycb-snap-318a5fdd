@@ -330,6 +330,120 @@ class AIOHTTPTransport(AsyncTransport):
             extensions=result.get("extensions"),
         )
 
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        extra_args: Optional[Dict[str, Any]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute a query that may use ``@defer`` or ``@stream``.
+
+        Requests incremental delivery (``deferSpec=20220824``). A single JSON
+        response is yielded once. A ``multipart/mixed`` response yields one
+        payload dict per part.
+
+        :param request: GraphQL request to execute
+        :param extra_args: additional arguments to send to the aiohttp post method
+        :yields: raw payload dicts (not accumulated)
+        """
+        if self.session is None:
+            raise TransportClosed("Transport is not connected")
+
+        post_args = self._prepare_request(request, extra_args)
+        headers = dict(post_args.get("headers") or {})
+        headers["Accept"] = (
+            "multipart/mixed;boundary=graphql;deferSpec=20220824,application/json"
+        )
+        post_args["headers"] = headers
+
+        try:
+            async with self.session.post(self.url, ssl=self.ssl, **post_args) as resp:
+                self.response_headers = resp.headers
+                if resp.status >= 400:
+                    self._raise_transport_server_error_if_status_more_than_400(resp)
+
+                content_type = resp.headers.get("Content-Type", "")
+                if (
+                    "application/json" in content_type
+                    and "multipart/mixed" not in content_type
+                ):
+                    result = await self._get_json_result(resp)
+                    if isinstance(result, dict):
+                        yield result
+                    return
+
+                if "multipart/mixed" not in content_type or (
+                    "boundary=graphql" not in content_type
+                    and 'boundary="graphql"' not in content_type
+                ):
+                    raise TransportProtocolError(
+                        f"Unexpected content-type: {content_type}. "
+                        "Server may not support the incremental delivery protocol."
+                    )
+
+                async for payload in self._parse_incremental_multipart(resp):
+                    yield payload
+        except TransportError:
+            raise
+        except Exception as e:
+            raise TransportConnectionFailed(str(e)) from e
+
+    async def _parse_incremental_multipart(
+        self,
+        response: aiohttp.ClientResponse,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Yield each JSON part of a defer/stream multipart response."""
+        reader = MultipartReader.from_response(response)
+
+        while True:
+            try:
+                part = await reader.next()
+            except Exception:
+                if reader.at_eof():
+                    break
+                raise  # pragma: no cover
+
+            if part is None:
+                break
+
+            assert not isinstance(
+                part, MultipartReader
+            ), "Nested multipart parts are not supported in incremental responses"
+
+            payload = await self._parse_incremental_part(part)
+            if payload is not None:
+                yield payload
+
+    async def _parse_incremental_part(
+        self, part: BodyPartReader
+    ) -> Optional[Dict[str, Any]]:
+        content_type = part.headers.get(aiohttp.hdrs.CONTENT_TYPE, "")
+        if content_type and not content_type.startswith("application/json"):
+            raise TransportProtocolError(
+                f"Unexpected part content-type: {content_type}. "
+                "Expected 'application/json'."
+            )
+
+        try:
+            body = (await part.text()).strip()
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug("<<< %s", ascii(body or "(empty body, skipping)"))
+            if not body:
+                return None
+
+            data = self.json_deserialize(body)
+            if not isinstance(data, dict):
+                raise TransportProtocolError(
+                    "Incremental response part is not a JSON object"
+                )
+            return data
+        except TransportError:
+            raise
+        except json.JSONDecodeError as e:
+            raise TransportProtocolError(
+                f"Invalid JSON in incremental part: {e}"
+            ) from e
+
     async def _prepare_batch_result(
         self,
         reqs: List[GraphQLRequest],

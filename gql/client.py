@@ -39,8 +39,13 @@ from tenacity import (
 )
 
 from .graphql_request import GraphQLRequest, support_deprecated_request
+from .incremental import IncrementalResult, IncrementalResultAccumulator
 from .transport.async_transport import AsyncTransport
-from .transport.exceptions import TransportConnectionFailed, TransportQueryError
+from .transport.exceptions import (
+    TransportConnectionFailed,
+    TransportError,
+    TransportQueryError,
+)
 from .transport.local_schema import LocalSchemaTransport
 from .transport.transport import Transport
 from .utilities import build_client_schema, get_introspection_query_ast
@@ -1594,6 +1599,35 @@ class AsyncClientSession:
             return result
 
         return result.data
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalResult, None]:
+        """Execute a query using incremental delivery (``@defer`` / ``@stream``).
+
+        Yields one :class:`~gql.incremental.IncrementalResult` per payload.
+        ``data`` is accumulated across payloads. ``extensions`` is the value
+        from that payload only. GraphQL errors are reported on the result and
+        do not stop later payloads.
+
+        :param request: GraphQL query as :class:`GraphQLRequest <gql.GraphQLRequest>`.
+        """
+        request = support_deprecated_request(request, kwargs)
+
+        if self.client.schema:
+            self.client.validate(request)
+
+        execute_incremental = getattr(self.transport, "execute_incremental", None)
+        if execute_incremental is None:
+            raise TransportError(
+                "The current transport does not support incremental delivery"
+            )
+
+        accumulator = IncrementalResultAccumulator()
+        async for payload in execute_incremental(request, **kwargs):
+            yield accumulator.apply(payload)
 
     async def _execute_batch(
         self,

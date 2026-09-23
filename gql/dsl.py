@@ -461,6 +461,7 @@ class DSLDirectable(ABC):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._directives = ()
+        self._extra_directives: Tuple[DirectiveNode, ...] = ()
 
     @abstractmethod
     def is_valid_directive(self, directive: DSLDirective) -> bool:
@@ -534,10 +535,16 @@ class DSLDirectable(ABC):
 
         return self
 
+    def _append_extra_directive(self, directive: DirectiveNode) -> None:
+        """Append a directive node built outside of :class:`DSLDirective`."""
+        self._extra_directives = self._extra_directives + (directive,)
+
     @property
     def directives_ast(self) -> Tuple[DirectiveNode, ...]:
         """Get AST directive nodes for this element."""
-        return tuple(directive.ast_directive for directive in self._directives)
+        return tuple(directive.ast_directive for directive in self._directives) + tuple(
+            self._extra_directives
+        )
 
 
 class DSLSelectable(DSLDirectable):
@@ -1186,6 +1193,29 @@ class DSLField(DSLSelectableWithAlias, DSLFieldSelector):
 
         return self
 
+    def stream(
+        self,
+        label: Optional[str] = None,
+        initial_count: Optional[int] = None,
+    ) -> Self:
+        """Add a ``@stream`` directive to this list field.
+
+        :param label: optional label argument
+        :param initial_count: optional ``initialCount`` argument
+        :raises graphql.error.GraphQLError: if the field is not a list
+        """
+        field_type = self.field.type
+        if is_non_null_type(field_type):
+            field_type = field_type.of_type
+        if not is_list_type(field_type):
+            raise GraphQLError(
+                f"@stream can only be used on list fields, not on '{self.name}'."
+            )
+
+        self._append_extra_directive(_stream_directive(label, initial_count))
+        self.ast_field.directives = self.directives_ast
+        return self
+
     def is_valid_directive(self, directive: DSLDirective) -> bool:
         """Check if directive is valid for Field locations."""
         return DirectiveLocation.FIELD in directive.directive_def.locations
@@ -1341,6 +1371,15 @@ class DSLFragmentSpread(DSLSelectable):
         self.ast_field.directives = self.directives_ast
         return self
 
+    def defer(self, label: Optional[str] = None) -> Self:
+        """Add a ``@defer`` directive to this fragment spread.
+
+        :param label: optional label argument
+        """
+        self._append_extra_directive(_defer_directive(label))
+        self.ast_field.directives = self.directives_ast
+        return self
+
     def is_valid_directive(self, directive: DSLDirective) -> bool:
         """Check if directive is valid for Fragment Spread locations."""
         return DirectiveLocation.FRAGMENT_SPREAD in directive.directive_def.locations
@@ -1383,6 +1422,19 @@ class DSLFragment(DSLSelectable, DSLFragmentSelector, DSLExecutable):
         """:meta private:"""
         if hasattr(self, "ast_field"):
             self.ast_field.name.value = value
+
+    def defer(self, label: Optional[str] = None) -> Self:
+        """Add a ``@defer`` directive to the fragment spread used in selections.
+
+        The directive is attached to the spread, not the fragment definition.
+        :meth:`spread` returns a separate spread; call :meth:`DSLFragmentSpread.defer`
+        on that instance to defer only that usage.
+
+        :param label: optional label argument
+        """
+        current = tuple(self.ast_field.directives or ())
+        self.ast_field.directives = current + (_defer_directive(label),)
+        return self
 
     def spread(self) -> DSLFragmentSpread:
         """Create a fragment spread that can have its own directives.
@@ -1465,6 +1517,40 @@ class DSLFragment(DSLSelectable, DSLFragmentSelector, DSLExecutable):
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} {self.name!s}>"
+
+
+def _defer_directive(label: Optional[str] = None) -> DirectiveNode:
+    arguments = []
+    if label is not None:
+        arguments.append(
+            ArgumentNode(
+                name=NameNode(value="label"),
+                value=StringValueNode(value=label),
+            )
+        )
+    return DirectiveNode(name=NameNode(value="defer"), arguments=tuple(arguments))
+
+
+def _stream_directive(
+    label: Optional[str] = None,
+    initial_count: Optional[int] = None,
+) -> DirectiveNode:
+    arguments = []
+    if label is not None:
+        arguments.append(
+            ArgumentNode(
+                name=NameNode(value="label"),
+                value=StringValueNode(value=label),
+            )
+        )
+    if initial_count is not None:
+        arguments.append(
+            ArgumentNode(
+                name=NameNode(value="initialCount"),
+                value=IntValueNode(value=str(initial_count)),
+            )
+        )
+    return DirectiveNode(name=NameNode(value="stream"), arguments=tuple(arguments))
 
 
 def dsl_gql(
