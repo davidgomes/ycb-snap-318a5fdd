@@ -70,6 +70,7 @@ Chrome, Chrome Canary, Chromium, Firefox, IE, Opera, PhantomJS, Safari, Safari T
 ### Config-level options:
 
     custom_browser_socket_events    [Object]  an object containing keys corresponding to event names that point to handler functions, which are to be added to the browser socket
+    bail_on_test_failure:        [Boolean|Number] bail after the first non-skipped non-todo failure when true, or after N such failures when a positive integer (false)
     browser_disconnect_timeout   [Number]  timeout to error after disconnect in seconds (10s)
     browser_reconnect_limit      [Number]  number of browser reconnects to allow (3)
     browser_start_timeout        [Number]  timeout to error after browser start in seconds (30s)

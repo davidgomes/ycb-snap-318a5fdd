@@ -7,7 +7,7 @@
 
  */
 
-/* globals emit, jasmine */
+/* globals emit, jasmine, Testem */
 /* exported jasmine2Adapter */
 'use strict';
 
@@ -21,20 +21,58 @@ function jasmine2Adapter() {
     tests: []
   };
 
+  var abortSignaled = false;
+
+  function testemAborted() {
+    return typeof Testem !== 'undefined' && Testem.aborted;
+  }
+
+  function signalAbortOnce() {
+    if (abortSignaled) {
+      return;
+    }
+    abortSignaled = true;
+    emit('all-test-results');
+  }
+
+  function emitUnlessAborted(eventName, payload) {
+    if (typeof Testem !== 'undefined' && Testem.aborted) {
+      signalAbortOnce();
+      return;
+    }
+    if (arguments.length > 1) {
+      emit(eventName, payload);
+    } else {
+      emit(eventName);
+    }
+  }
+
   function Jasmine2AdapterReporter() {
 
     this.jasmineStarted = function() {
-      emit('tests-start');
+      if (testemAborted()) {
+        signalAbortOnce();
+        return;
+      }
+      emitUnlessAborted('tests-start');
     };
 
     this.specStarted = function(spec) {
+      if (testemAborted()) {
+        signalAbortOnce();
+        return;
+      }
       var currentTest = {
         name: spec.fullName
       };
-      emit('tests-start', currentTest);
+      emitUnlessAborted('tests-start', currentTest);
     };
 
     this.specDone = function(spec) {
+      if (testemAborted()) {
+        signalAbortOnce();
+        return;
+      }
 
       var test = {
         passed: 0,
@@ -73,11 +111,15 @@ function jasmine2Adapter() {
 
       results.total++;
 
-      emit('test-result', test);
+      emitUnlessAborted('test-result', test);
     };
 
     this.jasmineDone = function() {
-      emit('all-test-results');
+      if (testemAborted()) {
+        signalAbortOnce();
+        return;
+      }
+      emitUnlessAborted('all-test-results');
     };
 
   }

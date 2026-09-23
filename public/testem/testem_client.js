@@ -121,6 +121,7 @@ if (typeof TestemConfig === 'undefined') {
 }
 
 var Testem = {
+  aborted: false,
   emitMessageQueue: [],
   afterTestsQueue: [],
   console: {},
@@ -141,7 +142,20 @@ var Testem = {
     var match = window.location.pathname.match(/^\/(-?[0-9]+)/);
     return match ? match[1] : null;
   },
+  handleAbortTests: function() {
+    if (this.aborted) {
+      return;
+    }
+    this.aborted = true;
+    this._bailEmitting = true;
+    this.emit('abort-tests');
+    this.emit('after-tests-complete');
+    this._bailEmitting = false;
+  },
   emitMessage: function() {
+    if (this.aborted && !this._bailEmitting) {
+      return;
+    }
     if (this._noConnectionRequired) {
       return;
     }
@@ -263,6 +277,9 @@ var Testem = {
           break;
         case 'stop-run':
           self.emit('after-tests-complete');
+          break;
+        case 'abort-tests':
+          self.handleAbortTests();
           break;
         default:
           if (type && type.indexOf('testem:') === 0) {

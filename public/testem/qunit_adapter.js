@@ -14,7 +14,7 @@ Testem's QUnit adapter. Works by using QUnit's hooks:
 
 */
 
-/* globals QUnit, emit */
+/* globals QUnit, emit, Testem */
 /* exported qunitAdapter */
 'use strict';
 
@@ -30,6 +30,48 @@ function qunitAdapter() {
   };
   var currentTest;
   var id = 1;
+  var abortSignaled = false;
+
+  function testemAborted() {
+    return typeof Testem !== 'undefined' && Testem.aborted;
+  }
+
+  function clearQUnitQueue() {
+    if (typeof QUnit !== 'undefined' && QUnit.config && QUnit.config.queue) {
+      QUnit.config.queue.length = 0;
+    }
+  }
+
+  function signalAbortOnce() {
+    if (abortSignaled) {
+      return;
+    }
+    abortSignaled = true;
+    clearQUnitQueue();
+    emit('all-test-results');
+  }
+
+  function emitUnlessAborted(eventName, payload) {
+    if (typeof Testem !== 'undefined' && Testem.aborted) {
+      clearQUnitQueue();
+      signalAbortOnce();
+      return;
+    }
+    if (arguments.length > 1) {
+      emit(eventName, payload);
+    } else {
+      emit(eventName);
+    }
+  }
+
+  if (typeof Testem !== 'undefined' && Testem.on) {
+    Testem.on('abort-tests', function() {
+      if (typeof Testem !== 'undefined' && Testem.aborted) {
+        clearQUnitQueue();
+        signalAbortOnce();
+      }
+    });
+  }
 
   function lineNumber(e) {
     return e.line || e.lineNumber;
@@ -52,6 +94,11 @@ function qunitAdapter() {
   }
 
   QUnit.log(function(params, e) {
+    if (testemAborted()) {
+      clearQUnitQueue();
+      signalAbortOnce();
+      return;
+    }
     if (e) {
       currentTest.items.push({
         passed: params.result,
@@ -81,14 +128,24 @@ function qunitAdapter() {
 
   });
   QUnit.testStart(function(params) {
+    if (testemAborted()) {
+      clearQUnitQueue();
+      signalAbortOnce();
+      return;
+    }
     currentTest = {
       id: id++,
       name: (params.module ? params.module + ': ' : '') + params.name,
       items: []
     };
-    emit('tests-start', currentTest);
+    emitUnlessAborted('tests-start', currentTest);
   });
   QUnit.testDone(function(params) {
+    if (testemAborted()) {
+      clearQUnitQueue();
+      signalAbortOnce();
+      return;
+    }
     currentTest.failed = params.failed;
     currentTest.passed = params.passed;
     currentTest.skipped = params.skipped;
@@ -109,11 +166,16 @@ function qunitAdapter() {
 
     results.tests.push(currentTest);
 
-    emit('test-result', currentTest);
+    emitUnlessAborted('test-result', currentTest);
   });
   QUnit.done(function(params) {
+    if (testemAborted()) {
+      clearQUnitQueue();
+      signalAbortOnce();
+      return;
+    }
     results.runDuration = params.runtime;
-    emit('all-test-results');
+    emitUnlessAborted('all-test-results');
   });
 
 }
