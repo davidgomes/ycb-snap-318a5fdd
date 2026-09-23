@@ -1099,7 +1099,10 @@ function parseSwitchStatement(
         },
       ) as ESTree.Statement;
 
-      if (statement.type === 'VariableDeclaration' && (statement.kind === 'using' || statement.kind === 'await using')) {
+      if (
+        statement.type === 'VariableDeclaration' &&
+        (statement.kind === 'using' || statement.kind === 'await using')
+      ) {
         throw new ParseError(
           statementStart,
           { index: parser.startIndex, line: parser.startLine, column: parser.startColumn },
@@ -1732,6 +1735,8 @@ function isUsingDeclarationStart(parser: Parser, context: Context, inForHead: 0 
 
   if (!parser.options.next || (token !== Token.UsingKeyword && token !== Token.AwaitKeyword)) return false;
 
+  // Tokens are scanned with the same context the expression parser would use after these
+  // identifiers, so looking ahead never throws a lexer error the regular parse wouldn't
   return parser.lookAhead(() => {
     if (token === Token.AwaitKeyword) {
       nextToken(parser, context | Context.AllowRegExp);
