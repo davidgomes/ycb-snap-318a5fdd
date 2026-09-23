@@ -12,6 +12,11 @@ import pandas as pd
 try:
     from igel.configs import configs
     from igel.data import evaluate_model, metrics_dict, models_dict
+    from igel.feature_schema import (
+        FeatureSchemaError,
+        apply_feature_schema,
+        build_feature_schema,
+    )
     from igel.hyperparams import hyperparameter_search
     from igel.preprocessing import (
         encode,
@@ -46,6 +51,13 @@ except ImportError:
         read_data_to_df,
     )
     from hyperparams import hyperparameter_search
+    from feature_schema import (
+        FeatureSchemaError,
+        apply_feature_schema,
+        build_feature_schema,
+    )
+
+from pathlib import Path
 
 from sklearn.model_selection import cross_validate, train_test_split
 from sklearn.multioutput import MultiOutputClassifier, MultiOutputRegressor
@@ -75,6 +87,9 @@ class Igel:
     description_file = configs.get(
         "description_file"
     )  # path to the description.json file
+    feature_schema_file = configs.get(
+        "feature_schema_file"
+    )  # path to the persisted raw feature schema
     evaluation_file = configs.get(
         "evaluation_file"
     )  # path to the evaluation.json file
@@ -89,6 +104,7 @@ class Igel:
     )  # model props that can be changed from the yaml file
     model = None
     predictions = None  # store predictions as pandas df
+    feature_schema = None  # raw feature schema selected at fit time
 
     def __init__(self, **cli_args):
         logger.info(f"Entered CLI args: {cli_args}")
@@ -157,7 +173,16 @@ class Igel:
                 "model_path", self.default_model_path
             )
             logger.info(f"path of the pre-fitted model => {self.model_path}")
-        
+            sibling_description = (
+                Path(self.model_path).parent / Path(self.description_file).name
+            )
+            self.description_file = cli_args.get(
+                "description_file",
+                sibling_description
+                if sibling_description.exists()
+                else self.description_file,
+            )
+
         # if entered command is evaluate or predict, then the pre-fitted model needs to be loaded and used
         else:
             self.model_path = cli_args.get(
@@ -186,7 +211,26 @@ class Igel:
                 self.dataset_props: dict = dic.get(
                     "dataset_props"
                 )  # dataset props entered while fitting
+                self.feature_schema = self._load_feature_schema(
+                    dic.get("feature_schema_path")
+                )
         getattr(self, self.command)()
+
+    def _load_feature_schema(self, recorded_path):
+        """
+        load the feature schema persisted at fit time, preferring the copy next to description.json
+        @return: schema dict or None if the model was fitted without dataset.features
+        """
+        if not recorded_path:
+            return None
+        sibling = Path(self.description_file).parent / Path(recorded_path).name
+        path = sibling if sibling.exists() else Path(recorded_path)
+        if not path.exists():
+            raise FeatureSchemaError(
+                f"feature schema file not found: {recorded_path}"
+            )
+        logger.info(f"loading feature schema from {path}")
+        return joblib.load(path)
 
     def _create_model(self, **kwargs):
         """
@@ -316,6 +360,7 @@ class Igel:
                 data_path=self.data_path, **read_data_options
             )
             logger.info(f"dataset shape: {dataset.shape}")
+            dataset = self._select_features(dataset, target)
             attributes = list(dataset.columns)
             logger.info(f"dataset attributes: {attributes}")
 
@@ -408,8 +453,37 @@ class Igel:
 
             return x_train, y_train, x_test, y_test
 
+        except FeatureSchemaError:
+            raise
         except Exception as e:
             logger.exception(f"error occured while preparing the data: {e}")
+
+    def _select_features(self, dataset, stage):
+        """
+        build (on fit) or enforce (otherwise) the raw feature schema on the dataset.
+        Target columns are kept after the model inputs when labels are needed.
+        """
+        targets = (
+            []
+            if self.model_type == "clustering"
+            else list(self.target or [])
+        )
+        if self.command == "fit":
+            features_config = self.dataset_props.get("features")
+            if features_config is None:
+                self.feature_schema = None
+                return dataset
+            self.feature_schema = build_feature_schema(
+                dataset, features_config, targets
+            )
+        elif self.feature_schema is None:
+            return dataset
+
+        features = apply_feature_schema(dataset, self.feature_schema)
+        if stage in ("fit", "evaluate"):
+            labels = [t for t in targets if t in dataset.columns]
+            features = pd.concat([features, dataset[labels]], axis=1)
+        return features
 
     def _prepare_clustering_data(self):
         """
@@ -577,6 +651,24 @@ class Igel:
             }
             fit_description["clustering_results"] = clustering_res
 
+        if self.feature_schema is not None:
+            joblib.dump(self.feature_schema, self.feature_schema_file)
+            logger.info(f"feature schema saved to {self.feature_schema_file}")
+            fit_description.update(
+                {
+                    "feature_schema_path": str(self.feature_schema_file),
+                    "input_features": self.feature_schema["input_features"],
+                    "dropped_features": self.feature_schema[
+                        "dropped_features"
+                    ],
+                    "duplicate_feature_aliases": self.feature_schema[
+                        "duplicate_feature_aliases"
+                    ],
+                }
+            )
+        elif os.path.exists(self.feature_schema_file):
+            os.remove(self.feature_schema_file)
+
         if cv_params:
             cv_res = {
                 "fit_time": cv_results["fit_time"].tolist(),
@@ -625,6 +717,8 @@ class Igel:
             with open(self.evaluation_file, "w", encoding="utf-8") as f:
                 json.dump(eval_results, f, ensure_ascii=False, indent=4)
 
+        except FeatureSchemaError:
+            raise
         except Exception as e:
             logger.exception(f"error occured during evaluation: {e}")
 
@@ -656,6 +750,8 @@ class Igel:
             )
             return df_pred
 
+        except FeatureSchemaError:
+            raise
         except Exception as e:
             logger.exception(f"Error while preparing predictions: {e}")
 
@@ -680,7 +776,11 @@ class Igel:
                 f"Trying to load sklearn model from directory - {self.model_path} "
             )
             model = self._load_model(f=self.model_path)
-            initial_type = [('float_input', FloatTensorType([None, 4]))]
+            n_features = self._get_input_width()
+            logger.info(f"exporting model with input width {n_features}")
+            initial_type = [
+                ("float_input", FloatTensorType([None, n_features]))
+            ]
             onx = convert_sklearn(model, initial_types=initial_type)
             
             # check if model_results folder is present and create if absent
@@ -704,6 +804,22 @@ class Igel:
             )
         except Exception as e:
             logger.exception(f"Error while exporting model: {e}")
+
+    def _get_input_width(self) -> int:
+        """
+        read the width of the model inputs from description.json
+        """
+        with open(self.description_file) as f:
+            description = json.load(f)
+        train_shape = description.get("train_data_shape")
+        if train_shape and len(train_shape) > 1:
+            return int(train_shape[1])
+        input_features = description.get("input_features")
+        if input_features:
+            return len(input_features)
+        raise Exception(
+            f"cannot derive the model input width from {self.description_file}"
+        )
 
     @staticmethod
     def create_init_mock_file(
