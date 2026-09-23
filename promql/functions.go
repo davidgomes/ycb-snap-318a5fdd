@@ -23,7 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/facette/natsort"
 	"github.com/grafana/regexp"
 	"github.com/prometheus/common/model"
 
@@ -650,12 +649,9 @@ func funcSortByLabel(vectorVals []Vector, _ Matrix, args parser.Expressions, _ *
 			if lv1 == lv2 {
 				continue
 			}
-
-			if natsort.Compare(lv1, lv2) {
-				return -1
+			if cmp := compareLabelValues(lv1, lv2); cmp != 0 {
+				return cmp
 			}
-
-			return +1
 		}
 
 		// If all labels provided as arguments were equal, sort by the full label set. This ensures a consistent ordering.
@@ -676,12 +672,9 @@ func funcSortByLabelDesc(vectorVals []Vector, _ Matrix, args parser.Expressions,
 			if lv1 == lv2 {
 				continue
 			}
-
-			if natsort.Compare(lv1, lv2) {
-				return +1
+			if cmp := compareLabelValues(lv1, lv2); cmp != 0 {
+				return -cmp
 			}
-
-			return -1
 		}
 
 		// If all labels provided as arguments were equal, sort by the full label set. This ensures a consistent ordering.

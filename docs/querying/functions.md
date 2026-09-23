@@ -816,8 +816,17 @@ label values are equal, elements are sorted by their full label sets.
 Please note that `sort_by_label` only affects the results of instant queries, as
 range query results always have a fixed output ordering.
 
-`sort_by_label` uses [natural sort
-order](https://en.wikipedia.org/wiki/Natural_sort_order).
+`sort_by_label` uses a typed total order. Values with leading whitespace are
+not parsed and sort first, in [natural sort
+order](https://en.wikipedia.org/wiki/Natural_sort_order) of the original
+strings. Remaining values sort by class: positive infinity, finite numbers
+(including a leading `+` and scientific exponents), negative infinity,
+durations, byte sizes, semantic versions (optional leading `v`), IP addresses
+(IPv4 before IPv6; IPv4-mapped IPv6 literals stay IPv6), CIDR prefixes (IPv4
+before IPv6, and a shorter prefix length first when the network address is the
+same), timestamps, then untyped strings in natural order. `NaN` literals and a
+bare exponent marker with no digits are untyped. Equal typed values break ties
+by natural order of the original strings. An empty label is untyped.
 
 ## `sort_by_label_desc()`
 

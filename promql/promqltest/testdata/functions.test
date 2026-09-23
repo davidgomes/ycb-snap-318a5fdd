@@ -880,6 +880,76 @@ eval instant at 50m sort_by_label(node_uname_info, "release")
 	node_uname_info{job="node_exporter", instance="4m5", release="1.11.3"} 100
 	node_uname_info{job="node_exporter", instance="4m1000", release="1.111.3"} 100
 
+# Typed multi-domain ordering, including scientific numbers and tie-breaks.
+clear
+load 5m
+	typed{l=" +Inf"} 1
+	typed{l="+Inf"} 1
+	typed{l="10"} 1
+	typed{l="1.0e2"} 1
+	typed{l="1e2"} 1
+	typed{l="100"} 1
+	typed{l="1e+06"} 1
+	typed{l="-Inf"} 1
+	typed{l="5s"} 1
+	typed{l="1m"} 1
+	typed{l="1KiB"} 1
+	typed{l="v1.2.3"} 1
+	typed{l="10.0.0.1"} 1
+	typed{l="::1"} 1
+	typed{l="10.0.0.0/8"} 1
+	typed{l="10.0.0.0/16"} 1
+	typed{l="2020-01-02T03:04:05Z"} 1
+	typed{l="1e"} 1
+	typed{l="NaN"} 1
+	typed{l="zebra"} 1
+
+eval instant at 0s sort_by_label(typed, "l")
+	expect ordered
+	typed{l=" +Inf"} 1
+	typed{l="+Inf"} 1
+	typed{l="10"} 1
+	typed{l="1.0e2"} 1
+	typed{l="1e2"} 1
+	typed{l="100"} 1
+	typed{l="1e+06"} 1
+	typed{l="-Inf"} 1
+	typed{l="5s"} 1
+	typed{l="1m"} 1
+	typed{l="1KiB"} 1
+	typed{l="v1.2.3"} 1
+	typed{l="10.0.0.1"} 1
+	typed{l="::1"} 1
+	typed{l="10.0.0.0/8"} 1
+	typed{l="10.0.0.0/16"} 1
+	typed{l="2020-01-02T03:04:05Z"} 1
+	typed{l="1e"} 1
+	typed{l="NaN"} 1
+	typed{l="zebra"} 1
+
+eval instant at 0s sort_by_label_desc(typed, "l")
+	expect ordered
+	typed{l="zebra"} 1
+	typed{l="NaN"} 1
+	typed{l="1e"} 1
+	typed{l="2020-01-02T03:04:05Z"} 1
+	typed{l="10.0.0.0/16"} 1
+	typed{l="10.0.0.0/8"} 1
+	typed{l="::1"} 1
+	typed{l="10.0.0.1"} 1
+	typed{l="v1.2.3"} 1
+	typed{l="1KiB"} 1
+	typed{l="1m"} 1
+	typed{l="5s"} 1
+	typed{l="-Inf"} 1
+	typed{l="1e+06"} 1
+	typed{l="100"} 1
+	typed{l="1e2"} 1
+	typed{l="1.0e2"} 1
+	typed{l="10"} 1
+	typed{l="+Inf"} 1
+	typed{l=" +Inf"} 1
+
 # Tests for double_exponential_smoothing
 clear
 
