@@ -384,6 +384,25 @@ class ResultImpl<T, E> {
   cast() {
     return this;
   }
+
+  /**
+    Iterate the wrapped value when this is {@linkcode Ok}. {@linkcode Err}
+    yields nothing.
+
+    `Result` can therefore be spread or used in `for...of`:
+
+    ```ts
+    import { ok, err } from 'true-myth/result';
+
+    const values = [...ok(1), ...err<number, string>('nope'), ...ok(2)];
+    // => [1, 2]
+    ```
+   */
+  *[Symbol.iterator](): IterableIterator<T> {
+    if (this.repr[0] === Variant.Ok) {
+      yield this.repr[1];
+    }
+  }
 }
 
 /**
@@ -2015,6 +2034,138 @@ export function flatten<T, E1, E2>(nested: Result<Result<T, E2>, E1>): Result<T,
   // Uses `andThen` directly rather than calling `.flatten()` to avoid an extra
   // function dispatch.
   return nested.andThen(identity);
+}
+
+/**
+  Combine an iterable of {@linkcode Result}s into one `Result` of the values.
+
+  The result is {@linkcode Ok} when every item is `Ok`, and {@linkcode Err} of
+  the first error as soon as one item is `Err`. Iteration stops immediately
+  after that failure: later items are not pulled from the iterable.
+
+  Tuple inputs keep their structure, in the same way as {@linkcode all}. Other
+  iterables produce `Result<T[], E>`.
+
+  @param results The `Result`s to combine.
+ */
+export function sequence(results: readonly []): Result<[], never>;
+export function sequence<const A extends readonly [AnyResult, ...AnyResult[]]>(results: A): All<A>;
+export function sequence<T, E>(results: Iterable<Result<T, E>>): Result<T[], E>;
+export function sequence(results: Iterable<AnyResult>): Result<unknown[], unknown> {
+  const oks: unknown[] = [];
+
+  for (const result of results) {
+    if (result.isErr) {
+      return Result.err(result.error);
+    }
+
+    oks.push(result.value);
+  }
+
+  return Result.ok(oks);
+}
+
+/**
+  Map `items` with `fn` and {@linkcode sequence} the resulting {@linkcode Result}s.
+
+  Stops pulling from `items`, and stops calling `fn`, immediately after `fn`
+  returns {@linkcode Err}.
+
+  @param items Values to map.
+  @param fn Function that returns a `Result` for one item.
+ */
+export function traverse<A, T, E>(
+  items: Iterable<A>,
+  fn: (item: A) => Result<T, E>
+): Result<T[], E>;
+/**
+  Curried {@linkcode traverse}. `traverse(fn)` returns a function of `items`.
+
+  @param fn Function that returns a `Result` for one item.
+ */
+export function traverse<A, T, E>(
+  fn: (item: A) => Result<T, E>
+): (items: Iterable<A>) => Result<T[], E>;
+export function traverse<A, T, E>(
+  itemsOrFn: Iterable<A> | ((item: A) => Result<T, E>),
+  fn?: (item: A) => Result<T, E>
+): Result<T[], E> | ((items: Iterable<A>) => Result<T[], E>) {
+  if (typeof fn !== 'function') {
+    const mapFn = itemsOrFn as (item: A) => Result<T, E>;
+    return (items) => traverse(items, mapFn);
+  }
+
+  return sequence(mapIterable(itemsOrFn as Iterable<A>, fn));
+}
+
+function* mapIterable<A, T, E>(
+  items: Iterable<A>,
+  fn: (item: A) => Result<T, E>
+): Generator<Result<T, E>> {
+  for (const item of items) {
+    yield fn(item);
+  }
+}
+
+/**
+  Pair the values of two {@linkcode Result}s when both are {@linkcode Ok}.
+
+  If `first` is {@linkcode Err}, that error is returned and `second` is not
+  consulted for the error value. Otherwise an `Err` from `second` is returned.
+
+  @param first The first `Result`.
+  @param second The second `Result`.
+ */
+export function zip<A, B, E, F>(first: Result<A, E>, second: Result<B, F>): Result<[A, B], E | F> {
+  return zipWith(first, second, (left, right) => [left, right]);
+}
+
+/**
+  Combine two {@linkcode Result}s with `fn` when both are {@linkcode Ok}.
+
+  `fn` is not called if either `Result` is {@linkcode Err}. If `first` is `Err`,
+  that error is returned. Otherwise an `Err` from `second` is returned.
+
+  @param first The first `Result`.
+  @param second The second `Result`.
+  @param fn Combines the two wrapped values.
+ */
+export function zipWith<A, B, C, E, F>(
+  first: Result<A, E>,
+  second: Result<B, F>,
+  fn: (firstValue: A, secondValue: B) => C
+): Result<C, E | F> {
+  if (first.isErr) {
+    return Result.err(first.error);
+  }
+
+  if (second.isErr) {
+    return Result.err(second.error);
+  }
+
+  return Result.ok(fn(first.value, second.value));
+}
+
+/**
+  Split an iterable of {@linkcode Result}s into the `Ok` values and the `Err`
+  errors, in the original order.
+
+  @param results The `Result`s to split.
+  @returns A pair of `[oks, errs]`.
+ */
+export function partition<T, E>(results: Iterable<Result<T, E>>): [T[], E[]] {
+  const oks: T[] = [];
+  const errs: E[] = [];
+
+  for (const result of results) {
+    if (result.isOk) {
+      oks.push(result.value);
+    } else {
+      errs.push(result.error);
+    }
+  }
+
+  return [oks, errs];
 }
 
 /**

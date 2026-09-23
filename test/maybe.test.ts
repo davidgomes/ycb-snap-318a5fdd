@@ -1453,3 +1453,176 @@ describe('`Maybe` class', () => {
     });
   });
 });
+
+describe('iteration and collections', () => {
+  test('`Just` yields its value once', () => {
+    const iter = maybe.just(1)[Symbol.iterator]();
+    expect(iter.next()).toEqual({ value: 1, done: false });
+    expect(iter.next()).toMatchObject({ done: true });
+
+    expect([...maybe.just('a'), ...maybe.nothing<string>(), ...maybe.just('b')]).toEqual([
+      'a',
+      'b',
+    ]);
+  });
+
+  test('`Nothing` yields nothing', () => {
+    const iter = maybe.nothing<number>()[Symbol.iterator]();
+    expect(iter.next()).toMatchObject({ done: true });
+    expect([...maybe.nothing<number>()]).toEqual([]);
+  });
+
+  describe('`sequence`', () => {
+    test('with an empty iterable', () => {
+      const sequenced = maybe.sequence([]);
+      expectTypeOf(sequenced).toEqualTypeOf<Maybe<[]>>();
+      expect(sequenced).toEqual(maybe.just([]));
+    });
+
+    test('keeps tuple structure', () => {
+      const sequenced = maybe.sequence([maybe.just(1), maybe.just('two')]);
+      expectTypeOf(sequenced).toEqualTypeOf<Maybe<[number, string]>>();
+      expect(sequenced).toEqual(maybe.just([1, 'two']));
+    });
+
+    test('with an array of one type', () => {
+      const values: Maybe<number>[] = [maybe.just(1), maybe.just(2)];
+      const sequenced = maybe.sequence(values);
+      expectTypeOf(sequenced).toEqualTypeOf<Maybe<number[]>>();
+      expect(sequenced).toEqual(maybe.just([1, 2]));
+    });
+
+    test('stops after the first Nothing', () => {
+      let pulls = 0;
+      function* gen(): Generator<Maybe<number>> {
+        pulls += 1;
+        yield maybe.just(1);
+        pulls += 1;
+        yield maybe.nothing<number>();
+        pulls += 1;
+        yield maybe.just(3);
+      }
+
+      expect(maybe.sequence(gen())).toEqual(maybe.nothing());
+      expect(pulls).toBe(2);
+    });
+
+    test('closes a generator after the first Nothing', () => {
+      const yielded: number[] = [];
+      function* gen(): Generator<Maybe<number>> {
+        try {
+          yielded.push(1);
+          yield maybe.just(1);
+          yielded.push(2);
+          yield maybe.nothing<number>();
+          yielded.push(3);
+          yield maybe.just(3);
+        } finally {
+          yielded.push(-1);
+        }
+      }
+
+      expect(maybe.sequence(gen())).toEqual(maybe.nothing());
+      expect(yielded).toEqual([1, 2, -1]);
+    });
+  });
+
+  describe('`traverse`', () => {
+    const toMaybe = (n: number) => (n > 0 ? maybe.just(n) : maybe.nothing<number>());
+
+    test('sequences the mapped values', () => {
+      const traversed = maybe.traverse([1, 2, 3], toMaybe);
+      expectTypeOf(traversed).toEqualTypeOf<Maybe<number[]>>();
+      expect(traversed).toEqual(maybe.just([1, 2, 3]));
+    });
+
+    test('is curried as traverse(fn)(items)', () => {
+      const traversePositive = maybe.traverse(toMaybe);
+      expect(traversePositive([1, 2])).toEqual(maybe.just([1, 2]));
+    });
+
+    test('stops calling fn after the first Nothing', () => {
+      const seen: number[] = [];
+      const traversed = maybe.traverse([1, 0, 3], (n) => {
+        seen.push(n);
+        return toMaybe(n);
+      });
+      expect(traversed).toEqual(maybe.nothing());
+      expect(seen).toEqual([1, 0]);
+    });
+
+    test('with an empty iterable', () => {
+      let calls = 0;
+      expect(
+        maybe.traverse([], () => {
+          calls += 1;
+          return maybe.just(1);
+        })
+      ).toEqual(maybe.just([]));
+      expect(calls).toBe(0);
+    });
+  });
+
+  describe('`zip` and `zipWith`', () => {
+    test('pairs two Just values', () => {
+      expect(maybe.zip(maybe.just(1), maybe.just('a'))).toEqual(maybe.just([1, 'a']));
+      expect(maybe.zipWith(maybe.just(2), maybe.just(3), (left, right) => left + right)).toEqual(
+        maybe.just(5)
+      );
+    });
+
+    test('is Nothing when the first is Nothing and does not call fn', () => {
+      let calls = 0;
+      expect(
+        maybe.zipWith(maybe.nothing<number>(), maybe.just(1), () => {
+          calls += 1;
+          return 0;
+        })
+      ).toEqual(maybe.nothing());
+      expect(calls).toBe(0);
+    });
+
+    test('is Nothing when the second is Nothing and does not call fn', () => {
+      let calls = 0;
+      expect(
+        maybe.zipWith(maybe.just(1), maybe.nothing<number>(), () => {
+          calls += 1;
+          return 0;
+        })
+      ).toEqual(maybe.nothing());
+      expect(maybe.zip(maybe.just(1), maybe.nothing<string>())).toEqual(maybe.nothing());
+      expect(calls).toBe(0);
+    });
+  });
+
+  test('`compact` drops Nothing and keeps going', () => {
+    expect(maybe.compact([maybe.just(1), maybe.nothing<number>(), maybe.just(2)])).toEqual([1, 2]);
+    expect(maybe.compact([])).toEqual([]);
+  });
+
+  describe('`filterMap`', () => {
+    const even = (n: number) => (n % 2 === 0 ? maybe.just(n) : maybe.nothing<number>());
+
+    test('keeps Just values and drops Nothing', () => {
+      expect(maybe.filterMap([1, 2, 3, 4], even)).toEqual([2, 4]);
+    });
+
+    test('is curried as filterMap(fn)(items)', () => {
+      expect(maybe.filterMap(even)([1, 2, 3, 4])).toEqual([2, 4]);
+    });
+  });
+
+  describe('`firstJust`', () => {
+    test('returns the first Just', () => {
+      const found = maybe.just(2);
+      expect(maybe.firstJust([maybe.nothing<number>(), found, maybe.just(3)])).toBe(found);
+    });
+
+    test('returns Nothing when there is no Just', () => {
+      expect(maybe.firstJust([maybe.nothing<number>(), maybe.nothing<number>()])).toEqual(
+        maybe.nothing()
+      );
+      expect(maybe.firstJust([])).toEqual(maybe.nothing());
+    });
+  });
+});

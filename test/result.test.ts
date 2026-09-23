@@ -1614,3 +1614,133 @@ describe('`Result` method tests', () => {
     });
   });
 });
+
+describe('iteration and collections', () => {
+  test('`Ok` yields its value once', () => {
+    const iter = result.ok(1)[Symbol.iterator]();
+    expect(iter.next()).toEqual({ value: 1, done: false });
+    expect(iter.next()).toMatchObject({ done: true });
+    expect([...result.ok(1), ...result.err<number, string>('no'), ...result.ok(2)]).toEqual([1, 2]);
+  });
+
+  test('`Err` yields nothing', () => {
+    const iter = result.err<number, string>('no')[Symbol.iterator]();
+    expect(iter.next()).toMatchObject({ done: true });
+    expect([...result.err('no')]).toEqual([]);
+  });
+
+  describe('`sequence`', () => {
+    test('with an empty iterable', () => {
+      const sequenced = result.sequence([]);
+      expectTypeOf(sequenced).toEqualTypeOf<Result<[], never>>();
+      expect(sequenced).toEqual(result.ok([]));
+    });
+
+    test('keeps tuple structure', () => {
+      const sequenced = result.sequence([result.ok(1), result.ok('two'), result.ok(true)]);
+      expectTypeOf(sequenced).toEqualTypeOf<Result<[number, string, boolean], never>>();
+      expect(sequenced).toEqual(result.ok([1, 'two', true]));
+    });
+
+    test('stops after the first Err', () => {
+      let pulls = 0;
+      function* gen(): Generator<Result<number, string>> {
+        pulls += 1;
+        yield result.ok(1);
+        pulls += 1;
+        yield result.err('no');
+        pulls += 1;
+        yield result.ok(3);
+      }
+
+      const sequenced = result.sequence(gen());
+      expectTypeOf(sequenced).toEqualTypeOf<Result<number[], string>>();
+      expect(sequenced).toEqual(result.err('no'));
+      expect(pulls).toBe(2);
+    });
+
+    test('with an array of one type', () => {
+      const values: Result<number, string>[] = [result.ok(1), result.ok(2)];
+      expect(result.sequence(values)).toEqual(result.ok([1, 2]));
+      expectTypeOf(result.sequence(values)).toEqualTypeOf<Result<number[], string>>();
+    });
+  });
+
+  describe('`traverse`', () => {
+    const parse = (text: string) =>
+      text.length > 0
+        ? result.ok<number, string>(text.length)
+        : result.err<number, string>('empty');
+
+    test('sequences the mapped values', () => {
+      expect(result.traverse(['a', 'bb'], parse)).toEqual(result.ok([1, 2]));
+    });
+
+    test('is curried as traverse(fn)(items)', () => {
+      expect(result.traverse(parse)(['a', 'bb'])).toEqual(result.ok([1, 2]));
+    });
+
+    test('stops calling fn after the first Err', () => {
+      const seen: string[] = [];
+      const traversed = result.traverse(['a', '', 'bb'], (text) => {
+        seen.push(text);
+        return parse(text);
+      });
+      expect(traversed).toEqual(result.err('empty'));
+      expect(seen).toEqual(['a', '']);
+    });
+  });
+
+  describe('`zip` and `zipWith`', () => {
+    test('pairs two Ok values', () => {
+      const zipped = result.zip(result.ok<number, string>(1), result.ok<string, number>('a'));
+      expectTypeOf(zipped).toEqualTypeOf<Result<[number, string], string | number>>();
+      expect(zipped).toEqual(result.ok([1, 'a']));
+      expect(result.zipWith(result.ok(2), result.ok(3), (left, right) => left + right)).toEqual(
+        result.ok(5)
+      );
+    });
+
+    test('returns the first Err and does not call fn', () => {
+      let calls = 0;
+      const zipped = result.zipWith(
+        result.err<number, string>('first'),
+        result.err<number, string>('second'),
+        () => {
+          calls += 1;
+          return 0;
+        }
+      );
+      expect(zipped).toEqual(result.err('first'));
+      expect(calls).toBe(0);
+    });
+
+    test('returns the second Err when the first is Ok', () => {
+      let calls = 0;
+      expect(
+        result.zipWith(result.ok<number, string>(1), result.err<number, string>('second'), () => {
+          calls += 1;
+          return 0;
+        })
+      ).toEqual(result.err('second'));
+      expect(calls).toBe(0);
+    });
+  });
+
+  describe('`partition`', () => {
+    test('splits Ok values and Err errors', () => {
+      const [oks, errs] = result.partition([
+        result.ok<number, string>(1),
+        result.err<number, string>('a'),
+        result.ok<number, string>(2),
+        result.err<number, string>('b'),
+      ]);
+      expect(oks).toEqual([1, 2]);
+      expect(errs).toEqual(['a', 'b']);
+    });
+
+    test('with an empty iterable', () => {
+      expect(result.partition([])).toEqual([[], []]);
+    });
+  });
+});

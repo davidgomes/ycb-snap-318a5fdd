@@ -10,6 +10,9 @@ import {
   fromResult,
   fromMaybe,
   toMaybe,
+  sequenceMaybeAsResult,
+  traverseMaybeAsResult,
+  zipMaybeAsResult,
 } from 'true-myth/toolbelt';
 
 describe('transposeResult', () => {
@@ -114,4 +117,63 @@ test('`fromResult`', () => {
   const reason = 'oh teh noes';
   const anErr = Result.err<number, string>(reason);
   expect(fromResult(anErr)).toEqual(Maybe.nothing());
+});
+
+describe('Maybe collections as Result', () => {
+  test('`sequenceMaybeAsResult`', () => {
+    expect(sequenceMaybeAsResult('missing', [Maybe.just(1), Maybe.just(2)])).toEqual(
+      Result.ok([1, 2])
+    );
+    expect(sequenceMaybeAsResult('missing', [Maybe.just(1), Maybe.nothing<number>()])).toEqual(
+      Result.err('missing')
+    );
+
+    let pulls = 0;
+    function* gen(): Generator<Maybe<number>> {
+      pulls += 1;
+      yield Maybe.just(1);
+      pulls += 1;
+      yield Maybe.nothing<number>();
+      pulls += 1;
+      yield Maybe.just(3);
+    }
+    expect(sequenceMaybeAsResult('missing', gen())).toEqual(Result.err('missing'));
+    expect(pulls).toBe(2);
+
+    expect(sequenceMaybeAsResult('missing')([Maybe.just(4)])).toEqual(Result.ok([4]));
+  });
+
+  test('`traverseMaybeAsResult`', () => {
+    const parse = (n: number) => (n > 0 ? Maybe.just(n) : Maybe.nothing<number>());
+    expect(traverseMaybeAsResult('missing', [1, 2], parse)).toEqual(Result.ok([1, 2]));
+
+    const seen: number[] = [];
+    expect(
+      traverseMaybeAsResult('missing', [1, 0, 2], (n) => {
+        seen.push(n);
+        return parse(n);
+      })
+    ).toEqual(Result.err('missing'));
+    expect(seen).toEqual([1, 0]);
+
+    expect(traverseMaybeAsResult('missing')([2, 3], parse)).toEqual(Result.ok([2, 3]));
+  });
+
+  test('`zipMaybeAsResult`', () => {
+    expect(zipMaybeAsResult('missing', Maybe.just(1), Maybe.just('a'))).toEqual(
+      Result.ok([1, 'a'])
+    );
+    expect(zipMaybeAsResult('missing', Maybe.nothing<number>(), Maybe.just('a'))).toEqual(
+      Result.err('missing')
+    );
+    expect(zipMaybeAsResult('missing', Maybe.just(1), Maybe.nothing<string>())).toEqual(
+      Result.err('missing')
+    );
+    expect(zipMaybeAsResult('missing', Maybe.nothing<number>(), Maybe.nothing<string>())).toEqual(
+      Result.err('missing')
+    );
+
+    const zipMissing = zipMaybeAsResult<string>('missing');
+    expect(zipMissing(Maybe.just(1), Maybe.just(2))).toEqual(Result.ok([1, 2]));
+  });
 });

@@ -954,6 +954,23 @@ class TaskImpl<T, E> implements PromiseLike<Result<T, E>> {
   flatten<A, F, G>(this: Task<Task<A, F>, G>): Task<A, F | G> {
     return this.andThen(identity);
   }
+
+  /**
+    Yield exactly one {@linkcode Result} once this {@linkcode Task} settles:
+    {@linkcode result.Ok Ok} when it resolves, {@linkcode result.Err Err} when it
+    rejects.
+
+    ```ts
+    import Task from 'true-myth/task';
+
+    for await (const result of Task.resolve(123)) {
+      console.log(result.toString()); // Ok(123)
+    }
+    ```
+   */
+  async *[Symbol.asyncIterator](): AsyncIterator<Result<T, E>> {
+    yield await this.#promise;
+  }
 }
 
 /**
@@ -3068,3 +3085,255 @@ export function isRetryFailed(error: unknown): error is RetryFailed<unknown> {
 }
 
 export type { RetryFailed };
+
+/**
+  Combine an iterable of {@linkcode Task}s into one `Task` of the values.
+
+  The tasks run concurrently, like {@linkcode all}. The resulting `Task`
+  resolves with the values in input order when every task resolves, and rejects
+  with the first rejection.
+
+  Tuple inputs keep their structure. Other iterables produce `Task<T[], E>`.
+
+  @param tasks The `Task`s to combine.
+ */
+export function sequence(tasks: readonly []): Task<[], never>;
+export function sequence<const A extends readonly [AnyTask, ...AnyTask[]]>(tasks: A): All<A>;
+export function sequence<T, E>(tasks: Iterable<Task<T, E>>): Task<T[], E>;
+export function sequence(tasks: Iterable<AnyTask>): AnyTask {
+  let list: AnyTask[] = [];
+  for (let task of tasks) {
+    list.push(task);
+  }
+
+  return all(list);
+}
+
+/**
+  Map `items` with `fn` and {@linkcode sequence} the resulting {@linkcode Task}s.
+
+  `fn` is called for every item immediately, so the tasks run concurrently. Use
+  {@linkcode traverseSerial} to run them one at a time and stop on the first
+  rejection.
+
+  @param items Values to map.
+  @param fn Function that returns a `Task` for one item.
+ */
+export function traverse<A, T, E>(items: Iterable<A>, fn: (item: A) => Task<T, E>): Task<T[], E>;
+/**
+  Curried {@linkcode traverse}. `traverse(fn)` returns a function of `items`.
+
+  @param fn Function that returns a `Task` for one item.
+ */
+export function traverse<A, T, E>(
+  fn: (item: A) => Task<T, E>
+): (items: Iterable<A>) => Task<T[], E>;
+export function traverse<A, T, E>(
+  itemsOrFn: Iterable<A> | ((item: A) => Task<T, E>),
+  fn?: (item: A) => Task<T, E>
+): Task<T[], E> | ((items: Iterable<A>) => Task<T[], E>) {
+  if (typeof fn !== 'function') {
+    let mapFn = itemsOrFn as (item: A) => Task<T, E>;
+    return (items) => traverse(items, mapFn);
+  }
+
+  let tasks: Array<Task<T, E>> = [];
+  for (let item of itemsOrFn as Iterable<A>) {
+    tasks.push(fn(item));
+  }
+
+  return sequence(tasks);
+}
+
+/**
+  Pair the values of two {@linkcode Task}s when both resolve.
+
+  The tasks run concurrently. If either rejects, the resulting `Task` rejects
+  with that reason.
+
+  @param first The first `Task`.
+  @param second The second `Task`.
+ */
+export function zip<A, B, E, F>(first: Task<A, E>, second: Task<B, F>): Task<[A, B], E | F> {
+  return all([first, second]);
+}
+
+/**
+  Combine two {@linkcode Task}s with `fn` when both resolve.
+
+  `fn` is not called if either `Task` rejects. The tasks run concurrently.
+
+  @param first The first `Task`.
+  @param second The second `Task`.
+  @param fn Combines the two resolved values.
+ */
+export function zipWith<A, B, C, E, F>(
+  first: Task<A, E>,
+  second: Task<B, F>,
+  fn: (firstValue: A, secondValue: B) => C
+): Task<C, E | F> {
+  return zip(first, second).map(([left, right]) => fn(left, right));
+}
+
+function closeIterator(iterator: Iterator<unknown>): void {
+  if (typeof iterator.return === 'function') {
+    iterator.return();
+  }
+}
+
+/**
+  Map `items` with `fn` one at a time, stopping on the first rejection.
+
+  `fn` is not called for later items after a `Task` rejects, and the iterable
+  is not pulled further. Successful values are collected in order.
+
+  @param items Values to map.
+  @param fn Function that returns a `Task` for one item. Called only after the
+    previous task resolves.
+ */
+export function traverseSerial<A, T, E>(
+  items: Iterable<A>,
+  fn: (item: A) => Task<T, E>
+): Task<T[], E>;
+/**
+  Curried {@linkcode traverseSerial}. `traverseSerial(fn)` returns a function
+  of `items`.
+
+  @param fn Function that returns a `Task` for one item.
+ */
+export function traverseSerial<A, T, E>(
+  fn: (item: A) => Task<T, E>
+): (items: Iterable<A>) => Task<T[], E>;
+export function traverseSerial<A, T, E>(
+  itemsOrFn: Iterable<A> | ((item: A) => Task<T, E>),
+  fn?: (item: A) => Task<T, E>
+): Task<T[], E> | ((items: Iterable<A>) => Task<T[], E>) {
+  if (typeof fn !== 'function') {
+    let mapFn = itemsOrFn as (item: A) => Task<T, E>;
+    return (items) => traverseSerial(items, mapFn);
+  }
+
+  let items = itemsOrFn as Iterable<A>;
+  let mapFn = fn;
+
+  return new Task((resolve, reject) => {
+    let iterator = items[Symbol.iterator]();
+    let values: T[] = [];
+
+    let step = (): void => {
+      let next = iterator.next();
+      if (next.done) {
+        resolve(values);
+        return;
+      }
+
+      void mapFn(next.value).match({
+        Resolved: (value) => {
+          values.push(value);
+          step();
+        },
+        Rejected: (reason) => {
+          closeIterator(iterator);
+          reject(reason);
+        },
+      });
+    };
+
+    step();
+  });
+}
+
+/**
+  Run a side effect with the resolved value of `task` and pass that value
+  through unchanged.
+
+  `fn` is called only when `task` resolves. A rejection is forwarded as-is and
+  `fn` is not called. The return value of `fn` is ignored.
+
+  @param task The `Task` to observe.
+  @param fn Called with the resolved value.
+ */
+export function tap<T, E>(task: Task<T, E>, fn: (value: T) => void): Task<T, E>;
+/**
+  Curried {@linkcode tap}. `tap(fn)` returns a function of `task`.
+
+  @param fn Called with the resolved value.
+ */
+export function tap<T>(fn: (value: T) => void): <E>(task: Task<T, E>) => Task<T, E>;
+export function tap<T, E>(
+  taskOrFn: Task<T, E> | ((value: T) => void),
+  fn?: (value: T) => void
+): Task<T, E> | (<F>(task: Task<T, F>) => Task<T, F>) {
+  if (typeof fn === 'function') {
+    return (taskOrFn as Task<T, E>).inspect(fn);
+  }
+
+  let effect = taskOrFn as (value: T) => void;
+  return <F>(task: Task<T, F>) => task.inspect(effect);
+}
+
+/**
+  Run a side effect with the rejection reason of `task` and pass the `Task`
+  through unchanged.
+
+  `fn` is called only when `task` rejects. A resolution is forwarded as-is and
+  `fn` is not called. The return value of `fn` is ignored.
+
+  @param task The `Task` to observe.
+  @param fn Called with the rejection reason.
+ */
+export function tapRejected<T, E>(task: Task<T, E>, fn: (error: E) => void): Task<T, E>;
+/**
+  Curried {@linkcode tapRejected}. `tapRejected(fn)` returns a function of
+  `task`.
+
+  @param fn Called with the rejection reason.
+ */
+export function tapRejected<E>(fn: (error: E) => void): <T>(task: Task<T, E>) => Task<T, E>;
+export function tapRejected<T, E>(
+  taskOrFn: Task<T, E> | ((error: E) => void),
+  fn?: (error: E) => void
+): Task<T, E> | (<U>(task: Task<U, E>) => Task<U, E>) {
+  if (typeof fn === 'function') {
+    return (taskOrFn as Task<T, E>).inspectRejected(fn);
+  }
+
+  let effect = taskOrFn as (error: E) => void;
+  return <U>(task: Task<U, E>) => task.inspectRejected(effect);
+}
+
+/**
+  Call `fn` to produce a {@linkcode Task}, and on rejection call it again up to
+  `n` additional times.
+
+  The first call always happens. Each rejection consumes one retry. When a call
+  resolves, that value is the result and `fn` is not called again. When the
+  retries are exhausted, the last rejection is returned.
+
+  @param n How many additional attempts to make after the first rejection.
+  @param fn A function that produces a new `Task` for each attempt.
+ */
+export function retryN<T, E>(n: number, fn: () => Task<T, E>): Task<T, E>;
+/**
+  Curried {@linkcode retryN}. `retryN(n)` returns a function of `fn`.
+
+  @param n How many additional attempts to make after the first rejection.
+ */
+export function retryN(n: number): <T, E>(fn: () => Task<T, E>) => Task<T, E>;
+export function retryN<T, E>(
+  n: number,
+  fn?: () => Task<T, E>
+): Task<T, E> | (<U, F>(produce: () => Task<U, F>) => Task<U, F>) {
+  let run = <U, F>(produce: () => Task<U, F>): Task<U, F> => {
+    let attempt = (remaining: number): Task<U, F> =>
+      produce().orElse((reason) => (remaining > 0 ? attempt(remaining - 1) : Task.reject(reason)));
+
+    return attempt(n);
+  };
+
+  if (fn === undefined) {
+    return run;
+  }
+
+  return run(fn);
+}

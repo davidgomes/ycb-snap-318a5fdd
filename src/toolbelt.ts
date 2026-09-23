@@ -13,7 +13,11 @@
  */
 
 import Result from './result.js';
-import Maybe from './maybe.js';
+import Maybe, {
+  sequence as sequenceMaybes,
+  traverse as traverseMaybes,
+  zip as zipMaybes,
+} from './maybe.js';
 import { curry1 } from './-private/utils.js';
 
 /**
@@ -159,4 +163,134 @@ export function toOkOrElseErr<T extends {}, E>(
  */
 export function fromResult<T extends {}>(result: Result<T, unknown>): Maybe<T> {
   return result.isOk ? Maybe.just(result.value) : Maybe.nothing<T>();
+}
+
+/**
+  {@linkcode "maybe".sequence sequence} an iterable of {@linkcode Maybe}s into a
+  {@linkcode Result}, using `errValue` for the {@linkcode "result".Err Err} when
+  any item is {@linkcode "maybe".Nothing Nothing}.
+
+  Iteration stops immediately after the first `Nothing`.
+
+  @param errValue The error used when a `Maybe` is `Nothing`.
+  @param maybes The `Maybe`s to combine.
+ */
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E,
+  maybes: Iterable<Maybe<T>>
+): Result<T[], E>;
+/**
+  Curried {@linkcode sequenceMaybeAsResult}. `sequenceMaybeAsResult(errValue)`
+  returns a function of the remaining `maybes` argument.
+
+  @param errValue The error used when a `Maybe` is `Nothing`.
+ */
+export function sequenceMaybeAsResult<E>(
+  errValue: E
+): <T extends {}>(maybes: Iterable<Maybe<T>>) => Result<T[], E>;
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E,
+  maybes?: Iterable<Maybe<T>>
+): Result<T[], E> | (<U extends {}>(items: Iterable<Maybe<U>>) => Result<U[], E>) {
+  let op = <U extends {}>(items: Iterable<Maybe<U>>): Result<U[], E> => {
+    let sequenced = sequenceMaybes(items);
+    return sequenced.isJust ? Result.ok(sequenced.value) : Result.err(errValue);
+  };
+
+  if (arguments.length === 1) {
+    return op;
+  }
+
+  return op(maybes as Iterable<Maybe<T>>);
+}
+
+/**
+  Map `items` with `fn` and {@linkcode sequenceMaybeAsResult} the resulting
+  {@linkcode Maybe}s.
+
+  `Nothing` becomes {@linkcode "result".Err Err(errValue)}. Iteration stops
+  immediately after the first `Nothing`, and `fn` is not called for later items.
+
+  @param errValue The error used when `fn` returns `Nothing`.
+  @param items Values to map.
+  @param fn Function that returns a `Maybe` for one item.
+ */
+export function traverseMaybeAsResult<A, T extends {}, E>(
+  errValue: E,
+  items: Iterable<A>,
+  fn: (item: A) => Maybe<T>
+): Result<T[], E>;
+/**
+  Curried {@linkcode traverseMaybeAsResult}.
+  `traverseMaybeAsResult(errValue)` returns a function of the remaining
+  `(items, fn)` arguments.
+
+  @param errValue The error used when `fn` returns `Nothing`.
+ */
+export function traverseMaybeAsResult<E>(
+  errValue: E
+): <A, T extends {}>(items: Iterable<A>, fn: (item: A) => Maybe<T>) => Result<T[], E>;
+export function traverseMaybeAsResult<A, T extends {}, E>(
+  errValue: E,
+  items?: Iterable<A>,
+  fn?: (item: A) => Maybe<T>
+):
+  | Result<T[], E>
+  | (<B, U extends {}>(nextItems: Iterable<B>, nextFn: (item: B) => Maybe<U>) => Result<U[], E>) {
+  let op = <B, U extends {}>(
+    nextItems: Iterable<B>,
+    nextFn: (item: B) => Maybe<U>
+  ): Result<U[], E> => {
+    let sequenced = traverseMaybes(nextItems, nextFn);
+    return sequenced.isJust ? Result.ok(sequenced.value) : Result.err(errValue);
+  };
+
+  if (arguments.length === 1) {
+    return op;
+  }
+
+  return op(items as Iterable<A>, fn as (item: A) => Maybe<T>);
+}
+
+/**
+  Pair two {@linkcode Maybe}s into a {@linkcode Result}. Both {@linkcode
+  "maybe".Just Just} values become {@linkcode "result".Ok Ok} of the pair.
+  Either {@linkcode "maybe".Nothing Nothing} becomes {@linkcode "result".Err
+  Err(errValue)}.
+
+  @param errValue The error used when either `Maybe` is `Nothing`.
+  @param maybeA The first `Maybe`.
+  @param maybeB The second `Maybe`.
+ */
+export function zipMaybeAsResult<A extends {}, B extends {}, E>(
+  errValue: E,
+  maybeA: Maybe<A>,
+  maybeB: Maybe<B>
+): Result<[A, B], E>;
+/**
+  Curried {@linkcode zipMaybeAsResult}. `zipMaybeAsResult(errValue)` returns a
+  function of the remaining `(maybeA, maybeB)` arguments.
+
+  @param errValue The error used when either `Maybe` is `Nothing`.
+ */
+export function zipMaybeAsResult<E>(
+  errValue: E
+): <A extends {}, B extends {}>(maybeA: Maybe<A>, maybeB: Maybe<B>) => Result<[A, B], E>;
+export function zipMaybeAsResult<A extends {}, B extends {}, E>(
+  errValue: E,
+  maybeA?: Maybe<A>,
+  maybeB?: Maybe<B>
+):
+  | Result<[A, B], E>
+  | (<T extends {}, U extends {}>(left: Maybe<T>, right: Maybe<U>) => Result<[T, U], E>) {
+  let op = <T extends {}, U extends {}>(left: Maybe<T>, right: Maybe<U>): Result<[T, U], E> => {
+    let zipped = zipMaybes(left, right);
+    return zipped.isJust ? Result.ok(zipped.value) : Result.err(errValue);
+  };
+
+  if (arguments.length === 1) {
+    return op;
+  }
+
+  return op(maybeA as Maybe<A>, maybeB as Maybe<B>);
 }
