@@ -253,6 +253,7 @@ func sortDeclarations(pkg *ast.Package) error {
 	vars := []*ast.Var{}
 	imports := []*ast.Import{}
 	funcs := []*ast.Func{}
+	methods := []*ast.Func{}
 
 	// Fragments global declarations.
 	for _, decl := range pkg.Declarations {
@@ -262,7 +263,11 @@ func sortDeclarations(pkg *ast.Package) error {
 		case *ast.Import:
 			imports = append(imports, decl)
 		case *ast.Func:
-			funcs = append(funcs, decl)
+			if decl.Recv != nil {
+				methods = append(methods, decl)
+			} else {
+				funcs = append(funcs, decl)
+			}
 		case *ast.Const:
 			if len(decl.Rhs) == 0 {
 				for i := range decl.Lhs {
@@ -497,6 +502,9 @@ varsLoop:
 	}
 	for _, f := range funcs {
 		sorted = append(sorted, f)
+	}
+	for _, m := range methods {
+		sorted = append(sorted, m)
 	}
 	pkg.Declarations = sorted
 

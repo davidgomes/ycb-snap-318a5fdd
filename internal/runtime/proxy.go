@@ -8,14 +8,18 @@ import (
 	"reflect"
 )
 
-var stringType = reflect.TypeOf("")
+var (
+	boolType   = reflect.TypeOf(false)
+	intType    = reflect.TypeOf(0)
+	stringType = reflect.TypeOf("")
+)
 
 // methodProxy is a proxy for a value of a Scriggo type with methods.
 //
 // Go code can only call the methods of a proxy that are implemented by its
 // Go type, so there is a proxy type for each supported combination of the
-// methods String() string and Error() string. The other methods can be
-// called only by Scriggo code.
+// methods of the fmt.Stringer, error and sort.Interface interfaces. The other
+// methods can be called only by Scriggo code.
 type methodProxy struct {
 	value reflect.Value
 	typ   ScriggoType
@@ -28,23 +32,66 @@ func (p methodProxy) ProxiedValue() reflect.Value { return p.value }
 // ProxiedType implements the Proxy interface.
 func (p methodProxy) ProxiedType() ScriggoType { return p.typ }
 
-func (p methodProxy) callString(name string) string {
+func (p methodProxy) call(name string, args ...reflect.Value) []reflect.Value {
 	fn, _ := boundMethod(p.env, p.typ, p.value, name)
-	return fn.Call(nil)[0].String()
+	return fn.Call(args)
 }
 
-type stringerProxy struct{ methodProxy }
+type stringMethod struct{ p methodProxy }
 
-func (p stringerProxy) String() string { return p.callString("String") }
+func (m stringMethod) String() string { return m.p.call("String")[0].String() }
 
-type errorProxy struct{ methodProxy }
+type errorMethod struct{ p methodProxy }
 
-func (p errorProxy) Error() string { return p.callString("Error") }
+func (m errorMethod) Error() string { return m.p.call("Error")[0].String() }
 
-type errorStringerProxy struct{ methodProxy }
+type sortMethods struct{ p methodProxy }
 
-func (p errorStringerProxy) Error() string  { return p.callString("Error") }
-func (p errorStringerProxy) String() string { return p.callString("String") }
+func (m sortMethods) Len() int { return int(m.p.call("Len")[0].Int()) }
+func (m sortMethods) Less(i, j int) bool {
+	return m.p.call("Less", reflect.ValueOf(i), reflect.ValueOf(j))[0].Bool()
+}
+func (m sortMethods) Swap(i, j int) { m.p.call("Swap", reflect.ValueOf(i), reflect.ValueOf(j)) }
+
+type stringerProxy struct {
+	methodProxy
+	stringMethod
+}
+
+type errorProxy struct {
+	methodProxy
+	errorMethod
+}
+
+type errorStringerProxy struct {
+	methodProxy
+	stringMethod
+	errorMethod
+}
+
+type sortProxy struct {
+	methodProxy
+	sortMethods
+}
+
+type sortStringerProxy struct {
+	methodProxy
+	sortMethods
+	stringMethod
+}
+
+type sortErrorProxy struct {
+	methodProxy
+	sortMethods
+	errorMethod
+}
+
+type sortErrorStringerProxy struct {
+	methodProxy
+	sortMethods
+	stringMethod
+	errorMethod
+}
 
 // wrap wraps the value v, with Scriggo type t, in a proxy.
 func (vm *VM) wrap(t ScriggoType, v reflect.Value) reflect.Value {
@@ -52,29 +99,59 @@ func (vm *VM) wrap(t ScriggoType, v reflect.Value) reflect.Value {
 	if !ok {
 		return t.Wrap(v)
 	}
-	isStringer := hasStringMethod(m, "String")
-	isError := hasStringMethod(m, "Error")
 	p := methodProxy{value: v, typ: t, env: vm.env}
+	s := stringMethod{p}
+	e := errorMethod{p}
+	o := sortMethods{p}
+	isStringer := hasMethod(m, "String", nil, []reflect.Type{stringType})
+	isError := hasMethod(m, "Error", nil, []reflect.Type{stringType})
+	isSort := hasMethod(m, "Len", nil, []reflect.Type{intType}) &&
+		hasMethod(m, "Less", []reflect.Type{intType, intType}, []reflect.Type{boolType}) &&
+		hasMethod(m, "Swap", []reflect.Type{intType, intType}, nil)
+	var proxy interface{}
 	switch {
+	case isSort && isStringer && isError:
+		proxy = sortErrorStringerProxy{p, o, s, e}
+	case isSort && isStringer:
+		proxy = sortStringerProxy{p, o, s}
+	case isSort && isError:
+		proxy = sortErrorProxy{p, o, e}
+	case isSort:
+		proxy = sortProxy{p, o}
 	case isStringer && isError:
-		return reflect.ValueOf(errorStringerProxy{p})
+		proxy = errorStringerProxy{p, s, e}
 	case isStringer:
-		return reflect.ValueOf(stringerProxy{p})
+		proxy = stringerProxy{p, s}
 	case isError:
-		return reflect.ValueOf(errorProxy{p})
+		proxy = errorProxy{p, e}
+	default:
+		return t.Wrap(v)
 	}
-	return t.Wrap(v)
+	return reflect.ValueOf(proxy)
 }
 
-// hasStringMethod reports whether m has a method with the given name and
-// type func() string.
-func hasStringMethod(m Methoder, name string) bool {
+// hasMethod reports whether m has a method with the given name, input
+// parameters (receiver excluded) and results.
+func hasMethod(m Methoder, name string, in, out []reflect.Type) bool {
 	fn, _, ok := m.ScriggoMethod(name)
 	if !ok || fn == nil {
 		return false
 	}
 	t := fn.Type
-	return t.NumIn() == 1 && t.NumOut() == 1 && t.Out(0) == stringType
+	if t.IsVariadic() || t.NumIn() != len(in)+1 || t.NumOut() != len(out) {
+		return false
+	}
+	for i, typ := range in {
+		if t.In(i+1) != typ {
+			return false
+		}
+	}
+	for i, typ := range out {
+		if t.Out(i) != typ {
+			return false
+		}
+	}
+	return true
 }
 
 // boundMethod returns a function that calls the Scriggo method with the given

@@ -151,7 +151,10 @@ func analyzeTree(pkg *ast.Package) packageDeclsDeps {
 		case *ast.Const:
 			d.analyzeGlobalConst(n)
 		case *ast.Func:
-			d.analyzeGlobalFunc(n)
+			// Methods cannot be referred by name.
+			if n.Recv == nil {
+				d.analyzeGlobalFunc(n)
+			}
 		case *ast.TypeDeclaration:
 			d.analyzeGlobalTypeDeclaration(n)
 		}
