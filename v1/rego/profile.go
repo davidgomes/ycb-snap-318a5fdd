@@ -108,12 +108,11 @@ func (p *ruleProfiler) statFor(rule *ast.Rule) *RuleStat {
 	if stat, ok := p.stats[rule]; ok {
 		return stat
 	}
-	var path string
+	ref := rule.Head.Ref()
 	if rule.Module != nil {
-		path = rule.Path().String()
-	} else {
-		path = rule.Head.Ref().GroundPrefix().String()
+		ref = rule.Ref()
 	}
+	path := ref.GroundPrefix().String()
 	stat, ok := p.profile.Rules[path]
 	if !ok {
 		stat = &RuleStat{}
