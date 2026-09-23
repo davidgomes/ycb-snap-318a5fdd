@@ -65,7 +65,7 @@ import File from '../file/File.js';
 import type FileReader from '../file/FileReader.js';
 import type FormData from '../form-data/FormData.js';
 import History from '../history/History.js';
-import IntersectionObserver from '../intersection-observer/IntersectionObserver.js';
+import type IntersectionObserver from '../intersection-observer/IntersectionObserver.js';
 import IntersectionObserverEntry from '../intersection-observer/IntersectionObserverEntry.js';
 import Location from '../location/Location.js';
 import MediaQueryList from '../match-media/MediaQueryList.js';
@@ -645,7 +645,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 	public readonly TextTrackCueList = TextTrackCueList;
 	public readonly ValidityState = ValidityState;
 	public readonly MutationRecord = MutationRecord;
-	public readonly IntersectionObserver = IntersectionObserver;
+	public declare readonly IntersectionObserver: typeof IntersectionObserver;
 	public readonly IntersectionObserverEntry = IntersectionObserverEntry;
 	public readonly CSSStyleDeclaration = CSSStyleDeclaration;
 	public readonly CSSRule = CSSRule;

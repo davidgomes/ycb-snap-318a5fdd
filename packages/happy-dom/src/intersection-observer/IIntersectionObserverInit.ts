@@ -4,7 +4,7 @@ export default interface IIntersectionObserverInit {
 	/**
 	 * A specific ancestor of the target element against which the intersection is to be calculated.
 	 */
-	root?: Element;
+	root?: Element | null;
 	/**
 	 * A string which specifies a specific property to observe on the intersection target.
 	 */

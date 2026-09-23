@@ -25,6 +25,7 @@ import type HTMLSelectElement from '../html-select-element/HTMLSelectElement.js'
 import type HTMLTextAreaElement from '../html-text-area-element/HTMLTextAreaElement.js';
 import type HTMLSlotElement from '../html-slot-element/HTMLSlotElement.js';
 import NodeFactory from '../NodeFactory.js';
+import { notifyIntersectionObserverTargets } from '../../intersection-observer/IntersectionObserverRegistry.js';
 import type SVGStyleElement from '../svg-style-element/SVGStyleElement.js';
 
 /**
@@ -1055,6 +1056,8 @@ export default class Node extends EventTarget {
 			// eslint-disable-next-line
 			(<any>this)[PropertySymbol.shadowRoot][PropertySymbol.connectedToDocument]();
 		}
+
+		notifyIntersectionObserverTargets();
 	}
 
 	/**
@@ -1071,6 +1074,8 @@ export default class Node extends EventTarget {
 			// eslint-disable-next-line
 			(<any>this)[PropertySymbol.shadowRoot][PropertySymbol.disconnectedFromDocument]();
 		}
+
+		notifyIntersectionObserverTargets();
 	}
 
 	/**
