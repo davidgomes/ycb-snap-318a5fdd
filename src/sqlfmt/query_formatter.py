@@ -75,6 +75,12 @@ class QueryFormatter:
 
         return lines
 
+    def _reflow_create_table(self, lines: List[Line]) -> List[Line]:
+        """Lay out CREATE TABLE statements after the generic split/merge."""
+        from sqlfmt.ddl import reflow_create_table_lines
+
+        return reflow_create_table_lines(lines, self.mode)
+
     def _remove_extra_blank_lines(self, lines: List[Line]) -> List[Line]:
         """
         A query can have at most 2 consecutive blank lines at depth (0,0)
@@ -98,12 +104,13 @@ class QueryFormatter:
 
     def format(self, raw_query: Query) -> Query:
         """
-        Applies 4 transformations to a Query:
+        Applies these transformations to a Query:
         1. Splits lines
         2. Formats jinja tags
         3. Dedents jinja block tags to match their least-indented contents
         4. Merges lines
         5. Removes extra blank lines
+        6. Lays out CREATE TABLE statements
         """
         lines = raw_query.lines
 
@@ -113,6 +120,7 @@ class QueryFormatter:
             self._dedent_jinja_blocks,
             self._merge_lines,
             self._remove_extra_blank_lines,
+            self._reflow_create_table,
         ]
 
         for transform in pipeline:

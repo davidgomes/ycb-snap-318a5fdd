@@ -164,6 +164,59 @@ def handle_semicolon(
     )
 
 
+def handle_create_table(
+    analyzer: "Analyzer",
+    source_string: str,
+    match: re.Match,
+) -> None:
+    """
+    Lex CREATE TABLE.
+
+    Column-list tables are formatted. CREATE TABLE AS / LIKE and other
+    variants stay on the unsupported path so they pass through unchanged.
+    Nested occurrences (inside an expression) lex only the word ``create``
+    so the following word remains a separate name.
+    """
+    probe = Token.from_match(source_string, match, TokenType.NAME)
+    probe_node = analyzer.node_manager.create_node(
+        token=probe, previous_node=analyzer.previous_node
+    )
+    previous_token, _ = get_previous_token(analyzer.previous_node)
+    nested = probe_node.depth[0] > 0 or (
+        previous_token is not None and previous_token.type is TokenType.DOT
+    )
+    if nested:
+        word = re.match(
+            r"([^\S\n]*)(create)\b",
+            source_string[analyzer.pos :],
+            re.IGNORECASE,
+        )
+        if word is None:
+            analyzer.node_buffer.append(probe_node)
+            analyzer.pos = probe.epos
+            return
+        prefix = word.group(1)
+        text = word.group(2)
+        epos = analyzer.pos + word.end(2)
+        token = Token(TokenType.NAME, prefix, text, analyzer.pos, epos)
+        node = analyzer.node_manager.create_node(
+            token=token, previous_node=analyzer.previous_node
+        )
+        analyzer.node_buffer.append(node)
+        analyzer.pos = epos
+        return
+
+    # Imported lazily: rules import actions at module load.
+    from sqlfmt.ddl import create_table_should_format
+    from sqlfmt.rules.ddl import CREATE_TABLE
+    from sqlfmt.rules.unsupported import UNSUPPORTED
+
+    if create_table_should_format(source_string, match.end(1)):
+        lex_ruleset(analyzer, source_string, match, CREATE_TABLE)
+    else:
+        lex_ruleset(analyzer, source_string, match, UNSUPPORTED)
+
+
 def handle_ddl_as(
     analyzer: "Analyzer",
     source_string: str,

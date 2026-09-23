@@ -310,6 +310,12 @@ MAIN = [
         ),
     ),
     Rule(
+        name="create_table",
+        priority=2040,
+        pattern=group(r"create\s+table(?:\s+if\s+not\s+exists)?") + group(r"\W", r"$"),
+        action=actions.handle_create_table,
+    ),
+    Rule(
         name="create_warehouse",
         priority=2030,
         pattern=group(
