@@ -11,6 +11,7 @@ from collections.abc import (
     Collection,
     Coroutine,
     Generator,
+    Iterable,
     Iterator,
     Mapping,
     Sequence,
@@ -85,7 +86,7 @@ from starlette.routing import (
     get_name,
 )
 from starlette.routing import Mount as Mount  # noqa
-from starlette.types import AppType, ASGIApp, Lifespan, Receive, Scope, Send
+from starlette.types import AppType, ASGIApp, Lifespan, Message, Receive, Scope, Send
 from starlette.websockets import WebSocket
 from typing_extensions import deprecated
 
@@ -114,7 +115,12 @@ def request_response(
                 async with AsyncExitStack() as function_stack:
                     scope["fastapi_function_astack"] = function_stack
                     response = await f(request)
-                await response(scope, receive, send)
+                if scope.get("fastapi_implicit_method") == "HEAD" and isinstance(
+                    response, StreamingResponse
+                ):
+                    await _send_implicit_head_response(response, send)
+                else:
+                    await response(scope, receive, send)
                 # Continues customization
                 response_awaited = True
             if not response_awaited:
@@ -130,6 +136,48 @@ def request_response(
         await wrap_app_handling_exceptions(app, request)(scope, receive, send)
 
     return app
+
+
+async def _send_implicit_head_response(response: StreamingResponse, send: Send) -> None:
+    # A streamed GET body can be unbounded (e.g. Server-Sent Events), so it is
+    # never produced for an implicit HEAD, only its status and headers.
+    await send(
+        {
+            "type": "http.response.start",
+            "status": response.status_code,
+            "headers": response.raw_headers,
+        }
+    )
+    await send({"type": "http.response.body", "body": b"", "more_body": False})
+    if response.background is not None:
+        await response.background()
+
+
+def _without_response_body(send: Send) -> Send:
+    async def sender(message: Message) -> None:
+        if message["type"] == "http.response.body":
+            if message.get("more_body", False):
+                return
+            message = {"type": "http.response.body", "body": b"", "more_body": False}
+        await send(message)
+
+    return sender
+
+
+_METHODS_ORDER = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE")
+
+
+def _sort_methods(methods: Iterable[str]) -> list[str]:
+    rank = {method: index for index, method in enumerate(_METHODS_ORDER)}
+    return sorted(
+        set(methods), key=lambda method: (rank.get(method, len(rank)), method)
+    )
+
+
+def _record_implicit_method(scope: Scope, method: str) -> None:
+    scope["fastapi_implicit_method"] = method
+    for tracker in scope.get("fastapi_implicit_method_trackers", ()):
+        tracker(method)
 
 
 # Copy of starlette.routing.websocket_session modified to include the
@@ -836,9 +884,35 @@ class APIRoute(routing.Route):
         generate_unique_id_function: Callable[["APIRoute"], str]
         | DefaultPlaceholder = Default(generate_unique_id),
         strict_content_type: bool | DefaultPlaceholder = Default(True),
+        auto_head: Annotated[
+            bool | DefaultPlaceholder,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                When not set, the value is taken from the router handling the
+                request.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool | DefaultPlaceholder,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                When not set, the value is taken from the router handling the
+                request.
+                """
+            ),
+        ] = Default(False),
     ) -> None:
         self.path = path
         self.endpoint = endpoint
+        self.auto_head = auto_head
+        self.auto_options = auto_options
         self.stream_item_type: Any | None = None
         if isinstance(response_model, DefaultPlaceholder):
             return_annotation = get_typed_return_annotation(endpoint)
@@ -1262,6 +1336,47 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(True),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests automatically for the *path operations*
+                in this router that use the HTTP GET method.
+
+                The implicit HEAD response runs the GET *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body.
+
+                An explicit HEAD *path operation* for the same path always takes
+                precedence. Implicit HEAD operations are not included in the
+                generated OpenAPI.
+
+                It's enabled by default. It can be overridden when including this
+                router and in each *path operation*.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests automatically for the paths of the
+                *path operations* in this router.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path (excluding HEAD and OPTIONS).
+
+                An explicit OPTIONS *path operation* for the same path always takes
+                precedence. Implicit OPTIONS operations are not included in the
+                generated OpenAPI.
+
+                It's disabled by default. It can be overridden when including this
+                router and in each *path operation*.
+                """
+            ),
+        ] = Default(False),
     ) -> None:
         # Determine the lifespan context to use
         if lifespan is None:
@@ -1309,6 +1424,121 @@ class APIRouter(routing.Router):
         self.default_response_class = default_response_class
         self.generate_unique_id_function = generate_unique_id_function
         self.strict_content_type = strict_content_type
+        self.auto_head = auto_head
+        self.auto_options = auto_options
+
+    async def app(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["method"] in ("HEAD", "OPTIONS"):
+            implicit_match: tuple[routing.Route, Scope] | None
+            if scope["method"] == "HEAD":
+                implicit_match = self._match_implicit_head(scope)
+            else:
+                implicit_match = self._match_implicit_options(scope)
+            if implicit_match is not None:
+                route, child_scope = implicit_match
+                if "router" not in scope:
+                    scope["router"] = self
+                scope.update(child_scope)
+                _record_implicit_method(scope, scope["method"])
+                if scope["method"] == "HEAD":
+                    await route.app(scope, receive, _without_response_body(send))
+                else:
+                    response = self._implicit_options_response(route.path_format, scope)
+                    await response(scope, receive, send)
+                return
+        await super().app(scope, receive, send)
+
+    def _implicit_head_enabled(self, route: APIRoute) -> bool:
+        return (
+            "GET" in route.methods
+            and "HEAD" not in route.methods
+            and bool(get_value_or_default(route.auto_head, self.auto_head))
+        )
+
+    def _implicit_options_enabled(self, route: APIRoute) -> bool:
+        return bool(get_value_or_default(route.auto_options, self.auto_options))
+
+    def _serves_explicitly(self, route: BaseRoute, scope: Scope) -> bool:
+        methods = getattr(route, "methods", None)
+        if not methods or scope["method"] not in methods:
+            return False
+        return route.matches(scope)[0] == Match.FULL
+
+    def _match_implicit_head(self, scope: Scope) -> tuple[APIRoute, Scope] | None:
+        # An implicit HEAD mirrors the route that would serve GET for this URL
+        get_scope = {**scope, "method": "GET"}
+        get_match: tuple[BaseRoute, Scope] | None = None
+        for route in self.routes:
+            if self._serves_explicitly(route, scope):
+                return None
+            if get_match is None:
+                match, child_scope = route.matches(get_scope)
+                if match == Match.FULL:
+                    get_match = (route, child_scope)
+        if get_match is None:
+            return None
+        route, child_scope = get_match
+        if isinstance(route, APIRoute) and self._implicit_head_enabled(route):
+            return route, child_scope
+        return None
+
+    def _match_implicit_options(
+        self, scope: Scope
+    ) -> tuple[routing.Route, Scope] | None:
+        # The implicit OPTIONS replaces the 405 the first route matching the path
+        # would produce, if any operation for that same path enables it
+        first_match: tuple[BaseRoute, Match, Scope] | None = None
+        for route in self.routes:
+            if self._serves_explicitly(route, scope):
+                return None
+            if first_match is None:
+                match, child_scope = route.matches(scope)
+                if match != Match.NONE:
+                    first_match = (route, match, child_scope)
+        if first_match is None:
+            return None
+        route, match, child_scope = first_match
+        if match != Match.PARTIAL or not isinstance(route, routing.Route):
+            return None
+        for path_route in self.routes:
+            if (
+                isinstance(path_route, APIRoute)
+                and path_route.path_format == route.path_format
+                and self._implicit_options_enabled(path_route)
+            ):
+                return route, child_scope
+        return None
+
+    def _implicit_options_response(self, path: str, scope: Scope) -> JSONResponse:
+        methods = {"OPTIONS"}
+        for route in self.routes:
+            if (
+                isinstance(route, routing.Route)
+                and route.path_format == path
+                and route.methods
+            ):
+                methods.update(route.methods)
+                if isinstance(route, APIRoute) and self._implicit_head_enabled(route):
+                    methods.add("HEAD")
+        sorted_methods = _sort_methods(methods)
+        app = scope.get("app")
+        app_openapi = getattr(app, "openapi", None)
+        if getattr(app, "router", None) is self and callable(app_openapi):
+            openapi_schema = app_openapi()
+        else:
+            from fastapi.openapi.utils import get_openapi
+
+            openapi_schema = get_openapi(title="", version="", routes=self.routes)
+        path_item = openapi_schema.get("paths", {}).get(path, {})
+        operations = {
+            key: value
+            for key, value in path_item.items()
+            if key not in ("head", "options")
+        }
+        return JSONResponse(
+            {"path": path, "methods": sorted_methods, "operations": operations},
+            headers={"Allow": ", ".join(sorted_methods)},
+        )
 
     def route(
         self,
@@ -1360,6 +1590,41 @@ class APIRouter(routing.Router):
         generate_unique_id_function: Callable[[APIRoute], str]
         | DefaultPlaceholder = Default(generate_unique_id),
         strict_content_type: bool | DefaultPlaceholder = Default(True),
+        auto_head: Annotated[
+            bool | DefaultPlaceholder,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool | DefaultPlaceholder,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> None:
         route_class = route_class_override or self.route_class
         responses = responses or {}
@@ -1409,6 +1674,8 @@ class APIRouter(routing.Router):
             strict_content_type=get_value_or_default(
                 strict_content_type, self.strict_content_type
             ),
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
         self.routes.append(route)
 
@@ -1441,6 +1708,41 @@ class APIRouter(routing.Router):
         generate_unique_id_function: Callable[[APIRoute], str] = Default(
             generate_unique_id
         ),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         def decorator(func: DecoratedCallable) -> DecoratedCallable:
             self.add_api_route(
@@ -1469,6 +1771,8 @@ class APIRouter(routing.Router):
                 callbacks=callbacks,
                 openapi_extra=openapi_extra,
                 generate_unique_id_function=generate_unique_id_function,
+                auto_head=auto_head,
+                auto_options=auto_options,
             )
             return func
 
@@ -1682,6 +1986,32 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests automatically for the *path operations*
+                in this router that use the HTTP GET method.
+
+                It takes precedence over the value set in the included router, and
+                it can be overridden in each *path operation*. When not set
+                anywhere, the value set in this router (or the app) is used.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests automatically for the paths of the
+                *path operations* in this router.
+
+                It takes precedence over the value set in the included router, and
+                it can be overridden in each *path operation*. When not set
+                anywhere, the value set in this router (or the app) is used.
+                """
+            ),
+        ] = Default(False),
     ) -> None:
         """
         Include another `APIRouter` in the same current `APIRouter`.
@@ -1788,6 +2118,12 @@ class APIRouter(routing.Router):
                         route.strict_content_type,
                         router.strict_content_type,
                         self.strict_content_type,
+                    ),
+                    auto_head=get_value_or_default(
+                        route.auto_head, auto_head, router.auto_head
+                    ),
+                    auto_options=get_value_or_default(
+                        route.auto_options, auto_options, router.auto_options
                     ),
                 )
             elif isinstance(route, routing.Route):
@@ -2155,6 +2491,41 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP GET operation.
@@ -2199,6 +2570,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def put(
@@ -2532,6 +2905,41 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP PUT operation.
@@ -2581,6 +2989,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def post(
@@ -2914,6 +3324,41 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP POST operation.
@@ -2963,6 +3408,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def delete(
@@ -3296,6 +3743,41 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP DELETE operation.
@@ -3340,6 +3822,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def options(
@@ -3673,6 +4157,41 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP OPTIONS operation.
@@ -3717,6 +4236,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def head(
@@ -4050,6 +4571,41 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP HEAD operation.
@@ -4099,6 +4655,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def patch(
@@ -4432,6 +4990,41 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP PATCH operation.
@@ -4481,6 +5074,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def trace(
@@ -4814,6 +5409,41 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP TRACE operation.
@@ -4863,6 +5493,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     # TODO: remove this once the lifespan (or alternative) interface is improved

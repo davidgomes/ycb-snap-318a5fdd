@@ -863,6 +863,47 @@ class FastAPI(Starlette):
                 """
             ),
         ] = True,
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests automatically for the *path operations*
+                that use the HTTP GET method.
+
+                The implicit HEAD response runs the GET *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body.
+
+                An explicit HEAD *path operation* for the same path always takes
+                precedence. Implicit HEAD operations are not included in the
+                generated OpenAPI.
+
+                It's enabled by default. It can be overridden in routers, when
+                including routers, and in each *path operation*.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests automatically for the paths of the
+                *path operations*.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path (excluding HEAD and OPTIONS).
+
+                An explicit OPTIONS *path operation* for the same path always takes
+                precedence. Implicit OPTIONS operations are not included in the
+                generated OpenAPI.
+
+                It's disabled by default. It can be overridden in routers, when
+                including routers, and in each *path operation*.
+                """
+            ),
+        ] = Default(False),
         **extra: Annotated[
             Any,
             Doc(
@@ -998,6 +1039,8 @@ class FastAPI(Starlette):
             responses=responses,
             generate_unique_id_function=generate_unique_id_function,
             strict_content_type=strict_content_type,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
         self.exception_handlers: dict[
             Any, Callable[[Request, Any], Response | Awaitable[Response]]
@@ -1188,6 +1231,41 @@ class FastAPI(Starlette):
         generate_unique_id_function: Callable[[routing.APIRoute], str] = Default(
             generate_unique_id
         ),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> None:
         self.router.add_api_route(
             path,
@@ -1214,6 +1292,8 @@ class FastAPI(Starlette):
             name=name,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def api_route(
@@ -1244,6 +1324,41 @@ class FastAPI(Starlette):
         generate_unique_id_function: Callable[[routing.APIRoute], str] = Default(
             generate_unique_id
         ),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         def decorator(func: DecoratedCallable) -> DecoratedCallable:
             self.router.add_api_route(
@@ -1271,6 +1386,8 @@ class FastAPI(Starlette):
                 name=name,
                 openapi_extra=openapi_extra,
                 generate_unique_id_function=generate_unique_id_function,
+                auto_head=auto_head,
+                auto_options=auto_options,
             )
             return func
 
@@ -1529,6 +1646,32 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests automatically for the *path operations*
+                in this router that use the HTTP GET method.
+
+                It takes precedence over the value set in the included router, and
+                it can be overridden in each *path operation*. When not set
+                anywhere, the value set in the app is used.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests automatically for the paths of the
+                *path operations* in this router.
+
+                It takes precedence over the value set in the included router, and
+                it can be overridden in each *path operation*. When not set
+                anywhere, the value set in the app is used.
+                """
+            ),
+        ] = Default(False),
     ) -> None:
         """
         Include an `APIRouter` in the same app.
@@ -1559,6 +1702,8 @@ class FastAPI(Starlette):
             default_response_class=default_response_class,
             callbacks=callbacks,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def get(
@@ -1892,6 +2037,41 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP GET operation.
@@ -1932,6 +2112,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def put(
@@ -2265,6 +2447,41 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP PUT operation.
@@ -2310,6 +2527,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def post(
@@ -2643,6 +2862,41 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP POST operation.
@@ -2688,6 +2942,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def delete(
@@ -3021,6 +3277,41 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP DELETE operation.
@@ -3061,6 +3352,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def options(
@@ -3394,6 +3687,41 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP OPTIONS operation.
@@ -3434,6 +3762,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def head(
@@ -3767,6 +4097,41 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP HEAD operation.
@@ -3807,6 +4172,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def patch(
@@ -4140,6 +4507,41 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP PATCH operation.
@@ -4185,6 +4587,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def trace(
@@ -4518,6 +4922,41 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to HEAD requests for this *path operation* automatically,
+                when it uses the HTTP GET method.
+
+                The implicit HEAD response runs this *path operation*, with its
+                dependencies and validation, and returns the same status code and
+                headers, but without a body. An explicit HEAD *path operation* for
+                the same path always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Respond to OPTIONS requests for the path of this *path operation*
+                automatically.
+
+                The implicit OPTIONS response has a status code of `200`, an
+                `Allow` header with the allowed methods, and a JSON body with the
+                `path`, the allowed `methods`, and the OpenAPI `operations` for
+                that path. An explicit OPTIONS *path operation* for the same path
+                always takes precedence.
+
+                When not set, the value set in `include_router()`, in the router, or in the
+                app is used. It's disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP TRACE operation.
@@ -4558,6 +4997,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def websocket_route(
