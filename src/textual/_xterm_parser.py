@@ -37,7 +37,16 @@ FOCUSOUT: Final[str] = "\x1b[O"
 SPECIAL_SEQUENCES = {BRACKETED_PASTE_START, BRACKETED_PASTE_END, FOCUSIN, FOCUSOUT}
 """Set of special sequences."""
 
-_re_extended_key: Final = re.compile(r"\x1b\[(?:(\d+)(?:;(\d+))?)?([u~ABCDEFHPQRS])")
+_re_extended_key: Final = re.compile(
+    r"\x1b\[(\d+)?(?::(\d*))?(?::(\d*))?(?:;(\d*)(?::(\d*))?)?(?:;([\d:]*))?([u~ABCDEFHPQRS])"
+)
+"""Matches legacy CSI keys and the full Kitty keyboard protocol form:
+CSI key-code:shifted-key:base-layout-key ; modifiers:event-type ; text-codepoints u"""
+
+_KEY_MODIFIERS: Final = ("shift", "alt", "ctrl", "super", "hyper", "meta")
+"""Modifier names, in the order of their Kitty protocol bits (caps_lock and num_lock are ignored)."""
+
+_KITTY_PHASES: Final = {"1": "press", "2": "repeat", "3": "release"}
 _re_in_band_window_resize: Final = re.compile(
     r"\x1b\[48;(\d+(?:\:.*?)?);(\d+(?:\:.*?)?);(\d+(?:\:.*?)?);(\d+(?:\:.*?)?)t"
 )
@@ -337,28 +346,7 @@ class XTermParser(Parser[Message]):
         """
 
         if (match := _re_extended_key.fullmatch(sequence)) is not None:
-            number, modifiers, end = match.groups()
-            number = number or 1
-            if not (key := FUNCTIONAL_KEYS.get(f"{number}{end}", "")):
-                try:
-                    key = _character_to_key(chr(int(number)))
-                except Exception:
-                    key = chr(int(number))
-            key_tokens: list[str] = []
-            if modifiers:
-                modifier_bits = int(modifiers) - 1
-                # Not convinced of the utility in reporting caps_lock and num_lock
-                MODIFIERS = ("shift", "alt", "ctrl", "super", "hyper", "meta")
-                # Ignore caps_lock and num_lock modifiers
-                for bit, modifier in enumerate(MODIFIERS):
-                    if modifier_bits & (1 << bit):
-                        key_tokens.append(modifier)
-
-            key_tokens.sort()
-            key_tokens.append(key.lower())
-            yield events.Key(
-                "+".join(key_tokens), sequence if len(sequence) == 1 else None
-            )
+            yield _extended_key_event(match)
             return
 
         keys = ANSI_SEQUENCES_KEYS.get(sequence)
@@ -374,7 +362,9 @@ class XTermParser(Parser[Message]):
             # If the sequence mapped to a tuple, then it's values from the
             # `Keys` enum. Raise key events from what we find in the tuple.
             for key in keys:
-                yield events.Key(key.value, sequence if len(sequence) == 1 else None)
+                yield _legacy_key_event(
+                    key.value, sequence if len(sequence) == 1 else None, alt
+                )
             return
         # If keys is a string, the intention is that it's a mapping to a
         # character, which should really be treated as the sequence for the
@@ -395,6 +385,120 @@ class XTermParser(Parser[Message]):
                     if name.isupper():
                         name = f"shift+{name.lower()}"
                     name = f"alt+{name}"
-                yield events.Key(name, sequence)
+                yield _legacy_key_event(name, sequence, alt)
             except Exception:
                 yield events.Key(sequence, sequence)
+
+
+def _code_to_key(code: int, end: str = "u") -> str:
+    """Convert a Kitty protocol key code to a Textual key name."""
+    if key := FUNCTIONAL_KEYS.get(f"{code}{end}"):
+        return key
+    try:
+        return _character_to_key(chr(code))
+    except (ValueError, OverflowError):
+        return str(code)
+
+
+def _safe_chr(code: int) -> str:
+    try:
+        return chr(code)
+    except (ValueError, OverflowError):
+        return ""
+
+
+def _extended_key_event(match: re.Match[str]) -> events.Key:
+    """Build a key event from a legacy CSI key or a Kitty keyboard protocol sequence."""
+    (
+        number,
+        shifted_code,
+        base_layout_code,
+        modifiers_field,
+        event_type,
+        text_field,
+        end,
+    ) = match.groups()
+    code = int(number) if number else 1
+    modifier_bits = max(0, int(modifiers_field) - 1) if modifiers_field else 0
+    modifiers = sorted(
+        modifier
+        for bit, modifier in enumerate(_KEY_MODIFIERS)
+        if modifier_bits & (1 << bit)
+    )
+    phase = _KITTY_PHASES.get(event_type or "1", "press")
+    text = (
+        "".join(_safe_chr(int(point)) for point in text_field.split(":") if point)
+        if text_field
+        else ""
+    )
+
+    if code == 0 and text:
+        return events.Key(text, text, phase=phase, modifiers=modifiers)
+
+    functional_key = FUNCTIONAL_KEYS.get(f"{code}{end}")
+    base_key = functional_key or _code_to_key(code).lower()
+    shifted_key = _code_to_key(int(shifted_code)) if shifted_code else None
+    base_layout_key = (
+        _code_to_key(int(base_layout_code)).lower() if base_layout_code else None
+    )
+
+    character: str | None = None
+    if functional_key is not None or any(modifier != "shift" for modifier in modifiers):
+        key = "+".join([*modifiers, base_key])
+    elif modifiers:
+        # Shift only: report the shifted character, as a legacy terminal would.
+        unshifted = _safe_chr(code)
+        if shifted_code:
+            shifted_character = _safe_chr(int(shifted_code))
+        elif text:
+            shifted_character = text
+        elif len(unshifted.upper()) == 1 and unshifted.upper() != unshifted:
+            shifted_character = unshifted.upper()
+        else:
+            shifted_character = ""
+        if shifted_character and shifted_character != unshifted:
+            if shifted_key is not None:
+                key = shifted_key
+            elif len(shifted_character) == 1:
+                key = _character_to_key(shifted_character)
+            else:
+                key = shifted_character
+            character = text or shifted_character
+        else:
+            key = f"shift+{base_key}"
+            character = text or None
+    else:
+        key = base_key
+        character = text or _safe_chr(code) or None
+
+    return events.Key(
+        key,
+        character,
+        phase=phase,
+        modifiers=modifiers,
+        base_key=base_key,
+        shifted_key=shifted_key,
+        base_layout_key=base_layout_key,
+    )
+
+
+def _legacy_key_event(name: str, character: str | None, alt: bool) -> events.Key:
+    """Build a key event for a legacy sequence, with metadata agreeing with its name.
+
+    Args:
+        name: Public key name.
+        character: Character, or `None`.
+        alt: Was the key prefixed with ESC (i.e. alt held)?
+    """
+    prefix, _, base_key = name.rpartition("+")
+    if not base_key:
+        prefix, base_key = "", name
+    modifiers = [
+        modifier for modifier in prefix.split("+") if modifier in _KEY_MODIFIERS
+    ]
+    if len(base_key) == 1 and base_key.isupper():
+        modifiers.append("shift")
+        base_key = base_key.lower()
+    if alt:
+        modifiers.append("alt")
+    return events.Key(name, character, modifiers=modifiers, base_key=base_key)
