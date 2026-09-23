@@ -1,0 +1,15 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should preserve anchors of sibling combinators -->\n    <style>\n        .a + .b { fill: red }\n    </style>\n    <g class=\"a\">\n        <rect width=\"1\" height=\"1\"/>\n    </g>\n    <rect class=\"b\" width=\"1\" height=\"1\"/>\n    <g>\n        <rect class=\"b\" width=\"1\" height=\"1\"/>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve anchors of sibling combinators -->
+    <style>
+        .a+.b{fill:red}
+    </style>
+    <g class="a">
+        <rect width="1" height="1"/>
+    </g>
+    <rect class="b" width="1" height="1"/>
+    <rect class="b" width="1" height="1"/>
+</svg>

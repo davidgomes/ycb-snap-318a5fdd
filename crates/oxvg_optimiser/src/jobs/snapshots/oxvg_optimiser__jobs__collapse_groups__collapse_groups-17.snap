@@ -1,0 +1,14 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should collapse between descendant combinator anchors, preserving the anchor -->\n    <style>\n        .a path { fill: red }\n    </style>\n    <g class=\"a\">\n        <g>\n            <g>\n                <path d=\"M0 0\"/>\n            </g>\n        </g>\n    </g>\n    <g class=\"b\">\n        <path d=\"M1 1\"/>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should collapse between descendant combinator anchors, preserving the anchor -->
+    <style>
+        .a path{fill:red}
+    </style>
+    <g class="a">
+        <path d="M0 0"/>
+    </g>
+    <path d="M1 1" class="b"/>
+</svg>

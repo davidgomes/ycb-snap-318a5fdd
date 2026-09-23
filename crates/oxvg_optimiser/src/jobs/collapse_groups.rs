@@ -553,5 +553,159 @@ fn collapse_groups() -> anyhow::Result<()> {
         )
     )?);
 
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve group implicated by child combinator, collapsing unrelated groups -->
+    <style>
+        .a > path { fill: red }
+    </style>
+    <g class="a">
+        <path d="M0 0"/>
+    </g>
+    <g class="b">
+        <path d="M1 1"/>
+    </g>
+    <g>
+        <g>
+            <path d="M2 2"/>
+        </g>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should collapse groups where the selector only partially matches -->
+    <style>
+        .a > path { fill: red }
+    </style>
+    <g class="a">
+        <rect width="1" height="1"/>
+    </g>
+    <g>
+        <path d="M0 0"/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should collapse between descendant combinator anchors, preserving the anchor -->
+    <style>
+        .a path { fill: red }
+    </style>
+    <g class="a">
+        <g>
+            <g>
+                <path d="M0 0"/>
+            </g>
+        </g>
+    </g>
+    <g class="b">
+        <path d="M1 1"/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve positions of elements matched by positional pseudo-classes -->
+    <style>
+        path:first-child { fill: red }
+        rect:nth-child(5) { fill: blue }
+    </style>
+    <circle r="1"/>
+    <g>
+        <path d="M0 0"/>
+        <path d="M1 1"/>
+    </g>
+    <g>
+        <circle r="2"/>
+        <circle r="3"/>
+    </g>
+    <rect width="1" height="1"/>
+    <g>
+        <g>
+            <path d="M2 2"/>
+        </g>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve anchors of sibling combinators -->
+    <style>
+        .a + .b { fill: red }
+    </style>
+    <g class="a">
+        <rect width="1" height="1"/>
+    </g>
+    <rect class="b" width="1" height="1"/>
+    <g>
+        <rect class="b" width="1" height="1"/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should treat dynamic pseudo-classes as possibly matching -->
+    <style>
+        g:hover > path { fill: red }
+        @media (min-width: 100px) {
+            .b > rect { fill: blue }
+        }
+    </style>
+    <g>
+        <path d="M0 0"/>
+    </g>
+    <g class="b">
+        <rect width="1" height="1"/>
+    </g>
+    <g class="c">
+        <circle r="1"/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve groups that a negated relationship depends on -->
+    <style>
+        path:not(g > *) { fill: red }
+    </style>
+    <g>
+        <path d="M0 0"/>
+    </g>
+    <g>
+        <g>
+            <circle r="1"/>
+        </g>
+    </g>
+</svg>"#
+        )
+    )?);
+
     Ok(())
 }

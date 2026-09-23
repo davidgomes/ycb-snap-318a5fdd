@@ -1,0 +1,23 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should preserve positions of elements matched by positional pseudo-classes -->\n    <style>\n        path:first-child { fill: red }\n        rect:nth-child(5) { fill: blue }\n    </style>\n    <circle r=\"1\"/>\n    <g>\n        <path d=\"M0 0\"/>\n        <path d=\"M1 1\"/>\n    </g>\n    <g>\n        <circle r=\"2\"/>\n        <circle r=\"3\"/>\n    </g>\n    <rect width=\"1\" height=\"1\"/>\n    <g>\n        <g>\n            <path d=\"M2 2\"/>\n        </g>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve positions of elements matched by positional pseudo-classes -->
+    <style>
+        path:first-child{fill:red}rect:nth-child(5){fill:#00f}
+    </style>
+    <circle r="1"/>
+    <g>
+        <path d="M0 0"/>
+        <path d="M1 1"/>
+    </g>
+    <g>
+        <circle r="2"/>
+        <circle r="3"/>
+    </g>
+    <rect width="1" height="1"/>
+    <g>
+        <path d="M2 2"/>
+    </g>
+</svg>

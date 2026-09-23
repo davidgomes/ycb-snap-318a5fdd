@@ -1,0 +1,15 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should preserve group implicated by child combinator, collapsing unrelated groups -->\n    <style>\n        .a > path { fill: red }\n    </style>\n    <g class=\"a\">\n        <path d=\"M0 0\"/>\n    </g>\n    <g class=\"b\">\n        <path d=\"M1 1\"/>\n    </g>\n    <g>\n        <g>\n            <path d=\"M2 2\"/>\n        </g>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve group implicated by child combinator, collapsing unrelated groups -->
+    <style>
+        .a>path{fill:red}
+    </style>
+    <g class="a">
+        <path d="M0 0"/>
+    </g>
+    <path d="M1 1" class="b"/>
+    <path d="M2 2"/>
+</svg>

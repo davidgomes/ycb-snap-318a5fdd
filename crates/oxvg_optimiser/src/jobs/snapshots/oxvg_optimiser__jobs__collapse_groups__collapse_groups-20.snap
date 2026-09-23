@@ -1,0 +1,17 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should treat dynamic pseudo-classes as possibly matching -->\n    <style>\n        g:hover > path { fill: red }\n        @media (min-width: 100px) {\n            .b > rect { fill: blue }\n        }\n    </style>\n    <g>\n        <path d=\"M0 0\"/>\n    </g>\n    <g class=\"b\">\n        <rect width=\"1\" height=\"1\"/>\n    </g>\n    <g class=\"c\">\n        <circle r=\"1\"/>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should treat dynamic pseudo-classes as possibly matching -->
+    <style>
+        g:hover>path{fill:red}@media (width>=100px){.b>rect{fill:#00f}}
+    </style>
+    <g>
+        <path d="M0 0"/>
+    </g>
+    <g class="b">
+        <rect width="1" height="1"/>
+    </g>
+    <circle r="1" class="c"/>
+</svg>
