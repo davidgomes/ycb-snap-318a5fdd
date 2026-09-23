@@ -47,8 +47,7 @@ enum Value {
     Text(String),
 }
 
-struct SortItem {
-    entry: DirEntry,
+struct SortKey {
     /// `false` for entries of the group that is listed first.
     secondary: bool,
     /// One value per sort key, followed by the path as an implicit tie-breaker.
@@ -68,29 +67,37 @@ impl SortOptions {
 
     /// Sort the entries and return them in the order in which they should be printed.
     pub fn sort(&self, entries: Vec<DirEntry>, config: &Config) -> Vec<DirEntry> {
-        let mut items: Vec<SortItem> = entries
-            .into_iter()
-            .map(|entry| self.item(entry, config))
+        let keys: Vec<SortKey> = entries
+            .iter()
+            .map(|entry| self.key(entry, config))
             .collect();
 
-        items.sort_by(|a, b| self.compare(a, b));
-
-        let entries = items.into_iter().map(|item| item.entry);
+        // Sort indices rather than the (large) entries themselves
+        let mut order: Vec<usize> = (0..entries.len()).collect();
+        order.sort_by(|&a, &b| {
+            self.compare(&keys[a], &keys[b])
+                // Distinguishes paths that are only equal after case folding or natural comparison
+                .then_with(|| {
+                    let (a, b) = (entries[a].path(), entries[b].path());
+                    a.as_os_str().cmp(b.as_os_str())
+                })
+        });
         if self.reverse {
-            entries.rev().collect()
-        } else {
-            entries.collect()
+            order.reverse();
         }
+
+        let mut entries: Vec<Option<DirEntry>> = entries.into_iter().map(Some).collect();
+        order
+            .into_iter()
+            .map(|i| entries[i].take().expect("every index occurs exactly once"))
+            .collect()
     }
 
-    fn item(&self, entry: DirEntry, config: &Config) -> SortItem {
+    fn key(&self, entry: &DirEntry, config: &Config) -> SortKey {
         let path = entry.stripped_path(config);
 
-        let mut values: Vec<Option<Value>> = self
-            .keys
-            .iter()
-            .map(|&key| self.value(key, &entry, path))
-            .collect();
+        let mut values: Vec<Option<Value>> = Vec::with_capacity(self.keys.len() + 1);
+        values.extend(self.keys.iter().map(|&key| self.value(key, entry, path)));
         values.push(Some(self.text(path.as_os_str())));
 
         let secondary = match self.group {
@@ -99,11 +106,7 @@ impl SortOptions {
             None => false,
         };
 
-        SortItem {
-            entry,
-            secondary,
-            values,
-        }
+        SortKey { secondary, values }
     }
 
     fn value(&self, key: SortField, entry: &DirEntry, path: &Path) -> Option<Value> {
@@ -140,19 +143,15 @@ impl SortOptions {
         })
     }
 
-    fn compare(&self, a: &SortItem, b: &SortItem) -> Ordering {
-        a.secondary
-            .cmp(&b.secondary)
-            .then_with(|| {
-                a.values
-                    .iter()
-                    .zip(&b.values)
-                    .map(|(x, y)| self.compare_values(x.as_ref(), y.as_ref()))
-                    .find(|ordering| ordering.is_ne())
-                    .unwrap_or(Ordering::Equal)
-            })
-            // Distinguishes paths that are only equal after case folding or natural comparison
-            .then_with(|| a.entry.path().as_os_str().cmp(b.entry.path().as_os_str()))
+    fn compare(&self, a: &SortKey, b: &SortKey) -> Ordering {
+        a.secondary.cmp(&b.secondary).then_with(|| {
+            a.values
+                .iter()
+                .zip(&b.values)
+                .map(|(x, y)| self.compare_values(x.as_ref(), y.as_ref()))
+                .find(|ordering| ordering.is_ne())
+                .unwrap_or(Ordering::Equal)
+        })
     }
 
     fn compare_values(&self, a: Option<&Value>, b: Option<&Value>) -> Ordering {
