@@ -55,6 +55,7 @@ Table of contents
         * [`deserialize` option](#deserialize-option)
         * [`serialization_strategy` option](#serialization_strategy-option)
         * [`alias` option](#alias-option)
+        * [`flatten` option](#flatten-option)
     * [Config options](#config-options)
         * [`debug` config option](#debug-config-option)
         * [`code_generation_options` config option](#code_generation_options-config-option)
@@ -1262,6 +1263,67 @@ class DataClass(DataClassDictMixin):
 
 x = DataClass.from_dict({"FieldA": 1, "#invalid": 2})  # DataClass(a=1, b=2)
 ```
+
+#### `flatten` option
+
+This option merges the keys of a nested dataclass field into the parent dict
+instead of putting them under the field name. Keys of a flattened field can be
+prefixed with `flatten_prefix` (a string, or `True` to use the field name
+followed by an underscore) or renamed one by one with `flatten_rename`
+(a mapping from a field name or alias of the nested dataclass to a new key).
+These two options are mutually exclusive.
+
+```python
+from dataclasses import dataclass, field
+from typing import Optional
+from mashumaro import DataClassDictMixin, field_options
+
+@dataclass
+class Point(DataClassDictMixin):
+    x: int
+    y: int
+
+@dataclass
+class Line(DataClassDictMixin):
+    name: str
+    start: Point = field(metadata=field_options(flatten=True))
+    end: Point = field(
+        metadata=field_options(flatten=True, flatten_prefix=True)
+    )
+    center: Optional[Point] = field(
+        default=None,
+        metadata=field_options(
+            flatten=True, flatten_rename={"x": "cx", "y": "cy"}
+        ),
+    )
+
+line = Line("a", Point(0, 0), Point(2, 2), Point(1, 1))
+assert line.to_dict() == {
+    "name": "a",
+    "x": 0,
+    "y": 0,
+    "end_x": 2,
+    "end_y": 2,
+    "cx": 1,
+    "cy": 1,
+}
+assert Line.from_dict(line.to_dict()) == line
+```
+
+A flattened dataclass is serialized and deserialized with its own config,
+so its aliases, `omit_none`, `serialize_by_alias` and other options still
+apply. An optional flattened field that is `None` adds no keys on
+serialization, and it's deserialized to `None` (or its default value)
+when none of its keys are present in the input. With the
+[`forbid_extra_keys`](#forbid_extra_keys-config-option) config option enabled,
+keys of flattened fields are allowed and the field name itself is not.
+
+The options are validated when the class is compiled. An
+`UnserializableField` exception is raised if the field type isn't a
+dataclass, if a key of a flattened field collides with a key of another field
+(field names and aliases defined in any way are taken into account), or if
+`flatten_rename` has keys that don't match any field or that refer to the same
+field.
 
 ### Config options
 
