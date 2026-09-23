@@ -82,6 +82,10 @@ func (c *TrafficPolicyConstructor) ConstructIR(
 	constructHeaderModifiers(policyCR.Spec, &outSpec)
 	// Construct auto host rewrite specific IR
 	constructAutoHostRewrite(policyCR.Spec, &outSpec)
+	// Construct consistent hash specific IR
+	if err := constructConsistentHash(policyCR.Spec, &outSpec); err != nil {
+		errors = append(errors, err)
+	}
 	// Construct buffer specific IR
 	constructBuffer(policyCR.Spec, &outSpec)
 	// Construct timeout and retry specific IR

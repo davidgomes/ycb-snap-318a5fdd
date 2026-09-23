@@ -1,0 +1,204 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: example-gateway
+spec:
+  gatewayClassName: example-gateway-class
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-svc
+spec:
+  selector:
+    test: test
+  ports:
+    - protocol: HTTP
+      port: 80
+      targetPort: test
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: example-route-empty
+spec:
+  parentRefs:
+  - name: example-gateway
+  hostnames:
+  - "empty.example.com"
+  rules:
+  - backendRefs:
+    - name: example-svc
+      port: 80
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: example-route-empty
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: example-route-empty
+  consistentHash: {}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: example-route-full
+spec:
+  parentRefs:
+  - name: example-gateway
+  hostnames:
+  - "full.example.com"
+  rules:
+  - backendRefs:
+    - name: example-svc
+      port: 80
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: example-route-full
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: example-route-full
+  consistentHash:
+    headers:
+    - headerName: X-User
+      regexRewrite:
+        pattern: "^user-(.*)$"
+        substitution: '\1'
+      terminal: true
+    - headerName: x-user
+    - headerName: X-Tenant
+    cookies:
+    - name: session
+      ttl: "1h30m"
+      path: /app
+      attributes:
+      - name: SameSite
+        value: Lax
+      - name: Secure
+        value: "true"
+      terminal: true
+    - name: session
+      ttl: "10s"
+    - name: alt
+      ttl: "3600"
+    queryParameters:
+    - name: user
+    - name: user
+      terminal: true
+    - name: region
+    filterState:
+    - key: role
+      terminal: true
+    - key: role
+    sourceIp:
+      terminal: true
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: example-route-disabled
+spec:
+  parentRefs:
+  - name: example-gateway
+  hostnames:
+  - "disabled.example.com"
+  rules:
+  - backendRefs:
+    - name: example-svc
+      port: 80
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: example-route-disabled-lower
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: example-route-disabled
+  consistentHash:
+    headers:
+    - headerName: x-inherited
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: example-route-disabled
+  annotations:
+    kgateway.dev/policy-weight: "10"
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: example-route-disabled
+  consistentHash:
+    disable: true
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: example-route-merged
+spec:
+  parentRefs:
+  - name: example-gateway
+  hostnames:
+  - "merged.example.com"
+  rules:
+  - backendRefs:
+    - name: example-svc
+      port: 80
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: example-route-merged-high
+  annotations:
+    kgateway.dev/policy-weight: "10"
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: example-route-merged
+  consistentHash:
+    headers:
+    - headerName: X-User
+      terminal: true
+    cookies:
+    - name: session
+    sourceIp:
+      terminal: true
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: example-route-merged-low
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: example-route-merged
+  consistentHash:
+    headers:
+    - headerName: x-user
+    - headerName: X-Tenant
+    cookies:
+    - name: session
+    - name: alt
+    queryParameters:
+    - name: region
+      terminal: true
+    filterState:
+    - key: role
+    sourceIp:
+      terminal: false

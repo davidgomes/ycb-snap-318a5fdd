@@ -150,6 +150,12 @@ type TrafficPolicySpec struct {
 	// malicious social engineering.
 	// +optional
 	OAuth2 *OAuth2Policy `json:"oauth2,omitempty"`
+
+	// ConsistentHash configures route-level consistent hashing.
+	// When set, including as an empty object, the route is configured with Envoy hash policies.
+	// If no sub-fields are set, hashing defaults to the downstream source IP address.
+	// +optional
+	ConsistentHash *ConsistentHash `json:"consistentHash,omitempty"`
 }
 
 // URLRewrite specifies URL rewrite rules using regular expressions.
@@ -607,4 +613,156 @@ type RequestDecompression struct {
 	// Disables decompression.
 	// +optional
 	Disable *shared.PolicyDisable `json:"disable,omitempty"`
+}
+
+// ConsistentHash configures Envoy route hash policies used for consistent hashing.
+// Hash policies are applied in a fixed order: headers, cookies, queryParameters, filterState, then sourceIp.
+// Entries within each list are deduplicated by their identifying key, keeping the first occurrence.
+// Header identity is case-insensitive.
+// +kubebuilder:validation:XValidation:rule="!has(self.disable) || !self.disable || (!has(self.headers) && !has(self.cookies) && !has(self.queryParameters) && !has(self.filterState) && !has(self.sourceIp))",message="no other fields may be set when disable is true"
+type ConsistentHash struct {
+	// Disable suppresses consistent hashing on the targeted route.
+	// When true, no hash policies are produced and hash policies inherited from
+	// broader-scoped TrafficPolicies are suppressed.
+	// No other fields may be set when disable is true.
+	// +optional
+	Disable *bool `json:"disable,omitempty"`
+
+	// Headers hashes request header values.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	Headers []ConsistentHashHeader `json:"headers,omitempty"`
+
+	// Cookies hashes cookie values.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	Cookies []ConsistentHashCookie `json:"cookies,omitempty"`
+
+	// QueryParameters hashes URL query parameter values.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	QueryParameters []ConsistentHashQueryParameter `json:"queryParameters,omitempty"`
+
+	// FilterState hashes values stored in Envoy filter state.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	FilterState []ConsistentHashFilterState `json:"filterState,omitempty"`
+
+	// SourceIP hashes the downstream source IP address.
+	// +optional
+	SourceIP *ConsistentHashSourceIP `json:"sourceIp,omitempty"`
+}
+
+// ConsistentHashHeader hashes the value of an HTTP request header.
+type ConsistentHashHeader struct {
+	// HeaderName is the name of the header to hash.
+	// Header names are compared case-insensitively when deduplicating entries.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	HeaderName string `json:"headerName"`
+
+	// RegexRewrite rewrites the header value before it is hashed.
+	// +optional
+	RegexRewrite *ConsistentHashRegexRewrite `json:"regexRewrite,omitempty"`
+
+	// Terminal stops evaluation of later hash policies when this header yields a hash.
+	// +optional
+	Terminal *bool `json:"terminal,omitempty"`
+}
+
+// ConsistentHashRegexRewrite rewrites a value with a regular expression before hashing.
+type ConsistentHashRegexRewrite struct {
+	// Pattern is the RE2 regular expression matched against the value.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Pattern string `json:"pattern"`
+
+	// Substitution is the replacement string for the matched pattern.
+	// It may include backreferences to captured groups.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Substitution string `json:"substitution"`
+}
+
+// ConsistentHashCookie hashes a cookie value.
+type ConsistentHashCookie struct {
+	// Name is the cookie name.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Name string `json:"name"`
+
+	// TTL is how long a generated cookie remains valid.
+	// Accepts a Go duration (for example "1h30m") or an integer number of seconds (for example "3600").
+	// When unset, only an existing cookie is hashed and Envoy does not generate one.
+	// When set to zero ("0" or "0s"), the generated cookie is a session cookie.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+$|^[0-9]+$`
+	TTL *string `json:"ttl,omitempty"`
+
+	// Path is the path attribute of a generated cookie.
+	// +optional
+	// +kubebuilder:validation:MaxLength=1024
+	Path *string `json:"path,omitempty"`
+
+	// Attributes are cookie attributes passed through to Envoy, such as SameSite or Secure.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	Attributes []ConsistentHashCookieAttribute `json:"attributes,omitempty"`
+
+	// Terminal stops evaluation of later hash policies when this cookie yields a hash.
+	// +optional
+	Terminal *bool `json:"terminal,omitempty"`
+}
+
+// ConsistentHashCookieAttribute is a name/value pair passed through to Envoy as a cookie attribute.
+type ConsistentHashCookieAttribute struct {
+	// Name is the attribute name, for example "SameSite" or "Secure".
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Name string `json:"name"`
+
+	// Value is the attribute value, passed through to Envoy as-is.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Value string `json:"value,omitempty"`
+}
+
+// ConsistentHashQueryParameter hashes a URL query parameter value.
+type ConsistentHashQueryParameter struct {
+	// Name is the query parameter name.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Name string `json:"name"`
+
+	// Terminal stops evaluation of later hash policies when this query parameter yields a hash.
+	// +optional
+	Terminal *bool `json:"terminal,omitempty"`
+}
+
+// ConsistentHashFilterState hashes a value stored in Envoy filter state.
+type ConsistentHashFilterState struct {
+	// Key is the filter state key.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Key string `json:"key"`
+
+	// Terminal stops evaluation of later hash policies when this filter state entry yields a hash.
+	// +optional
+	Terminal *bool `json:"terminal,omitempty"`
+}
+
+// ConsistentHashSourceIP hashes the downstream source IP address.
+type ConsistentHashSourceIP struct {
+	// Terminal stops evaluation of later hash policies when the source IP yields a hash.
+	// +optional
+	Terminal *bool `json:"terminal,omitempty"`
 }
