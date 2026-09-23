@@ -31,6 +31,11 @@ from mashumaro.config import (
 from mashumaro.core.const import Sentinel
 from mashumaro.core.helpers import ConfigValue
 from mashumaro.core.meta.code.lines import CodeLines
+from mashumaro.core.meta.flatten import (
+    FieldView,
+    FlattenPlan,
+    analyze_flatten,
+)
 from mashumaro.core.meta.helpers import (
     get_args,
     get_class_that_defines_field,
@@ -38,12 +43,14 @@ from mashumaro.core.meta.helpers import (
     get_literal_values,
     get_name_error_name,
     get_type_annotations,
+    get_type_origin,
     hash_type_args,
     is_annotated,
     is_class_var,
     is_dataclass_dict_mixin,
     is_dataclass_dict_mixin_subclass,
     is_dialect_subclass,
+    is_final,
     is_hashable,
     is_init_var,
     is_literal,
@@ -51,6 +58,7 @@ from mashumaro.core.meta.helpers import (
     is_named_tuple,
     is_optional,
     is_type_var_any,
+    not_none_type_arg,
     resolve_type_params,
     substitute_type_params,
     type_name,
@@ -156,6 +164,10 @@ class CodeBuilder:
             self.attrs_registry = attrs_registry
         else:
             self.attrs_registry = {}
+        self._flatten_analysis_cache: typing.Optional[
+            dict[str, FlattenPlan]
+        ] = None
+        self._field_view_builders: dict = {}
 
     def reset(self) -> None:
         self.lines.reset()
@@ -164,6 +176,8 @@ class CodeBuilder:
             self.cls, self.initial_type_args
         )
         self.field_classes = {}
+        self._flatten_analysis_cache = None
+        self._field_view_builders = {}
 
     @property
     def namespace(self) -> typing.Mapping[typing.Any, typing.Any]:
@@ -365,6 +379,10 @@ class CodeBuilder:
             and self.allow_postponed_evaluation
             and self.is_nailed
         ):
+            try:
+                self._flatten_plans()
+            except UnresolvedTypeReferenceError:
+                pass
             self._add_unpack_method_lines_lazy(method_name)
             return
         try:
@@ -377,6 +395,7 @@ class CodeBuilder:
                 raise
             self._add_unpack_method_lines_lazy(method_name)
         else:
+            self._flatten_plans()
             if self.decoder is not None:
                 self.add_line("d = decoder(d)")
             discr = self.get_discriminator()
@@ -420,13 +439,21 @@ class CodeBuilder:
                         f"with Callable[[{type_name(self.cls)}], "
                         f"{type_name(self.cls)}] signature"
                     )
-            filtered_fields = []
+            filtered_fields: list[
+                tuple[
+                    str,
+                    typing.Optional[str],
+                    typing.Any,
+                    typing.Optional[FlattenPlan],
+                ]
+            ] = []
             pos_args = []
             kw_args = []
             missing_kw_only = False
             add_kwargs = False
             kw_only_fields = set()
             field_blocks = []
+            flatten_plans = self._flatten_plans()
             for fname, ftype in field_types.items():
                 field = self.dataclass_fields.get(fname)
                 if field and not field.init:
@@ -445,12 +472,21 @@ class CodeBuilder:
                     kw_only_fields.add(fname)
 
                 metadata = self.metadatas.get(fname, {})
+                plan = flatten_plans.get(fname)
+                if plan is not None:
+                    filtered_fields.append((fname, None, ftype, plan))
+                    continue
                 alias = self.__get_field_alias(fname, ftype, metadata, config)
 
-                filtered_fields.append((fname, alias, ftype))
+                filtered_fields.append((fname, alias, ftype, None))
             if filtered_fields:
                 if config.forbid_extra_keys:
-                    allowed_keys = {f[1] or f[0] for f in filtered_fields}
+                    allowed_keys = set()
+                    for fname, alias, _ftype, plan in filtered_fields:
+                        if plan is not None:
+                            allowed_keys.update(plan.input_keys)
+                        else:
+                            allowed_keys.add(alias or fname)
 
                     # If a discriminator with a field is set via config,
                     # we should allow this field to be present in the input
@@ -460,7 +496,11 @@ class CodeBuilder:
                         allowed_keys.add(discr.field)
 
                     if config.allow_deserialization_not_by_alias:
-                        allowed_keys |= {f[0] for f in filtered_fields}
+                        allowed_keys |= {
+                            fname
+                            for fname, _alias, _ftype, plan in filtered_fields
+                            if plan is None
+                        }
 
                     allowed_keys_str = "'" + "', '".join(allowed_keys) + "'"
 
@@ -475,17 +515,22 @@ class CodeBuilder:
                         )
 
                 with self.indent("try:"):
-                    for fname, alias, ftype in filtered_fields:
-                        self.add_type_modules(ftype)
-                        metadata = self.metadatas.get(fname, {})
-                        field_block = FieldUnpackerCodeBlockBuilder(
-                            self, CodeLines()
-                        ).build(
-                            fname=fname,
-                            ftype=ftype,
-                            metadata=metadata,
-                            alias=alias,
-                        )
+                    for fname, alias, ftype, plan in filtered_fields:
+                        if plan is not None:
+                            field_block = self._build_flatten_unpack_block(
+                                fname, plan
+                            )
+                        else:
+                            self.add_type_modules(ftype)
+                            metadata = self.metadatas.get(fname, {})
+                            field_block = FieldUnpackerCodeBlockBuilder(
+                                self, CodeLines()
+                            ).build(
+                                fname=fname,
+                                ftype=ftype,
+                                metadata=metadata,
+                                alias=alias,
+                            )
                         if field_block.in_kwargs:
                             add_kwargs = True
                         field_blocks.append(field_block)
@@ -822,6 +867,10 @@ class CodeBuilder:
             and self.allow_postponed_evaluation
             and self.is_nailed
         ):
+            try:
+                self._flatten_plans()
+            except UnresolvedTypeReferenceError:
+                pass
             self._add_pack_method_lines_lazy(method_name)
             return
         try:
@@ -834,6 +883,7 @@ class CodeBuilder:
                 raise
             self._add_pack_method_lines_lazy(method_name)
         else:
+            flatten_plans = self._flatten_plans()
             pre_serialize = self.get_declared_hook(__PRE_SERIALIZE__)
             if pre_serialize:
                 if self.is_code_generation_option_enabled(
@@ -872,6 +922,9 @@ class CodeBuilder:
             for fname, ftype in fnames_and_types:
                 if self.metadatas.get(fname, {}).get("serialize") == "omit":
                     continue
+                if fname in flatten_plans:
+                    packers[fname] = ""
+                    continue
                 packer, alias, could_be_none = self._get_field_packer(
                     fname, ftype, config, force_value
                 )
@@ -882,6 +935,7 @@ class CodeBuilder:
                     nullable_fields.add(fname)
                     if packer != "value":
                         nontrivial_nullable_fields.add(fname)
+            active_flatten = any(fname in flatten_plans for fname in packers)
             if (
                 nontrivial_nullable_fields
                 or nullable_fields
@@ -889,10 +943,15 @@ class CodeBuilder:
                 or by_alias_feature
                 and aliases
                 or omit_default
+                or active_flatten
             ):
                 kwargs = "kwargs"
                 self.add_line("kwargs = {}")
                 for fname, packer in packers.items():
+                    plan = flatten_plans.get(fname)
+                    if plan is not None:
+                        self._emit_flatten_pack(fname, plan, omit_default)
+                        continue
                     if force_value:
                         self.add_line(f"value = self.{fname}")
                     alias = aliases.get(fname)
@@ -1260,6 +1319,274 @@ class CodeBuilder:
             name = f"v_{uuid.uuid4().hex}"
             self.ensure_object_imported(value, name)
             return name
+
+    def _class_uses_flatten(self) -> bool:
+        for metadata in self.metadatas.values():
+            if metadata.get("flatten") not in (None, False):
+                return True
+            if metadata.get("flatten_prefix") not in (None, False):
+                return True
+            rename = metadata.get("flatten_rename")
+            if rename is None:
+                continue
+            if isinstance(rename, dict) and not rename:
+                continue
+            return True
+        return False
+
+    def _flatten_plans(self) -> dict[str, FlattenPlan]:
+        if not self._class_uses_flatten():
+            return {}
+        if self._flatten_analysis_cache is None:
+            self._flatten_analysis_cache = analyze_flatten(
+                self.cls,
+                type_name(self.cls, short=True),
+                self._iter_field_views(self.cls, self.initial_type_args),
+                self._load_flatten_fields,
+            )
+        return self._flatten_analysis_cache
+
+    def _load_flatten_fields(
+        self, cls: typing.Type, type_args: tuple
+    ) -> tuple[str, list[FieldView]]:
+        return (
+            type_name(cls, short=True),
+            self._iter_field_views(cls, type_args),
+        )
+
+    def _field_view_builder(
+        self, cls: typing.Type, type_args: tuple
+    ) -> "CodeBuilder":
+        if cls is self.cls and tuple(type_args) == tuple(
+            self.initial_type_args
+        ):
+            return self
+        key = (cls, tuple(type_args), self.dialect)
+        cached = self._field_view_builders.get(key)
+        if cached is None:
+            cached = CodeBuilder(
+                cls,
+                type_args,
+                dialect=self.dialect,
+                format_name=self.format_name,
+                default_dialect=self.default_dialect,
+            )
+            cached.reset()
+            self._field_view_builders[key] = cached
+        return cached
+
+    def _iter_field_views(
+        self, cls: typing.Type, type_args: tuple
+    ) -> list[FieldView]:
+        builder = self._field_view_builder(cls, type_args)
+        serialize_by_alias = bool(
+            builder.get_dialect_or_config_option("serialize_by_alias", False)
+        )
+        by_alias_flag = builder.is_code_generation_option_enabled(
+            TO_DICT_ADD_BY_ALIAS_FLAG
+        )
+        allow_not_by_alias = bool(
+            builder.get_config().allow_deserialization_not_by_alias
+        )
+        views = []
+        for fname, ftype in builder.get_field_types(
+            include_extras=True
+        ).items():
+            metadata = builder.metadatas.get(fname, {})
+            alias = builder.__get_field_alias(
+                fname, ftype, metadata, builder.get_config()
+            )
+            dc_field = builder.dataclass_fields.get(fname)
+            init = True if dc_field is None else bool(dc_field.init)
+            child_type, child_args, optional = builder._unwrap_dataclass_type(
+                fname, ftype
+            )
+            views.append(
+                FieldView(
+                    name=fname,
+                    type_name=type_name(ftype, short=True),
+                    alias=alias,
+                    optional=optional,
+                    init=init,
+                    serialize_omit=metadata.get("serialize") == "omit",
+                    flatten=metadata.get("flatten"),
+                    flatten_prefix=metadata.get("flatten_prefix"),
+                    flatten_rename=metadata.get("flatten_rename"),
+                    child_type=child_type,
+                    child_type_args=child_args,
+                    serialize_by_alias=serialize_by_alias,
+                    by_alias_flag=by_alias_flag,
+                    allow_not_by_alias=allow_not_by_alias,
+                )
+            )
+        return views
+
+    def _unwrap_dataclass_type(
+        self, fname: str, ftype: typing.Any
+    ) -> tuple[typing.Optional[typing.Type], tuple, bool]:
+        resolved = self.get_field_resolved_type_params(fname)
+        optional = False
+        seen: set[int] = set()
+        while True:
+            marker = id(ftype)
+            if marker in seen:
+                break
+            seen.add(marker)
+            if is_annotated(ftype):
+                args = get_args(ftype)
+                if not args:
+                    break
+                ftype = args[0]
+                continue
+            if is_final(ftype):
+                args = get_args(ftype)
+                if not args:
+                    break
+                ftype = args[0]
+                continue
+            real = resolved.get(ftype, ftype)
+            if real is not ftype:
+                ftype = real
+                continue
+            if is_optional(ftype, resolved):
+                optional = True
+                inner = not_none_type_arg(get_args(ftype), resolved)
+                if inner is None:
+                    break
+                ftype = inner
+                continue
+            break
+        origin = get_type_origin(ftype)
+        try:
+            dataclass_type = origin if is_dataclass(origin) else None
+        except TypeError:
+            dataclass_type = None
+        if dataclass_type is None:
+            return None, (), optional
+        if origin is not ftype:
+            return dataclass_type, tuple(get_args(ftype)), optional
+        return dataclass_type, (), optional
+
+    def _ensure_child_methods(
+        self, cls: typing.Type, type_args: tuple
+    ) -> None:
+        if cls is self.cls and tuple(type_args) == tuple(
+            self.initial_type_args
+        ):
+            return
+        unpack_name = self.get_unpack_method_name(type_args, self.format_name)
+        pack_name = self.get_pack_method_name(type_args, self.format_name)
+        needs_unpack = get_class_that_defines_method(unpack_name, cls) != cls
+        needs_pack = get_class_that_defines_method(pack_name, cls) != cls
+        if not needs_unpack and not needs_pack:
+            return
+        if needs_unpack:
+            CodeBuilder(
+                cls,
+                type_args,
+                dialect=self.dialect,
+                format_name=self.format_name,
+                default_dialect=self.default_dialect,
+                allow_postponed_evaluation=False,
+            ).add_unpack_method()
+        if needs_pack:
+            CodeBuilder(
+                cls,
+                type_args,
+                dialect=self.dialect,
+                format_name=self.format_name,
+                default_dialect=self.default_dialect,
+                allow_postponed_evaluation=False,
+            ).add_pack_method()
+
+    def _build_flatten_unpack_block(
+        self, fname: str, plan: FlattenPlan
+    ) -> "FieldUnpackerCodeBlock":
+        lines = CodeLines()
+        self._ensure_child_methods(plan.child_type, plan.type_args)
+        lines.append(f"__flat_{fname} = {{}}")
+        for lookups, store in plan.bindings:
+            if not lookups:
+                continue
+            first, *rest = lookups
+            lines.append(f"__fv = d.get({first!r}, MISSING)")
+            for alt in rest:
+                with lines.indent("if __fv is MISSING:"):
+                    lines.append(f"__fv = d.get({alt!r}, MISSING)")
+            with lines.indent("if __fv is not MISSING:"):
+                lines.append(f"__flat_{fname}[{store!r}] = __fv")
+        cls_alias = clean_id(type_name(plan.child_type))
+        self.ensure_object_imported(plan.child_type, cls_alias)
+        method = self.get_unpack_method_name(plan.type_args, self.format_name)
+        flags = self.get_unpack_method_flags(plan.child_type)
+        call_args = ", ".join(filter(None, (f"__flat_{fname}", flags)))
+        call = f"{cls_alias}.{method}({call_args})"
+        default = self.get_field_default(fname)
+        has_default = default is not MISSING
+        target = f"kwargs[{fname!r}]" if has_default else f"__{fname}"
+        if has_default:
+            with lines.indent(f"if __flat_{fname}:"):
+                lines.append(f"{target} = {call}")
+        elif plan.optional:
+            with lines.indent(f"if __flat_{fname}:"):
+                lines.append(f"{target} = {call}")
+            with lines.indent("else:"):
+                lines.append(f"{target} = None")
+        else:
+            lines.append(f"{target} = {call}")
+        return FieldUnpackerCodeBlock(lines, fname, has_default)
+
+    def _emit_flatten_pack(
+        self, fname: str, plan: FlattenPlan, omit_default: bool
+    ) -> None:
+        stored_default = self.get_field_default(fname)
+        can_be_none = plan.optional or stored_default is None
+        if omit_default:
+            default = self.get_field_default(fname, call_factory=True)
+        else:
+            default = MISSING
+        if omit_default and default is not MISSING:
+            self.add_line(f"value = self.{fname}")
+            with self.indent(f"if {self._value_not_default_expr(default)}:"):
+                if can_be_none and default is not None:
+                    with self.indent("if value is not None:"):
+                        self._emit_flatten_merge(fname, plan, "value")
+                else:
+                    self._emit_flatten_merge(fname, plan, "value")
+        elif can_be_none:
+            self.add_line(f"value = self.{fname}")
+            with self.indent("if value is not None:"):
+                self._emit_flatten_merge(fname, plan, "value")
+        else:
+            self._emit_flatten_merge(fname, plan, f"self.{fname}")
+
+    def _value_not_default_expr(self, default: typing.Any) -> str:
+        default_literal = self.get_field_default_literal(default)
+        if isinstance(default, float) and math.isnan(default):
+            self.ensure_object_imported(math.isnan, "isnan")
+            return "not isnan(value)"
+        return f"value != {default_literal}"
+
+    def _emit_flatten_merge(
+        self, fname: str, plan: FlattenPlan, value_expr: str
+    ) -> None:
+        self._ensure_child_methods(plan.child_type, plan.type_args)
+        method = self.get_pack_method_name(plan.type_args, self.format_name)
+        flags = self.get_pack_method_flags(plan.child_type)
+        tmp = f"__flat_{fname}_d"
+        self.add_line(f"{tmp} = {value_expr}.{method}({flags})")
+        if plan.remap is not None:
+            map_name = f"__flatten_map_{fname}"
+            self.ensure_object_imported(plan.remap, map_name)
+            self.add_line(f"for __fk, __fv in {tmp}.items():")
+            with self.indent():
+                self.add_line(f"kwargs[{map_name}.get(__fk, __fk)] = __fv")
+        elif plan.prefix:
+            self.add_line(f"for __fk, __fv in {tmp}.items():")
+            with self.indent():
+                self.add_line(f"kwargs[{plan.prefix!r} + __fk] = __fv")
+        else:
+            self.add_line(f"kwargs.update({tmp})")
 
 
 class FieldUnpackerCodeBlock:

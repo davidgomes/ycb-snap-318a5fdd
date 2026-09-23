@@ -55,6 +55,7 @@ Table of contents
         * [`deserialize` option](#deserialize-option)
         * [`serialization_strategy` option](#serialization_strategy-option)
         * [`alias` option](#alias-option)
+        * [`flatten` option](#flatten-option)
     * [Config options](#config-options)
         * [`debug` config option](#debug-config-option)
         * [`code_generation_options` config option](#code_generation_options-config-option)
@@ -1261,6 +1262,39 @@ class DataClass(DataClassDictMixin):
     b: int = field(metadata=field_options(alias="#invalid"))
 
 x = DataClass.from_dict({"FieldA": 1, "#invalid": 2})  # DataClass(a=1, b=2)
+```
+
+#### `flatten` option
+
+Merge a nested dataclass into the parent dictionary instead of nesting it
+under the field name. The nested class keeps its own config (`aliases`,
+`serialize_by_alias`, `omit_none`, `omit_default`, field strategies, and so
+on). `flatten_prefix` and `flatten_rename` are mutually exclusive.
+
+* `flatten_prefix=True` prefixes every nested key with the field name and an
+  underscore (`address` → `address_`).
+* `flatten_prefix="addr_"` uses that string as the prefix.
+* `flatten_rename` maps nested field names to new keys.
+
+Invalid combinations are rejected when the class is created: a non-dataclass
+field, key collisions (field names and every alias form), rename keys that
+are not fields of the nested class, and duplicate rename targets.
+
+```python
+@dataclass
+class Address(DataClassDictMixin):
+    street: str
+    city: str
+
+@dataclass
+class Person(DataClassDictMixin):
+    name: str
+    address: Address = field(
+        metadata=field_options(flatten=True, flatten_prefix=True)
+    )
+
+Person("Ann", Address("Main", "Rome")).to_dict()
+# {"name": "Ann", "address_street": "Main", "address_city": "Rome"}
 ```
 
 ### Config options
