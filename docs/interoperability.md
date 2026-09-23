@@ -5,6 +5,7 @@
 - [Using Scripts](#using-scripts)
   - [Type Conversion Table](#type-conversion-table)
   - [User Types](#user-types)
+  - [Calling Script Functions](#calling-script-functions)
 - [Sandbox Environments](#sandbox-environments)
 - [Concurrency](#concurrency)
 - [Compiler and VM](#compiler-and-vm)
@@ -137,6 +138,35 @@ will treat the user types in the same way it does to the runtime types with no
 performance overhead. See
 [Object Types](https://github.com/d5/tengo/blob/master/docs/objects.md) for
 more details.
+
+### Calling Script Functions
+
+Functions and closures defined by a script can be called from Go through
+their `Call` method, whether they come from global variables, arrays and maps,
+source module exports, or arguments passed to Go functions. A call behaves like
+a call made from the script: it uses the script's global variables and the
+function's captured variables, and returns runtime errors in the same format.
+
+```golang
+s := tengo.NewScript([]byte(`
+total := 0
+add := func(x) { total += x; return total }
+`))
+c, _ := s.Run()
+
+res, err := c.Get("add").Object().Call(&tengo.Int{Value: 5})
+fmt.Println(res, err, c.Get("total").Int()) // "5 <nil> 5"
+```
+
+When a function is called from a Go function the script is calling, it runs on
+the script's VM and shares its allocation limit and cancellation. Calls on one
+compiled instance must not be made from multiple goroutines at the same time.
+
+Functions keep running against the compiled instance they belong to.
+`Compiled.Clone` and `Compiled.Set` give the destination its own copies of the
+functions they move, including those inside arrays and maps: the copies run
+against the destination's globals, and start from the captured variables'
+values at the time of the copy.
 
 ## Sandbox Environments
 
