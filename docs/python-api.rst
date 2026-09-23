@@ -860,6 +860,38 @@ This also works with generators:
 
 Tuples and lists are both supported.
 
+.. _python_api_safe_import:
+
+Safe imports
+============
+
+:meth:`Database.enable_safe_import` turns on safe import mode for a database. The flag and any invariants are stored in the database file.
+
+.. code-block:: python
+
+    db.enable_safe_import()
+    invariant_id = db.add_import_invariant("chickens", "count(*) > 0")
+    db.list_import_invariants("chickens")
+    db.validate_import_invariants("chickens")
+    db.remove_import_invariant("chickens", invariant_id)
+    db.disable_safe_import()
+
+:meth:`Database.safe_bulk_insert`, :meth:`Database.safe_bulk_upsert`, :meth:`Database.import_csv` and :meth:`Database.import_json` write inside a checkpoint. They commit only when every invariant on that table passes. On failure they roll back schema changes as well as row changes.
+
+With ``strict=False`` (the default) a failed safe import returns ``{"success": False, "checkpoint_id": "...", "failures": [...], "error_report": "..."}``. ``failures`` is empty when the error was not an invariant. With ``strict=True`` the method rolls back and raises. Invariant failures raise ``sqlite_utils.db.ImportValidationError``.
+
+``import_csv`` and ``import_json`` only use a checkpoint when ``safe_mode=True``.
+
+Checkpoints can also be managed directly:
+
+.. code-block:: python
+
+    checkpoint_id = db.create_import_checkpoint()
+    db["chickens"].insert({"name": "Lila"})
+    db.rollback_to_checkpoint(checkpoint_id)  # or commit_checkpoint / cleanup_checkpoint
+
+``create_import_checkpoint()`` raises ``sqlite_utils.db.SafeImportNotEnabledError`` when safe import is off. Committing or rolling back an id finalizes it; doing so again raises ``CheckpointNotActiveError``. An unknown or cleaned-up id raises ``CheckpointNotFoundError``. Checkpoints can be nested.
+
 .. _python_api_insert_replace:
 
 Insert-replacing data

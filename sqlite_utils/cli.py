@@ -802,6 +802,151 @@ def disable_wal(path, load_extension):
         db.disable_wal()
 
 
+@cli.command(name="enable-safe-import")
+@click.argument(
+    "path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+@load_extension_option
+def enable_safe_import(path, load_extension):
+    """Enable safe import mode for a database
+
+    Example:
+
+    \b
+        sqlite-utils enable-safe-import chickens.db
+    """
+    db = sqlite_utils.Database(path)
+    _register_db_for_cleanup(db)
+    _load_extensions(db, load_extension)
+    db.enable_safe_import()
+
+
+@cli.command(name="disable-safe-import")
+@click.argument(
+    "path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+@load_extension_option
+def disable_safe_import(path, load_extension):
+    """Disable safe import mode for a database
+
+    Example:
+
+    \b
+        sqlite-utils disable-safe-import chickens.db
+    """
+    db = sqlite_utils.Database(path)
+    _register_db_for_cleanup(db)
+    _load_extensions(db, load_extension)
+    db.disable_safe_import()
+
+
+@cli.command(name="add-import-invariant")
+@click.argument(
+    "path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+@click.argument("table")
+@click.argument("sql")
+@load_extension_option
+def add_import_invariant(path, table, sql, load_extension):
+    """Register a persistent import invariant for a table
+
+    Example:
+
+    \b
+        sqlite-utils add-import-invariant chickens.db chickens "count(*) > 0"
+
+    Prints the new invariant id.
+    """
+    db = sqlite_utils.Database(path)
+    _register_db_for_cleanup(db)
+    _load_extensions(db, load_extension)
+    click.echo(db.add_import_invariant(table, sql))
+
+
+@cli.command(name="remove-import-invariant")
+@click.argument(
+    "path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+@click.argument("table")
+@click.argument("invariant_id")
+@load_extension_option
+def remove_import_invariant(path, table, invariant_id, load_extension):
+    """Remove an import invariant from a table
+
+    Example:
+
+    \b
+        sqlite-utils remove-import-invariant chickens.db chickens INVARIANT_ID
+    """
+    db = sqlite_utils.Database(path)
+    _register_db_for_cleanup(db)
+    _load_extensions(db, load_extension)
+    db.remove_import_invariant(table, invariant_id)
+
+
+@cli.command(name="list-import-invariants")
+@click.argument(
+    "path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+@click.argument("table")
+@load_extension_option
+def list_import_invariants(path, table, load_extension):
+    """List import invariant ids and SQL for a table
+
+    Example:
+
+    \b
+        sqlite-utils list-import-invariants chickens.db chickens
+    """
+    db = sqlite_utils.Database(path)
+    _register_db_for_cleanup(db)
+    _load_extensions(db, load_extension)
+    for invariant in db.list_import_invariants(table):
+        click.echo("{id}\t{expression}".format(**invariant))
+
+
+@cli.command(name="validate-import-invariants")
+@click.argument(
+    "path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+@click.argument("table")
+@load_extension_option
+def validate_import_invariants(path, table, load_extension):
+    """Validate import invariants for a table
+
+    Always exits 0. Output reports pass or fail and lists failing invariant ids.
+
+    Example:
+
+    \b
+        sqlite-utils validate-import-invariants chickens.db chickens
+    """
+    db = sqlite_utils.Database(path)
+    _register_db_for_cleanup(db)
+    _load_extensions(db, load_extension)
+    result = db.validate_import_invariants(table)
+    if result["valid"]:
+        click.echo("status: pass")
+        click.echo("valid: true")
+        return
+    click.echo("status: fail")
+    click.echo("valid: false")
+    for failure in result["failures"]:
+        click.echo("failed invariant {id}: {expression} ({error})".format(**failure))
+
+
 @cli.command(name="enable-counts")
 @click.argument(
     "path",
@@ -962,6 +1107,16 @@ def insert_upsert_options(*, require_pk=False):
                     default=False,
                     help="Apply STRICT mode to created table",
                 ),
+                click.option(
+                    "--safe-mode",
+                    is_flag=True,
+                    default=False,
+                    help=(
+                        "Import inside a checkpoint and commit only when "
+                        "import invariants pass. Input format is inferred "
+                        "when --csv/--tsv/--nl are omitted."
+                    ),
+                ),
             )
         ):
             fn = decorator(fn)
@@ -1006,6 +1161,7 @@ def insert_upsert_implementation(
     bulk_sql=None,
     functions=None,
     strict=False,
+    safe_mode=False,
 ):
     db = sqlite_utils.Database(path)
     _register_db_for_cleanup(db)
@@ -1015,6 +1171,13 @@ def insert_upsert_implementation(
         csv = True
     if (nl + csv + tsv) >= 2:
         raise click.ClickException("Use just one of --nl, --csv or --tsv")
+    if safe_mode and not db.safe_import_enabled():
+        raise click.ClickException(
+            "Safe import is not enabled. Run sqlite-utils enable-safe-import first."
+        )
+    file, nl, csv, tsv = _maybe_infer_import_format(
+        file, encoding, safe_mode, nl, csv, tsv, lines, text
+    )
     if (csv or tsv) and flatten:
         raise click.ClickException("--flatten cannot be used with --csv or --tsv")
     if empty_null and not (csv or tsv):
@@ -1138,52 +1301,122 @@ def insert_upsert_implementation(
         # Apply {"$base64": true, ...} decoding, if needed
         docs = (decode_base64_values(doc) for doc in docs)
 
-        # For bulk_sql= we use cursor.executemany() instead
-        if bulk_sql:
-            if batch_size:
-                doc_chunks = chunks(docs, batch_size)
-            else:
-                doc_chunks = [docs]
-            for doc_chunk in doc_chunks:
-                with db.conn:
-                    db.conn.cursor().executemany(bulk_sql, doc_chunk)
-            return
+        def _run_import() -> None:
+            # For bulk_sql= we use cursor.executemany() instead
+            if bulk_sql:
+                if batch_size:
+                    doc_chunks = chunks(docs, batch_size)
+                else:
+                    doc_chunks = [docs]
+                for doc_chunk in doc_chunks:
+                    with db.conn:
+                        db.conn.cursor().executemany(bulk_sql, doc_chunk)
+                return
+
+            try:
+                db.table(table).insert_all(
+                    docs, pk=pk, batch_size=batch_size, alter=alter, **extra_kwargs
+                )
+            except Exception as e:
+                if (
+                    isinstance(e, OperationalError)
+                    and e.args
+                    and (
+                        "has no column named" in e.args[0]
+                        or "no such column" in e.args[0]
+                    )
+                ):
+                    raise click.ClickException(
+                        "{}\n\nTry using --alter to add additional columns".format(
+                            e.args[0]
+                        )
+                    )
+                # If we can find sql= and parameters= arguments, show those
+                variables = _find_variables(e.__traceback__, ["sql", "parameters"])
+                if "sql" in variables and "parameters" in variables:
+                    raise click.ClickException(
+                        "{}\n\nsql = {}\nparameters = {}".format(
+                            str(e), variables["sql"], variables["parameters"]
+                        )
+                    )
+                else:
+                    raise
+            if tracker is not None:
+                db.table(table).transform(types=tracker.types)
 
         try:
-            db.table(table).insert_all(
-                docs, pk=pk, batch_size=batch_size, alter=alter, **extra_kwargs
-            )
-        except Exception as e:
-            if (
-                isinstance(e, OperationalError)
-                and e.args
-                and (
-                    "has no column named" in e.args[0] or "no such column" in e.args[0]
-                )
-            ):
-                raise click.ClickException(
-                    "{}\n\nTry using --alter to add additional columns".format(
-                        e.args[0]
-                    )
-                )
-            # If we can find sql= and parameters= arguments, show those
-            variables = _find_variables(e.__traceback__, ["sql", "parameters"])
-            if "sql" in variables and "parameters" in variables:
-                raise click.ClickException(
-                    "{}\n\nsql = {}\nparameters = {}".format(
-                        str(e), variables["sql"], variables["parameters"]
-                    )
-                )
+            if safe_mode:
+                _run_safe_cli_import(db, _run_import, table=table, bulk_sql=bulk_sql)
             else:
-                raise
-        if tracker is not None:
-            db.table(table).transform(types=tracker.types)
+                _run_import()
+        finally:
+            # Clean up open file-like objects
+            if sniff_buffer:
+                sniff_buffer.close()
+            if decoded_buffer:
+                decoded_buffer.close()
 
-        # Clean up open file-like objects
-        if sniff_buffer:
-            sniff_buffer.close()
-        if decoded_buffer:
-            decoded_buffer.close()
+
+def _maybe_infer_import_format(file, encoding, safe_mode, nl, csv, tsv, lines, text):
+    """When --safe-mode is set and no format flag was given, peek at the input."""
+    if not safe_mode or nl or csv or tsv or lines or text:
+        return file, nl, csv, tsv
+    try:
+        buffered = io.BufferedReader(file, buffer_size=4096)
+        first = buffered.peek(2048)
+    except Exception:
+        return file, nl, csv, tsv
+    stripped = first.lstrip()
+    if not stripped or stripped[:1] in (b"{", b"["):
+        return buffered, nl, csv, tsv
+    sample = stripped.decode(encoding or "utf-8", "ignore")
+    first_line = sample.splitlines()[0] if sample.splitlines() else ""
+    if "\t" in first_line and "," not in first_line:
+        return buffered, nl, False, True
+    return buffered, nl, True, False
+
+
+def _safe_cli_failure(message: str) -> None:
+    click.echo(message)
+    raise SystemExit(1)
+
+
+def _run_safe_cli_import(db, operation, table, bulk_sql):
+    checkpoint_id = db.create_import_checkpoint()
+    try:
+        operation()
+        if bulk_sql:
+            tables = db._tables_for_safe_sql(bulk_sql)
+        elif table:
+            tables = [table]
+        else:
+            tables = db._tables_with_import_invariants()
+        failures = []
+        seen = set()
+        for table_name in tables:
+            if table_name in seen:
+                continue
+            seen.add(table_name)
+            failures.extend(db.validate_import_invariants(table_name)["failures"])
+        if failures:
+            db.rollback_to_checkpoint(checkpoint_id)
+            lines = ["Import invariant validation failed; database is not valid."]
+            for failure in failures:
+                lines.append(
+                    "invariant {id} failed validation: {expression} ({error})".format(
+                        **failure
+                    )
+                )
+            _safe_cli_failure("\n".join(lines))
+        db.commit_checkpoint(checkpoint_id)
+    except SystemExit:
+        raise
+    except click.ClickException:
+        db._rollback_checkpoint_if_active(checkpoint_id)
+        raise
+    except Exception as exc:
+        db._rollback_checkpoint_if_active(checkpoint_id)
+        _safe_cli_failure(str(exc))
 
 
 def _find_variables(tb, vars):
@@ -1248,6 +1481,7 @@ def insert(
     not_null,
     default,
     strict,
+    safe_mode,
 ):
     """
     Insert records from FILE into a table, creating the table if it
@@ -1328,6 +1562,7 @@ def insert(
             not_null=not_null,
             default=default,
             strict=strict,
+            safe_mode=safe_mode,
         )
     except UnicodeDecodeError as ex:
         raise click.ClickException(UNICODE_ERROR.format(ex))
@@ -1365,6 +1600,7 @@ def upsert(
     load_extension,
     silent,
     strict,
+    safe_mode,
 ):
     """
     Upsert records based on their primary key. Works like 'insert' but if
@@ -1411,6 +1647,7 @@ def upsert(
             load_extension=load_extension,
             silent=silent,
             strict=strict,
+            safe_mode=safe_mode,
         )
     except UnicodeDecodeError as ex:
         raise click.ClickException(UNICODE_ERROR.format(ex))
@@ -1432,6 +1669,16 @@ def upsert(
 )
 @import_options
 @load_extension_option
+@click.option(
+    "--safe-mode",
+    is_flag=True,
+    default=False,
+    help=(
+        "Run SQL inside a checkpoint, including UPDATE statements, and commit "
+        "only when import invariants pass. Input format is inferred when "
+        "--csv/--tsv/--nl are omitted."
+    ),
+)
 def bulk(
     path,
     sql,
@@ -1453,6 +1700,7 @@ def bulk(
     no_headers,
     encoding,
     load_extension,
+    safe_mode,
 ):
     """
     Execute parameterized SQL against the provided list of documents.
@@ -1499,6 +1747,7 @@ def bulk(
             silent=False,
             bulk_sql=sql,
             functions=functions,
+            safe_mode=safe_mode,
         )
     except (OperationalError, sqlite3.IntegrityError) as e:
         raise click.ClickException(str(e))

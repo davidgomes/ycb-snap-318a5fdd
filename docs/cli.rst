@@ -2687,6 +2687,59 @@ To optimize specific tables rather than every FTS table, pass those tables as ex
 
     sqlite-utils optimize mydb.db table_1 table_2
 
+.. _cli_safe_import:
+
+Safe imports
+============
+
+Bulk imports can fail part way through and leave a database half-written. Safe import mode records a checkpoint, checks invariants after the write, and commits only when every check passes. A failure rolls the database back to the exact pre-import state, including tables, columns, indexes and triggers created during the import.
+
+Enable it on a database file:
+
+.. code-block:: bash
+
+    sqlite-utils enable-safe-import mydb.db
+
+Disable it again with ``disable-safe-import`` (stored invariants are kept):
+
+.. code-block:: bash
+
+    sqlite-utils disable-safe-import mydb.db
+
+Register an invariant for a table. The argument is either a SQL expression or a ``SELECT`` statement. Expressions such as ``count(*) > 0`` are evaluated once when they use an aggregate, and must be true for every row otherwise. A ``SELECT`` is executed as written and the first column of the first row is treated as true or false.
+
+.. code-block:: bash
+
+    sqlite-utils add-import-invariant mydb.db chickens "count(*) > 0"
+
+That prints an invariant id. List ids and their SQL:
+
+.. code-block:: bash
+
+    sqlite-utils list-import-invariants mydb.db chickens
+
+Remove one by id:
+
+.. code-block:: bash
+
+    sqlite-utils remove-import-invariant mydb.db chickens INVARIANT_ID
+
+Check invariants without importing. This command always exits 0. The output reports ``pass`` or ``fail`` and lists any failing invariant ids:
+
+.. code-block:: bash
+
+    sqlite-utils validate-import-invariants mydb.db chickens
+
+``insert``, ``upsert`` and ``bulk`` accept ``--safe-mode``. The import commits only when it finishes and every invariant for the affected table passes. Otherwise the process exits non-zero and the database is unchanged. ``--csv``, ``--tsv`` and ``--nl`` are optional in safe mode; the format is inferred from the input. ``bulk --safe-mode`` runs the SQL you provide, including ``UPDATE`` statements, inside the same checkpoint.
+
+.. code-block:: bash
+
+    sqlite-utils insert mydb.db chickens chickens.csv --safe-mode
+    sqlite-utils upsert mydb.db chickens chickens.csv --pk id --safe-mode
+    sqlite-utils bulk mydb.db \
+        "update chickens set name = :name where id = :id" \
+        updates.csv --safe-mode
+
 .. _cli_wal:
 
 WAL mode

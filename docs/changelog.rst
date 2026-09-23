@@ -4,6 +4,13 @@
  Changelog
 ===========
 
+.. _unreleased:
+
+Unreleased
+----------
+
+- Safe import mode. ``Database.enable_safe_import()`` stores checkpoints and persistent import invariants. ``safe_bulk_insert()``, ``safe_bulk_upsert()``, ``import_csv()`` and ``import_json()`` commit only when those invariants pass, and roll back schema changes (tables, columns, indexes and triggers) on failure. CLI: ``enable-safe-import``, ``disable-safe-import``, ``add-import-invariant``, ``remove-import-invariant``, ``list-import-invariants``, ``validate-import-invariants``, plus ``--safe-mode`` on ``insert``, ``upsert`` and ``bulk``. See :ref:`cli_safe_import` and :ref:`python_api_safe_import`.
+
 .. _v3_39:
 
 3.39 (2025-11-24)
