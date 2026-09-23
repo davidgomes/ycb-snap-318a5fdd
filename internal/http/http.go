@@ -4,17 +4,20 @@ package http
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	h "net/http"
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/caarlos0/log"
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/extrafiles"
 	"github.com/goreleaser/goreleaser/v2/internal/pipe"
+	"github.com/goreleaser/goreleaser/v2/internal/pubretry"
 	"github.com/goreleaser/goreleaser/v2/internal/semerrgroup"
 	"github.com/goreleaser/goreleaser/v2/internal/tmpl"
 	"github.com/goreleaser/goreleaser/v2/pkg/config"
@@ -308,12 +311,15 @@ func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact
 		return fmt.Errorf("%s: %s: error while building target URL: %w", upload.Name, kind, err)
 	}
 
-	// Handle the artifact
-	asset, err := assetOpen(kind, artifact)
+	first, err := assetOpen(kind, artifact)
 	if err != nil {
 		return err
 	}
-	defer asset.ReadCloser.Close()
+	defer func() {
+		if first != nil {
+			_ = first.ReadCloser.Close()
+		}
+	}()
 
 	// target url need to contain the artifact name unless the custom
 	// artifact name is used
@@ -346,16 +352,58 @@ func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact
 		WithField("file", artifact.Name).
 		Info("uploading")
 
-	res, err := uploadAssetToServer(ctx, upload, targetURL, username, secret, headers, asset, check)
+	err = pubretry.Do(ctx, upload.Retry, func(int) pubretry.Result {
+		asset := first
+		first = nil
+		if asset == nil {
+			var err error
+			asset, err = assetOpen(kind, artifact)
+			if err != nil {
+				return pubretry.Result{Err: err}
+			}
+		}
+		defer asset.ReadCloser.Close()
+
+		res, err := uploadAssetToServer(ctx, upload, targetURL, username, secret, headers, asset, check)
+		if err == nil {
+			if err := res.Body.Close(); err != nil {
+				log.WithError(err).Warn("failed to close response body")
+			}
+			return pubretry.Result{}
+		}
+		var terr transportError
+		switch {
+		case errors.As(err, &terr):
+			return pubretry.Result{Err: err, Retryable: true}
+		case res != nil && pubretry.RetryableStatus(res.StatusCode):
+			return pubretry.Result{
+				Err:        err,
+				Retryable:  true,
+				RetryAfter: pubretry.RetryAfter(res, time.Now()),
+			}
+		default:
+			return pubretry.Result{Err: err}
+		}
+	}, func(attempt int, err error) {
+		if err != nil {
+			log.WithField("instance", upload.Name).
+				WithField("file", artifact.Name).
+				WithField("attempt", attempt).
+				WithError(err).
+				Warn("upload attempt failed")
+		}
+		artifact.AddPublishAttempt(kind, upload.Name, targetURL, attempt, err)
+	})
 	if err != nil {
 		return fmt.Errorf("%s: %s: upload failed: %w", upload.Name, kind, err)
 	}
-	if err := res.Body.Close(); err != nil {
-		log.WithError(err).Warn("failed to close response body")
-	}
-
 	return nil
 }
+
+type transportError struct{ err error }
+
+func (e transportError) Error() string { return e.err.Error() }
+func (e transportError) Unwrap() error { return e.err }
 
 // uploadAssetToServer uploads the asset file to target.
 func uploadAssetToServer(ctx *context.Context, upload *config.Upload, target, username, secret string, headers map[string]string, a *asset, check ResponseChecker) (*h.Response, error) {
@@ -433,7 +481,7 @@ func executeHTTPRequest(ctx *context.Context, upload *config.Upload, req *h.Requ
 			return nil, ctx.Err()
 		default:
 		}
-		return nil, err
+		return nil, transportError{err}
 	}
 
 	defer resp.Body.Close()

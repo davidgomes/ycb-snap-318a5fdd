@@ -15,6 +15,7 @@ import (
 	"github.com/caarlos0/log"
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/extrafiles"
+	"github.com/goreleaser/goreleaser/v2/internal/pubretry"
 	"github.com/goreleaser/goreleaser/v2/internal/semerrgroup"
 	"github.com/goreleaser/goreleaser/v2/internal/tmpl"
 	"github.com/goreleaser/goreleaser/v2/pkg/config"
@@ -125,7 +126,18 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 		}
 	}
 
-	if err := up.Open(ctx, bucketURL); err != nil {
+	instance, err := instanceFor(ctx, conf)
+	if err != nil {
+		return err
+	}
+
+	if err := pubretry.Do(ctx, conf.Retry, func(int) pubretry.Result {
+		err := up.Open(ctx, bucketURL)
+		return pubretry.Result{Err: err, Retryable: pubretry.IsTransient(err)}
+	}, nil); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
 		return handleError(err, bucketURL)
 	}
 	defer up.Close()
@@ -137,7 +149,7 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 			dataFile := artifact.Path
 			uploadFile := path.Join(dir, artifact.Name)
 
-			return uploadData(ctx, conf, up, dataFile, uploadFile, bucketURL)
+			return uploadData(ctx, conf, up, artifact, dataFile, uploadFile, bucketURL, instance)
 		})
 	}
 
@@ -148,7 +160,8 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 	for name, fullpath := range files {
 		g.Go(func() error {
 			uploadFile := path.Join(dir, name)
-			return uploadData(ctx, conf, up, fullpath, uploadFile, bucketURL)
+			a := &artifact.Artifact{Name: name, Path: fullpath, Type: artifact.UploadableFile}
+			return uploadData(ctx, conf, up, a, fullpath, uploadFile, bucketURL, instance)
 		})
 	}
 
@@ -182,13 +195,33 @@ func artifactList(ctx *context.Context, conf config.Blob) []*artifact.Artifact {
 	)).List()
 }
 
-func uploadData(ctx *context.Context, conf config.Blob, up uploader, dataFile, uploadFile, bucketURL string) error {
+func instanceFor(ctx *context.Context, conf config.Blob) (string, error) {
+	bucket, err := tmpl.New(ctx).Apply(conf.Bucket)
+	if err != nil {
+		return "", err
+	}
+	provider, err := tmpl.New(ctx).Apply(conf.Provider)
+	if err != nil {
+		return "", err
+	}
+	return provider + "://" + bucket, nil
+}
+
+func uploadData(ctx *context.Context, conf config.Blob, up uploader, a *artifact.Artifact, dataFile, uploadFile, bucketURL, instance string) error {
 	data, err := getData(ctx, conf, dataFile)
 	if err != nil {
 		return err
 	}
 
-	if err := up.Upload(ctx, uploadFile, data); err != nil {
+	if err := pubretry.Do(ctx, conf.Retry, func(int) pubretry.Result {
+		err := up.Upload(ctx, uploadFile, data)
+		return pubretry.Result{Err: err, Retryable: pubretry.IsTransient(err)}
+	}, func(attempt int, err error) {
+		a.AddPublishAttempt("blob", instance, uploadFile, attempt, err)
+	}); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
 		return handleError(err, bucketURL)
 	}
 	return nil

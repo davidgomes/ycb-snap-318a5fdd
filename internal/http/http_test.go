@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/pipe"
@@ -759,4 +760,50 @@ func TestManyUploads(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, pipe.IsSkip(err), err)
 	require.True(t, uploaded.Load(), "should have uploaded")
+}
+
+func TestUploadRetry(t *testing.T) {
+	var m sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bs, _ := io.ReadAll(r.Body)
+		m.Lock()
+		bodies = append(bodies, string(bs))
+		n := len(bodies)
+		m.Unlock()
+		if n == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	file := filepath.Join(t.TempDir(), "a.tar")
+	require.NoError(t, os.WriteFile(file, []byte("lorem ipsum"), 0o644))
+	ctx := testctx.WrapWithCfg(t.Context(), config.Project{ProjectName: "blah"})
+	a := &artifact.Artifact{Name: "a.tar", Path: file, Type: artifact.UploadableArchive}
+	ctx.Artifacts.Add(a)
+
+	check := func(r *http.Response) error {
+		if r.StatusCode/100 == 2 {
+			return nil
+		}
+		return fmt.Errorf("unexpected http status code: %v", r.StatusCode)
+	}
+	require.NoError(t, Upload(ctx, []config.Upload{{
+		Name:   "a",
+		Mode:   ModeArchive,
+		Method: http.MethodPut,
+		Target: srv.URL + "/x/",
+		Retry:  config.Retry{Attempts: 3, Delay: time.Millisecond},
+	}}, "upload", check))
+
+	require.Equal(t, []string{"lorem ipsum", "lorem ipsum"}, bodies)
+	target := srv.URL + "/x/a.tar"
+	require.Equal(t, []artifact.PublishAttempt{
+		{Publisher: "upload", Instance: "a", Target: target, Attempt: 1, Status: "failure", Error: "unexpected http status code: 503"},
+		{Publisher: "upload", Instance: "a", Target: target, Attempt: 2, Status: "success"},
+	}, a.Extra[artifact.ExtraPublishAttempts])
 }

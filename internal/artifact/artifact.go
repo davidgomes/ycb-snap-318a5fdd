@@ -4,6 +4,7 @@ package artifact
 //nolint:gosec
 import (
 	"bytes"
+	"cmp"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -833,4 +834,61 @@ func autoOr[T any](input []T, filter func(T) Filter) Filter {
 		}
 		return Or(filters...)
 	}
+}
+
+// ExtraPublishAttempts is the extra key holding the list of publish attempts.
+const ExtraPublishAttempts = "publish_attempts"
+
+// Publish attempt statuses.
+const (
+	PublishAttemptSuccess = "success"
+	PublishAttemptFailure = "failure"
+)
+
+// PublishAttempt records a single attempt of publishing an artifact.
+type PublishAttempt struct {
+	Publisher string `json:"publisher"`
+	Instance  string `json:"instance"`
+	Target    string `json:"target"`
+	Attempt   int    `json:"attempt"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
+
+var publishAttemptsLock sync.Mutex //nolint:gochecknoglobals
+
+// AddPublishAttempt records a publish attempt in the artifact extras, keeping
+// the list sorted by publisher, instance, target and attempt.
+func (a *Artifact) AddPublishAttempt(publisher, instance, target string, attempt int, err error) {
+	pa := PublishAttempt{
+		Publisher: publisher,
+		Instance:  instance,
+		Target:    target,
+		Attempt:   attempt,
+		Status:    PublishAttemptSuccess,
+	}
+	if err != nil {
+		pa.Status = PublishAttemptFailure
+		pa.Error = err.Error()
+	}
+
+	publishAttemptsLock.Lock()
+	defer publishAttemptsLock.Unlock()
+	if a.Extra == nil {
+		a.Extra = Extras{}
+	}
+	var attempts []PublishAttempt
+	if v, ok := a.Extra[ExtraPublishAttempts]; ok {
+		attempts, _ = tryCastExtra[[]PublishAttempt](v)
+	}
+	attempts = append(attempts, pa)
+	slices.SortStableFunc(attempts, func(x, y PublishAttempt) int {
+		return cmp.Or(
+			cmp.Compare(x.Publisher, y.Publisher),
+			cmp.Compare(x.Instance, y.Instance),
+			cmp.Compare(x.Target, y.Target),
+			cmp.Compare(x.Attempt, y.Attempt),
+		)
+	})
+	a.Extra[ExtraPublishAttempts] = attempts
 }
