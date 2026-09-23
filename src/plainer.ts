@@ -185,6 +185,28 @@ export function generateReferentialEqualityAnnotations(
   }
 }
 
+function applyErrorStackProcessor(
+  object: any,
+  transformedValue: any,
+  type: TypeAnnotation | undefined,
+  superJson: SuperJSON
+) {
+  if (type !== 'Error' && type !== 'Error/stack' && type !== 'Error/frames') {
+    return transformedValue;
+  }
+
+  if (!isError(object) || typeof object.name !== 'string') {
+    return transformedValue;
+  }
+
+  const processor = superJson.errorClassRegistry.getProcessor(object.name);
+  if (!processor) {
+    return transformedValue;
+  }
+
+  return processor(transformedValue);
+}
+
 export const walker = (
   object: any,
   identities: Map<any, any[][]>,
@@ -272,15 +294,22 @@ export const walker = (
     }
   });
 
+  const outputValue = applyErrorStackProcessor(
+    object,
+    transformedValue,
+    transformationResult?.type,
+    superJson
+  );
+
   const result: Result = isEmptyObject(innerAnnotations)
     ? {
-        transformedValue,
+        transformedValue: outputValue,
         annotations: !!transformationResult
           ? [transformationResult.type]
           : undefined,
       }
     : {
-        transformedValue,
+        transformedValue: outputValue,
         annotations: !!transformationResult
           ? [transformationResult.type, innerAnnotations]
           : innerAnnotations,

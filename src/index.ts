@@ -1,5 +1,14 @@
 import { Class, JSONValue, SuperJSONResult, SuperJSONValue } from './types.js';
 import { ClassRegistry, RegisterOptions } from './class-registry.js';
+import {
+  ErrorClassRegistry,
+  ErrorStackProcessor,
+} from './error-class-registry.js';
+import {
+  ErrorStackOptions,
+  NormalizedErrorStackOptions,
+  normalizeErrorStackOptions,
+} from './error-options.js';
 import { Registry } from './registry.js';
 import {
   CustomTransfomer,
@@ -22,15 +31,35 @@ export default class SuperJSON {
   /**
    * @param dedupeReferentialEqualities  If true, SuperJSON will make sure only one instance of referentially equal objects are serialized and the rest are replaced with `null`.
    */
+  readonly errorStackOptions: NormalizedErrorStackOptions | undefined;
+
+  private errorCauseDepth = new WeakMap<object, number>();
+  private errorSerializationDepth = 0;
+
   constructor({
     dedupe = false,
+    errorStack,
   }: {
     dedupe?: boolean;
+    errorStack?: ErrorStackOptions;
   } = {}) {
     this.dedupe = dedupe;
+    this.errorStackOptions = normalizeErrorStackOptions(errorStack);
   }
 
   serialize(object: SuperJSONValue): SuperJSONResult {
+    if (this.errorSerializationDepth === 0) {
+      this.errorCauseDepth = new WeakMap();
+    }
+    this.errorSerializationDepth++;
+    try {
+      return this.serializeValue(object);
+    } finally {
+      this.errorSerializationDepth--;
+    }
+  }
+
+  private serializeValue(object: SuperJSONValue): SuperJSONResult {
     const identities = new Map<any, any[][]>();
     const output = walker(object, identities, this, this.dedupe);
     const res: SuperJSONResult = {
@@ -114,6 +143,19 @@ export default class SuperJSON {
     this.allowedErrorProps.push(...props);
   }
 
+  readonly errorClassRegistry = new ErrorClassRegistry();
+  registerErrorStackProcessor(className: string, fn: ErrorStackProcessor) {
+    this.errorClassRegistry.register(className, fn);
+  }
+
+  getErrorCauseDepth(error: object): number {
+    return this.errorCauseDepth.get(error) ?? 0;
+  }
+
+  setErrorCauseDepth(error: object, depth: number): void {
+    this.errorCauseDepth.set(error, depth);
+  }
+
   private static defaultInstance = new SuperJSON();
   static serialize = SuperJSON.defaultInstance.serialize.bind(
     SuperJSON.defaultInstance
@@ -139,6 +181,10 @@ export default class SuperJSON {
   static allowErrorProps = SuperJSON.defaultInstance.allowErrorProps.bind(
     SuperJSON.defaultInstance
   );
+  static registerErrorStackProcessor =
+    SuperJSON.defaultInstance.registerErrorStackProcessor.bind(
+      SuperJSON.defaultInstance
+    );
 }
 
 export { SuperJSON, SuperJSONResult, SuperJSONValue };
@@ -153,3 +199,4 @@ export const registerClass = SuperJSON.registerClass;
 export const registerCustom = SuperJSON.registerCustom;
 export const registerSymbol = SuperJSON.registerSymbol;
 export const allowErrorProps = SuperJSON.allowErrorProps;
+export const registerErrorStackProcessor = SuperJSON.registerErrorStackProcessor;
