@@ -209,6 +209,121 @@ func TestFilterTargets(t *testing.T) {
 	}
 }
 
+func TestAlertPolicyInheritance(t *testing.T) {
+	configContent := `
+[global.alert_policy]
+consecutive_failures = 4
+consecutive_recoveries = 3
+cooldown_seconds = 120
+latency_threshold_ms = 250
+latency_breach_count = 5
+ssl_expiry_threshold_days = 21
+
+[[targets]]
+url = "https://inherit.example"
+name = "Inherit"
+
+[[targets]]
+url = "https://override.example"
+name = "Override"
+alert_policy = { consecutive_failures = 2, latency_threshold_ms = 800 }
+
+[[targets]]
+url = "https://disable.example"
+name = "Disable"
+alert_policy = { latency_threshold_ms = 0, ssl_expiry_threshold_days = 7 }
+`
+
+	tmpFile, err := os.CreateTemp("", "test-alert-policy-*.toml")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer func() {
+		if err := os.Remove(tmpFile.Name()); err != nil {
+			t.Logf("Failed to remove temp file: %v", err)
+		}
+	}()
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatalf("Failed to close temp file: %v", err)
+	}
+
+	cfg, err := LoadConfig(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	inherited := cfg.Targets[0].AlertPolicy
+	if inherited.ConsecutiveFailures != 4 || inherited.ConsecutiveRecoveries != 3 || inherited.CooldownSeconds != 120 {
+		t.Fatalf("inherited counters = %+v", inherited)
+	}
+	if inherited.LatencyThresholdMs != 250 || inherited.LatencyBreachCount != 5 || inherited.SSLExpiryThresholdDays != 21 {
+		t.Fatalf("inherited thresholds = %+v", inherited)
+	}
+
+	overridden := cfg.Targets[1].AlertPolicy
+	if overridden.ConsecutiveFailures != 2 || overridden.LatencyThresholdMs != 800 {
+		t.Fatalf("override = %+v", overridden)
+	}
+	if overridden.ConsecutiveRecoveries != 3 || overridden.CooldownSeconds != 120 || overridden.LatencyBreachCount != 5 || overridden.SSLExpiryThresholdDays != 21 {
+		t.Fatalf("override should inherit unset fields: %+v", overridden)
+	}
+
+	policy := overridden.ToAlertsPolicy()
+	if policy.ConsecutiveFailures != 2 || policy.Cooldown != 120*time.Second || policy.LatencyThreshold != 800*time.Millisecond {
+		t.Fatalf("alerts policy = %+v", policy)
+	}
+
+	disabled := cfg.Targets[2].AlertPolicy
+	if disabled.LatencyThresholdMs != 0 || disabled.SSLExpiryThresholdDays != 7 {
+		t.Fatalf("explicit disable = %+v", disabled)
+	}
+	if disabled.ConsecutiveFailures != 4 || disabled.ConsecutiveRecoveries != 3 || disabled.CooldownSeconds != 120 || disabled.LatencyBreachCount != 5 {
+		t.Fatalf("disabled target should keep other global fields: %+v", disabled)
+	}
+}
+
+func TestAlertPolicyDefaults(t *testing.T) {
+	configContent := `
+[[targets]]
+url = "https://example.com"
+`
+
+	tmpFile, err := os.CreateTemp("", "test-alert-defaults-*.toml")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer func() {
+		if err := os.Remove(tmpFile.Name()); err != nil {
+			t.Logf("Failed to remove temp file: %v", err)
+		}
+	}()
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatalf("Failed to close temp file: %v", err)
+	}
+
+	cfg, err := LoadConfig(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	policy := cfg.Targets[0].AlertPolicy
+	if policy.ConsecutiveFailures != 1 || policy.ConsecutiveRecoveries != 1 {
+		t.Fatalf("defaults = %+v", policy)
+	}
+	if policy.LatencyThresholdMs != 0 || policy.LatencyBreachCount != 0 || policy.SSLExpiryThresholdDays != 0 || policy.CooldownSeconds != 0 {
+		t.Fatalf("alerting should stay disabled = %+v", policy)
+	}
+	if cfg.Global.AlertPolicy.ConsecutiveFailures != 1 || cfg.Global.AlertPolicy.ConsecutiveRecoveries != 1 {
+		t.Fatalf("global defaults = %+v", cfg.Global.AlertPolicy)
+	}
+}
+
 func TestGetTargetName(t *testing.T) {
 	tests := []struct {
 		name     string
