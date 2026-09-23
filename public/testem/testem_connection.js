@@ -194,6 +194,9 @@ function initSocket(id) {
   socket.on('tap-all-test-results', function() {
     sendMessageToParent('tap-all-test-results');
   });
+  socket.on('abort-tests', function() {
+    sendMessageToParent('abort-tests');
+  });
   socket.on('stop-run', function() {
     sendMessageToParent('stop-run');
   });

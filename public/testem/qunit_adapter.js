@@ -14,7 +14,7 @@ Testem's QUnit adapter. Works by using QUnit's hooks:
 
 */
 
-/* globals QUnit, emit */
+/* globals QUnit, emit, Testem */
 /* exported qunitAdapter */
 'use strict';
 
@@ -30,6 +30,27 @@ function qunitAdapter() {
   };
   var currentTest;
   var id = 1;
+
+  var allResultsSignaled = false;
+
+  function isAborted() {
+    return typeof Testem !== 'undefined' && !!Testem && !!Testem.aborted;
+  }
+
+  function signalAllResults() {
+    if (allResultsSignaled) {
+      return;
+    }
+    allResultsSignaled = true;
+    emit('all-test-results');
+  }
+
+  function handleAbort() {
+    signalAllResults();
+    if (QUnit.config && QUnit.config.queue) {
+      QUnit.config.queue.length = 0;
+    }
+  }
 
   function lineNumber(e) {
     return e.line || e.lineNumber;
@@ -52,6 +73,12 @@ function qunitAdapter() {
   }
 
   QUnit.log(function(params, e) {
+    if (isAborted() || !currentTest) {
+      if (isAborted()) {
+        handleAbort();
+      }
+      return;
+    }
     if (e) {
       currentTest.items.push({
         passed: params.result,
@@ -81,6 +108,10 @@ function qunitAdapter() {
 
   });
   QUnit.testStart(function(params) {
+    if (isAborted()) {
+      handleAbort();
+      return;
+    }
     currentTest = {
       id: id++,
       name: (params.module ? params.module + ': ' : '') + params.name,
@@ -89,6 +120,12 @@ function qunitAdapter() {
     emit('tests-start', currentTest);
   });
   QUnit.testDone(function(params) {
+    if (isAborted() || !currentTest) {
+      if (isAborted()) {
+        handleAbort();
+      }
+      return;
+    }
     currentTest.failed = params.failed;
     currentTest.passed = params.passed;
     currentTest.skipped = params.skipped;
@@ -109,11 +146,15 @@ function qunitAdapter() {
 
     results.tests.push(currentTest);
 
+    if (isAborted()) {
+      handleAbort();
+      return;
+    }
     emit('test-result', currentTest);
   });
   QUnit.done(function(params) {
     results.runDuration = params.runtime;
-    emit('all-test-results');
+    signalAllResults();
   });
 
 }

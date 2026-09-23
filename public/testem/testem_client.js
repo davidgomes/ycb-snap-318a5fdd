@@ -124,6 +124,7 @@ var Testem = {
   emitMessageQueue: [],
   afterTestsQueue: [],
   console: {},
+  aborted: false,
 
   // The maximum depth beyond which decycle will truncate an emitted event
   // object. When undefined, decycle uses its default.
@@ -142,9 +143,12 @@ var Testem = {
     return match ? match[1] : null;
   },
   emitMessage: function() {
-    if (this._noConnectionRequired) {
+    if (this._noConnectionRequired || Testem.aborted) {
       return;
     }
+    this._sendMessage.apply(this, arguments);
+  },
+  _sendMessage: function() {
     var args = new Array(arguments.length);
     for (var i = 0; i < args.length; ++i) {
       args[i] = arguments[i];
@@ -158,6 +162,18 @@ var Testem = {
       // enqueue until iframe is ready
       this.enqueueMessage(message);
     }
+  },
+  handleAbortTests: function() {
+    if (Testem.aborted) {
+      return;
+    }
+    Testem.aborted = true;
+    Testem.emitMessageQueue = [];
+    if (this._noConnectionRequired) {
+      return;
+    }
+    this._sendMessage('abort-tests');
+    this._sendMessage('after-tests-complete');
   },
   emit: function(evt) {
     var argsWithoutFirst = new Array(arguments.length - 1);
@@ -260,6 +276,9 @@ var Testem = {
           break;
         case 'tap-all-test-results':
           self.emit('tap-all-test-results');
+          break;
+        case 'abort-tests':
+          self.handleAbortTests();
           break;
         case 'stop-run':
           self.emit('after-tests-complete');
