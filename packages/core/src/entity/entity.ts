@@ -12,8 +12,19 @@ import { getEntityId, getEntityWorldId } from './utils/pack-entity';
 import './entity-methods-patch';
 
 export function createEntity(world: World, ...traits: ConfigurableTrait[]): Entity {
+    const entity = allocateEntity(world[$internal].entityIndex);
+
+    initEntity(world, entity);
+    addTrait(world, entity, ...traits);
+
+    return entity;
+}
+
+/**
+ * Set up world state for an entity that just became alive.
+ */
+export function initEntity(world: World, entity: Entity) {
     const ctx = world[$internal];
-    const entity = allocateEntity(ctx.entityIndex);
 
     for (const query of ctx.notQueries) {
         const match = query.check(world, entity);
@@ -23,15 +34,16 @@ export function createEntity(world: World, ...traits: ConfigurableTrait[]): Enti
     }
 
     ctx.entityTraits.set(entity, new Set());
-    addTrait(world, entity, ...traits);
-
-    return entity;
 }
 
 const cachedSet = new Set<Entity>();
 const cachedQueue = [] as Entity[];
 
-export function destroyEntity(world: World, entity: Entity) {
+/**
+ * Destroy an entity. When `cascade` is false, autoDestroy relations are cleaned up
+ * but related entities are not queued for destruction.
+ */
+export function destroyEntity(world: World, entity: Entity, cascade = true) {
     const ctx = world[$internal];
 
     // Check if entity exists.
@@ -70,12 +82,12 @@ export function destroyEntity(world: World, entity: Entity) {
                 cleanupRelationTarget(world, relation, source, currentEntity);
 
                 // If autoDestroy: 'source', queue the source for destruction
-                if (relationCtx.autoDestroy === 'source') entityQueue.push(source);
+                if (cascade && relationCtx.autoDestroy === 'source') entityQueue.push(source);
             }
 
             // Handle relations where currentEntity is the source pointing to targets
             // If autoDestroy is 'target', destroy those targets
-            if (relationCtx.autoDestroy === 'target') {
+            if (cascade && relationCtx.autoDestroy === 'target') {
                 const targets = getRelationTargets(world, relation, currentEntity);
                 for (const target of targets) {
                     if (!world.has(target)) continue;

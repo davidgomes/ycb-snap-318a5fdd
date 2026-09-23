@@ -1,11 +1,5 @@
 import type { Entity } from '../types';
-import {
-    getEntityGeneration,
-    getEntityId,
-    getEntityWorldId,
-    incrementGeneration,
-    packEntity,
-} from './pack-entity';
+import { getEntityId, incrementGeneration, packEntity } from './pack-entity';
 
 export type EntityIndex = {
     /** The number of currently alive entities. */
@@ -82,6 +76,54 @@ export const releaseEntity = (index: EntityIndex, entity: Entity): void => {
 };
 
 /**
+ * Reserves an entity without making it alive. A reserved entity is not part of the
+ * index until it is activated with `activateReservedEntity` or returned to the
+ * recycle pool with `releaseReservedEntity`.
+ * @param index - The EntityIndex to reserve from.
+ * @returns The reserved packed entity.
+ */
+export const reserveEntity = (index: EntityIndex): Entity => {
+    if (index.aliveCount < index.dense.length) {
+        // The sparse slot is left pointing past the dense array. Liveness checks compare
+        // the stored entity, so the stale slot can never match.
+        return incrementGeneration(index.dense.pop()!);
+    }
+
+    return packEntity(index.worldId, 0, index.maxId++);
+};
+
+/**
+ * Makes a reserved entity alive.
+ * @param index - The EntityIndex the entity was reserved from.
+ * @param entity - The reserved packed entity.
+ */
+export const activateReservedEntity = (index: EntityIndex, entity: Entity): void => {
+    const slot = index.aliveCount;
+    const lastIndex = index.dense.length;
+
+    // Move the first recyclable entity to the end to make room in the alive range.
+    if (slot < lastIndex) {
+        const recyclable = index.dense[slot];
+        index.dense[lastIndex] = recyclable;
+        index.sparse[getEntityId(recyclable)] = lastIndex;
+    }
+
+    index.dense[slot] = entity;
+    index.sparse[getEntityId(entity)] = slot;
+    index.aliveCount++;
+};
+
+/**
+ * Returns a reserved entity to the recycle pool without it ever becoming alive.
+ * @param index - The EntityIndex the entity was reserved from.
+ * @param entity - The reserved packed entity.
+ */
+export const releaseReservedEntity = (index: EntityIndex, entity: Entity): void => {
+    index.sparse[getEntityId(entity)] = index.dense.length;
+    index.dense.push(entity);
+};
+
+/**
  * Checks if an entity ID is currently alive in the index.
  * @param index - The EntityIndex to check.
  * @param entity - The packed entity to check.
@@ -90,11 +132,7 @@ export const releaseEntity = (index: EntityIndex, entity: Entity): void => {
 export const isEntityAlive = /* @inline @pure */ (index: EntityIndex, entity: Entity): boolean => {
     const denseIndex = index.sparse[getEntityId(entity)];
     if (denseIndex === undefined || denseIndex >= index.aliveCount) return false;
-    const storedEntity = index.dense[denseIndex];
-    return (
-        getEntityGeneration(entity) === getEntityGeneration(storedEntity) &&
-        getEntityWorldId(entity) === index.worldId
-    );
+    return index.dense[denseIndex] === entity;
 };
 
 /**
