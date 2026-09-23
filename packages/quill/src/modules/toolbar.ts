@@ -287,8 +287,14 @@ class ToolbarGroup {
     } else if (this.active === toolbar) {
       return;
     }
+    const previous = this.active;
     this.active = toolbar;
     this.refresh();
+    // Drop the previous editor's stale range now rather than on the next
+    // selectionchange, so selecting that same range again reactivates it.
+    if (previous != null && this.toolbars.includes(previous)) {
+      previous.quill.selection.update(Quill.sources.USER);
+    }
   }
 
   bind(input: HTMLElement) {
