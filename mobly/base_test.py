@@ -188,7 +188,9 @@ class _SyncBarriers:
         self._departed_stages.add(stage_name)
       for key, barrier in list(self._barriers.items()):
         if stage_name is None or key[0] == stage_name:
-          self._break(key, barrier, 'a participant finished without reaching it')
+          self._break(
+              key, barrier, 'a participant finished without reaching it'
+          )
 
   def _break(self, key, barrier, reason):
     """Fails a barrier and releases its waiters. Requires the lock."""
@@ -1421,7 +1423,9 @@ class BaseTestClass:
       group = groups.get(group_name)
       if group is None:
         group = groups[group_name] = _Group(group_name, explicit)
-      group.participants.append(_Participant(group_name, participant_id, device))
+      group.participants.append(
+          _Participant(group_name, participant_id, device)
+      )
     return list(groups.values())
 
   def _exec_test_with_decorators(self, test_name, test_method):
