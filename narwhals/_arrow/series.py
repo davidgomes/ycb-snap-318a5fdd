@@ -32,6 +32,7 @@ from narwhals._utils import (
     is_list_of,
     no_default,
     not_implemented,
+    parse_version,
 )
 from narwhals.dependencies import is_numpy_array_1d
 from narwhals.exceptions import InvalidOperationError, ShapeError
@@ -1005,6 +1006,94 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
                 window_size=window_size, min_samples=min_samples, center=center, ddof=ddof
             )
             ** 0.5
+        )
+
+    def _rolling_nan_aggregate(
+        self,
+        function: Callable[[_2DArray], _1DArray],
+        window_size: int,
+        *,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        import warnings
+
+        import numpy as np  # ignore-banned-import
+
+        if len(self) == 0:
+            return self
+
+        padded_series, offset = pad_series(self, window_size=window_size, center=center)
+        values = pc.fill_null(
+            pc.cast(padded_series.native, pa.float64()), float("nan")
+        ).to_numpy()
+        windows = np.lib.stride_tricks.sliding_window_view(
+            np.concatenate([np.full(window_size - 1, np.nan), values]), window_size
+        )
+        count_in_window = window_size - np.isnan(windows).sum(axis=1)
+        with warnings.catch_warnings():
+            # Windows without any valid value are masked below anyway.
+            warnings.simplefilter("ignore", RuntimeWarning)
+            aggregated = function(windows)
+        result = pa.array(aggregated, mask=count_in_window < min_samples)
+        return self._with_native(pa.chunked_array([result]))._gather_slice(
+            slice(offset, None)
+        )
+
+    def rolling_min(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        import numpy as np  # ignore-banned-import
+
+        result = self._rolling_nan_aggregate(
+            lambda windows: np.nanmin(windows, axis=1),
+            window_size,
+            min_samples=min_samples,
+            center=center,
+        )
+        return result._with_native(result.native.cast(self.native.type))
+
+    def rolling_max(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        import numpy as np  # ignore-banned-import
+
+        result = self._rolling_nan_aggregate(
+            lambda windows: np.nanmax(windows, axis=1),
+            window_size,
+            min_samples=min_samples,
+            center=center,
+        )
+        return result._with_native(result.native.cast(self.native.type))
+
+    def rolling_median(
+        self, window_size: int, *, min_samples: int, center: bool
+    ) -> Self:
+        import numpy as np  # ignore-banned-import
+
+        return self._rolling_nan_aggregate(
+            lambda windows: np.nanmedian(windows, axis=1),
+            window_size,
+            min_samples=min_samples,
+            center=center,
+        )
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        import numpy as np  # ignore-banned-import
+
+        # `interpolation` was renamed to `method` in numpy 1.22.
+        method_kwarg = "method" if parse_version(np) >= (1, 22) else "interpolation"
+        return self._rolling_nan_aggregate(
+            lambda windows: np.nanquantile(
+                windows, quantile, axis=1, **{method_kwarg: interpolation}
+            ),
+            window_size,
+            min_samples=min_samples,
+            center=center,
         )
 
     def rank(self, method: RankMethod, *, descending: bool) -> Self:

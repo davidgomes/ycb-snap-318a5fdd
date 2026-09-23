@@ -20,6 +20,7 @@ from narwhals._utils import (
     Version,
     _Implementation,
     _validate_rolling_arguments,
+    _validate_rolling_quantile_arguments,
     ensure_type,
     generate_repr,
     is_compliant_series,
@@ -2617,6 +2618,189 @@ class Series(Generic[IntoSeriesT]):
         return self._with_compliant(
             self._compliant_series.rolling_std(
                 window_size=window_size, min_samples=min_samples, center=center, ddof=ddof
+            )
+        )
+
+    def rolling_min(
+        self, window_size: int, *, min_samples: int | None = None, center: bool = False
+    ) -> Self:
+        """Apply a rolling min (moving min) over the values.
+
+        A window of length `window_size` will traverse the values. The resulting values
+        will be aggregated to their min.
+
+        The window at a given row will include the row itself and the `window_size - 1`
+        elements before it.
+
+        Arguments:
+            window_size: The length of the window in number of elements. It must be a
+                strictly positive integer.
+            min_samples: The number of values in the window that should be non-null before
+                computing a result. If set to `None` (default), it will be set equal to
+                `window_size`. If provided, it must be a strictly positive integer, and
+                less than or equal to `window_size`
+            center: Set the labels at the center of the window.
+
+        Examples:
+            >>> import pandas as pd
+            >>> import narwhals as nw
+            >>>
+            >>> s_native = pd.Series([4.0, 2.0, 3.0, 1.0])
+            >>> nw.from_native(s_native, series_only=True).rolling_min(
+            ...     window_size=2
+            ... ).to_native()
+        """
+        window_size, min_samples = _validate_rolling_arguments(
+            window_size=window_size, min_samples=min_samples
+        )
+
+        if len(self) == 0:  # pragma: no cover
+            return self
+
+        return self._with_compliant(
+            self._compliant_series.rolling_min(
+                window_size=window_size, min_samples=min_samples, center=center
+            )
+        )
+
+    def rolling_max(
+        self, window_size: int, *, min_samples: int | None = None, center: bool = False
+    ) -> Self:
+        """Apply a rolling max (moving max) over the values.
+
+        A window of length `window_size` will traverse the values. The resulting values
+        will be aggregated to their max.
+
+        The window at a given row will include the row itself and the `window_size - 1`
+        elements before it.
+
+        Arguments:
+            window_size: The length of the window in number of elements. It must be a
+                strictly positive integer.
+            min_samples: The number of values in the window that should be non-null before
+                computing a result. If set to `None` (default), it will be set equal to
+                `window_size`. If provided, it must be a strictly positive integer, and
+                less than or equal to `window_size`
+            center: Set the labels at the center of the window.
+
+        Examples:
+            >>> import pyarrow as pa
+            >>> import narwhals as nw
+            >>>
+            >>> s_native = pa.chunked_array([[4.0, 2.0, 3.0, 1.0]])
+            >>> nw.from_native(s_native, series_only=True).rolling_max(
+            ...     window_size=2
+            ... ).to_native()  # doctest:+ELLIPSIS
+        """
+        window_size, min_samples = _validate_rolling_arguments(
+            window_size=window_size, min_samples=min_samples
+        )
+
+        if len(self) == 0:  # pragma: no cover
+            return self
+
+        return self._with_compliant(
+            self._compliant_series.rolling_max(
+                window_size=window_size, min_samples=min_samples, center=center
+            )
+        )
+
+    def rolling_median(
+        self, window_size: int, *, min_samples: int | None = None, center: bool = False
+    ) -> Self:
+        """Apply a rolling median (moving median) over the values.
+
+        A window of length `window_size` will traverse the values. The resulting values
+        will be aggregated to their median.
+
+        The window at a given row will include the row itself and the `window_size - 1`
+        elements before it.
+
+        Arguments:
+            window_size: The length of the window in number of elements. It must be a
+                strictly positive integer.
+            min_samples: The number of values in the window that should be non-null before
+                computing a result. If set to `None` (default), it will be set equal to
+                `window_size`. If provided, it must be a strictly positive integer, and
+                less than or equal to `window_size`
+            center: Set the labels at the center of the window.
+
+        Examples:
+            >>> import polars as pl
+            >>> import narwhals as nw
+            >>>
+            >>> s_native = pl.Series([4.0, 2.0, 3.0, 1.0])
+            >>> nw.from_native(s_native, series_only=True).rolling_median(
+            ...     window_size=3, min_samples=1
+            ... ).to_native()  # doctest:+NORMALIZE_WHITESPACE
+        """
+        window_size, min_samples = _validate_rolling_arguments(
+            window_size=window_size, min_samples=min_samples
+        )
+
+        if len(self) == 0:  # pragma: no cover
+            return self
+
+        return self._with_compliant(
+            self._compliant_series.rolling_median(
+                window_size=window_size, min_samples=min_samples, center=center
+            )
+        )
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod = "linear",
+        min_samples: int | None = None,
+        center: bool = False,
+    ) -> Self:
+        """Apply a rolling quantile (moving quantile) over the values.
+
+        A window of length `window_size` will traverse the values. The resulting values
+        will be aggregated to their quantile.
+
+        The window at a given row will include the row itself and the `window_size - 1`
+        elements before it.
+
+        Arguments:
+            window_size: The length of the window in number of elements. It must be a
+                strictly positive integer.
+            quantile: Quantile between 0.0 and 1.0.
+            interpolation: Interpolation method to use when the quantile lies between
+                two data points. One of `'nearest'`, `'higher'`, `'lower'`, `'midpoint'`,
+                `'linear'`.
+            min_samples: The number of values in the window that should be non-null before
+                computing a result. If set to `None` (default), it will be set equal to
+                `window_size`. If provided, it must be a strictly positive integer, and
+                less than or equal to `window_size`
+            center: Set the labels at the center of the window.
+
+        Examples:
+            >>> import pandas as pd
+            >>> import narwhals as nw
+            >>>
+            >>> s_native = pd.Series([4.0, 2.0, 3.0, 1.0])
+            >>> nw.from_native(s_native, series_only=True).rolling_quantile(
+            ...     window_size=3, quantile=0.25, min_samples=1
+            ... ).to_native()
+        """
+        window_size, min_samples = _validate_rolling_arguments(
+            window_size=window_size, min_samples=min_samples
+        )
+        _validate_rolling_quantile_arguments(quantile, interpolation)
+
+        if len(self) == 0:  # pragma: no cover
+            return self
+
+        return self._with_compliant(
+            self._compliant_series.rolling_quantile(
+                window_size=window_size,
+                quantile=quantile,
+                interpolation=interpolation,
+                min_samples=min_samples,
+                center=center,
             )
         )
 

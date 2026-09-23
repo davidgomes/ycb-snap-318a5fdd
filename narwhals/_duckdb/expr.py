@@ -21,7 +21,13 @@ from narwhals._duckdb.utils import (
     window_expression,
 )
 from narwhals._sql.expr import SQLExpr
-from narwhals._utils import Implementation, Version, extend_bool, no_default
+from narwhals._utils import (
+    Implementation,
+    Version,
+    extend_bool,
+    no_default,
+    not_implemented,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -341,3 +347,5 @@ class DuckDBExpr(SQLExpr["DuckDBLazyFrame", "Expression"]):
     @property
     def struct(self) -> DuckDBExprStructNamespace:
         return DuckDBExprStructNamespace(self)
+
+    rolling_quantile = not_implemented()
