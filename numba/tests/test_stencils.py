@@ -3219,5 +3219,183 @@ class TestManyStencils(TestStencilBase):
                                                  'cval':cval})
 
 
+class TestStencilBoundaryMode(unittest.TestCase):
+    """Boundary modes: wrap, nearest, reflect, symmetric, and constant."""
+
+    def _expected_1d(self, values, mode, cval=0):
+        arr = np.asarray(values, dtype=np.float64)
+        out = np.empty_like(arr)
+        n = arr.shape[0]
+        for i in range(n):
+            out[i] = (_load(arr, i - 1, mode, cval) +
+                      _load(arr, i + 1, mode, cval))
+        return out
+
+    def test_modes_match_reference(self):
+        arr = np.array([1., 2., 3., 4.])
+        for mode in ('wrap', 'nearest', 'reflect', 'symmetric'):
+            def kernel(a):
+                return a[-1] + a[1]
+            expected = self._expected_1d(arr, mode)
+            self_check = TestManyStencils()
+            # Reuse the three-path checker (pure stencil, njit, parallel).
+            self_check.check_against_expected(
+                kernel, expected, arr, options={'mode': mode})
+
+    def test_positional_mode_and_per_dimension(self):
+        arr = np.arange(12.).reshape(3, 4)
+
+        @stencil('wrap')
+        def kwrap(a):
+            return a[-1, 0] + a[0, 1]
+
+        @stencil(mode=('wrap', 'nearest'))
+        def kmixed(a):
+            return a[-1, 0] + a[0, 1]
+
+        def ref(a, modes):
+            out = np.empty_like(a)
+            for i in range(a.shape[0]):
+                for j in range(a.shape[1]):
+                    out[i, j] = (_load(a, (i - 1, j), modes, 0) +
+                                 _load(a, (i, j + 1), modes, 0))
+            return out
+
+        np.testing.assert_allclose(kwrap(arr), ref(arr, 'wrap'))
+        np.testing.assert_allclose(
+            kmixed(arr), ref(arr, ('wrap', 'nearest')))
+
+    def test_reflect_symmetric_cval_when_still_out_of_bounds(self):
+        arr = np.array([1., 2., 3.])
+
+        def kernel(a):
+            return a[-4]
+
+        for mode, cval in (('reflect', 8.), ('symmetric', -2.)):
+            def ref_one(i, how):
+                return _load(arr, i - 4, how, cval)
+            expected = np.array([ref_one(i, mode) for i in range(arr.size)])
+            checker = TestManyStencils()
+            checker.check_against_expected(
+                kernel, expected, arr,
+                options={'mode': mode, 'cval': cval})
+
+    def test_constant_border_with_other_options(self):
+        # constant on axis 0, wrap on axis 1, plus cval / neighborhood.
+        arr = np.arange(12.).reshape(3, 4)
+
+        def kernel(a):
+            return a[-1, 0] + a[0, -1]
+
+        modes = ('constant', 'wrap')
+        cval = -1.
+        expected = np.full(arr.shape, cval)
+        for i in range(1, arr.shape[0]):
+            for j in range(arr.shape[1]):
+                expected[i, j] = (_load(arr, (i - 1, j), modes, cval) +
+                                  _load(arr, (i, j - 1), modes, cval))
+        checker = TestManyStencils()
+        checker.check_against_expected(
+            kernel, expected, arr,
+            options={'mode': modes, 'cval': cval,
+                     'neighborhood': ((-1, 0), (-1, 0))})
+
+    def test_standard_indexing_alongside_mode(self):
+        arr = np.array([1., 2., 3., 4.])
+        weights = np.array([10., 0.])
+
+        def kernel(a, b):
+            return a[-1] + b[0]
+
+        expected = np.empty_like(arr)
+        for i in range(arr.size):
+            expected[i] = _load(arr, i - 1, 'nearest', 0) + weights[0]
+        checker = TestManyStencils()
+        checker.check_against_expected(
+            kernel, expected, arr, weights,
+            options={'mode': 'nearest', 'standard_indexing': ('b',)})
+
+    def test_invalid_mode_and_rank_mismatch(self):
+        with self.assertRaises(NumbaValueError) as raised:
+            @stencil('diagonal')
+            def kernel(a):
+                return a[0]
+        self.assertIn('Unsupported mode style', str(raised.exception))
+
+        with self.assertRaises(NumbaValueError):
+            @stencil(mode=('wrap', 'not-a-mode'))
+            def kernel2(a):
+                return a[0]
+
+        @stencil(mode=('wrap', 'nearest'))
+        def kernel3(a):
+            return a[0]
+
+        with self.assertRaises(NumbaValueError) as raised:
+            kernel3(np.ones(4))
+        self.assertIn('dimensional mode', str(raised.exception))
+
+        @njit
+        def call_it(a):
+            return kernel3(a)
+
+        with self.assertRaises((NumbaValueError, TypingError)) as raised:
+            call_it(np.ones(4))
+        self.assertIn('dimensional mode', str(raised.exception))
+
+
+def _load(arr, index, mode, cval):
+    """Reference boundary load. ``index`` is an int or a tuple of ints."""
+    if isinstance(mode, str):
+        modes = (mode,) * arr.ndim
+    else:
+        modes = mode
+    if not isinstance(index, tuple):
+        index = (index,)
+    coords = []
+    for idx, size, one_mode in zip(index, arr.shape, modes):
+        mapped = _map_index(idx, size, one_mode)
+        if mapped is None:
+            return arr.dtype.type(cval)
+        coords.append(mapped)
+    return arr[tuple(coords)]
+
+
+def _map_index(idx, size, mode):
+    if mode == 'constant':
+        if idx < 0 or idx >= size:
+            return None
+        return idx
+    if mode == 'wrap':
+        return idx % size
+    if mode == 'nearest':
+        if idx < 0:
+            return 0
+        if idx >= size:
+            return size - 1
+        return idx
+    if mode == 'reflect':
+        if idx < 0:
+            reflected = -idx
+        elif idx >= size:
+            reflected = 2 * (size - 1) - idx
+        else:
+            reflected = idx
+        if reflected < 0 or reflected >= size:
+            return None
+        return reflected
+    if mode == 'symmetric':
+        if idx < 0:
+            reflected = -idx - 1
+        elif idx >= size:
+            reflected = 2 * size - 1 - idx
+        else:
+            reflected = idx
+        if reflected < 0 or reflected >= size:
+            return None
+        return reflected
+    raise AssertionError(mode)
+
+
 if __name__ == "__main__":
     unittest.main()

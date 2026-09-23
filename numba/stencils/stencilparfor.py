@@ -189,13 +189,21 @@ class StencilPass(object):
         in_arr_dim_sizes = equiv_set.get_shape(in_arr)
 
         assert ndims == len(in_arr_dim_sizes)
+        from numba.stencils.stencil import normalize_stencil_modes
+        modes = normalize_stencil_modes(stencil_func.mode, ndims)
         start_inds = []
         last_inds = []
         for i in range(ndims):
-            last_ind = self._get_stencil_last_ind(in_arr_dim_sizes[i],
-                                        end_lengths[i], gen_nodes, scope, loc)
-            start_ind = self._get_stencil_start_ind(
-                                        start_lengths[i], gen_nodes, scope, loc)
+            # Non-constant modes visit every index. Constant mode skips the
+            # border, which is filled with cval and does not run the kernel.
+            if modes[i] == 'constant':
+                last_ind = self._get_stencil_last_ind(in_arr_dim_sizes[i],
+                                            end_lengths[i], gen_nodes, scope, loc)
+                start_ind = self._get_stencil_start_ind(
+                                            start_lengths[i], gen_nodes, scope, loc)
+            else:
+                start_ind = 0
+                last_ind = in_arr_dim_sizes[i]
             start_inds.append(start_ind)
             last_inds.append(last_ind)
             # start from stencil size to avoid invalid array access
@@ -592,6 +600,10 @@ class StencilPass(object):
 
         # Get all the tuples defined in the stencil blocks.
         tuple_table = ir_utils.get_tuple_table(stencil_blocks)
+        from numba.stencils.stencil import (
+            normalize_stencil_modes, make_stencil_boundary_load)
+        modes = normalize_stencil_modes(stencil_func.mode, ndims)
+        boundary = any(mode != 'constant' for mode in modes)
 
         found_relative_index = False
 
@@ -655,34 +667,48 @@ class StencilPass(object):
                     index_vars = self._add_index_offsets(parfor_vars,
                                 list(index_list), new_body, scope, loc)
 
-                    # new access index tuple
-                    if ndims == 1:
-                        ind_var = index_vars[0]
+                    index_is_int = all([self.typemap[v.name] == types.intp
+                                        for v in index_vars])
+                    if boundary and not index_is_int:
+                        raise NumbaValueError(
+                            "Stencil boundary modes do not support slice "
+                            "indexing.")
+                    if boundary:
+                        cval = stencil_func.options.get("cval", 0)
+                        preamble, load_expr = make_stencil_boundary_load(
+                            stmt.value.value, index_vars, modes, cval,
+                            scope, loc, self.typingctx, self.typemap,
+                            self.calltypes)
+                        new_body.extend(preamble)
+                        stmt.value = load_expr
                     else:
-                        ind_var = ir.Var(scope, mk_unique_var(
-                            "$parfor_index_ind_var"), loc)
-                        self.typemap[ind_var.name] = types.containers.UniTuple(
-                            types.intp, ndims)
-                        tuple_call = ir.Expr.build_tuple(index_vars, loc)
-                        tuple_assign = ir.Assign(tuple_call, ind_var, loc)
-                        new_body.append(tuple_assign)
+                        # new access index tuple
+                        if ndims == 1:
+                            ind_var = index_vars[0]
+                        else:
+                            ind_var = ir.Var(scope, mk_unique_var(
+                                "$parfor_index_ind_var"), loc)
+                            self.typemap[ind_var.name] = types.containers.UniTuple(
+                                types.intp, ndims)
+                            tuple_call = ir.Expr.build_tuple(index_vars, loc)
+                            tuple_assign = ir.Assign(tuple_call, ind_var, loc)
+                            new_body.append(tuple_assign)
 
-                    # getitem return type is scalar if all indices are integer
-                    if all([self.typemap[v.name] == types.intp
-                                                        for v in index_vars]):
-                        getitem_return_typ = self.typemap[
-                                                    stmt.value.value.name].dtype
-                    else:
-                        # getitem returns an array
-                        getitem_return_typ = self.typemap[stmt.value.value.name]
-                    # new getitem with the new index var
-                    getitem_call = ir.Expr.getitem(stmt.value.value, ind_var,
-                                                                            loc)
-                    self.calltypes[getitem_call] = signature(
-                        getitem_return_typ,
-                        self.typemap[stmt.value.value.name],
-                        self.typemap[ind_var.name])
-                    stmt.value = getitem_call
+                        # getitem return type is scalar if all indices are integer
+                        if index_is_int:
+                            getitem_return_typ = self.typemap[
+                                                        stmt.value.value.name].dtype
+                        else:
+                            # getitem returns an array
+                            getitem_return_typ = self.typemap[stmt.value.value.name]
+                        # new getitem with the new index var
+                        getitem_call = ir.Expr.getitem(stmt.value.value, ind_var,
+                                                                                loc)
+                        self.calltypes[getitem_call] = signature(
+                            getitem_return_typ,
+                            self.typemap[stmt.value.value.name],
+                            self.typemap[ind_var.name])
+                        stmt.value = getitem_call
 
                 new_body.append(stmt)
             block.body = new_body
