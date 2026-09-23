@@ -43,6 +43,7 @@ import Task, {
   isRetryFailed,
   flatten,
 } from 'true-myth/task';
+import * as task from 'true-myth/task';
 import {
   exponential,
   fibonacci,
@@ -3830,6 +3831,97 @@ function* take<T>(iterable: Iterable<T>, count: number): IterableIterator<T> {
     yield item;
   }
 }
+
+describe('async iteration and combinators', () => {
+  test('async iterator yields one `Result`', async () => {
+    const resolved = [];
+    for await (const item of Task.resolve<number, string>(7)) {
+      resolved.push(item);
+    }
+    expect(resolved).toEqual([Result.ok(7)]);
+
+    const rejected = [];
+    for await (const item of Task.reject<number, string>('nope')) {
+      rejected.push(item);
+    }
+    expect(rejected).toEqual([Result.err('nope')]);
+  });
+
+  test('`sequence` and `traverse`', async () => {
+    expect(await task.sequence([Task.resolve<number, string>(1), Task.resolve(2)])).toEqual(
+      Result.ok([1, 2])
+    );
+    expect(
+      await task.sequence([Task.resolve<number, string>(1), Task.reject<number, string>('bad')])
+    ).toEqual(Result.err('bad'));
+
+    const double = (n: number) => Task.resolve<number, string>(n * 2);
+    expect(await task.traverse([1, 2], double)).toEqual(Result.ok([2, 4]));
+    expect(await task.traverse(double)([1, 2])).toEqual(Result.ok([2, 4]));
+  });
+
+  test('`traverseSerial` stops after the first rejection', async () => {
+    const started: number[] = [];
+    const run = (n: number) => {
+      started.push(n);
+      return n > 0 ? Task.resolve<number, string>(n) : Task.reject<number, string>('bad');
+    };
+    expect(await task.traverseSerial([1, 0, 2], run)).toEqual(Result.err('bad'));
+    expect(started).toEqual([1, 0]);
+
+    started.length = 0;
+    function* source() {
+      yield 1;
+      yield 0;
+      yield 2;
+    }
+    expect(await task.traverseSerial(source(), run)).toEqual(Result.err('bad'));
+    expect(started).toEqual([1, 0]);
+    expect(await task.traverseSerial(run)([1, 2])).toEqual(Result.ok([1, 2]));
+  });
+
+  test('`zip` and `zipWith`', async () => {
+    expect(await task.zip(Task.resolve<number, string>(1), Task.resolve<string, number>('a'))).toEqual(
+      Result.ok([1, 'a'])
+    );
+    expect(await task.zip(Task.reject<number, string>('no'), Task.resolve<string, number>('a'))).toEqual(
+      Result.err('no')
+    );
+    expect(
+      await task.zipWith(Task.resolve<number, string>(2), Task.resolve<number, string>(3), (a, b) => a + b)
+    ).toEqual(Result.ok(5));
+  });
+
+  test('`tap` and `tapRejected` pass the task through', async () => {
+    const seen: number[] = [];
+    const errors: string[] = [];
+    const resolved = Task.resolve<number, string>(4);
+    expect(await task.tap(resolved, (n) => seen.push(n))).toEqual(Result.ok(4));
+    expect(await task.tap((n: number) => seen.push(n))(resolved)).toEqual(Result.ok(4));
+    expect(seen).toEqual([4, 4]);
+
+    const rejected = Task.reject<number, string>('bad');
+    expect(await task.tap(rejected, (n) => seen.push(n))).toEqual(Result.err('bad'));
+    expect(await task.tapRejected(rejected, (e) => errors.push(e))).toEqual(Result.err('bad'));
+    expect(await task.tapRejected((e: string) => errors.push(e))(rejected)).toEqual(Result.err('bad'));
+    expect(errors).toEqual(['bad', 'bad']);
+    expect(seen).toEqual([4, 4]);
+  });
+
+  test('`retryN` retries additional times after rejection', async () => {
+    let calls = 0;
+    const flaky = () => {
+      calls += 1;
+      return calls < 3 ? Task.reject<number, string>('no') : Task.resolve<number, string>(calls);
+    };
+    expect(await task.retryN(2, flaky)).toEqual(Result.ok(3));
+    expect(calls).toBe(3);
+
+    calls = 0;
+    expect(await task.retryN(1, flaky)).toEqual(Result.err('no'));
+    expect(calls).toBe(2);
+  });
+});
 
 function printError(e: Error): string {
   // prettier-ignore

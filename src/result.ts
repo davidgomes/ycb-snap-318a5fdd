@@ -384,6 +384,23 @@ class ResultImpl<T, E> {
   cast() {
     return this;
   }
+
+  /**
+    Iterate the wrapped value when this is {@linkcode Ok}, or yield nothing
+    when this is {@linkcode Err}.
+
+    ```ts
+    import Result from 'true-myth/result';
+
+    const success = [...Result.ok(1)]; // [1]
+    const failure = [...Result.err<number, string>('nope')]; // []
+    ```
+   */
+  *[Symbol.iterator](): Generator<T, void, unknown> {
+    if (this.repr[0] === 'Ok') {
+      yield this.repr[1];
+    }
+  }
 }
 
 /**
@@ -2011,6 +2028,132 @@ export function transposeAny(
   console.log(flattenedOuter); // Err('outer error')
   ```
   */
+function stop<T>(iterator: Iterator<T>): void {
+  iterator.return?.();
+}
+
+/**
+  Combine an iterable of {@linkcode Result}s into one `Result` of an array.
+
+  Every item is {@linkcode Ok} when the result is `Ok`. The first {@linkcode
+  Err} stops iteration immediately and that error is returned.
+
+  @param results The `Result`s to combine.
+ */
+export function sequence<T, E>(results: Iterable<Result<T, E>>): Result<T[], E> {
+  const values: T[] = [];
+  const iterator = results[Symbol.iterator]();
+  let next = iterator.next();
+  while (!next.done) {
+    const result = next.value;
+    if (result.isErr) {
+      stop(iterator);
+      return Result.err(result.error);
+    }
+    values.push(result.value);
+    next = iterator.next();
+  }
+  return Result.ok(values);
+}
+
+/**
+  Map `fn` over `items` and {@linkcode sequence} the resulting `Result`s.
+
+  Iteration stops at the first {@linkcode Err}. The single-argument form
+  `traverse(fn)` returns `(items) => Result<U[], E>`.
+
+  @param items Values to map.
+  @param fn Function producing a `Result` for each item.
+ */
+export function traverse<A, U, E>(
+  fn: (item: A) => Result<U, E>
+): (items: Iterable<A>) => Result<U[], E>;
+export function traverse<A, U, E>(
+  items: Iterable<A>,
+  fn: (item: A) => Result<U, E>
+): Result<U[], E>;
+export function traverse<A, U, E>(
+  itemsOrFn: Iterable<A> | ((item: A) => Result<U, E>),
+  fn?: (item: A) => Result<U, E>
+): Result<U[], E> | ((items: Iterable<A>) => Result<U[], E>) {
+  if (fn === undefined) {
+    const mapFn = itemsOrFn as (item: A) => Result<U, E>;
+    return (items: Iterable<A>) => traverse(items, mapFn);
+  }
+
+  const items = itemsOrFn as Iterable<A>;
+  const values: U[] = [];
+  const iterator = items[Symbol.iterator]();
+  let next = iterator.next();
+  while (!next.done) {
+    const result = fn(next.value);
+    if (result.isErr) {
+      stop(iterator);
+      return Result.err(result.error);
+    }
+    values.push(result.value);
+    next = iterator.next();
+  }
+  return Result.ok(values);
+}
+
+/**
+  Pair two {@linkcode Result}s. The first {@linkcode Err} is returned if either
+  input failed. `a` is checked before `b`.
+
+  @param a First `Result`.
+  @param b Second `Result`.
+ */
+export function zip<A, B, E, F>(a: Result<A, E>, b: Result<B, F>): Result<[A, B], E | F> {
+  if (a.isErr) {
+    return Result.err(a.error);
+  }
+  if (b.isErr) {
+    return Result.err(b.error);
+  }
+  return Result.ok([a.value, b.value]);
+}
+
+/**
+  Pair two {@linkcode Result}s and combine their values with `fn`. The first
+  {@linkcode Err} is returned if either input failed.
+
+  @param a First `Result`.
+  @param b Second `Result`.
+  @param fn Combiner applied to both wrapped values.
+ */
+export function zipWith<A, B, C, E, F>(
+  a: Result<A, E>,
+  b: Result<B, F>,
+  fn: (a: A, b: B) => C
+): Result<C, E | F> {
+  if (a.isErr) {
+    return Result.err(a.error);
+  }
+  if (b.isErr) {
+    return Result.err(b.error);
+  }
+  return Result.ok(fn(a.value, b.value));
+}
+
+/**
+  Split an iterable of {@linkcode Result}s into `[oks, errs]`.
+
+  @param results The `Result`s to partition.
+ */
+export function partition<T, E>(results: Iterable<Result<T, E>>): [T[], E[]] {
+  const oks: T[] = [];
+  const errs: E[] = [];
+  for (const result of results) {
+    if (result.isOk) {
+      oks.push(result.value);
+    } else {
+      errs.push(result.error);
+    }
+  }
+  return [oks, errs];
+}
+
 export function flatten<T, E1, E2>(nested: Result<Result<T, E2>, E1>): Result<T, E1 | E2> {
   // Uses `andThen` directly rather than calling `.flatten()` to avoid an extra
   // function dispatch.

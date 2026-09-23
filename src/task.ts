@@ -136,6 +136,22 @@ class TaskImpl<T, E> implements PromiseLike<Result<T, E>> {
     return this.#promise.then(onSuccess, onRejected);
   }
 
+  /**
+    Yield exactly one {@linkcode Result}: {@linkcode result.Ok Ok} when this
+    task resolves, {@linkcode result.Err Err} when it rejects.
+
+    ```ts
+    import Task from 'true-myth/task';
+
+    for await (const result of Task.resolve(1)) {
+      console.log(result.toString()); // Ok(1)
+    }
+    ```
+   */
+  async *[Symbol.asyncIterator](): AsyncGenerator<Result<T, E>, void, unknown> {
+    yield await this;
+  }
+
   toString() {
     switch (this.#state[0]) {
       case State.Pending:
@@ -2425,6 +2441,202 @@ export function inspectRejected<T, E>(
   task?: Task<T, E>
 ): Task<T, E> | ((task: Task<T, E>) => Task<T, E>) {
   return curry1((task) => task.inspectRejected(fn), task);
+}
+
+/**
+  Run `fn` with the resolved value and pass the {@linkcode Task} through
+  unchanged. Rejected tasks do not call `fn`.
+
+  `tap(fn)` returns `(task) => Task<T, E>`. The two-argument form is
+  `tap(task, fn)`.
+
+  @param task The task to observe.
+  @param fn Side effect invoked with the resolved value.
+ */
+export function tap<T, E>(fn: (value: T) => void): (task: Task<T, E>) => Task<T, E>;
+export function tap<T, E>(task: Task<T, E>, fn: (value: T) => void): Task<T, E>;
+export function tap<T, E>(
+  taskOrFn: Task<T, E> | ((value: T) => void),
+  fn?: (value: T) => void
+): Task<T, E> | ((task: Task<T, E>) => Task<T, E>) {
+  if (fn === undefined) {
+    const sideEffect = taskOrFn as (value: T) => void;
+    return (task: Task<T, E>) => task.inspect(sideEffect);
+  }
+  return (taskOrFn as Task<T, E>).inspect(fn);
+}
+
+/**
+  Run `fn` with the rejection reason and pass the {@linkcode Task} through
+  unchanged. Resolved tasks do not call `fn`.
+
+  `tapRejected(fn)` returns `(task) => Task<T, E>`. The two-argument form is
+  `tapRejected(task, fn)`.
+
+  @param task The task to observe.
+  @param fn Side effect invoked with the rejection reason.
+ */
+export function tapRejected<T, E>(fn: (error: E) => void): (task: Task<T, E>) => Task<T, E>;
+export function tapRejected<T, E>(task: Task<T, E>, fn: (error: E) => void): Task<T, E>;
+export function tapRejected<T, E>(
+  taskOrFn: Task<T, E> | ((error: E) => void),
+  fn?: (error: E) => void
+): Task<T, E> | ((task: Task<T, E>) => Task<T, E>) {
+  if (fn === undefined) {
+    const sideEffect = taskOrFn as (error: E) => void;
+    return (task: Task<T, E>) => task.inspectRejected(sideEffect);
+  }
+  return (taskOrFn as Task<T, E>).inspectRejected(fn);
+}
+
+/**
+  Wait for every task in `tasks`, preserving order. The first rejection rejects
+  the resulting task (same settlement rule as {@linkcode all}).
+
+  @param tasks Tasks to combine.
+ */
+export function sequence<T, E>(tasks: Iterable<Task<T, E>>): Task<T[], E> {
+  return all([...tasks]) as Task<T[], E>;
+}
+
+/**
+  Map `fn` over `items` and {@linkcode sequence} the resulting tasks in
+  parallel. The single-argument form `traverse(fn)` returns
+  `(items) => Task<U[], E>`.
+
+  @param items Values to map.
+  @param fn Function producing a `Task` for each item.
+ */
+export function traverse<A, T, E>(
+  fn: (item: A) => Task<T, E>
+): (items: Iterable<A>) => Task<T[], E>;
+export function traverse<A, T, E>(items: Iterable<A>, fn: (item: A) => Task<T, E>): Task<T[], E>;
+export function traverse<A, T, E>(
+  itemsOrFn: Iterable<A> | ((item: A) => Task<T, E>),
+  fn?: (item: A) => Task<T, E>
+): Task<T[], E> | ((items: Iterable<A>) => Task<T[], E>) {
+  if (fn === undefined) {
+    const mapFn = itemsOrFn as (item: A) => Task<T, E>;
+    return (items: Iterable<A>) => traverse(items, mapFn);
+  }
+  return sequence(Array.from(itemsOrFn as Iterable<A>, fn));
+}
+
+/**
+  Map `fn` over `items` one at a time. The first rejection stops iteration and
+  rejects the resulting task; later items are not started.
+
+  `traverseSerial(fn)` returns `(items) => Task<U[], E>`.
+
+  @param items Values to map.
+  @param fn Function producing a `Task` for each item.
+ */
+export function traverseSerial<A, T, E>(
+  fn: (item: A) => Task<T, E>
+): (items: Iterable<A>) => Task<T[], E>;
+export function traverseSerial<A, T, E>(
+  items: Iterable<A>,
+  fn: (item: A) => Task<T, E>
+): Task<T[], E>;
+export function traverseSerial<A, T, E>(
+  itemsOrFn: Iterable<A> | ((item: A) => Task<T, E>),
+  fn?: (item: A) => Task<T, E>
+): Task<T[], E> | ((items: Iterable<A>) => Task<T[], E>) {
+  if (fn === undefined) {
+    const mapFn = itemsOrFn as (item: A) => Task<T, E>;
+    return (items: Iterable<A>) => traverseSerial(items, mapFn);
+  }
+
+  const items = itemsOrFn as Iterable<A>;
+  const mapFn = fn;
+  return new Task((resolve, reject) => {
+    const iterator = items[Symbol.iterator]();
+    const values: T[] = [];
+
+    const step = (): void => {
+      const next = iterator.next();
+
+      if (next.done) {
+        resolve(values);
+        return;
+      }
+
+      mapFn(next.value).then((result) => {
+        if (result.isErr) {
+          iterator.return?.();
+          reject(result.error);
+          return;
+        }
+        values.push(result.value);
+        step();
+      });
+    };
+
+    step();
+  });
+}
+
+/**
+  Pair two tasks. Both run together. If either rejects, the pair rejects; when
+  both reject, the rejection from `a` is used.
+
+  @param a First task.
+  @param b Second task.
+ */
+export function zip<A, B, E, F>(a: Task<A, E>, b: Task<B, F>): Task<[A, B], E | F> {
+  return new Task((resolve, reject) => {
+    Promise.all([a, b] as const).then(([left, right]) => {
+      if (left.isErr) {
+        reject(left.error);
+        return;
+      }
+      if (right.isErr) {
+        reject(right.error);
+        return;
+      }
+      resolve([left.value, right.value]);
+    });
+  });
+}
+
+/**
+  Pair two tasks and combine their resolved values with `fn`.
+
+  @param a First task.
+  @param b Second task.
+  @param fn Combiner applied to both resolved values.
+ */
+export function zipWith<A, B, C, E, F>(
+  a: Task<A, E>,
+  b: Task<B, F>,
+  fn: (a: A, b: B) => C
+): Task<C, E | F> {
+  return zip(a, b).map(([left, right]) => fn(left, right));
+}
+
+/**
+  Run `fn` and, if it rejects, try it up to `n` additional times.
+
+  @param n How many extra attempts to make after the first rejection.
+  @param fn Function that produces a fresh `Task` on every attempt.
+ */
+export function retryN<T, E>(n: number, fn: () => Task<T, E>): Task<T, E> {
+  return new Task((resolve, reject) => {
+    const attempt = (remaining: number): void => {
+      fn().then((result) => {
+        if (result.isOk) {
+          resolve(result.value);
+          return;
+        }
+        if (remaining > 0) {
+          attempt(remaining - 1);
+          return;
+        }
+        reject(result.error);
+      });
+    };
+    attempt(n);
+  });
 }
 
 /**

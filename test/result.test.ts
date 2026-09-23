@@ -1614,3 +1614,57 @@ describe('`Result` method tests', () => {
     });
   });
 });
+
+describe('iterating `Result`', () => {
+  test('`Ok` yields its value once', () => {
+    expect([...result.ok(3)]).toEqual([3]);
+  });
+
+  test('`Err` yields nothing', () => {
+    expect([...result.err<number, string>('nope')]).toEqual([]);
+  });
+});
+
+describe('array helpers', () => {
+  test('`sequence` collects `Ok` values and stops at the first `Err`', () => {
+    expect(result.sequence([result.ok(1), result.ok(2)])).toEqual(result.ok([1, 2]));
+
+    let seen = 0;
+    function* source() {
+      yield result.ok(1);
+      yield result.err<number, string>('bad');
+      seen += 1;
+      yield result.ok(3);
+    }
+    expect(result.sequence(source())).toEqual(result.err('bad'));
+    expect(seen).toBe(0);
+  });
+
+  test('`traverse` maps and stops early, including the curried form', () => {
+    const parse = (n: number) => (n > 0 ? result.ok(n) : result.err<number, string>('bad'));
+    expect(result.traverse([1, 2], parse)).toEqual(result.ok([1, 2]));
+
+    let pulled = 0;
+    function* source() {
+      yield 1;
+      yield 0;
+      pulled += 1;
+      yield 2;
+    }
+    expect(result.traverse(source(), parse)).toEqual(result.err('bad'));
+    expect(pulled).toBe(0);
+    expect(result.traverse(parse)([1, 2])).toEqual(result.ok([1, 2]));
+  });
+
+  test('`zip` and `zipWith`', () => {
+    expect(result.zip(result.ok(1), result.ok('a'))).toEqual(result.ok([1, 'a']));
+    expect(result.zip(result.err<number, string>('no'), result.ok('a'))).toEqual(result.err('no'));
+    expect(result.zipWith(result.ok(2), result.ok(3), (a, b) => a + b)).toEqual(result.ok(5));
+  });
+
+  test('`partition` splits oks and errs', () => {
+    expect(
+      result.partition([result.ok(1), result.err<number, string>('a'), result.ok(2), result.err('b')])
+    ).toEqual([[1, 2], ['a', 'b']]);
+  });
+});

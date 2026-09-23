@@ -10,6 +10,9 @@ import {
   fromResult,
   fromMaybe,
   toMaybe,
+  sequenceMaybeAsResult,
+  traverseMaybeAsResult,
+  zipMaybeAsResult,
 } from 'true-myth/toolbelt';
 
 describe('transposeResult', () => {
@@ -114,4 +117,52 @@ test('`fromResult`', () => {
   const reason = 'oh teh noes';
   const anErr = Result.err<number, string>(reason);
   expect(fromResult(anErr)).toEqual(Maybe.nothing());
+});
+
+describe('maybe sequences as result', () => {
+  test('`sequenceMaybeAsResult`', () => {
+    const err = 'missing';
+    expect(
+      sequenceMaybeAsResult(err, [Maybe.just(1), Maybe.just(2)])
+    ).toEqual(Result.ok([1, 2]));
+
+    let seen = 0;
+    function* source() {
+      yield Maybe.just(1);
+      yield Maybe.nothing<number>();
+      seen += 1;
+      yield Maybe.just(3);
+    }
+    expect(sequenceMaybeAsResult(err, source())).toEqual(Result.err(err));
+    expect(seen).toBe(0);
+    expect(sequenceMaybeAsResult<number, string>(err)([Maybe.just(1)])).toEqual(Result.ok([1]));
+  });
+
+  test('`traverseMaybeAsResult`', () => {
+    const err = 'missing';
+    const parse = (n: number) => (n > 0 ? Maybe.just(n) : Maybe.nothing<number>());
+    expect(traverseMaybeAsResult(err, [1, 2], parse)).toEqual(Result.ok([1, 2]));
+
+    let pulled = 0;
+    function* source() {
+      yield 1;
+      yield 0;
+      pulled += 1;
+      yield 2;
+    }
+    expect(traverseMaybeAsResult(err, source(), parse)).toEqual(Result.err(err));
+    expect(pulled).toBe(0);
+    expect(traverseMaybeAsResult<number, number, string>(err)([1, 2], parse)).toEqual(
+      Result.ok([1, 2])
+    );
+  });
+
+  test('`zipMaybeAsResult`', () => {
+    const err = 'missing';
+    expect(zipMaybeAsResult(err, Maybe.just(1), Maybe.just('a'))).toEqual(Result.ok([1, 'a']));
+    expect(zipMaybeAsResult(err, Maybe.nothing<number>(), Maybe.just('a'))).toEqual(Result.err(err));
+    expect(zipMaybeAsResult<number, string, string>(err)(Maybe.just(1), Maybe.just('a'))).toEqual(
+      Result.ok([1, 'a'])
+    );
+  });
 });

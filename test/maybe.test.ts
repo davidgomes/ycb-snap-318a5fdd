@@ -1453,3 +1453,73 @@ describe('`Maybe` class', () => {
     });
   });
 });
+
+describe('iterating `Maybe`', () => {
+  test('`Just` yields its value once', () => {
+    expect([...maybe.just(3)]).toEqual([3]);
+  });
+
+  test('`Nothing` yields nothing', () => {
+    expect([...maybe.nothing<number>()]).toEqual([]);
+  });
+});
+
+describe('array helpers', () => {
+  test('`sequence` collects `Just` values and stops at the first `Nothing`', () => {
+    expect(maybe.sequence([maybe.just(1), maybe.just(2)])).toEqual(maybe.just([1, 2]));
+
+    let seen = 0;
+    function* source() {
+      yield maybe.just(1);
+      yield maybe.nothing<number>();
+      seen += 1;
+      yield maybe.just(3);
+    }
+    expect(maybe.sequence(source())).toEqual(maybe.nothing());
+    expect(seen).toBe(0);
+  });
+
+  test('`traverse` maps and stops early, including the curried form', () => {
+    const parse = (n: number) => (n > 0 ? maybe.just(n) : maybe.nothing<number>());
+    expect(maybe.traverse([1, 2], parse)).toEqual(maybe.just([1, 2]));
+
+    let pulled = 0;
+    function* source() {
+      yield 1;
+      yield 0;
+      pulled += 1;
+      yield 2;
+    }
+    expect(maybe.traverse(source(), parse)).toEqual(maybe.nothing());
+    expect(pulled).toBe(0);
+    expect(maybe.traverse(parse)([1, 2])).toEqual(maybe.just([1, 2]));
+  });
+
+  test('`zip` and `zipWith`', () => {
+    expect(maybe.zip(maybe.just(1), maybe.just('a'))).toEqual(maybe.just([1, 'a']));
+    expect(maybe.zip(maybe.nothing<number>(), maybe.just('a'))).toEqual(maybe.nothing());
+    expect(maybe.zipWith(maybe.just(2), maybe.just(3), (a, b) => a + b)).toEqual(maybe.just(5));
+    expect(maybe.zipWith(maybe.just(2), maybe.nothing<number>(), (a, b) => a + b)).toEqual(
+      maybe.nothing()
+    );
+  });
+
+  test('`compact` drops `Nothing`', () => {
+    expect(maybe.compact([maybe.just(1), maybe.nothing(), maybe.just(3)])).toEqual([1, 3]);
+  });
+
+  test('`filterMap` keeps successful mappings, including the curried form', () => {
+    const parse = (n: number) => (n % 2 === 0 ? maybe.just(n) : maybe.nothing<number>());
+    expect(maybe.filterMap([1, 2, 3, 4], parse)).toEqual([2, 4]);
+    expect(maybe.filterMap(parse)([1, 2, 3, 4])).toEqual([2, 4]);
+  });
+
+  test('`firstJust`', () => {
+    expect(maybe.firstJust([maybe.nothing<number>(), maybe.just(4), maybe.just(9)])).toEqual(
+      maybe.just(4)
+    );
+    expect(maybe.firstJust([maybe.nothing<number>(), maybe.nothing<number>()])).toEqual(
+      maybe.nothing()
+    );
+  });
+});

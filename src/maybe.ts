@@ -405,6 +405,23 @@ class MaybeImpl<T extends {}> implements SomeMaybe<T> {
   flatten<A extends {}>(this: Maybe<Maybe<A>>): Maybe<A> {
     return this.andThen(identity);
   }
+
+  /**
+    Iterate the wrapped value when this is {@linkcode Just}, or yield nothing
+    when this is {@linkcode Nothing}.
+
+    ```ts
+    import Maybe from 'true-myth/maybe';
+
+    const present = [...Maybe.just(1)]; // [1]
+    const absent = [...Maybe.nothing<number>()]; // []
+    ```
+   */
+  *[Symbol.iterator](): Generator<T, void, unknown> {
+    if (this.repr[0] === 'Just') {
+      yield this.repr[1];
+    }
+  }
 }
 
 /**
@@ -1841,6 +1858,171 @@ export function safe<
   console.log(flattenedOuter); // Nothing
   ```
  */
+function stop<T>(iterator: Iterator<T>): void {
+  iterator.return?.();
+}
+
+/**
+  Combine an iterable of {@linkcode Maybe}s into a single `Maybe` of an array.
+
+  Every item is {@linkcode Just} when the result is `Just`. The first
+  {@linkcode Nothing} stops iteration immediately and the result is `Nothing`.
+
+  @param maybes The `Maybe`s to combine.
+ */
+export function sequence<T extends {}>(maybes: Iterable<Maybe<T>>): Maybe<T[]> {
+  const values: T[] = [];
+  const iterator = maybes[Symbol.iterator]();
+  let next = iterator.next();
+  while (!next.done) {
+    const maybe = next.value;
+    if (maybe.isNothing) {
+      stop(iterator);
+      return nothing();
+    }
+    values.push(maybe.value);
+    next = iterator.next();
+  }
+  return just(values);
+}
+
+/**
+  Map `fn` over `items` and {@linkcode sequence} the resulting `Maybe`s.
+
+  Iteration stops at the first {@linkcode Nothing}. The single-argument form
+  `traverse(fn)` returns `(items) => Maybe<U[]>`.
+
+  @param items Values to map.
+  @param fn Function producing a `Maybe` for each item.
+ */
+export function traverse<A, U extends {}>(
+  fn: (item: A) => Maybe<U>
+): (items: Iterable<A>) => Maybe<U[]>;
+export function traverse<A, U extends {}>(
+  items: Iterable<A>,
+  fn: (item: A) => Maybe<U>
+): Maybe<U[]>;
+export function traverse<A, U extends {}>(
+  itemsOrFn: Iterable<A> | ((item: A) => Maybe<U>),
+  fn?: (item: A) => Maybe<U>
+): Maybe<U[]> | ((items: Iterable<A>) => Maybe<U[]>) {
+  if (fn === undefined) {
+    const mapFn = itemsOrFn as (item: A) => Maybe<U>;
+    return (items: Iterable<A>) => traverse(items, mapFn);
+  }
+
+  const items = itemsOrFn as Iterable<A>;
+  const values: U[] = [];
+  const iterator = items[Symbol.iterator]();
+  let next = iterator.next();
+  while (!next.done) {
+    const maybe = fn(next.value);
+    if (maybe.isNothing) {
+      stop(iterator);
+      return nothing();
+    }
+    values.push(maybe.value);
+    next = iterator.next();
+  }
+  return just(values);
+}
+
+/**
+  Pair two {@linkcode Maybe}s. The result is {@linkcode Nothing} if either is
+  `Nothing`.
+
+  @param a First `Maybe`.
+  @param b Second `Maybe`.
+ */
+export function zip<A extends {}, B extends {}>(a: Maybe<A>, b: Maybe<B>): Maybe<[A, B]> {
+  if (a.isNothing || b.isNothing) {
+    return nothing();
+  }
+  return just([a.value, b.value]);
+}
+
+/**
+  Pair two {@linkcode Maybe}s and combine their values with `fn`. The result is
+  {@linkcode Nothing} if either input is `Nothing`.
+
+  @param a First `Maybe`.
+  @param b Second `Maybe`.
+  @param fn Combiner applied to both wrapped values.
+ */
+export function zipWith<A extends {}, B extends {}, C extends {}>(
+  a: Maybe<A>,
+  b: Maybe<B>,
+  fn: (a: A, b: B) => C
+): Maybe<C> {
+  if (a.isNothing || b.isNothing) {
+    return nothing();
+  }
+  return just(fn(a.value, b.value));
+}
+
+/**
+  Keep only the values wrapped in {@linkcode Just}, dropping {@linkcode Nothing}
+  silently.
+
+  @param maybes The `Maybe`s to compact.
+ */
+export function compact<T extends {}>(maybes: Iterable<Maybe<T>>): T[] {
+  const values: T[] = [];
+  for (const maybe of maybes) {
+    if (maybe.isJust) {
+      values.push(maybe.value);
+    }
+  }
+  return values;
+}
+
+/**
+  Map `fn` over `items` and keep only the {@linkcode Just} values.
+
+  {@linkcode Nothing} results are dropped. The single-argument form
+  `filterMap(fn)` returns `(items) => U[]`.
+
+  @param items Values to map.
+  @param fn Function producing a `Maybe` for each item.
+ */
+export function filterMap<A, U extends {}>(
+  fn: (item: A) => Maybe<U>
+): (items: Iterable<A>) => U[];
+export function filterMap<A, U extends {}>(items: Iterable<A>, fn: (item: A) => Maybe<U>): U[];
+export function filterMap<A, U extends {}>(
+  itemsOrFn: Iterable<A> | ((item: A) => Maybe<U>),
+  fn?: (item: A) => Maybe<U>
+): U[] | ((items: Iterable<A>) => U[]) {
+  if (fn === undefined) {
+    const mapFn = itemsOrFn as (item: A) => Maybe<U>;
+    return (items: Iterable<A>) => filterMap(items, mapFn);
+  }
+
+  const values: U[] = [];
+  for (const item of itemsOrFn as Iterable<A>) {
+    const maybe = fn(item);
+    if (maybe.isJust) {
+      values.push(maybe.value);
+    }
+  }
+  return values;
+}
+
+/**
+  Return the first {@linkcode Just} in `maybes`, or {@linkcode Nothing} if every
+  item is `Nothing`.
+
+  @param maybes The `Maybe`s to search.
+ */
+export function firstJust<T extends {}>(maybes: readonly Maybe<T>[]): Maybe<T> {
+  for (const maybe of maybes) {
+    if (maybe.isJust) {
+      return maybe;
+    }
+  }
+  return nothing();
+}
+
 export function flatten<T extends {}>(nested: Maybe<Maybe<T>>): Maybe<T> {
   // Uses `andThen` directly rather than calling `.flatten()` to avoid an extra
   // function dispatch.
