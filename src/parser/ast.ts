@@ -4,6 +4,7 @@ export enum NodeType {
   statement = 'statement',
   clause = 'clause',
   set_operation = 'set_operation',
+  pipe_clause = 'pipe_clause',
   function_call = 'function_call',
   parameterized_data_type = 'parameterized_data_type',
   array_subscript = 'array_subscript',
@@ -46,6 +47,14 @@ export interface ClauseNode extends BaseNode {
 
 export interface SetOperationNode extends BaseNode {
   type: NodeType.set_operation;
+  nameKw: KeywordNode;
+  children: AstNode[];
+}
+
+// |> <nameKw> <children>
+// Sub-clauses (like GROUP BY inside AGGREGATE) are included as ClauseNodes in children.
+export interface PipeClauseNode extends BaseNode {
+  type: NodeType.pipe_clause;
   nameKw: KeywordNode;
   children: AstNode[];
 }
@@ -190,6 +199,7 @@ export type CommentNode = LineCommentNode | BlockCommentNode | DisableCommentNod
 export type AstNode =
   | ClauseNode
   | SetOperationNode
+  | PipeClauseNode
   | FunctionCallNode
   | ParameterizedDataTypeNode
   | ArraySubscriptNode

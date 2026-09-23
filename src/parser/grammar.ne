@@ -57,6 +57,28 @@ const addCommentsToArray = (nodes: AstNode[], { leading, trailing }: CommentAtta
   return nodes;
 };
 
+// Clauses that are nested inside the preceding pipe clause, like: |> AGGREGATE ... GROUP BY ...
+const pipeSubClauses: Record<string, string[]> = {
+  AGGREGATE: ['GROUP BY'],
+};
+
+const nestPipeSubClauses = (clauses: AstNode[]): AstNode[] => {
+  const result: AstNode[] = [];
+  for (const clause of clauses) {
+    const prev = result[result.length - 1];
+    if (
+      prev?.type === NodeType.pipe_clause &&
+      clause.type === NodeType.clause &&
+      pipeSubClauses[prev.nameKw.text]?.includes(clause.nameKw.text)
+    ) {
+      result[result.length - 1] = { ...prev, children: [...prev.children, clause] };
+    } else {
+      result.push(clause);
+    }
+  }
+  return result;
+};
+
 %}
 @lexer lexer
 
@@ -90,14 +112,34 @@ statement -> expressions_or_clauses (%DELIMITER | %EOF) {%
 
 # To avoid ambiguity, plain expressions can only come before clauses
 expressions_or_clauses -> free_form_sql:* clause:* {%
-  ([expressions, clauses]) => [...expressions, ...clauses]
+  ([expressions, clauses]) => [...expressions, ...nestPipeSubClauses(clauses)]
 %}
 
 clause ->
   ( limit_clause
   | select_clause
   | other_clause
+  | set_operation
+  | pipe_clause ) {% unwrap %}
+
+pipe_clause -> %PIPE _ pipe_operation {%
+  ([pipeToken, _, { nameKw, children }]) => ({
+    type: NodeType.pipe_clause,
+    nameKw: addComments(nameKw, { leading: _ }),
+    children,
+  })
+%}
+
+pipe_operation ->
+  ( select_clause
+  | other_clause
   | set_operation ) {% unwrap %}
+pipe_operation -> ( %LIMIT | %RESERVED_JOIN ) free_form_sql:* {%
+  ([[nameToken], children]) => ({
+    nameKw: toKeywordNode(nameToken),
+    children,
+  })
+%}
 
 limit_clause -> %LIMIT _ expression_chain_ (%COMMA free_form_sql:+):? {%
   ([limitToken, _, exp1, optional]) => {

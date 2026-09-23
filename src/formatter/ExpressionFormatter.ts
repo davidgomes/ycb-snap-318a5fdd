@@ -10,6 +10,7 @@ import {
   AstNode,
   BetweenPredicateNode,
   SetOperationNode,
+  PipeClauseNode,
   ClauseNode,
   FunctionCallNode,
   LimitClauseNode,
@@ -52,6 +53,8 @@ export interface DialectFormatOptions {
   onelineClauses: string[];
   // List of clauses that should be formatted on a single line in tabular style
   tabularOnelineClauses?: string[];
+  // List of clauses that should be formatted on a single line when following the |> pipe operator
+  onelinePipeClauses?: string[];
 }
 
 // Contains the same data as DialectFormatOptions,
@@ -60,6 +63,7 @@ export interface ProcessedDialectFormatOptions {
   alwaysDenseOperators: string[];
   onelineClauses: Record<string, boolean>;
   tabularOnelineClauses: Record<string, boolean>;
+  onelinePipeClauses: Record<string, boolean>;
 }
 
 /** Formats a generic SQL expression */
@@ -120,6 +124,8 @@ export default class ExpressionFormatter {
         return this.formatClause(node);
       case NodeType.set_operation:
         return this.formatSetOperation(node);
+      case NodeType.pipe_clause:
+        return this.formatPipeClause(node);
       case NodeType.limit_clause:
         return this.formatLimitClause(node);
       case NodeType.all_columns_asterisk:
@@ -289,6 +295,29 @@ export default class ExpressionFormatter {
     this.layout.add(WS.NEWLINE, WS.INDENT, this.showKw(node.nameKw), WS.NEWLINE);
     this.layout.add(WS.INDENT);
     this.layout = this.formatSubExpression(node.children);
+  }
+
+  private formatPipeClause(node: PipeClauseNode) {
+    this.layout.add(WS.NEWLINE, WS.INDENT, '|>', WS.SPACE);
+    this.withComments(node.nameKw, () => {
+      this.layout.add(this.showNonTabularKw(node.nameKw));
+    });
+
+    if (this.dialectCfg.onelinePipeClauses[node.nameKw.text]) {
+      this.layout.add(WS.SPACE);
+      this.layout = this.formatSubExpression(node.children);
+    } else if (isTabularStyle(this.cfg)) {
+      this.layout.add(WS.SPACE);
+      this.layout.indentation.increaseTopLevel();
+      this.layout = this.formatSubExpression(node.children);
+      this.layout.indentation.decreaseTopLevel();
+    } else {
+      this.layout.add(WS.NEWLINE);
+      this.layout.indentation.increaseTopLevel();
+      this.layout.add(WS.INDENT);
+      this.layout = this.formatSubExpression(node.children);
+      this.layout.indentation.decreaseTopLevel();
+    }
   }
 
   private formatLimitClause(node: LimitClauseNode) {

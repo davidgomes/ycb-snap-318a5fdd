@@ -601,4 +601,171 @@ describe('BigQueryFormatter', () => {
       expect(format(input, { linesBetweenQueries: 0 })).toBe(input);
     });
   });
+
+  describe('pipe syntax', () => {
+    it('formats pipe query with indented clauses', () => {
+      const result = format(
+        `FROM mydataset.produce |> WHERE sales > 0 AND item != 'x' |> SELECT item, sales |> ORDER BY sales DESC`
+      );
+      expect(result).toBe(dedent`
+        FROM
+          mydataset.produce
+        |> WHERE
+          sales > 0
+          AND item != 'x'
+        |> SELECT
+          item,
+          sales
+        |> ORDER BY
+          sales DESC
+      `);
+    });
+
+    it('formats AGGREGATE with nested GROUP BY', () => {
+      const result = format(
+        `FROM produce |> AGGREGATE SUM(sales) AS total_sales, COUNT(*) AS num_sales GROUP BY item, category |> WHERE num_sales > 1`
+      );
+      expect(result).toBe(dedent`
+        FROM
+          produce
+        |> AGGREGATE
+          SUM(sales) AS total_sales,
+          COUNT(*) AS num_sales
+          GROUP BY
+            item,
+            category
+        |> WHERE
+          num_sales > 1
+      `);
+    });
+
+    it('formats AGGREGATE without GROUP BY', () => {
+      expect(format(`FROM produce |> AGGREGATE COUNT(*) AS cnt`)).toBe(dedent`
+        FROM
+          produce
+        |> AGGREGATE
+          COUNT(*) AS cnt
+      `);
+    });
+
+    it('formats EXTEND, SET and DROP clauses', () => {
+      const result = format(
+        `FROM t |> EXTEND a + b AS c, a * 2 AS d |> SET c = c * 10 |> DROP a, b`
+      );
+      expect(result).toBe(dedent`
+        FROM
+          t
+        |> EXTEND
+          a + b AS c,
+          a * 2 AS d
+        |> SET
+          c = c * 10
+        |> DROP
+          a,
+          b
+      `);
+    });
+
+    it('formats LIMIT, JOIN and AS clauses on a single line', () => {
+      const result = format(
+        `FROM t |> AS t1 |> LEFT OUTER JOIN u ON t1.id = u.id |> JOIN v USING (id) |> LIMIT 10 OFFSET 5`
+      );
+      expect(result).toBe(dedent`
+        FROM
+          t
+        |> AS t1
+        |> LEFT OUTER JOIN u ON t1.id = u.id
+        |> JOIN v USING (id)
+        |> LIMIT 10 OFFSET 5
+      `);
+    });
+
+    it('formats pipe query as subquery', () => {
+      const result = format(`SELECT * FROM (FROM t |> WHERE x > 1 |> SELECT x) AS sub`);
+      expect(result).toBe(dedent`
+        SELECT
+          *
+        FROM
+          (
+            FROM
+              t
+            |> WHERE
+              x > 1
+            |> SELECT
+              x
+          ) AS sub
+      `);
+    });
+
+    it('attaches semicolon after the final pipe step', () => {
+      expect(format(`FROM t |> WHERE x;`)).toBe(dedent`
+        FROM
+          t
+        |> WHERE
+          x;
+      `);
+    });
+
+    it('formats pipe and traditional statements independently', () => {
+      const result = format(`SELECT a FROM t LIMIT 5; FROM t |> LIMIT 5;`);
+      expect(result).toBe(dedent`
+        SELECT
+          a
+        FROM
+          t
+        LIMIT
+          5;
+
+        FROM
+          t
+        |> LIMIT 5;
+      `);
+    });
+
+    it('applies keywordCase to pipe keywords', () => {
+      const input = `from t |> extend x as y |> aggregate count(*) group by y |> as t2 |> limit 1`;
+      expect(format(input, { keywordCase: 'upper' })).toBe(dedent`
+        FROM
+          t
+        |> EXTEND
+          x AS y
+        |> AGGREGATE
+          count(*)
+          GROUP BY
+            y
+        |> AS t2
+        |> LIMIT 1
+      `);
+      expect(format(input.toUpperCase(), { keywordCase: 'lower' })).toBe(dedent`
+        from
+          T
+        |> extend
+          X as Y
+        |> aggregate
+          COUNT(*)
+          group by
+            Y
+        |> as T2
+        |> limit 1
+      `);
+    });
+
+    it('formats comments around pipe steps', () => {
+      expect(format(`FROM t -- source\n|> /* filter */ WHERE x`)).toBe(dedent`
+        FROM
+          t -- source
+        |> /* filter */ WHERE
+          x
+      `);
+    });
+
+    it('does not treat bitwise OR followed by > as pipe operator', () => {
+      expect(format(`SELECT a | > b FROM t`)).toBe(dedent`
+        SELECT
+          a | > b
+        FROM
+          t
+      `);
+    });
+  });
 });

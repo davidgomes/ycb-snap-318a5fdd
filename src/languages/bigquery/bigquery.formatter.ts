@@ -1,6 +1,7 @@
 import { DialectOptions } from '../../dialect.js';
 import { expandPhrases } from '../../expandPhrases.js';
 import { EOF_TOKEN, isToken, Token, TokenType } from '../../lexer/token.js';
+import { equalizeWhitespace } from '../../utils.js';
 import { functions } from './bigquery.functions.js';
 import { dataTypes, keywords } from './bigquery.keywords.js';
 
@@ -190,16 +191,88 @@ export const bigquery: DialectOptions = {
     variableTypes: [{ regex: String.raw`@@\w+` }],
     lineCommentTypes: ['--', '#'],
     operators: ['&', '|', '^', '~', '>>', '<<', '||', '=>'],
+    supportsPipeSyntax: true,
     postProcess,
   },
   formatOptions: {
     onelineClauses: [...standardOnelineClauses, ...tabularOnelineClauses],
     tabularOnelineClauses,
+    onelinePipeClauses: ['LIMIT', 'AS', ...reservedJoins],
   },
 };
 
 function postProcess(tokens: Token[]): Token[] {
-  return detectArraySubscripts(combineParameterizedTypes(tokens));
+  return detectPipeOperators(detectArraySubscripts(combineParameterizedTypes(tokens)));
+}
+
+const pipeOperatorTokenTypes = [
+  TokenType.RESERVED_KEYWORD,
+  TokenType.RESERVED_KEYWORD_PHRASE,
+  TokenType.RESERVED_FUNCTION_NAME,
+  TokenType.IDENTIFIER,
+];
+
+const isCommentToken = (token: Token) =>
+  token.type === TokenType.LINE_COMMENT ||
+  token.type === TokenType.BLOCK_COMMENT ||
+  token.type === TokenType.DISABLE_COMMENT;
+
+// Converts the keyword following |> (like AGGREGATE, EXTEND, AS) to RESERVED_CLAUSE.
+// Converts OFFSET inside a |> LIMIT step from RESERVED_CLAUSE to RESERVED_KEYWORD,
+// so it stays part of the LIMIT step.
+// See: https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax
+function detectPipeOperators(tokens: Token[]): Token[] {
+  let prevToken = EOF_TOKEN;
+  let depth = 0;
+  let pipeLimitDepth: number | undefined;
+
+  return tokens.map(token => {
+    if (isCommentToken(token)) {
+      return token;
+    }
+    const prevType = prevToken.type;
+    prevToken = token;
+
+    if (token.type === TokenType.OPEN_PAREN) {
+      depth++;
+    } else if (token.type === TokenType.CLOSE_PAREN) {
+      depth--;
+    }
+
+    if (pipeLimitDepth !== undefined) {
+      if (
+        token.type === TokenType.RESERVED_CLAUSE &&
+        token.text === 'OFFSET' &&
+        depth === pipeLimitDepth
+      ) {
+        pipeLimitDepth = undefined;
+        return { ...token, type: TokenType.RESERVED_KEYWORD };
+      }
+      if (
+        depth < pipeLimitDepth ||
+        (depth === pipeLimitDepth &&
+          [TokenType.PIPE, TokenType.DELIMITER, TokenType.RESERVED_CLAUSE].includes(token.type))
+      ) {
+        pipeLimitDepth = undefined;
+      }
+    }
+
+    if (prevType !== TokenType.PIPE) {
+      return token;
+    }
+    if (token.type === TokenType.LIMIT) {
+      pipeLimitDepth = depth;
+      return token;
+    }
+    if (pipeOperatorTokenTypes.includes(token.type)) {
+      return {
+        ...token,
+        type: TokenType.RESERVED_CLAUSE,
+        text: equalizeWhitespace(token.raw.toUpperCase()),
+      };
+    }
+    return token;
+  });
 }
 
 // Converts OFFSET token inside array from RESERVED_CLAUSE to RESERVED_FUNCTION_NAME
