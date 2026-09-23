@@ -7,7 +7,7 @@ Testem`s adapter for Mocha. It works by monkey-patching `Runner.prototype.emit`.
 
 */
 
-/* globals mocha, emit, Mocha */
+/* globals mocha, emit, Mocha, Testem */
 /* globals module */
 /* exported mochaAdapter */
 'use strict';
@@ -25,6 +25,24 @@ function mochaAdapter() {
   var Runner;
   var ended = false;
   var waiting = 0;
+  var allTestResultsSent = false;
+
+  function emitAllTestResults() {
+    allTestResultsSent = true;
+    emit('all-test-results');
+  }
+
+  // Must be checked before every emit: once aborted, all further events are
+  // dropped and 'all-test-results' is signaled exactly once.
+  function isAborted() {
+    if (typeof Testem === 'undefined' || !Testem.aborted) {
+      return false;
+    }
+    if (!allTestResultsSent) {
+      emitAllTestResults();
+    }
+    return true;
+  }
 
   try {
     Runner = mocha.Runner || Mocha.Runner;
@@ -48,24 +66,31 @@ function mochaAdapter() {
   var oEmit = Runner.prototype.emit;
   Runner.prototype.emit = function(evt, test, err) {
     var name = getFullName(test);
+    if (isAborted()) {
+      return oEmit.apply(this, arguments);
+    }
+
     if (evt === 'start') {
       emit('tests-start', { name: name });
     } else if (evt === 'end') {
       if (waiting === 0) {
-        emit('all-test-results');
+        emitAllTestResults();
       }
       ended = true;
     } else if (evt === 'test end') {
       waiting++;
       _setTimeout(function() {
         waiting--;
+        if (isAborted()) {
+          return;
+        }
         if (test.state === 'passed') {
           testPass(test);
         } else if (test.pending) {
           testPending(test);
         }
         if (ended && waiting === 0) {
-          emit('all-test-results');
+          emitAllTestResults();
         }
       }, 0);
     } else if (evt === 'fail') {

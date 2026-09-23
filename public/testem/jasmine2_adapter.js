@@ -7,7 +7,8 @@
 
  */
 
-/* globals emit, jasmine */
+/* globals emit, jasmine, Testem */
+/* globals module */
 /* exported jasmine2Adapter */
 'use strict';
 
@@ -20,14 +21,38 @@ function jasmine2Adapter() {
     pending: 0,
     tests: []
   };
+  var allTestResultsSent = false;
+
+  function emitAllTestResults() {
+    allTestResultsSent = true;
+    emit('all-test-results');
+  }
+
+  // Must be checked before every emit: once aborted, all further events are
+  // dropped and 'all-test-results' is signaled exactly once.
+  function isAborted() {
+    if (typeof Testem === 'undefined' || !Testem.aborted) {
+      return false;
+    }
+    if (!allTestResultsSent) {
+      emitAllTestResults();
+    }
+    return true;
+  }
 
   function Jasmine2AdapterReporter() {
 
     this.jasmineStarted = function() {
+      if (isAborted()) {
+        return;
+      }
       emit('tests-start');
     };
 
     this.specStarted = function(spec) {
+      if (isAborted()) {
+        return;
+      }
       var currentTest = {
         name: spec.fullName
       };
@@ -35,6 +60,9 @@ function jasmine2Adapter() {
     };
 
     this.specDone = function(spec) {
+      if (isAborted()) {
+        return;
+      }
 
       var test = {
         passed: 0,
@@ -77,10 +105,18 @@ function jasmine2Adapter() {
     };
 
     this.jasmineDone = function() {
-      emit('all-test-results');
+      if (isAborted()) {
+        return;
+      }
+      emitAllTestResults();
     };
 
   }
 
   jasmine.getEnv().addReporter(new Jasmine2AdapterReporter());
+}
+
+// Exporting this as a module so that it can be unit tested in Node.
+if (typeof module !== 'undefined') {
+  module.exports = jasmine2Adapter;
 }
