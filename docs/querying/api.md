@@ -1314,6 +1314,51 @@ curl http://localhost:9090/api/v1/status/flags
 
 *New in v2.2*
 
+### Reload status
+
+The following endpoint returns the outcome of the most recent configuration
+reload attempt made with the experimental `transactional-reload-config`
+feature flag. The outcome is persisted in the storage directory and therefore
+survives restarts.
+
+```
+GET /api/v1/status/reload
+```
+
+- `last_reload_id`: RFC3339 start time of the attempt, or `""` if no attempt was recorded yet.
+- `error_category`: one of `none`, `load_error` (the configuration could not be
+  loaded or parsed), `apply_error` (a component failed to apply the
+  configuration; any rollback succeeded) or `rollback_error` (the rollback to
+  the last known-good configuration failed as well).
+- `applied_reloaders`: components that applied the new configuration before the attempt stopped.
+- `failed_reloader`: the component that failed to apply the new configuration, if any.
+- `reloader_timings_ms`: time in milliseconds taken by each component that was run.
+
+```bash
+curl http://localhost:9090/api/v1/status/reload
+```
+
+```json
+{
+  "status": "success",
+  "data": {
+    "last_reload_id": "2026-09-23T11:11:00.123456789Z",
+    "last_reload_successful": false,
+    "error_category": "apply_error",
+    "error_message": "reloader \"rules\" failed to apply the new configuration (--config.file=\"prometheus.yml\"): ...; rolled back to the last known-good configuration",
+    "applied_reloaders": ["db_storage", "remote_storage", "web_handler", "query_engine", "scrape", "scrape_sd", "notify", "notify_sd"],
+    "rollback_attempted": true,
+    "rollback_successful": true,
+    "failed_reloader": "rules",
+    "reloader_timings_ms": {
+      "db_storage": 0.012,
+      "rules": 1.5,
+      ...
+    }
+  }
+}
+```
+
 ### Runtime Information
 
 The following endpoint returns various runtime information properties about the Prometheus server:
@@ -1779,7 +1824,8 @@ curl http://localhost:9090/api/v1/features
     },
     "prometheus": {
       "agent_mode": false,
-      "auto_reload_config": false
+      "auto_reload_config": false,
+      "transactional_reload_config": false
     },
     "promql": {
       "anchored": false,
