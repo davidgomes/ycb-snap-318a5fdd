@@ -58,6 +58,18 @@ export default class Indentation {
   }
 
   /**
+   * Drops leftover top-level indents so the next line starts at the current
+   * block base. Pipe steps call this so each `|>` lines up with that base
+   * instead of inheriting indentation from the previous step's body.
+   * Block-level indents (open parentheses) are left in place.
+   */
+  resetToBlockBase() {
+    while (this.indentTypes.length > 0 && last(this.indentTypes) === INDENT_TYPE_TOP_LEVEL) {
+      this.indentTypes.pop();
+    }
+  }
+
+  /**
    * Decreases indentation by one block-level indent.
    * If there are top-level indents within the block-level indent,
    * throws away these as well.

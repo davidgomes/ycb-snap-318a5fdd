@@ -1,7 +1,7 @@
 @preprocessor typescript
 @{%
 import LexerAdapter from './LexerAdapter.js';
-import { NodeType, AstNode, CommentNode, KeywordNode, IdentifierNode, DataTypeNode } from './ast.js';
+import { NodeType, AstNode, CommentNode, KeywordNode, IdentifierNode, DataTypeNode, ClauseNode, LimitClauseNode, SetOperationNode } from './ast.js';
 import { Token, TokenType } from '../lexer/token.js';
 
 // The lexer here is only to provide the has() method,
@@ -43,6 +43,17 @@ const addComments = (node: AstNode, { leading, trailing }: CommentAttachments): 
   }
   return node;
 };
+
+interface PipeOperation {
+  clause: ClauseNode | LimitClauseNode | SetOperationNode;
+  offsetClause?: ClauseNode;
+}
+
+const toSubClause = (token: Token, children: AstNode[]): ClauseNode => ({
+  type: NodeType.clause,
+  nameKw: toKeywordNode(token),
+  children,
+});
 
 const addCommentsToArray = (nodes: AstNode[], { leading, trailing }: CommentAttachments): AstNode[] => {
   if (leading?.length) {
@@ -88,9 +99,11 @@ statement -> expressions_or_clauses (%DELIMITER | %EOF) {%
   })
 %}
 
-# To avoid ambiguity, plain expressions can only come before clauses
-expressions_or_clauses -> free_form_sql:* clause:* {%
-  ([expressions, clauses]) => [...expressions, ...clauses]
+# To avoid ambiguity, plain expressions can only come before clauses.
+# BigQuery pipe steps (`|> WHERE`, `|> AGGREGATE`, ...) follow those clauses
+# and always return to the enclosing block's base indentation.
+expressions_or_clauses -> free_form_sql:* clause:* pipe_step:* {%
+  ([expressions, clauses, pipes]) => [...expressions, ...clauses, ...pipes]
 %}
 
 clause ->
@@ -152,6 +165,128 @@ set_operation -> %RESERVED_SET_OPERATION free_form_sql:* {%
     nameKw: toKeywordNode(nameToken),
     children,
   })
+%}
+
+# |> operator args
+# Pipe-exclusive clauses (AGGREGATE, EXTEND) are promoted to RESERVED_CLAUSE
+# tokens before parsing, but only when they immediately follow `|>`.
+pipe_step -> %PIPE _ pipe_operation {%
+  ([pipeToken, comments, operation]) => ({
+    type: NodeType.pipe_clause,
+    pipe: pipeToken.text,
+    ...(comments.length ? { afterPipeComments: comments } : {}),
+    clause: operation.clause,
+    ...(operation.offsetClause ? { offsetClause: operation.offsetClause } : {}),
+  })
+%}
+
+pipe_operation ->
+  ( pipe_aggregate
+  | pipe_extend
+  | pipe_select
+  | pipe_limit
+  | pipe_join
+  | pipe_as
+  | pipe_set_operation
+  | pipe_other ) {% unwrap %}
+
+pipe_aggregate -> %RESERVED_CLAUSE free_form_sql:* group_by_clause:? {%
+  ([nameToken, children, groupBy], _ref, reject): PipeOperation | typeof reject => {
+    if (nameToken.text !== 'AGGREGATE') {
+      return reject;
+    }
+    return {
+      clause: toSubClause(nameToken, groupBy ? [...children, groupBy] : children),
+    };
+  }
+%}
+
+# GROUP BY, including the pipe shorthand GROUP AND ORDER BY, belongs to AGGREGATE.
+group_by_clause -> %RESERVED_CLAUSE free_form_sql:* {%
+  ([nameToken, children], _ref, reject) => {
+    if (nameToken.text !== 'GROUP BY' && nameToken.text !== 'GROUP AND ORDER BY') {
+      return reject;
+    }
+    return toSubClause(nameToken, children);
+  }
+%}
+
+pipe_extend -> %RESERVED_CLAUSE free_form_sql:* window_clause:? {%
+  ([nameToken, children, windowClause], _ref, reject): PipeOperation | typeof reject => {
+    if (nameToken.text !== 'EXTEND') {
+      return reject;
+    }
+    return {
+      clause: toSubClause(nameToken, windowClause ? [...children, windowClause] : children),
+    };
+  }
+%}
+
+pipe_select -> select_clause window_clause:? {%
+  ([clause, windowClause]): PipeOperation => ({
+    clause: windowClause
+      ? { ...clause, children: [...clause.children, windowClause] }
+      : clause,
+  })
+%}
+
+# Named windows are part of the SELECT / EXTEND pipe operator, not their own step.
+window_clause -> %RESERVED_CLAUSE free_form_sql:* {%
+  ([nameToken, children], _ref, reject) => {
+    if (nameToken.text !== 'WINDOW') {
+      return reject;
+    }
+    return toSubClause(nameToken, children);
+  }
+%}
+
+pipe_limit -> limit_clause pipe_offset:? {%
+  ([clause, offsetClause]): PipeOperation => ({
+    clause,
+    ...(offsetClause ? { offsetClause } : {}),
+  })
+%}
+
+pipe_offset -> %RESERVED_CLAUSE free_form_sql:* {%
+  ([nameToken, children], _ref, reject) => {
+    if (nameToken.text !== 'OFFSET') {
+      return reject;
+    }
+    return toSubClause(nameToken, children);
+  }
+%}
+
+pipe_join -> %RESERVED_JOIN free_form_sql:* {%
+  ([nameToken, children]): PipeOperation => ({
+    clause: toSubClause(nameToken, children),
+  })
+%}
+
+pipe_as -> %RESERVED_KEYWORD free_form_sql:* {%
+  ([nameToken, children], _ref, reject): PipeOperation | typeof reject => {
+    if (nameToken.text !== 'AS') {
+      return reject;
+    }
+    return {
+      clause: toSubClause(nameToken, children),
+    };
+  }
+%}
+
+pipe_set_operation -> set_operation {%
+  ([clause]): PipeOperation => ({ clause })
+%}
+
+pipe_other -> %RESERVED_CLAUSE free_form_sql:* {%
+  ([nameToken, children], _ref, reject): PipeOperation | typeof reject => {
+    // AGGREGATE and EXTEND have their own rules so GROUP BY / WINDOW can nest.
+    if (nameToken.text === 'AGGREGATE' || nameToken.text === 'EXTEND') {
+      return reject;
+    }
+    return {
+      clause: toSubClause(nameToken, children),
+    };
+  }
 %}
 
 expression_chain_ -> expression_with_comments_:+ {% id %}

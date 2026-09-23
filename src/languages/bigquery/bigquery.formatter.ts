@@ -1,6 +1,7 @@
 import { DialectOptions } from '../../dialect.js';
 import { expandPhrases } from '../../expandPhrases.js';
 import { EOF_TOKEN, isToken, Token, TokenType } from '../../lexer/token.js';
+import { equalizeWhitespace } from '../../utils.js';
 import { functions } from './bigquery.functions.js';
 import { dataTypes, keywords } from './bigquery.keywords.js';
 
@@ -12,6 +13,9 @@ const reservedClauses = expandPhrases([
   'FROM',
   'WHERE',
   'GROUP BY',
+  // Pipe AGGREGATE shorthand. Harmless in traditional queries: it only matches
+  // the full "GROUP AND ORDER BY" phrase, which is not standard GROUP BY.
+  'GROUP AND ORDER BY',
   'HAVING',
   'QUALIFY',
   'WINDOW',
@@ -190,6 +194,7 @@ export const bigquery: DialectOptions = {
     variableTypes: [{ regex: String.raw`@@\w+` }],
     lineCommentTypes: ['--', '#'],
     operators: ['&', '|', '^', '~', '>>', '<<', '||', '=>'],
+    supportsPipeOperator: true,
     postProcess,
   },
   formatOptions: {
@@ -199,7 +204,43 @@ export const bigquery: DialectOptions = {
 };
 
 function postProcess(tokens: Token[]): Token[] {
-  return detectArraySubscripts(combineParameterizedTypes(tokens));
+  return promotePipeClauses(detectArraySubscripts(combineParameterizedTypes(tokens)));
+}
+
+// Pipe-exclusive operators that are not reserved clauses in standard BigQuery.
+// They become clauses only immediately after `|>`, so `SELECT aggregate`
+// stays an identifier in traditional queries.
+const PIPE_PROMOTED_CLAUSES = new Set(['AGGREGATE', 'EXTEND', 'RENAME', 'DISTINCT']);
+
+function promotePipeClauses(tokens: Token[]): Token[] {
+  return tokens.map((token, index) => {
+    const canonical = equalizeWhitespace(token.text.toUpperCase());
+    if (!PIPE_PROMOTED_CLAUSES.has(canonical)) {
+      return token;
+    }
+    if (previousNonCommentToken(tokens, index)?.type !== TokenType.PIPE) {
+      return token;
+    }
+    return {
+      ...token,
+      type: TokenType.RESERVED_CLAUSE,
+      text: canonical,
+    };
+  });
+}
+
+function previousNonCommentToken(tokens: Token[], index: number): Token | undefined {
+  for (let i = index - 1; i >= 0; i--) {
+    const token = tokens[i];
+    if (
+      token.type !== TokenType.BLOCK_COMMENT &&
+      token.type !== TokenType.LINE_COMMENT &&
+      token.type !== TokenType.DISABLE_COMMENT
+    ) {
+      return token;
+    }
+  }
+  return undefined;
 }
 
 // Converts OFFSET token inside array from RESERVED_CLAUSE to RESERVED_FUNCTION_NAME

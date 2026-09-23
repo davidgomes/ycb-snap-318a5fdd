@@ -1,6 +1,11 @@
 import dedent from 'dedent-js';
 
 import { format as originalFormat, FormatFn } from '../src/sqlFormatter.js';
+import { bigquery } from '../src/languages/bigquery/bigquery.formatter.js';
+import Tokenizer from '../src/lexer/Tokenizer.js';
+import { TokenType } from '../src/lexer/token.js';
+import { createParser } from '../src/parser/createParser.js';
+import { NodeType } from '../src/parser/ast.js';
 import behavesLikeSqlFormatter from './behavesLikeSqlFormatter.js';
 
 import supportsCreateTable from './features/createTable.js';
@@ -581,6 +586,253 @@ describe('BigQueryFormatter', () => {
         ALTER BI_CAPACITY my-project.region-us.default
         SET OPTIONS (size_gb = 250)`;
       expect(format(input)).toBe(expected);
+    });
+  });
+
+  describe('BigQuery pipe syntax', () => {
+    const pipeQuery = `
+      FROM Produce
+      |> WHERE item != 'bananas' AND category IN ('fruit', 'nut')
+      |> AGGREGATE COUNT(*) AS num_items, SUM(sales) AS total_sales GROUP BY item
+      |> ORDER BY item DESC
+      |> LIMIT 10
+    `;
+
+    it('formats pipe steps at base indentation', () => {
+      expect(format(pipeQuery)).toBe(dedent`
+        FROM
+          Produce
+        |> WHERE
+          item != 'bananas'
+          AND category IN ('fruit', 'nut')
+        |> AGGREGATE
+          COUNT(*) AS num_items,
+          SUM(sales) AS total_sales
+          GROUP BY
+            item
+        |> ORDER BY
+          item DESC
+        |> LIMIT 10
+      `);
+    });
+
+    it('keeps LIMIT, JOIN, and AS on one line and indents SET, DROP, and EXTEND', () => {
+      expect(
+        format(`
+          FROM orders
+          |> EXTEND price * quantity AS revenue
+          |> SET status = 'processed'
+          |> DROP internal_notes, debug_col
+          |> AS cleaned
+          |> LEFT JOIN customers ON cleaned.id = customers.id
+          |> SELECT customer_name, revenue
+        `)
+      ).toBe(dedent`
+        FROM
+          orders
+        |> EXTEND
+          price * quantity AS revenue
+        |> SET
+          status = 'processed'
+        |> DROP
+          internal_notes,
+          debug_col
+        |> AS cleaned
+        |> LEFT JOIN customers ON cleaned.id = customers.id
+        |> SELECT
+          customer_name,
+          revenue
+      `);
+    });
+
+    it('nests pipe queries inside parentheses and formats mixed statements independently', () => {
+      expect(
+        format(`
+          SELECT * FROM foo;
+          SELECT * FROM (
+            FROM bar
+            |> WHERE id > 1
+            |> SELECT id
+          ) sub
+        `)
+      ).toBe(dedent`
+        SELECT
+          *
+        FROM
+          foo;
+
+        SELECT
+          *
+        FROM
+          (
+            FROM
+              bar
+            |> WHERE
+              id > 1
+            |> SELECT
+              id
+          ) sub
+      `);
+    });
+
+    it('attaches the semicolon to the final pipe step', () => {
+      expect(format(`FROM t |> WHERE a > 1;`)).toBe(dedent`
+        FROM
+          t
+        |> WHERE
+          a > 1;
+      `);
+    });
+
+    it('applies keywordCase to pipe keywords, including pipe-exclusive ones', () => {
+      expect(
+        format(
+          `from produce |> where sales > 0 |> aggregate sum(sales) as total group by item |> extend sales * 2 as doubled |> as renamed`,
+          { keywordCase: 'upper' }
+        )
+      ).toBe(dedent`
+        FROM
+          produce
+        |> WHERE
+          sales > 0
+        |> AGGREGATE
+          sum(sales) AS total
+          GROUP BY
+            item
+        |> EXTEND
+          sales * 2 AS doubled
+        |> AS renamed
+      `);
+
+      expect(
+        format(`FROM Produce |> WHERE sales > 0 |> AGGREGATE SUM(sales) AS total GROUP BY item`, {
+          keywordCase: 'lower',
+        })
+      ).toBe(dedent`
+        from
+          Produce
+        |> where
+          sales > 0
+        |> aggregate
+          SUM(sales) as total
+          group by
+            item
+      `);
+    });
+
+    it('leaves traditional queries unchanged when they use aggregate as an identifier', () => {
+      expect(format('SELECT aggregate FROM t')).toBe(dedent`
+        SELECT
+          aggregate
+        FROM
+          t
+      `);
+    });
+
+    it('tokenizes |> as one pipe token and promotes AGGREGATE and EXTEND after it', () => {
+      const tokens = new Tokenizer(bigquery.tokenizerOptions, 'bigquery').tokenize(
+        'SELECT a | b, a > b FROM t |> AGGREGATE x |> extend y',
+        {}
+      );
+      const pipes = tokens.filter(token => token.type === TokenType.PIPE || token.text === '|>');
+      expect(pipes).toEqual([
+        expect.objectContaining({ type: TokenType.PIPE, text: '|>' }),
+        expect.objectContaining({ type: TokenType.PIPE, text: '|>' }),
+      ]);
+      expect(
+        tokens.filter(token => token.text === '|' || token.text === '>').map(token => token.type)
+      ).toEqual([TokenType.OPERATOR, TokenType.OPERATOR]);
+      expect(tokens.filter(token => token.text === 'AGGREGATE' || token.text === 'EXTEND')).toEqual(
+        [
+          expect.objectContaining({ type: TokenType.RESERVED_CLAUSE, text: 'AGGREGATE' }),
+          expect.objectContaining({ type: TokenType.RESERVED_CLAUSE, text: 'EXTEND' }),
+        ]
+      );
+      // Not after a pipe: stays an identifier, not a clause.
+      const traditional = new Tokenizer(bigquery.tokenizerOptions, 'bigquery').tokenize(
+        'SELECT aggregate, extend FROM t',
+        {}
+      );
+      expect(
+        traditional.filter(token => /aggregate|extend/i.test(token.text)).map(token => token.type)
+      ).toEqual([TokenType.IDENTIFIER, TokenType.IDENTIFIER]);
+    });
+
+    it('parses AGGREGATE with a nested GROUP BY sub-clause', () => {
+      const ast = createParser(new Tokenizer(bigquery.tokenizerOptions, 'bigquery')).parse(
+        'FROM t |> AGGREGATE SUM(x) AS total GROUP BY y',
+        {}
+      );
+      const pipe = ast[0].children.find(node => node.type === NodeType.pipe_clause);
+      expect(pipe).toMatchObject({
+        type: NodeType.pipe_clause,
+        pipe: '|>',
+        clause: {
+          type: NodeType.clause,
+          nameKw: { text: 'AGGREGATE', tokenType: TokenType.RESERVED_CLAUSE },
+        },
+      });
+      if (!pipe || pipe.type !== NodeType.pipe_clause || pipe.clause.type !== NodeType.clause) {
+        throw new Error('expected aggregate pipe clause');
+      }
+      expect(pipe.clause.children).toContainEqual(
+        expect.objectContaining({
+          type: NodeType.clause,
+          nameKw: expect.objectContaining({
+            text: 'GROUP BY',
+            tokenType: TokenType.RESERVED_CLAUSE,
+          }),
+        })
+      );
+    });
+
+    it('formats a named window nested under EXTEND and a comment between pipe and keyword', () => {
+      expect(
+        format(
+          'FROM Produce |> EXTEND SUM(sales) OVER item_window AS category_total WINDOW item_window AS (PARTITION BY category)'
+        )
+      ).toBe(dedent`
+        FROM
+          Produce
+        |> EXTEND
+          SUM(sales) OVER item_window AS category_total
+          WINDOW
+            item_window AS (
+              PARTITION BY
+                category
+            )
+      `);
+
+      expect(format('FROM t |>\n-- keep\nWHERE a > 1')).toBe(dedent`
+        FROM
+          t
+        |>
+        -- keep
+        WHERE
+          a > 1
+      `);
+    });
+
+    it('formats LIMIT OFFSET, GROUP AND ORDER BY, and a pipe after a standard SELECT', () => {
+      expect(format('FROM t |> LIMIT 5 OFFSET 8;')).toBe(dedent`
+        FROM
+          t
+        |> LIMIT 5 OFFSET 8;
+      `);
+      expect(format('FROM t |> AGGREGATE SUM(x) GROUP AND ORDER BY y DESC;')).toBe(dedent`
+        FROM
+          t
+        |> AGGREGATE
+          SUM(x)
+          GROUP AND ORDER BY
+            y DESC;
+      `);
+      expect(format(`SELECT 'apples' AS item |> DROP item;`)).toBe(dedent`
+        SELECT
+          'apples' AS item
+        |> DROP
+          item;
+      `);
     });
   });
 

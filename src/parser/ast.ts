@@ -14,6 +14,9 @@ export enum NodeType {
   case_when = 'case_when',
   case_else = 'case_else',
   limit_clause = 'limit_clause',
+  // BigQuery `|> clause` step. The clause itself is nested so pipe-only
+  // syntax (AGGREGATE, EXTEND, ...) can carry sub-clauses such as GROUP BY.
+  pipe_clause = 'pipe_clause',
   all_columns_asterisk = 'all_columns_asterisk',
   literal = 'literal',
   identifier = 'identifier',
@@ -116,6 +119,18 @@ export interface LimitClauseNode extends BaseNode {
   offset?: AstNode[];
 }
 
+// |> <clause>
+// BigQuery pipe syntax. `clause` is the operator after `|>`
+// (WHERE, SELECT, AGGREGATE, LIMIT, JOIN, AS, ...).
+// `offsetClause` is the optional OFFSET attached to a LIMIT pipe step.
+export interface PipeClauseNode extends BaseNode {
+  type: NodeType.pipe_clause;
+  pipe: string;
+  afterPipeComments?: CommentNode[];
+  clause: ClauseNode | LimitClauseNode | SetOperationNode;
+  offsetClause?: ClauseNode;
+}
+
 // The "*" operator used in SELECT *
 export interface AllColumnsAsteriskNode extends BaseNode {
   type: NodeType.all_columns_asterisk;
@@ -200,6 +215,7 @@ export type AstNode =
   | CaseWhenNode
   | CaseElseNode
   | LimitClauseNode
+  | PipeClauseNode
   | AllColumnsAsteriskNode
   | LiteralNode
   | IdentifierNode

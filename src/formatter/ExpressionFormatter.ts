@@ -13,6 +13,7 @@ import {
   ClauseNode,
   FunctionCallNode,
   LimitClauseNode,
+  PipeClauseNode,
   NodeType,
   ParenthesisNode,
   LiteralNode,
@@ -122,6 +123,8 @@ export default class ExpressionFormatter {
         return this.formatSetOperation(node);
       case NodeType.limit_clause:
         return this.formatLimitClause(node);
+      case NodeType.pipe_clause:
+        return this.formatPipeClause(node);
       case NodeType.all_columns_asterisk:
         return this.formatAllColumnsAsterisk(node);
       case NodeType.literal:
@@ -289,6 +292,81 @@ export default class ExpressionFormatter {
     this.layout.add(WS.NEWLINE, WS.INDENT, this.showKw(node.nameKw), WS.NEWLINE);
     this.layout.add(WS.INDENT);
     this.layout = this.formatSubExpression(node.children);
+  }
+
+  // BigQuery `|>` steps. The operator and clause keyword share a line at the
+  // enclosing block's base indentation. Indented clauses put their body on
+  // the next line, one level deeper — the same pattern traditional clauses use.
+  // One-line pipe clauses (LIMIT, JOIN, AS, and traditional one-line clauses
+  // other than DROP) keep their arguments on that same line.
+  private formatPipeClause(node: PipeClauseNode) {
+    this.layout.indentation.resetToBlockBase();
+    this.layout.add(WS.NEWLINE, WS.INDENT, node.pipe, WS.SPACE);
+    if (node.afterPipeComments) {
+      this.formatComments(node.afterPipeComments);
+    }
+
+    if (node.clause.type === NodeType.limit_clause) {
+      this.formatPipeLimitClause(node.clause, node.offsetClause);
+      return;
+    }
+    this.formatPipeOperatorClause(node.clause);
+  }
+
+  private formatPipeOperatorClause(clause: ClauseNode | SetOperationNode) {
+    this.withComments(clause.nameKw, () => {
+      this.layout.add(this.showKw(clause.nameKw));
+    });
+
+    if (this.isPipeOnelineClause(clause.nameKw.text)) {
+      if (clause.children.length > 0) {
+        this.layout.add(WS.SPACE);
+        this.layout = this.formatSubExpression(clause.children);
+      }
+      return;
+    }
+
+    this.layout.add(WS.NEWLINE);
+    this.layout.indentation.increaseTopLevel();
+    if (clause.children.length > 0) {
+      this.layout.add(WS.INDENT);
+      this.layout = this.formatSubExpression(clause.children);
+    }
+    this.layout.indentation.decreaseTopLevel();
+  }
+
+  private formatPipeLimitClause(node: LimitClauseNode, offsetClause?: ClauseNode) {
+    this.withComments(node.limitKw, () => {
+      this.layout.add(this.showKw(node.limitKw));
+    });
+    this.layout.add(WS.SPACE);
+
+    if (node.offset) {
+      this.layout = this.formatSubExpression(node.offset);
+      this.layout.add(WS.NO_SPACE, ',', WS.SPACE);
+      this.layout = this.formatSubExpression(node.count);
+    } else {
+      this.layout = this.formatSubExpression(node.count);
+    }
+
+    if (offsetClause) {
+      this.layout.add(this.showKw(offsetClause.nameKw), WS.SPACE);
+      this.layout = this.formatSubExpression(offsetClause.children);
+    }
+  }
+
+  // DROP is a one-line clause in traditional BigQuery (DROP TABLE, ...),
+  // but the pipe operator `|> DROP` removes columns and is indented.
+  private isPipeOnelineClause(name: string): boolean {
+    if (
+      name === 'AS' ||
+      name === 'LIMIT' ||
+      name.includes('JOIN') ||
+      (name !== 'DROP' && this.dialectCfg.onelineClauses[name])
+    ) {
+      return true;
+    }
+    return false;
   }
 
   private formatLimitClause(node: LimitClauseNode) {
