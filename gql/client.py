@@ -28,6 +28,7 @@ from graphql import (
     IntrospectionQuery,
     build_ast_schema,
     parse,
+    print_ast,
     validate,
 )
 from tenacity import (
@@ -39,6 +40,11 @@ from tenacity import (
 )
 
 from .graphql_request import GraphQLRequest, support_deprecated_request
+from .incremental import (
+    IncrementalExecutionResult,
+    IncrementalResultAccumulator,
+    schema_with_incremental_directives,
+)
 from .transport.async_transport import AsyncTransport
 from .transport.exceptions import TransportConnectionFailed, TransportQueryError
 from .transport.local_schema import LocalSchemaTransport
@@ -166,7 +172,11 @@ class Client:
             self.schema
         ), "Cannot validate the document locally, you need to pass a schema."
 
-        validation_errors = validate(self.schema, request.document)
+        schema = self.schema
+        printed = print_ast(request.document)
+        if "@defer" in printed or "@stream" in printed:
+            schema = schema_with_incremental_directives(schema)
+        validation_errors = validate(schema, request.document)
         if validation_errors:
             raise validation_errors[0]
 
@@ -1594,6 +1604,65 @@ class AsyncClientSession:
             return result
 
         return result.data
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        parse_result: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalExecutionResult, None]:
+        """Execute a query that may use ``@defer`` or ``@stream``.
+
+        Yields one result per server payload. ``data`` is the merged document
+        so far, not the raw delta of that payload. ``extensions`` is taken
+        from the current payload only. Errors are reported on the result and
+        do not stop later payloads.
+
+        :param request: GraphQL query as :class:`GraphQLRequest <gql.GraphQLRequest>`.
+        :param serialize_variables: whether the variable values should be
+            serialized. Used for custom scalars and/or enums.
+            By default use the serialize_variables argument of the client.
+        :param parse_result: Whether gql will deserialize the result.
+            By default use the parse_results argument of the client.
+
+        The extra arguments are passed to the transport ``execute_incremental``
+        method.
+        """
+        request = support_deprecated_request(request, kwargs)
+
+        if self.client.schema:
+            self.client.validate(request)
+
+            if request.variable_values is not None:
+                if serialize_variables or (
+                    serialize_variables is None and self.client.serialize_variables
+                ):
+                    request = request.serialize_variable_values(self.client.schema)
+
+        inner = self.transport.execute_incremental(
+            request,
+            **kwargs,
+        )
+        accumulator = IncrementalResultAccumulator()
+
+        try:
+            async for chunk in inner:
+                merged = accumulator.apply(chunk)
+                if self.client.schema and merged.data is not None:
+                    if parse_result or (
+                        parse_result is None and self.client.parse_results
+                    ):
+                        merged.data = parse_result_fn(
+                            self.client.schema,
+                            request.document,
+                            merged.data,
+                            operation_name=request.operation_name,
+                        )
+                yield merged
+        finally:
+            await inner.aclose()
 
     async def _execute_batch(
         self,

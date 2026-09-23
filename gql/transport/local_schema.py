@@ -3,10 +3,13 @@ from inspect import isawaitable
 from typing import Any, AsyncGenerator, Awaitable, cast
 
 from graphql import ExecutionResult, GraphQLSchema, execute, subscribe
+from graphql.execution.execute import experimental_execute_incrementally
+from graphql.execution.types import ExperimentalIncrementalExecutionResults
 
 from gql.transport import AsyncTransport
 
 from ..graphql_request import GraphQLRequest
+from ..incremental import chunk_from_graphql_result
 
 
 class LocalSchemaTransport(AsyncTransport):
@@ -61,6 +64,40 @@ class LocalSchemaTransport(AsyncTransport):
             execution_result = result_or_awaitable
 
         return execution_result
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncGenerator[ExecutionResult, None]:
+        """Execute a query, yielding one payload per incremental result.
+
+        ``@defer`` and ``@stream`` use graphql-core's incremental executor.
+        A query that does not defer or stream yields a single result.
+        """
+        inner_kwargs = {
+            "variable_values": request.variable_values,
+            "operation_name": request.operation_name,
+            **kwargs,
+        }
+
+        result = experimental_execute_incrementally(
+            self.schema,
+            request.document,
+            *args,
+            **inner_kwargs,
+        )
+        if isawaitable(result):
+            result = await result
+
+        if isinstance(result, ExperimentalIncrementalExecutionResults):
+            yield chunk_from_graphql_result(result.initial_result)
+            async for subsequent in result.subsequent_results:
+                yield chunk_from_graphql_result(subsequent)
+            return
+
+        yield chunk_from_graphql_result(result)
 
     @staticmethod
     async def _await_if_necessary(obj):

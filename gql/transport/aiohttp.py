@@ -25,6 +25,11 @@ from graphql import ExecutionResult
 from multidict import CIMultiDictProxy
 
 from ..graphql_request import GraphQLRequest
+from ..incremental import (
+    IncrementalExecutionResult,
+    incremental_result_from_payload,
+    is_graphql_incremental_payload,
+)
 from .appsync_auth import AppSyncAuthentication
 from .async_transport import AsyncTransport
 from .common.aiohttp_closed_event import create_aiohttp_closed_event
@@ -387,6 +392,149 @@ class AIOHTTPTransport(AsyncTransport):
         finally:
             if upload_files:
                 close_files(list(self.files.values()))
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        extra_args: Optional[Dict[str, Any]] = None,
+    ) -> AsyncGenerator[ExecutionResult, None]:
+        """Execute a query and yield incremental ``@defer`` / ``@stream`` payloads.
+
+        Sends ``Accept: multipart/mixed;boundary=graphql;deferSpec=20220824``.
+        A single JSON response is yielded as one result so non-incremental
+        servers keep working.
+
+        :param request: GraphQL request as a
+                        :class:`GraphQLRequest <gql.GraphQLRequest>` object.
+        :param extra_args: additional arguments to send to the aiohttp post method
+        :yields: raw payload results. The session merges them.
+        """
+        if self.session is None:
+            raise TransportClosed("Transport is not connected")
+
+        post_args = self._prepare_request(request, extra_args)
+        headers = dict(post_args.get("headers") or {})
+        headers["Accept"] = (
+            "multipart/mixed;boundary=graphql;deferSpec=20220824,application/json"
+        )
+        post_args["headers"] = headers
+
+        try:
+            async with self.session.post(self.url, ssl=self.ssl, **post_args) as resp:
+                self.response_headers = resp.headers
+
+                if resp.status >= 400:
+                    self._raise_transport_server_error_if_status_more_than_400(resp)
+
+                content_type = resp.headers.get("Content-Type", "").lower()
+                if "multipart/mixed" in content_type:
+                    async for result in self._parse_incremental_multipart(resp):
+                        yield result
+                else:
+                    yield await self._prepare_incremental_json_result(resp)
+        except TransportError:
+            raise
+        except Exception as e:
+            raise TransportConnectionFailed(str(e)) from e
+
+    async def _prepare_incremental_json_result(
+        self,
+        response: aiohttp.ClientResponse,
+    ) -> IncrementalExecutionResult:
+        """Parse a single JSON body as an incremental or classic GraphQL result."""
+        result = await self._get_json_result(response)
+
+        if not is_graphql_incremental_payload(result):
+            await self._raise_response_error(
+                response, 'No "data" or "errors" keys in answer'
+            )
+
+        return incremental_result_from_payload(result)
+
+    async def _parse_incremental_multipart(
+        self,
+        response: aiohttp.ClientResponse,
+    ) -> AsyncGenerator[IncrementalExecutionResult, None]:
+        """Yield one result per incremental multipart part."""
+        reader = MultipartReader.from_response(response)
+
+        while True:
+            try:
+                part = await reader.next()
+            except Exception:
+                if reader.at_eof():
+                    break
+                raise  # pragma: no cover
+
+            if part is None:
+                break
+
+            assert not isinstance(
+                part, MultipartReader
+            ), "Nested multipart parts are not supported in incremental responses"
+
+            result = await self._parse_incremental_part(part)
+            if result is not None:
+                yield result
+
+    async def _parse_incremental_part(
+        self,
+        part: BodyPartReader,
+    ) -> Optional[IncrementalExecutionResult]:
+        """Parse one ``deferSpec=20220824`` part.
+
+        Parts are the GraphQL payload itself. A subscription-style ``payload``
+        wrapper is accepted when the body is not already a GraphQL result.
+        Empty bodies and ``{}`` heartbeats are skipped. Empty ``incremental``
+        arrays and ``hasNext``-only objects are returned.
+        """
+        content_type = part.headers.get(aiohttp.hdrs.CONTENT_TYPE, "")
+        if content_type and not content_type.startswith("application/json"):
+            raise TransportProtocolError(
+                f"Unexpected part content-type: {content_type}. "
+                "Expected 'application/json'."
+            )
+
+        try:
+            body = await part.text()
+            body = body.strip()
+
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug("<<< %s", ascii(body or "(empty body, skipping)"))
+
+            if not body:
+                return None
+
+            parsed = self.json_deserialize(body)
+        except json.JSONDecodeError as exc:
+            log.warning("Failed to parse incremental JSON: %s", ascii(exc))
+            return None
+        except UnicodeDecodeError as exc:
+            log.warning("Failed to decode incremental part: %s", ascii(exc))
+            return None
+
+        if not isinstance(parsed, dict):
+            raise TransportProtocolError(
+                "Incremental response part must be a JSON object"
+            )
+
+        if not parsed:
+            log.debug("Received heartbeat, ignoring")
+            return None
+
+        if "payload" in parsed and not is_graphql_incremental_payload(parsed):
+            parsed = parsed["payload"]
+            if parsed is None:
+                return None
+            if not isinstance(parsed, dict):
+                raise TransportProtocolError(
+                    "Incremental response payload must be a JSON object"
+                )
+            if not parsed:
+                return None
+
+        return incremental_result_from_payload(parsed)
 
     async def execute_batch(
         self,

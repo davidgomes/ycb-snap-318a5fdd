@@ -1164,8 +1164,10 @@ def test_node_tree_with_loc(ds):
 DocumentNode
   definitions:
     OperationDefinitionNode
+      description:
+        None
       directives:
-        empty tuple
+        None
       loc:
         Location
           <Location 0:43>
@@ -1188,9 +1190,9 @@ DocumentNode
               alias:
                 None
               arguments:
-                empty tuple
+                None
               directives:
-                empty tuple
+                None
               loc:
                 Location
                   <Location 22:41>
@@ -1201,8 +1203,6 @@ DocumentNode
                       <Location 22:26>
                   value:
                     'hero'
-              nullability_assertion:
-                None
               selection_set:
                 SelectionSetNode
                   loc:
@@ -1213,9 +1213,9 @@ DocumentNode
                       alias:
                         None
                       arguments:
-                        empty tuple
+                        None
                       directives:
-                        empty tuple
+                        None
                       loc:
                         Location
                           <Location 33:37>
@@ -1226,12 +1226,10 @@ DocumentNode
                               <Location 33:37>
                           value:
                             'name'
-                      nullability_assertion:
-                        None
                       selection_set:
                         None
       variable_definitions:
-        empty tuple
+        None
   loc:
     Location
       <Location 0:43>

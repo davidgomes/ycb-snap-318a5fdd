@@ -14,7 +14,9 @@ def _node_tree_recursive(
 
     results = []
 
-    if hasattr(obj, "__slots__"):
+    # graphql-core 3.3 AST nodes are frozen dataclasses and no longer set
+    # __slots__. They are still Node instances and expose ``keys``.
+    if isinstance(obj, Node) or hasattr(obj, "__slots__"):
 
         results.append("  " * indent + f"{type(obj).__name__}")
 

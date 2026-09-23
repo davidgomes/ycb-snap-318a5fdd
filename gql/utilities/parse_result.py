@@ -16,7 +16,6 @@ from graphql import (
     GraphQLSchema,
     GraphQLType,
     InlineFragmentNode,
-    NameNode,
     Node,
     OperationDefinitionNode,
     SelectionSetNode,
@@ -121,13 +120,14 @@ class ParseResultVisitor(Visitor):
     ) -> Union[None, VisitorActionEnum]:
 
         if self.operation_name is not None:
-            if not hasattr(node.name, "value"):
+            # Operation names are frozen on graphql-core 3.3 AST nodes, so
+            # compare the existing name instead of assigning it.
+            name_node = node.name
+            if name_node is None or not hasattr(name_node, "value"):
                 return REMOVE  # pragma: no cover
 
-            node.name = cast(NameNode, node.name)
-
-            if node.name.value != self.operation_name:
-                log.debug(f"SKIPPING operation {node.name.value}")
+            if name_node.value != self.operation_name:
+                log.debug(f"SKIPPING operation {name_node.value}")
                 return REMOVE
 
         return IDLE
@@ -238,7 +238,7 @@ class ParseResultVisitor(Visitor):
                 assert isinstance(selection_set_node, SelectionSetNode)
 
                 # Keep only the current node in a new selection set node
-                new_node = SelectionSetNode(selections=[node])
+                new_node = SelectionSetNode(selections=(node,))
 
                 for item in result_value:
 

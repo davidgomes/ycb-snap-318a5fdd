@@ -7,11 +7,13 @@ import logging
 import re
 import sys
 from abc import ABC, abstractmethod
+from dataclasses import replace
 from math import isfinite
 from typing import (
     Any,
     Dict,
     Iterable,
+    List,
     Literal,
     Mapping,
     Optional,
@@ -92,6 +94,54 @@ else:
 log = logging.getLogger(__name__)
 
 _re_integer_string = re.compile("^-?(?:0|[1-9][0-9]*)$")
+
+
+def _none_if_empty(
+    nodes: Iterable[Any],
+) -> Optional[Tuple[Any, ...]]:
+    """Match graphql-core's parser, which omits empty directive and argument lists."""
+    collected = tuple(nodes)
+    return collected or None
+
+
+def _directive_node(
+    name: str, arguments: Iterable[Tuple[str, ValueNode]]
+) -> DirectiveNode:
+    """Build a directive AST node without requiring the directive in the schema."""
+    return DirectiveNode(
+        name=NameNode(value=name),
+        arguments=_none_if_empty(
+            ArgumentNode(name=NameNode(value=arg_name), value=value)
+            for arg_name, value in arguments
+        ),
+    )
+
+
+def _defer_directive_node(
+    label: Optional[str] = None,
+    if_: Optional[bool] = None,
+) -> DirectiveNode:
+    arguments: List[Tuple[str, ValueNode]] = []
+    if label is not None:
+        arguments.append(("label", StringValueNode(value=label)))
+    if if_ is not None:
+        arguments.append(("if", BooleanValueNode(value=if_)))
+    return _directive_node("defer", arguments)
+
+
+def _stream_directive_node(
+    label: Optional[str] = None,
+    initial_count: Optional[int] = None,
+    if_: Optional[bool] = None,
+) -> DirectiveNode:
+    arguments: List[Tuple[str, ValueNode]] = []
+    if label is not None:
+        arguments.append(("label", StringValueNode(value=label)))
+    if if_ is not None:
+        arguments.append(("if", BooleanValueNode(value=if_)))
+    if initial_count is not None:
+        arguments.append(("initialCount", IntValueNode(value=str(initial_count))))
+    return _directive_node("stream", arguments)
 
 
 def ast_from_serialized_value_untyped(serialized: Any) -> Optional[ValueNode]:
@@ -382,7 +432,7 @@ class DSLDirective:
             )
 
         self.directive_def: GraphQLDirective = directive_def
-        self.ast_directive = DirectiveNode(name=NameNode(value=name), arguments=())
+        self.ast_directive = DirectiveNode(name=NameNode(value=name))
 
     @property
     def name(self) -> str:
@@ -415,7 +465,7 @@ class DSLDirective:
         :raises graphql.error.GraphQLError:
                 if argument doesn't exist in directive definition
         """
-        if len(self.ast_directive.arguments) > 0:
+        if self.ast_directive.arguments:
             raise AttributeError(f"Arguments for directive @{self.name} already set.")
 
         errs = []
@@ -444,7 +494,7 @@ class DSLDirective:
     def __repr__(self) -> str:
         args_str = ", ".join(
             f"{arg.name.value}={getattr(arg.value, 'value')}"
-            for arg in self.ast_directive.arguments
+            for arg in self.ast_directive.arguments or ()
         )
         return f"<DSLDirective @{self.name}({args_str})>"
 
@@ -461,6 +511,7 @@ class DSLDirectable(ABC):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._directives = ()
+        self._extra_directive_nodes: Tuple[DirectiveNode, ...] = ()
 
     @abstractmethod
     def is_valid_directive(self, directive: DSLDirective) -> bool:
@@ -596,7 +647,7 @@ class DSLSelectableWithAlias(DSLSelectable):
         :return: itself
         """
 
-        self.ast_field.alias = NameNode(value=alias)
+        self.ast_field = replace(self.ast_field, alias=NameNode(value=alias))
         return self
 
 
@@ -666,8 +717,12 @@ class DSLSelector(ABC):
             Union[FieldNode, InlineFragmentNode, FragmentSpreadNode], ...
         ] = tuple(field.ast_field for field in added_fields)
 
-        # Update the current selection list with new selections
-        self.selection_set.selections = self.selection_set.selections + added_selections
+        # Update the current selection list with new selections.
+        # AST nodes are frozen, so replace the selection set instead of mutating it.
+        self.selection_set = replace(
+            self.selection_set,
+            selections=self.selection_set.selections + added_selections,
+        )
 
         log.debug(f"Added fields: {added_fields} in {self!r}")
 
@@ -798,9 +853,11 @@ class DSLOperation(DSLExecutable, DSLRootFieldSelector):
         return OperationDefinitionNode(
             operation=OperationType(self.operation_type),
             selection_set=self.selection_set,
-            variable_definitions=self.variable_definitions.get_ast_definitions(),
+            variable_definitions=_none_if_empty(
+                self.variable_definitions.get_ast_definitions()
+            ),
             **({"name": NameNode(value=self.name)} if self.name else {}),
-            directives=self.directives_ast,
+            directives=_none_if_empty(self.directives_ast),
         )
 
     def __repr__(self) -> str:
@@ -876,7 +933,7 @@ class DSLVariable(DSLDirectable):
 
     def is_valid_directive(self, directive: DSLDirective) -> bool:
         """Check if directive is valid for Variable definitions."""
-        for arg in directive.ast_directive.arguments:
+        for arg in directive.ast_directive.arguments or ():
             if isinstance(arg.value, VariableNode):
                 raise GraphQLError(
                     f"Directive @{directive.name} argument value has "
@@ -931,7 +988,7 @@ class DSLVariableDefinitions:
                     if var.default_value is None
                     else ast_from_value(var.default_value, var.type)
                 ),
-                directives=var.directives_ast,
+                directives=_none_if_empty(var.directives_ast),
             )
             for var in self.variables.values()
             if var.type is not None  # only variables used
@@ -1102,11 +1159,7 @@ class DSLField(DSLSelectableWithAlias, DSLFieldSelector):
         """
         self.parent_type = parent_type
         self.field = field
-        self.ast_field = FieldNode(
-            name=NameNode(value=name),
-            arguments=(),
-            directives=(),
-        )
+        self.ast_field = FieldNode(name=NameNode(value=name))
         self.dsl_type = dsl_type
 
         log.debug(f"Creating {self!r}")
@@ -1139,14 +1192,16 @@ class DSLField(DSLSelectableWithAlias, DSLFieldSelector):
                           for this field.
         """
 
-        assert self.ast_field.arguments is not None
-
-        self.ast_field.arguments = self.ast_field.arguments + tuple(
-            ArgumentNode(
-                name=NameNode(value=name),
-                value=ast_from_value(value, self._get_argument(name).type),
-            )
-            for name, value in kwargs.items()
+        self.ast_field = replace(
+            self.ast_field,
+            arguments=(self.ast_field.arguments or ())
+            + tuple(
+                ArgumentNode(
+                    name=NameNode(value=name),
+                    value=ast_from_value(value, self._get_argument(name).type),
+                )
+                for name, value in kwargs.items()
+            ),
         )
 
         log.debug(f"Added arguments {kwargs} in field {self!r})")
@@ -1175,15 +1230,56 @@ class DSLField(DSLSelectableWithAlias, DSLFieldSelector):
         """
 
         super().select(*fields, **fields_with_alias)
-        self.ast_field.selection_set = self.selection_set
+        self.ast_field = replace(self.ast_field, selection_set=self.selection_set)
 
         return self
 
     def directives(self, *directives: DSLDirective) -> Self:
         """Add directives to this field."""
         super().directives(*directives)
-        self.ast_field.directives = self.directives_ast
+        self._sync_extra_directives()
 
+        return self
+
+    def _sync_extra_directives(self) -> None:
+        self.ast_field = replace(
+            self.ast_field,
+            directives=_none_if_empty(
+                (*self.directives_ast, *self._extra_directive_nodes)
+            ),
+        )
+
+    def stream(
+        self,
+        label: Optional[str] = None,
+        initial_count: Optional[int] = None,
+        if_: Optional[bool] = None,
+    ) -> Self:
+        """Mark this list field with ``@stream``.
+
+        :param label: optional label forwarded to the directive
+        :param initial_count: optional ``initialCount`` argument
+        :param if_: optional ``if`` argument
+        :return: itself
+        :raises GraphQLError: if the field is not a list
+        """
+        field_type = self.field.type
+        if is_non_null_type(field_type):
+            field_type = field_type.of_type
+        if not is_list_type(field_type):
+            raise GraphQLError(
+                "@stream can only be used on list fields. "
+                f"Field '{self.name}' is not a list."
+            )
+
+        self._extra_directive_nodes = self._extra_directive_nodes + (
+            _stream_directive_node(
+                label=label,
+                initial_count=initial_count,
+                if_=if_,
+            ),
+        )
+        self._sync_extra_directives()
         return self
 
     def is_valid_directive(self, directive: DSLDirective) -> bool:
@@ -1254,7 +1350,9 @@ class DSLInlineFragment(DSLSelectable, DSLFragmentSelector):
 
         log.debug(f"Creating {self!r}")
 
-        self.ast_field = InlineFragmentNode(directives=())
+        self.ast_field = InlineFragmentNode(
+            selection_set=SelectionSetNode(selections=()),
+        )
 
         DSLSelector.__init__(self, *fields, **fields_with_alias)
         DSLDirectable.__init__(self)
@@ -1266,7 +1364,7 @@ class DSLInlineFragment(DSLSelectable, DSLFragmentSelector):
         corrected typing hints
         """
         super().select(*fields, **fields_with_alias)
-        self.ast_field.selection_set = self.selection_set
+        self.ast_field = replace(self.ast_field, selection_set=self.selection_set)
 
         return self
 
@@ -1274,8 +1372,9 @@ class DSLInlineFragment(DSLSelectable, DSLFragmentSelector):
         """Provides the GraphQL type of this inline fragment."""
 
         self._type = type_condition._type
-        self.ast_field.type_condition = NamedTypeNode(
-            name=NameNode(value=self._type.name)
+        self.ast_field = replace(
+            self.ast_field,
+            type_condition=NamedTypeNode(name=NameNode(value=self._type.name)),
         )
         return self
 
@@ -1285,7 +1384,9 @@ class DSLInlineFragment(DSLSelectable, DSLFragmentSelector):
         Inline fragments support all directive types through auto-validation.
         """
         super().directives(*directives)
-        self.ast_field.directives = self.directives_ast
+        self.ast_field = replace(
+            self.ast_field, directives=_none_if_empty(self.directives_ast)
+        )
         return self
 
     def __repr__(self) -> str:
@@ -1319,9 +1420,7 @@ class DSLFragmentSpread(DSLSelectable):
         :param fragment: The DSLFragment to create a spread from
         """
         self._fragment = fragment
-        self.ast_field = FragmentSpreadNode(
-            name=NameNode(value=fragment.name), directives=()
-        )
+        self.ast_field = FragmentSpreadNode(name=NameNode(value=fragment.name))
 
         log.debug(f"Creating fragment spread for {fragment.name}")
 
@@ -1338,7 +1437,34 @@ class DSLFragmentSpread(DSLSelectable):
         Fragment spreads support all directive types through auto-validation.
         """
         super().directives(*directives)
-        self.ast_field.directives = self.directives_ast
+        self.ast_field = replace(
+            self.ast_field,
+            directives=_none_if_empty(
+                (*self.directives_ast, *self._extra_directive_nodes)
+            ),
+        )
+        return self
+
+    def defer(
+        self,
+        label: Optional[str] = None,
+        if_: Optional[bool] = None,
+    ) -> Self:
+        """Mark this fragment spread with ``@defer``.
+
+        :param label: optional label forwarded to the directive
+        :param if_: optional ``if`` argument
+        :return: itself
+        """
+        self._extra_directive_nodes = self._extra_directive_nodes + (
+            _defer_directive_node(label=label, if_=if_),
+        )
+        self.ast_field = replace(
+            self.ast_field,
+            directives=_none_if_empty(
+                (*self.directives_ast, *self._extra_directive_nodes)
+            ),
+        )
         return self
 
     def is_valid_directive(self, directive: DSLDirective) -> bool:
@@ -1367,7 +1493,7 @@ class DSLFragment(DSLSelectable, DSLFragmentSelector, DSLExecutable):
 
         DSLExecutable.__init__(self)
 
-        self.ast_field = FragmentSpreadNode(name=NameNode(value=name), directives=())
+        self.ast_field = FragmentSpreadNode(name=NameNode(value=name))
 
         self._type = None
 
@@ -1382,7 +1508,7 @@ class DSLFragment(DSLSelectable, DSLFragmentSelector, DSLExecutable):
     def name(self, value: str) -> None:
         """:meta private:"""
         if hasattr(self, "ast_field"):
-            self.ast_field.name.value = value
+            self.ast_field = replace(self.ast_field, name=NameNode(value=value))
 
     def spread(self) -> DSLFragmentSpread:
         """Create a fragment spread that can have its own directives.
@@ -1393,6 +1519,29 @@ class DSLFragment(DSLSelectable, DSLFragmentSelector, DSLExecutable):
         :return: DSLFragmentSpread instance for this fragment
         """
         return DSLFragmentSpread(self)
+
+    def defer(
+        self,
+        label: Optional[str] = None,
+        if_: Optional[bool] = None,
+    ) -> Self:
+        """Mark the fragment spread used by this definition with ``@defer``.
+
+        The directive is attached to the spread inserted into a selection set,
+        not to the fragment definition.
+
+        :param label: optional label forwarded to the directive
+        :param if_: optional ``if`` argument
+        :return: itself
+        """
+        current = self.ast_field.directives or ()
+        self.ast_field = replace(
+            self.ast_field,
+            directives=_none_if_empty(
+                (*tuple(current), _defer_directive_node(label=label, if_=if_))
+            ),
+        )
+        return self
 
     def select(
         self, *fields: DSLSelectable, **fields_with_alias: DSLSelectableWithAlias
@@ -1435,26 +1584,18 @@ class DSLFragment(DSLSelectable, DSLFragmentSelector, DSLExecutable):
 
         fragment_variable_definitions = self.variable_definitions.get_ast_definitions()
 
-        if len(fragment_variable_definitions) == 0:
-            """Fragment variable definitions are obsolete and only supported on
-            graphql-core if the Parser is initialized with:
-            allow_legacy_fragment_variables=True.
-
-            We will not provide variable_definitions instead of providing an empty
-            tuple to be coherent with how it works by default on graphql-core.
-            """
-            variable_definition_kwargs = {}
-        else:
-            variable_definition_kwargs = {
-                "variable_definitions": fragment_variable_definitions
-            }
+        # The parser keeps an empty tuple on fragment definitions (legacy fragment
+        # variables) and uses None on operations that declare no variables.
+        variable_definition_kwargs = {
+            "variable_definitions": fragment_variable_definitions
+        }
 
         return FragmentDefinitionNode(
             type_condition=NamedTypeNode(name=NameNode(value=self._type.name)),
             selection_set=self.selection_set,
             **variable_definition_kwargs,
             name=NameNode(value=self.name),
-            directives=self.directives_ast,
+            directives=_none_if_empty(self.directives_ast),
         )
 
     def is_valid_directive(self, directive: DSLDirective) -> bool:
@@ -1516,7 +1657,7 @@ def dsl_gql(
             )
 
     document = DocumentNode(
-        definitions=[operation.executable_ast for operation in all_operations]
+        definitions=tuple(operation.executable_ast for operation in all_operations)
     )
 
     return GraphQLRequest(document)

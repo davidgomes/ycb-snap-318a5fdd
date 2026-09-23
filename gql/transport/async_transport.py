@@ -4,6 +4,7 @@ from typing import Any, AsyncGenerator, List
 from graphql import ExecutionResult
 
 from ..graphql_request import GraphQLRequest
+from ..incremental import IncrementalExecutionResult
 
 
 class AsyncTransport(abc.ABC):
@@ -48,6 +49,31 @@ class AsyncTransport(abc.ABC):
         raise NotImplementedError(
             "This Transport has not implemented the execute_batch method"
         )  # pragma: no cover
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncGenerator[ExecutionResult, None]:
+        """Execute a request and yield a single, non-incremental result.
+
+        Transports that can receive ``@defer`` / ``@stream`` payloads override
+        this method. The default reads one execution result and yields it with
+        ``has_next`` false so callers can treat every transport the same way.
+        """
+        result = await self.execute(request, *args, **kwargs)
+        has_next = bool(getattr(result, "has_next", False))
+        yield IncrementalExecutionResult(
+            data=result.data,
+            errors=result.errors,
+            extensions=result.extensions,
+            has_next=has_next,
+            incremental=getattr(result, "incremental", None),
+            has_data=getattr(result, "has_data", True),
+            pending=getattr(result, "pending", None),
+            completed=getattr(result, "completed", None),
+        )
 
     @abc.abstractmethod
     def subscribe(

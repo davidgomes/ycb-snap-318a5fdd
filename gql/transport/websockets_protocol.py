@@ -2,11 +2,12 @@ import asyncio
 import json
 import logging
 from contextlib import suppress
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 from graphql import ExecutionResult
 
 from ..graphql_request import GraphQLRequest
+from ..incremental import incremental_result_from_payload
 from .common.adapters.connection import AdapterConnection
 from .common.base import SubscriptionTransportBase
 from .exceptions import (
@@ -17,6 +18,32 @@ from .exceptions import (
 )
 
 log = logging.getLogger("gql.transport.websockets")
+
+
+def _execution_result_from_payload(payload: Any) -> ExecutionResult:
+    """Build an execution result, including incremental ``@defer``/``@stream``.
+
+    Subsequent incremental payloads may contain only ``incremental`` and
+    ``hasNext``. Those are forwarded through the existing websocket protocol
+    instead of being rejected as incomplete results.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("payload is not a dict")
+
+    incremental = "incremental" in payload or "hasNext" in payload
+    if "errors" not in payload and "data" not in payload and not incremental:
+        raise ValueError("payload does not contain 'data' or 'errors' fields")
+
+    # Classic payloads stay ExecutionResult so existing result comparisons
+    # are unchanged. Incremental payloads keep hasNext and incremental.
+    if incremental:
+        return incremental_result_from_payload(payload)
+
+    return ExecutionResult(
+        errors=payload.get("errors"),
+        data=payload.get("data"),
+        extensions=payload.get("extensions"),
+    )
 
 
 class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
@@ -294,19 +321,7 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
 
                     if answer_type == "next":
 
-                        if not isinstance(payload, dict):
-                            raise ValueError("payload is not a dict")
-
-                        if "errors" not in payload and "data" not in payload:
-                            raise ValueError(
-                                "payload does not contain 'data' or 'errors' fields"
-                            )
-
-                        execution_result = ExecutionResult(
-                            errors=payload.get("errors"),
-                            data=payload.get("data"),
-                            extensions=payload.get("extensions"),
-                        )
+                        execution_result = _execution_result_from_payload(payload)
 
                         # Saving answer_type as 'data' to be understood with superclass
                         answer_type = "data"
@@ -368,16 +383,7 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
 
                     if answer_type == "data":
 
-                        if "errors" not in payload and "data" not in payload:
-                            raise ValueError(
-                                "payload does not contain 'data' or 'errors' fields"
-                            )
-
-                        execution_result = ExecutionResult(
-                            errors=payload.get("errors"),
-                            data=payload.get("data"),
-                            extensions=payload.get("extensions"),
-                        )
+                        execution_result = _execution_result_from_payload(payload)
 
                     elif answer_type == "error":
 
@@ -421,6 +427,24 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
             return self._parse_answer_graphqlws(json_answer)
 
         return self._parse_answer_apollo(json_answer)
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        **kwargs: Any,
+    ) -> AsyncGenerator[ExecutionResult, None]:
+        """Yield each websocket payload, including incremental ones.
+
+        The graphql-ws and apollo protocols already deliver one message per
+        payload. This forwards those messages until the server completes the
+        operation. Merging is done by the client session.
+        """
+        generator = self.subscribe(request, **kwargs)
+        try:
+            async for result in generator:
+                yield result
+        finally:
+            await generator.aclose()
 
     async def _send_ping_coro(self) -> None:
         """Coroutine to periodically send a ping from the client to the backend.
