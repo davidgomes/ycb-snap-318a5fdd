@@ -3556,38 +3556,34 @@ func _make(n *node) {
 
 func reset(n *node) {
 	next := getExec(n.tnext)
-
-	switch l := len(n.child) - 1; l {
-	case 1:
-		typ := n.child[0].typ.frameType()
-		i := n.child[0].findex
-		n.exec = func(f *frame) bltn {
-			f.data[i] = reflect.New(typ).Elem()
-			return next
-		}
-	case 2:
-		c0, c1 := n.child[0], n.child[1]
-		i0, i1 := c0.findex, c1.findex
-		t0, t1 := c0.typ.frameType(), c1.typ.frameType()
-		n.exec = func(f *frame) bltn {
-			f.data[i0] = reflect.New(t0).Elem()
-			f.data[i1] = reflect.New(t1).Elem()
-			return next
-		}
-	default:
-		types := make([]reflect.Type, l)
-		index := make([]int, l)
-		for i, c := range n.child[:l] {
-			index[i] = c.findex
-			types[i] = c.typ.frameType()
-		}
-		n.exec = func(f *frame) bltn {
-			for i, ind := range index {
-				f.data[ind] = reflect.New(types[i]).Elem()
-			}
-			return next
-		}
+	l := len(n.child) - 1
+	types := make([]reflect.Type, l)
+	index := make([]int, l)
+	for i, c := range n.child[:l] {
+		index[i] = c.findex
+		types[i] = c.typ.frameType()
 	}
+	n.exec = func(f *frame) bltn {
+		for i, ind := range index {
+			f.data[ind] = initialVarValue(n.child[i], types[i])
+		}
+		return next
+	}
+}
+
+// initialVarValue is the value stored for a package- or function-level variable
+// with no initializer. Embedded files are installed here so the usual zeroing
+// pass does not wipe them.
+func initialVarValue(c *node, typ reflect.Type) reflect.Value {
+	v := reflect.New(typ).Elem()
+	if c != nil && c.sym != nil && c.sym.embed.IsValid() {
+		ev := c.sym.embed
+		if ev.Type() != typ {
+			ev = ev.Convert(typ)
+		}
+		v.Set(ev)
+	}
+	return v
 }
 
 // recv reads from a channel.

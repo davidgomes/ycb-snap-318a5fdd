@@ -366,7 +366,8 @@ func wrapInMain(src string) string {
 }
 
 func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err error) {
-	mode := parser.DeclarationErrors
+	// Parse comments so //go:embed directives are available on declarations.
+	mode := parser.DeclarationErrors | parser.ParseComments
 
 	// Allow incremental parsing of declarations or statements, by inserting
 	// them in a pseudo file package or function. Those statements or
@@ -926,6 +927,18 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 			n := addChild(&root, anc, pos, kind, act)
 			n.nleft = len(a.Names)
 			n.nright = len(a.Values)
+			doc := a.Doc
+			if doc == nil {
+				if gd, ok := anc.ast.(*ast.GenDecl); ok && gd.Tok == token.VAR && !gd.Lparen.IsValid() {
+					doc = gd.Doc
+				}
+			}
+			pats, perr := embedPatternsFromDoc(doc)
+			if perr != nil {
+				err = n.cfgErrorf("%v", perr)
+				return false
+			}
+			n.embedPatterns = pats
 			st.push(n, nod)
 
 		default:

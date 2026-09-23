@@ -108,7 +108,18 @@ func (interp *Interpreter) cfg(root *node, sc *scope, importPath, pkgName string
 				n.typ = n.anc.typ
 			}
 
-		case defineStmt:
+		case defineStmt, defineXStmt:
+			if len(n.embedPatterns) > 0 {
+				if n.anc == nil || n.anc.kind != varDecl || n.anc.anc == nil || n.anc.anc.kind != fileStmt {
+					err = n.cfgErrorf("go:embed only permitted at package scope")
+				} else {
+					err = n.cfgErrorf("go:embed cannot apply to var with initializer")
+				}
+				return false
+			}
+			if n.kind == defineXStmt {
+				break
+			}
 			// Determine type of variables initialized at declaration, so it can be propagated.
 			if n.nleft+n.nright == len(n.child) {
 				// No type was specified on the left hand side, it will resolved at post-order.
@@ -2295,6 +2306,21 @@ func (interp *Interpreter) cfg(root *node, sc *scope, importPath, pkgName string
 				}
 				c.typ = n.typ
 				c.findex = index
+				c.sym = sc.sym[c.ident]
+			}
+			if len(n.embedPatterns) > 0 {
+				if n.anc == nil || n.anc.kind != varDecl || n.anc.anc == nil || n.anc.anc.kind != fileStmt {
+					err = n.cfgErrorf("go:embed only permitted at package scope")
+					return
+				}
+				if n.nleft != 1 {
+					err = n.cfgErrorf("go:embed cannot apply to multiple variables")
+					return
+				}
+				err = interp.resolveEmbed(n)
+				if err != nil {
+					return
+				}
 			}
 		}
 	})
