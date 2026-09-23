@@ -193,16 +193,17 @@ impl CoreDump {
 #[track_caller]
 fn assert_values(actual: &[CoreDumpValue], expected: &[CoreDumpValue]) {
     let is_eq = actual.len() == expected.len()
-        && actual.iter().zip(expected).all(|(actual, expected)| {
-            match (actual, expected) {
+        && actual
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| match (actual, expected) {
                 (CoreDumpValue::Missing, CoreDumpValue::Missing) => true,
                 (CoreDumpValue::I32(a), CoreDumpValue::I32(b)) => a == b,
                 (CoreDumpValue::I64(a), CoreDumpValue::I64(b)) => a == b,
                 (CoreDumpValue::F32(a), CoreDumpValue::F32(b)) => a.to_bits() == b.to_bits(),
                 (CoreDumpValue::F64(a), CoreDumpValue::F64(b)) => a.to_bits() == b.to_bits(),
                 _ => false,
-            }
-        });
+            });
     assert!(is_eq, "actual: {actual:?}\nexpected: {expected:?}");
 }
 
@@ -257,9 +258,7 @@ fn coredump_disabled_by_default() {
     let mut store = Store::new(&engine, ());
     let module = Module::new(&engine, TRAP_WITH_STATE).unwrap();
     let instance = Instance::new(&mut store, &module, &[]).unwrap();
-    let run = instance
-        .get_typed_func::<i32, i32>(&store, "run")
-        .unwrap();
+    let run = instance.get_typed_func::<i32, i32>(&store, "run").unwrap();
     let error = run.call(&mut store, 41).unwrap_err();
     assert_eq!(error.as_trap_code(), Some(TrapCode::UnreachableCodeReached));
     assert!(error.coredump().is_none());
@@ -272,9 +271,7 @@ fn coredump_records_trap_state() {
         let mut store = Store::new(&engine, ());
         let module = Module::new(&engine, TRAP_WITH_STATE).unwrap();
         let instance = Instance::new(&mut store, &module, &[]).unwrap();
-        let run = instance
-            .get_typed_func::<i32, i32>(&store, "run")
-            .unwrap();
+        let run = instance.get_typed_func::<i32, i32>(&store, "run").unwrap();
         let error = run.call(&mut store, 41).unwrap_err();
         let coredump = expect_coredump(&error, TrapCode::UnreachableCodeReached);
 
@@ -395,7 +392,9 @@ fn coredump_for_different_traps() {
     assert_eq!(coredump.frame_funcs(), [(0, 1)]);
     assert_values(coredump.locals(0), &[CoreDumpValue::I32(0x1_0000)]);
 
-    let recurse = instance.get_typed_func::<i64, ()>(&store, "recurse").unwrap();
+    let recurse = instance
+        .get_typed_func::<i64, ()>(&store, "recurse")
+        .unwrap();
     let error = recurse.call(&mut store, 100).unwrap_err();
     let coredump = expect_coredump(&error, TrapCode::StackOverflow);
     assert_eq!(coredump.frame_funcs(), [(0, 2); 10]);
@@ -484,7 +483,10 @@ fn coredump_includes_frames_of_all_wasm_executions() {
         for (index, depth) in [0, 1, 2].into_iter().enumerate() {
             assert_values(
                 coredump.locals(index),
-                &[CoreDumpValue::I32(depth), CoreDumpValue::I64(i64::from(depth))],
+                &[
+                    CoreDumpValue::I32(depth),
+                    CoreDumpValue::I64(i64::from(depth)),
+                ],
             );
         }
         assert_eq!(coredump.modules, ["reentrant"]);

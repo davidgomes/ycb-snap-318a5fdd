@@ -52,7 +52,12 @@ impl CoreDump {
     /// Creates a new [`CoreDump`] of the trapped Wasm execution operating on `stack`.
     ///
     /// Returns `None` if `stack` has no Wasm frames or if the coredump is too large to be encoded.
-    pub fn new(config: &Config, store: &StoreInner, stack: &Stack, code_map: &CodeMap) -> Option<Self> {
+    pub fn new(
+        config: &Config,
+        store: &StoreInner,
+        stack: &Stack,
+        code_map: &CodeMap,
+    ) -> Option<Self> {
         let mut contents = Contents::new(config.get_coredump_executable_name());
         contents.push_frames(store, stack, code_map);
         if contents.frames.is_empty() {
@@ -225,7 +230,12 @@ impl Contents {
         let entities: Vec<Option<Inst>> = self
             .instances
             .iter()
-            .map(|entry| store.try_resolve_instance(&entry.instance).ok().map(Inst::from))
+            .map(|entry| {
+                store
+                    .try_resolve_instance(&entry.instance)
+                    .ok()
+                    .map(Inst::from)
+            })
             .collect();
         let mut funcs = FuncLookup::default();
         for frame in stack.frames() {

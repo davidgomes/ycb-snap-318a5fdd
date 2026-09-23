@@ -576,13 +576,11 @@ impl Stack {
 
     /// Returns an iterator over the function frames of `self` from top-most to bottom-most.
     pub fn frames(&self) -> impl Iterator<Item = FrameView<'_>> {
-        self.frames
-            .frames()
-            .map(|(ip, start, instance)| FrameView {
-                ip,
-                instance,
-                cells: self.values.cells_at(start),
-            })
+        self.frames.frames().map(|(ip, start, instance)| FrameView {
+            ip,
+            instance,
+            cells: self.values.cells_at(start),
+        })
     }
 
     /// Restores the top-most function frame and its [`Ip`], [`Sp`] and [`Inst`].
