@@ -125,6 +125,35 @@ s.Blink()
 s.Bold().Underline()
 ```
 
+Resets inside nested styled text normally end the outer style too. Use
+`PreserveResets` to re-open the outer style after them, or enable it for all
+styles of an output with `termenv.WithPreserveResets(true)`:
+
+```go
+inner := output.String("bold").Bold().String()
+s := output.String("red " + inner + " still red").Foreground(output.Color("1"))
+s.PreserveResets()
+```
+
+## Truncation
+
+Truncate text to a given terminal width without splitting escape sequences.
+The tail counts toward the width and inherits the active style; open styles
+and hyperlinks are closed:
+
+```go
+// Truncate a Style
+s := output.String("Hello World").Bold()
+s.Truncate(8, termenv.TruncateOptions{Tail: "..."})
+
+// Truncate any string, e.g. one styled by another library
+output.Truncate(str, 8, termenv.TruncateOptions{Tail: "…", PreserveResets: true})
+```
+
+`termenv.StripANSI`, `termenv.ANSIWidth`, and `termenv.HasANSI` help with
+measuring styled strings. The `ansi` package offers these helpers and a
+tokenizer for escape sequences.
+
 ## Template Helpers
 
 `termenv` provides a set of helper functions to style your Go templates:
@@ -155,6 +184,13 @@ fmt.Println(&buf)
 
 Other available helper functions are: `Faint`, `Italic`, `CrossOut`,
 `Underline`, `Overline`, `Reverse`, and `Blink`.
+
+`Truncate` and `truncate` shorten text to a terminal width, with and without a
+tail:
+
+```go
+trunc := `{{ Truncate 10 "…" .Title }} {{ .Description | truncate 20 }}`
+```
 
 ## Positioning
 
