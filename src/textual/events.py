@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Type, TypeVar
+from typing import TYPE_CHECKING, Iterable, Literal, Type, TypeVar
 
 import rich.repr
 from rich.style import Style
@@ -23,7 +23,7 @@ from typing_extensions import Self
 
 from textual._types import CallbackType
 from textual.geometry import Offset, Size
-from textual.keys import _get_key_aliases
+from textual.keys import _get_key_aliases, _split_key_modifiers
 from textual.message import Message
 
 MouseEventT = TypeVar("MouseEventT", bound="MouseEvent")
@@ -257,6 +257,10 @@ class InputEvent(Event):
     """Base class for input events."""
 
 
+KeyPhase = Literal["press", "repeat", "release"]
+"""Key event phase reported by the Kitty keyboard protocol."""
+
+
 @rich.repr.auto
 class Key(InputEvent):
     """Sent when the user hits a key on the keyboard.
@@ -267,11 +271,36 @@ class Key(InputEvent):
     Args:
         key: The key that was pressed.
         character: A printable character or `None` if it is not printable.
+        phase: `press`, `repeat`, or `release`. Defaults to `press`.
+        modifiers: Active modifiers. Stored as a sorted tuple. When omitted,
+            modifiers are taken from `key`.
+        base_key: Key without modifiers. When omitted, taken from `key`.
+        shifted_key: Shifted key name from Kitty alternate-key reporting.
+        base_layout_key: Base-layout key name from Kitty alternate-key reporting.
     """
 
-    __slots__ = ["key", "character", "aliases"]
+    __slots__ = [
+        "key",
+        "character",
+        "aliases",
+        "phase",
+        "modifiers",
+        "base_key",
+        "shifted_key",
+        "base_layout_key",
+    ]
 
-    def __init__(self, key: str, character: str | None) -> None:
+    def __init__(
+        self,
+        key: str,
+        character: str | None,
+        *,
+        phase: KeyPhase = "press",
+        modifiers: Iterable[str] | None = None,
+        base_key: str | None = None,
+        shifted_key: str | None = None,
+        base_layout_key: str | None = None,
+    ) -> None:
         super().__init__()
         self.key = key
         """The key that was pressed."""
@@ -279,7 +308,39 @@ class Key(InputEvent):
             (key if len(key) == 1 else None) if character is None else character
         )
         """A printable character or ``None`` if it is not printable."""
-        self.aliases: list[str] = _get_key_aliases(key)
+        if phase not in ("press", "repeat", "release"):
+            raise ValueError(
+                f"phase must be 'press', 'repeat', or 'release' (received {phase!r})"
+            )
+        self.phase: KeyPhase = phase
+        """`press`, `repeat`, or `release`. Defaults to `press`."""
+        inferred_modifiers, inferred_base = _split_key_modifiers(key)
+        self.modifiers: tuple[str, ...] = (
+            inferred_modifiers if modifiers is None else tuple(sorted(modifiers))
+        )
+        """Active modifiers, sorted."""
+        self.base_key: str = inferred_base if base_key is None else base_key
+        """Key name with modifiers removed."""
+        self.shifted_key: str | None = shifted_key
+        """Shifted key from Kitty alternate-key reporting, or `None`."""
+        self.base_layout_key: str | None = base_layout_key
+        """Base-layout key from Kitty alternate-key reporting, or `None`."""
+        aliases = _get_key_aliases(key)
+        if shifted_key:
+            unshifted_modifiers = tuple(
+                modifier for modifier in self.modifiers if modifier != "shift"
+            )
+            shifted_alias = "+".join((*unshifted_modifiers, shifted_key))
+            if shifted_alias not in aliases:
+                aliases.append(shifted_alias)
+        if base_layout_key and base_layout_key != self.base_key:
+            if self.modifiers:
+                layout_alias = "+".join((*self.modifiers, base_layout_key))
+            else:
+                layout_alias = base_layout_key
+            if layout_alias not in aliases:
+                aliases.append(layout_alias)
+        self.aliases: list[str] = aliases
         """The aliases for the key, including the key itself."""
 
     def __rich_repr__(self) -> rich.repr.Result:
@@ -287,6 +348,11 @@ class Key(InputEvent):
         yield "character", self.character
         yield "name", self.name
         yield "is_printable", self.is_printable
+        yield "phase", self.phase, "press"
+        yield "modifiers", self.modifiers, ()
+        yield "base_key", self.base_key, None
+        yield "shifted_key", self.shifted_key, None
+        yield "base_layout_key", self.base_layout_key, None
         yield "aliases", self.aliases, [self.key]
 
     @property
@@ -307,6 +373,51 @@ class Key(InputEvent):
             `True` if the key is printable.
         """
         return False if self.character is None else self.character.isprintable()
+
+    @property
+    def is_press(self) -> bool:
+        """`True` when this event is a key press."""
+        return self.phase == "press"
+
+    @property
+    def is_repeat(self) -> bool:
+        """`True` when this event is a key repeat."""
+        return self.phase == "repeat"
+
+    @property
+    def is_release(self) -> bool:
+        """`True` when this event is a key release."""
+        return self.phase == "release"
+
+    @property
+    def shift(self) -> bool:
+        """`True` when shift is held."""
+        return "shift" in self.modifiers
+
+    @property
+    def alt(self) -> bool:
+        """`True` when alt is held."""
+        return "alt" in self.modifiers
+
+    @property
+    def ctrl(self) -> bool:
+        """`True` when ctrl is held."""
+        return "ctrl" in self.modifiers
+
+    @property
+    def super(self) -> bool:
+        """`True` when super is held."""
+        return "super" in self.modifiers
+
+    @property
+    def hyper(self) -> bool:
+        """`True` when hyper is held."""
+        return "hyper" in self.modifiers
+
+    @property
+    def meta(self) -> bool:
+        """`True` when meta is held."""
+        return "meta" in self.modifiers
 
 
 def _key_to_identifier(key: str) -> str:

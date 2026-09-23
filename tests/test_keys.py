@@ -76,3 +76,46 @@ def test_key_to_character():
     assert key_to_character("ctrl+space") is None
     assert key_to_character("question_mark") == "?"
     assert key_to_character("foo") is None
+
+
+def test_key_event_metadata_defaults() -> None:
+    """Stored Kitty fields default to a press with modifiers taken from the key."""
+    from textual.events import Key
+
+    event = Key("alt+ctrl+a", None)
+    assert event.phase == "press"
+    assert event.is_press is True
+    assert event.is_repeat is False
+    assert event.is_release is False
+    assert event.modifiers == ("alt", "ctrl")
+    assert event.base_key == "a"
+    assert event.shifted_key is None
+    assert event.base_layout_key is None
+    assert event.alt is True
+    assert event.ctrl is True
+    assert event.shift is False
+    assert event.super is False
+    assert event.hyper is False
+    assert event.meta is False
+
+
+async def test_shifted_key_alias_matches_binding() -> None:
+    """A ctrl+plus binding matches the Kitty shifted-key alias."""
+    from textual._xterm_parser import XTermParser
+
+    pressed = False
+
+    class PlusApp(App):
+        BINDINGS = [("ctrl+plus", "hit", "Hit")]
+
+        def action_hit(self) -> None:
+            nonlocal pressed
+            pressed = True
+
+    event = list(XTermParser().feed("\x1b[61:43;6u"))[0]
+    async with PlusApp().run_test() as pilot:
+        assert pilot.app._driver is not None
+        event.set_sender(pilot.app)
+        pilot.app._driver.send_message(event)
+        await pilot.pause()
+    assert pressed is True

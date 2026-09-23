@@ -286,6 +286,27 @@ def _get_key_aliases(key: str) -> list[str]:
     return [key] + KEY_ALIASES.get(key, [])
 
 
+# Modifier names accepted in key strings and Kitty keyboard reports.
+_KEY_MODIFIERS = frozenset({"alt", "ctrl", "hyper", "meta", "shift", "super"})
+
+
+def _split_key_modifiers(key: str) -> tuple[tuple[str, ...], str]:
+    """Split a key string into sorted modifiers and the base key.
+
+    Args:
+        key: Public key name, for example ``"alt+ctrl+a"``.
+
+    Returns:
+        A sorted modifier tuple and the base key. If `key` is not a
+        modifier combination, the modifiers are empty and the base key
+        is `key` itself.
+    """
+    parts = key.split("+")
+    if len(parts) < 2 or any(part not in _KEY_MODIFIERS for part in parts[:-1]):
+        return (), key
+    return tuple(sorted(parts[:-1])), parts[-1]
+
+
 @lru_cache(1024)
 def format_key(key: str) -> str:
     """Given a key (i.e. the `key` string argument to Binding __init__),

@@ -386,3 +386,115 @@ def test_terminal_mode_reporting_synchronized_output_not_supported(parser):
     sequence = "\x1b[?2026;0$y"
     events = list(parser.feed(sequence))
     assert events == []
+
+
+def _feed(parser: XTermParser, sequence: str) -> list[Key]:
+    """Feed a sequence, flushing a trailing escape with EOF."""
+    events = list(parser.feed(sequence))
+    events.extend(event for event in parser.feed("") if isinstance(event, Key))
+    return [event for event in events if isinstance(event, Key)]
+
+
+@pytest.mark.parametrize(
+    "sequence,phase",
+    [
+        ("\x1b[97u", "press"),
+        ("\x1b[97;1:1u", "press"),
+        ("\x1b[97;1:2u", "repeat"),
+        ("\x1b[97;1:3u", "release"),
+    ],
+)
+def test_kitty_key_phase(sequence: str, phase: str) -> None:
+    """Kitty event types distinguish press, repeat, and release."""
+    event = _feed(XTermParser(), sequence)[0]
+    assert event.phase == phase
+    assert event.is_press is (phase == "press")
+    assert event.is_repeat is (phase == "repeat")
+    assert event.is_release is (phase == "release")
+    assert event.key == "a"
+    assert event.base_key == "a"
+    assert event.modifiers == ()
+
+
+@pytest.mark.parametrize(
+    "sequence",
+    [
+        "\x1b[65;2u",
+        "\x1b[97;2;65u",
+        "\x1b[97:65;2u",
+    ],
+)
+def test_kitty_shift_only_printable_preserves_character(sequence: str) -> None:
+    """Shift-only printable keys keep the shifted character and metadata."""
+    event = _feed(XTermParser(), sequence)[0]
+    assert event.character == "A"
+    assert event.modifiers == ("shift",)
+    assert event.base_key == "a"
+    assert event.shift is True
+    assert event.ctrl is False
+    assert event.key in {"A", "shift+a"}
+
+
+def test_kitty_modified_printable_shortcut_has_no_character() -> None:
+    """Shortcuts with a modifier other than shift keep a stable name."""
+    event = _feed(XTermParser(), "\x1b[65;4u")[0]
+    assert event.key == "alt+shift+a"
+    assert event.character is None
+    assert event.modifiers == ("alt", "shift")
+    assert event.base_key == "a"
+    assert event.alt is True
+    assert event.shift is True
+
+
+def test_kitty_associated_text_only_uses_text_as_key_and_character() -> None:
+    """Key code 0 carries only associated text."""
+    event = _feed(XTermParser(), "\x1b[0;;65u")[0]
+    assert event.key == "A"
+    assert event.character == "A"
+    assert event.base_key == "A"
+
+
+def test_kitty_alternate_shifted_key_uses_textual_name_and_alias() -> None:
+    """Alternate shifted keys use Textual names such as ``plus``."""
+    event = _feed(XTermParser(), "\x1b[61:43;6u")[0]
+    assert event.key == "ctrl+shift+equals_sign"
+    assert event.character is None
+    assert event.modifiers == ("ctrl", "shift")
+    assert event.base_key == "equals_sign"
+    assert event.shifted_key == "plus"
+    assert "ctrl+plus" in event.aliases
+
+
+def test_kitty_base_layout_key_uses_textual_name() -> None:
+    """Base-layout alternates are exposed under their Textual name."""
+    # U+0441 CYRILLIC SMALL LETTER ES, base layout 'c', ctrl.
+    event = _feed(XTermParser(), "\x1b[1089::99;5u")[0]
+    assert event.base_key == "с"
+    assert event.base_layout_key == "c"
+    assert event.modifiers == ("ctrl",)
+    assert "ctrl+c" in event.aliases
+
+
+@pytest.mark.parametrize(
+    "sequence,key,character,modifiers,base_key",
+    [
+        ("\x1b\r", "alt+enter", "\r", ("alt",), "enter"),
+        ("\x1b ", "alt+space", " ", ("alt",), "space"),
+        ("\x1b\x08", "alt+backspace", "\x08", ("alt",), "backspace"),
+        ("\x1b\x01", "alt+ctrl+a", "\x01", ("alt", "ctrl"), "a"),
+    ],
+)
+def test_legacy_alt_prefixed_keys_keep_public_names(
+    sequence: str,
+    key: str,
+    character: str,
+    modifiers: tuple[str, ...],
+    base_key: str,
+) -> None:
+    """ESC-prefixed fallback keeps enter, space, backspace, and ctrl+letter."""
+    event = _feed(XTermParser(), sequence)[0]
+    assert event.key == key
+    assert event.character == character
+    assert event.modifiers == modifiers
+    assert event.base_key == base_key
+    assert event.phase == "press"

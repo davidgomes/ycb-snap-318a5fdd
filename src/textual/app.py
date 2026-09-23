@@ -3833,6 +3833,23 @@ class App(Generic[ReturnType], DOMNode):
         """
         self.post_message(events.Key(key, None))
 
+    async def _check_key_bindings(
+        self, event: events.Key, priority: bool = False
+    ) -> bool:
+        """Handle a key press, including Kitty alternate-key aliases.
+
+        Args:
+            event: Key event to match against bindings.
+            priority: If `True` check from `App` down, otherwise from focused up.
+
+        Returns:
+            True if the key was handled by a binding, otherwise False.
+        """
+        for key in event.aliases:
+            if await self._check_bindings(key, priority=priority):
+                return True
+        return False
+
     async def _check_bindings(self, key: str, priority: bool = False) -> bool:
         """Handle a key press.
 
@@ -4002,7 +4019,7 @@ class App(Generic[ReturnType], DOMNode):
                         self.screen._clear_tooltip()
                     except NoScreen:
                         pass
-                if not await self._check_bindings(event.key, priority=True):
+                if not await self._check_key_bindings(event, priority=True):
                     forward_target = self.focused or self.screen
                     forward_target._forward_event(event)
             else:
@@ -4208,7 +4225,7 @@ class App(Generic[ReturnType], DOMNode):
         message.stop()
 
     async def _on_key(self, event: events.Key) -> None:
-        if not (await self._check_bindings(event.key)):
+        if not (await self._check_key_bindings(event)):
             await dispatch_key(self, event)
 
     async def _on_resize(self, event: events.Resize) -> None:
