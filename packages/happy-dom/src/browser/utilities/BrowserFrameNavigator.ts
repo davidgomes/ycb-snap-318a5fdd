@@ -106,7 +106,7 @@ export default class BrowserFrameNavigator {
 							asyncTaskManager.endTask(taskID);
 							resolve(null);
 						});
-						const taskID = asyncTaskManager.startTask(() => () => {
+						const taskID = asyncTaskManager.startTask(() => {
 							clearImmediate(immediate);
 							resolve(null);
 						});
@@ -303,7 +303,7 @@ export default class BrowserFrameNavigator {
 				// "immediate" needs to be assigned before initialization in Node v20
 				// eslint-disable-next-line prefer-const
 				let immediate: NodeJS.Immediate;
-				const taskID = asyncTaskManager.startTask(() => () => {
+				const taskID = asyncTaskManager.startTask(() => {
 					clearImmediate(immediate);
 					resolve(null);
 				});
