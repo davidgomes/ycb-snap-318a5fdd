@@ -7,20 +7,30 @@ import httpx
 CONTENT_TYPE = "multipart/mixed; boundary=abc"
 
 
-def parts(content: bytes, content_type: str = CONTENT_TYPE) -> list:
+PartItems = typing.List[typing.Tuple[typing.List[typing.Tuple[str, str]], bytes]]
+
+
+def as_items(response: httpx.Response) -> PartItems:
+    return [
+        (part.headers.multi_items(), part.content)
+        for part in response.iter_multipart()
+    ]
+
+
+def parts(content: bytes, content_type: str = CONTENT_TYPE) -> PartItems:
     response = httpx.Response(
         200, headers={"Content-Type": content_type}, content=content
     )
-    return [(part.headers.multi_items(), part.content) for part in response.iter_multipart()]
+    return as_items(response)
 
 
-def chunked_parts(chunks: typing.List[bytes]) -> list:
+def chunked_parts(chunks: typing.List[bytes]) -> PartItems:
     response = httpx.Response(
         200,
         headers={"Content-Type": CONTENT_TYPE},
         content=iter(chunks),
     )
-    return [(part.headers.multi_items(), part.content) for part in response.iter_multipart()]
+    return as_items(response)
 
 
 BODY = (
