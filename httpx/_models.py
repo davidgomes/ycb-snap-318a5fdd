@@ -30,7 +30,11 @@ from ._exceptions import (
     StreamConsumed,
     request_context,
 )
-from ._multipart import get_multipart_boundary_from_content_type
+from ._multipart import (
+    _MultipartDecoder,
+    get_multipart_boundary_from_content_type,
+    parse_multipart_response_boundary,
+)
 from ._status_codes import codes
 from ._types import (
     AsyncByteStream,
@@ -48,7 +52,7 @@ from ._types import (
 from ._urls import URL
 from ._utils import to_bytes_or_str, to_str
 
-__all__ = ["Cookies", "Headers", "Request", "Response"]
+__all__ = ["Cookies", "Headers", "MultipartPart", "Request", "Response"]
 
 SENSITIVE_HEADERS = {"authorization", "proxy-authorization"}
 
@@ -512,6 +516,25 @@ class Request:
         self.stream = UnattachedStream()
 
 
+class MultipartPart:
+    """
+    A single part from a ``multipart/*`` response body.
+    """
+
+    def __init__(self, headers: HeaderTypes, content: bytes) -> None:
+        self.headers = Headers(headers)
+        self.content = content
+
+    def __eq__(self, other: typing.Any) -> bool:
+        if not isinstance(other, MultipartPart):
+            return False
+        return self.headers == other.headers and self.content == other.content
+
+    def __repr__(self) -> str:
+        class_name = self.__class__.__name__
+        return f"{class_name}(headers={self.headers!r}, content={self.content!r})"
+
+
 class Response:
     def __init__(
         self,
@@ -932,6 +955,47 @@ class Response:
             for line in decoder.flush():
                 yield line
 
+    def iter_multipart(self) -> typing.Iterator[MultipartPart]:
+        """
+        Yield each part of a ``multipart/*`` response.
+
+        Streaming bodies are read from the raw response stream. That consumes
+        the stream and closes the response; a later multipart iteration raises
+        ``StreamConsumed``. Iteration is repeatable when the body is already
+        loaded in memory.
+        """
+        boundary = self._multipart_boundary()
+        return self._iter_multipart(boundary)
+
+    def _multipart_boundary(self) -> bytes:
+        with request_context(request=self._request):
+            content_type = self.headers.get("content-type")
+            return parse_multipart_response_boundary(content_type)
+
+    def _iter_multipart(self, boundary: bytes) -> typing.Iterator[MultipartPart]:
+        with request_context(request=self._request):
+            decoder = _MultipartDecoder(boundary)
+            stream: typing.Iterator[bytes] | None
+            if hasattr(self, "_content"):
+                chunks: typing.Iterable[bytes] = (self._content,)
+                stream = None
+            else:
+                stream = self.iter_raw()
+                chunks = stream
+
+            started = False
+            try:
+                for chunk in chunks:
+                    started = True
+                    for parsed in decoder.feed(chunk):
+                        yield MultipartPart(parsed.headers, parsed.content)
+                for parsed in decoder.flush():
+                    yield MultipartPart(parsed.headers, parsed.content)
+            finally:
+                if stream is not None and started:
+                    for _ in stream:
+                        pass
+
     def iter_raw(self, chunk_size: int | None = None) -> typing.Iterator[bytes]:
         """
         A byte-iterator over the raw response content.
@@ -1033,6 +1097,44 @@ class Response:
                     yield line
             for line in decoder.flush():
                 yield line
+
+    def aiter_multipart(self) -> typing.AsyncIterator[MultipartPart]:
+        """
+        Yield each part of a ``multipart/*`` response.
+
+        Streaming bodies are read from the raw response stream. That consumes
+        the stream and closes the response; a later multipart iteration raises
+        ``StreamConsumed``. Iteration is repeatable when the body is already
+        loaded in memory.
+        """
+        boundary = self._multipart_boundary()
+        return self._aiter_multipart(boundary)
+
+    async def _aiter_multipart(
+        self, boundary: bytes
+    ) -> typing.AsyncIterator[MultipartPart]:
+        with request_context(request=self._request):
+            decoder = _MultipartDecoder(boundary)
+            if hasattr(self, "_content"):
+                for parsed in decoder.feed(self._content):
+                    yield MultipartPart(parsed.headers, parsed.content)
+                for parsed in decoder.flush():
+                    yield MultipartPart(parsed.headers, parsed.content)
+                return
+
+            stream = self.aiter_raw()
+            started = False
+            try:
+                async for chunk in stream:
+                    started = True
+                    for parsed in decoder.feed(chunk):
+                        yield MultipartPart(parsed.headers, parsed.content)
+                for parsed in decoder.flush():
+                    yield MultipartPart(parsed.headers, parsed.content)
+            finally:
+                if started:
+                    async for _ in stream:
+                        pass
 
     async def aiter_raw(
         self, chunk_size: int | None = None
