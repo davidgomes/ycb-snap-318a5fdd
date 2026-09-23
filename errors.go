@@ -52,6 +52,13 @@ var (
 
 	// ErrInvalidRangeStep is an error where the step parameter is less than or equal to 0 when using builtin range function.
 	ErrInvalidRangeStep = errors.New("range step must be greater than 0")
+
+	// ErrVMAborted is an error where a call to a compiled function from Go
+	// could not complete because the VM running it was aborted.
+	ErrVMAborted = errors.New("virtual machine aborted")
+
+	errUnboundFunction = errors.New(
+		"compiled function was not created by a VM and has no globals")
 )
 
 // ErrInvalidArgumentType represents an invalid argument value type error.

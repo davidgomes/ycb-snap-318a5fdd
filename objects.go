@@ -576,6 +576,7 @@ type CompiledFunction struct {
 	VarArgs       bool
 	SourceMap     map[int]parser.Pos
 	Free          []*ObjectPtr
+	rt            *vmRuntime
 }
 
 // TypeName returns the name of the type.
@@ -600,7 +601,23 @@ func (o *CompiledFunction) Copy() Object {
 		NumLocals:     o.NumLocals,
 		NumParameters: o.NumParameters,
 		VarArgs:       o.VarArgs,
+		SourceMap:     o.SourceMap,
 		Free:          append([]*ObjectPtr{}, o.Free...), // DO NOT Copy() of elements; these are variable pointers
+		rt:            o.rt,
+	}
+}
+
+// boundTo returns a copy of the function, sharing its captured variables,
+// that runs in rt.
+func (o *CompiledFunction) boundTo(rt *vmRuntime) *CompiledFunction {
+	return &CompiledFunction{
+		Instructions:  o.Instructions,
+		NumLocals:     o.NumLocals,
+		NumParameters: o.NumParameters,
+		VarArgs:       o.VarArgs,
+		SourceMap:     o.SourceMap,
+		Free:          o.Free,
+		rt:            rt,
 	}
 }
 
@@ -608,6 +625,26 @@ func (o *CompiledFunction) Copy() Object {
 // another object.
 func (o *CompiledFunction) Equals(_ Object) bool {
 	return false
+}
+
+// Call calls the function from Go. It runs against the globals of the
+// compiled script the function belongs to, with the same semantics as a call
+// made from the script, and returns runtime errors formatted the same way.
+//
+// When called while that script is running, typically from a Go function the
+// script called, the call runs on the running VM, sharing its allocation
+// limit and abort state. Like the script itself, calls must not be made
+// concurrently from multiple goroutines; use Compiled.Clone for that.
+func (o *CompiledFunction) Call(args ...Object) (Object, error) {
+	if o.rt == nil {
+		return nil, errUnboundFunction
+	}
+	v := o.rt.env.vm
+	if v == nil {
+		v = newVM(o.rt)
+		v.allocs = v.maxAllocs + 1
+	}
+	return v.invoke(o, args)
 }
 
 // SourcePos returns the source position of the instruction at ip.

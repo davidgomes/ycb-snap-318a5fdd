@@ -113,6 +113,14 @@ func (s *Script) Compile() (*Compiled, error) {
 	// reduce globals size
 	globals = globals[:symbolTable.MaxSymbols()+1]
 
+	env := newGlobalEnv(globals, s.maxAllocs)
+	b := newBinder(env)
+	for idx, g := range globals {
+		if g != nil {
+			globals[idx] = b.bind(g)
+		}
+	}
+
 	// global symbol names to indexes
 	globalIndexes := make(map[string]int, len(globals))
 	for _, name := range symbolTable.Names() {
@@ -138,6 +146,7 @@ func (s *Script) Compile() (*Compiled, error) {
 		bytecode:      bytecode,
 		globals:       globals,
 		maxAllocs:     s.maxAllocs,
+		env:           env,
 	}, nil
 }
 
@@ -199,6 +208,7 @@ type Compiled struct {
 	bytecode      *Bytecode
 	globals       []Object
 	maxAllocs     int64
+	env           *globalEnv
 	lock          sync.RWMutex
 }
 
@@ -207,7 +217,7 @@ func (c *Compiled) Run() error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	v := newVM(c.env.runtime(c.bytecode))
 	return v.Run()
 }
 
@@ -216,7 +226,7 @@ func (c *Compiled) RunContext(ctx context.Context) (err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	v := newVM(c.env.runtime(c.bytecode))
 	ch := make(chan error, 1)
 	go func() {
 		defer func() {
@@ -254,7 +264,9 @@ func (c *Compiled) Size() int64 {
 }
 
 // Clone creates a new copy of Compiled. Cloned copies are safe for concurrent
-// use by multiple goroutines.
+// use by multiple goroutines. Compiled functions in the copy run against the
+// globals of the copy, and their captured variables are copies of the ones in
+// c at the time of cloning.
 func (c *Compiled) Clone() *Compiled {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -265,10 +277,12 @@ func (c *Compiled) Clone() *Compiled {
 		globals:       make([]Object, len(c.globals)),
 		maxAllocs:     c.maxAllocs,
 	}
+	clone.env = newGlobalEnv(clone.globals, c.maxAllocs)
 	// copy global objects
+	b := newBinder(clone.env)
 	for idx, g := range c.globals {
 		if g != nil {
-			clone.globals[idx] = g.Copy()
+			clone.globals[idx] = b.bind(g.Copy())
 		}
 	}
 	return clone
@@ -329,7 +343,10 @@ func (c *Compiled) GetAll() []*Variable {
 }
 
 // Set replaces the value of a global variable identified by the name. An error
-// will be returned if the name was not defined during compilation.
+// will be returned if the name was not defined during compilation. Compiled
+// functions from another Compiled instance, including those inside arrays and
+// maps, are copied to run against the globals of c, with their captured
+// variables copied as they are at the time of the call.
 func (c *Compiled) Set(name string, value interface{}) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -342,6 +359,6 @@ func (c *Compiled) Set(name string, value interface{}) error {
 	if !ok {
 		return fmt.Errorf("'%s' is not defined", name)
 	}
-	c.globals[idx] = obj
+	c.globals[idx] = newBinder(c.env).bind(obj)
 	return nil
 }

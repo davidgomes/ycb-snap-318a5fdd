@@ -2,6 +2,7 @@ package tengo
 
 import (
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	"github.com/d5/tengo/v2/parser"
@@ -14,6 +15,216 @@ type frame struct {
 	freeVars    []*ObjectPtr
 	ip          int
 	basePointer int
+	rt          *vmRuntime
+}
+
+// globalEnv holds the global variables of a Compiled instance, or of a VM
+// created by NewVM, and the runtimes executing compiled code against them.
+type globalEnv struct {
+	globals   []Object
+	maxAllocs int64
+	runtimes  map[*Bytecode]*vmRuntime
+	vm        *VM // VM currently running against globals, if any
+}
+
+func newGlobalEnv(globals []Object, maxAllocs int64) *globalEnv {
+	return &globalEnv{
+		globals:   globals,
+		maxAllocs: maxAllocs,
+		runtimes:  make(map[*Bytecode]*vmRuntime),
+	}
+}
+
+// runtime returns the runtime executing the code of bytecode against the
+// globals of e.
+func (e *globalEnv) runtime(bytecode *Bytecode) *vmRuntime {
+	if rt, ok := e.runtimes[bytecode]; ok {
+		return rt
+	}
+	rt := &vmRuntime{
+		env:       e,
+		bytecode:  bytecode,
+		constants: make([]Object, len(bytecode.Constants)),
+		globals:   e.globals,
+	}
+	for i, c := range bytecode.Constants {
+		if fn, ok := c.(*CompiledFunction); ok && fn.rt == nil {
+			c = fn.boundTo(rt)
+		}
+		rt.constants[i] = c
+	}
+	e.runtimes[bytecode] = rt
+	return rt
+}
+
+// vmRuntime binds the code of a Bytecode to a set of globals. Every compiled
+// function the VM creates is bound to the runtime of the frame creating it,
+// and runs in that runtime wherever it is called from.
+type vmRuntime struct {
+	env       *globalEnv
+	bytecode  *Bytecode
+	constants []Object // bytecode constants with functions bound to this runtime
+	globals   []Object
+}
+
+// binder moves values into a globalEnv. Compiled functions bound to other
+// globals are replaced by copies bound to the env, whose captured variables
+// hold snapshots of their current values, so the copies share no state with
+// the originals. One binder preserves sharing among the values it moves.
+type binder struct {
+	env  *globalEnv
+	objs map[Object]Object
+	ptrs map[*ObjectPtr]*ObjectPtr
+}
+
+func newBinder(env *globalEnv) *binder {
+	return &binder{
+		env:  env,
+		objs: make(map[Object]Object),
+		ptrs: make(map[*ObjectPtr]*ObjectPtr),
+	}
+}
+
+// bind returns o unchanged if it reaches no compiled function bound to other
+// globals. Otherwise it returns a deep copy of o's arrays, maps and errors
+// with those functions rebound.
+func (b *binder) bind(o Object) Object {
+	if !b.reachesForeign(o, make(map[Object]bool)) {
+		return o
+	}
+	return b.copy(o)
+}
+
+func (b *binder) reachesForeign(o Object, seen map[Object]bool) bool {
+	switch o := o.(type) {
+	case *CompiledFunction:
+		return o.rt != nil && o.rt.env != b.env
+	case *Array:
+		return b.elemsReachForeign(o, o.Value, seen)
+	case *ImmutableArray:
+		return b.elemsReachForeign(o, o.Value, seen)
+	case *Map:
+		return b.valuesReachForeign(o, o.Value, seen)
+	case *ImmutableMap:
+		return b.valuesReachForeign(o, o.Value, seen)
+	case *Error:
+		return b.elemsReachForeign(o, []Object{o.Value}, seen)
+	}
+	return false
+}
+
+func (b *binder) elemsReachForeign(
+	o Object,
+	elems []Object,
+	seen map[Object]bool,
+) bool {
+	if seen[o] {
+		return false
+	}
+	seen[o] = true
+	for _, e := range elems {
+		if b.reachesForeign(e, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *binder) valuesReachForeign(
+	o Object,
+	values map[string]Object,
+	seen map[Object]bool,
+) bool {
+	if seen[o] {
+		return false
+	}
+	seen[o] = true
+	for _, e := range values {
+		if b.reachesForeign(e, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *binder) copy(o Object) Object {
+	switch o := o.(type) {
+	case *CompiledFunction:
+		if o.rt == nil || o.rt.env == b.env {
+			return o
+		}
+		if c, ok := b.objs[o]; ok {
+			return c
+		}
+		c := o.boundTo(b.env.runtime(o.rt.bytecode))
+		b.objs[o] = c
+		if o.Free != nil {
+			c.Free = make([]*ObjectPtr, len(o.Free))
+			for i, p := range o.Free {
+				c.Free[i] = b.snapshot(p)
+			}
+		}
+		return c
+	case *Array:
+		if c, ok := b.objs[o]; ok {
+			return c
+		}
+		c := &Array{Value: make([]Object, len(o.Value))}
+		b.objs[o] = c
+		for i, e := range o.Value {
+			c.Value[i] = b.copy(e)
+		}
+		return c
+	case *ImmutableArray:
+		if c, ok := b.objs[o]; ok {
+			return c
+		}
+		c := &ImmutableArray{Value: make([]Object, len(o.Value))}
+		b.objs[o] = c
+		for i, e := range o.Value {
+			c.Value[i] = b.copy(e)
+		}
+		return c
+	case *Map:
+		if c, ok := b.objs[o]; ok {
+			return c
+		}
+		c := &Map{Value: make(map[string]Object, len(o.Value))}
+		b.objs[o] = c
+		for k, e := range o.Value {
+			c.Value[k] = b.copy(e)
+		}
+		return c
+	case *ImmutableMap:
+		if c, ok := b.objs[o]; ok {
+			return c
+		}
+		c := &ImmutableMap{Value: make(map[string]Object, len(o.Value))}
+		b.objs[o] = c
+		for k, e := range o.Value {
+			c.Value[k] = b.copy(e)
+		}
+		return c
+	case *Error:
+		if c, ok := b.objs[o]; ok {
+			return c
+		}
+		c := &Error{}
+		b.objs[o] = c
+		c.Value = b.copy(o.Value)
+		return c
+	}
+	return o
+}
+
+func (b *binder) snapshot(p *ObjectPtr) *ObjectPtr {
+	if c, ok := b.ptrs[p]; ok {
+		return c
+	}
+	c := &ObjectPtr{Value: new(Object)}
+	b.ptrs[p] = c
+	*c.Value = b.copy(*p.Value)
+	return c
 }
 
 // VM is a virtual machine that executes the bytecode compiled by Compiler.
@@ -22,7 +233,6 @@ type VM struct {
 	stack       [StackSize]Object
 	sp          int
 	globals     []Object
-	fileSet     *parser.SourceFileSet
 	frames      [MaxFrames]frame
 	framesIndex int
 	curFrame    *frame
@@ -43,17 +253,21 @@ func NewVM(
 	if globals == nil {
 		globals = make([]Object, GlobalsSize)
 	}
+	return newVM(newGlobalEnv(globals, maxAllocs).runtime(bytecode))
+}
+
+func newVM(rt *vmRuntime) *VM {
 	v := &VM{
-		constants:   bytecode.Constants,
+		constants:   rt.constants,
 		sp:          0,
-		globals:     globals,
-		fileSet:     bytecode.FileSet,
+		globals:     rt.globals,
 		framesIndex: 1,
 		ip:          -1,
-		maxAllocs:   maxAllocs,
+		maxAllocs:   rt.env.maxAllocs,
 	}
-	v.frames[0].fn = bytecode.MainFunction
+	v.frames[0].fn = rt.bytecode.MainFunction
 	v.frames[0].ip = -1
+	v.frames[0].rt = rt
 	v.curFrame = &v.frames[0]
 	v.curInsts = v.curFrame.fn.Instructions
 	return v
@@ -70,28 +284,137 @@ func (v *VM) Run() (err error) {
 	v.sp = 0
 	v.curFrame = &(v.frames[0])
 	v.curInsts = v.curFrame.fn.Instructions
+	v.constants = v.curFrame.rt.constants
+	v.globals = v.curFrame.rt.globals
 	v.framesIndex = 1
 	v.ip = -1
 	v.allocs = v.maxAllocs + 1
+
+	env := v.curFrame.rt.env
+	outer := env.vm
+	env.vm = v
+	defer func() { env.vm = outer }()
 
 	v.run()
 	atomic.StoreInt64(&v.aborting, 0)
 	err = v.err
 	if err != nil {
-		filePos := v.fileSet.Position(
-			v.curFrame.fn.SourcePos(v.ip - 1))
-		err = fmt.Errorf("Runtime Error: %w\n\tat %s",
-			err, filePos)
-		for v.framesIndex > 1 {
-			v.framesIndex--
-			v.curFrame = &v.frames[v.framesIndex-1]
-			filePos = v.fileSet.Position(
-				v.curFrame.fn.SourcePos(v.curFrame.ip - 1))
-			err = fmt.Errorf("%w\n\tat %s", err, filePos)
-		}
-		return err
+		return v.runtimeError(err, 0)
 	}
 	return nil
+}
+
+// callTrampoline is the entry frame of calls made from Go: it calls the
+// function below the array of arguments on the stack, and suspends the VM once
+// that call returns.
+var callTrampoline = &CompiledFunction{
+	Instructions: append(MakeInstruction(parser.OpCall, 1, 1),
+		parser.OpSuspend),
+}
+
+// invoke calls fn with args on top of the current state of the VM, and returns
+// once the call returns. The state of the VM is restored afterwards, so this
+// can run while the VM is calling out to Go code.
+func (v *VM) invoke(fn *CompiledFunction, args []Object) (Object, error) {
+	if v.framesIndex >= MaxFrames || v.sp+len(args)+2 > StackSize {
+		return nil, &runtimeError{err: ErrStackOverflow}
+	}
+	sp, ip, framesIndex := v.sp, v.ip, v.framesIndex
+	curFrame, curInsts := v.curFrame, v.curInsts
+	constants, globals := v.constants, v.globals
+
+	callArgs := make([]Object, len(args))
+	for i, arg := range args {
+		if arg == nil {
+			arg = UndefinedValue
+		}
+		callArgs[i] = arg
+	}
+	v.stack[v.sp] = fn
+	v.stack[v.sp+1] = &Array{Value: callArgs}
+	v.sp += 2
+
+	v.curFrame = &v.frames[v.framesIndex]
+	v.curFrame.fn = callTrampoline
+	v.curFrame.freeVars = nil
+	v.curFrame.basePointer = v.sp
+	v.curFrame.rt = fn.rt
+	v.curInsts = callTrampoline.Instructions
+	v.constants = fn.rt.constants
+	v.globals = fn.rt.globals
+	v.ip = -1
+	v.framesIndex++
+
+	v.run()
+
+	var ret Object
+	var err error
+	switch {
+	case v.err != nil:
+		if v.err == ErrObjectAllocLimit {
+			// the limit stays exhausted for the code that made the call
+			v.allocs = 1
+		}
+		err = v.runtimeError(v.err, framesIndex+1)
+		v.err = nil
+	case atomic.LoadInt64(&v.aborting) != 0:
+		err = ErrVMAborted
+	default:
+		ret = v.stack[sp]
+	}
+
+	v.sp, v.ip, v.framesIndex = sp, ip, framesIndex
+	v.curFrame, v.curInsts = curFrame, curInsts
+	v.constants, v.globals = constants, globals
+	return ret, err
+}
+
+// runtimeError is an error raised while executing compiled code, with the
+// source positions of the call frames it unwound, innermost first.
+type runtimeError struct {
+	err   error
+	trace []parser.SourceFilePos
+}
+
+func (e *runtimeError) Error() string {
+	var sb strings.Builder
+	sb.WriteString("Runtime Error: ")
+	sb.WriteString(e.err.Error())
+	for _, pos := range e.trace {
+		sb.WriteString("\n\tat ")
+		sb.WriteString(pos.String())
+	}
+	return sb.String()
+}
+
+func (e *runtimeError) Unwrap() error {
+	return e.err
+}
+
+// runtimeError attaches to err the source positions of the frames from the
+// current one down to the frame at index bottom. A runtime error returned by
+// Go code, such as a callback passing on the error of a compiled function it
+// called, gets its trace extended instead, so it reads as if the call was made
+// from the script.
+func (v *VM) runtimeError(err error, bottom int) error {
+	var trace []parser.SourceFilePos
+	for i := v.framesIndex - 1; i >= bottom; i-- {
+		f := &v.frames[i]
+		ip := f.ip
+		if i == v.framesIndex-1 {
+			ip = v.ip
+		}
+		trace = append(trace,
+			f.rt.bytecode.FileSet.Position(f.fn.SourcePos(ip-1)))
+	}
+	if inner, ok := err.(*runtimeError); ok {
+		n := len(inner.trace)
+		return &runtimeError{
+			err:   inner.err,
+			trace: append(inner.trace[:n:n], trace...),
+		}
+	}
+	return &runtimeError{err: err, trace: trace}
 }
 
 func (v *VM) run() {
@@ -620,13 +943,21 @@ func (v *VM) run() {
 					return
 				}
 
+				rt := callee.rt
+				if rt == nil {
+					rt = v.curFrame.rt
+				}
+
 				// update call frame
 				v.curFrame.ip = v.ip // store current ip before call
 				v.curFrame = &(v.frames[v.framesIndex])
 				v.curFrame.fn = callee
 				v.curFrame.freeVars = callee.Free
 				v.curFrame.basePointer = v.sp - numArgs
+				v.curFrame.rt = rt
 				v.curInsts = callee.Instructions
+				v.constants = rt.constants
+				v.globals = rt.globals
 				v.ip = -1
 				v.framesIndex++
 				v.sp = v.sp - numArgs + callee.NumLocals
@@ -679,6 +1010,8 @@ func (v *VM) run() {
 			v.framesIndex--
 			v.curFrame = &v.frames[v.framesIndex-1]
 			v.curInsts = v.curFrame.fn.Instructions
+			v.constants = v.curFrame.rt.constants
+			v.globals = v.curFrame.rt.globals
 			v.ip = v.curFrame.ip
 			//v.sp = lastFrame.basePointer - 1
 			v.sp = v.frames[v.framesIndex].basePointer
@@ -772,6 +1105,7 @@ func (v *VM) run() {
 				VarArgs:       fn.VarArgs,
 				SourceMap:     fn.SourceMap,
 				Free:          free,
+				rt:            v.curFrame.rt,
 			}
 			v.allocs--
 			if v.allocs == 0 {
