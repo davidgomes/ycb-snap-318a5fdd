@@ -72,7 +72,10 @@ export function selectors<L extends Logic = Logic>(
       const [input, func, memoizeOptions] = arr
       const inputNames = atomicGraph && new Map<unknown, string>()
       const args: ParametricSelector<any, any, any>[] = inputNames
-        ? input(trackSelectorNames(logic.selectors, inputNames), trackSelectorNames(propSelectors, inputNames, 'props.'))
+        ? input(
+            trackSelectorNames(logic.selectors, inputNames),
+            trackSelectorNames(propSelectors, inputNames, 'props.'),
+          )
         : input(logic.selectors, propSelectors)
 
       if (args.filter((a) => typeof a !== 'function').length > 0) {

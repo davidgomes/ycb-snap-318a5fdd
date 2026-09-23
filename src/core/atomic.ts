@@ -261,7 +261,10 @@ function scanArray(
 const arrayMethods: Record<string, (record: ProxyRecord, proxy: any) => (...args: any[]) => any> = {
   includes: (record) => (search, fromIndex) => searchArray(record, 'includes', search, fromIndex),
   indexOf: (record) => (search, fromIndex) => searchArray(record, 'indexOf', search, fromIndex),
-  lastIndexOf: (record) => (...args) => searchArray(record, 'lastIndexOf', args[0], args[1]),
+  lastIndexOf:
+    (record) =>
+    (search, ...fromIndex) =>
+      searchArray(record, 'lastIndexOf', search, fromIndex.length > 0 ? toInteger(fromIndex[0]) : undefined),
   find: (record, proxy) => (callback, thisArg) => scanArray(record, proxy, 'find', callback, thisArg),
   findIndex: (record, proxy) => (callback, thisArg) => scanArray(record, proxy, 'findIndex', callback, thisArg),
   some: (record, proxy) => (callback, thisArg) => scanArray(record, proxy, 'some', callback, thisArg),
@@ -451,7 +454,9 @@ class TrackingSession {
         const untracked = this.untrack(item, seen)
         if (untracked !== item) {
           if (result === value && Object.isFrozen(value)) {
-            result = Array.isArray(value) ? [...value] : Object.assign(Object.create(Object.getPrototypeOf(value)), value)
+            result = Array.isArray(value)
+              ? [...value]
+              : Object.assign(Object.create(Object.getPrototypeOf(value)), value)
           }
           result[key] = untracked
         }
@@ -460,13 +465,13 @@ class TrackingSession {
         Object.freeze(result)
       }
     } else if (value instanceof Map) {
-      const entries = [...value].map(([k, v]) => [k, v, this.untrack(k, seen), this.untrack(v, seen)])
+      const entries = Array.from(value, ([k, v]) => [k, v, this.untrack(k, seen), this.untrack(v, seen)])
       if (entries.some(([k, v, uk, uv]) => k !== uk || v !== uv)) {
         value.clear()
         entries.forEach(([, , uk, uv]) => value.set(uk, uv))
       }
     } else if (value instanceof Set) {
-      const items = [...value].map((item) => [item, this.untrack(item, seen)])
+      const items = Array.from(value, (item) => [item, this.untrack(item, seen)])
       if (items.some(([item, untracked]) => item !== untracked)) {
         value.clear()
         items.forEach(([, untracked]) => value.add(untracked))
@@ -545,7 +550,8 @@ class AtomicSelectorNode {
         collectLeaves(tree, dependencies)
       }
     })
-    return [...dependencies]
+    // not `[...dependencies]`: the loose Babel build compiles spreads as if they were always arrays
+    return Array.from(dependencies)
   }
 
   private findChange(inputValues: any[]): string | null {
