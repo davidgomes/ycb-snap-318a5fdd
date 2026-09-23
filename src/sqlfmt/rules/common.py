@@ -54,4 +54,13 @@ CREATE_CLONABLE = (
     + r"(\s+if\s+not\s+exists)?"
 )
 
+CREATE_TABLE = (
+    r"create(\s+or\s+replace)?(\s+temp(orary)?)?\s+table(\s+if\s+not\s+exists)?"
+)
+# a table name immediately followed by an opening paren (a column list),
+# which excludes CTAS and CREATE TABLE ... LIKE
+CREATE_TABLE_WITH_BODY = (
+    group(CREATE_TABLE) + r"(?=\s+(?:\"[^\"]*\"|`[^`]*`|\[[^\]]*\]|[\w.$-])+\s*\()"
+)
+
 PRAGMA_SET_CALL = group(r"pragma", r"set", r"call")

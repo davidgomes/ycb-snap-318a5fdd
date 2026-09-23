@@ -8,11 +8,13 @@ from sqlfmt.rules.common import (
     ALTER_WAREHOUSE,
     CREATE_CLONABLE,
     CREATE_FUNCTION,
+    CREATE_TABLE_WITH_BODY,
     CREATE_WAREHOUSE,
     PRAGMA_SET_CALL,
     group,
 )
 from sqlfmt.rules.core import CORE as CORE
+from sqlfmt.rules.create_table import CREATE_TABLE_RULES as CREATE_TABLE_RULES
 from sqlfmt.rules.function import FUNCTION as FUNCTION
 from sqlfmt.rules.grant import GRANT as GRANT
 from sqlfmt.rules.jinja import JINJA as JINJA  # noqa
@@ -283,6 +285,18 @@ MAIN = [
         action=partial(
             actions.handle_nonreserved_top_level_keyword,
             action=partial(actions.lex_ruleset, new_ruleset=GRANT),
+        ),
+    ),
+    Rule(
+        name="create_table",
+        priority=2012,
+        pattern=CREATE_TABLE_WITH_BODY,
+        action=partial(
+            actions.handle_nonreserved_top_level_keyword,
+            action=partial(
+                actions.lex_ruleset,
+                new_ruleset=CREATE_TABLE_RULES,
+            ),
         ),
     ),
     Rule(

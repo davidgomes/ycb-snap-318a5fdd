@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Optional
 
+from sqlfmt.ddl import format_ddl_lines
 from sqlfmt.jinjafmt import JinjaFormatter
 from sqlfmt.line import Line
 from sqlfmt.merger import LineMerger
@@ -9,6 +10,7 @@ from sqlfmt.node import Node
 from sqlfmt.node_manager import NodeManager
 from sqlfmt.query import Query
 from sqlfmt.splitter import LineSplitter
+from sqlfmt.tokens import TokenType
 
 
 @dataclass
@@ -96,6 +98,19 @@ class QueryFormatter:
                 cnt = 0
         return new_lines
 
+    @staticmethod
+    def _split_statements(lines: List[Line]) -> List[List[Line]]:
+        """
+        Groups split lines into statements, each ending with a line that
+        contains a semicolon
+        """
+        statements: List[List[Line]] = [[]]
+        for line in lines:
+            statements[-1].append(line)
+            if any(n.token.type is TokenType.SEMICOLON for n in line.nodes):
+                statements.append([])
+        return [s for s in statements if s]
+
     def format(self, raw_query: Query) -> Query:
         """
         Applies 4 transformations to a Query:
@@ -105,18 +120,40 @@ class QueryFormatter:
         4. Merges lines
         5. Removes extra blank lines
         """
-        lines = raw_query.lines
+        lines = self._split_lines(raw_query.lines)
 
         pipeline = [
-            self._split_lines,
             self._format_jinja,
             self._dedent_jinja_blocks,
             self._merge_lines,
-            self._remove_extra_blank_lines,
         ]
 
-        for transform in pipeline:
-            lines = transform(lines)
+        formatted: List[Line] = []
+        pending: List[Line] = []
+
+        def flush() -> None:
+            nonlocal pending
+            if pending:
+                segment = pending
+                for transform in pipeline:
+                    segment = transform(segment)
+                formatted.extend(segment)
+                pending = []
+
+        for statement in self._split_statements(lines):
+            ddl_lines = format_ddl_lines(
+                statement,
+                max_length=self.mode.line_length,
+                case_sensitive_names=self.mode.dialect.case_sensitive_names,
+            )
+            if ddl_lines is None:
+                pending.extend(statement)
+            else:
+                flush()
+                formatted.extend(ddl_lines)
+        flush()
+
+        lines = self._remove_extra_blank_lines(formatted)
 
         formatted_query = Query(
             source_string=raw_query.source_string,
