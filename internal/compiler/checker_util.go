@@ -547,7 +547,17 @@ func (tc *typechecker) typedValue(ti *typeInfo, t reflect.Type) interface{} {
 // errTypeAssertion is called when the type typ does not implement the
 // interface iface. It returns the corresponding compile-time error.
 func (tc *typechecker) errTypeAssertion(typ reflect.Type, iface reflect.Type) error {
-	msg := fmt.Sprintf("impossible type assertion:\n\t%s does not implement %s", typ, iface)
+	reason := tc.notImplementsReason(typ, iface)
+	if reason == "" {
+		panic("unexpected")
+	}
+	return fmt.Errorf("impossible type assertion:\n\t%s", reason)
+}
+
+// notImplementsReason returns the reason why the type typ does not implement
+// the interface iface, or the empty string if typ implements iface.
+func (tc *typechecker) notImplementsReason(typ reflect.Type, iface reflect.Type) string {
+	msg := fmt.Sprintf("%s does not implement %s", typ, iface)
 	num := iface.NumMethod()
 	for i := 0; i < num; i++ {
 		mi := iface.Method(i)
@@ -556,9 +566,9 @@ func (tc *typechecker) errTypeAssertion(typ reflect.Type, iface reflect.Type) er
 			ptr := tc.types.PointerTo(typ)
 			_, ok = ptr.MethodByName(mi.Name)
 			if ok {
-				return fmt.Errorf("%s (%s method has pointer receiver)", msg, mi.Name)
+				return fmt.Sprintf("%s (%s method has pointer receiver)", msg, mi.Name)
 			}
-			return fmt.Errorf("%s (missing %s method)", msg, mi.Name)
+			return fmt.Sprintf("%s (missing %s method)", msg, mi.Name)
 		}
 		numIn := mt.Type.NumIn() - 1
 		numOut := mt.Type.NumOut()
@@ -588,10 +598,24 @@ func (tc *typechecker) errTypeAssertion(typ reflect.Type, iface reflect.Type) er
 			}
 			have = "func(" + have[p:]
 			want := mi.Type.String()
-			return fmt.Errorf("%s (wrong type for %s method)\n\t\thave %s\n\t\twant %s", msg, mi.Name, have, want)
+			return fmt.Sprintf("%s (wrong type for %s method)\n\t\thave %s\n\t\twant %s", msg, mi.Name, have, want)
 		}
 	}
-	panic("unexpected")
+	return ""
+}
+
+// notAssignableReason returns, if x is not assignable to t because it does
+// not implement the interface t, a string with the reason that can be
+// appended to the error message. Otherwise it returns the empty string.
+func (tc *typechecker) notAssignableReason(x *typeInfo, t reflect.Type) string {
+	if x == nil || x.Nil() || x.Untyped() || x.Type.Kind() == reflect.Interface ||
+		t.Kind() != reflect.Interface || t.NumMethod() == 0 {
+		return ""
+	}
+	if reason := tc.notImplementsReason(x.Type, t); reason != "" {
+		return ":\n\t" + reason
+	}
+	return ""
 }
 
 // isValidIdentifier reports whether name is a valid identifier in the

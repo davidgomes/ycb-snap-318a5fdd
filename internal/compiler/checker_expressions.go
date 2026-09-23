@@ -1697,7 +1697,7 @@ func (tc *typechecker) checkCallExpression(expr *ast.Call) []*typeInfo {
 				if special {
 					err = fmt.Errorf("cannot use %s value as type %s", a, in)
 				}
-				panic(tc.errorf(expr, "%s in argument to %s", err, expr.Func))
+				panic(tc.errorf(expr, "%s in argument to %s%s", err, expr.Func, tc.notAssignableReason(a, in)))
 			}
 			if _, ok := err.(nilConversionError); ok {
 				panic(tc.errorf(args[i], "cannot use %s as type %s in argument to %s", a, in, expr.Func))

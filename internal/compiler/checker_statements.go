@@ -1296,7 +1296,7 @@ func (tc *typechecker) checkReturn(node *ast.Return) ast.Node {
 		ti := tc.compilation.typeInfos[x]
 		if err := tc.isAssignableTo(ti, x, typ); err != nil {
 			if _, ok := err.(invalidTypeInAssignment); ok {
-				panic(tc.errorf(node, "%s in return argument", err))
+				panic(tc.errorf(node, "%s in return argument%s", err, tc.notAssignableReason(ti, typ)))
 			}
 			panic(tc.errorf(node, "%s", err))
 		}

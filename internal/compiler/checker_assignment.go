@@ -525,7 +525,7 @@ func (tc *typechecker) mustBeAssignableTo(rh *typeInfo, rhExpr ast.Expression, t
 		if nilErr, ok := err.(nilConversionError); ok {
 			panic(tc.errorf(rhExpr, "cannot use nil as type %s in assignment", nilErr.typ))
 		}
-		panic(tc.errorf(rhExpr, "%s in assignment", err))
+		panic(tc.errorf(rhExpr, "%s in assignment%s", err, tc.notAssignableReason(rh, typ)))
 	}
 }
 
