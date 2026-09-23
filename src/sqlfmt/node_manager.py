@@ -217,6 +217,15 @@ class NodeManager:
             )
         ):
             return NO_SPACE
+        # OPTIONS(...) is a function-style post-body clause, not a constraint.
+        elif (
+            token.type is TokenType.BRACKET_OPEN
+            and token.token == "("
+            and previous_token
+            and previous_token.type is TokenType.DDL_KEYWORD
+            and previous_token.token.lower() == "options"
+        ):
+            return NO_SPACE
         # open square brackets that follow colons are escaped databricks
         # variant cols
         elif (

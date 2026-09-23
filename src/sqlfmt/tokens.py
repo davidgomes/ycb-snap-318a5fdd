@@ -46,6 +46,10 @@ class TokenType(Enum):
     UNTERM_KEYWORD = auto()  # Unterminated keyword
     SET_OPERATOR = auto()
     NAME = auto()
+    # Lowercased DDL keyword that does not change depth and is not an operator.
+    # Used for CREATE TABLE headers, column constraints, and post-body clauses
+    # so "(" after the keyword keeps a separating space.
+    DDL_KEYWORD = auto()
 
     @cached_property
     def is_jinja_statement(self) -> bool:
@@ -132,6 +136,7 @@ class TokenType(Enum):
             TokenType.BOOLEAN_OPERATOR,
             TokenType.SET_OPERATOR,
             TokenType.NUMBER,
+            TokenType.DDL_KEYWORD,
         ]
 
     @cached_property

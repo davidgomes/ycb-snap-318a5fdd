@@ -164,6 +164,35 @@ def handle_semicolon(
     )
 
 
+def handle_ddl_column_list_paren(
+    analyzer: "Analyzer",
+    source_string: str,
+    match: re.Match,
+) -> None:
+    """
+    Lex "(" inside a CREATE TABLE statement.
+
+    The column-list parenthesis follows the table name and takes a single
+    space. Later parentheses keep the usual name/function spacing, so
+    varchar(10) and references t(id) stay tight.
+    """
+    add_node_to_buffer(
+        analyzer=analyzer,
+        source_string=source_string,
+        match=match,
+        token_type=TokenType.BRACKET_OPEN,
+    )
+    node = analyzer.node_buffer[-1]
+    if node.value != "(" or node.depth[0] != 0:
+        return
+    previous = node.previous_node
+    while previous is not None and previous.token.type is not TokenType.SEMICOLON:
+        if previous.token.type is TokenType.BRACKET_OPEN:
+            return
+        previous = previous.previous_node
+    node.prefix = " "
+
+
 def handle_ddl_as(
     analyzer: "Analyzer",
     source_string: str,

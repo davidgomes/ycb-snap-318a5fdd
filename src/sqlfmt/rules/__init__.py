@@ -13,6 +13,9 @@ from sqlfmt.rules.common import (
     group,
 )
 from sqlfmt.rules.core import CORE as CORE
+from sqlfmt.rules.ddl import DDL as DDL
+from sqlfmt.rules.ddl import DDL_SPECIFIC as DDL_SPECIFIC
+from sqlfmt.rules.ddl import lex_create_table
 from sqlfmt.rules.function import FUNCTION as FUNCTION
 from sqlfmt.rules.grant import GRANT as GRANT
 from sqlfmt.rules.jinja import JINJA as JINJA  # noqa
@@ -310,6 +313,21 @@ MAIN = [
         ),
     ),
     Rule(
+        name="create_table",
+        priority=2025,
+        pattern=group(
+            r"create(\s+or\s+replace)?"
+            r"(\s+(global|local|temp|temporary|transient|volatile|unlogged"
+            r"|external|iceberg|dynamic))*"
+            r"\s+table(\s+if\s+not\s+exists)?"
+        )
+        + group(r"\W", r"$"),
+        action=partial(
+            actions.handle_nonreserved_top_level_keyword,
+            action=lex_create_table,
+        ),
+    ),
+    Rule(
         name="create_warehouse",
         priority=2030,
         pattern=group(
@@ -390,3 +408,18 @@ MAIN = [
         ),
     ),
 ]
+
+# CREATE TABLE lexing reuses expression rules, plus DDL-specific keywords.
+# Rules that switch into another statement ruleset stay on MAIN only.
+_DDL_SKIP = {
+    "unsupported_ddl",
+    "create_table",
+    "create_clone",
+    "create_function",
+    "create_warehouse",
+    "grant",
+    "pragma",
+    "explain",
+}
+DDL.extend(rule for rule in MAIN if rule.name not in _DDL_SKIP)
+DDL.extend(DDL_SPECIFIC)

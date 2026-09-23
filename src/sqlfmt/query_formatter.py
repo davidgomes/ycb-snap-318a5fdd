@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Optional
 
+from sqlfmt.ddl import relayout_ddl_lines
 from sqlfmt.jinjafmt import JinjaFormatter
 from sqlfmt.line import Line
 from sqlfmt.merger import LineMerger
@@ -96,6 +97,10 @@ class QueryFormatter:
                 cnt = 0
         return new_lines
 
+    def _relayout_ddl(self, lines: List[Line]) -> List[Line]:
+        """Lay out CREATE TABLE statements after the generic split/merge."""
+        return relayout_ddl_lines(lines, self.mode.line_length)
+
     def format(self, raw_query: Query) -> Query:
         """
         Applies 4 transformations to a Query:
@@ -113,6 +118,7 @@ class QueryFormatter:
             self._dedent_jinja_blocks,
             self._merge_lines,
             self._remove_extra_blank_lines,
+            self._relayout_ddl,
         ]
 
         for transform in pipeline:
