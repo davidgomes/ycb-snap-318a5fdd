@@ -101,6 +101,14 @@ type Upgrade struct {
 	ReuseValues bool
 	// ResetThenReuseValues will reset the values to the chart's built-ins then merge with user's last supplied values.
 	ResetThenReuseValues bool
+	// MergeStrategies sets how arrays in the values are combined with the chart
+	// defaults, as "path=strategy" entries where strategy is "append" or "merge".
+	// They take precedence over the chart's merge strategy annotations.
+	MergeStrategies []string
+	// MergeKeys sets the fields used to match array elements for the "merge"
+	// strategy, as "path=key" entries. They take precedence over the chart's
+	// merge key annotations.
+	MergeKeys []string
 	// MaxHistory limits the maximum number of revisions saved per release
 	MaxHistory int
 	// RollbackOnFailure enables rolling back the upgraded release on failure
@@ -221,6 +229,10 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 	// HideSecret must be used with dry run. Otherwise, return an error.
 	if !isDryRun(u.DryRunStrategy) && u.HideSecret {
 		return nil, nil, false, errors.New("hiding Kubernetes secrets requires a dry-run mode")
+	}
+
+	if err := applyMergeStrategyOverrides(chart, u.MergeStrategies, u.MergeKeys); err != nil {
+		return nil, nil, false, err
 	}
 
 	// finds the last non-deleted release with the given name
@@ -618,8 +630,15 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 			return nil, fmt.Errorf("failed to rebuild old values: %w", err)
 		}
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		strategies, err := util.ChartMergeStrategies(chart)
+		if err != nil {
+			return nil, err
+		}
+		newVals = util.CoalesceTablesWithStrategies(newVals, current.Config, strategies)
 
+		// The merged config already holds the old user supplied arrays, so the
+		// defaults they get combined with must be the old chart's defaults.
+		util.ResetMergeStrategyValues(oldVals, current.Chart.Values, strategies)
 		chart.Values = oldVals
 
 		return newVals, nil
@@ -629,7 +648,11 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 	if u.ResetThenReuseValues {
 		u.cfg.Logger().Debug("merging values from old release to new values")
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		strategies, err := util.ChartMergeStrategies(chart)
+		if err != nil {
+			return nil, err
+		}
+		newVals = util.CoalesceTablesWithStrategies(newVals, current.Config, strategies)
 
 		return newVals, nil
 	}

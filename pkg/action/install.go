@@ -24,6 +24,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -115,6 +116,14 @@ type Install struct {
 	DisableOpenAPIValidation bool
 	IncludeCRDs              bool
 	Labels                   map[string]string
+	// MergeStrategies sets how arrays in the values are combined with the chart
+	// defaults, as "path=strategy" entries where strategy is "append" or "merge".
+	// They take precedence over the chart's merge strategy annotations.
+	MergeStrategies []string
+	// MergeKeys sets the fields used to match array elements for the "merge"
+	// strategy, as "path=key" entries. They take precedence over the chart's
+	// merge key annotations.
+	MergeKeys []string
 	// KubeVersion allows specifying a custom kubernetes version to use and
 	// APIVersions allows a manual set of supported API Versions to be passed
 	// (for things like templating).
@@ -303,6 +312,10 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 	if err := i.availableName(); err != nil {
 		i.cfg.Logger().Error("release name check failed", slog.Any("error", err))
 		return nil, fmt.Errorf("release name check failed: %w", err)
+	}
+
+	if err := applyMergeStrategyOverrides(chrt, i.MergeStrategies, i.MergeKeys); err != nil {
+		return nil, err
 	}
 
 	if err := chartutil.ProcessDependencies(chrt, vals); err != nil {
@@ -590,6 +603,28 @@ func (i *Install) failRelease(rel *release.Release, err error) (*release.Release
 	}
 	i.recordRelease(rel) // Ignore the error, since we have another error to deal with.
 	return rel, err
+}
+
+// applyMergeStrategyOverrides records merge strategy and merge key overrides as
+// annotations of the chart, replacing the chart's own annotations for the same
+// paths. Keeping them in the chart metadata stores them with the release, so
+// later coalescing of the release values applies the same strategies.
+func applyMergeStrategyOverrides(chrt *chart.Chart, strategies, keys []string) error {
+	if len(strategies) == 0 && len(keys) == 0 {
+		return nil
+	}
+	annotations, err := util.ParseMergeStrategyOverrides(strategies, keys)
+	if err != nil {
+		return err
+	}
+	if chrt.Metadata == nil {
+		return errors.New("unable to apply merge strategies: chart metadata is missing")
+	}
+	if chrt.Metadata.Annotations == nil {
+		chrt.Metadata.Annotations = make(map[string]string, len(annotations))
+	}
+	maps.Copy(chrt.Metadata.Annotations, annotations)
+	return nil
 }
 
 // availableName tests whether a name is available
