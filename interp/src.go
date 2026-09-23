@@ -145,6 +145,7 @@ func (interp *Interpreter) importSrc(rPath, importPath string, skipTest bool) (s
 	interp.resizeFrame()
 	interp.frame.mutex.Unlock()
 	interp.mutex.Unlock()
+	interp.initEmbeds(rootNodes...)
 
 	// Once all package sources have been parsed, execute entry points then init functions.
 	for _, n := range rootNodes {

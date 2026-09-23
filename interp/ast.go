@@ -387,6 +387,9 @@ func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err
 		// Parse comments in REPL mode, to allow tag setting.
 		mode |= parser.ParseComments
 	}
+	if strings.Contains(src, embedDirective) {
+		mode |= parser.ParseComments
+	}
 
 	if ok, err := interp.buildOk(&interp.context, name, src); !ok || err != nil {
 		return nil, err // skip source not matching build constraints
@@ -433,6 +436,7 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 	var root *node
 	var anc astNode
 	var st nodestack
+	var comments []*ast.CommentGroup
 	pkgName := "main"
 
 	addChild := func(root **node, anc astNode, pos token.Pos, kind nkind, act action) *node {
@@ -682,6 +686,7 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 
 		case *ast.File:
 			pkgName = a.Name.Name
+			comments = a.Comments
 			st.push(addChild(&root, anc, pos, fileStmt, aNop), nod)
 
 		case *ast.ForStmt:
@@ -927,6 +932,33 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 			n.nleft = len(a.Names)
 			n.nright = len(a.Values)
 			st.push(n, nod)
+			if anc.node.kind != varDecl {
+				break
+			}
+			docs := []*ast.CommentGroup{a.Doc}
+			if gd, ok := anc.ast.(*ast.GenDecl); ok && !gd.Lparen.IsValid() {
+				docs = append(docs, interp.declDoc(gd, comments))
+			}
+			var patterns []string
+			if patterns, err = embedPatterns(docs...); err != nil {
+				err = fmt.Errorf("%s: %w", interp.fset.Position(pos), err)
+				return false
+			}
+			if patterns == nil {
+				break
+			}
+			switch {
+			case anc.node.anc == nil || anc.node.anc.kind != fileStmt:
+				err = fmt.Errorf("%s: go:embed cannot apply to var inside func", interp.fset.Position(pos))
+			case len(a.Names) > 1:
+				err = fmt.Errorf("%s: go:embed cannot apply to multiple vars", interp.fset.Position(pos))
+			case len(a.Values) > 0:
+				err = fmt.Errorf("%s: go:embed cannot apply to var with initializer", interp.fset.Position(pos))
+			}
+			if err != nil {
+				return false
+			}
+			n.embed = &embedSpec{patterns: patterns}
 
 		default:
 			err = astError(fmt.Errorf("ast: %T not implemented, line %s", a, interp.fset.Position(pos)))

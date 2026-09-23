@@ -2296,6 +2296,14 @@ func (interp *Interpreter) cfg(root *node, sc *scope, importPath, pkgName string
 				c.typ = n.typ
 				c.findex = index
 			}
+
+			if n.embed != nil {
+				if err = interp.setEmbedValue(n); err != nil {
+					return
+				}
+				// Content is set by initEmbeds prior to execution and must not be reset.
+				n.gen = nop
+			}
 		}
 	})
 

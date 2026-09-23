@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	iembed "github.com/traefik/yaegi/internal/embed"
 )
 
 // Interpreter node structure for AST and CFG.
@@ -53,6 +55,7 @@ type node struct {
 	ident      string         // set if node is a var or func
 	redeclared bool           // set if node is a redeclared variable (CFG)
 	meta       interface{}    // meta stores meta information between gta runs, like errors
+	embed      *embedSpec     // go:embed directive of a var declaration, or nil
 }
 
 func (n *node) shouldBreak() bool {
@@ -327,10 +330,13 @@ func New(options Options) *Interpreter {
 		fset:     token.NewFileSet(),
 		universe: initUniverse(),
 		scopes:   map[string]*scope{},
-		binPkg:   Exports{"": map[string]reflect.Value{"_error": reflect.ValueOf((*_error)(nil))}},
+		binPkg: Exports{
+			"":      map[string]reflect.Value{"_error": reflect.ValueOf((*_error)(nil))},
+			"embed": map[string]reflect.Value{"FS": reflect.ValueOf((*iembed.FS)(nil))},
+		},
 		mapTypes: map[reflect.Value][]reflect.Type{},
 		srcPkg:   imports{},
-		pkgNames: map[string]string{},
+		pkgNames: map[string]string{"embed": "embed"},
 		rdir:     map[string]bool{},
 		hooks:    &hooks{},
 		generic:  map[string]*node{},

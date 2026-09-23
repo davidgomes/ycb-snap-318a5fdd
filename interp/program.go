@@ -159,6 +159,7 @@ func (interp *Interpreter) Execute(p *Program) (res reflect.Value, err error) {
 	interp.frame.mutex.Lock()
 	interp.resizeFrame()
 	interp.frame.mutex.Unlock()
+	interp.initEmbeds(p.root)
 
 	// Execute node closures.
 	interp.run(p.root, nil)
