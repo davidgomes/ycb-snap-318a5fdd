@@ -787,6 +787,17 @@ func TestBasic(t *testing.T) {
 		})
 	})
 
+	t.Run("TrafficPolicy with consistent hash", func(t *testing.T) {
+		test(t, translatorTestCase{
+			inputFile:  "traffic-policy/consistent-hash.yaml",
+			outputFile: "traffic-policy/consistent-hash.yaml",
+			gwNN: types.NamespacedName{
+				Namespace: "default",
+				Name:      "example-gateway",
+			},
+		})
+	})
+
 	t.Run("tcp gateway with basic routing", func(t *testing.T) {
 		test(t, translatorTestCase{
 			inputFile:  "tcp-routing/basic.yaml",

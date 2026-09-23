@@ -1,0 +1,171 @@
+kind: Gateway
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: example-gateway
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - protocol: HTTP
+      port: 8080
+      name: http
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-svc
+spec:
+  selector:
+    test: example-gateway
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: merged-route
+spec:
+  parentRefs:
+    - name: example-gateway
+  hostnames:
+    - "merged.example.com"
+  rules:
+    - backendRefs:
+        - name: example-svc
+          port: 8000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: disabled-route
+spec:
+  parentRefs:
+    - name: example-gateway
+  hostnames:
+    - "disabled.example.com"
+  rules:
+    - name: rule-disabled
+      matches:
+        - path:
+            type: PathPrefix
+            value: /disabled
+      backendRefs:
+        - name: example-svc
+          port: 8000
+    - name: rule-enabled
+      backendRefs:
+        - name: example-svc
+          port: 8000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: default-route
+spec:
+  parentRefs:
+    - name: example-gateway
+  hostnames:
+    - "default.example.com"
+  rules:
+    - backendRefs:
+        - name: example-svc
+          port: 8000
+---
+# An empty consistentHash defaults to sourceIp hashing.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: default-hash
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: default-route
+  consistentHash: {}
+---
+# Older (higher-priority) policy on merged-route.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: route-hash-a
+  creationTimestamp: "2024-01-01T00:00:00Z"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: merged-route
+  consistentHash:
+    filterState:
+      - key: io.istio.peer
+    headers:
+      - headerName: X-User
+        terminal: true
+        regexRewrite:
+          pattern: "^([^-]+)-.*$"
+          substitution: "\\1"
+      - headerName: x-user
+    cookies:
+      - name: session
+        ttl: 1h30m
+        path: /
+        attributes:
+          - name: SameSite
+            value: Strict
+          - name: Secure
+---
+# Newer (lower-priority) policy on merged-route; its entries are unioned after route-hash-a's.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: route-hash-b
+  creationTimestamp: "2024-01-02T00:00:00Z"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: merged-route
+  consistentHash:
+    headers:
+      - headerName: x-user
+        terminal: false
+      - headerName: x-tenant
+    cookies:
+      - name: session
+        ttl: "60"
+      - name: affinity
+        ttl: "3600"
+    queryParameters:
+      - name: user
+    sourceIp:
+      terminal: true
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: route-hash-wide
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: disabled-route
+  consistentHash:
+    headers:
+      - headerName: x-user
+---
+# Suppresses the hash policies inherited from route-hash-wide on a single rule.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: route-hash-disabled
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: disabled-route
+      sectionName: rule-disabled
+  consistentHash:
+    disable: true
