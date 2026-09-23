@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/liweiyi88/onedump/encryption"
 	"github.com/liweiyi88/onedump/jobresult"
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v3"
 )
 
 var testDBDsn = "root@tcp(127.0.0.1:3306)/dump_test"
@@ -70,6 +72,68 @@ func TestValidateDump(t *testing.T) {
 	err = dump.Validate()
 
 	assert.ErrorIs(err, ErrMissingDBDriver)
+}
+
+func TestValidateJobEncryption(t *testing.T) {
+	assert := assert.New(t)
+
+	job := NewJob("job", "mysql", testDBDsn)
+	assert.NoError(job.Validate())
+
+	job.Encryption = encryption.Config{Enabled: true}
+	assert.ErrorContains(job.Validate(), "key source")
+
+	job.Encryption = encryption.Config{Enabled: true, KeySource: "env", KeyEnvVar: "ONEDUMP_KEY", KeyFile: "/key"}
+	assert.ErrorContains(job.Validate(), "mutually exclusive")
+
+	job.Encryption = encryption.Config{Enabled: true, KeySource: "Env", KeyEnvVar: "ONEDUMP_KEY"}
+	assert.NoError(job.Validate())
+
+	job.Encryption = encryption.Config{KeySource: "unsupported"}
+	assert.NoError(job.Validate())
+
+	invalid := NewJob("job", "mysql", testDBDsn)
+	invalid.Encryption = encryption.Config{Enabled: true, KeySource: "unsupported"}
+	dump := Dump{MaxJobs: DefaultMaxConcurrentJobs, Jobs: []*Job{invalid}}
+	assert.ErrorContains(dump.Validate(), "unsupported key source")
+}
+
+func TestEncrypted(t *testing.T) {
+	job := NewJob("job", "mysql", testDBDsn)
+	assert.False(t, job.Encrypted())
+
+	job.Encryption.Enabled = true
+	assert.True(t, job.Encrypted())
+}
+
+func TestUnmarshalEncryption(t *testing.T) {
+	assert := assert.New(t)
+
+	content := []byte(`
+jobs:
+- name: encrypted
+  dbdriver: mysql
+  dbdsn: root@tcp(127.0.0.1:3306)/dump_test
+  gzip: true
+  encryption:
+    enabled: true
+    keysource: derive
+    passphrase: secret
+    salt: MDEyMzQ1Njc4OWFiY2RlZg==
+`)
+
+	dump := Dump{MaxJobs: DefaultMaxConcurrentJobs}
+	assert.NoError(yaml.Unmarshal(content, &dump))
+	assert.NoError(dump.Validate())
+
+	job := dump.Jobs[0]
+	assert.True(job.Encrypted())
+	assert.Equal(encryption.Config{
+		Enabled:    true,
+		KeySource:  "derive",
+		Passphrase: "secret",
+		Salt:       "MDEyMzQ1Njc4OWFiY2RlZg==",
+	}, job.Encryption)
 }
 
 func TestResultString(t *testing.T) {
