@@ -29,6 +29,7 @@ import type { OrderByNode } from './order-by-node.js'
 import type { OrderByItemNode } from './order-by-item-node.js'
 import type { GroupByNode } from './group-by-node.js'
 import type { GroupByItemNode } from './group-by-item-node.js'
+import type { GroupingSetsNode } from './grouping-sets-node.js'
 import type { UpdateQueryNode } from './update-query-node.js'
 import type { ColumnUpdateNode } from './column-update-node.js'
 import type { LimitNode } from './limit-node.js'
@@ -175,6 +176,7 @@ export class OperationNodeTransformer {
     OrderByItemNode: this.transformOrderByItem.bind(this),
     GroupByNode: this.transformGroupBy.bind(this),
     GroupByItemNode: this.transformGroupByItem.bind(this),
+    GroupingSetsNode: this.transformGroupingSets.bind(this),
     UpdateQueryNode: this.transformUpdateQuery.bind(this),
     ColumnUpdateNode: this.transformColumnUpdate.bind(this),
     LimitNode: this.transformLimit.bind(this),
@@ -576,6 +578,17 @@ export class OperationNodeTransformer {
     return requireAllProps<GroupByItemNode>({
       kind: 'GroupByItemNode',
       groupBy: this.transformNode(node.groupBy, queryId),
+    })
+  }
+
+  protected transformGroupingSets(
+    node: GroupingSetsNode,
+    queryId?: QueryId,
+  ): GroupingSetsNode {
+    return requireAllProps<GroupingSetsNode>({
+      kind: 'GroupingSetsNode',
+      type: node.type,
+      items: this.transformNodeList(node.items, queryId),
     })
   }
 

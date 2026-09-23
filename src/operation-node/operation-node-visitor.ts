@@ -32,6 +32,7 @@ import type { OrderByNode } from './order-by-node.js'
 import type { OrderByItemNode } from './order-by-item-node.js'
 import type { GroupByNode } from './group-by-node.js'
 import type { GroupByItemNode } from './group-by-item-node.js'
+import type { GroupingSetsNode } from './grouping-sets-node.js'
 import type { UpdateQueryNode } from './update-query-node.js'
 import type { ColumnUpdateNode } from './column-update-node.js'
 import type { LimitNode } from './limit-node.js'
@@ -141,6 +142,7 @@ export abstract class OperationNodeVisitor {
     OrderByItemNode: this.visitOrderByItem.bind(this),
     GroupByNode: this.visitGroupBy.bind(this),
     GroupByItemNode: this.visitGroupByItem.bind(this),
+    GroupingSetsNode: this.visitGroupingSets.bind(this),
     UpdateQueryNode: this.visitUpdateQuery.bind(this),
     ColumnUpdateNode: this.visitColumnUpdate.bind(this),
     LimitNode: this.visitLimit.bind(this),
@@ -240,6 +242,7 @@ export abstract class OperationNodeVisitor {
   protected abstract visitOrderByItem(node: OrderByItemNode): void
   protected abstract visitGroupBy(node: GroupByNode): void
   protected abstract visitGroupByItem(node: GroupByItemNode): void
+  protected abstract visitGroupingSets(node: GroupingSetsNode): void
   protected abstract visitUpdateQuery(node: UpdateQueryNode): void
   protected abstract visitColumnUpdate(node: ColumnUpdateNode): void
   protected abstract visitLimit(node: LimitNode): void

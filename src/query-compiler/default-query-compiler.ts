@@ -12,6 +12,7 @@ import type { DropTableNode } from '../operation-node/drop-table-node.js'
 import type { FromNode } from '../operation-node/from-node.js'
 import type { GroupByItemNode } from '../operation-node/group-by-item-node.js'
 import type { GroupByNode } from '../operation-node/group-by-node.js'
+import type { GroupingSetsNode } from '../operation-node/grouping-sets-node.js'
 import type { IdentifierNode } from '../operation-node/identifier-node.js'
 import { InsertQueryNode } from '../operation-node/insert-query-node.js'
 import type { JoinNode, JoinType } from '../operation-node/join-node.js'
@@ -795,6 +796,13 @@ export class DefaultQueryCompiler
 
   protected override visitGroupByItem(node: GroupByItemNode): void {
     this.visitNode(node.groupBy)
+  }
+
+  protected override visitGroupingSets(node: GroupingSetsNode): void {
+    this.append(node.type)
+    this.append('(')
+    this.compileList(node.items)
+    this.append(')')
   }
 
   protected override visitUpdateQuery(node: UpdateQueryNode): void {

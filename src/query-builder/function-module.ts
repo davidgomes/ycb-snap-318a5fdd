@@ -623,6 +623,43 @@ export interface FunctionModule<DB, TB extends keyof DB> {
   ): AggregateFunctionBuilder<DB, TB, O>
 
   /**
+   * Calls the `grouping` function for the column or expression given as the argument.
+   *
+   * This sql function returns `1` for rows where the given `group by` column was
+   * rolled up (null-filled) by {@link SelectQueryBuilder.groupByCube},
+   * {@link SelectQueryBuilder.groupByRollup} or {@link SelectQueryBuilder.groupByGroupingSets},
+   * and `0` otherwise. This allows telling super-aggregate rows apart from
+   * rows where the column is actually null.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.selectFrom('person')
+   *   .select((eb) => [
+   *     'gender',
+   *     eb.fn.grouping<number>('gender').as('is_total'),
+   *     eb.fn.countAll<number>().as('person_count'),
+   *   ])
+   *   .groupByRollup('gender')
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "gender", grouping("gender") as "is_total", count(*) as "person_count"
+   * from "person"
+   * group by rollup("gender")
+   * ```
+   */
+  grouping<
+    O extends number | string | bigint = number,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    expr: RE,
+  ): ExpressionWrapper<DB, TB, O>
+
+  /**
    * Calls the `any` function for the column or expression given as the argument.
    *
    * The argument must be a subquery or evaluate to an array.
@@ -839,6 +876,13 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
       C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
     >(column: C): AggregateFunctionBuilder<DB, TB, O> {
       return agg('sum', [column])
+    },
+
+    grouping<
+      O extends number | string | bigint = number,
+      C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+    >(column: C): ExpressionWrapper<DB, TB, O> {
+      return fn('grouping', [column])
     },
 
     any<RE extends ReferenceExpression<DB, TB>>(column: RE): any {

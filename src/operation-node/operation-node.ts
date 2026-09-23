@@ -31,6 +31,7 @@ export type OperationNodeKind =
   | 'OrderByItemNode'
   | 'GroupByNode'
   | 'GroupByItemNode'
+  | 'GroupingSetsNode'
   | 'UpdateQueryNode'
   | 'ColumnUpdateNode'
   | 'LimitNode'

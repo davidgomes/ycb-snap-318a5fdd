@@ -45,7 +45,14 @@ import type { Compilable } from '../util/compilable.js'
 import type { QueryExecutor } from '../query-executor/query-executor.js'
 import type { QueryId } from '../util/query-id.js'
 import { asArray, freeze } from '../util/object-utils.js'
-import { type GroupByArg, parseGroupBy } from '../parser/group-by-parser.js'
+import {
+  type GroupByArg,
+  type GroupByExpression,
+  type GroupingSetExpression,
+  parseGroupBy,
+  parseGroupByCubeOrRollup,
+  parseGroupByGroupingSets,
+} from '../parser/group-by-parser.js'
 import type { KyselyPlugin } from '../plugin/kysely-plugin.js'
 import type { WhereInterface } from './where-interface.js'
 import {
@@ -1086,6 +1093,112 @@ export interface SelectQueryBuilder<DB, TB extends keyof DB, O>
    */
   groupBy<GE extends GroupByArg<DB, TB, O>>(
     groupBy: GE,
+  ): SelectQueryBuilder<DB, TB, O>
+
+  /**
+   * Adds a `cube` grouping element to the `group by` clause of the query.
+   *
+   * `cube` groups by every combination of the given columns, including the
+   * empty combination. Can be combined with {@link groupBy} and the other
+   * grouping element methods.
+   *
+   * This is only supported by some dialects like PostgreSQL or MS SQL Server.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db
+   *   .selectFrom('person')
+   *   .select((eb) => [
+   *     'first_name',
+   *     'last_name',
+   *     eb.fn.countAll<number>().as('person_count'),
+   *   ])
+   *   .groupByCube('first_name', 'last_name')
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "first_name", "last_name", count(*) as "person_count"
+   * from "person"
+   * group by cube("first_name", "last_name")
+   * ```
+   */
+  groupByCube(
+    ...columns: ReadonlyArray<GroupByExpression<DB, TB, O>>
+  ): SelectQueryBuilder<DB, TB, O>
+
+  /**
+   * Adds a `rollup` grouping element to the `group by` clause of the query.
+   *
+   * `rollup` groups by every prefix of the given columns, including the
+   * empty prefix. Can be combined with {@link groupBy} and the other
+   * grouping element methods.
+   *
+   * This is only supported by some dialects like PostgreSQL or MS SQL Server.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db
+   *   .selectFrom('person')
+   *   .select((eb) => [
+   *     'gender',
+   *     'first_name',
+   *     eb.fn.countAll<number>().as('person_count'),
+   *   ])
+   *   .groupBy('gender')
+   *   .groupByRollup('first_name')
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "gender", "first_name", count(*) as "person_count"
+   * from "person"
+   * group by "gender", rollup("first_name")
+   * ```
+   */
+  groupByRollup(
+    ...columns: ReadonlyArray<GroupByExpression<DB, TB, O>>
+  ): SelectQueryBuilder<DB, TB, O>
+
+  /**
+   * Adds a `grouping sets` grouping element to the `group by` clause of the query.
+   *
+   * Each argument is a grouping set: an array of columns, or a single column.
+   * Pass an empty array to add the empty grouping set (grand total). Can be
+   * combined with {@link groupBy} and the other grouping element methods.
+   *
+   * This is only supported by some dialects like PostgreSQL or MS SQL Server.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db
+   *   .selectFrom('person')
+   *   .select((eb) => [
+   *     'first_name',
+   *     'last_name',
+   *     eb.fn.countAll<number>().as('person_count'),
+   *   ])
+   *   .groupByGroupingSets(['first_name', 'last_name'], ['first_name'], [])
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "first_name", "last_name", count(*) as "person_count"
+   * from "person"
+   * group by grouping sets(("first_name", "last_name"), ("first_name"), ())
+   * ```
+   */
+  groupByGroupingSets(
+    ...sets: ReadonlyArray<GroupingSetExpression<DB, TB, O>>
   ): SelectQueryBuilder<DB, TB, O>
 
   orderBy<OE extends OrderByExpression<DB, TB, O>>(
@@ -2419,6 +2532,39 @@ class SelectQueryBuilderImpl<
         this.#props.queryNode,
         parseGroupBy(groupBy),
       ),
+    })
+  }
+
+  groupByCube(
+    ...columns: ReadonlyArray<GroupByExpression<DB, TB, O>>
+  ): SelectQueryBuilder<DB, TB, O> {
+    return new SelectQueryBuilderImpl({
+      ...this.#props,
+      queryNode: SelectQueryNode.cloneWithGroupByItems(this.#props.queryNode, [
+        parseGroupByCubeOrRollup('cube', columns),
+      ]),
+    })
+  }
+
+  groupByRollup(
+    ...columns: ReadonlyArray<GroupByExpression<DB, TB, O>>
+  ): SelectQueryBuilder<DB, TB, O> {
+    return new SelectQueryBuilderImpl({
+      ...this.#props,
+      queryNode: SelectQueryNode.cloneWithGroupByItems(this.#props.queryNode, [
+        parseGroupByCubeOrRollup('rollup', columns),
+      ]),
+    })
+  }
+
+  groupByGroupingSets(
+    ...sets: ReadonlyArray<GroupingSetExpression<DB, TB, O>>
+  ): SelectQueryBuilder<DB, TB, O> {
+    return new SelectQueryBuilderImpl({
+      ...this.#props,
+      queryNode: SelectQueryNode.cloneWithGroupByItems(this.#props.queryNode, [
+        parseGroupByGroupingSets(sets),
+      ]),
     })
   }
 
