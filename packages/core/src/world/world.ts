@@ -21,6 +21,8 @@ import type {
     TraitRecord,
     TraitValue,
 } from '../trait/types';
+import { rollbackWorld, snapshotWorld } from '../snapshot/snapshot';
+import type { TraitRegistry, WorldSnapshot } from '../snapshot/types';
 import { universe } from '../universe/universe';
 import type { World, WorldInternal, WorldOptions } from './types';
 import { allocateWorldId, releaseWorldId } from './utils/world-index';
@@ -180,6 +182,14 @@ export function createWorld(
             for (const sub of ctx.resetSubscriptions) {
                 sub(world);
             }
+        },
+
+        snapshot(registry: TraitRegistry) {
+            return snapshotWorld(world, registry);
+        },
+
+        rollback(registry: TraitRegistry, checkpoint: WorldSnapshot) {
+            rollbackWorld(world, registry, checkpoint);
         },
 
         query(...args: any[]) {
