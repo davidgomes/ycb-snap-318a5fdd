@@ -6,8 +6,9 @@ import pytest
 
 from sqlfmt.rule import Rule
 from sqlfmt.rules import CLONE, CORE, FUNCTION, GRANT, JINJA, MAIN, WAREHOUSE
+from sqlfmt.rules.ddl import DDL
 
-ALL_RULESETS = [CLONE, CORE, FUNCTION, GRANT, JINJA, MAIN, WAREHOUSE]
+ALL_RULESETS = [CLONE, CORE, DDL, FUNCTION, GRANT, JINJA, MAIN, WAREHOUSE]
 
 
 def get_rule(ruleset: List[Rule], rule_name: str) -> Rule:
@@ -493,9 +494,9 @@ def test_regex_partial_match(
     assert match is not None, f"{rule_name} regex doesn't match {value}"
     start, end = match.span(1)
 
-    assert value[start:end] == matched_value, (
-        f"{rule_name} regex doesn't exactly match {matched_value}"
-    )
+    assert (
+        value[start:end] == matched_value
+    ), f"{rule_name} regex doesn't exactly match {matched_value}"
 
 
 def test_regex_should_not_match_empty_string() -> None:

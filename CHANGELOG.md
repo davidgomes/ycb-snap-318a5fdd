@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Formatting Changes and Bug Fixes
+
+- sqlfmt now formats `CREATE TABLE` column lists, table constraints, and `PARTITION BY` / `CLUSTER BY` / `OPTIONS` clauses. `CREATE TABLE AS SELECT` and `CREATE TABLE ... LIKE` are unchanged.
+
 ## [0.29.0] - 2026-01-12
 
 ## Breaking changes

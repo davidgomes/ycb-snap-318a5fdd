@@ -59,6 +59,11 @@ class Analyzer:
         self.comment_buffer = []
         self.line_buffer = []
         self.pos = 0
+        # A previous statement may have switched rulesets (for example CREATE
+        # TABLE). The next parse has to start from the dialect rules again.
+        if self.rule_stack:
+            self.rules = self.rule_stack[0]
+            self.rule_stack = []
 
     def write_buffers_to_query(self, query: Query) -> None:
         """

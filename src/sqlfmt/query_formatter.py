@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Optional
 
+from sqlfmt.ddl import reflow_create_table_statements
 from sqlfmt.jinjafmt import JinjaFormatter
 from sqlfmt.line import Line
 from sqlfmt.merger import LineMerger
@@ -96,6 +97,15 @@ class QueryFormatter:
                 cnt = 0
         return new_lines
 
+    def _reflow_create_table(self, lines: List[Line]) -> List[Line]:
+        """
+        Lay out CREATE TABLE statements: one column or table constraint per
+        line, with post-body clauses kept intact. CREATE TABLE AS SELECT and
+        CREATE TABLE ... LIKE are not rewritten.
+        """
+        node_manager = NodeManager(self.mode.dialect.case_sensitive_names)
+        return reflow_create_table_statements(lines, node_manager)
+
     def format(self, raw_query: Query) -> Query:
         """
         Applies 4 transformations to a Query:
@@ -113,6 +123,7 @@ class QueryFormatter:
             self._dedent_jinja_blocks,
             self._merge_lines,
             self._remove_extra_blank_lines,
+            self._reflow_create_table,
         ]
 
         for transform in pipeline:

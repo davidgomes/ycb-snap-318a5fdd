@@ -461,19 +461,22 @@ def test_handle_unsupported_ddl(default_analyzer: Analyzer) -> None:
     source_string = """
     create table foo (bar int);
     select create, insert from baz;
-    create table bar (foo int);
+    create view bar as select 1;
     """
     query = default_analyzer.parse_query(source_string=source_string.lstrip())
     assert len(query.lines) == 3
     first_create_line = query.lines[0]
-    assert len(first_create_line.nodes) == 3  # data, semicolon, newline
-    assert first_create_line.nodes[0].token.type is TokenType.DATA
+    assert first_create_line.nodes[0].token.type is TokenType.WORD_OPERATOR
+    assert first_create_line.nodes[0].value == "create table"
     assert first_create_line.nodes[-2].token.type is TokenType.SEMICOLON
 
     select_line = query.lines[1]
     assert len(select_line.nodes) == 8
     assert select_line.nodes[1].token.type is TokenType.NAME
     assert select_line.nodes[3].token.type is TokenType.NAME
+
+    view_line = query.lines[2]
+    assert view_line.nodes[0].token.type is TokenType.DATA
 
 
 def test_handle_explain(default_analyzer: Analyzer) -> None:
