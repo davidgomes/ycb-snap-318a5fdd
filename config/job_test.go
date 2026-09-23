@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/liweiyi88/onedump/encryption"
 	"github.com/liweiyi88/onedump/jobresult"
 	"github.com/stretchr/testify/assert"
 )
@@ -102,4 +103,25 @@ func TestViaSsh(t *testing.T) {
 	job.SshKey = "my-ssh-key"
 
 	assert.True(job.ViaSsh())
+}
+
+func TestJobEncryption(t *testing.T) {
+	assert := assert.New(t)
+	job := NewJob("job", "mysql", testDBDsn)
+	assert.False(job.Encrypted())
+	assert.NoError(job.Validate())
+
+	job.Encryption = encryption.Config{Enabled: true}
+	assert.True(job.Encrypted())
+	assert.ErrorContains(job.Validate(), "key source")
+
+	job.Encryption.KeySource = "env"
+	job.Encryption.KeyEnvVar = "ONEDUMP_KEY"
+	assert.NoError(job.Validate())
+
+	job.Encryption.Key = "c2VjcmV0"
+	assert.ErrorContains(job.Validate(), "mutually exclusive")
+
+	dump := Dump{MaxJobs: DefaultMaxConcurrentJobs, Jobs: []*Job{job}}
+	assert.ErrorContains(dump.Validate(), "mutually exclusive")
 }
