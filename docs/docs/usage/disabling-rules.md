@@ -50,8 +50,15 @@ disabled rules: [all]
 
 ### Range Ignore
 
-When there is a need to disable the Linter for part of a file, ranged ignores can be used. The syntax for a ranged ignore
-is `<!-- linter-disable -->` or `%%linter-disable%%` with an optional `<!-- linter-enable -->` or `%%linter-disable%%` where you want the Linter to start back up with its linting.
+When there is a need to disable the Linter for part of a file, ranged ignores can be used. Markers are recognized only on their own line (optional leading or trailing spaces or tabs) and are ignored inside YAML frontmatter, fenced or indented code, inline code, and math blocks. Marker lines themselves are never modified.
+
+HTML comments and Obsidian comments are both supported:
+
+- `<!-- linter-disable -->` / `%% linter-disable %%` disables every rule until a matching enable. An optional comma-separated list of rule aliases disables only those rules.
+- `<!-- linter-enable -->` / `%% linter-enable %%` with no list closes the most recent disable scope. With a rule list, it re-enables only those rules, including individual rules inside a scope that disabled everything.
+- `<!-- linter-disable-next-line -->` / `%% linter-disable-next-line %%` disables rules for the next line.
+- `<!-- linter-disable-next-n-lines: N -->` / `%% linter-disable-next-n-lines: N %%` disables rules for the next `N` lines. `N` must be a positive integer. The range stops at the end of the file.
+
 Leaving off the ending of a range ignore will assume you want to ignore the file contents from the start of the range ignore to the end of the file. So be careful when not ending a range ignore.
 
 !!! warning
@@ -64,9 +71,9 @@ Here is some text
                           This area will not be formatted
 <!-- linter-enable -->
 More content goes here...
-%%linter-disable %%
+%% linter-disable %%
                           This area will not be formatted
-%%linter-enable%%
+%% linter-enable %%
 ```
 
 Here is another example that shows a ranged ignore without an ending indicator:

@@ -1,5 +1,6 @@
 import {obsidianMultilineCommentRegex, tagWithLeadingWhitespaceRegex, wikiLinkRegex, yamlRegex, escapeDollarSigns, genericLinkRegex, urlRegex, anchorTagRegex, templaterCommandRegex, footnoteDefinitionIndicatorAtStartOfLine} from './regex';
-import {getAllCustomIgnoreSectionsInText, getAllTablesInText, getPositions, MDAstTypes} from './mdast';
+import {getAllTablesInText, getPositions, MDAstTypes} from './mdast';
+import {getIgnoreSpansForRule} from './rule-ignore';
 import type {Position} from 'unist';
 import {replaceTextBetweenStartAndEndWithNewValue} from './strings';
 
@@ -33,10 +34,10 @@ export const IgnoreTypes: Record<string, IgnoreType> = {
   link: {replaceAction: replaceMarkdownLinks, placeholder: '{REGULAR_LINK_PLACEHOLDER}'},
   tag: {replaceAction: replaceTags, placeholder: '#tag-placeholder'},
   table: {replaceAction: replaceTables, placeholder: '{TABLE_PLACEHOLDER}'},
-  customIgnore: {replaceAction: replaceCustomIgnore, placeholder: '{CUSTOM_IGNORE_PLACEHOLDER}'},
+  customIgnore: {replaceAction: replaceScopedRuleIgnore, placeholder: '{CUSTOM_IGNORE_PLACEHOLDER}'},
 } as const;
 
-export function ignoreListOfTypes(ignoreTypes: IgnoreType[], text: string, func: ((text: string) => string)): string {
+export function ignoreListOfTypes(ignoreTypes: IgnoreType[], text: string, func: ((text: string) => string), ruleAlias?: string): string {
   let setOfPlaceholders: {placeholder: string, replacedValues: string[]}[] = [];
 
   // replace ignore blocks with their placeholders
@@ -47,8 +48,12 @@ export function ignoreListOfTypes(ignoreTypes: IgnoreType[], text: string, func:
     } else if (ignoreType.replaceAction instanceof RegExp) {
       [replaceValues, text] = replaceRegex(text, ignoreType.placeholder, ignoreType.replaceAction);
     } else if (typeof ignoreType.replaceAction === 'function') {
-      const ignoreFunc: IgnoreFunction = ignoreType.replaceAction;
-      [replaceValues, text] = ignoreFunc(text, ignoreType.placeholder);
+      if (ignoreType.placeholder === IgnoreTypes.customIgnore.placeholder) {
+        [replaceValues, text] = replaceScopedRuleIgnore(text, ignoreType.placeholder, ruleAlias);
+      } else {
+        const ignoreFunc: IgnoreFunction = ignoreType.replaceAction;
+        [replaceValues, text] = ignoreFunc(text, ignoreType.placeholder);
+      }
     }
 
     setOfPlaceholders.push({replacedValues: replaceValues, placeholder: ignoreType.placeholder});
@@ -199,9 +204,12 @@ function replaceTables(text: string, tablePlaceholder: string): [string[], strin
 }
 
 
-function replaceCustomIgnore(text: string, customIgnorePlaceholder: string): [string[], string] {
-  const customIgnorePositions = getAllCustomIgnoreSectionsInText(text);
+function replaceScopedRuleIgnore(text: string, customIgnorePlaceholder: string, ruleAlias?: string): [string[], string] {
+  const customIgnorePositions = getIgnoreSpansForRule(text, ruleAlias ?? null);
+  return replaceSectionsWithPlaceholder(text, customIgnorePlaceholder, customIgnorePositions);
+}
 
+function replaceSectionsWithPlaceholder(text: string, customIgnorePlaceholder: string, customIgnorePositions: {startIndex: number, endIndex: number}[]): [string[], string] {
   const replacedSections: string[] = new Array(customIgnorePositions.length);
   let index = 0;
   const length = replacedSections.length;
