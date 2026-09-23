@@ -431,6 +431,44 @@ import { Or } from 'koota'
 const movingOrVisible = world.query(Or(Velocity, Renderable))
 ```
 
+#### Predicates
+
+`createPredicate` filters entities by trait values. Pass the dependency traits and a function that receives one array of their data, in that same order. Each call returns a distinct predicate. Tags and relations cannot be dependencies.
+
+`set` or `add` on a dependency re-evaluates the predicate. Predicates do not add values to `readEach` or `updateEach` callbacks. Dependency writes during `updateEach` re-evaluate after that iteration finishes. Predicates compose with relation pairs and with `Not`, `Or`, `Added`, `Removed`, and `Changed`.
+
+```js
+import { createAdded, createChanged, createPredicate, createRemoved, Not, Or } from 'koota'
+
+const Health = trait({ value: 100 })
+const isLow = createPredicate([Health], ([health]) => health.value < 20)
+
+// Entities whose health is below 20
+world.query(isLow)
+
+// Missing Health, or health that is not low
+world.query(Not(isLow))
+
+// Low health or a player tag
+world.query(Or(isLow, IsPlayer))
+
+// Children of parent that also match the predicate
+world.query(ChildOf(parent), isLow)
+
+const Added = createAdded()
+const Removed = createRemoved()
+const Changed = createChanged()
+
+// Satisfies isLow and was not in the previous result
+world.query(Added(isLow))
+
+// Predicate transitioned to false
+world.query(Removed(isLow))
+
+// Predicate truthiness changed
+world.query(Changed(isLow))
+```
+
 #### Added
 
 The `Added` modifier tracks all entities that have added the specified traits or relations since the last time the query was run. A new instance of the modifier must be created for tracking to be unique.

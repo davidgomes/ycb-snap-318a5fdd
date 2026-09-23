@@ -2,6 +2,7 @@ import { $internal } from '../../common';
 import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
+import { hasPredicateConstraints, passesPredicateConstraints } from '../predicate-match';
 import { EventType, QueryInstance } from '../types';
 
 /**
@@ -37,6 +38,10 @@ export function checkQueryTracking(
     if (traitInstancesAll.length === 0) return false;
 
     // 1. Check static constraints (required/forbidden/or)
+    const predicateFilters = query.predicateFilters;
+    const hasOrPredicates = predicateFilters.or.length !== 0;
+    let orTraitState: 'none' | 'pass' | 'fail' = 'none';
+
     for (let i = 0; i < generationsLen; i++) {
         const generationId = generations[i];
         const bitmask = staticBitmasks[i];
@@ -56,8 +61,13 @@ export function checkQueryTracking(
         // Check required traits
         if (required && (entityMask & required) !== required) return false;
 
-        // Check Or traits
-        if (or !== 0 && (entityMask & or) === 0) return false;
+        // Check Or traits. A predicate in the same Or can still satisfy the filter.
+        if (or !== 0 && (entityMask & or) === 0) {
+            if (!hasOrPredicates) return false;
+            orTraitState = 'fail';
+        } else if (hasOrPredicates && or !== 0 && orTraitState !== 'fail') {
+            orTraitState = 'pass';
+        }
     }
 
     // 2. Process tracking groups - update trackers and check cross-event invalidation
@@ -139,6 +149,10 @@ export function checkQueryTracking(
 
     // If we have OR groups, at least one must match
     if (hasOrGroup && !anyOrMatched) {
+        return false;
+    }
+
+    if (hasPredicateConstraints(query) && !passesPredicateConstraints(world, query, eid, orTraitState)) {
         return false;
     }
 

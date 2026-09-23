@@ -6,6 +6,7 @@ Complete guide to querying entities in Koota.
 
 - [Basic queries](#basic-queries)
 - [Query modifiers](#query-modifiers) - Not, Or
+- [Predicates](#predicates) - value filters with Not, Or, Added, Removed, Changed
 - [Tracking modifiers](#tracking-modifiers) - Added, Removed, Changed
 - [Caching queries](#caching-queries) - createQuery for performance
 - [Change detection](#change-detection) - updateEach options
@@ -53,6 +54,31 @@ world.query(Or(IsPlayer, IsEnemy))
 
 // Combine modifiers
 world.query(Position, Not(Velocity), Or(IsPlayer, IsEnemy))
+```
+
+## Predicates
+
+`createPredicate` filters on trait values. The function receives one array of dependency data in dependency order. Each call returns a distinct predicate. Tags and relations as dependencies throw.
+
+`set` or `add` on a dependency re-evaluates the predicate. Predicates add no callback tuple data. Writes during `updateEach` re-evaluate after the iteration. Predicates compose with relation pairs.
+
+```typescript
+import { createAdded, createChanged, createPredicate, createRemoved, Not, Or } from 'koota'
+
+const isLow = createPredicate([Health], ([health]) => health.value < 20)
+
+world.query(isLow)
+world.query(Not(isLow)) // missing a dependency, or the predicate is false
+world.query(Or(isLow, IsPlayer))
+world.query(ChildOf(parent), isLow)
+
+const Added = createAdded()
+const Removed = createRemoved()
+const Changed = createChanged()
+
+world.query(Added(isLow)) // true now, absent from the previous result
+world.query(Removed(isLow)) // transitioned to false
+world.query(Changed(isLow)) // any truthiness transition
 ```
 
 ## Tracking modifiers

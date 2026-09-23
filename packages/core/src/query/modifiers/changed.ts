@@ -1,16 +1,16 @@
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
-import { isRelation } from '../../relation/utils/is-relation';
 import { hasTrait, registerTrait } from '../../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../../trait/trait-instance';
 import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
 import { createModifier } from '../modifier';
-import type { Modifier } from '../types';
+import type { Modifier, Predicate } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
+import { splitTrackedInputs } from './added';
 
 export function createChanged() {
     const id = createTrackingId();
@@ -20,14 +20,20 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    function changed<T extends TraitOrRelation[]>(
         ...inputs: T
-    ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`changed-${id}`, id, traits);
-    };
+    ): Modifier<ExtractTraits<T>, `changed-${number}`>;
+    function changed(predicate: Predicate): Modifier<[], `changed-${number}`>;
+    function changed(
+        ...inputs: Array<TraitOrRelation | Predicate>
+    ): Modifier<any, `changed-${number}`> {
+        const { traits, predicates } = splitTrackedInputs(inputs);
+        const modifier = createModifier(`changed-${id}`, id, traits);
+        if (predicates.length) modifier.predicates = predicates;
+        return modifier;
+    }
+
+    return changed;
 }
 
 /** @inline */

@@ -4,6 +4,7 @@ export { $internal } from './common';
 export type { Entity } from './entity/types';
 export { unpackEntity } from './entity/utils/pack-entity';
 export { createAdded } from './query/modifiers/added';
+export { createPredicate } from './query/predicate';
 export { createChanged } from './query/modifiers/changed';
 export { Not } from './query/modifiers/not';
 export { Or } from './query/modifiers/or';
@@ -16,6 +17,8 @@ export type {
     IsNotModifier,
     Modifier,
     Query,
+    Predicate,
+    PredicateTuple,
     QueryModifier,
     QueryParameter,
     QueryResult,

@@ -8,8 +8,9 @@ import { getStore } from '../trait/trait';
 import type { Trait } from '../trait/types';
 import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
-import { isModifier } from './modifier';
+import { isModifier, isPredicate } from './modifier';
 import { setChanged } from './modifiers/changed';
+import { beginPredicateDeferral, endPredicateDeferral, schedulePredicateReevaluation } from './predicate';
 import type {
     InstancesFromParameters,
     QueryInstance,
@@ -55,6 +56,9 @@ export function createQueryResult<T extends QueryParameter[]>(
         ) {
             const state = Array.from({ length: traits.length });
 
+            // Dependency writes re-evaluate predicates after the iteration finishes.
+            beginPredicateDeferral();
+            try {
             // Inline all three permutations of updateEach for performance.
             if (options.changeDetection === 'auto') {
                 const changedPairs: [Entity, Trait][] = [];
@@ -93,7 +97,10 @@ export function createQueryResult<T extends QueryParameter[]>(
                         }
 
                         // Collect changed traits.
-                        if (changed) changedPairs.push([entity, trait] as const);
+                        if (changed) {
+                            changedPairs.push([entity, trait] as const);
+                            schedulePredicateReevaluation(world, entity, trait);
+                        }
                     }
 
                     // Commit all changes back to the stores for untracked traits.
@@ -103,6 +110,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                         const ctx = trait[$internal];
                         const store = stores[index];
                         ctx.fastSet(eid, store, state[index]);
+                        schedulePredicateReevaluation(world, entity, trait);
                     }
                 }
 
@@ -142,7 +150,10 @@ export function createQueryResult<T extends QueryParameter[]>(
                         }
 
                         // Collect changed traits.
-                        if (changed) changedPairs.push([entity, trait] as const);
+                        if (changed) {
+                            changedPairs.push([entity, trait] as const);
+                            schedulePredicateReevaluation(world, entity, trait);
+                        }
                     }
                 }
 
@@ -166,11 +177,15 @@ export function createQueryResult<T extends QueryParameter[]>(
                         const trait = traits[j];
                         const ctx = trait[$internal];
                         ctx.fastSet(eid, stores[j], state[j]);
+                        schedulePredicateReevaluation(world, entity, trait);
                     }
                 }
             }
 
             return results;
+            } finally {
+                endPredicateDeferral();
+            }
         },
 
         useStores(callback: (stores: StoresFromParameters<T>, entities: readonly Entity[]) => void) {
@@ -251,6 +266,8 @@ export function createQueryResult<T extends QueryParameter[]>(
 ) {
     for (let i = 0; i < params.length; i++) {
         const param = params[i];
+
+        if (isPredicate(param)) continue;
 
         // Handle relation pairs
         if (isRelationPair(param)) {

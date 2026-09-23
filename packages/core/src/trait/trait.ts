@@ -2,6 +2,7 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { setChanged, setPairChanged } from '../query/modifiers/changed';
+import { schedulePredicateReevaluation } from '../query/predicate';
 import { checkQueryTrackingWithRelations } from '../query/utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
 import { getOrderedTraitRelation, isOrderedTrait, setupOrderedTraitSync } from '../relation/ordered';
@@ -419,6 +420,7 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
 
     ctx.set(index, store, value);
     triggerChanged && setChanged(world, entity, trait);
+    schedulePredicateReevaluation(world, entity, trait);
 }
 
 /**
@@ -531,4 +533,5 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
 
     // Remove trait from entity internally
     ctx.entityTraits.get(entity)!.delete(trait);
+    schedulePredicateReevaluation(world, entity, trait);
 }

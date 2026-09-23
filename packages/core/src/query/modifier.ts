@@ -1,6 +1,7 @@
 import { Brand } from '../common';
 import { Trait } from '../trait/types';
-import { EventType, Modifier, OrModifier, QueryParameter } from './types';
+import { $predicate } from './symbols';
+import { EventType, Modifier, OrModifier, Predicate, QueryParameter } from './types';
 
 export const $modifier = Symbol('modifier');
 
@@ -20,6 +21,10 @@ export function createModifier<TTrait extends Trait[] = Trait[], TType extends s
 
 export /* @inline @pure */ function isModifier(param: QueryParameter): param is Modifier {
     return (param as Brand<typeof $modifier> | null | undefined)?.[$modifier] as unknown as boolean;
+}
+
+export /* @inline @pure */ function isPredicate(param: unknown): param is Predicate {
+    return (param as Brand<typeof $predicate> | null | undefined)?.[$predicate] as unknown as boolean;
 }
 
 /** Check if a modifier is a tracking modifier (added, removed, or changed) */

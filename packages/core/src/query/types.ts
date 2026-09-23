@@ -12,10 +12,10 @@ import type {
 import type { SparseSet } from '../utils/sparse-set';
 import type { World } from '../world';
 import { $modifier } from './modifier';
-import { $parameters, $queryRef } from './symbols';
+import { $parameters, $predicate, $queryRef } from './symbols';
 
 export type QueryModifier = (...components: Trait[]) => Modifier;
-export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier>;
+export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier> | Predicate;
 export type QuerySubscriber = (entity: Entity) => void;
 export type QueryUnsubscriber = () => void;
 
@@ -56,17 +56,19 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
     ...infer Rest,
 ]
     ? [
-          ...(First extends Trait
-              ? IsTag<First> extends false
-                  ? ExtractSchema<First> extends AoSFactory
-                      ? [ReturnType<ExtractSchema<First>>]
-                      : [TraitRecord<First>]
-                  : []
-              : First extends Modifier
-                ? IsNotModifier<First> extends true
-                    ? []
-                    : InstancesFromParameters<UnwrapModifierData<First>>
-                : []),
+          ...(First extends Predicate
+              ? []
+              : First extends Trait
+                ? IsTag<First> extends false
+                    ? ExtractSchema<First> extends AoSFactory
+                        ? [ReturnType<ExtractSchema<First>>]
+                        : [TraitRecord<First>]
+                    : []
+                : First extends Modifier
+                  ? IsNotModifier<First> extends true
+                      ? []
+                      : InstancesFromParameters<UnwrapModifierData<First>>
+                  : []),
           ...(Rest extends QueryParameter[] ? InstancesFromParameters<Rest> : []),
       ]
     : [];
@@ -93,10 +95,32 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /** Value predicates carried by Not, Or, Added, Removed, or Changed. */
+    predicates?: Predicate[];
+};
+
+/**
+ * Value tuple passed to a predicate, aligned with its dependency traits.
+ * Dependency data is ordered to match the array given to `createPredicate`.
+ */
+export type PredicateTuple<T extends readonly Trait[]> = {
+    [K in keyof T]: T[K] extends Trait ? TraitRecord<T[K]> : never;
+};
+
+/**
+ * A distinct value filter. It matches an entity when every dependency trait
+ * is present and `test` returns a truthy result for that entity's data.
+ */
+export type Predicate<T extends readonly Trait[] = readonly Trait[]> = {
+    readonly [$predicate]: true;
+    readonly id: number;
+    readonly dependencies: T;
+    /** Method syntax so a specific predicate stays assignable to a query parameter. */
+    test(data: PredicateTuple<T>): boolean;
 };
 
 /** Parameter types that can be passed to Or modifier */
-export type OrParameter = Trait | Modifier;
+export type OrParameter = Trait | Modifier | Predicate;
 
 /** Or modifier that can contain both traits and nested modifiers */
 export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
@@ -134,6 +158,25 @@ export type TrackingGroup = {
     trackers: (number[] | undefined)[];
 };
 
+export type PredicateFilters = {
+    required: Predicate[];
+    /** Not(predicate): match when the predicate is not true. */
+    not: Predicate[];
+    or: Predicate[];
+};
+
+/**
+ * Tracking for Added / Removed / Changed applied to predicates.
+ * `pending[eid]` is a bitmask of predicates in this group with an open event.
+ */
+export type PredicateTrackingGroup = {
+    type: 'add' | 'remove' | 'change';
+    logic: 'and' | 'or';
+    id: number;
+    predicates: Predicate[];
+    pending: number[];
+};
+
 export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     version: number;
     world: World;
@@ -165,6 +208,9 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     removeSubscriptions: Set<QuerySubscriber>;
     /** Relation pairs for target-specific queries */
     relationFilters?: RelationPair[];
+    /** Value predicates that constrain membership without contributing callback data. */
+    predicateFilters: PredicateFilters;
+    predicateTracking: PredicateTrackingGroup[];
     run: (world: World, params: QueryParameter[]) => QueryResult<T>;
     add: (entity: Entity) => void;
     remove: (world: World, entity: Entity) => void;

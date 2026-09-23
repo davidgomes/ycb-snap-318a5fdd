@@ -73,6 +73,8 @@ export function createWorld(
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
+            predicateRuntimes: new Map(),
+            predicatesByTrait: new Map(),
         } as WorldInternal,
 
         traits: new Set<Trait>(),
@@ -173,6 +175,8 @@ export function createWorld(
             ctx.dirtyMasks.clear();
             ctx.changedMasks.clear();
             ctx.trackedTraits.clear();
+            ctx.predicateRuntimes.clear();
+            ctx.predicatesByTrait.clear();
 
             // Create new world entity.
             ctx.worldEntity = createEntity(world, IsExcluded);

@@ -2,6 +2,7 @@ import { ActionInstance } from '../actions/types';
 import type { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
+import type { PredicateRuntime } from '../query/predicate-state';
 import type {
     Query,
     QueryInstance,
@@ -43,6 +44,10 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    /** Per-predicate truth cache and the queries watching it. */
+    predicateRuntimes: Map<number, PredicateRuntime>;
+    /** Dependency trait id → predicate runtimes re-evaluated on set/add/remove. */
+    predicatesByTrait: Map<number, PredicateRuntime[]>;
 };
 
 export type World = {
