@@ -298,6 +298,51 @@ export default {
       'default-install-failed': 'Failed to download {URL}. Disabling Auto-correct Common Misspellings.',
       'defaults-missing': 'Failed to find default common auto-correct file: {FILE}.',
     },
+    // auto-toc.ts
+    'auto-toc': {
+      'name': 'Auto Table of Contents',
+      'description': 'Generates or updates a table of contents between <code>&lt;!-- toc --&gt;</code> and <code>&lt;!-- /toc --&gt;</code> using the ATX headings in the file. Files without a <code>&lt;!-- toc --&gt;</code> marker are left unchanged and a missing end marker is added.',
+      'list-style': {
+        'name': 'List Style',
+        'description': 'Whether the table of contents uses a bulleted or a numbered list',
+      },
+      'bullet-marker': {
+        'name': 'Bullet Marker',
+        'description': 'The list item indicator to use when <code>List Style</code> is <code>bullet</code>',
+      },
+      'ordered-list-style': {
+        'name': 'Ordered List Style',
+        'description': 'Whether numbered list items all use <code>1.</code> or increment across all items when <code>List Style</code> is <code>number</code>',
+      },
+      'indent-size': {
+        'name': 'Indent Size',
+        'description': 'The number of spaces to indent each nested heading level by',
+      },
+      'min-level': {
+        'name': 'Minimum Heading Level',
+        'description': 'The smallest heading level to include in the table of contents',
+      },
+      'max-level': {
+        'name': 'Maximum Heading Level',
+        'description': 'The largest heading level to include in the table of contents',
+      },
+      'title': {
+        'name': 'Title',
+        'description': 'A line of text to add before the list of headings. Leave empty to not add a title.',
+      },
+      'use-explicit-ids': {
+        'name': 'Use Explicit IDs',
+        'description': 'Uses a trailing <code>{#id}</code> on a heading as the anchor for that heading',
+      },
+      'strip-formatting-in-toc': {
+        'name': 'Strip Formatting in Table of Contents',
+        'description': 'Removes links, images, and formatting from the heading text shown in the table of contents',
+      },
+      'exclude-headings': {
+        'name': 'Exclude Headings',
+        'description': 'Headings to leave out of the table of contents, one per line. Plain values match the whole heading case-insensitively and values wrapped in <code>/</code> are treated as case-insensitive regular expressions.',
+      },
+    },
     // add-blank-line-after-yaml.ts
     'add-blank-line-after-yaml': {
       'name': 'Add Blank Line After YAML',
@@ -942,6 +987,11 @@ export default {
     'None': 'None',
     'Ascending Alphabetical': 'Ascending Alphabetical',
     'Descending Alphabetical': 'Descending Alphabetical',
+    // auto-toc.ts
+    'bullet': 'bullet',
+    'number': 'number',
+    'always-one': 'always one',
+    'increment': 'increment',
     // yaml.ts
     'multi-line': 'multi-line',
     'single-line': 'single-line',
