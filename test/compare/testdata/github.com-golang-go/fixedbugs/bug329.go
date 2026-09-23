@@ -1,5 +1,3 @@
-// skip : method definition https://github.com/open2b/scriggo/issues/458
-
 // run
 
 // Copyright 2011 The Go Authors. All rights reserved.
