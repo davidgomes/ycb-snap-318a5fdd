@@ -256,6 +256,52 @@ const customReplaceTestCases: CustomReplaceTestCase[] = [
     `,
   },
   {
+    testName: 'A custom replace should not be affected by linter ignore ranges that only disable specific rules',
+    listOfRegexReplacements: [
+      {
+        label: 'Replace Did at the start of a line', find: '^Did', replace: 'swapped', flags: 'gm', enabled: true,
+      },
+    ],
+    before: dedent`
+      <!-- linter-disable-next-line trailing-spaces -->
+      Did it stay the same?
+      %% linter-disable yaml-title %%
+      Did it stay the same?
+    `,
+    after: dedent`
+      <!-- linter-disable-next-line trailing-spaces -->
+      swapped it stay the same?
+      %% linter-disable yaml-title %%
+      swapped it stay the same?
+    `,
+  },
+  {
+    testName: 'A custom replace should respect linter ignore ranges for all rules, but not their markers in code blocks',
+    listOfRegexReplacements: [
+      {
+        label: 'Replace Did at the start of a line', find: '^Did', replace: 'swapped', flags: 'gm', enabled: true,
+      },
+    ],
+    before: dedent`
+      \`\`\`
+      <!-- linter-disable -->
+      \`\`\`
+      Did it stay the same?
+      <!-- linter-disable-next-line -->
+      Did it stay the same?
+      Did it stay the same?
+    `,
+    after: dedent`
+      \`\`\`
+      <!-- linter-disable -->
+      \`\`\`
+      swapped it stay the same?
+      <!-- linter-disable-next-line -->
+      Did it stay the same?
+      swapped it stay the same?
+    `,
+  },
+  {
     testName: 'A custom replace that is not enabled should not run',
     listOfRegexReplacements: [
       {
