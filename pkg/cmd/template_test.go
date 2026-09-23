@@ -19,6 +19,7 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -168,6 +169,26 @@ func TestTemplateCmd(t *testing.T) {
 		},
 	}
 	runTestCmd(t, tests)
+}
+
+func TestTemplateUnifiedStreamTrailingNewline(t *testing.T) {
+	defer resetEnv()()
+	_, out, err := executeActionCommand("template testdata/testcharts/object-order")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(out, "\n") || strings.HasSuffix(out, "\n\n") {
+		t.Fatalf("template output must end with a single trailing newline, got %q", out[len(out)-20:])
+	}
+	order := []string{"name: fourth", "name: fifth", "name: sixth", "name: seventh"}
+	last := -1
+	for _, name := range order {
+		idx := strings.Index(out, name)
+		if idx < 0 || idx < last {
+			t.Fatalf("expected %s in source order:\n%s", name, out)
+		}
+		last = idx
+	}
 }
 
 func TestTemplateVersionCompletion(t *testing.T) {

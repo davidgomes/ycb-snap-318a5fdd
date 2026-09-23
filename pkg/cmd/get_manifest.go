@@ -26,6 +26,7 @@ import (
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/cmd/require"
 	"helm.sh/helm/v4/pkg/release"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 )
 
 var getManifestHelp = `
@@ -59,7 +60,15 @@ func newGetManifestCmd(cfg *action.Configuration, out io.Writer) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(out, rac.Manifest())
+			hooks := make([]releaseutil.SourcedHook, 0, len(rac.Hooks()))
+			for _, hook := range rac.Hooks() {
+				hac, err := release.NewHookAccessor(hook)
+				if err != nil {
+					return err
+				}
+				hooks = append(hooks, releaseutil.SourcedHook{Path: hac.Path(), Manifest: hac.Manifest()})
+			}
+			fmt.Fprint(out, releaseutil.StoredManifestStream(rac.Manifest(), hooks))
 			return nil
 		},
 	}

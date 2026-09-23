@@ -118,31 +118,39 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			// we always want to print the YAML, even if it is not valid. The error is still returned afterwards.
 			if rel != nil {
 				var manifests bytes.Buffer
-				fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
-				if !client.DisableHooks {
-					fileWritten := make(map[string]bool)
-					for _, m := range rel.Hooks {
-						if skipTests && isTestHook(m) {
-							continue
-						}
-						if client.OutputDir == "" {
-							fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", m.Path, m.Manifest)
-						} else {
-							newDir := client.OutputDir
-							if client.UseReleaseName {
-								newDir = filepath.Join(client.OutputDir, client.ReleaseName)
+				useStream := client.OutputDir == "" && rel.OutputManifest != ""
+				if useStream {
+					streamed := rel.OutputManifest
+					if client.DisableHooks || skipTests {
+						streamed = filterStreamHooks(streamed, rel.Hooks, client.DisableHooks, skipTests)
+					}
+					fmt.Fprintln(&manifests, strings.TrimSpace(streamed))
+				} else {
+					fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
+					if !client.DisableHooks {
+						fileWritten := make(map[string]bool)
+						for _, m := range rel.Hooks {
+							if skipTests && isTestHook(m) {
+								continue
 							}
-							_, err := os.Stat(filepath.Join(newDir, m.Path))
-							if err == nil {
-								fileWritten[m.Path] = true
-							}
+							if client.OutputDir == "" {
+								fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", m.Path, m.Manifest)
+							} else {
+								newDir := client.OutputDir
+								if client.UseReleaseName {
+									newDir = filepath.Join(client.OutputDir, client.ReleaseName)
+								}
+								_, err := os.Stat(filepath.Join(newDir, m.Path))
+								if err == nil {
+									fileWritten[m.Path] = true
+								}
 
-							err = writeToFile(newDir, m.Path, m.Manifest, fileWritten[m.Path])
-							if err != nil {
-								return err
+								err = writeToFile(newDir, m.Path, m.Manifest, fileWritten[m.Path])
+								if err != nil {
+									return err
+								}
 							}
 						}
-
 					}
 				}
 
@@ -227,6 +235,80 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 
 func isTestHook(h *release.Hook) bool {
 	return slices.Contains(h.Events, release.HookTest)
+}
+
+type skippedHook struct {
+	path string
+	body string
+	used bool
+}
+
+// filterStreamHooks drops hook documents from a unified manifest stream.
+// disableHooks removes every hook. skipTests removes only test hooks.
+func filterStreamHooks(stream string, hooks []*release.Hook, disableHooks, skipTests bool) string {
+	if stream == "" || (!disableHooks && !skipTests) {
+		return stream
+	}
+	skipping := make([]skippedHook, 0, len(hooks))
+	for _, hook := range hooks {
+		if hook == nil {
+			continue
+		}
+		if disableHooks || (skipTests && isTestHook(hook)) {
+			skipping = append(skipping, skippedHook{path: hook.Path, body: strings.TrimSpace(hook.Manifest)})
+		}
+	}
+	if len(skipping) == 0 {
+		return stream
+	}
+
+	parts := releaseutil.SplitManifests(stream)
+	keys := make([]string, 0, len(parts))
+	for key := range parts {
+		keys = append(keys, key)
+	}
+	sort.Sort(releaseutil.BySplitManifestsOrder(keys))
+
+	var b strings.Builder
+	for _, key := range keys {
+		source, body := splitStreamDocument(parts[key])
+		if skip := matchSkippedHook(skipping, source, body); skip {
+			continue
+		}
+		if source == "" {
+			fmt.Fprintf(&b, "---\n%s\n", body)
+			continue
+		}
+		fmt.Fprintf(&b, "---\n# Source: %s\n%s\n", source, body)
+	}
+	return b.String()
+}
+
+func matchSkippedHook(skipping []skippedHook, source, body string) bool {
+	for i := range skipping {
+		if skipping[i].used {
+			continue
+		}
+		if skipping[i].path == source && skipping[i].body == body {
+			skipping[i].used = true
+			return true
+		}
+	}
+	return false
+}
+
+func splitStreamDocument(doc string) (source, body string) {
+	doc = strings.TrimSpace(doc)
+	line, rest, found := strings.Cut(doc, "\n")
+	const prefix = "# Source: "
+	if strings.HasPrefix(line, prefix) {
+		source = strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		if found {
+			body = strings.TrimSpace(rest)
+		}
+		return source, body
+	}
+	return "", doc
 }
 
 // The following functions (writeToFile, createOrOpenFile, and ensureDirectoryForFile)

@@ -259,18 +259,18 @@ func splitAndDeannotate(postrendered string) (map[string]string, error) {
 // TODO: As part of the refactor the duplicate code in cmd/helm/template.go should be removed
 //
 //	This code has to do with writing files to disk.
-func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values, releaseName, outputDir string, subNotes, useReleaseName, includeCrds bool, pr postrenderer.PostRenderer, interactWithRemote, enableDNS, hideSecret bool) ([]*release.Hook, *bytes.Buffer, string, error) {
+func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values, releaseName, outputDir string, subNotes, useReleaseName, includeCrds bool, pr postrenderer.PostRenderer, interactWithRemote, enableDNS, hideSecret bool) ([]*release.Hook, *bytes.Buffer, string, string, error) {
 	var hs []*release.Hook
 	b := bytes.NewBuffer(nil)
 
 	caps, err := cfg.getCapabilities()
 	if err != nil {
-		return hs, b, "", err
+		return hs, b, "", "", err
 	}
 
 	if ch.Metadata.KubeVersion != "" {
 		if !chartutil.IsCompatibleRange(ch.Metadata.KubeVersion, caps.KubeVersion.String()) {
-			return hs, b, "", fmt.Errorf("chart requires kubeVersion: %s which is incompatible with Kubernetes %s", ch.Metadata.KubeVersion, caps.KubeVersion.Version)
+			return hs, b, "", "", fmt.Errorf("chart requires kubeVersion: %s which is incompatible with Kubernetes %s", ch.Metadata.KubeVersion, caps.KubeVersion.Version)
 		}
 	}
 
@@ -283,7 +283,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 	if interactWithRemote && cfg.RESTClientGetter != nil {
 		restConfig, err := cfg.RESTClientGetter.ToRESTConfig()
 		if err != nil {
-			return hs, b, "", err
+			return hs, b, "", "", err
 		}
 		e := engine.New(restConfig)
 		e.EnableDNS = enableDNS
@@ -299,7 +299,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 	}
 
 	if err2 != nil {
-		return hs, b, "", err2
+		return hs, b, "", "", err2
 	}
 
 	// NOTES.txt gets rendered like all the other files, but because it's not a hook nor a resource,
@@ -333,19 +333,19 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 		// Merge files as stream of documents for sending to post renderer
 		merged, err := annotateAndMerge(files)
 		if err != nil {
-			return hs, b, notes, fmt.Errorf("error merging manifests: %w", err)
+			return hs, b, notes, "", fmt.Errorf("error merging manifests: %w", err)
 		}
 
 		// Run the post renderer
 		postRendered, err := pr.Run(bytes.NewBufferString(merged))
 		if err != nil {
-			return hs, b, notes, fmt.Errorf("error while running post render on files: %w", err)
+			return hs, b, notes, "", fmt.Errorf("error while running post render on files: %w", err)
 		}
 
 		// Use the file list and contents received from the post renderer
 		files, err = splitAndDeannotate(postRendered.String())
 		if err != nil {
-			return hs, b, notes, fmt.Errorf("error while parsing post rendered output: %w", err)
+			return hs, b, notes, "", fmt.Errorf("error while parsing post rendered output: %w", err)
 		}
 	}
 
@@ -365,8 +365,23 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 			}
 			fmt.Fprintf(b, "---\n# Source: %s\n%s\n", name, content)
 		}
-		return hs, b, "", err
+		return hs, b, "", "", err
 	}
+
+	// Source-ordered stream, including hooks, for template and dry-run output.
+	// The buffer below stays in install order and omits hooks so apply is unchanged.
+	streamFiles := maps.Clone(files)
+	if streamFiles == nil {
+		streamFiles = map[string]string{}
+	}
+	if includeCrds {
+		for _, crd := range ch.CRDObjects() {
+			if _, exists := streamFiles[crd.Filename]; !exists {
+				streamFiles[crd.Filename] = string(crd.File.Data)
+			}
+		}
+	}
+	stream := releaseutil.ManifestStream(streamFiles, hideSecret)
 
 	// Aggregate all valid manifests into one big doc.
 	fileWritten := make(map[string]bool)
@@ -378,7 +393,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 			} else {
 				err = writeToFile(outputDir, crd.Filename, string(crd.File.Data[:]), fileWritten[crd.Filename])
 				if err != nil {
-					return hs, b, "", err
+					return hs, b, "", "", err
 				}
 				fileWritten[crd.Filename] = true
 			}
@@ -403,13 +418,13 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 			// used by install or upgrade
 			err = writeToFile(newDir, m.Name, m.Content, fileWritten[m.Name])
 			if err != nil {
-				return hs, b, "", err
+				return hs, b, "", "", err
 			}
 			fileWritten[m.Name] = true
 		}
 	}
 
-	return hs, b, notes, nil
+	return hs, b, notes, stream, nil
 }
 
 // RESTClientGetter gets the rest client

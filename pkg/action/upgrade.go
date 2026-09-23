@@ -296,7 +296,7 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 		return nil, nil, false, err
 	}
 
-	hooks, manifestDoc, notesTxt, err := u.cfg.renderResources(chart, valuesToRender, "", "", u.SubNotes, false, false, u.PostRenderer, interactWithServer(u.DryRunStrategy), u.EnableDNS, u.HideSecret)
+	hooks, manifestDoc, notesTxt, manifestStream, err := u.cfg.renderResources(chart, valuesToRender, "", "", u.SubNotes, false, false, u.PostRenderer, interactWithServer(u.DryRunStrategy), u.EnableDNS, u.HideSecret)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -333,6 +333,9 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 
 	if len(notesTxt) > 0 {
 		upgradedRelease.Info.Notes = notesTxt
+	}
+	if isDryRun(u.DryRunStrategy) {
+		upgradedRelease.OutputManifest = manifestStream
 	}
 	err = validateManifest(u.cfg.KubeClient, manifestDoc.Bytes(), !u.DisableOpenAPIValidation)
 	return currentRelease, upgradedRelease, serverSideApply, err

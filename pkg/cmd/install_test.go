@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"helm.sh/helm/v4/pkg/repo/v1/repotest"
@@ -315,6 +316,32 @@ func TestInstallVersionCompletion(t *testing.T) {
 		golden: "output/version-invalid-comp.txt",
 	}}
 	runTestCmd(t, tests)
+}
+
+func TestInstallDryRunUnifiedManifest(t *testing.T) {
+	defer resetEnv()()
+	_, out, err := executeActionCommand("install order testdata/testcharts/object-order --dry-run --namespace default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "HOOKS:") {
+		t.Fatalf("dry-run should not print a HOOKS section:\n%s", out)
+	}
+	if strings.Count(out, "MANIFEST:") != 1 {
+		t.Fatalf("expected a single MANIFEST section:\n%s", out)
+	}
+	order := []string{"name: first", "name: second", "name: third", "name: fourth", "name: fifth", "name: sixth", "name: seventh"}
+	last := -1
+	for _, name := range order {
+		idx := strings.Index(out, name)
+		if idx < 0 || idx < last {
+			t.Fatalf("expected %s after previous resources in source order:\n%s", name, out)
+		}
+		last = idx
+	}
+	if !strings.HasSuffix(out, "\n") || strings.HasSuffix(out, "\n\n") || strings.Contains(out, "MANIFEST:\n\n") {
+		t.Fatalf("dry-run manifest has extra trailing blank lines:\n%q", out)
+	}
 }
 
 func TestInstallFileCompletion(t *testing.T) {

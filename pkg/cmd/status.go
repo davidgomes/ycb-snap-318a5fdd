@@ -35,6 +35,7 @@ import (
 	"helm.sh/helm/v4/pkg/cmd/require"
 	"helm.sh/helm/v4/pkg/release"
 	releasev1 "helm.sh/helm/v4/pkg/release/v1"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 )
 
 // NOTE: Keep the list of statuses up-to-date with pkg/release/status.go.
@@ -227,7 +228,13 @@ func (s statusPrinter) WriteTable(out io.Writer) error {
 		_, _ = fmt.Fprintln(out)
 	}
 
-	if strings.EqualFold(rel.Info.Description, "Dry run complete") || s.debug {
+	if rel.OutputManifest != "" || strings.EqualFold(rel.Info.Description, "Dry run complete") {
+		manifest := rel.OutputManifest
+		if strings.TrimSpace(manifest) == "" {
+			manifest = releaseutil.StoredManifestStream(rel.Manifest, sourcedHooks(rel.Hooks))
+		}
+		writeManifestSection(out, manifest)
+	} else if s.debug {
 		_, _ = fmt.Fprintln(out, "HOOKS:")
 		for _, h := range rel.Hooks {
 			_, _ = fmt.Fprintf(out, "---\n# Source: %s\n%s\n", h.Path, h.Manifest)
@@ -240,6 +247,26 @@ func (s statusPrinter) WriteTable(out io.Writer) error {
 		_, _ = fmt.Fprintf(out, "NOTES:\n%s\n", strings.TrimSpace(rel.Info.Notes))
 	}
 	return nil
+}
+
+func writeManifestSection(out io.Writer, manifest string) {
+	manifest = strings.TrimRight(manifest, "\n")
+	if manifest == "" {
+		_, _ = fmt.Fprintln(out, "MANIFEST:")
+		return
+	}
+	_, _ = fmt.Fprintf(out, "MANIFEST:\n%s\n", manifest)
+}
+
+func sourcedHooks(hooks []*releasev1.Hook) []releaseutil.SourcedHook {
+	sourced := make([]releaseutil.SourcedHook, 0, len(hooks))
+	for _, hook := range hooks {
+		if hook == nil {
+			continue
+		}
+		sourced = append(sourced, releaseutil.SourcedHook{Path: hook.Path, Manifest: hook.Manifest})
+	}
+	return sourced
 }
 
 func executionsByHookEvent(rel *releasev1.Release) map[releasev1.HookEvent][]*releasev1.Hook {

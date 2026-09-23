@@ -39,6 +39,9 @@ type Release struct {
 	Config map[string]any `json:"config,omitempty"`
 	// Manifest is the string representation of the rendered template.
 	Manifest string `json:"manifest,omitempty"`
+	// OutputManifest is a source-ordered manifest stream, including hooks, for
+	// dry-run and template output. It is not persisted.
+	OutputManifest string `json:"-"`
 	// Hooks are all of the hooks declared for this release.
 	Hooks []*Hook `json:"hooks,omitempty"`
 	// Version is an int which represents the revision of the release.
