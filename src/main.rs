@@ -11,6 +11,7 @@ mod fmt;
 mod hyperlink;
 mod output;
 mod regex_helper;
+mod sort;
 mod walk;
 
 use std::env;
@@ -24,7 +25,7 @@ use globset::GlobBuilder;
 use lscolors::LsColors;
 use regex::bytes::{Regex, RegexBuilder, RegexSetBuilder};
 
-use crate::cli::{ColorWhen, HyperlinkWhen, Opts};
+use crate::cli::{ColorWhen, HyperlinkWhen, Opts, SortKey};
 use crate::config::Config;
 use crate::exec::CommandSet;
 use crate::exit_codes::ExitCode;
@@ -33,6 +34,7 @@ use crate::filetypes::FileTypes;
 use crate::filter::OwnerFilter;
 use crate::filter::TimeFilter;
 use crate::regex_helper::{pattern_has_uppercase_char, pattern_matches_strings_with_leading_dot};
+use crate::sort::SortConfig;
 
 // We use jemalloc for performance reasons, see https://github.com/sharkdp/fd/pull/481
 // FIXME: re-enable jemalloc on macOS, see comment in Cargo.toml file for more infos
@@ -325,8 +327,32 @@ fn construct_config(mut opts: Opts, pattern_regexps: &[String]) -> Result<Config
         path_separator,
         actual_path_separator,
         max_results: opts.max_results(),
+        sort: sort_config(&opts),
         strip_cwd_prefix: opts.strip_cwd_prefix(|| !(opts.null_separator || has_command)),
         ignore_contain: opts.ignore_contain,
+    })
+}
+
+fn sort_config(opts: &Opts) -> Option<SortConfig> {
+    if opts.sort.is_empty() {
+        return None;
+    }
+    let seed = opts.sort_seed.unwrap_or_else(|| {
+        if opts.sort.contains(&SortKey::Random) {
+            crate::sort::time_seed()
+        } else {
+            0
+        }
+    });
+    Some(SortConfig {
+        keys: opts.sort.clone(),
+        reverse: opts.reverse,
+        dirs_first: opts.dirs_first,
+        files_first: opts.files_first,
+        case_sensitive: opts.sort_case_sensitive,
+        missing_last: opts.sort_missing_last,
+        natural: opts.sort_natural,
+        seed,
     })
 }
 

@@ -182,6 +182,13 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
 
     /// Receive the next worker result.
     fn recv(&self) -> Result<Batch, RecvTimeoutError> {
+        if self.config.sort.is_some() {
+            // Sorting needs the full set. Do not stream or apply --max-results early.
+            return match self.rx.recv() {
+                Ok(batch) => Ok(batch),
+                Err(_) => Err(RecvTimeoutError::Disconnected),
+            };
+        }
         match self.mode {
             ReceiverMode::Buffering => {
                 // Wait at most until we should switch to streaming
@@ -205,23 +212,27 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                                 return Err(ExitCode::HasResults(true));
                             }
 
-                            match self.mode {
-                                ReceiverMode::Buffering => {
-                                    self.buffer.push(dir_entry);
-                                    if self.buffer.len() > MAX_BUFFER_LENGTH {
-                                        self.stream()?;
+                            if self.config.sort.is_some() {
+                                self.buffer.push(dir_entry);
+                            } else {
+                                match self.mode {
+                                    ReceiverMode::Buffering => {
+                                        self.buffer.push(dir_entry);
+                                        if self.buffer.len() > MAX_BUFFER_LENGTH {
+                                            self.stream()?;
+                                        }
+                                    }
+                                    ReceiverMode::Streaming => {
+                                        self.print(&dir_entry)?;
                                     }
                                 }
-                                ReceiverMode::Streaming => {
-                                    self.print(&dir_entry)?;
-                                }
-                            }
 
-                            self.num_results += 1;
-                            if let Some(max_results) = self.config.max_results
-                                && self.num_results >= max_results
-                            {
-                                return self.stop();
+                                self.num_results += 1;
+                                if let Some(max_results) = self.config.max_results
+                                    && self.num_results >= max_results
+                                {
+                                    return self.stop();
+                                }
                             }
                         }
                         WorkerResult::Error(err) => {
@@ -280,7 +291,14 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
 
     /// Stop looping.
     fn stop(&mut self) -> Result<(), ExitCode> {
-        if self.mode == ReceiverMode::Buffering {
+        if let Some(sort) = self.config.sort.clone() {
+            crate::sort::sort_entries(&mut self.buffer, &sort);
+            if let Some(max_results) = self.config.max_results {
+                self.buffer.truncate(max_results);
+            }
+            self.num_results = self.buffer.len();
+            self.stream()?;
+        } else if self.mode == ReceiverMode::Buffering {
             self.buffer.sort();
             self.stream()?;
         }
@@ -440,11 +458,13 @@ impl WorkerState {
     }
 
     /// Spawn the sender threads.
-    fn spawn_senders(&self, walker: WalkParallel, tx: Sender<Batch>) {
+    fn spawn_senders(&self, walker: WalkParallel, tx: Sender<Batch>, roots: &[PathBuf]) {
+        let roots = Arc::new(roots.to_vec());
         walker.run(|| {
             let patterns = &self.patterns;
             let config = &self.config;
             let quit_flag = self.quit_flag.as_ref();
+            let roots = Arc::clone(&roots);
 
             let mut limit = 0x100;
             if let Some(cmd) = &config.command
@@ -495,7 +515,7 @@ impl WorkerState {
                                     .ok()
                                     .is_some_and(|m| m.file_type().is_symlink()) =>
                         {
-                            DirEntry::broken_symlink(path)
+                            DirEntry::broken_symlink(path.clone(), relative_depth(&path, &roots))
                         }
                         _ => {
                             return match tx.send(WorkerResult::Error(ignore::Error::WithPath {
@@ -663,7 +683,7 @@ impl WorkerState {
             let receiver = scope.spawn(|| self.receive(rx));
 
             // Spawn the sender threads.
-            self.spawn_senders(walker, tx);
+            self.spawn_senders(walker, tx, paths);
 
             receiver.join().unwrap()
         });
@@ -674,6 +694,19 @@ impl WorkerState {
             Ok(exit_code)
         }
     }
+}
+
+/// Depth of `path` relative to the search root that contains it.
+///
+/// Broken symlinks are reported as walk errors, which do not carry the walker's
+/// depth. Counting components under the matching root matches `ignore`'s depth
+/// for a normal entry at the same location.
+fn relative_depth(path: &std::path::Path, roots: &[PathBuf]) -> Option<usize> {
+    roots.iter().find_map(|root| {
+        path.strip_prefix(root)
+            .ok()
+            .map(|relative| relative.components().count())
+    })
 }
 
 /// Recursively scan the given search path for files / pathnames matching the patterns.

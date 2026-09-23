@@ -2758,3 +2758,631 @@ fn test_ignore_contain_precedence_over_root_check() {
     let expected = "";
     te.assert_output(&["--ignore-contain=CACHEDIR.TAG", "."], expected);
 }
+
+/// Compare stdout in traversal order. `assert_output` sorts lines, which hides
+/// whether `--sort` actually ordered the results.
+fn assert_order(te: &TestEnv, args: &[&str], expected: &str) {
+    let output = te.assert_success_and_get_output(".", args);
+    let actual = String::from_utf8_lossy(&output.stdout).replace('\\', "/");
+    let normalize = |text: &str| {
+        text.replace('\0', "\n")
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let expected = normalize(expected);
+    let actual = normalize(&actual);
+    assert_eq!(
+        actual,
+        expected,
+        "fd {} did not print results in the expected order",
+        args.join(" ")
+    );
+}
+
+#[test]
+fn test_sort_name_path_tie_and_threads() {
+    let te = TestEnv::new(
+        &["sort_sub"],
+        &["sort_b", "sort_a", "sort_sub/sort_c", "sort_sub/sort_a"],
+    );
+
+    let expected = "\
+        sort_a
+        sort_sub/sort_a
+        sort_b
+        sort_sub/sort_c";
+    assert_order(&te, &["^sort_[abc]$", "--sort", "name"], expected);
+    assert_order(
+        &te,
+        &["^sort_[abc]$", "--sort", "name", "--threads", "1"],
+        expected,
+    );
+    assert_order(
+        &te,
+        &["^sort_[abc]$", "--sort", "name", "--threads", "8"],
+        expected,
+    );
+
+    assert_order(
+        &te,
+        &["^sort_[abc]$", "--sort", "name", "--reverse"],
+        "\
+        sort_sub/sort_c
+        sort_b
+        sort_sub/sort_a
+        sort_a",
+    );
+
+    assert_order(
+        &te,
+        &["^sort_[abc]$", "--sort", "path"],
+        "\
+        sort_a
+        sort_b
+        sort_sub/sort_a
+        sort_sub/sort_c",
+    );
+}
+
+#[test]
+fn test_sort_case_and_extension() {
+    let te = TestEnv::new(
+        &[],
+        &[
+            "sort_b",
+            "sort_C",
+            "sort_noext",
+            "sort_file.a",
+            "sort_file.B",
+            "sort_file.c",
+            "sort_b.a",
+            "sort_a.a",
+        ],
+    );
+
+    assert_order(&te, &["^sort_[bC]$", "--sort", "name"], "sort_b\nsort_C");
+    assert_order(
+        &te,
+        &["^sort_[bC]$", "--sort", "name", "--sort-case-sensitive"],
+        "sort_C\nsort_b",
+    );
+    assert_order(
+        &te,
+        &["^sort_[bC]$", "--sort", "path", "--sort-case-sensitive"],
+        "sort_C\nsort_b",
+    );
+
+    assert_order(
+        &te,
+        &["sort_file", "--sort", "extension"],
+        "\
+        sort_file.a
+        sort_file.B
+        sort_file.c",
+    );
+    assert_order(
+        &te,
+        &["sort_file", "--sort", "extension", "--sort-case-sensitive"],
+        "\
+        sort_file.B
+        sort_file.a
+        sort_file.c",
+    );
+    assert_order(
+        &te,
+        &["sort_", "--sort", "extension", "--sort", "name"],
+        "\
+        sort_b
+        sort_C
+        sort_noext
+        sort_a.a
+        sort_b.a
+        sort_file.a
+        sort_file.B
+        sort_file.c",
+    );
+    assert_order(
+        &te,
+        &[
+            "sort_",
+            "--sort",
+            "extension",
+            "--sort",
+            "name",
+            "--sort-missing-last",
+        ],
+        "\
+        sort_a.a
+        sort_b.a
+        sort_file.a
+        sort_file.B
+        sort_file.c
+        sort_b
+        sort_C
+        sort_noext",
+    );
+}
+
+#[test]
+fn test_sort_natural() {
+    let te = TestEnv::new(
+        &["sort_dir2", "sort_dir10"],
+        &[
+            "sort_file9",
+            "sort_file10",
+            "sort_file20",
+            "sort_file007",
+            "sort_file7",
+            "sort_File10",
+            "sort_dir2/a",
+            "sort_dir10/a",
+        ],
+    );
+
+    assert_order(
+        &te,
+        &["sort_file", "--sort", "name", "--sort-natural"],
+        "\
+        sort_file7
+        sort_file007
+        sort_file9
+        sort_File10
+        sort_file10
+        sort_file20",
+    );
+    assert_order(
+        &te,
+        &[
+            "sort_file",
+            "--sort",
+            "name",
+            "--sort-natural",
+            "--sort-case-sensitive",
+        ],
+        "\
+        sort_File10
+        sort_file7
+        sort_file007
+        sort_file9
+        sort_file10
+        sort_file20",
+    );
+    assert_order(
+        &te,
+        &["sort_file", "--sort", "name"],
+        "\
+        sort_file007
+        sort_File10
+        sort_file10
+        sort_file20
+        sort_file7
+        sort_file9",
+    );
+
+    assert_order(
+        &te,
+        &["^a$", "--sort", "path", "--sort-natural"],
+        "\
+        sort_dir2/a
+        sort_dir10/a",
+    );
+    assert_order(
+        &te,
+        &["^a$", "--sort", "path"],
+        "\
+        sort_dir10/a
+        sort_dir2/a",
+    );
+}
+
+#[test]
+fn test_sort_length_depth_and_limit() {
+    let te = TestEnv::new(
+        &["sort_sub", "sort_cdir", "sort_ddir"],
+        &["sort_bb", "sort_a", "sort_c", "sort_sub/sort_b"],
+    );
+
+    assert_order(
+        &te,
+        &["^sort_(a|c|bb)$", "--sort", "name-length", "--sort", "name"],
+        "\
+        sort_a
+        sort_c
+        sort_bb",
+    );
+    assert_order(
+        &te,
+        &[
+            "sort_sub",
+            "--full-path",
+            "--sort",
+            "path-length",
+            "--sort",
+            "name",
+        ],
+        "\
+        sort_sub/
+        sort_sub/sort_b",
+    );
+    assert_order(
+        &te,
+        &["sort_", "--sort", "depth", "--sort", "name"],
+        "\
+        sort_a
+        sort_bb
+        sort_c
+        sort_cdir/
+        sort_ddir/
+        sort_sub/
+        sort_sub/sort_b",
+    );
+
+    let limited = "^sort_(a|bb|cdir|ddir)$";
+    assert_order(
+        &te,
+        &[limited, "--sort", "name", "--max-results", "2"],
+        "sort_a\nsort_bb",
+    );
+    assert_order(
+        &te,
+        &[limited, "--sort", "name", "--reverse", "--max-results", "2"],
+        "sort_ddir/\nsort_cdir/",
+    );
+    assert_order(
+        &te,
+        &[
+            limited,
+            "--dirs-first",
+            "--sort",
+            "name",
+            "--reverse",
+            "--max-results",
+            "2",
+        ],
+        "sort_bb\nsort_a",
+    );
+    assert_order(
+        &te,
+        &[limited, "--dirs-first", "--sort", "name"],
+        "\
+        sort_cdir/
+        sort_ddir/
+        sort_a
+        sort_bb",
+    );
+    assert_order(
+        &te,
+        &[limited, "--files-first", "--sort", "name"],
+        "\
+        sort_a
+        sort_bb
+        sort_cdir/
+        sort_ddir/",
+    );
+}
+
+#[test]
+fn test_sort_size_and_time() {
+    let te = TestEnv::new(&["sort_dir"], &[]);
+    create_file_with_size(te.test_root().join("sort_zero"), 0);
+    create_file_with_size(te.test_root().join("sort_small"), 1);
+    create_file_with_size(te.test_root().join("sort_big"), 50);
+    create_file_with_modified(te.test_root().join("sort_old"), 3600);
+    create_file_with_modified(te.test_root().join("sort_new"), 0);
+
+    assert_order(
+        &te,
+        &[
+            "^sort_(dir|zero|small|big)$",
+            "--sort",
+            "size",
+            "--sort",
+            "name",
+        ],
+        "\
+        sort_dir/
+        sort_zero
+        sort_small
+        sort_big",
+    );
+    assert_order(
+        &te,
+        &[
+            "^sort_(dir|zero|small|big)$",
+            "--sort",
+            "size",
+            "--sort",
+            "name",
+            "--sort-missing-last",
+        ],
+        "\
+        sort_zero
+        sort_small
+        sort_big
+        sort_dir/",
+    );
+    assert_order(
+        &te,
+        &["^sort_(old|new)$", "--sort", "modified"],
+        "sort_old\nsort_new",
+    );
+    assert_order(
+        &te,
+        &["^sort_(old|new)$", "--sort", "accessed"],
+        "sort_old\nsort_new",
+    );
+    assert_order(
+        &te,
+        &["^sort_(old|new)$", "--sort", "modified", "--reverse"],
+        "sort_new\nsort_old",
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_sort_type_groups_and_non_files() {
+    let te = TestEnv::new(&["sort_z"], &["sort_a"]);
+    let root = te.test_root();
+    std::os::unix::fs::symlink("sort_a", root.join("sort_m")).unwrap();
+    std::os::unix::fs::symlink("sort_z", root.join("sort_dirlink")).unwrap();
+    create_file_with_size(root.join("sort_big"), 20);
+    let fifo =
+        std::ffi::CString::new(root.join("sort_fifo").as_os_str().as_encoded_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o644) }, 0);
+
+    assert_order(
+        &te,
+        &["^sort_[azm]$", "--sort", "type", "--sort", "name"],
+        "\
+        sort_z/
+        sort_m
+        sort_a",
+    );
+    assert_order(
+        &te,
+        &["^sort_[azm]$", "--dirs-first", "--sort", "name"],
+        "\
+        sort_z/
+        sort_a
+        sort_m",
+    );
+    assert_order(
+        &te,
+        &["^sort_(z|a|dirlink)$", "--dirs-first", "--sort", "name"],
+        "\
+        sort_z/
+        sort_a
+        sort_dirlink",
+    );
+    assert_order(
+        &te,
+        &["^sort_(z|a|dirlink)$", "--files-first", "--sort", "name"],
+        "\
+        sort_a
+        sort_dirlink
+        sort_z/",
+    );
+    assert_order(
+        &te,
+        &[
+            "^sort_(a|fifo|m|z|big)$",
+            "--sort",
+            "type",
+            "--sort",
+            "name",
+        ],
+        "\
+        sort_z/
+        sort_m
+        sort_a
+        sort_big
+        sort_fifo",
+    );
+    assert_order(
+        &te,
+        &["^sort_(z|big|m|fifo)$", "--sort", "size", "--sort", "name"],
+        "\
+        sort_fifo
+        sort_m
+        sort_z/
+        sort_big",
+    );
+}
+
+#[test]
+fn test_sort_missing_depth_and_multiple_roots() {
+    let mut te = TestEnv::new(
+        &["r1", "r2", "sort_a"],
+        &["r1/sort_b", "r1/sort_a", "r2/sort_c", "sort_z"],
+    );
+    te.create_broken_symlink("sort_a/sort_broken")
+        .expect("create broken symlink");
+
+    // Path order would put sort_a/sort_broken first. Depth order does not.
+    assert_order(
+        &te,
+        &["^sort_(z|broken)$", "--sort", "depth", "--sort", "name"],
+        "\
+        sort_z
+        sort_a/sort_broken",
+    );
+    assert_order(
+        &te,
+        &["^sort_(z|broken)$", "--sort", "path"],
+        "\
+        sort_a/sort_broken
+        sort_z",
+    );
+
+    assert_order(
+        &te,
+        &["--sort", "name", "sort", "r1", "r2"],
+        "\
+        r1/sort_a
+        r1/sort_b
+        r2/sort_c",
+    );
+}
+
+#[test]
+fn test_sort_random_seed() {
+    let te = TestEnv::new(
+        &[],
+        &[
+            "sort_r0",
+            "sort_r1",
+            "sort_r2",
+            "sort_r3",
+            "sort_r4",
+            "sort_r5",
+            "sort_a.txt",
+            "sort_b.txt",
+            "sort_a.md",
+            "sort_b.md",
+        ],
+    );
+
+    let seeded = te
+        .assert_success_and_get_output(".", &["^sort_r", "--sort", "random", "--sort-seed", "42"]);
+    let seeded_again = te.assert_success_and_get_output(
+        ".",
+        &[
+            "^sort_r",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "42",
+            "--threads",
+            "1",
+        ],
+    );
+    assert_eq!(seeded.stdout, seeded_again.stdout);
+
+    let other_seed = te
+        .assert_success_and_get_output(".", &["^sort_r", "--sort", "random", "--sort-seed", "99"]);
+    assert_ne!(seeded.stdout, other_seed.stdout);
+
+    let forward = String::from_utf8_lossy(&seeded.stdout).replace('\\', "/");
+    let reversed = te.assert_success_and_get_output(
+        ".",
+        &[
+            "^sort_r",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "42",
+            "--reverse",
+        ],
+    );
+    let reversed = String::from_utf8_lossy(&reversed.stdout).replace('\\', "/");
+    let forward_lines: Vec<_> = forward.lines().collect();
+    let reversed_lines: Vec<_> = reversed.lines().collect();
+    let mut expected_reverse = forward_lines.clone();
+    expected_reverse.reverse();
+    assert_eq!(reversed_lines, expected_reverse);
+
+    let grouped = te.assert_success_and_get_output(
+        ".",
+        &[
+            r"sort_[ab]\.(txt|md)$",
+            "--sort",
+            "extension",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "7",
+        ],
+    );
+    let grouped_again = te.assert_success_and_get_output(
+        ".",
+        &[
+            r"sort_[ab]\.(txt|md)$",
+            "--sort",
+            "extension",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "7",
+        ],
+    );
+    assert_eq!(grouped.stdout, grouped_again.stdout);
+    let lines: Vec<_> = String::from_utf8_lossy(&grouped.stdout)
+        .lines()
+        .map(|line| line.to_string())
+        .collect();
+    assert_eq!(lines.len(), 4);
+    let md_before_txt = lines.iter().position(|line| line.ends_with(".md"))
+        < lines.iter().position(|line| line.ends_with(".txt"));
+    assert!(
+        md_before_txt,
+        "extensions should group before the random tie-break: {lines:?}"
+    );
+
+    let named = te.assert_success_and_get_output(
+        ".",
+        &[
+            r"sort_[ab]\.(txt|md)$",
+            "--sort",
+            "name",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "7",
+        ],
+    );
+    assert_order(
+        &te,
+        &[
+            r"sort_[ab]\.(txt|md)$",
+            "--sort",
+            "name",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "7",
+        ],
+        &String::from_utf8_lossy(&named.stdout),
+    );
+    assert_order(
+        &te,
+        &[r"sort_[ab]\.(txt|md)$", "--sort", "name"],
+        "\
+        sort_a.md
+        sort_a.txt
+        sort_b.md
+        sort_b.txt",
+    );
+
+    let unseeded = te.assert_success_and_get_output(".", &["^sort_r", "--sort", "random"]);
+    assert_eq!(String::from_utf8_lossy(&unseeded.stdout).lines().count(), 6);
+}
+
+#[test]
+fn test_sort_rendering_and_conflicts() {
+    let te = TestEnv::new(&[], &["sort_b", "sort_a"]);
+    assert_order(
+        &te,
+        &["sort_", "--sort", "name", "--format", "{/}"],
+        "sort_a\nsort_b",
+    );
+    let nul = te.assert_success_and_get_output(".", &["sort_", "--sort", "name", "--print0"]);
+    // --print0 keeps the ./ prefix that normal output strips.
+    assert_eq!(nul.stdout, b"./sort_a\0./sort_b\0");
+
+    te.assert_failure(&["--reverse", "sort_a"]);
+    te.assert_failure(&["--dirs-first"]);
+    te.assert_failure(&["--files-first"]);
+    te.assert_failure(&["--sort-natural"]);
+    te.assert_failure(&["--sort-missing-last"]);
+    te.assert_failure(&["--sort-case-sensitive"]);
+    te.assert_failure(&["--sort-seed", "1"]);
+    te.assert_failure(&["--dirs-first", "--files-first", "--sort", "name"]);
+    te.assert_failure(&["--sort", "name", "--exec", "echo"]);
+    te.assert_failure(&["--sort", "name", "--exec-batch", "echo"]);
+    te.assert_failure(&["--sort", "name", "--list-details"]);
+    te.assert_failure(&["--sort", "not-a-field"]);
+    te.assert_failure(&["--sort", "random", "--sort-seed", "-1"]);
+}

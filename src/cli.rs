@@ -27,7 +27,9 @@ use crate::filter::SizeFilter;
     max_term_width = 98,
     args_override_self = true,
     group(ArgGroup::new("execs").args(&["exec", "exec_batch", "list_details"]).conflicts_with_all(&[
-            "max_results", "quiet", "max_one_result"])),
+            "max_results", "quiet", "max_one_result",
+            "sort", "reverse", "dirs_first", "files_first",
+            "sort_case_sensitive", "sort_missing_last", "sort_natural", "sort_seed"])),
 )]
 pub struct Opts {
     /// Include hidden directories and files in the search results (default:
@@ -581,6 +583,129 @@ pub struct Opts {
     )]
     pub quiet: bool,
 
+    /// Sort results by the given field. Repeat the option to add tie-breakers:
+    /// keys are applied left to right, and later keys break ties from earlier
+    /// ones. If every key ties, results are ordered by full path so the output
+    /// does not depend on traversal order.
+    ///
+    /// {n}  path          full path
+    /// {n}  name          file or directory name
+    /// {n}  extension     text after the last dot (missing when there is none)
+    /// {n}  size          size in bytes; only regular files have a size
+    /// {n}  modified      modification time
+    /// {n}  created       creation time
+    /// {n}  accessed      access time
+    /// {n}  depth         directory depth
+    /// {n}  type          directory, then symlink, then regular file, then other
+    /// {n}  name-length   length of the file name
+    /// {n}  path-length   length of the full path
+    /// {n}  random        pseudo-random order (see --sort-seed)
+    ///
+    /// Text fields (name, path, extension) are case-insensitive unless
+    /// --sort-case-sensitive is set. With --sort-natural, digit runs in those
+    /// fields are compared numerically (file9 before file10).
+    ///
+    /// Entries with a missing value (no extension, no timestamp, no size on
+    /// directories, symlinks, and other non-files, unknown depth) sort before
+    /// entries that have a value, unless --sort-missing-last is set.
+    ///
+    /// --dirs-first and --files-first group results before these keys.
+    /// --reverse reverses the final order. With --max-results, fd collects and
+    /// sorts every match, then keeps the first results of that final order.
+    ///
+    /// Sorting cannot be combined with --exec, --exec-batch, or --list-details.
+    #[arg(
+        long,
+        value_name = "field",
+        value_enum,
+        hide_possible_values = true,
+        help = "Sort results by a field (repeatable)",
+        long_help
+    )]
+    pub sort: Vec<SortKey>,
+
+    /// Reverse the order produced by --sort, including directory/file grouping
+    /// and the final path tie-break.
+    #[arg(long, requires = "sort", help = "Reverse the sorted order", long_help)]
+    pub reverse: bool,
+
+    /// When sorting, list directories before every other entry type. Symlinks
+    /// (including links to directories) and other non-directories stay in the
+    /// second group and are ordered by the --sort keys. Mutually exclusive
+    /// with --files-first.
+    #[arg(
+        long,
+        requires = "sort",
+        conflicts_with = "files_first",
+        help = "When sorting, show directories first",
+        long_help
+    )]
+    pub dirs_first: bool,
+
+    /// When sorting, list regular files before every other entry type. Directories,
+    /// symlinks, and other non-files stay in the second group and are ordered by
+    /// the --sort keys. Mutually exclusive with --dirs-first.
+    #[arg(
+        long,
+        requires = "sort",
+        help = "When sorting, show regular files first",
+        long_help
+    )]
+    pub files_first: bool,
+
+    /// Compare name, path, and extension case-sensitively when sorting. The
+    /// default is to fold case. With --sort-natural, digit runs are still
+    /// compared numerically.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Case-sensitive text comparisons when sorting",
+        long_help
+    )]
+    pub sort_case_sensitive: bool,
+
+    /// Place entries that lack a value for a sort key (for example directories
+    /// when sorting by size, or names without an extension) after entries that
+    /// have a value. By default, missing values sort first.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Sort missing values last",
+        long_help
+    )]
+    pub sort_missing_last: bool,
+
+    /// Compare name, path, and extension in natural order. Runs of ASCII digits
+    /// are compared by numeric value, so file9 comes before file10. Other
+    /// characters follow the usual text comparison, including case folding
+    /// unless --sort-case-sensitive is set. When two digit runs have the same
+    /// value, the shorter run (fewer leading zeros) comes first.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Natural order for name, path, and extension",
+        long_help
+    )]
+    pub sort_natural: bool,
+
+    /// Unsigned 64-bit seed for --sort random. The same seed and the same set of
+    /// paths always produce the same order, independent of traversal. Without
+    /// this option, the seed is taken from the current time and the order
+    /// changes between runs. Has no effect on keys other than random.
+    #[arg(
+        long,
+        value_name = "n",
+        requires = "sort",
+        hide_short_help = true,
+        value_parser = value_parser!(u64),
+        help = "Seed for --sort random",
+        long_help
+    )]
+    pub sort_seed: Option<u64>,
+
     /// Enable the display of filesystem errors for situations such as
     /// insufficient permissions or dead symlinks.
     #[arg(
@@ -817,6 +942,34 @@ pub enum StripCwdWhen {
     Always,
     /// Never strip the ./
     Never,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
+pub enum SortKey {
+    /// Full path
+    Path,
+    /// File or directory name
+    Name,
+    /// File extension, without the leading dot
+    Extension,
+    /// Size in bytes of a regular file
+    Size,
+    /// Modification time
+    Modified,
+    /// Creation time
+    Created,
+    /// Access time
+    Accessed,
+    /// Directory depth
+    Depth,
+    /// directory < symlink < regular file < other
+    Type,
+    /// Length of the file name
+    NameLength,
+    /// Length of the full path
+    PathLength,
+    /// Pseudo-random order
+    Random,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
