@@ -128,12 +128,15 @@ def get_import_targets(nodes, filename):
     for node in nodes:
         if isinstance(node, ast.Import):
             for alias in node.names:
-                names.update(_get_prefixes(alias.name.split(".")))
+                names.update(
+                    ".".join(prefix)
+                    for prefix in _get_prefixes(alias.name.split("."))
+                )
             continue
         parts = node.module.split(".") if node.module else []
         imported = [alias.name for alias in node.names if alias.name != "*"]
         if node.level == 0:
-            names.update(_get_prefixes(parts))
+            names.update(".".join(prefix) for prefix in _get_prefixes(parts))
             names.update(".".join([*parts, name]) for name in imported)
         else:
             package = Path(filename).parent
@@ -142,7 +145,7 @@ def get_import_targets(nodes, filename):
             if not parts:
                 stems.add(str(package))
             stems.update(
-                str(package.joinpath(*prefix.split(".")))
+                str(package.joinpath(*prefix))
                 for prefix in _get_prefixes(parts)
             )
             stems.update(
@@ -152,7 +155,7 @@ def get_import_targets(nodes, filename):
 
 
 def _get_prefixes(parts):
-    return [".".join(parts[:i]) for i in range(1, len(parts) + 1)]
+    return [parts[:i] for i in range(1, len(parts) + 1)]
 
 
 def _read_import_targets(path):
@@ -183,38 +186,60 @@ def _is_whitelist(key):
     return "whitelist" in PurePath(key).name.lower()
 
 
+def _get_stem(key):
+    # Imports are matched case-insensitively, since false positives only
+    # cause unnecessary re-analysis.
+    path = PurePath(key.lower())
+    return path.parent if path.name == "__init__.py" else path.with_suffix("")
+
+
 class _ModuleIndex:
     """Find the modules that import statements refer to."""
 
     def __init__(self, keys):
+        stems = {key: _get_stem(key) for key in keys}
+        packages = {
+            stem
+            for key, stem in stems.items()
+            if PurePath(key.lower()).name == "__init__.py"
+        }
         self._keys_by_stem = defaultdict(set)
-        self._stems_by_name = defaultdict(list)
-        for key in keys:
-            # Imports are matched case-insensitively, since false positives
-            # only cause unnecessary re-analysis.
-            path = PurePath(key.lower())
-            stem = (
-                path.parent
-                if path.name == "__init__.py"
-                else path.with_suffix("")
-            )
+        self._modules_by_name = defaultdict(list)
+        for key, stem in stems.items():
+            # Number of components of the fully qualified module name, which
+            # spans all enclosing packages known to the index.
+            length = 1
+            while (
+                length < len(stem.parts)
+                and PurePath(*stem.parts[:-length]) in packages
+            ):
+                length += 1
             self._keys_by_stem[str(stem)].add(key)
-            self._stems_by_name[stem.name].append((stem.parts, key))
+            self._modules_by_name[stem.name].append((stem.parts, length, key))
 
-    def resolve(self, names, stems):
+    def resolve(self, names, stems, importer):
         """
         Return the keys of the modules that the dotted *names* and path
-        *stems* (see get_import_targets()) may refer to. A dotted name matches
-        all modules whose path ends with it, since the import roots are
-        unknown.
+        *stems* (see get_import_targets()) of the module *importer* may refer
+        to.
+
+        Since the import roots are unknown, a dotted name matches all modules
+        whose path ends with it, as long as it contains the fully qualified
+        module name or refers to a module next to the importer.
         """
         keys = set()
         for stem in stems:
             keys |= self._keys_by_stem.get(str(PurePath(stem.lower())), set())
+        importer_dir = PurePath(importer.lower()).parent.parts
         for name in names:
             parts = tuple(name.lower().split("."))
-            for stem_parts, key in self._stems_by_name.get(parts[-1], []):
-                if stem_parts[-len(parts) :] == parts:
+            for stem_parts, length, key in self._modules_by_name.get(
+                parts[-1], []
+            ):
+                if stem_parts[-len(parts) :] == parts and (
+                    len(parts) >= length
+                    or stem_parts[: -len(parts)] == importer_dir
+                ):
                     keys.add(key)
         return keys
 
@@ -239,6 +264,12 @@ class Cache:
         }
 
     An empty message stands for the default message of the item type.
+
+    Entries without "defined" and "used" belong to modules that have not been
+    analyzed successfully, e.g., because they are invalid or because the
+    analysis was interrupted. Such modules are always analyzed, but they only
+    affect the modules importing them if they changed. Their imports are
+    omitted if they are unknown.
     """
 
     def __init__(self, cache_dir, settings=None):
@@ -287,6 +318,7 @@ class Cache:
         are affected by a changed whitelist.
         """
         changed = set()
+        unanalyzed = set()
         for key, (path, checksum) in current.items():
             entry = self.modules.get(key)
             if (
@@ -296,6 +328,8 @@ class Cache:
                 or entry["path"] != str(path)
             ):
                 changed.add(key)
+            elif "defined" not in entry:
+                unanalyzed.add(key)
         deleted = {
             key
             for key, entry in self.modules.items()
@@ -318,23 +352,23 @@ class Cache:
         }
         for key in filter(_is_whitelist, changed | deleted):
             if key in self.modules:
-                affected |= index.resolve(
-                    self.modules[key]["imports"],
-                    self.modules[key]["relative_imports"],
-                )
+                affected |= self._resolve_imports(index, key)
             if key in current:
-                affected |= index.resolve(
-                    *_read_import_targets(current[key][0])
-                )
+                names, stems = _read_import_targets(current[key][0])
+                affected |= index.resolve(names, stems, key)
 
         importers = defaultdict(set)
+        unknown_imports = set()
         for key in unchanged:
-            entry = self.modules[key]
-            for imported in index.resolve(
-                entry["imports"], entry["relative_imports"]
-            ):
-                importers[imported].add(key)
+            if "imports" in self.modules[key]:
+                for imported in self._resolve_imports(index, key):
+                    importers[imported].add(key)
+            else:
+                unknown_imports.add(key)
         outdated = changed | deleted
+        if outdated:
+            # Modules with unknown imports may import outdated modules.
+            outdated |= unknown_imports
         queue = list(outdated)
         while queue:
             for importer in importers.get(queue.pop(), set()):
@@ -342,22 +376,45 @@ class Cache:
                     outdated.add(importer)
                     queue.append(importer)
 
-        return (outdated | affected) & current.keys()
+        return (outdated | affected | unanalyzed) & current.keys()
+
+    def _resolve_imports(self, index, key):
+        entry = self.modules[key]
+        if "imports" not in entry:
+            return set()
+        return index.resolve(entry["imports"], entry["relative_imports"], key)
 
     def _get_imported_names(self, key):
-        return {
-            row[0] for row in self.modules[key]["defined"].get("import", [])
-        }
+        defined = self.modules[key].get("defined", {})
+        return {row[0] for row in defined.get("import", [])}
 
-    def save(self, modules, whitelists, keys):
+    def _get_unanalyzed_entry(self, key, path, checksum):
+        entry = {"path": str(path), "sha256": checksum}
+        previous = self.modules.get(key)
+        if (
+            previous is not None
+            and previous["sha256"] == checksum
+            and "imports" in previous
+        ):
+            entry["imports"] = previous["imports"]
+            entry["relative_imports"] = previous["relative_imports"]
+        return entry
+
+    def save(self, modules, whitelists, current):
         """
         Store the entries in *modules* and the checksums of the bundled
         *whitelists* (mapping import names to checksums).
 
-        *keys* holds the keys of all modules of this run. Entries of other
-        modules are kept if their files still exist, including entries that
-        concurrent Vulture processes stored in the meantime.
+        *current* maps the keys of all modules of this run to pairs of their
+        path and checksum (see get_stale_modules()). Modules without entry
+        are stored as unanalyzed. Entries of other modules are kept if their
+        files still exist, including entries that concurrent Vulture
+        processes stored in the meantime.
         """
+        modules = dict(modules)
+        for key, (path, checksum) in current.items():
+            if key not in modules and checksum is not None:
+                modules[key] = self._get_unanalyzed_entry(key, path, checksum)
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             with _locked(self.cache_dir, exclusive=True):
@@ -365,7 +422,7 @@ class Cache:
                 merged = {
                     key: entry
                     for key, entry in stored_modules.items()
-                    if key not in keys and os.path.exists(entry["path"])
+                    if key not in current and os.path.exists(entry["path"])
                 }
                 merged.update(modules)
                 data = {
@@ -468,18 +525,28 @@ def _is_valid_entry(entry):
             and isinstance(row[4], str)
         )
 
-    return (
+    if not (
         isinstance(entry, dict)
         and isinstance(entry.get("path"), str)
         and isinstance(entry.get("sha256"), str)
+    ):
+        return False
+    has_imports = "imports" in entry or "relative_imports" in entry
+    if has_imports and not (
+        is_str_list(entry.get("imports"))
+        and is_str_list(entry.get("relative_imports"))
+    ):
+        return False
+    if "defined" not in entry and "used" not in entry:
+        return True
+    return (
+        has_imports
         and isinstance(entry.get("defined"), dict)
         and all(
             isinstance(rows, list) and all(is_item_row(row) for row in rows)
             for rows in entry["defined"].values()
         )
         and is_str_list(entry.get("used"))
-        and is_str_list(entry.get("imports"))
-        and is_str_list(entry.get("relative_imports"))
     )
 
 

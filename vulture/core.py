@@ -346,7 +346,7 @@ class Vulture(ast.NodeVisitor):
             self._scan_whitelists(exclude_path, whitelists)
         finally:
             # Also store the results so far if the user aborts the analysis.
-            self._cache.save(entries, whitelists, set(keys))
+            self._cache.save(entries, whitelists, current)
 
     def _scan_module(self, module):
         self._log("Scanning:", module)
@@ -377,7 +377,7 @@ class Vulture(ast.NodeVisitor):
 
     def _scan_module_for_cache(self, module, checksum):
         """
-        Scan the module and return its cache entry, or None if the module
+        Scan the module and return its cache entry, or None if its results
         can't be cached because it's unreadable or invalid.
         """
         collections = self._get_collections()
@@ -399,7 +399,8 @@ class Vulture(ast.NodeVisitor):
                 self.exit_code = exit_code
             self._import_nodes = None
 
-        # Don't cache invalid modules to report their errors in every run.
+        # Don't cache the results of invalid modules to report their errors in
+        # every run.
         if failed or checksum is None:
             return None
         defined = {}
