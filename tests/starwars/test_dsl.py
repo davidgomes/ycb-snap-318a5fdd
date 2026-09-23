@@ -1628,3 +1628,207 @@ def test_directive_location_validation(
         # Should raise GraphQLError for invalid location
         with pytest.raises(GraphQLError, match="Invalid directive location"):
             instance.directives(directive)
+
+
+def test_dsl_defer_fragment(ds, client):
+    fragment = DSLFragment("HeroName").on(ds.Character).select(ds.Character.name)
+    fragment_no_label = (
+        DSLFragment("HeroAppearsIn").on(ds.Character).select(ds.Character.appearsIn)
+    )
+
+    query = DSLQuery(
+        ds.Query.hero.select(
+            ds.Character.id,
+            fragment.defer(label="HeroName"),
+            fragment_no_label,
+        )
+    )
+
+    # The directive is also added when defer is called after the selection
+    fragment_no_label.defer()
+
+    request = dsl_gql(fragment, fragment_no_label, query)
+
+    expected = """\
+fragment HeroName on Character {
+  name
+}
+
+fragment HeroAppearsIn on Character {
+  appearsIn
+}
+
+{
+  hero {
+    id
+    ...HeroName @defer(label: "HeroName")
+    ...HeroAppearsIn @defer
+  }
+}"""
+
+    assert strip_braces_spaces(print_ast(request.document)) == expected
+    assert node_tree(request.document) == node_tree(gql(expected).document)
+
+    client._validate_incremental(request)
+
+
+def test_dsl_defer_fragment_spread(ds, client):
+    fragment = DSLFragment("HeroName").on(ds.Character).select(ds.Character.name)
+
+    query = DSLQuery(
+        ds.Query.hero.select(
+            ds.Character.id, fragment.spread().defer(label="Deferred")
+        ),
+        ds.Query.human(id="1000").select(
+            fragment.spread(),
+            fragment.spread()
+            .directives(ds("@include")(**{"if": True}))
+            .defer(label="Included"),
+        ),
+        ds.Query.droid(id="2001").select(fragment.spread().defer()),
+    )
+
+    request = dsl_gql(fragment, query)
+
+    expected = """\
+fragment HeroName on Character {
+  name
+}
+
+{
+  hero {
+    id
+    ...HeroName @defer(label: "Deferred")
+  }
+  human(id: "1000") {
+    ...HeroName
+    ...HeroName @include(if: true) @defer(label: "Included")
+  }
+  droid(id: "2001") {
+    ...HeroName @defer
+  }
+}"""
+
+    assert strip_braces_spaces(print_ast(request.document)) == expected
+    assert node_tree(request.document) == node_tree(gql(expected).document)
+
+    client._validate_incremental(request)
+
+
+def test_dsl_defer_inline_fragment(ds, client):
+    query = DSLQuery(
+        ds.Query.hero.select(
+            ds.Character.id,
+            DSLInlineFragment()
+            .on(ds.Human)
+            .select(ds.Human.homePlanet)
+            .defer(label="HomePlanet"),
+            DSLInlineFragment().on(ds.Droid).select(ds.Droid.primaryFunction).defer(),
+        )
+    )
+
+    request = dsl_gql(query)
+
+    expected = """\
+{
+  hero {
+    id
+    ... on Human @defer(label: "HomePlanet") {
+      homePlanet
+    }
+    ... on Droid @defer {
+      primaryFunction
+    }
+  }
+}"""
+
+    assert strip_braces_spaces(print_ast(request.document)) == expected
+    assert node_tree(request.document) == node_tree(gql(expected).document)
+
+    client._validate_incremental(request)
+
+
+def test_dsl_stream(ds, client):
+    query = DSLQuery(
+        ds.Query.hero.select(
+            ds.Character.id,
+            ds.Character.friends.stream().select(ds.Character.name),
+        ),
+        ds.Query.human(id="1000").select(
+            ds.Human.friends.stream(label="HumanFriends").select(ds.Character.name),
+            ds.Human.appearsIn.stream(initial_count=2),
+        ),
+        ds.Query.droid(id="2001").select(
+            ds.Droid.friends.stream(label="DroidFriends", initial_count=0).select(
+                ds.Character.id
+            ),
+        ),
+        ds.Query.characters.args(ids=["1000", "1001"])
+        .directives(ds("@field"))
+        .stream(initial_count=1)
+        .select(ds.Character.name),
+    )
+
+    request = dsl_gql(query)
+
+    expected = """\
+{
+  hero {
+    id
+    friends @stream {
+      name
+    }
+  }
+  human(id: "1000") {
+    friends @stream(label: "HumanFriends") {
+      name
+    }
+    appearsIn @stream(initialCount: 2)
+  }
+  droid(id: "2001") {
+    friends @stream(label: "DroidFriends", initialCount: 0) {
+      id
+    }
+  }
+  characters(ids: ["1000", "1001"]) @field @stream(initialCount: 1) {
+    name
+  }
+}"""
+
+    assert strip_braces_spaces(print_ast(request.document)) == expected
+    assert node_tree(request.document) == node_tree(gql(expected).document)
+
+    client._validate_incremental(request)
+
+
+def test_dsl_stream_on_non_list_field(ds):
+    with pytest.raises(GraphQLError, match="@stream can only be used on list fields"):
+        ds.Character.name.stream()
+
+    with pytest.raises(GraphQLError, match="@stream can only be used on list fields"):
+        ds.Query.hero.stream(initial_count=1)
+
+    with pytest.raises(GraphQLError, match="@stream can only be used on list fields"):
+        DSLMetaField("__typename").stream()
+
+
+def test_dsl_defer_and_stream_builtin_directives(ds):
+    # The @defer and @stream directives are not defined in the StarWars schema
+    assert StarWarsSchema.get_directive("defer") is None
+    assert StarWarsSchema.get_directive("stream") is None
+
+    defer = ds("@defer")(label="a")
+    stream = ds("@stream")(label="b", initialCount=1)
+
+    assert repr(defer) == "<DSLDirective @defer(label=a)>"
+    assert repr(stream) == "<DSLDirective @stream(label=b, initialCount=1)>"
+
+    # Directives can be created without a schema
+    assert DSLDirective("defer").name == "defer"
+    assert DSLDirective("include").name == "include"
+
+    with pytest.raises(GraphQLError, match="Directive '@field' not found"):
+        DSLDirective("field")
+
+    with pytest.raises(GraphQLError, match="Argument 'initialCount' does not exist"):
+        ds("@defer")(initialCount=1)
