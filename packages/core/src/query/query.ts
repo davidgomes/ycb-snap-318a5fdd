@@ -1,3 +1,4 @@
+import { isAspect } from '../aspect/aspect';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -126,6 +127,27 @@ function processTrackingModifier(
     const trackingType = getTrackingType(modifier);
     if (!trackingType) return;
 
+    // Changed(aspect) matches when any constituent changes while the aspect is complete.
+    let traits = modifier.traits as Trait[];
+    if (trackingType === 'change' && modifier.aspects) {
+        const markers = new Set(modifier.aspects.map((a) => a[$internal].marker));
+        traits = traits.filter((t) => !markers.has(t));
+        for (const aspect of modifier.aspects) {
+            const marker = aspect[$internal].marker;
+            if (!hasTraitInstance(ctx.traitInstances, marker)) registerTrait(world, marker);
+            query.traitInstances.required.push(getTraitInstance(ctx.traitInstances, marker)!);
+            processTrackingModifier(
+                world,
+                query,
+                { ...modifier, traits: aspect.traits, aspects: undefined },
+                'or',
+                ctx,
+                groupsMap
+            );
+        }
+        if (traits.length === 0) return;
+    }
+
     const id = modifier.id;
     // Key includes logic so Changed(A) at top-level stays separate from Or(Changed(A))
     const key = `${trackingType}-${id}-${logic}`;
@@ -145,7 +167,7 @@ function processTrackingModifier(
     }
 
     // Register traits and build bitmasks
-    for (const trait of modifier.traits) {
+    for (const trait of traits) {
         if (!hasTraitInstance(ctx.traitInstances, trait)) registerTrait(world, trait);
         const instance = getTraitInstance(ctx.traitInstances, trait)!;
         query.traits.push(trait);
@@ -233,8 +255,25 @@ export function createQueryInstance<T extends QueryParameter[]>(
             continue;
         }
 
+        if (isAspect(parameter)) {
+            for (const t of parameter.traits) {
+                if (!hasTraitInstance(ctx.traitInstances, t)) registerTrait(world, t);
+                query.traitInstances.required.push(getTraitInstance(ctx.traitInstances, t)!);
+                query.traits.push(t);
+            }
+            continue;
+        }
+
         if (isModifier(parameter)) {
-            const traits = parameter.traits;
+            const traits = parameter.traits as Trait[];
+
+            if (parameter.aspects) {
+                for (const aspect of parameter.aspects) {
+                    for (const t of aspect.traits as Trait[]) {
+                        if (!hasTraitInstance(ctx.traitInstances, t)) registerTrait(world, t);
+                    }
+                }
+            }
 
             // Register traits
             for (let j = 0; j < traits.length; j++) {
@@ -256,7 +295,14 @@ export function createQueryInstance<T extends QueryParameter[]>(
                 if (isOrWithModifiers(parameter)) {
                     for (const nestedModifier of parameter.modifiers) {
                         if (isTrackingModifier(nestedModifier)) {
-                            processTrackingModifier(world, query, nestedModifier, 'or', ctx, trackingGroupsMap);
+                            processTrackingModifier(
+                                world,
+                                query,
+                                nestedModifier,
+                                'or',
+                                ctx,
+                                trackingGroupsMap
+                            );
                         }
                     }
                 }

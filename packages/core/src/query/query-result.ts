@@ -1,3 +1,5 @@
+import { isAspect } from '../aspect/aspect';
+import type { Aspect } from '../aspect/types';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -27,8 +29,7 @@ export function createQueryResult<T extends QueryParameter[]>(
 ): QueryResult<T> {
     const traits: Trait[] = [];
     const stores: Store<any>[] = [];
-
-    getQueryStores(params, traits, stores, world);
+    let layout = getQueryStores(params, traits, stores, world);
 
     const results = Object.assign(entities, {
         readEach(
@@ -43,7 +44,11 @@ export function createQueryResult<T extends QueryParameter[]>(
                 // Create snapshots without atomic tracking
                 createSnapshots(eid, traits, stores, state);
 
-                callback(state, entity, i);
+                callback(
+                    (layout ? createLayoutView(layout, state) : state) as InstancesFromParameters<T>,
+                    entity,
+                    i
+                );
             }
 
             return results;
@@ -69,7 +74,13 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const eid = getEntityId(entity);
 
                     createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    if (layout) {
+                        const view = createLayoutView(layout, state);
+                        callback(view as unknown as InstancesFromParameters<T>, entity, i);
+                        commitLayoutView(layout, view, state, traits);
+                    } else {
+                        callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    }
 
                     // Skip if the entity has been destroyed.
                     if (!world.has(entity)) continue;
@@ -120,7 +131,13 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const eid = getEntityId(entity);
 
                     createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    if (layout) {
+                        const view = createLayoutView(layout, state);
+                        callback(view as unknown as InstancesFromParameters<T>, entity, i);
+                        commitLayoutView(layout, view, state, traits);
+                    } else {
+                        callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    }
 
                     // Skip if the entity has been destroyed.
                     if (!world.has(entity)) continue;
@@ -156,7 +173,13 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const entity = entities[i];
                     const eid = getEntityId(entity);
                     createSnapshots(eid, traits, stores, state);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    if (layout) {
+                        const view = createLayoutView(layout, state);
+                        callback(view as unknown as InstancesFromParameters<T>, entity, i);
+                        commitLayoutView(layout, view, state, traits);
+                    } else {
+                        callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    }
 
                     // Skip if the entity has been destroyed.
                     if (!world.has(entity)) continue;
@@ -181,7 +204,7 @@ export function createQueryResult<T extends QueryParameter[]>(
         select<U extends QueryParameter[]>(...params: U): QueryResult<U> {
             traits.length = 0;
             stores.length = 0;
-            getQueryStores(params, traits, stores, world);
+            layout = getQueryStores(params, traits, stores, world);
             return results as unknown as QueryResult<U>;
         },
 
@@ -243,14 +266,77 @@ export function createQueryResult<T extends QueryParameter[]>(
     }
 }
 
+/**
+ * Maps each callback state slot to either a flat trait index or an aspect
+ * whose constituents occupy a range of flat indices.
+ */
+type LayoutSlot = number | { aspect: Aspect; indices: number[] };
+type Layout = LayoutSlot[];
+
+function createLayoutView(layout: Layout, state: any[]) {
+    const view: any[] = Array.from({ length: layout.length });
+    for (let i = 0; i < layout.length; i++) {
+        const slot = layout[i];
+        if (typeof slot === 'number') {
+            view[i] = state[slot];
+        } else {
+            const merged: Record<string, any> = {};
+            for (const index of slot.indices) Object.assign(merged, state[index]);
+            view[i] = merged;
+        }
+    }
+    return view;
+}
+
+function commitLayoutView(layout: Layout, view: any[], state: any[], traits: Trait[]) {
+    for (let i = 0; i < layout.length; i++) {
+        const slot = layout[i];
+        if (typeof slot === 'number') {
+            state[slot] = view[i];
+            continue;
+        }
+        const merged = view[i];
+        const fields = slot.aspect[$internal].fields;
+        for (const index of slot.indices) {
+            const target = state[index];
+            for (const field of fields.get(traits[index])!) target[field] = merged[field];
+        }
+    }
+}
+
+function pushAspectStores(
+    aspect: Aspect,
+    traits: Trait[],
+    stores: Store<any>[],
+    world: World,
+    layout: Layout
+) {
+    const indices: number[] = [];
+    for (const trait of aspect[$internal].dataTraits) {
+        indices.push(traits.length);
+        traits.push(trait);
+        stores.push(getStore(world, trait));
+    }
+    layout.push({ aspect, indices });
+}
+
 /* @inline */ export function getQueryStores<T extends QueryParameter[]>(
     params: T,
     traits: Trait[],
     stores: Store<any>[],
     world: World
-) {
+): Layout | null {
+    const layout: Layout = [];
+    let hasAspects = false;
+
     for (let i = 0; i < params.length; i++) {
         const param = params[i];
+
+        if (isAspect(param)) {
+            hasAspects = true;
+            pushAspectStores(param, traits, stores, world, layout);
+            continue;
+        }
 
         // Handle relation pairs
         if (isRelationPair(param)) {
@@ -258,6 +344,7 @@ export function createQueryResult<T extends QueryParameter[]>(
             const relation = pairCtx.relation as Relation<Trait>;
             const baseTrait = relation[$internal].trait;
             if (baseTrait[$internal].type !== 'tag') {
+                layout.push(traits.length);
                 traits.push(baseTrait);
                 stores.push(getStore(world, baseTrait));
             }
@@ -268,19 +355,30 @@ export function createQueryResult<T extends QueryParameter[]>(
             // Skip not modifier.
             if (param.type === 'not') continue;
 
-            const modifierTraits = param.traits;
+            const modifierTraits = param.traits as Trait[];
+            const aspects = param.aspects;
             for (const trait of modifierTraits) {
+                const aspect = aspects?.find((a) => a[$internal].marker === trait);
+                if (aspect) {
+                    hasAspects = true;
+                    pushAspectStores(aspect, traits, stores, world, layout);
+                    continue;
+                }
                 if (trait[$internal].type === 'tag') continue; // Skip tags
+                layout.push(traits.length);
                 traits.push(trait);
                 stores.push(getStore(world, trait));
             }
         } else {
             const trait = param as Trait;
             if (trait[$internal].type === 'tag') continue; // Skip tags
+            layout.push(traits.length);
             traits.push(trait);
             stores.push(getStore(world, trait));
         }
     }
+
+    return hasAspects ? layout : null;
 }
 
 export function createEmptyQueryResult(): QueryResult<QueryParameter[]> {

@@ -1,3 +1,12 @@
+import {
+    expandAspectConfig,
+    getAspect,
+    isAspect,
+    setAspect,
+    syncAspectsOnAdd,
+    syncAspectsOnRemove,
+} from '../aspect/aspect';
+import type { Aspect } from '../aspect/types';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -139,6 +148,15 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
             continue;
         }
 
+        if (isAspect(config)) {
+            addTrait(world, entity, ...expandAspectConfig(world, entity, config, undefined));
+            continue;
+        }
+        if (Array.isArray(config) && isAspect(config[0])) {
+            addTrait(world, entity, ...expandAspectConfig(world, entity, config[0], config[1]));
+            continue;
+        }
+
         // Get trait and params for regular traits
         let trait: Trait;
         let params: Record<string, any> | undefined;
@@ -170,6 +188,8 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
 
         // Call add subscriptions after values are set
         for (const sub of data.addSubscriptions) sub(entity);
+
+        syncAspectsOnAdd(world, entity, trait);
     }
 }
 
@@ -224,7 +244,11 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
     for (const sub of instance.addSubscriptions) sub(entity, target);
 }
 
-export function removeTrait(world: World, entity: Entity, ...traits: (Trait | RelationPair)[]) {
+export function removeTrait(
+    world: World,
+    entity: Entity,
+    ...traits: (Trait | RelationPair | Aspect)[]
+) {
     for (let i = 0; i < traits.length; i++) {
         const trait = traits[i];
 
@@ -233,7 +257,14 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
             continue;
         }
 
+        if (isAspect(trait)) {
+            removeTrait(world, entity, ...trait.traits);
+            continue;
+        }
+
         if (!hasTrait(world, entity, trait)) continue;
+
+        syncAspectsOnRemove(world, entity, trait);
 
         const traitCtx = trait[$internal];
 
@@ -340,16 +371,18 @@ export /* @inline @pure */ function getStore<C extends Trait = Trait>(
 export function setTrait(
     world: World,
     entity: Entity,
-    trait: Trait | RelationPair,
+    trait: Trait | RelationPair | Aspect,
     value: any,
     triggerChanged = true
 ) {
     if (isRelationPair(trait)) return setTraitForPair(world, entity, trait, value, triggerChanged);
+    if (isAspect(trait)) return setAspect(world, entity, trait, value, triggerChanged);
     return setTraitForTrait(world, entity, trait, value, triggerChanged);
 }
 
-export function getTrait(world: World, entity: Entity, trait: Trait | RelationPair) {
+export function getTrait(world: World, entity: Entity, trait: Trait | RelationPair | Aspect) {
     if (isRelationPair(trait)) return getTraitForPair(world, entity, trait);
+    if (isAspect(trait)) return getAspect(world, entity, trait);
     return getTraitForTrait(world, entity, trait);
 }
 

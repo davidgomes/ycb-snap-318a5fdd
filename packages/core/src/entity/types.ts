@@ -1,3 +1,4 @@
+import type { Aspect, AspectRecord, AspectValue } from '../aspect/types';
 import type { Relation, RelationPair } from '../relation/types';
 import type {
     ConfigurableTrait,
@@ -10,16 +11,22 @@ import type {
 
 export type Entity = number & {
     add: (...traits: ConfigurableTrait[]) => void;
-    remove: (...traits: (Trait | RelationPair)[]) => void;
-    has: (trait: Trait | RelationPair) => boolean;
+    remove: (...traits: (Trait | RelationPair | Aspect)[]) => void;
+    has: (trait: Trait | RelationPair | Aspect) => boolean;
     destroy: () => void;
     changed: (trait: Trait) => void;
-    set: <T extends Trait | RelationPair>(
-        trait: T,
-        value: TraitValue<ExtractSchema<T>> | SetTraitCallback<T>,
+    set: (<A extends Aspect>(
+        aspect: A,
+        value: AspectValue<A> | ((prev: AspectRecord<A>) => AspectValue<A>),
         flagChanged?: boolean
-    ) => void;
-    get: <T extends Trait | RelationPair>(trait: T) => TraitRecord<ExtractSchema<T>> | undefined;
+    ) => void) &
+        (<T extends Trait | RelationPair>(
+            trait: T,
+            value: TraitValue<ExtractSchema<T>> | SetTraitCallback<T>,
+            flagChanged?: boolean
+        ) => void);
+    get: (<A extends Aspect>(aspect: A) => AspectRecord<A> | undefined) &
+        (<T extends Trait | RelationPair>(trait: T) => TraitRecord<ExtractSchema<T>> | undefined);
     targetFor: <T extends Trait>(relation: Relation<T>) => Entity | undefined;
     targetsFor: <T extends Trait>(relation: Relation<T>) => Entity[];
     id: () => number;

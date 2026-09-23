@@ -1,3 +1,4 @@
+import type { Aspect } from '../aspect/types';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { QueryInstance } from '../query/types';
@@ -43,7 +44,12 @@ export type TraitTuple<T extends Trait = Trait> = [
         : never,
 ];
 
-export type ConfigurableTrait<T extends Trait = Trait> = T | TraitTuple<T> | RelationPair<T>;
+export type ConfigurableTrait<T extends Trait = Trait> =
+    | T
+    | TraitTuple<T>
+    | RelationPair<T>
+    | Aspect
+    | [Aspect, Record<string, any>];
 
 export type SetTraitCallback<T extends Trait | RelationPair> = (
     prev: TraitRecord<ExtractSchema<T>>
@@ -114,3 +120,19 @@ export type ExtractTrait<T> = T extends Relation<infer TTrait> ? TTrait : T;
 export type ExtractTraits<T extends TraitOrRelation[]> = {
     [K in keyof T]: ExtractTrait<T[K]>;
 };
+
+/** Maps modifier inputs to their underlying traits. Aspects expand to their constituents. */
+export type ExtractModifierTraits<T extends unknown[]> = T extends [infer First, ...infer Rest]
+    ? [
+          ...(First extends Aspect<infer A>
+              ? [Aspect<A>]
+              : First extends Relation<infer R>
+                ? [R]
+                : First extends Trait
+                  ? [First]
+                  : []),
+          ...ExtractModifierTraits<Rest>,
+      ]
+    : T extends []
+      ? []
+      : ExtractTrait<T[number]>[];

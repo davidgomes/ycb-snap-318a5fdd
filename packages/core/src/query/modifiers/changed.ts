@@ -1,13 +1,14 @@
+import type { Aspect } from '../../aspect/types';
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { isRelation } from '../../relation/utils/is-relation';
 import { hasTrait, registerTrait } from '../../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../../trait/trait-instance';
-import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
+import type { ExtractModifierTraits, Trait, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
-import { createModifier } from '../modifier';
+import { createAspectAwareModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
@@ -20,13 +21,16 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends (TraitOrRelation | Aspect)[]>(
         ...inputs: T
-    ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
+    ): Modifier<ExtractModifierTraits<T>, `changed-${number}`> => {
         const traits = inputs.map((input) =>
             isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`changed-${id}`, id, traits);
+        ) as (Trait | Aspect)[];
+        return createAspectAwareModifier(`changed-${id}`, id, traits) as Modifier<
+            ExtractModifierTraits<T>,
+            `changed-${number}`
+        >;
     };
 }
 

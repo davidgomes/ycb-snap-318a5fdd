@@ -1,3 +1,4 @@
+import { isAspect } from '../../aspect/aspect';
 import { $internal } from '../../common';
 import { isRelationPair } from '../../relation/utils/is-relation';
 import type { Relation } from '../../relation/types';
@@ -26,6 +27,8 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
 
             // Combine into a unique hash number
             sortedIDs[cursor++] = relationId * 10000000 + targetId + 5000000;
+        } else if (isAspect(param)) {
+            for (const t of param.traits) sortedIDs[cursor++] = t.id;
         } else if (isModifier(param)) {
             const modifierId = param.id;
             const traitIds = param.traitIds;

@@ -160,6 +160,10 @@ entity.has(Position) // Check if has trait
 entity.destroy()
 ```
 
+**Aspects**
+
+`createAspect(Position, Velocity)` groups traits into one unit. `has`/`get`/`set`/`add`/`remove` and queries treat it as all constituents at once, with data merged into one object. See [queries](references/queries.md#aspects).
+
 **Entity IDs**
 
 An entity is internally a number packed with entity ID, generation ID (for recycling), and world ID. Safe to store directly for persistence or networking.

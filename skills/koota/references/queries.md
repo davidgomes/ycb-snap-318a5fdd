@@ -7,6 +7,7 @@ Complete guide to querying entities in Koota.
 - [Basic queries](#basic-queries)
 - [Query modifiers](#query-modifiers) - Not, Or
 - [Tracking modifiers](#tracking-modifiers) - Added, Removed, Changed
+- [Aspects](#aspects) - Query grouped traits as one merged object
 - [Caching queries](#caching-queries) - createQuery for performance
 - [Change detection](#change-detection) - updateEach options
 - [Query + select](#query--select) - Select subset of traits for updates
@@ -132,6 +133,19 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 - Create instances at module scope, not inside functions
 - Tracking resets after each query execution
 - Changed only tracks `set()` calls and `entity.changed()` signals
+
+## Aspects
+
+`createAspect(A, B, ...)` groups traits. Used as a query parameter it requires all constituents and `readEach`/`updateEach` receive one merged object whose writes go back to each constituent.
+
+```typescript
+const Motion = createAspect(Position, Velocity)
+world.query(Motion).updateEach(([m]) => { m.x += m.vx })
+world.query(Position, Not(Motion)) // Missing at least one constituent
+world.query(Changed(Motion)) // Any constituent changed
+world.query(Added(Motion)) // Became complete
+world.query(Removed(Motion)) // Stopped being complete
+```
 
 ## Caching queries
 

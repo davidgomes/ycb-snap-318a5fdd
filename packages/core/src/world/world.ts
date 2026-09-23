@@ -1,3 +1,5 @@
+import { hasAllConstituents, isAspect } from '../aspect/aspect';
+import type { Aspect } from '../aspect/types';
 import { $internal } from '../common';
 import { createEntity, destroyEntity } from '../entity/entity';
 import type { Entity } from '../entity/types';
@@ -34,12 +36,13 @@ export function createWorld(
     const id = allocateWorldId(universe.worldIndex);
     let isInitialized = false;
     let lazyTraits: ConfigurableTrait[] | undefined;
-    type HookInput = Trait | Relation<Trait> | RelationPair<Trait>;
+    type HookInput = Trait | Relation<Trait> | RelationPair<Trait> | Aspect;
     type HookCallback = (entity: Entity, target?: Entity) => void;
 
     function resolveHookTrait(input: HookInput): Trait {
         if (isRelationPair(input)) return input[$internal].relation[$internal].trait;
         if (isRelation(input)) return input[$internal].trait;
+        if (isAspect(input)) return input[$internal].marker;
         return input;
     }
 
@@ -107,22 +110,24 @@ export function createWorld(
             return createEntity(world, ...spawnTraits);
         },
 
-        has(target: Entity | Trait): boolean {
-            return typeof target === 'number'
-                ? isEntityAlive(world[$internal].entityIndex, target)
-                : hasTrait(world, world[$internal].worldEntity, target);
+        has(target: Entity | Trait | Aspect): boolean {
+            if (typeof target === 'number')
+                return isEntityAlive(world[$internal].entityIndex, target);
+            if (isAspect(target))
+                return hasAllConstituents(world, world[$internal].worldEntity, target);
+            return hasTrait(world, world[$internal].worldEntity, target);
         },
 
         add(...addTraits: ConfigurableTrait[]) {
             addTrait(world, world[$internal].worldEntity, ...addTraits);
         },
 
-        remove(...removeTraits: Trait[]) {
+        remove(...removeTraits: (Trait | Aspect)[]) {
             removeTrait(world, world[$internal].worldEntity, ...removeTraits);
         },
 
         get<T extends Trait>(trait: T): TraitRecord<ExtractSchema<T>> | undefined {
-            return getTrait(world, world[$internal].worldEntity, trait);
+            return getTrait(world, world[$internal].worldEntity, trait) as any;
         },
 
         set<T extends Trait>(trait: T, value: TraitValue<ExtractSchema<T>> | SetTraitCallback<T>) {
@@ -312,7 +317,7 @@ export function createWorld(
         },
 
         onAdd<T extends Trait>(
-            trait: T | Relation<T> | RelationPair<T>,
+            trait: T | Relation<T> | RelationPair<T> | Aspect,
             callback: (entity: Entity, target?: Entity) => void
         ): QueryUnsubscriber {
             const ctx = world[$internal];
@@ -332,7 +337,7 @@ export function createWorld(
         },
 
         onRemove<T extends Trait>(
-            trait: T | Relation<T> | RelationPair<T>,
+            trait: T | Relation<T> | RelationPair<T> | Aspect,
             callback: (entity: Entity, target?: Entity) => void
         ): QueryUnsubscriber {
             const ctx = world[$internal];
@@ -352,10 +357,24 @@ export function createWorld(
         },
 
         onChange(
-            trait: Trait | Relation<Trait> | RelationPair<Trait>,
+            trait: Trait | Relation<Trait> | RelationPair<Trait> | Aspect,
             callback: (entity: Entity, target?: Entity) => void
         ) {
             const ctx = world[$internal];
+
+            if (isAspect(trait)) {
+                const aspect = trait;
+                const aspectCallback = (entity: Entity) => {
+                    if (hasAllConstituents(world, entity, aspect)) callback(entity);
+                };
+                const unsubs = (aspect.traits as Trait[]).map((t) =>
+                    world.onChange(t, aspectCallback)
+                );
+                return () => {
+                    for (const unsub of unsubs) unsub();
+                };
+            }
+
             const resolvedTrait = resolveHookTrait(trait);
             const resolvedCallback = resolveHookCallback(trait, callback);
 

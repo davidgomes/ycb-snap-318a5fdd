@@ -583,6 +583,28 @@ world.query(Inventory).updateEach(([inventory], entity) => {
 })
 ```
 
+### Aspects
+
+An aspect groups two or more traits so they can be used as one unit. Overlapping field names and relations throw at creation. Tags are allowed and nested aspects flatten to their traits. Each call to `createAspect` returns a distinct aspect with `id`, `traits` and `schema`.
+
+```js
+import { createAspect } from 'koota'
+
+const Motion = createAspect(Position, Velocity)
+
+entity.add(Motion({ x: 1, vx: 2 })) // Adds only missing constituents
+entity.has(Motion) // True when every constituent is present
+entity.get(Motion) // { x, y, vx, vy } or undefined if any is missing
+entity.set(Motion, { x: 5, vy: 1 }) // Writes each field to its owning trait
+entity.remove(Motion) // Removes every constituent
+
+world.query(Motion).updateEach(([motion]) => {
+  motion.x += motion.vx
+})
+```
+
+Aspects work with query modifiers. `Not(Motion)` matches entities missing at least one constituent, `Changed(Motion)` matches when any constituent changed, and `Added`/`Removed` match the transition to and from having all constituents. `world.onAdd`, `world.onRemove` and `world.onChange` follow the same rules.
+
 ### World traits
 
 For global data like time, these can be traits added to the world. **World traits do not appear in queries.**

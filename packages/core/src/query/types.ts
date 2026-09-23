@@ -1,3 +1,4 @@
+import type { Aspect, AspectRecord } from '../aspect/types';
 import type { Entity } from '../entity/types';
 import type { RelationPair } from '../relation/types';
 import { AoSFactory } from '../storage';
@@ -15,7 +16,7 @@ import { $modifier } from './modifier';
 import { $parameters, $queryRef } from './symbols';
 
 export type QueryModifier = (...components: Trait[]) => Modifier;
-export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier>;
+export type QueryParameter = Trait | RelationPair | Aspect | Modifier<any>;
 export type QuerySubscriber = (entity: Entity) => void;
 export type QueryUnsubscriber = () => void;
 
@@ -38,15 +39,17 @@ export type QueryResult<T extends QueryParameter[] = QueryParameter[]> = readonl
     sort(callback?: (a: Entity, b: Entity) => number): QueryResult<T>;
 };
 
-type UnwrapModifierData<T> = T extends Modifier<infer C> ? C : never;
+type UnwrapModifierData<T> = T extends Modifier<infer C, any> ? C : never;
 
 export type StoresFromParameters<T extends QueryParameter[]> = T extends [infer First, ...infer Rest]
     ? [
-          ...(First extends Trait
-              ? [ExtractStore<First>]
-              : First extends Modifier
-                ? StoresFromParameters<UnwrapModifierData<First>>
-                : []),
+          ...(First extends Aspect<infer A>
+              ? StoresFromParameters<A>
+              : First extends Trait
+                ? [ExtractStore<First>]
+                : First extends Modifier<any>
+                  ? StoresFromParameters<UnwrapModifierData<First>>
+                  : []),
           ...(Rest extends QueryParameter[] ? StoresFromParameters<Rest> : []),
       ]
     : [];
@@ -56,23 +59,25 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
     ...infer Rest,
 ]
     ? [
-          ...(First extends Trait
-              ? IsTag<First> extends false
-                  ? ExtractSchema<First> extends AoSFactory
-                      ? [ReturnType<ExtractSchema<First>>]
-                      : [TraitRecord<First>]
-                  : []
-              : First extends Modifier
-                ? IsNotModifier<First> extends true
-                    ? []
-                    : InstancesFromParameters<UnwrapModifierData<First>>
-                : []),
+          ...(First extends Aspect
+              ? [AspectRecord<First>]
+              : First extends Trait
+                ? IsTag<First> extends false
+                    ? ExtractSchema<First> extends AoSFactory
+                        ? [ReturnType<ExtractSchema<First>>]
+                        : [TraitRecord<First>]
+                    : []
+                : First extends Modifier<any>
+                  ? IsNotModifier<First> extends true
+                      ? []
+                      : InstancesFromParameters<UnwrapModifierData<First>>
+                  : []),
           ...(Rest extends QueryParameter[] ? InstancesFromParameters<Rest> : []),
       ]
     : [];
 
 export type IsNotModifier<T> =
-    T extends Modifier<Trait[], infer TType> ? (TType extends 'not' ? true : false) : false;
+    T extends Modifier<any, infer TType> ? (TType extends 'not' ? true : false) : false;
 
 export type QueryHash = string;
 
@@ -87,12 +92,14 @@ export type Query<T extends QueryParameter[] = QueryParameter[]> = {
     readonly [$parameters]: T;
 };
 
-export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = string> = {
+export type Modifier<TTrait extends (Trait | Aspect)[] = Trait[], TType extends string = string> = {
     [$modifier]: true;
     type: TType;
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /** Aspects passed to the modifier. Their markers are included in `traits`. */
+    aspects?: Aspect[];
 };
 
 /** Parameter types that can be passed to Or modifier */
