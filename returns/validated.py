@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, final, overload
 from typing_extensions import Never, ParamSpec
 
 from returns.interfaces.specific.validated import ValidatedBased2
+from returns.iterables import Fold
 from returns.primitives.container import BaseContainer, container_equality
 from returns.primitives.exceptions import UnwrapFailedError
 from returns.primitives.hkt import Kind2, SupportsKind2
@@ -372,14 +373,7 @@ class Validated(  # type: ignore[type-var]
           ... ) == Invalid(('a', 'b'))
 
         """
-        return first.apply(
-            second.map(
-                lambda second_value: lambda first_value: function(
-                    first_value,
-                    second_value,
-                ),
-            ),
-        )
+        return cls.combine_n((first, second), function)
 
     @classmethod
     def combine_n(
@@ -407,11 +401,10 @@ class Validated(  # type: ignore[type-var]
           ... ) == Invalid(('a', 'b', 'c'))
 
         """
-        collected: Validated[tuple[Any, ...], _NewErrorType] = Valid(())
-        for container in containers:
-            collected = collected.apply(
-                container.map(lambda inner: lambda acc: (*acc, inner)),
-            )
+        collected: Validated[tuple[Any, ...], _NewErrorType] = Fold.collect(
+            containers,
+            Valid(()),
+        )
         return collected.map(lambda args: function(*args))
 
 
@@ -462,9 +455,9 @@ class Invalid(Validated[Any, _ErrorType_co]):  # noqa: WPS338
             """Returns default value for failed container."""
             return default_value
 
-    def swap(self):
-        """Invalid swaps to :class:`Valid` with a tuple of errors."""
-        return Valid(self._inner_value)
+        def swap(self):
+            """Invalid swaps to :class:`Valid` with a tuple of errors."""
+            return Valid(self._inner_value)
 
     def unwrap(self) -> Never:
         """Raises an exception, since it does not have a value inside."""
@@ -522,9 +515,9 @@ class Valid(Validated[_ValueType_co, Any]):
             """Returns the value for successful container."""
             return self._inner_value
 
-    def swap(self):
-        """Valid swaps to :class:`Invalid` with a single error."""
-        return Invalid((self._inner_value,))
+        def swap(self):
+            """Valid swaps to :class:`Invalid` with a single error."""
+            return Invalid((self._inner_value,))
 
     def unwrap(self) -> _ValueType_co:
         """Returns the unwrapped value from successful container."""

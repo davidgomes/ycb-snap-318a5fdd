@@ -52,14 +52,10 @@ def strategy_from_container(
                     st.from_type(value_type),
                 )
             )
-        if issubclass(container_type, result.ResultLikeN):
-            strategies.append(
-                st.builds(
-                    container_type.from_failure,
-                    st.from_type(error_type),
-                )
-            )
-        if issubclass(container_type, validated.ValidatedLikeN):
+        if issubclass(
+            container_type,
+            (result.ResultLikeN, validated.ValidatedLikeN),
+        ):
             strategies.append(
                 st.builds(
                     container_type.from_failure,
