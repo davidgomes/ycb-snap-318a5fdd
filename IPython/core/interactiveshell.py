@@ -2431,7 +2431,7 @@ class InteractiveShell(SingletonConfigurable):
             m.ConfigMagics, m.DisplayMagics, m.ExecutionMagics,
             m.ExtensionMagics, m.HistoryMagics, m.LoggingMagics,
             m.NamespaceMagics, m.OSMagics, m.PackagingMagics,
-            m.PylabMagics, m.ScriptMagics,
+            m.PylabMagics, m.ScriptMagics, m.SessionBundleMagics,
         )
         self.register_magics(m.AsyncMagics)
 
@@ -3121,6 +3121,9 @@ class InteractiveShell(SingletonConfigurable):
                 outputs_by_counter[execution_count].append(output_stream)
 
             output_stream.bundle["stream"].append(data)  # Append to existing stream
+            recorder = getattr(self, "_session_bundle_recorder", None)
+            if recorder is not None and recorder.accepting:
+                recorder.capture(channel, data)
             return result
 
         stream.write = write
@@ -3174,6 +3177,26 @@ class InteractiveShell(SingletonConfigurable):
                 if not silent:
                     self.events.trigger("post_run_cell", result)
         return result
+
+    def start_session_bundle(self, path, *, overwrite=False, redact=None) -> str:
+        """Start recording this shell to an ``.ipybundle`` archive."""
+        from IPython.core.sessionbundle import start_session_bundle
+
+        return start_session_bundle(
+            self, path, overwrite=overwrite, redact=redact
+        )
+
+    def stop_session_bundle(self) -> str:
+        """Stop the active session-bundle recording and return its path."""
+        from IPython.core.sessionbundle import stop_session_bundle
+
+        return stop_session_bundle(self)
+
+    def session_bundle_status(self) -> dict:
+        """Return whether a session bundle is recording and its path."""
+        from IPython.core.sessionbundle import session_bundle_status
+
+        return session_bundle_status(self)
 
     def _run_cell(
         self,
