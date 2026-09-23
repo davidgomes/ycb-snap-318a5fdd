@@ -14,7 +14,8 @@ Testem's QUnit adapter. Works by using QUnit's hooks:
 
 */
 
-/* globals QUnit, emit */
+/* globals QUnit, emit, Testem */
+/* globals module */
 /* exported qunitAdapter */
 'use strict';
 
@@ -30,6 +31,25 @@ function qunitAdapter() {
   };
   var currentTest;
   var id = 1;
+  var allTestResultsSent = false;
+
+  function isAborted() {
+    return typeof Testem !== 'undefined' && !!Testem && !!Testem.aborted;
+  }
+
+  function emitAllTestResults() {
+    allTestResultsSent = true;
+    emit('all-test-results');
+  }
+
+  function signalAborted() {
+    if (QUnit.config && QUnit.config.queue) {
+      QUnit.config.queue.length = 0;
+    }
+    if (!allTestResultsSent) {
+      emitAllTestResults();
+    }
+  }
 
   function lineNumber(e) {
     return e.line || e.lineNumber;
@@ -52,6 +72,9 @@ function qunitAdapter() {
   }
 
   QUnit.log(function(params, e) {
+    if (isAborted()) {
+      return;
+    }
     if (e) {
       currentTest.items.push({
         passed: params.result,
@@ -81,6 +104,10 @@ function qunitAdapter() {
 
   });
   QUnit.testStart(function(params) {
+    if (isAborted()) {
+      signalAborted();
+      return;
+    }
     currentTest = {
       id: id++,
       name: (params.module ? params.module + ': ' : '') + params.name,
@@ -89,6 +116,10 @@ function qunitAdapter() {
     emit('tests-start', currentTest);
   });
   QUnit.testDone(function(params) {
+    if (isAborted()) {
+      signalAborted();
+      return;
+    }
     currentTest.failed = params.failed;
     currentTest.passed = params.passed;
     currentTest.skipped = params.skipped;
@@ -112,8 +143,17 @@ function qunitAdapter() {
     emit('test-result', currentTest);
   });
   QUnit.done(function(params) {
+    if (isAborted()) {
+      signalAborted();
+      return;
+    }
     results.runDuration = params.runtime;
-    emit('all-test-results');
+    emitAllTestResults();
   });
 
+}
+
+// Exporting this as a module so that it can be unit tested in Node.
+if (typeof module !== 'undefined') {
+  module.exports = qunitAdapter;
 }
