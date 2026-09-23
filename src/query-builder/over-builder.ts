@@ -1,4 +1,5 @@
 import type { Expression } from '../expression/expression.js'
+import type { FrameMode } from '../operation-node/frame-node.js'
 import type { OperationNodeSource } from '../operation-node/operation-node-source.js'
 import { OverNode } from '../operation-node/over-node.js'
 import { QueryNode } from '../operation-node/query-node.js'
@@ -14,6 +15,7 @@ import {
   type PartitionByExpressionOrList,
 } from '../parser/partition-by-parser.js'
 import { freeze } from '../util/object-utils.js'
+import { FrameBuilder, type FrameBuilderCallback } from './frame-builder.js'
 import type { OrderByInterface } from './order-by-interface.js'
 
 export class OverBuilder<DB, TB extends keyof DB>
@@ -127,6 +129,112 @@ export class OverBuilder<DB, TB extends keyof DB>
       overNode: OverNode.cloneWithPartitionByItems(
         this.#props.overNode,
         parsePartitionBy(partitionBy),
+      ),
+    })
+  }
+
+  /**
+   * Adds a `rows` frame clause inside the over function.
+   *
+   * Numeric offsets are passed as parameters. Pass an expression, such as
+   * `sql.lit(2)`, to inline an offset in the SQL.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select(
+   *     (eb) => eb.fn.avg<number>('age').over(
+   *       ob => ob
+   *         .orderBy('first_name')
+   *         .rows((fb) => fb.betweenPreceding(2).andCurrentRow())
+   *     ).as('moving_average_age')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select avg("age") over(order by "first_name" rows between $1 preceding and current row) as "moving_average_age"
+   * from "person"
+   * ```
+   */
+  rows(frame: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#withFrame('rows', frame)
+  }
+
+  /**
+   * Adds a `range` frame clause inside the over function.
+   *
+   * See {@link rows} for details.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select(
+   *     (eb) => eb.fn.sum<number>('age').over(
+   *       ob => ob
+   *         .orderBy('age')
+   *         .range((fb) => fb.betweenCurrentRow().andUnboundedFollowing())
+   *     ).as('remaining_age')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select sum("age") over(order by "age" range between current row and unbounded following) as "remaining_age"
+   * from "person"
+   * ```
+   */
+  range(frame: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#withFrame('range', frame)
+  }
+
+  /**
+   * Adds a `groups` frame clause inside the over function.
+   *
+   * See {@link rows} for details.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select(
+   *     (eb) => eb.fn.countAll<number>().over(
+   *       ob => ob
+   *         .orderBy('age')
+   *         .groups((fb) => fb.betweenPreceding(1).andFollowing(1).excludeGroup())
+   *     ).as('neighbour_count')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select count(*) over(order by "age" groups between $1 preceding and $2 following exclude group) as "neighbour_count"
+   * from "person"
+   * ```
+   */
+  groups(frame: FrameBuilderCallback): OverBuilder<DB, TB> {
+    return this.#withFrame('groups', frame)
+  }
+
+  #withFrame(
+    mode: FrameMode,
+    frame: FrameBuilderCallback,
+  ): OverBuilder<DB, TB> {
+    return new OverBuilder({
+      overNode: OverNode.cloneWithFrame(
+        this.#props.overNode,
+        frame(new FrameBuilder({ mode })).toOperationNode(),
       ),
     })
   }

@@ -117,6 +117,9 @@ import { logOnce } from '../util/log-once.js'
 import type { CollateNode } from '../operation-node/collate-node.js'
 import type { QueryId } from '../util/query-id.js'
 import type { RenameConstraintNode } from '../operation-node/rename-constraint-node.js'
+import type { GroupingElementNode } from '../operation-node/grouping-element-node.js'
+import type { FrameNode } from '../operation-node/frame-node.js'
+import type { FrameBoundNode } from '../operation-node/frame-bound-node.js'
 
 const LIT_WRAP_REGEX = /'/g
 
@@ -795,6 +798,13 @@ export class DefaultQueryCompiler
 
   protected override visitGroupByItem(node: GroupByItemNode): void {
     this.visitNode(node.groupBy)
+  }
+
+  protected override visitGroupingElement(node: GroupingElementNode): void {
+    this.append(node.type)
+    this.append('(')
+    this.compileList(node.items)
+    this.append(')')
   }
 
   protected override visitUpdateQuery(node: UpdateQueryNode): void {
@@ -1488,6 +1498,11 @@ export class DefaultQueryCompiler
 
     this.append(')')
 
+    if (node.nullTreatment) {
+      this.append(' ')
+      this.append(node.nullTreatment)
+    }
+
     if (node.withinGroup) {
       this.append(' within group (')
       this.visitNode(node.withinGroup)
@@ -1509,19 +1524,51 @@ export class DefaultQueryCompiler
   protected override visitOver(node: OverNode): void {
     this.append('over(')
 
-    if (node.partitionBy) {
-      this.visitNode(node.partitionBy)
+    const clauses = [node.partitionBy, node.orderBy, node.frame]
+    let first = true
 
-      if (node.orderBy) {
+    for (const clause of clauses) {
+      if (!clause) {
+        continue
+      }
+
+      if (!first) {
         this.append(' ')
       }
-    }
 
-    if (node.orderBy) {
-      this.visitNode(node.orderBy)
+      this.visitNode(clause)
+      first = false
     }
 
     this.append(')')
+  }
+
+  protected override visitFrame(node: FrameNode): void {
+    this.append(node.mode)
+    this.append(' ')
+
+    if (node.end) {
+      this.append('between ')
+      this.visitNode(node.start)
+      this.append(' and ')
+      this.visitNode(node.end)
+    } else {
+      this.visitNode(node.start)
+    }
+
+    if (node.exclusion) {
+      this.append(' exclude ')
+      this.append(node.exclusion)
+    }
+  }
+
+  protected override visitFrameBound(node: FrameBoundNode): void {
+    if (node.offset) {
+      this.visitNode(node.offset)
+      this.append(' ')
+    }
+
+    this.append(node.type)
   }
 
   protected override visitPartitionBy(node: PartitionByNode): void {

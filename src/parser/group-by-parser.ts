@@ -1,5 +1,10 @@
 import { GroupByItemNode } from '../operation-node/group-by-item-node.js'
 import {
+  GroupingElementNode,
+  type GroupingElementType,
+} from '../operation-node/grouping-element-node.js'
+import { TupleNode } from '../operation-node/tuple-node.js'
+import {
   expressionBuilder,
   type ExpressionBuilder,
 } from '../expression/expression-builder.js'
@@ -25,4 +30,30 @@ export function parseGroupBy(
 ): GroupByItemNode[] {
   groupBy = isFunction(groupBy) ? groupBy(expressionBuilder()) : groupBy
   return parseReferenceExpressionOrList(groupBy).map(GroupByItemNode.create)
+}
+
+export function parseGroupByGroupingElement(
+  type: Exclude<GroupingElementType, 'grouping sets'>,
+  columns: ReadonlyArray<GroupByExpression<any, any, any>>,
+): GroupByItemNode[] {
+  return [
+    GroupByItemNode.create(
+      GroupingElementNode.create(type, parseReferenceExpressionOrList(columns)),
+    ),
+  ]
+}
+
+export function parseGroupByGroupingSets(
+  sets: ReadonlyArray<ReadonlyArray<GroupByExpression<any, any, any>>>,
+): GroupByItemNode[] {
+  return [
+    GroupByItemNode.create(
+      GroupingElementNode.create(
+        'grouping sets',
+        sets.map((set) =>
+          TupleNode.create(parseReferenceExpressionOrList(set)),
+        ),
+      ),
+    ),
+  ]
 }
