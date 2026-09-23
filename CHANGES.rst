@@ -11,6 +11,11 @@ Ongoing Development
 
 New Features
 ------------
+- :class:`DurationEncoder` extracts numeric features from duration columns
+  (pandas ``timedelta64`` and polars ``Duration``). :class:`TableVectorizer`
+  routes those columns through a new ``duration`` parameter, and
+  :func:`selectors.duration` selects them. Duration columns are left unchanged
+  by the float and string coercion steps used while cleaning a table.
 - The ``eager_data_ops`` :ref:`configuration
   <user_guide_configuration_parameters>` option has been added. When set to
   False, no previews are computed and validation is deferred until the DataOp is

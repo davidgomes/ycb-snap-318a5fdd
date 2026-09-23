@@ -276,6 +276,7 @@ def passthrough_vectorizer():
         low_cardinality="passthrough",
         numeric="passthrough",
         datetime="passthrough",
+        duration="passthrough",
     )
 
 

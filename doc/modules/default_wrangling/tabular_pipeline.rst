@@ -68,6 +68,10 @@ problems, but may not beat properly tuned ad-hoc pipelines.
      - :class:`DatetimeEncoder`
      - :class:`DatetimeEncoder`
      - :class:`DatetimeEncoder` with spline encoding
+   * - Duration preprocessor
+     - :class:`DurationEncoder`
+     - :class:`DurationEncoder`
+     - :class:`DurationEncoder`
    * - Missing value strategy
      - Native support :sup:`(2)`
      - Native support
