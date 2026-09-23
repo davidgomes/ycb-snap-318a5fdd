@@ -1,4 +1,4 @@
-import { getContext } from './context'
+import { getContext, runAtomicReducerHook } from './context'
 import { runPlugins } from './plugins'
 import { BuiltLogic, ReducerFunction } from '../types'
 import type { Reducer } from 'redux'
@@ -227,5 +227,11 @@ function regenerateCombinedReducer() {
 
 export function createReduxStoreReducer(): Reducer {
   regenerateCombinedReducer()
-  return (state = defaultState, action) => getContext().reducers.combined?.(state, action, state)
+  return (state = defaultState, action) => {
+    const next = getContext().reducers.combined?.(state, action, state)
+    if (next !== state) {
+      runAtomicReducerHook(state, next)
+    }
+    return next as any
+  }
 }

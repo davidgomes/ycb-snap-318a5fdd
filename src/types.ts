@@ -34,6 +34,8 @@ export interface Logic {
   reducerOptions: Record<string, any>
   selector?: Selector
   selectors: Record<string, Selector>
+  /** Present only when `resetContext({ atomicSelectors: true })` is set. */
+  selectorHealth?: () => SelectorHealth
   values: Record<string, any>
   events: {
     beforeMount?: () => void
@@ -530,6 +532,18 @@ export interface CreateStoreOptions {
   plugins: KeaPlugin[]
 }
 
+export interface SelectorHealthEntry {
+  dependencies: string[]
+  dependents: string[]
+  evaluations: number
+  dirtyCause: string | null
+}
+
+export interface SelectorHealth {
+  selectors: Record<string, SelectorHealthEntry>
+  topologicalOrder: string[]
+}
+
 export interface InternalContextOptions {
   debug: boolean
   proxyFields: boolean
@@ -538,6 +552,8 @@ export interface InternalContextOptions {
   detachStrategy: 'dispatch' | 'replace' | 'persist'
   defaultPath: string[]
   disableAsyncActions: boolean
+  /** Fine-grained selector dependency tracking. Defaults to false. */
+  atomicSelectors: boolean
   // ...otherOptions
 }
 

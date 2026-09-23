@@ -3,6 +3,7 @@ import { createStore } from './store'
 import { Context, ContextOptions } from '../types'
 import type { Store } from 'redux'
 import { corePlugin } from '../core'
+import { atomicSelectorsPlugin } from '../core/atomic-selectors'
 
 let context: Context
 
@@ -10,7 +11,41 @@ export function getContext(): Context {
   return context
 }
 
-export const getStoreState = () => getContext().store.getState()
+let atomicReadActive = false
+let atomicReadState: any
+
+/** Read the in-flight reducer result while atomic selectors recompute, before Redux notifies subscribers. */
+export function withAtomicReadState<T>(state: any, run: () => T): T {
+  const prevActive = atomicReadActive
+  const prevState = atomicReadState
+  atomicReadActive = true
+  atomicReadState = state
+  try {
+    return run()
+  } finally {
+    atomicReadActive = prevActive
+    atomicReadState = prevState
+  }
+}
+
+export const getStoreState = () => (atomicReadActive ? atomicReadState : getContext().store.getState())
+
+let atomicReducerHook: ((previous: any, next: any) => void) | undefined
+
+export function setAtomicReducerHook(hook: ((previous: any, next: any) => void) | undefined): void {
+  atomicReducerHook = hook
+}
+
+export function runAtomicReducerHook(previous: any, next: any): void {
+  if (!atomicReducerHook) {
+    return
+  }
+  const context = getContext()
+  if (!context?.options.atomicSelectors) {
+    return
+  }
+  atomicReducerHook(previous, next)
+}
 
 export function setContext(newContext: Context): void {
   context = newContext
@@ -66,6 +101,7 @@ export function openContext(options: ContextOptions = {}, initial = false): Cont
       attachStrategy: 'dispatch',
       detachStrategy: 'dispatch',
       defaultPath: ['kea', 'logic'],
+      atomicSelectors: false,
       ...otherOptions,
     },
   } as Context
@@ -87,6 +123,10 @@ export function openContext(options: ContextOptions = {}, initial = false): Cont
   setContext(newContext)
 
   activatePlugin(corePlugin)
+
+  if (newContext.options.atomicSelectors) {
+    activatePlugin(atomicSelectorsPlugin)
+  }
 
   runPlugins('afterOpenContext', newContext, options)
 
