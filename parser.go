@@ -31,7 +31,13 @@ type parserOptions struct {
 	unionDefs             []unionDef
 	customDefs            []customDef
 	elide                 []string
+	strict                bool
 }
+
+// strictAnalysis, when non-nil, reports ambiguous grammars at the end of Build.
+// The analyze-tagged implementation installs it; without that tag the hook stays nil
+// so StrictMode does not reference analysis symbols.
+var strictAnalysis func(root node, syms map[lexer.TokenType]string) error
 
 // A Parser for a particular grammar and lexer.
 type Parser[G any] struct {
@@ -134,6 +140,11 @@ func Build[G any](options ...Option) (parser *Parser[G], err error) {
 	p.typeNodes = context.typeNodes
 	p.typeNodes[p.rootType] = rootNode
 	p.setCaseInsensitiveTokens()
+	if p.strict && strictAnalysis != nil {
+		if err := strictAnalysis(rootNode, lexer.SymbolsByRune(p.lex)); err != nil {
+			return nil, err
+		}
+	}
 	return p, nil
 }
 

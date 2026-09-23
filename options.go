@@ -82,6 +82,16 @@ func ParseTypeWith[T any](parseFn func(*lexer.PeekingLexer) (T, error)) Option {
 	}
 }
 
+// StrictMode runs grammar ambiguity analysis at the end of Build.
+// Any detected conflict, including warnings, fails the build with an error
+// whose message contains "conflict".
+func StrictMode() Option {
+	return func(p *parserOptions) error {
+		p.strict = true
+		return nil
+	}
+}
+
 // Union associates several member productions with some interface type T.
 // Given members X, Y, Z, and W for a union type U, then the EBNF rule is:
 //
