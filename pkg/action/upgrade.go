@@ -339,7 +339,11 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 }
 
 func (u *Upgrade) performUpgrade(ctx context.Context, originalRelease, upgradedRelease *release.Release, serverSideApply bool) (*release.Release, error) {
-	current, err := u.cfg.KubeClient.Build(bytes.NewBufferString(originalRelease.Manifest), false)
+	currentManifest, err := releaseutil.InstallOrderManifest(originalRelease.Manifest)
+	if err != nil {
+		return upgradedRelease, fmt.Errorf("unable to sort current release manifest: %w", err)
+	}
+	current, err := u.cfg.KubeClient.Build(bytes.NewBufferString(currentManifest), false)
 	if err != nil {
 		// Checking for removed Kubernetes API error so can provide a more informative error message to the user
 		// Ref: https://github.com/helm/helm/issues/7219
@@ -350,7 +354,11 @@ func (u *Upgrade) performUpgrade(ctx context.Context, originalRelease, upgradedR
 		}
 		return upgradedRelease, fmt.Errorf("unable to build kubernetes objects from current release manifest: %w", err)
 	}
-	target, err := u.cfg.KubeClient.Build(bytes.NewBufferString(upgradedRelease.Manifest), !u.DisableOpenAPIValidation)
+	targetManifest, err := releaseutil.InstallOrderManifest(upgradedRelease.Manifest)
+	if err != nil {
+		return upgradedRelease, fmt.Errorf("unable to sort upgraded release manifest: %w", err)
+	}
+	target, err := u.cfg.KubeClient.Build(bytes.NewBufferString(targetManifest), !u.DisableOpenAPIValidation)
 	if err != nil {
 		return upgradedRelease, fmt.Errorf("unable to build kubernetes objects from new release manifest: %w", err)
 	}

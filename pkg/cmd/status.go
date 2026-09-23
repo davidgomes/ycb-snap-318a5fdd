@@ -114,12 +114,18 @@ func newStatusCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 	return cmd
 }
 
+func isDryRunStrategy(strategy action.DryRunStrategy) bool {
+	return strategy == action.DryRunClient || strategy == action.DryRunServer
+}
+
 type statusPrinter struct {
-	release      release.Releaser
-	debug        bool
-	showMetadata bool
-	hideNotes    bool
-	noColor      bool
+	release        release.Releaser
+	debug          bool
+	showMetadata   bool
+	hideNotes      bool
+	noColor        bool
+	dryRun         bool
+	manifestStream string
 }
 
 func (s statusPrinter) getV1Release() *releasev1.Release {
@@ -227,7 +233,13 @@ func (s statusPrinter) WriteTable(out io.Writer) error {
 		_, _ = fmt.Fprintln(out)
 	}
 
-	if strings.EqualFold(rel.Info.Description, "Dry run complete") || s.debug {
+	if s.dryRun {
+		manifest := s.manifestStream
+		if manifest != "" && !strings.HasSuffix(manifest, "\n") {
+			manifest += "\n"
+		}
+		_, _ = fmt.Fprintf(out, "MANIFEST:\n%s", manifest)
+	} else if strings.EqualFold(rel.Info.Description, "Dry run complete") || s.debug {
 		_, _ = fmt.Fprintln(out, "HOOKS:")
 		for _, h := range rel.Hooks {
 			_, _ = fmt.Fprintf(out, "---\n# Source: %s\n%s\n", h.Path, h.Manifest)

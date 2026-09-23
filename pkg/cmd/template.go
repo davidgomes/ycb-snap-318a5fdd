@@ -118,8 +118,16 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			// we always want to print the YAML, even if it is not valid. The error is still returned afterwards.
 			if rel != nil {
 				var manifests bytes.Buffer
-				fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
-				if !client.DisableHooks {
+				useUnifiedStream := err == nil && client.OutputDir == ""
+				if useUnifiedStream {
+					manifests.WriteString(releaseutil.FormatManifestStream(cfg.RenderedStreamDocuments(), releaseutil.StreamFormatOptions{
+						SkipHooks: client.DisableHooks,
+						SkipTests: skipTests,
+					}))
+				} else {
+					fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
+				}
+				if !useUnifiedStream && !client.DisableHooks {
 					fileWritten := make(map[string]bool)
 					for _, m := range rel.Hooks {
 						if skipTests && isTestHook(m) {
@@ -192,6 +200,13 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 					}
 					for _, m := range manifestsToRender {
 						fmt.Fprintf(out, "---\n%s\n", m)
+					}
+				} else if useUnifiedStream {
+					outStr := manifests.String()
+					if outStr == "" || !strings.HasSuffix(outStr, "\n") {
+						fmt.Fprintln(out, outStr)
+					} else {
+						fmt.Fprint(out, outStr)
 					}
 				} else {
 					fmt.Fprintf(out, "%s", manifests.String())

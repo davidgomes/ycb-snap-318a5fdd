@@ -39,6 +39,7 @@ import (
 	"helm.sh/helm/v4/pkg/downloader"
 	"helm.sh/helm/v4/pkg/getter"
 	release "helm.sh/helm/v4/pkg/release/v1"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 )
 
 const installDesc = `
@@ -161,12 +162,21 @@ func newInstallCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 				return fmt.Errorf("INSTALLATION FAILED: %w", err)
 			}
 
+			dryRun := isDryRunStrategy(client.DryRunStrategy)
+			manifestStream := ""
+			if dryRun {
+				manifestStream = releaseutil.FormatManifestStream(cfg.RenderedStreamDocuments(), releaseutil.StreamFormatOptions{
+					HideSecrets: client.HideSecret,
+				})
+			}
 			return outfmt.Write(out, &statusPrinter{
-				release:      rel,
-				debug:        settings.Debug,
-				showMetadata: false,
-				hideNotes:    client.HideNotes,
-				noColor:      settings.ShouldDisableColor(),
+				release:        rel,
+				debug:          settings.Debug,
+				showMetadata:   false,
+				hideNotes:      client.HideNotes,
+				noColor:        settings.ShouldDisableColor(),
+				dryRun:         dryRun,
+				manifestStream: manifestStream,
 			})
 		},
 	}

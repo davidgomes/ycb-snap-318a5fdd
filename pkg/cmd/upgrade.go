@@ -40,6 +40,7 @@ import (
 	"helm.sh/helm/v4/pkg/getter"
 	ri "helm.sh/helm/v4/pkg/release"
 	"helm.sh/helm/v4/pkg/release/common"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 	"helm.sh/helm/v4/pkg/storage/driver"
 )
 
@@ -165,12 +166,21 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 					if err != nil {
 						return err
 					}
+					dryRun := isDryRunStrategy(client.DryRunStrategy)
+					manifestStream := ""
+					if dryRun {
+						manifestStream = releaseutil.FormatManifestStream(cfg.RenderedStreamDocuments(), releaseutil.StreamFormatOptions{
+							HideSecrets: instClient.HideSecret,
+						})
+					}
 					return outfmt.Write(out, &statusPrinter{
-						release:      rel,
-						debug:        settings.Debug,
-						showMetadata: false,
-						hideNotes:    instClient.HideNotes,
-						noColor:      settings.ShouldDisableColor(),
+						release:        rel,
+						debug:          settings.Debug,
+						showMetadata:   false,
+						hideNotes:      instClient.HideNotes,
+						noColor:        settings.ShouldDisableColor(),
+						dryRun:         dryRun,
+						manifestStream: manifestStream,
 					})
 				} else if err != nil {
 					return err
@@ -255,16 +265,25 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 				return fmt.Errorf("UPGRADE FAILED: %w", err)
 			}
 
-			if outfmt == output.Table {
+			dryRun := isDryRunStrategy(client.DryRunStrategy)
+			if outfmt == output.Table && !dryRun {
 				fmt.Fprintf(out, "Release %q has been upgraded. Happy Helming!\n", args[0])
 			}
 
+			manifestStream := ""
+			if dryRun {
+				manifestStream = releaseutil.FormatManifestStream(cfg.RenderedStreamDocuments(), releaseutil.StreamFormatOptions{
+					HideSecrets: client.HideSecret,
+				})
+			}
 			return outfmt.Write(out, &statusPrinter{
-				release:      rel,
-				debug:        settings.Debug,
-				showMetadata: false,
-				hideNotes:    client.HideNotes,
-				noColor:      settings.ShouldDisableColor(),
+				release:        rel,
+				debug:          settings.Debug,
+				showMetadata:   false,
+				hideNotes:      client.HideNotes,
+				noColor:        settings.ShouldDisableColor(),
+				dryRun:         dryRun,
+				manifestStream: manifestStream,
 			})
 		},
 	}

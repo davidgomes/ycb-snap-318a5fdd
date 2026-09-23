@@ -28,6 +28,7 @@ import (
 	"helm.sh/helm/v4/pkg/kube"
 	"helm.sh/helm/v4/pkg/release/common"
 	release "helm.sh/helm/v4/pkg/release/v1"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 	"helm.sh/helm/v4/pkg/storage/driver"
 )
 
@@ -200,11 +201,19 @@ func (r *Rollback) performRollback(currentRelease, targetRelease *release.Releas
 		return targetRelease, nil
 	}
 
-	current, err := r.cfg.KubeClient.Build(bytes.NewBufferString(currentRelease.Manifest), false)
+	currentManifest, err := releaseutil.InstallOrderManifest(currentRelease.Manifest)
+	if err != nil {
+		return targetRelease, fmt.Errorf("unable to sort current release manifest: %w", err)
+	}
+	current, err := r.cfg.KubeClient.Build(bytes.NewBufferString(currentManifest), false)
 	if err != nil {
 		return targetRelease, fmt.Errorf("unable to build kubernetes objects from current release manifest: %w", err)
 	}
-	target, err := r.cfg.KubeClient.Build(bytes.NewBufferString(targetRelease.Manifest), false)
+	targetManifest, err := releaseutil.InstallOrderManifest(targetRelease.Manifest)
+	if err != nil {
+		return targetRelease, fmt.Errorf("unable to sort target release manifest: %w", err)
+	}
+	target, err := r.cfg.KubeClient.Build(bytes.NewBufferString(targetManifest), false)
 	if err != nil {
 		return targetRelease, fmt.Errorf("unable to build kubernetes objects from new release manifest: %w", err)
 	}

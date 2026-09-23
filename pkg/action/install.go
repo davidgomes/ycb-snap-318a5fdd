@@ -386,7 +386,11 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 	rel.SetStatus(rcommon.StatusPendingInstall, "Initial install underway")
 
 	var toBeAdopted kube.ResourceList
-	resources, err := i.cfg.KubeClient.Build(bytes.NewBufferString(rel.Manifest), !i.DisableOpenAPIValidation)
+	manifestForApply, err := releaseutil.InstallOrderManifest(rel.Manifest)
+	if err != nil {
+		return nil, fmt.Errorf("unable to sort release manifest: %w", err)
+	}
+	resources, err := i.cfg.KubeClient.Build(bytes.NewBufferString(manifestForApply), !i.DisableOpenAPIValidation)
 	if err != nil {
 		return nil, fmt.Errorf("unable to build kubernetes objects from release manifest: %w", err)
 	}

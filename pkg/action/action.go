@@ -115,6 +115,10 @@ type Configuration struct {
 
 	// Embed a LogHolder to provide logger functionality
 	logging.LogHolder
+
+	// renderedDocuments is the source-ordered stream from the latest successful render.
+	// It includes hooks in rendered order and is not stored on the release.
+	renderedDocuments []releaseutil.StreamDocument
 }
 
 type ConfigurationOption func(c *Configuration)
@@ -262,6 +266,7 @@ func splitAndDeannotate(postrendered string) (map[string]string, error) {
 func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values, releaseName, outputDir string, subNotes, useReleaseName, includeCrds bool, pr postrenderer.PostRenderer, interactWithRemote, enableDNS, hideSecret bool) ([]*release.Hook, *bytes.Buffer, string, error) {
 	var hs []*release.Hook
 	b := bytes.NewBuffer(nil)
+	cfg.renderedDocuments = nil
 
 	caps, err := cfg.getCapabilities()
 	if err != nil {
@@ -368,14 +373,40 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 		return hs, b, "", err
 	}
 
-	// Aggregate all valid manifests into one big doc.
-	fileWritten := make(map[string]bool)
-
+	streamDocs, err := releaseutil.DocumentsInSourceOrder(files)
+	if err != nil {
+		return hs, b, "", err
+	}
 	if includeCrds {
 		for _, crd := range ch.CRDObjects() {
-			if outputDir == "" {
-				fmt.Fprintf(b, "---\n# Source: %s\n%s\n", crd.Filename, string(crd.File.Data[:]))
-			} else {
+			streamDocs = append(streamDocs, releaseutil.StreamDocument{
+				Source: crd.Filename,
+				Body:   string(crd.File.Data),
+			})
+		}
+		slices.SortStableFunc(streamDocs, func(a, b releaseutil.StreamDocument) int {
+			return strings.Compare(a.Source, b.Source)
+		})
+	}
+	cfg.renderedDocuments = streamDocs
+
+	// Aggregate all valid manifests into one big doc.
+	// The stored manifest follows source order so later reads can rebuild a
+	// stable stream. Callers that apply resources reorder by kind first.
+	fileWritten := make(map[string]bool)
+
+	if outputDir == "" {
+		printable := make([]releaseutil.StreamDocument, 0, len(streamDocs))
+		for _, doc := range streamDocs {
+			if doc.Hook {
+				continue
+			}
+			printable = append(printable, doc)
+		}
+		b.WriteString(releaseutil.FormatManifestStream(printable, releaseutil.StreamFormatOptions{HideSecrets: hideSecret}))
+	} else {
+		if includeCrds {
+			for _, crd := range ch.CRDObjects() {
 				err = writeToFile(outputDir, crd.Filename, string(crd.File.Data[:]), fileWritten[crd.Filename])
 				if err != nil {
 					return hs, b, "", err
@@ -383,16 +414,8 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 				fileWritten[crd.Filename] = true
 			}
 		}
-	}
 
-	for _, m := range manifests {
-		if outputDir == "" {
-			if hideSecret && m.Head.Kind == "Secret" && m.Head.Version == "v1" {
-				fmt.Fprintf(b, "---\n# Source: %s\n# HIDDEN: The Secret output has been suppressed\n", m.Name)
-			} else {
-				fmt.Fprintf(b, "---\n# Source: %s\n%s\n", m.Name, m.Content)
-			}
-		} else {
+		for _, m := range manifests {
 			newDir := outputDir
 			if useReleaseName {
 				newDir = filepath.Join(outputDir, releaseName)
@@ -410,6 +433,18 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 	}
 
 	return hs, b, notes, nil
+}
+
+// RenderedStreamDocuments returns the source-ordered documents from the latest
+// successful renderResources call. Hooks are included in rendered order.
+// The slice is a copy; callers may filter it without affecting later renders.
+func (cfg *Configuration) RenderedStreamDocuments() []releaseutil.StreamDocument {
+	if cfg == nil || len(cfg.renderedDocuments) == 0 {
+		return nil
+	}
+	out := make([]releaseutil.StreamDocument, len(cfg.renderedDocuments))
+	copy(out, cfg.renderedDocuments)
+	return out
 }
 
 // RESTClientGetter gets the rest client

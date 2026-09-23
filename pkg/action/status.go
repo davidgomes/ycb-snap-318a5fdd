@@ -18,9 +18,11 @@ package action
 
 import (
 	"bytes"
+	"fmt"
 
 	"helm.sh/helm/v4/pkg/kube"
 	ri "helm.sh/helm/v4/pkg/release"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 )
 
 // Status is the action for checking the deployment status of releases.
@@ -60,13 +62,17 @@ func (s *Status) Run(name string) (ri.Releaser, error) {
 	}
 
 	var resources kube.ResourceList
+	manifest, err := releaseutil.InstallOrderManifest(rel.Manifest)
+	if err != nil {
+		return nil, fmt.Errorf("unable to sort release manifest: %w", err)
+	}
 	if s.ShowResourcesTable {
-		resources, err = s.cfg.KubeClient.BuildTable(bytes.NewBufferString(rel.Manifest), false)
+		resources, err = s.cfg.KubeClient.BuildTable(bytes.NewBufferString(manifest), false)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		resources, err = s.cfg.KubeClient.Build(bytes.NewBufferString(rel.Manifest), false)
+		resources, err = s.cfg.KubeClient.Build(bytes.NewBufferString(manifest), false)
 		if err != nil {
 			return nil, err
 		}

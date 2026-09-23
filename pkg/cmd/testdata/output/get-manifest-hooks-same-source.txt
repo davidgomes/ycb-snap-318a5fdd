@@ -1,0 +1,36 @@
+---
+# Source: chart/templates/a.yaml
+apiVersion: v1
+kind: Job
+metadata:
+  name: early
+---
+# Source: chart/templates/shared.yaml
+apiVersion: v1
+kind: Job
+metadata:
+  name: hook-b
+---
+# Source: chart/templates/shared.yaml
+apiVersion: v1
+kind: Job
+metadata:
+  name: hook-a
+---
+# Source: chart/templates/shared.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: main
+---
+# Source: chart/templates/shared.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: main-svc
+---
+# Source: chart/templates/z.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: z

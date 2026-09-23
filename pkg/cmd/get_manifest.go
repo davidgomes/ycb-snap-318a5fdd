@@ -20,12 +20,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/cmd/require"
 	"helm.sh/helm/v4/pkg/release"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 )
 
 var getManifestHelp = `
@@ -59,7 +61,24 @@ func newGetManifestCmd(cfg *action.Configuration, out io.Writer) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(out, rac.Manifest())
+			hooks := make([]releaseutil.StreamDocument, 0, len(rac.Hooks()))
+			for _, hook := range rac.Hooks() {
+				hac, err := release.NewHookAccessor(hook)
+				if err != nil {
+					return err
+				}
+				hooks = append(hooks, releaseutil.StreamDocument{
+					Source: hac.Path(),
+					Body:   hac.Manifest(),
+					Hook:   true,
+				})
+			}
+			stream := releaseutil.UnifiedReleaseManifest(rac.Manifest(), hooks)
+			if stream == "" || !strings.HasSuffix(stream, "\n") {
+				fmt.Fprintln(out, stream)
+			} else {
+				fmt.Fprint(out, stream)
+			}
 			return nil
 		},
 	}
