@@ -27,7 +27,9 @@ use crate::filter::SizeFilter;
     max_term_width = 98,
     args_override_self = true,
     group(ArgGroup::new("execs").args(&["exec", "exec_batch", "list_details"]).conflicts_with_all(&[
-            "max_results", "quiet", "max_one_result"])),
+            "max_results", "quiet", "max_one_result",
+            "sort", "reverse", "dirs_first", "files_first",
+            "sort_case_sensitive", "sort_missing_last", "sort_natural", "sort_seed"])),
 )]
 pub struct Opts {
     /// Include hidden directories and files in the search results (default:
@@ -543,6 +545,85 @@ pub struct Opts {
     /// results to the console.
     #[arg(long, hide = true, value_parser = parse_millis)]
     pub max_buffer_time: Option<Duration>,
+
+    /// Sort results by the given field. May be repeated; later keys break ties
+    /// from earlier keys. If every key ties, results are ordered by path.
+    #[arg(
+        long,
+        value_name = "field",
+        value_enum,
+        action = ArgAction::Append,
+        help = "Sort results by a field (repeatable)",
+        long_help
+    )]
+    pub sort: Vec<crate::sort::SortKey>,
+
+    /// Reverse the final sorted order. Requires --sort.
+    #[arg(long, requires = "sort", help = "Reverse the sorted order", long_help)]
+    pub reverse: bool,
+
+    /// Place directories before other entries, ahead of the --sort keys.
+    /// Mutually exclusive with --files-first. Requires --sort.
+    #[arg(
+        long,
+        requires = "sort",
+        conflicts_with = "files_first",
+        help = "Sort directories before other entries",
+        long_help
+    )]
+    pub dirs_first: bool,
+
+    /// Place regular files before other entries, ahead of the --sort keys.
+    /// Mutually exclusive with --dirs-first. Requires --sort.
+    #[arg(
+        long,
+        requires = "sort",
+        conflicts_with = "dirs_first",
+        help = "Sort regular files before other entries",
+        long_help
+    )]
+    pub files_first: bool,
+
+    /// Compare text sort fields case-sensitively. Requires --sort.
+    /// The default is case-insensitive comparison.
+    #[arg(
+        long,
+        requires = "sort",
+        help = "Case-sensitive text comparisons when sorting",
+        long_help
+    )]
+    pub sort_case_sensitive: bool,
+
+    /// Place entries with missing optional sort values after entries that have
+    /// a value. Without this flag, missing values sort first. Requires --sort.
+    #[arg(
+        long,
+        requires = "sort",
+        help = "Place missing sort values last",
+        long_help
+    )]
+    pub sort_missing_last: bool,
+
+    /// Compare name, path, and extension with natural order: digit runs are
+    /// compared numerically. Requires --sort.
+    #[arg(
+        long,
+        requires = "sort",
+        help = "Natural order for name, path, and extension",
+        long_help
+    )]
+    pub sort_natural: bool,
+
+    /// Seed for --sort random. An unsigned 64-bit integer. Requires --sort.
+    #[arg(
+        long,
+        value_name = "n",
+        requires = "sort",
+        value_parser = value_parser!(u64),
+        help = "Seed for --sort random",
+        long_help
+    )]
+    pub sort_seed: Option<u64>,
 
     ///Limit the number of search results to 'count' and quit immediately.
     #[arg(

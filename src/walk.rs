@@ -22,6 +22,7 @@ use crate::exec;
 use crate::exit_codes::{ExitCode, merge_exitcodes};
 use crate::filesystem;
 use crate::output;
+use crate::sort;
 
 /// The receiver thread can either be buffering results or directly streaming to the console.
 #[derive(PartialEq)]
@@ -180,8 +181,16 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
         }
     }
 
+    fn sorting(&self) -> bool {
+        self.config.sort.is_some()
+    }
+
     /// Receive the next worker result.
     fn recv(&self) -> Result<Batch, RecvTimeoutError> {
+        if self.sorting() {
+            // Sorted output needs the full result set before anything is printed.
+            return Ok(self.rx.recv()?);
+        }
         match self.mode {
             ReceiverMode::Buffering => {
                 // Wait at most until we should switch to streaming
@@ -205,23 +214,27 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                                 return Err(ExitCode::HasResults(true));
                             }
 
-                            match self.mode {
-                                ReceiverMode::Buffering => {
-                                    self.buffer.push(dir_entry);
-                                    if self.buffer.len() > MAX_BUFFER_LENGTH {
-                                        self.stream()?;
+                            if self.sorting() {
+                                self.buffer.push(dir_entry);
+                            } else {
+                                match self.mode {
+                                    ReceiverMode::Buffering => {
+                                        self.buffer.push(dir_entry);
+                                        if self.buffer.len() > MAX_BUFFER_LENGTH {
+                                            self.stream()?;
+                                        }
+                                    }
+                                    ReceiverMode::Streaming => {
+                                        self.print(&dir_entry)?;
                                     }
                                 }
-                                ReceiverMode::Streaming => {
-                                    self.print(&dir_entry)?;
-                                }
-                            }
 
-                            self.num_results += 1;
-                            if let Some(max_results) = self.config.max_results
-                                && self.num_results >= max_results
-                            {
-                                return self.stop();
+                                self.num_results += 1;
+                                if let Some(max_results) = self.config.max_results
+                                    && self.num_results >= max_results
+                                {
+                                    return self.stop();
+                                }
                             }
                         }
                         WorkerResult::Error(err) => {
@@ -280,7 +293,19 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
 
     /// Stop looping.
     fn stop(&mut self) -> Result<(), ExitCode> {
-        if self.mode == ReceiverMode::Buffering {
+        if let Some(spec) = self.config.sort.clone() {
+            let strip = self.config.strip_cwd_prefix;
+            let max_results = self.config.max_results;
+            sort::sort_entries(&mut self.buffer, &spec, strip);
+            if spec.reverse {
+                self.buffer.reverse();
+            }
+            if let Some(max_results) = max_results {
+                self.buffer.truncate(max_results);
+            }
+            self.num_results = self.buffer.len();
+            self.stream()?;
+        } else if self.mode == ReceiverMode::Buffering {
             self.buffer.sort();
             self.stream()?;
         }

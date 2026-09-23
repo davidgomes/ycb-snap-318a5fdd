@@ -9,6 +9,7 @@ use crate::filetypes::FileTypes;
 use crate::filter::OwnerFilter;
 use crate::filter::{SizeFilter, TimeFilter};
 use crate::fmt::FormatTemplate;
+use crate::sort::SortSpec;
 
 /// Configuration options for *fd*.
 pub struct Config {
@@ -124,6 +125,9 @@ pub struct Config {
 
     /// The maximum number of search results
     pub max_results: Option<usize>,
+
+    /// When set, results are fully collected and sorted before printing.
+    pub sort: Option<SortSpec>,
 
     /// Whether or not to strip the './' prefix for search results
     pub strip_cwd_prefix: bool,

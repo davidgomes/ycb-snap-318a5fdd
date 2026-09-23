@@ -2758,3 +2758,235 @@ fn test_ignore_contain_precedence_over_root_check() {
     let expected = "";
     te.assert_output(&["--ignore-contain=CACHEDIR.TAG", "."], expected);
 }
+
+fn sorted_lines(output: &std::process::Output) -> Vec<String> {
+    String::from_utf8_lossy(&output.stdout)
+        .replace(std::path::MAIN_SEPARATOR, "/")
+        .lines()
+        .map(|l| l.to_string())
+        .collect()
+}
+
+#[test]
+fn test_sort_name_path_tiebreak_and_natural() {
+    let te = TestEnv::new(
+        &["sortsub"],
+        &[
+            "sort_b",
+            "sort_a",
+            "sortsub/sort_a",
+            "file10",
+            "file9",
+            "file20",
+            "file007",
+            "file7",
+            "aB",
+            "Ac",
+        ],
+    );
+
+    let lex = te.assert_success_and_get_output(".", &["--sort", "name", "--glob", "sort_*"]);
+    assert_eq!(
+        sorted_lines(&lex),
+        vec!["sort_a", "sortsub/sort_a", "sort_b"]
+    );
+
+    let again = te.assert_success_and_get_output(".", &["--sort", "name", "--glob", "sort_*"]);
+    assert_eq!(sorted_lines(&lex), sorted_lines(&again));
+
+    let natural = te.assert_success_and_get_output(
+        ".",
+        &["--sort", "name", "--sort-natural", "--glob", "file*"],
+    );
+    assert_eq!(
+        sorted_lines(&natural),
+        vec!["file7", "file007", "file9", "file10", "file20"]
+    );
+
+    let folded = te.assert_success_and_get_output(".", &["--sort", "name", "^(aB|Ac)$"]);
+    assert_eq!(sorted_lines(&folded), vec!["aB", "Ac"]);
+
+    let sensitive = te.assert_success_and_get_output(
+        ".",
+        &["--sort", "name", "--sort-case-sensitive", "^(aB|Ac)$"],
+    );
+    assert_eq!(sorted_lines(&sensitive), vec!["Ac", "aB"]);
+}
+
+#[test]
+fn test_sort_extension_missing_size_and_type() {
+    let te = TestEnv::new(&["sortdir"], &["alpha.txt", "readme", "zeta.md", "mid.txt"]);
+    fs::write(te.test_root().join("alpha.txt"), vec![1, 2, 3]).unwrap();
+    fs::write(te.test_root().join("mid.txt"), vec![1]).unwrap();
+    fs::write(te.test_root().join("zeta.md"), vec![1, 2, 3, 4, 5]).unwrap();
+
+    let missing_first = te.assert_success_and_get_output(
+        ".",
+        &[
+            "--sort",
+            "extension",
+            "alpha.txt|readme|zeta.md|mid.txt|sortdir",
+        ],
+    );
+    assert_eq!(
+        sorted_lines(&missing_first),
+        vec!["readme", "sortdir/", "zeta.md", "alpha.txt", "mid.txt"]
+    );
+
+    let missing_last = te.assert_success_and_get_output(
+        ".",
+        &[
+            "--sort",
+            "extension",
+            "--sort-missing-last",
+            "alpha.txt|readme|zeta.md|mid.txt|sortdir",
+        ],
+    );
+    assert_eq!(
+        sorted_lines(&missing_last),
+        vec!["zeta.md", "alpha.txt", "mid.txt", "readme", "sortdir/"]
+    );
+
+    let by_size = te.assert_success_and_get_output(
+        ".",
+        &["--sort", "size", "alpha.txt|readme|zeta.md|mid.txt|sortdir"],
+    );
+    // Non-files (dir) have missing size and sort first. readme is empty (0).
+    assert_eq!(
+        sorted_lines(&by_size),
+        vec!["sortdir/", "readme", "mid.txt", "alpha.txt", "zeta.md"]
+    );
+
+    let by_type = te.assert_success_and_get_output(
+        ".",
+        &[
+            "--sort",
+            "type",
+            "alpha.txt|readme|zeta.md|mid.txt|sortdir|symlink",
+        ],
+    );
+    let lines = sorted_lines(&by_type);
+    assert_eq!(lines[0], "sortdir/");
+    assert!(lines.contains(&"symlink".to_string()));
+    assert!(
+        lines.iter().position(|l| l == "sortdir/").unwrap()
+            < lines.iter().position(|l| l == "symlink").unwrap()
+    );
+    assert!(
+        lines.iter().position(|l| l == "symlink").unwrap()
+            < lines.iter().position(|l| l == "readme").unwrap()
+    );
+}
+
+#[test]
+fn test_sort_grouping_reverse_and_max_results() {
+    let te = TestEnv::new(&["d"], &["a", "c", "d/b"]);
+    let grouped =
+        te.assert_success_and_get_output(".", &["--sort", "name", "--dirs-first", "^(a|b|c|d)$"]);
+    assert_eq!(sorted_lines(&grouped), vec!["d/", "a", "d/b", "c"]);
+
+    let files_first =
+        te.assert_success_and_get_output(".", &["--sort", "name", "--files-first", "^(a|b|c|d)$"]);
+    assert_eq!(sorted_lines(&files_first), vec!["a", "d/b", "c", "d/"]);
+
+    let reversed = te.assert_success_and_get_output(
+        ".",
+        &[
+            "--sort",
+            "name",
+            "--dirs-first",
+            "--reverse",
+            "--max-results",
+            "2",
+            "^(a|b|c|d)$",
+        ],
+    );
+    // Full order d/, a, d/b, c reversed is c, d/b, a, d/ then limited to 2.
+    assert_eq!(sorted_lines(&reversed), vec!["c", "d/b"]);
+
+    te.assert_failure(&["--reverse", "a"]);
+    te.assert_failure(&["--dirs-first", "--files-first", "--sort", "name"]);
+    te.assert_failure(&["--sort", "name", "--exec", "echo", ";", "a"]);
+    te.assert_failure(&["--sort", "name", "--list-details"]);
+    te.assert_failure(&["--sort", "nope"]);
+}
+
+#[test]
+fn test_sort_random_seed_and_tiebreak() {
+    let te = TestEnv::new(&[], &["r1", "r2", "r3", "r4", "r5", "r6"]);
+    let args = ["--sort", "random", "--sort-seed", "42", "--glob", "r?"];
+    let first = te.assert_success_and_get_output(".", &args);
+    let second = te.assert_success_and_get_output(".", &args);
+    assert_eq!(sorted_lines(&first), sorted_lines(&second));
+    assert_eq!(sorted_lines(&first).len(), 6);
+
+    let other = te.assert_success_and_get_output(
+        ".",
+        &["--sort", "random", "--sort-seed", "99", "--glob", "r?"],
+    );
+    assert_ne!(sorted_lines(&first), sorted_lines(&other));
+
+    // Same extension, random breaks ties reproducibly; name is a later key.
+    let tied = te.assert_success_and_get_output(
+        ".",
+        &[
+            "--sort",
+            "extension",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "7",
+            "--sort",
+            "name",
+            "--glob",
+            "r?",
+        ],
+    );
+    let tied2 = te.assert_success_and_get_output(
+        ".",
+        &[
+            "--sort",
+            "extension",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "7",
+            "--sort",
+            "name",
+            "--glob",
+            "r?",
+        ],
+    );
+    assert_eq!(sorted_lines(&tied), sorted_lines(&tied2));
+}
+
+#[test]
+fn test_sort_depth_and_multi_root() {
+    let te = TestEnv::new(
+        &["rootA/nested", "rootB"],
+        &["rootA/nested/z", "rootB/a", "rootA/m"],
+    );
+    let by_depth = te.assert_success_and_get_output(
+        ".",
+        &[
+            "--sort",
+            "depth",
+            "--sort",
+            "name",
+            "^(rootA|rootB|nested|m|a|z)$",
+        ],
+    );
+    let lines = sorted_lines(&by_depth);
+    // depth 1: rootA, rootB (name order). depth 2: m, nested. depth 3: z
+    assert_eq!(
+        lines,
+        vec![
+            "rootA/",
+            "rootB/",
+            "rootB/a",
+            "rootA/m",
+            "rootA/nested/",
+            "rootA/nested/z",
+        ]
+    );
+}
