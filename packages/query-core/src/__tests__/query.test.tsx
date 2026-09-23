@@ -7,18 +7,20 @@ import {
 import {
   CancelledError,
   Query,
+  QueryCache,
   QueryClient,
   QueryObserver,
+  createPersisterRestoreResult,
   dehydrate,
   hydrate,
 } from '..'
 import { hashQueryKeyByOptions } from '../utils'
 import { mockOnlineManagerIsOnline, setIsServer } from './utils'
 import type {
-  QueryCache,
   QueryFunctionContext,
   QueryKey,
   QueryObserverResult,
+  QueryState,
 } from '..'
 
 describe('query', () => {
@@ -1162,6 +1164,138 @@ describe('query', () => {
 
     const query = queryCache.find({ queryKey: key })!
     expect(query.state.data).toBe('persisted data')
+  })
+
+  describe('persister restore result', () => {
+    const error = new Error('persisted error')
+    const persistedState: QueryState<string, Error> = {
+      data: 'persisted data',
+      dataUpdateCount: 3,
+      dataUpdatedAt: 1000,
+      error,
+      errorUpdateCount: 2,
+      errorUpdatedAt: 2000,
+      fetchFailureCount: 1,
+      fetchFailureReason: error,
+      fetchMeta: null,
+      isInvalidated: true,
+      status: 'error',
+      fetchStatus: 'fetching',
+    }
+
+    test('should adopt the restored state instead of treating it as a successful fetch', async () => {
+      const key = queryKey()
+      const onSuccess = vi.fn()
+      const onSettled = vi.fn()
+      const client = new QueryClient({
+        queryCache: new QueryCache({ onSuccess, onSettled }),
+      })
+      const queryFn = vi.fn(() => 'fetched data')
+
+      await client.prefetchQuery({
+        queryKey: key,
+        queryFn,
+        persister: () =>
+          Promise.resolve(
+            createPersisterRestoreResult({
+              data: persistedState.data!,
+              state: persistedState,
+            }),
+          ),
+      })
+
+      expect(client.getQueryState(key)).toEqual({
+        ...persistedState,
+        fetchStatus: 'idle',
+      })
+      expect(queryFn).not.toHaveBeenCalled()
+      expect(onSuccess).not.toHaveBeenCalled()
+      expect(onSettled).not.toHaveBeenCalled()
+    })
+
+    test('should expose the restored state through observer results', async () => {
+      const key = queryKey()
+      const observer = new QueryObserver(queryClient, {
+        queryKey: key,
+        queryFn: () => 'fetched data',
+        persister: () =>
+          createPersisterRestoreResult({
+            data: persistedState.data!,
+            state: persistedState,
+          }),
+      })
+      const unsubscribe = observer.subscribe(() => undefined)
+
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(observer.getCurrentResult()).toMatchObject({
+        data: 'persisted data',
+        dataUpdatedAt: 1000,
+        error,
+        errorUpdatedAt: 2000,
+        errorUpdateCount: 2,
+        failureCount: 1,
+        failureReason: error,
+        fetchStatus: 'idle',
+        isFetched: true,
+        isRefetchError: true,
+        isStale: true,
+        status: 'error',
+      })
+
+      unsubscribe()
+    })
+
+    test('should fall back to a success state for fields missing from the restored state', async () => {
+      const key = queryKey()
+
+      await queryClient.prefetchQuery({
+        queryKey: key,
+        queryFn: () => 'fetched data',
+        persister: () =>
+          createPersisterRestoreResult({
+            data: 'persisted data',
+            state: { dataUpdatedAt: 1000 },
+          }),
+      })
+
+      expect(queryClient.getQueryState(key)).toMatchObject({
+        data: 'persisted data',
+        dataUpdateCount: 1,
+        dataUpdatedAt: 1000,
+        error: null,
+        fetchStatus: 'idle',
+        isInvalidated: false,
+        status: 'success',
+      })
+    })
+
+    test('should resolve deduplicated fetches with the restored data', async () => {
+      const key = queryKey()
+      const persister = vi.fn(async () => {
+        await sleep(10)
+        return createPersisterRestoreResult({
+          data: persistedState.data!,
+          state: persistedState,
+        })
+      })
+      const options = { queryKey: key, queryFn: () => 'fetched data', persister }
+
+      const results = Promise.all([
+        queryClient.fetchQuery(options),
+        queryClient.fetchQuery(options),
+      ])
+      await vi.advanceTimersByTimeAsync(10)
+
+      await expect(results).resolves.toEqual([
+        'persisted data',
+        'persisted data',
+      ])
+      expect(persister).toHaveBeenCalledTimes(1)
+      await expect(queryCache.find({ queryKey: key })!.promise).resolves.toBe(
+        'persisted data',
+      )
+    })
   })
 
   test('should use queryFn from observer if not provided in options', async () => {

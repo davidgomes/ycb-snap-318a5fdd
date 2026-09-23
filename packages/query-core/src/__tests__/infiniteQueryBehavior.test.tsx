@@ -1,7 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { queryKey, sleep } from '@tanstack/query-test-utils'
-import { CancelledError, InfiniteQueryObserver, QueryClient } from '..'
-import type { InfiniteData, InfiniteQueryObserverResult, QueryCache } from '..'
+import {
+  CancelledError,
+  InfiniteQueryObserver,
+  QueryClient,
+  createPersisterRestoreResult,
+} from '..'
+import type {
+  InfiniteData,
+  InfiniteQueryObserverResult,
+  Query,
+  QueryCache,
+} from '..'
 
 describe('InfiniteQueryBehavior', () => {
   let queryClient: QueryClient
@@ -486,6 +496,54 @@ describe('InfiniteQueryBehavior', () => {
 
     await vi.advanceTimersByTimeAsync(0)
     expect(persisterSpy).toHaveBeenCalledTimes(1)
+
+    unsubscribe()
+  })
+
+  test('should keep page params from a persister restore result', async () => {
+    const key = queryKey()
+    const queryFn = vi.fn(({ pageParam }: { pageParam: number }) => pageParam)
+
+    const persister = vi
+      .fn()
+      .mockImplementation((fn, _context, query: Query) =>
+        query.state.data === undefined
+          ? createPersisterRestoreResult({
+              data: { pages: [5, 6], pageParams: [5, 6] },
+              state: { dataUpdatedAt: 1000, isInvalidated: true },
+            })
+          : fn(),
+      )
+
+    const observer = new InfiniteQueryObserver(queryClient, {
+      queryKey: key,
+      queryFn,
+      getNextPageParam: (lastPage: number) => lastPage + 1,
+      initialPageParam: 1,
+      persister,
+    })
+
+    const unsubscribe = observer.subscribe(() => {})
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(queryFn).not.toHaveBeenCalled()
+    expect(observer.getCurrentResult()).toMatchObject({
+      data: { pages: [5, 6], pageParams: [5, 6] },
+      dataUpdatedAt: 1000,
+      fetchStatus: 'idle',
+      hasNextPage: true,
+      isStale: true,
+      status: 'success',
+    })
+
+    await observer.fetchNextPage()
+
+    expect(queryFn).toHaveBeenCalledTimes(1)
+    expect(observer.getCurrentResult().data).toEqual({
+      pages: [5, 6, 7],
+      pageParams: [5, 6, 7],
+    })
 
     unsubscribe()
   })
