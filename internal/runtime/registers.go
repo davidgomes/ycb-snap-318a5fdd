@@ -230,8 +230,13 @@ func (vm *VM) generalIndirect(r int8) reflect.Value {
 		panic(errNilPointer)
 	}
 	elem := v.Elem()
-	if elem.Kind() == reflect.Func {
+	switch elem.Kind() {
+	case reflect.Func:
 		return reflect.ValueOf(&callable{native: NewNativeFunction("", "", elem)})
+	case reflect.Interface:
+		// Values with an interface type are stored in the general registers
+		// as their dynamic values.
+		return importValue(elem.Elem())
 	}
 	return elem
 }
@@ -245,7 +250,15 @@ func (vm *VM) setGeneral(r int8, v reflect.Value) {
 }
 
 func (vm *VM) setGeneralIndirect(r int8, v reflect.Value) {
-	vm.regs.general[vm.fp[3]+Addr(r)].Elem().Set(v)
+	elem := vm.regs.general[vm.fp[3]+Addr(r)].Elem()
+	if elem.Kind() == reflect.Interface {
+		if !v.IsValid() {
+			v = reflect.Zero(elem.Type())
+		} else {
+			v = vm.exportValue(v, elem.Type())
+		}
+	}
+	elem.Set(v)
 }
 
 func (vm *VM) getIntoReflectValue(r int8, v reflect.Value, k bool) registerType {
@@ -276,7 +289,7 @@ func (vm *VM) getIntoReflectValue(r int8, v reflect.Value, k bool) registerType 
 				v.Set(reflect.Zero(t))
 			}
 		} else {
-			v.Set(g)
+			v.Set(vm.exportValue(g, v.Type()))
 		}
 		return generalRegister
 	default:
@@ -307,7 +320,7 @@ func (vm *VM) setFromReflectValue(r int8, v reflect.Value) registerType {
 		vm.setGeneral(r, reflect.ValueOf(c))
 		return generalRegister
 	case reflect.Interface:
-		vm.setGeneral(r, v.Elem())
+		vm.setGeneral(r, importValue(v.Elem()))
 		return generalRegister
 	default:
 		vm.setGeneral(r, v)
@@ -441,6 +454,16 @@ func (vm *VM) appendSlice(first int8, length int, slice reflect.Value) reflect.V
 			regs := vm.regs.string[vm.fp[2]+Addr(first):]
 			for i, j := 0, ol; i < length; i, j = i+1, j+1 {
 				slice.Index(j).SetString(regs[i])
+			}
+		case reflect.Interface:
+			regs := vm.regs.general[vm.fp[3]+Addr(first):]
+			t := slice.Type().Elem()
+			for i, j := 0, ol; i < length; i, j = i+1, j+1 {
+				if regs[i].IsValid() {
+					slice.Index(j).Set(vm.exportValue(regs[i], t))
+				} else {
+					slice.Index(j).Set(reflect.Zero(t))
+				}
 			}
 		default:
 			regs := vm.regs.general[vm.fp[3]+Addr(first):]
