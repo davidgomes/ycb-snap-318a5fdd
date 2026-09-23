@@ -38,7 +38,7 @@ func (tc *typechecker) declareMethod(fn *ast.Func, localTypes map[reflect.Type]b
 		isPtr = true
 	}
 	if !localTypes[base] {
-		if base.Name() == "" || base.Kind() == reflect.Ptr || base.Kind() == reflect.Interface {
+		if base.Name() == "" {
 			panic(tc.errorf(fn.Recv.Type, "invalid receiver type %s", recvType))
 		}
 		panic(tc.errorf(fn.Recv.Type, "cannot define new methods on non-local type %s", base))

@@ -33,11 +33,11 @@ const (
 // checker scopes to associate the declarations to the type checking
 // information.
 type typeInfo struct {
-	Type              reflect.Type // Type.
-	Alias             string       // Alias.
-	Properties        properties   // Properties.
-	Constant          constant     // Constant value.
-	NativePackageName string       // Name of the package. Empty string if non-native.
+	Type              reflect.Type   // Type.
+	Alias             string         // Alias.
+	Properties        properties     // Properties.
+	Constant          constant       // Constant value.
+	NativePackageName string         // Name of the package. Empty string if non-native.
 	MethodType        methodType     // Method type.
 	value             interface{}    // value; for packages has type *Package.
 	valueType         reflect.Type   // When value is a native type holds the original type of value.
