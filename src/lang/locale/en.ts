@@ -528,6 +528,19 @@ export default {
       'name': 'Line Break at Document End',
       'description': 'Ensures that there is exactly one line break at the end of a document if the note is not empty.',
     },
+    // link-style.ts
+    'link-style': {
+      'name': 'Link Style',
+      'description': 'Converts between Obsidian wiki links/embeds and markdown links/images.',
+      'linkStyle': {
+        'name': 'Link Style',
+        'description': 'The format to use for links',
+      },
+      'imageStyle': {
+        'name': 'Image Style',
+        'description': 'The format to use for embeds and images',
+      },
+    },
     // move-footnotes-to-the-bottom.ts
     'move-footnotes-to-the-bottom': {
       'name': 'Move Footnotes to the bottom',
@@ -965,6 +978,10 @@ export default {
     'file system': 'File system',
     'frontmatter': 'YAML frontmatter',
     'user or Linter edits': 'Changes in Obsidian',
+    // link-style.ts
+    'no-change': 'No change',
+    'markdown': 'Markdown',
+    'wiki': 'Wiki',
     // quote-style.ts
     '\'\'': '\'\'', // leave as is
     '‘’': '‘’', // leave as is
