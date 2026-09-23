@@ -700,6 +700,49 @@ This generates GraphQL equivalent to::
       }
     }
 
+Defer and Stream
+""""""""""""""""
+
+To request the :ref:`incremental delivery <incremental_delivery>` of some parts
+of a query, use the :code:`defer` method on
+:class:`DSLFragment <gql.dsl.DSLFragment>`,
+:class:`DSLFragmentSpread <gql.dsl.DSLFragmentSpread>` or
+:class:`DSLInlineFragment <gql.dsl.DSLInlineFragment>` instances,
+and the :meth:`stream <gql.dsl.DSLField.stream>` method on list fields::
+
+    name_fragment = DSLFragment("NameFragment").on(ds.Character).select(
+        ds.Character.name
+    )
+
+    query = DSLQuery(
+        ds.Query.hero.select(
+            ds.Character.id,
+            name_fragment.defer(label="name"),
+            ds.Character.friends.stream(initial_count=1).select(ds.Character.name),
+        )
+    )
+
+    request = dsl_gql(name_fragment, query)
+
+This generates::
+
+    fragment NameFragment on Character {
+      name
+    }
+
+    {
+      hero {
+        id
+        ...NameFragment @defer(label: "name")
+        friends @stream(initialCount: 1) {
+          name
+        }
+      }
+    }
+
+Calling :code:`defer` on a :class:`DSLFragment <gql.dsl.DSLFragment>` adds the
+directive where the fragment is spread, not on the fragment definition.
+
 Executable examples
 -------------------
 
