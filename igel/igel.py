@@ -11,7 +11,14 @@ import pandas as pd
 
 try:
     from igel.configs import configs
+    from igel.constants import Constants
     from igel.data import evaluate_model, metrics_dict, models_dict
+    from igel.feature_schema import (
+        FeatureSchemaError,
+        apply_feature_schema,
+        build_feature_schema,
+        project_with_targets,
+    )
     from igel.hyperparams import hyperparameter_search
     from igel.preprocessing import (
         encode,
@@ -177,6 +184,7 @@ class Igel:
             # load description file to read stored training parameters
             with open(self.description_file) as f:
                 dic = json.load(f)
+                self._train_description = dic
                 self.target: list = dic.get(
                     "target"
                 )  # target to predict as a list
@@ -316,6 +324,7 @@ class Igel:
                 data_path=self.data_path, **read_data_options
             )
             logger.info(f"dataset shape: {dataset.shape}")
+            dataset = self._apply_feature_selection(dataset, stage=target)
             attributes = list(dataset.columns)
             logger.info(f"dataset attributes: {attributes}")
 
@@ -408,6 +417,8 @@ class Igel:
 
             return x_train, y_train, x_test, y_test
 
+        except FeatureSchemaError:
+            raise
         except Exception as e:
             logger.exception(f"error occured while preparing the data: {e}")
 
@@ -570,6 +581,22 @@ class Igel:
             "results_on_test_data": eval_results,
             "hyperparameter_search_results": hp_search_results,
         }
+        feature_schema = getattr(self, "_feature_schema", None)
+        if feature_schema is not None:
+            if not os.path.exists(self.results_path):
+                os.mkdir(self.results_path)
+            schema_path = os.path.join(
+                str(self.results_path), Constants.feature_schema_file
+            )
+            joblib.dump(feature_schema, schema_path)
+            fit_description["feature_schema_path"] = schema_path
+            fit_description["input_features"] = feature_schema["input_features"]
+            fit_description["dropped_features"] = feature_schema[
+                "dropped_features"
+            ]
+            fit_description["duplicate_feature_aliases"] = feature_schema[
+                "duplicate_feature_aliases"
+            ]
         if self.model_type == "clustering":
             clustering_res = {
                 "cluster_centers": self.model.cluster_centers_.tolist(),
@@ -625,6 +652,8 @@ class Igel:
             with open(self.evaluation_file, "w", encoding="utf-8") as f:
                 json.dump(eval_results, f, ensure_ascii=False, indent=4)
 
+        except FeatureSchemaError:
+            raise
         except Exception as e:
             logger.exception(f"error occured during evaluation: {e}")
 
@@ -656,6 +685,8 @@ class Igel:
             )
             return df_pred
 
+        except FeatureSchemaError:
+            raise
         except Exception as e:
             logger.exception(f"Error while preparing predictions: {e}")
 
@@ -680,7 +711,8 @@ class Igel:
                 f"Trying to load sklearn model from directory - {self.model_path} "
             )
             model = self._load_model(f=self.model_path)
-            initial_type = [('float_input', FloatTensorType([None, 4]))]
+            n_features = self._input_width_from_description()
+            initial_type = [('float_input', FloatTensorType([None, n_features]))]
             onx = convert_sklearn(model, initial_types=initial_type)
             
             # check if model_results folder is present and create if absent
@@ -704,6 +736,65 @@ class Igel:
             )
         except Exception as e:
             logger.exception(f"Error while exporting model: {e}")
+
+    def _apply_feature_selection(self, dataset, stage):
+        """
+        On fit, build and remember the raw feature schema when dataset.features
+        is set. On later commands, load that schema and apply it before the
+        model sees the data.
+        """
+        clustering = getattr(self, "model_type", None) == "clustering"
+        targets = []
+        if not clustering and getattr(self, "target", None):
+            targets = list(self.target)
+        schema_targets = [] if clustering else targets
+        keep_targets = stage in ("fit", "evaluate") and not clustering
+
+        if self.command == "fit":
+            features_config = (self.dataset_props or {}).get("features", None)
+            if features_config is None:
+                return dataset
+            schema = build_feature_schema(
+                dataset, features_config, schema_targets
+            )
+            self._feature_schema = schema
+        else:
+            schema = self._load_persisted_feature_schema()
+            if schema is None:
+                return dataset
+
+        if keep_targets:
+            return project_with_targets(dataset, schema, schema_targets)
+        return apply_feature_schema(dataset, schema)
+
+    def _load_persisted_feature_schema(self):
+        description = getattr(self, "_train_description", None) or {}
+        schema_path = description.get("feature_schema_path")
+        if not schema_path:
+            return None
+        if not os.path.exists(schema_path):
+            raise FeatureSchemaError(
+                f"feature schema was not found at {schema_path}"
+            )
+        return joblib.load(schema_path)
+
+    def _input_width_from_description(self) -> int:
+        description_path = os.path.join(
+            os.path.dirname(str(self.model_path)), Constants.description_file
+        )
+        if not os.path.exists(description_path):
+            description_path = str(self.description_file)
+        with open(description_path, encoding="utf-8") as handle:
+            description = json.load(handle)
+        input_features = description.get("input_features")
+        if input_features is not None:
+            return len(input_features)
+        train_shape = description.get("train_data_shape")
+        if not train_shape or len(train_shape) < 2:
+            raise FeatureSchemaError(
+                "description.json does not contain an input width"
+            )
+        return int(train_shape[1])
 
     @staticmethod
     def create_init_mock_file(
