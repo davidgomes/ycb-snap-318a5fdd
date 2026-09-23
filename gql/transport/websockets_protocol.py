@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from graphql import ExecutionResult
 
 from ..graphql_request import GraphQLRequest
+from ..incremental import IncrementalPayloadExecutionResult, is_incremental_payload
 from .common.adapters.connection import AdapterConnection
 from .common.base import SubscriptionTransportBase
 from .exceptions import (
@@ -256,6 +257,28 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
         if self.subprotocol == self.APOLLO_SUBPROTOCOL:
             await self._send_connection_terminate_message()
 
+    @staticmethod
+    def _payload_to_execution_result(payload: Dict[str, Any]) -> ExecutionResult:
+        """Convert a 'next' / 'data' payload to an ExecutionResult.
+
+        Incremental delivery payloads (@defer / @stream) may not contain
+        any 'data' or 'errors' field, the raw payload is then kept to be
+        forwarded to execute_incremental.
+
+        :raises ValueError: if the payload is not a valid GraphQL result
+        """
+        if is_incremental_payload(payload):
+            return IncrementalPayloadExecutionResult(payload)
+
+        if "errors" not in payload and "data" not in payload:
+            raise ValueError("payload does not contain 'data' or 'errors' fields")
+
+        return ExecutionResult(
+            errors=payload.get("errors"),
+            data=payload.get("data"),
+            extensions=payload.get("extensions"),
+        )
+
     def _parse_answer_graphqlws(
         self, json_answer: Dict[str, Any]
     ) -> Tuple[str, Optional[int], Optional[ExecutionResult]]:
@@ -297,15 +320,8 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
                         if not isinstance(payload, dict):
                             raise ValueError("payload is not a dict")
 
-                        if "errors" not in payload and "data" not in payload:
-                            raise ValueError(
-                                "payload does not contain 'data' or 'errors' fields"
-                            )
-
-                        execution_result = ExecutionResult(
-                            errors=payload.get("errors"),
-                            data=payload.get("data"),
-                            extensions=payload.get("extensions"),
+                        execution_result = self._payload_to_execution_result(
+                            payload
                         )
 
                         # Saving answer_type as 'data' to be understood with superclass
@@ -368,15 +384,8 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
 
                     if answer_type == "data":
 
-                        if "errors" not in payload and "data" not in payload:
-                            raise ValueError(
-                                "payload does not contain 'data' or 'errors' fields"
-                            )
-
-                        execution_result = ExecutionResult(
-                            errors=payload.get("errors"),
-                            data=payload.get("data"),
-                            extensions=payload.get("extensions"),
+                        execution_result = self._payload_to_execution_result(
+                            payload
                         )
 
                     elif answer_type == "error":

@@ -486,6 +486,122 @@ class AIOHTTPTransport(AsyncTransport):
         except Exception as e:
             raise TransportConnectionFailed(str(e)) from e
 
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        extra_args: Optional[Dict[str, Any]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute a GraphQL request which may contain @defer or @stream
+        directives and yield the raw payloads received from the server.
+
+        Don't call this method directly on the transport, instead use
+        :code:`execute_incremental` on a session.
+
+        :param request: GraphQL request to execute
+        :param extra_args: additional arguments to send to the aiohttp post method
+        :yields: the payloads (dicts) as they arrive in the multipart stream
+        """
+        if self.session is None:
+            raise TransportClosed("Transport is not connected")
+
+        post_args = self._prepare_request(request, extra_args)
+
+        headers = post_args.get("headers", {})
+        headers.update(
+            {
+                "Content-Type": "application/json",
+                "Accept": (
+                    "multipart/mixed;boundary=graphql;"
+                    "deferSpec=20220824,application/json"
+                ),
+            }
+        )
+        post_args["headers"] = headers
+
+        try:
+            async with self.session.post(self.url, ssl=self.ssl, **post_args) as resp:
+                self.response_headers = resp.headers
+
+                if resp.status >= 400:
+                    self._raise_transport_server_error_if_status_more_than_400(resp)
+
+                content_type = resp.headers.get("Content-Type", "")
+
+                if "multipart/mixed" not in content_type:
+                    result = await self._get_json_result(resp)
+                    if not isinstance(result, dict) or (
+                        "errors" not in result and "data" not in result
+                    ):
+                        await self._raise_response_error(
+                            resp, 'No "data" or "errors" keys in answer'
+                        )
+                    yield result
+                    return
+
+                reader = MultipartReader.from_response(resp)
+
+                while True:
+                    try:
+                        part = await reader.next()
+                    except Exception:
+                        # See _parse_multipart_response
+                        if reader.at_eof():
+                            break
+                        raise  # pragma: no cover
+
+                    if part is None:
+                        break
+
+                    assert not isinstance(
+                        part, MultipartReader
+                    ), "Nested multipart parts are not supported"
+
+                    payload = await self._parse_incremental_part(part)
+                    if payload is not None:
+                        yield payload
+
+        except TransportError:
+            raise
+        except Exception as e:
+            raise TransportConnectionFailed(str(e)) from e
+
+    async def _parse_incremental_part(
+        self, part: BodyPartReader
+    ) -> Optional[Dict[str, Any]]:
+        content_type = part.headers.get(aiohttp.hdrs.CONTENT_TYPE, "")
+        if content_type and not content_type.startswith("application/json"):
+            raise TransportProtocolError(
+                f"Unexpected part content-type: {content_type}. "
+                "Expected 'application/json'."
+            )
+
+        body = (await part.text()).strip()
+
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug("<<< %s", ascii(body or "(empty body, skipping)"))
+
+        if not body:
+            return None
+
+        try:
+            payload = self.json_deserialize(body)
+        except ValueError as e:
+            raise TransportProtocolError(
+                f"Server did not return a valid JSON part: {body[:100]}"
+            ) from e
+
+        if not isinstance(payload, dict):
+            raise TransportProtocolError(
+                f"Server did not return a valid GraphQL payload: {body[:100]}"
+            )
+
+        if not payload:
+            log.debug("Received heartbeat, ignoring")
+            return None
+
+        return payload
+
     async def _parse_multipart_response(
         self,
         response: aiohttp.ClientResponse,

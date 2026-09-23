@@ -8,6 +8,7 @@ from typing import Any, AsyncGenerator, Dict, Optional, Tuple, Union
 from graphql import ExecutionResult
 
 from ...graphql_request import GraphQLRequest
+from ...incremental import execution_result_to_payload
 from ..async_transport import AsyncTransport
 from ..exceptions import (
     TransportAlreadyConnected,
@@ -320,6 +321,25 @@ class SubscriptionTransportBase(AsyncTransport):
         finally:
             log.debug(f"In subscribe finally for query_id {query_id}")
             self._remove_listener(query_id)
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute a request which may contain @defer or @stream directives
+        and yield the raw payloads received from the server until the
+        operation is complete.
+
+        Don't call this method directly on the transport, instead use
+        :code:`execute_incremental` on a session.
+        """
+        generator = self.subscribe(request)
+
+        try:
+            async for result in generator:
+                yield execution_result_to_payload(result)
+        finally:
+            await generator.aclose()
 
     async def execute(
         self,

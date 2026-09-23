@@ -39,6 +39,11 @@ from tenacity import (
 )
 
 from .graphql_request import GraphQLRequest, support_deprecated_request
+from .incremental import (
+    IncrementalResult,
+    IncrementalResultAccumulator,
+    execution_result_to_payload,
+)
 from .transport.async_transport import AsyncTransport
 from .transport.exceptions import TransportConnectionFailed, TransportQueryError
 from .transport.local_schema import LocalSchemaTransport
@@ -1594,6 +1599,66 @@ class AsyncClientSession:
             return result
 
         return result.data
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalResult, None]:
+        """Execute a request which may contain @defer or @stream directives,
+        yielding an :class:`IncrementalResult <gql.incremental.IncrementalResult>`
+        for each payload received from the server.
+
+        The data of each result is accumulated from all the payloads received
+        so far. The errors and extensions only contain the values received
+        in the current payload. Errors are not raised, they are returned
+        in the errors attribute of the results.
+
+        If the transport does not support incremental delivery, or if the
+        server returns a standard response, a single result is yielded.
+
+        :param request: GraphQL query as :class:`GraphQLRequest <gql.GraphQLRequest>`.
+        :param serialize_variables: whether the variable values should be
+            serialized. Used for custom scalars and/or enums.
+            By default use the serialize_variables argument of the client.
+
+        The extra arguments are passed to the transport execute_incremental method.
+        """
+
+        request = support_deprecated_request(request, kwargs)
+
+        if self.client.schema:
+            self.client.validate(request)
+
+            if request.variable_values is not None:
+                if serialize_variables or (
+                    serialize_variables is None and self.client.serialize_variables
+                ):
+                    request = request.serialize_variable_values(self.client.schema)
+
+        accumulator = IncrementalResultAccumulator()
+
+        transport_execute_incremental = getattr(
+            self.transport, "execute_incremental", None
+        )
+
+        if transport_execute_incremental is None:
+            with fail_after(self.client.execute_timeout):
+                result = await self.transport.execute(request, **kwargs)
+            yield accumulator.add_payload(execution_result_to_payload(result))
+            return
+
+        inner_generator: AsyncGenerator[Dict[str, Any], None] = (
+            transport_execute_incremental(request, **kwargs)
+        )
+
+        try:
+            async for payload in inner_generator:
+                yield accumulator.add_payload(payload)
+        finally:
+            await inner_generator.aclose()
 
     async def _execute_batch(
         self,
