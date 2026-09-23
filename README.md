@@ -55,6 +55,7 @@ Table of contents
         * [`deserialize` option](#deserialize-option)
         * [`serialization_strategy` option](#serialization_strategy-option)
         * [`alias` option](#alias-option)
+        * [`flatten` option](#flatten-option)
     * [Config options](#config-options)
         * [`debug` config option](#debug-config-option)
         * [`code_generation_options` config option](#code_generation_options-config-option)
@@ -1262,6 +1263,72 @@ class DataClass(DataClassDictMixin):
 
 x = DataClass.from_dict({"FieldA": 1, "#invalid": 2})  # DataClass(a=1, b=2)
 ```
+
+#### `flatten` option
+
+This option merges the keys of a nested dataclass into the dictionary of its
+parent instead of putting them under the field name:
+
+```python
+from dataclasses import dataclass, field
+from typing import Optional
+from mashumaro import DataClassDictMixin, field_options
+
+@dataclass
+class Address:
+    city: str
+    zip: str
+
+@dataclass
+class Person(DataClassDictMixin):
+    name: str
+    address: Address = field(metadata=field_options(flatten=True))
+    billing: Optional[Address] = field(
+        default=None,
+        metadata=field_options(flatten=True, flatten_prefix=True),
+    )
+    shipping: Optional[Address] = field(
+        default=None,
+        metadata=field_options(
+            flatten=True,
+            flatten_rename={"city": "ship_city", "zip": "ship_zip"},
+        ),
+    )
+
+person = Person(
+    name="Bob",
+    address=Address("Paris", "75001"),
+    billing=Address("Lyon", "69001"),
+)
+person.to_dict()
+# {'name': 'Bob', 'city': 'Paris', 'zip': '75001',
+#  'billing_city': 'Lyon', 'billing_zip': '69001'}
+assert Person.from_dict(person.to_dict()) == person
+```
+
+The keys of the flattened dataclass can be changed with one of these options,
+which are mutually exclusive:
+
+* `flatten_prefix` — a string to prepend to each key, or `True` to use
+  the field name followed by an underscore.
+* `flatten_rename` — a mapping of the keys to new names. A field can be
+  referenced by its name or by its [alias](#field-aliases), and the new name
+  will be used in both cases.
+
+The flattened dataclass is serialized and deserialized by its own rules, so it
+keeps its own [config](#config-options), such as aliases or
+`forbid_extra_keys`. On deserialization, it receives only the keys that belong
+to it. If none of these keys are present, the default value of the field is
+used, or `None` for an `Optional` field. On serialization, an `Optional` field
+with the value `None` adds no keys. The keys of flattened fields are allowed
+by the [`forbid_extra_keys`](#forbid_extra_keys-config-option) config option.
+
+The type of the field must be a dataclass, optionally wrapped in `Optional`.
+Flattened keys must not collide with the names or aliases of other fields,
+and `flatten_rename` can only have the keys of the flattened dataclass, one per
+field. These rules are checked when the serialization methods are compiled, and
+`mashumaro.exceptions.InvalidFlattenedField` is raised if any of them is
+broken.
 
 ### Config options
 
