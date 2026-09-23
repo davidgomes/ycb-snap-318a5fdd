@@ -1,9 +1,17 @@
-use std::mem;
+use std::{cell::RefCell, collections::HashSet, mem};
 
-use lightningcss::{properties::PropertyId, vendor_prefix::VendorPrefix};
+use lightningcss::{
+    printer::PrinterOptions,
+    properties::PropertyId,
+    rules::CssRule,
+    selector::{Combinator, Component, Selector},
+    traits::ToCss,
+    vendor_prefix::VendorPrefix,
+};
 use oxvg_ast::{
     element::Element,
     get_attribute, has_attribute, is_element,
+    selectors::SelectElement,
     visitor::{Context, PrepareOutcome, Visitor},
 };
 use oxvg_collections::{
@@ -45,15 +53,206 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
 
     fn prepare(
         &self,
-        _document: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        document: &Element<'input, 'arena>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
-        Ok(if self.0 {
-            PrepareOutcome::none
-        } else {
-            PrepareOutcome::skip
-        })
+        if !self.0 {
+            return Ok(PrepareOutcome::skip);
+        }
+        context.query_has_stylesheet(document);
+        let state = State::default();
+        for css in &context.query_has_stylesheet_result {
+            for rule in &css.borrow().0 {
+                state.protect_rule(document, rule);
+            }
+        }
+        state.start_with_context(document, context)?;
+        Ok(PrepareOutcome::skip)
     }
+}
+
+#[derive(Default)]
+struct State {
+    /// Elements whose parent or ancestors are relevant to a structural selector
+    structural: RefCell<HashSet<usize>>,
+    /// Elements whose siblings are relevant to a structural selector
+    sibling: RefCell<HashSet<usize>>,
+}
+
+impl State {
+    fn protect_rule<'input>(&self, root: &Element<'input, '_>, rule: &CssRule<'input>) {
+        match rule {
+            CssRule::Style(r) => {
+                for selector in &r.selectors.0 {
+                    self.protect_selector(root, selector);
+                }
+            }
+            CssRule::Media(r) => r.rules.0.iter().for_each(|r| self.protect_rule(root, r)),
+            CssRule::Container(r) => r.rules.0.iter().for_each(|r| self.protect_rule(root, r)),
+            _ => {}
+        }
+    }
+
+    /// Records the targets and anchors of a structure-dependent selector, as they
+    /// exist before any rewrite.
+    fn protect_selector<'input>(&self, root: &Element<'input, '_>, selector: &Selector<'input>) {
+        let components: Vec<_> = selector.iter_raw_match_order().cloned().collect();
+        let mut is_structural = false;
+        let mut is_sibling = false;
+        for component in &components {
+            match component {
+                Component::Combinator(Combinator::NextSibling | Combinator::LaterSibling)
+                | Component::Nth(_)
+                | Component::NthOf(_)
+                | Component::Empty => {
+                    is_structural = true;
+                    is_sibling = true;
+                }
+                Component::Combinator(Combinator::PseudoElement) => {}
+                Component::Combinator(_) | Component::Root | Component::Has(_) => {
+                    is_structural = true;
+                }
+                _ => {}
+            }
+        }
+        if !is_structural {
+            return;
+        }
+
+        let Some(targets) = select_all(root, selector) else {
+            return;
+        };
+        let mut implicated: Vec<_> = targets.clone();
+        let mut forming = vec![];
+        let mut compound_start = 0;
+        for (i, component) in components.iter().enumerate() {
+            let Component::Combinator(combinator) = component else {
+                continue;
+            };
+            let compound = Selector::from(components[compound_start..i].to_vec());
+            compound_start = i + 1;
+            if *combinator == Combinator::PseudoElement {
+                continue;
+            }
+            let anchor = Selector::from(components[i + 1..].to_vec());
+            let Some(anchors) = select_all(root, &anchor) else {
+                continue;
+            };
+            let compound = compound
+                .to_css_string(PrinterOptions::default())
+                .ok()
+                .and_then(|s| oxvg_ast::selectors::Selector::new(&s).ok());
+            for anchor in anchors {
+                if targets.iter().any(|t| is_related(&anchor, t)) {
+                    implicated.push(anchor.clone());
+                }
+                if let Some(compound) = &compound {
+                    forming.extend(would_form_relationship(&anchor, *combinator, compound));
+                }
+            }
+        }
+
+        let mut structural = self.structural.borrow_mut();
+        structural.extend(forming.iter().map(|e| e.id()));
+        let mut sibling = self.sibling.borrow_mut();
+        for element in implicated {
+            structural.insert(element.id());
+            if is_sibling {
+                sibling.insert(element.id());
+            }
+        }
+    }
+
+    fn is_blocked(&self, element: &Element) -> bool {
+        let structural = self.structural.borrow();
+        if structural.contains(&element.id())
+            || element
+                .children_iter()
+                .any(|child| structural.contains(&child.id()))
+        {
+            return true;
+        }
+        let sibling = self.sibling.borrow();
+        let mut current = element.previous_element_sibling();
+        while let Some(e) = current {
+            if sibling.contains(&e.id()) {
+                return true;
+            }
+            current = e.previous_element_sibling();
+        }
+        let mut current = element.next_element_sibling();
+        while let Some(e) = current {
+            if sibling.contains(&e.id()) {
+                return true;
+            }
+            current = e.next_element_sibling();
+        }
+        false
+    }
+}
+
+fn select_all<'input, 'arena>(
+    root: &Element<'input, 'arena>,
+    selector: &Selector<'input>,
+) -> Option<Vec<Element<'input, 'arena>>> {
+    let selector = selector.to_css_string(PrinterOptions::default()).ok()?;
+    Some(root.select(&selector).ok()?.collect())
+}
+
+/// Groups that, if flattened, would place a child matching `compound` into a `combinator`
+/// relationship with `anchor` that it isn't in yet.
+fn would_form_relationship<'input, 'arena>(
+    anchor: &Element<'input, 'arena>,
+    combinator: Combinator,
+    compound: &oxvg_ast::selectors::Selector,
+) -> Vec<Element<'input, 'arena>> {
+    let candidates: Vec<_> = match combinator {
+        Combinator::Child => anchor.children_iter().collect(),
+        Combinator::NextSibling => anchor.next_element_sibling().into_iter().collect(),
+        Combinator::LaterSibling => {
+            let mut result = vec![];
+            let mut current = anchor.next_element_sibling();
+            while let Some(e) = current {
+                current = e.next_element_sibling();
+                result.push(e);
+            }
+            result
+        }
+        _ => vec![],
+    };
+    candidates
+        .into_iter()
+        .filter(|group| is_element!(group, G))
+        .filter(|group| {
+            group
+                .children_iter()
+                .any(|child| compound.matches_naive(&SelectElement::new(child)))
+        })
+        .collect()
+}
+
+/// Whether `anchor` can take part in a selector relationship matching `target`, i.e. it is
+/// an ancestor of the target, or a preceding sibling of the target or one of its ancestors.
+fn is_related<'input, 'arena>(anchor: &Element<'input, 'arena>, target: &Element<'input, 'arena>) -> bool {
+    let mut current = Some(target.clone());
+    while let Some(element) = current {
+        let mut sibling = element.previous_element_sibling();
+        while let Some(s) = sibling {
+            if s == *anchor {
+                return true;
+            }
+            sibling = s.previous_element_sibling();
+        }
+        current = Element::parent_element(&element);
+        if current.as_ref() == Some(anchor) {
+            return true;
+        }
+    }
+    false
+}
+
+impl<'input, 'arena> Visitor<'input, 'arena> for State {
+    type Error = JobsError<'input>;
 
     fn exit_element(
         &self,
@@ -68,6 +267,11 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
             return Ok(());
         }
         if !is_element!(element, G) || !element.has_child_elements() {
+            return Ok(());
+        }
+
+        if self.is_blocked(element) {
+            log::debug!("collapse_groups: not collapsing: implicated by structural selector");
             return Ok(());
         }
 
@@ -489,6 +693,38 @@ fn collapse_groups() -> anyhow::Result<()> {
         </g>
     </g>
     <circle cx="25" cy="15" r="10" stroke="black" stroke-width=".1" fill="none"/>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve only groups implicated by structural selectors -->
+    <style>
+        .a > .b { fill: red }
+        rect + circle { fill: blue }
+        .unused > .b { fill: green }
+    </style>
+    <g class="a">
+        <path class="b" d="..."/>
+    </g>
+    <g>
+        <g>
+            <path class="b" d="..."/>
+        </g>
+    </g>
+    <g class="a">
+        <g>
+            <path class="b" d="..."/>
+        </g>
+    </g>
+    <rect/>
+    <g>
+        <circle/>
+    </g>
+    <circle/>
 </svg>"#
         )
     )?);

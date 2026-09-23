@@ -1,0 +1,24 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should preserve only groups implicated by structural selectors -->\n    <style>\n        .a > .b { fill: red }\n        rect + circle { fill: blue }\n        .unused > .b { fill: green }\n    </style>\n    <g class=\"a\">\n        <path class=\"b\" d=\"...\"/>\n    </g>\n    <g>\n        <g>\n            <path class=\"b\" d=\"...\"/>\n        </g>\n    </g>\n    <g class=\"a\">\n        <g>\n            <path class=\"b\" d=\"...\"/>\n        </g>\n    </g>\n    <rect/>\n    <g>\n        <circle/>\n    </g>\n    <circle/>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve only groups implicated by structural selectors -->
+    <style>
+        .a>.b{fill:red}rect+circle{fill:#00f}.unused>.b{fill:green}
+    </style>
+    <g class="a">
+        <path class="b" d=""/>
+    </g>
+    <path class="b" d=""/>
+    <g class="a">
+        <g>
+            <path class="b" d=""/>
+        </g>
+    </g>
+    <rect/>
+    <g>
+        <circle/>
+    </g>
+    <circle/>
+</svg>
