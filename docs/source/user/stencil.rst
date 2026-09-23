@@ -136,10 +136,8 @@ simple expressions if possible. For example::
 Stencil decorator options
 =========================
 
-.. note::
-   The stencil decorator may be augmented in the future to provide additional
-   mechanisms for border handling. At present, only one behaviour is
-   implemented, ``"constant"`` (see ``func_or_mode`` below for details).
+Border handling is selected with the ``mode`` parameter described below.
+The default is ``"constant"``.
 
 .. _stencil-neighborhood:
 
@@ -172,26 +170,58 @@ specified neighborhood, **the behavior is undefined.**
 
 .. _stencil-mode:
 
-``func_or_mode``
-----------------
+``func_or_mode`` / ``mode``
+---------------------------
 
-The optional ``func_or_mode`` parameter controls how the border of the output array
-is handled.  Currently, there is only one supported value, ``"constant"``.
-In ``constant`` mode, the stencil kernel is not applied in cases where
-the kernel would access elements outside the valid range of the input
-array.  In such cases, those elements in the output array are assigned
-to a constant value, as specified by the ``cval`` parameter.
+The optional mode controls out-of-bounds accesses.  Pass a single mode as
+the first positional argument, or pass ``mode`` to choose a mode per
+dimension::
+
+   @stencil('wrap')
+   def kernel(a):
+       return a[-1] + a[1]
+
+   @stencil(mode=('wrap', 'nearest'))
+   def kernel(a):
+       return a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1]
+
+A per-dimension tuple must have one entry for each dimension of the input
+array.  An unknown mode name raises ``NumbaValueError``.  Supported modes
+are:
+
+``constant`` (default)
+    The kernel is not applied where it would read outside the array.
+    Those output elements are set to ``cval``.
+
+``wrap``
+    Indices wrap around circularly (Python modulo).
+
+``nearest``
+    Indices are clamped to the nearest edge element.
+
+``reflect``
+    Indices are mirrored about the edge without repeating the edge sample
+    (the sample just outside the array maps to index 1, not index 0).
+    If that reflected index is still out of bounds, the read yields ``cval``.
+
+``symmetric``
+    Indices are mirrored so that the edge sample is repeated.
+    If that reflected index is still out of bounds, the read yields ``cval``.
 
 ``cval``
 --------
 
-The optional cval parameter defaults to zero but can be set to any
-desired value, which is then used for the border of the output array
-if the ``func_or_mode`` parameter is set to ``constant``.  The cval parameter is
-ignored in all other modes.  The type of the cval parameter must match
-the return type of the stencil kernel.  If the user wishes the output
-array to be constructed from a particular type then they should ensure
-that the stencil kernel returns that type.
+The optional ``cval`` parameter defaults to zero.  In ``constant`` mode it is
+the value written to border outputs where the kernel is not applied.  In
+``reflect`` and ``symmetric`` modes it is the value used for an access whose
+index is still out of bounds after one reflection.  The type of ``cval``
+must match the return type of the stencil kernel.  If the user wishes the
+output array to be constructed from a particular type then they should
+ensure that the stencil kernel returns that type.
+
+``mode`` can be combined with ``cval``, ``neighborhood``, and
+``standard_indexing``.  ``standard_indexing`` arrays are not remapped; only
+relatively indexed reads use the boundary mode.
 
 ``standard_indexing``
 ---------------------

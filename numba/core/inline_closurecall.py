@@ -192,7 +192,8 @@ class InlineClosureCallPass(object):
         return True
 
     def _inline_stencil(self, instr, call_name, func_def):
-        from numba.stencils.stencil import StencilFunc
+        from numba.stencils.stencil import (
+            StencilFunc, _normalize_stencil_mode)
         lhs = instr.target
         expr = instr.value
         # We keep the escaping variables of the stencil kernel
@@ -234,12 +235,40 @@ class InlineClosureCallPass(object):
                     "stencil index_offsets option should be a tuple"
                     " with constant structure such as (offset, )"
                 )
-        sf = StencilFunc(kernel_ir, 'constant', options)
+        mode = 'constant'
+        if 'mode' in options:
+            mode = self._resolve_stencil_mode(options.pop('mode'))
+            mode = _normalize_stencil_mode(mode)
+        # mode is consumed by StencilFunc. Do not forward it as a call
+        # keyword; the generated stencil signature does not accept it.
+        expr.kws = [(k, v) for (k, v) in expr.kws if k != 'mode']
+        sf = StencilFunc(kernel_ir, mode, options)
         sf.kws = expr.kws # hack to keep variables live
         sf_global = ir.Global('stencil', sf, expr.loc)
         self.func_ir._definitions[lhs.name] = [sf_global]
         instr.value = sf_global
         return True
+
+    def _resolve_stencil_mode(self, mode_val):
+        """Resolve a stencil ``mode`` keyword to a constant string or tuple."""
+        if isinstance(mode_val, (str, tuple, list)):
+            return mode_val
+        const = guard(ir_utils.find_const, self.func_ir, mode_val)
+        if isinstance(const, str):
+            return const
+        defin = guard(get_definition, self.func_ir, mode_val)
+        if (isinstance(defin, ir.Expr) and defin.op == 'build_tuple'):
+            modes = []
+            for item in defin.items:
+                item_const = guard(ir_utils.find_const, self.func_ir, item)
+                if not isinstance(item_const, str):
+                    raise errors.NumbaValueError(
+                        "stencil mode must be a constant string or tuple of "
+                        "strings")
+                modes.append(item_const)
+            return tuple(modes)
+        raise errors.NumbaValueError(
+            "stencil mode must be a constant string or tuple of strings")
 
     def _fix_stencil_neighborhood(self, options):
         """

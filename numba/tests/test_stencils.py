@@ -3219,5 +3219,281 @@ class TestManyStencils(TestStencilBase):
                                                  'cval':cval})
 
 
+def _map_index(idx, size, mode):
+    """Python reference for one stencil boundary index."""
+    if size <= 0:
+        return None
+    if 0 <= idx < size:
+        return idx
+    if mode == 'wrap':
+        return idx % size
+    if mode == 'nearest':
+        return 0 if idx < 0 else size - 1
+    if mode == 'reflect':
+        mapped = -idx if idx < 0 else (size - 1) * 2 - idx
+        if mapped < 0 or mapped >= size:
+            return None
+        return mapped
+    if mode == 'symmetric':
+        mapped = -idx - 1 if idx < 0 else size * 2 - 1 - idx
+        if mapped < 0 or mapped >= size:
+            return None
+        return mapped
+    if mode == 'constant':
+        return None
+    raise AssertionError(mode)
+
+
+def _load(arr, idx, mode, cval):
+    mapped = _map_index(idx, arr.shape[0] if arr.ndim == 1 else None, mode)
+    # ndim-specific helper below uses per-axis mapping
+    if mapped is None:
+        return cval
+    return arr[mapped]
+
+
+def _apply_1d(arr, rel_offsets, mode='constant', cval=0, reduce='sum'):
+    """Apply a 1D stencil of integer offsets. ``reduce`` is 'sum' or 'first'."""
+    n = arr.shape[0]
+    # Match Numba's output dtype: sum of the input dtype, unless cval widens it.
+    acc0 = arr.dtype.type(0)
+    sample = acc0
+    for off in rel_offsets:
+        mapped = _map_index(0 + off, n, mode)
+        sample = acc0 if mapped is None else arr[mapped]
+        break
+    out = np.empty(n, dtype=np.result_type(sample, cval if False else sample))
+    # Use the kernel's natural dtype: the dtype of summing input samples.
+    out = np.empty(n, dtype=arr.dtype)
+    lo = min(rel_offsets)
+    hi = max(rel_offsets)
+    for i in range(n):
+        if mode == 'constant' and (i + lo < 0 or i + hi >= n):
+            out[i] = cval
+            continue
+        if reduce == 'first':
+            mapped = _map_index(i + rel_offsets[0], n, mode)
+            out[i] = cval if mapped is None else arr[mapped]
+        else:
+            total = arr.dtype.type(0)
+            for off in rel_offsets:
+                mapped = _map_index(i + off, n, mode)
+                total = total + (cval if mapped is None else arr[mapped])
+            out[i] = total
+    return out
+
+
+def _apply_2d(arr, mode, cval=0):
+    """2D stencil a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1]."""
+    if isinstance(mode, str):
+        modes = (mode, mode)
+    else:
+        modes = tuple(mode)
+    n0, n1 = arr.shape
+    out = np.empty(arr.shape, dtype=arr.dtype)
+    offsets = ((-1, 0), (1, 0), (0, -1), (0, 1))
+    for i in range(n0):
+        for j in range(n1):
+            skip = False
+            for axis, (ii, jj) in ((0, (i, j)),):
+                pass
+            if modes[0] == 'constant' and (i - 1 < 0 or i + 1 >= n0):
+                skip = True
+            if modes[1] == 'constant' and (j - 1 < 0 or j + 1 >= n1):
+                skip = True
+            if skip:
+                out[i, j] = cval
+                continue
+            total = arr.dtype.type(0)
+            for di, dj in offsets:
+                coords = []
+                for axis, (index, delta, size) in (
+                        (0, (i, di, n0)), (1, (j, dj, n1))):
+                    mapped = _map_index(index + delta, size, modes[axis])
+                    if mapped is None:
+                        coords = None
+                        break
+                    coords.append(mapped)
+                if coords is None:
+                    total = total + cval
+                else:
+                    total = total + arr[coords[0], coords[1]]
+            out[i, j] = total
+    return out
+
+
+class TestStencilBoundaryMode(TestStencilBase):
+    """Out-of-bounds modes for @stencil."""
+
+    def _check_stencil(self, stencil_func, reference, arg):
+        def pyfunc(a):
+            return stencil_func(a)
+
+        self.check(reference, pyfunc, arg)
+
+    def test_wrap_1d(self):
+        @stencil('wrap')
+        def kernel(a):
+            return a[-1] + a[1]
+
+        arr = np.arange(8, dtype=np.float64)
+        self._check_stencil(kernel, lambda a: _apply_1d(a, [-1, 1], 'wrap'), arr)
+
+    def test_nearest_1d(self):
+        @stencil('nearest')
+        def kernel(a):
+            return a[-1] + a[0] + a[1]
+
+        arr = np.arange(1, 7, dtype=np.int64)
+        self._check_stencil(
+            kernel, lambda a: _apply_1d(a, [-1, 0, 1], 'nearest'), arr)
+
+    def test_reflect_1d(self):
+        @stencil('reflect')
+        def kernel(a):
+            return a[-1] + a[1]
+
+        arr = np.array([2.0, 4.0, 6.0, 8.0, 10.0])
+        self._check_stencil(
+            kernel, lambda a: _apply_1d(a, [-1, 1], 'reflect'), arr)
+
+    def test_symmetric_1d(self):
+        @stencil(mode='symmetric')
+        def kernel(a):
+            return a[-1] + a[1]
+
+        arr = np.array([2.0, 4.0, 6.0, 8.0, 10.0])
+        self._check_stencil(
+            kernel, lambda a: _apply_1d(a, [-1, 1], 'symmetric'), arr)
+
+    def test_reflect_and_symmetric_cval_fallback(self):
+        # Offset is larger than the array, so one reflection is still OOB.
+        cval = 7.5
+
+        @stencil('reflect', cval=cval)
+        def reflect_kernel(a):
+            return a[-5]
+
+        @stencil('symmetric', cval=cval)
+        def symmetric_kernel(a):
+            return a[6]
+
+        arr = np.array([1.0, 2.0, 3.0])
+        self._check_stencil(
+            reflect_kernel,
+            lambda a: _apply_1d(a, [-5], 'reflect', cval=cval, reduce='first'),
+            arr)
+        self._check_stencil(
+            symmetric_kernel,
+            lambda a: _apply_1d(a, [6], 'symmetric', cval=cval, reduce='first'),
+            arr)
+        # Every index is still out of bounds after one reflection.
+        np.testing.assert_array_equal(reflect_kernel(arr), np.full(3, cval))
+        np.testing.assert_array_equal(symmetric_kernel(arr), np.full(3, cval))
+
+    def test_constant_is_default_and_cval(self):
+        @stencil
+        def kernel(a):
+            return a[-1] + a[1]
+
+        @stencil('constant', cval=4)
+        def kernel_cval(a):
+            return a[-1] + a[1]
+
+        arr = np.arange(6, dtype=np.int64)
+        self._check_stencil(
+            kernel, lambda a: _apply_1d(a, [-1, 1], 'constant', cval=0), arr)
+        self._check_stencil(
+            kernel_cval, lambda a: _apply_1d(a, [-1, 1], 'constant', cval=4), arr)
+
+    def test_per_dimension_modes(self):
+        @stencil(mode=('wrap', 'nearest'))
+        def kernel(a):
+            return a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1]
+
+        arr = np.arange(12, dtype=np.float64).reshape(3, 4)
+        self._check_stencil(
+            kernel, lambda a: _apply_2d(a, ('wrap', 'nearest')), arr)
+
+    def test_mixed_constant_and_wrap(self):
+        @stencil(mode=('wrap', 'constant'), cval=0)
+        def kernel(a):
+            return a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1]
+
+        arr = np.arange(9, dtype=np.int64).reshape(3, 3)
+        self._check_stencil(
+            kernel, lambda a: _apply_2d(a, ('wrap', 'constant'), cval=0), arr)
+
+    def test_mode_with_neighborhood_and_standard_indexing(self):
+        @stencil('wrap', neighborhood=((-2, 2),), standard_indexing=('b',))
+        def kernel(a, b):
+            acc = a[-2] + a[2]
+            for i in range(-1, 2):
+                acc += a[i]
+            return acc + b[0]
+
+        def reference(a, b):
+            n = a.shape[0]
+            out = np.empty(n, dtype=np.result_type(a, b))
+            for i in range(n):
+                total = b[0]
+                for off in (-2, -1, 0, 1, 2):
+                    total = total + a[(i + off) % n]
+                out[i] = total
+            return out
+
+        a = np.arange(9, dtype=np.float64)
+        b = np.array([3.0, 8.0, 1.0, 4.0, 5.0, 6.0, 7.0, 2.0, 9.0])
+
+        def pyfunc(a, b):
+            return kernel(a, b)
+
+        cfunc, cpfunc = self.compile_all(pyfunc, a, b)
+        expected = reference(a, b)
+        np.testing.assert_allclose(pyfunc(a, b), expected)
+        np.testing.assert_allclose(cfunc.entry_point(a, b), expected)
+        np.testing.assert_allclose(cpfunc.entry_point(a, b), expected)
+
+    def test_mode_keyword_inside_njit(self):
+        def pyfunc(a):
+            def kernel(x):
+                return x[-1] + x[1]
+            return numba.stencil(kernel, mode='wrap')(a)
+
+        arr = np.arange(6, dtype=np.float64)
+        expected = _apply_1d(arr, [-1, 1], 'wrap')
+        cfunc, cpfunc = self.compile_all(pyfunc, arr)
+        np.testing.assert_allclose(cfunc.entry_point(arr), expected)
+        np.testing.assert_allclose(cpfunc.entry_point(arr), expected)
+
+    def test_invalid_mode_and_rank(self):
+        with self.assertRaises(NumbaValueError) as exc:
+            @stencil('diagonal')
+            def kernel(a):
+                return a[0]
+        self.assertIn('Unsupported mode style', str(exc.exception))
+
+        with self.assertRaises(NumbaValueError) as exc:
+            @stencil(mode=('nope', 'wrap'))
+            def kernel2(a):
+                return a[0, 0]
+        self.assertIn('Unsupported mode style', str(exc.exception))
+
+        @stencil(mode=('wrap',))
+        def kernel1(a):
+            return a[0, 0]
+
+        with self.assertRaises(NumbaValueError) as exc:
+            kernel1(np.zeros((3, 3)))
+        self.assertIn('dimensional mode', str(exc.exception))
+
+        def plain(a):
+            return a[0]
+
+        with self.assertRaises(NumbaValueError) as exc:
+            stencil(mode=('wrap', 'nearest'), neighborhood=((-1, 1),))(plain)
+        self.assertIn('dimensional mode', str(exc.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -408,13 +408,23 @@ class StencilPass(object):
             equiv_set.insert_equiv(out_arr, in_arr_dim_sizes)
             init_block.body.extend(stmts)
         else: # out is present
-            if "cval" in stencil_func.options: # do out[:] = cval
-                cval = stencil_func.options["cval"]
-                # TODO: Loosen this restriction to adhere to casting rules.
-                cval_ty = typing.typeof.typeof(cval)
-                if not self.typingctx.can_convert(cval_ty, return_type.dtype):
-                    msg = "cval type does not match stencil return type."
-                    raise NumbaValueError(msg)
+            from numba.stencils.stencil import _stencil_modes_for_ndim
+            _modes = _stencil_modes_for_ndim(stencil_func.mode, ndims)
+            # Non-constant modes still leave constant-axis borders unvisited.
+            # Those positions are cval (default 0). Filling `out` first is
+            # overwritten by every cell the kernel does visit.
+            _fill_out = ("cval" in stencil_func.options or
+                         any(m != 'constant' for m in _modes))
+            if _fill_out: # do out[:] = cval
+                if "cval" in stencil_func.options:
+                    cval = stencil_func.options["cval"]
+                    # TODO: Loosen this restriction to adhere to casting rules.
+                    cval_ty = typing.typeof.typeof(cval)
+                    if not self.typingctx.can_convert(cval_ty, return_type.dtype):
+                        msg = "cval type does not match stencil return type."
+                        raise NumbaValueError(msg)
+                else:
+                    cval = 0
 
                 # get slice ref
                 slice_var = ir.Var(scope, mk_unique_var("$py_g_var"), loc)
@@ -576,6 +586,10 @@ class StencilPass(object):
         ndims = self.typemap[in_arr.name].ndim
         scope = in_arr.scope
         loc = in_arr.loc
+        from numba.stencils.stencil import (
+            _stencil_modes_for_ndim, prepare_stencil_boundary_load)
+        modes = _stencil_modes_for_ndim(stencil_func.mode, ndims)
+        apply_boundary = any(m != 'constant' for m in modes)
         # replace access indices, find access lengths in each dimension
         need_to_calc_kernel = stencil_func.neighborhood is None
 
@@ -655,40 +669,60 @@ class StencilPass(object):
                     index_vars = self._add_index_offsets(parfor_vars,
                                 list(index_list), new_body, scope, loc)
 
-                    # new access index tuple
-                    if ndims == 1:
-                        ind_var = index_vars[0]
+                    # Integer relative accesses use the boundary mode. Slices
+                    # keep standard indexing (constant-mode behavior).
+                    use_boundary = (
+                        apply_boundary and
+                        all(self.typemap[v.name] == types.intp
+                            for v in index_vars))
+                    if use_boundary:
+                        cval = stencil_func.options.get("cval", 0)
+                        load_call = prepare_stencil_boundary_load(
+                            new_body, scope, loc, stmt.value.value, index_vars,
+                            self.typemap, self.calltypes, self.typingctx,
+                            modes, cval)
+                        stmt.value = load_call
                     else:
-                        ind_var = ir.Var(scope, mk_unique_var(
-                            "$parfor_index_ind_var"), loc)
-                        self.typemap[ind_var.name] = types.containers.UniTuple(
-                            types.intp, ndims)
-                        tuple_call = ir.Expr.build_tuple(index_vars, loc)
-                        tuple_assign = ir.Assign(tuple_call, ind_var, loc)
-                        new_body.append(tuple_assign)
+                        # new access index tuple
+                        if ndims == 1:
+                            ind_var = index_vars[0]
+                        else:
+                            ind_var = ir.Var(scope, mk_unique_var(
+                                "$parfor_index_ind_var"), loc)
+                            self.typemap[ind_var.name] = types.containers.UniTuple(
+                                types.intp, ndims)
+                            tuple_call = ir.Expr.build_tuple(index_vars, loc)
+                            tuple_assign = ir.Assign(tuple_call, ind_var, loc)
+                            new_body.append(tuple_assign)
 
-                    # getitem return type is scalar if all indices are integer
-                    if all([self.typemap[v.name] == types.intp
-                                                        for v in index_vars]):
-                        getitem_return_typ = self.typemap[
-                                                    stmt.value.value.name].dtype
-                    else:
-                        # getitem returns an array
-                        getitem_return_typ = self.typemap[stmt.value.value.name]
-                    # new getitem with the new index var
-                    getitem_call = ir.Expr.getitem(stmt.value.value, ind_var,
-                                                                            loc)
-                    self.calltypes[getitem_call] = signature(
-                        getitem_return_typ,
-                        self.typemap[stmt.value.value.name],
-                        self.typemap[ind_var.name])
-                    stmt.value = getitem_call
+                        # getitem return type is scalar if all indices are integer
+                        if all([self.typemap[v.name] == types.intp
+                                                            for v in index_vars]):
+                            getitem_return_typ = self.typemap[
+                                                        stmt.value.value.name].dtype
+                        else:
+                            # getitem returns an array
+                            getitem_return_typ = self.typemap[stmt.value.value.name]
+                        # new getitem with the new index var
+                        getitem_call = ir.Expr.getitem(stmt.value.value, ind_var,
+                                                                                loc)
+                        self.calltypes[getitem_call] = signature(
+                            getitem_return_typ,
+                            self.typemap[stmt.value.value.name],
+                            self.typemap[ind_var.name])
+                        stmt.value = getitem_call
 
                 new_body.append(stmt)
             block.body = new_body
         if need_to_calc_kernel and not found_relative_index:
             raise NumbaValueError("Stencil kernel with no accesses to " \
                                   "relatively indexed arrays.")
+
+        if apply_boundary:
+            for dim, mode_name in enumerate(modes):
+                if mode_name != 'constant':
+                    start_lengths[dim] = 0
+                    end_lengths[dim] = 0
 
         return start_lengths, end_lengths
 
