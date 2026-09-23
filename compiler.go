@@ -614,6 +614,8 @@ func (c *Compiler) Compile(node parser.Node) error {
 		// update second jump offset
 		curPos = len(c.currentInstructions())
 		c.changeOperand(jumpPos2, curPos)
+	case *parser.ArrayPattern, *parser.MapPattern:
+		return c.errorf(node, "destructuring pattern not allowed here")
 	}
 	return nil
 }

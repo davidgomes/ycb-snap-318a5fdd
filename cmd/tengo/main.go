@@ -297,12 +297,19 @@ func addPrints(file *parser.File) *parser.File {
 		case *parser.AssignStmt:
 			stmts = append(stmts, s)
 
+			args := s.LHS
+			if len(args) == 1 {
+				switch args[0].(type) {
+				case *parser.ArrayPattern, *parser.MapPattern:
+					args = patternIdents(args[0])
+				}
+			}
 			stmts = append(stmts, &parser.ExprStmt{
 				Expr: &parser.CallExpr{
 					Func: &parser.Ident{
 						Name: "__repl_println__",
 					},
-					Args: s.LHS,
+					Args: args,
 				},
 			})
 		default:
@@ -313,6 +320,29 @@ func addPrints(file *parser.File) *parser.File {
 		InputFile: file.InputFile,
 		Stmts:     stmts,
 	}
+}
+
+// patternIdents returns the identifiers bound by a destructuring pattern.
+func patternIdents(pattern parser.Expr) (idents []parser.Expr) {
+	switch pattern := pattern.(type) {
+	case *parser.Ident:
+		if pattern.Name != "_" {
+			idents = append(idents, pattern)
+		}
+	case *parser.ArrayPattern:
+		for _, elem := range pattern.Elements {
+			idents = append(idents, patternIdents(elem)...)
+		}
+	case *parser.MapPattern:
+		for _, elem := range pattern.Elements {
+			idents = append(idents, patternIdents(elem.Value)...)
+		}
+	case *parser.DefaultPattern:
+		idents = patternIdents(pattern.Target)
+	case *parser.RestElement:
+		idents = patternIdents(pattern.Name)
+	}
+	return
 }
 
 func basename(s string) string {
