@@ -136,11 +136,6 @@ simple expressions if possible. For example::
 Stencil decorator options
 =========================
 
-.. note::
-   The stencil decorator may be augmented in the future to provide additional
-   mechanisms for border handling. At present, only one behaviour is
-   implemented, ``"constant"`` (see ``func_or_mode`` below for details).
-
 .. _stencil-neighborhood:
 
 ``neighborhood``
@@ -172,23 +167,48 @@ specified neighborhood, **the behavior is undefined.**
 
 .. _stencil-mode:
 
-``func_or_mode``
-----------------
+``func_or_mode`` / ``mode``
+---------------------------
 
-The optional ``func_or_mode`` parameter controls how the border of the output array
-is handled.  Currently, there is only one supported value, ``"constant"``.
-In ``constant`` mode, the stencil kernel is not applied in cases where
-the kernel would access elements outside the valid range of the input
-array.  In such cases, those elements in the output array are assigned
-to a constant value, as specified by the ``cval`` parameter.
+The optional mode, given either as the ``func_or_mode`` positional parameter
+(e.g. ``@stencil('wrap')``) or as the ``mode`` keyword parameter, controls
+how accesses outside the valid range of the input array are handled.  The
+supported values are:
+
+* ``"constant"`` (the default): the stencil kernel is not applied in cases
+  where the kernel would access elements outside the valid range of the
+  input array.  In such cases, those elements in the output array are
+  assigned to a constant value, as specified by the ``cval`` parameter.
+* ``"wrap"``: out-of-bounds accesses wrap around to the opposite edge
+  (``a b c d | a b c d | a b c d``).
+* ``"nearest"``: out-of-bounds accesses are clamped to the nearest edge
+  element (``a a a a | a b c d | d d d d``).
+* ``"reflect"``: out-of-bounds accesses are mirrored about the edge element,
+  without repeating it (``d c b | a b c d | c b a``).
+* ``"symmetric"``: out-of-bounds accesses are mirrored about the edge of the
+  array, repeating the edge element (``d c b a | a b c d | d c b a``).
+
+In all modes other than ``"constant"`` the kernel is applied to every element
+of the input array.  For ``"reflect"`` and ``"symmetric"``, an access whose
+mirrored index is still out of bounds uses the value of ``cval`` instead.
+
+The mode may also be given per dimension as a tuple whose length matches the
+number of dimensions of the input array::
+
+    @stencil(mode=('wrap', 'nearest'))
+    def kernel3(a):
+        return a[-1, 0] + a[0, -1] + a[0, 1] + a[1, 0]
+
+Indexing with slices is only supported in ``"constant"`` mode.
 
 ``cval``
 --------
 
 The optional cval parameter defaults to zero but can be set to any
 desired value, which is then used for the border of the output array
-if the ``func_or_mode`` parameter is set to ``constant``.  The cval parameter is
-ignored in all other modes.  The type of the cval parameter must match
+in dimensions whose mode is ``constant``.  In ``reflect`` and ``symmetric``
+modes it is used for accesses that remain out of bounds after mirroring, and
+it is ignored in the other modes.  The type of the cval parameter must match
 the return type of the stencil kernel.  If the user wishes the output
 array to be constructed from a particular type then they should ensure
 that the stencil kernel returns that type.

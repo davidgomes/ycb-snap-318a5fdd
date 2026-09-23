@@ -3218,6 +3218,233 @@ class TestManyStencils(TestStencilBase):
                                         options={'neighborhood': nh,
                                                  'cval':cval})
 
+    _np_pad_modes = {'wrap': 'wrap', 'nearest': 'edge', 'reflect': 'reflect',
+                     'symmetric': 'symmetric'}
+
+    def _pad(self, a, modes, width):
+        """Pads each dimension of ``a`` by ``width`` per ``modes`` using the
+        equivalent np.pad mode."""
+        for dim, mode in enumerate(modes):
+            pad_width = [(0, 0)] * a.ndim
+            pad_width[dim] = (width, width)
+            a = np.pad(a, pad_width, mode=self._np_pad_modes[mode])
+        return a
+
+    def test_mode_1d(self):
+        """1D kernel in each non-constant mode"""
+        def kernel(a):
+            return a[-1] + 2 * a[0] + 3 * a[1]
+
+        a = np.arange(1., 8.)
+        for mode in ('wrap', 'nearest', 'reflect', 'symmetric'):
+            p = self._pad(a, (mode,), 1)
+            expected = p[:-2] + 2 * p[1:-1] + 3 * p[2:]
+            self.check_against_expected(kernel, expected, a,
+                                        options={'mode': mode})
+
+    def test_mode_2d(self):
+        """2D kernel with a single mode and with per-dimension modes"""
+        def kernel(a):
+            return a[-1, 0] + 2 * a[0, 1] + 3 * a[1, -1] + 5 * a[0, 0]
+
+        a = np.arange(20.).reshape(4, 5)
+        for modes in (('wrap',) * 2, ('nearest',) * 2, ('reflect',) * 2,
+                      ('symmetric',) * 2, ('wrap', 'nearest'),
+                      ('reflect', 'symmetric'), ('nearest', 'wrap')):
+            p = self._pad(a, modes, 1)
+            expected = (p[:-2, 1:-1] + 2 * p[1:-1, 2:] + 3 * p[2:, :-2] +
+                        5 * p[1:-1, 1:-1])
+            mode = modes[0] if modes[0] == modes[1] else modes
+            self.check_against_expected(kernel, expected, a,
+                                        options={'mode': mode})
+
+    def test_mode_mixed_constant(self):
+        """constant mode in one dimension, wrap in the other"""
+        def kernel(a):
+            return a[-1, -1] + a[1, 1]
+
+        # Padding of the constant dimension only affects the border, which is
+        # then overwritten with cval.
+        a = np.arange(20.).reshape(4, 5)
+        p = self._pad(a, ('wrap', 'wrap'), 1)
+        expected = p[:-2, :-2] + p[2:, 2:]
+        expected[0, :] = expected[-1, :] = -1.
+        self.check_against_expected(kernel, expected, a,
+                                    options={'mode': ('constant', 'wrap'),
+                                             'cval': -1.})
+
+        p = self._pad(a, ('nearest', 'nearest'), 1)
+        expected = p[:-2, :-2] + p[2:, 2:]
+        expected[:, 0] = expected[:, -1] = 0.
+        self.check_against_expected(kernel, expected, a,
+                                    options={'mode': ('nearest', 'constant')})
+
+    def test_mode_reflect_out_of_bounds(self):
+        """reflect/symmetric use cval when the mirrored index is still out of
+        bounds"""
+        def kernel(a):
+            return a[-2] + 10 * a[2]
+
+        # reflect: index -2 -> 2 and 3 -> -1 remain out of bounds
+        a = np.array([1., 2.])
+        self.check_against_expected(kernel, np.array([110., 1002.]), a,
+                                    options={'mode': 'reflect', 'cval': 100.})
+        self.check_against_expected(kernel, np.array([10., 2.]), a,
+                                    options={'mode': 'reflect'})
+        # symmetric: all mirrored indices are in bounds
+        self.check_against_expected(kernel, np.array([22., 11.]), a,
+                                    options={'mode': 'symmetric',
+                                             'cval': 100.})
+        # symmetric: index -2 -> 1 and 2 -> -1 remain out of bounds
+        a = np.array([5.])
+        self.check_against_expected(kernel, np.array([1100.]), a,
+                                    options={'mode': 'symmetric',
+                                             'cval': 100.})
+
+    def test_mode_int_dtype(self):
+        """non-constant modes preserve the kernel return type"""
+        def kernel(a):
+            return a[-1] - a[1]
+
+        a = np.arange(1, 6)
+        p = self._pad(a, ('nearest',), 1)
+        self.check_against_expected(kernel, p[:-2] - p[2:], a,
+                                    options={'mode': 'nearest'})
+
+        def kernel(a):
+            return a[-3] + a[0]
+
+        # index -3 reflects to 3, which is out of bounds for 3 elements
+        a = np.arange(1, 4)
+        self.check_against_expected(kernel, np.array([8, 5, 5]), a,
+                                    options={'mode': 'reflect', 'cval': 7})
+
+    def test_mode_neighborhood(self):
+        """wrap mode with a user-specified neighborhood"""
+        def kernel(a):
+            cumul = 0.
+            for i in range(-2, 3):
+                cumul += a[i]
+            return cumul
+
+        a = np.arange(7.)
+        expected = sum(np.roll(a, -i) for i in range(-2, 3))
+        self.check_against_expected(kernel, expected, a,
+                                    options={'mode': 'wrap',
+                                             'neighborhood': ((-2, 2),)})
+
+    def test_mode_standard_indexing(self):
+        """wrap mode with a standard indexed weights array"""
+        def kernel(a, b):
+            return a[-1] * b[0] + a[1] * b[1]
+
+        a = np.arange(1., 6.)
+        b = np.array([2., 3.])
+        expected = np.roll(a, 1) * 2. + np.roll(a, -1) * 3.
+        self.check_against_expected(kernel, expected, a, b,
+                                    options={'mode': 'wrap',
+                                             'standard_indexing': 'b'})
+
+    def test_mode_multiple_inputs(self):
+        """nearest mode applied to all relatively indexed arrays"""
+        def kernel(a, f):
+            return a[-1] if f[1] else a[1]
+
+        a = np.arange(4.)
+        f = np.array([True, False, True, False])
+        self.check_against_expected(kernel, np.array([1., 0., 3., 3.]), a, f,
+                                    options={'mode': 'nearest'})
+
+    def test_mode_positional(self):
+        """mode given as the positional decorator argument"""
+        a = np.arange(9.).reshape(3, 3)
+
+        @stencil('wrap')
+        def wrap_kernel(a):
+            return a[-1, -1]
+
+        np.testing.assert_equal(wrap_kernel(a), np.roll(a, (1, 1), (0, 1)))
+
+        @stencil(('wrap', 'nearest'))
+        def mixed_kernel(a):
+            return a[-1, -1]
+
+        p = self._pad(a, ('wrap', 'nearest'), 1)
+        np.testing.assert_equal(mixed_kernel(a), p[:-2, :-2])
+
+    def test_mode_out_kwarg(self):
+        """non-constant mode with the out kwarg"""
+        stencil_fn = numba.stencil(lambda a: a[-1] + a[1], mode='wrap')
+
+        def wrapped(a):
+            out = np.zeros_like(a)
+            stencil_fn(a, out=out)
+            return out
+
+        a = np.arange(5.)
+        expected = np.roll(a, 1) + np.roll(a, -1)
+        np.testing.assert_equal(wrapped(a), expected)
+        for impl in self.compile_all(wrapped, a):
+            np.testing.assert_equal(impl.entry_point(a), expected)
+
+    def test_mode_inline(self):
+        """mode on numba.stencil() calls inside jitted functions"""
+        def wrapped_1d(A):
+            return numba.stencil(lambda a: a[-1] + 10 * a[1], mode='wrap')(A)
+
+        def wrapped_2d(A):
+            return numba.stencil(lambda a: a[-1, 0] + 10 * a[0, 1],
+                                 mode=('nearest', 'symmetric'))(A)
+
+        a = np.arange(1., 7.)
+        expected = np.roll(a, 1) + 10 * np.roll(a, -1)
+        for impl in self.compile_all(wrapped_1d, a):
+            np.testing.assert_equal(impl.entry_point(a), expected)
+
+        a = np.arange(12.).reshape(3, 4)
+        p = self._pad(a, ('nearest', 'symmetric'), 1)
+        expected = p[:-2, 1:-1] + 10 * p[1:-1, 2:]
+        for impl in self.compile_all(wrapped_2d, a):
+            np.testing.assert_equal(impl.entry_point(a), expected)
+
+    def test_mode_invalid(self):
+        """unknown modes raise NumbaValueError"""
+        def kernel(a):
+            return a[0]
+
+        for mode in ('bogus', ('wrap', 'bogus'), (), 3):
+            with self.assertRaises(NumbaValueError) as e:
+                stencil(kernel, mode=mode)
+            self.assertIn("Unsupported mode style", str(e.exception))
+        with self.assertRaises(NumbaValueError) as e:
+            stencil('bogus')
+        self.assertIn("Unsupported mode style bogus", str(e.exception))
+
+    def test_mode_ndim_mismatch(self):
+        """mode tuple length must match the input dimensionality"""
+        def kernel(a):
+            return a[-1] + a[1]
+
+        a = np.arange(5.)
+        ex = self.exception_dict(stencil=NumbaValueError,
+                                 parfor=NumbaValueError,
+                                 njit=NumbaValueError)
+        self.check_exceptions(kernel, a, options={'mode': ('wrap', 'nearest')},
+                              expected_exception=ex)
+
+    def test_mode_slice_unsupported(self):
+        """slice indexing is only supported in constant mode"""
+        def kernel(a):
+            return np.median(a[-1:2])
+
+        a = np.arange(10.)
+        ex = self.exception_dict(stencil=NumbaValueError,
+                                 parfor=NumbaValueError,
+                                 njit=NumbaValueError)
+        self.check_exceptions(kernel, a, options={'mode': 'wrap',
+                                                  'neighborhood': ((-1, 1),)},
+                              expected_exception=ex)
+
 
 if __name__ == "__main__":
     unittest.main()
