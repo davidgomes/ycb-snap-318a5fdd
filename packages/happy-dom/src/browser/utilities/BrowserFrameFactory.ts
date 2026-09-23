@@ -75,10 +75,12 @@ export default class BrowserFrameFactory {
 				return;
 			}
 
+			// The async task manager is destroyed immediately, so that timers and animation frames of the Window don't run while child frames are being destroyed.
+			const asyncTaskManagerDestroyed = frame[PropertySymbol.asyncTaskManager].destroy();
+
 			Promise.all(frame.childFrames.slice().map((childFrame) => this.destroyFrame(childFrame)))
 				.then(() => {
-					frame[PropertySymbol.asyncTaskManager]
-						.destroy()
+					asyncTaskManagerDestroyed
 						.then(() => {
 							if (exceptionObserver && frame.window) {
 								exceptionObserver.disconnect(frame.window);

@@ -164,8 +164,9 @@ export default class Response implements Response {
 			(<boolean>this.bodyUsed) = true;
 
 			const bufferedBody = this[PropertySymbol.buffer];
+			const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
 
-			if (bufferedBody) {
+			if (bufferedBody && !asyncTaskManager) {
 				const result = await MultipartFormDataParser.streamToFormData(
 					window,
 					{
@@ -180,7 +181,7 @@ export default class Response implements Response {
 
 			const { formData, buffer } = await FetchBodyUtility.readAsAsyncTask(
 				window,
-				new WindowBrowserContext(window).getAsyncTaskManager(),
+				asyncTaskManager,
 				this,
 				() => MultipartFormDataParser.streamToFormData(window, this, contentType)
 			);

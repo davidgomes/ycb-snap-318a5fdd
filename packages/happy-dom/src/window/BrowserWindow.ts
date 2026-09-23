@@ -1664,9 +1664,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 			return;
 		}
 		let isAborted = false;
-		const taskId = this.#asyncTaskManager.startTask(
-			() => (isAborted = true)
-		);
+		const taskId = this.#asyncTaskManager.startTask(() => (isAborted = true));
 		const settings = this.#browserFrame.page.context.browser.settings;
 		const useTryCatch =
 			!settings ||

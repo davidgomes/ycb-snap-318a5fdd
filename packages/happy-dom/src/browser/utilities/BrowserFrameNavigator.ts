@@ -175,8 +175,10 @@ export default class BrowserFrameNavigator {
 
 		// Destroy child frames and Window
 		const destroyTaskID = frame[PropertySymbol.asyncTaskManager].startTask();
+		// The previous async task manager is destroyed immediately, so that timers and animation frames of the previous Window don't run while child frames are being destroyed.
+		const previousAsyncTaskManagerDestroyed = previousAsyncTaskManager.destroy();
 		const destroyWindowAndAsyncTaskManager = (): void => {
-			previousAsyncTaskManager.destroy().then(() => {
+			previousAsyncTaskManagerDestroyed.then(() => {
 				if (exceptionObserver) {
 					exceptionObserver.disconnect(previousWindow);
 				}

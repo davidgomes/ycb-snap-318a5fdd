@@ -90,7 +90,9 @@ export default class WindowBrowserContext {
 		if (!this.#window) {
 			return null;
 		}
-		return WindowBrowserContext.#asyncTaskManagers.get(this.#window[PropertySymbol.internalId]) || null;
+		return (
+			WindowBrowserContext.#asyncTaskManagers.get(this.#window[PropertySymbol.internalId]) || null
+		);
 	}
 
 	/**
