@@ -265,6 +265,45 @@ a = "123"       // re-assigned 'string'
 a = [1, 2, 3]   // re-assigned 'array'
 ```
 
+### Destructuring
+
+The `:=` operator can also define multiple variables at once by destructuring
+an array or a map. Array patterns bind by position, and map patterns bind by
+key. Destructuring with `=` is not allowed.
+
+```golang
+[a, b] := [1, 2]                 // a == 1, b == 2
+[c, d] := [1]                    // c == 1, d == undefined
+{x, y: z} := {x: 1, y: 2}        // x == 1, z == 2
+[e, [f, g], {h}] := [1, [2, 3], {h: 4}]
+[i, ...rest] := [1, 2, 3]        // i == 1, rest == [2, 3]
+[_, _, j] := [1, 2, 3]           // '_' discards the value
+[] := [1, 2]                     // ok: empty patterns are valid
+```
+
+Positions beyond the length of an array and absent map keys are missing and
+bind `undefined`. A rest element (`...name`) collects the remaining array
+elements into a new array; it must be the last element of the pattern and is
+not supported in map patterns.
+
+A default value (`name = expr`) is evaluated only when the position or key
+does not exist in the source (a key holding `undefined` is not missing).
+Defaults can reference variables bound earlier in the same pattern.
+
+```golang
+[a, b = a * 10] := [5]           // a == 5, b == 50
+{x: c = 50, y = 1} := {y: undefined} // c == 50, y == undefined
+```
+
+The same patterns can be used as function parameters.
+
+```golang
+f := func([a, b], {x, y = 2}) {
+  return a + b + x + y
+}
+f([1, 2], {x: 3})                // == 8
+```
+
 ## Type Conversions
 
 Although the type is not directly specified in Tengo, one can use type
