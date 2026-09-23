@@ -126,9 +126,9 @@ func (d *DB) WaitForJobDurability(jobID int) error {
 // WaitForJobDurabilityContext returns the outcome of the commit reported by
 // the BatchDurable event with the given BatchDurableInfo.JobID: nil if it
 // became durable, or its error. Only the most recent BatchDurable jobs are
-// retained; older jobs return an error marked with ErrDurabilityJobExpired,
-// and job IDs that have not been assigned (including zero) return an error
-// marked with ErrDurabilityJobUnknown. If Options.DisableWAL is set, it returns
+// retained; older jobs return an error wrapping ErrDurabilityJobExpired, and
+// job IDs that have not been assigned (including zero) return an error
+// wrapping ErrDurabilityJobUnknown. If Options.DisableWAL is set, it returns
 // nil immediately.
 //
 // Job IDs are only assigned once the outcome of a commit is known, so this
@@ -339,12 +339,10 @@ func (t *durabilityTracker) jobResult(jobID int) error {
 	defer t.mu.Unlock()
 	switch {
 	case jobID <= 0 || jobID > t.mu.lastJobID:
-		return errors.Mark(
-			errors.Newf("pebble: unknown durability job %d", errors.Safe(jobID)), ErrDurabilityJobUnknown)
+		return errors.Wrapf(ErrDurabilityJobUnknown, "job %d", errors.Safe(jobID))
 	case jobID <= t.mu.lastJobID-durableJobRetention:
-		return errors.Mark(
-			errors.Newf("pebble: durability job %d expired (only the last %d jobs are retained)",
-				errors.Safe(jobID), errors.Safe(durableJobRetention)), ErrDurabilityJobExpired)
+		return errors.Wrapf(ErrDurabilityJobExpired, "job %d (only the last %d jobs are retained)",
+			errors.Safe(jobID), errors.Safe(durableJobRetention))
 	}
 	return t.mu.jobErrs[jobID%durableJobRetention]
 }
