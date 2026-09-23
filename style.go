@@ -1,7 +1,6 @@
 package termenv
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/rivo/uniseg"
@@ -24,7 +23,8 @@ const (
 type Style struct {
 	profile Profile
 	string
-	styles []string
+	styles         []string
+	preserveResets bool
 }
 
 // String returns a new Style.
@@ -45,15 +45,51 @@ func (t Style) Styled(s string) string {
 		return s
 	}
 	if len(t.styles) == 0 {
+		if t.preserveResets {
+			return preserveANSI(s)
+		}
 		return s
 	}
 
 	seq := strings.Join(t.styles, ";")
 	if seq == "" {
+		if t.preserveResets {
+			return preserveANSI(s)
+		}
 		return s
 	}
 
-	return fmt.Sprintf("%s%sm%s%sm", CSI, seq, s, CSI+ResetSeq)
+	open := CSI + seq + "m"
+	close := CSI + ResetSeq + "m"
+	if !t.preserveResets {
+		return open + s + close
+	}
+	return preserveANSI(open + s + close)
+}
+
+// PreserveResets keeps this style in effect across reset sequences inside the
+// text. After each reset run the style is opened again.
+func (t Style) PreserveResets() Style {
+	t.preserveResets = true
+	return t
+}
+
+// Truncate shortens the styled text to width visible cells.
+// Under the Ascii profile the result is plain text with no tail and no ANSI.
+// Otherwise Tail counts toward width, inherits the active style, and reset
+// sequences inside the text are preserved when this style or opts ask for it.
+func (t Style) Truncate(width int, opts TruncateOptions) string {
+	if t.profile == Ascii {
+		return truncatePlain(t.string, width, "")
+	}
+	if t.preserveResets {
+		opts.PreserveResets = true
+	}
+	body := t.string
+	if seq := strings.Join(t.styles, ";"); seq != "" {
+		body = CSI + seq + "m" + body + CSI + ResetSeq + "m"
+	}
+	return TruncateANSI(body, width, opts)
 }
 
 // Foreground sets a foreground color.
