@@ -421,14 +421,19 @@ class BaseEngine:
         return result
 
     def _get_args_kwargs(
-        self, transition: Transition, trigger_data: TriggerData, target: "State | None" = None
+        self,
+        transition: Transition,
+        trigger_data: TriggerData,
+        target: "State | None" = None,
+        scope_state: "State | None" = None,
     ):
         # Generate a unique key for the cache, the cache is invalidated once per loop
         cache_key = (id(transition), id(trigger_data), id(target))
 
         # Check the cache for existing results
         if cache_key in self._cache:
-            return self._cache[cache_key]
+            args, kwargs = self._cache[cache_key]
+            return self._bind_state_data(args, kwargs, scope_state)
 
         event_data = EventData(trigger_data=trigger_data, transition=transition)
         if target:
@@ -443,6 +448,13 @@ class BaseEngine:
 
         # Store the result in the cache
         self._cache[cache_key] = (args, kwargs)
+
+        return self._bind_state_data(args, kwargs, scope_state)
+
+    def _bind_state_data(self, args, kwargs, scope_state):
+        kwargs = dict(kwargs)
+        scope = scope_state if scope_state is not None else kwargs.get("state")
+        kwargs["state_data"] = self.sm.scoped_state_data(scope)
         return args, kwargs
 
     def _conditions_match(self, transition: Transition, trigger_data: TriggerData):
@@ -482,6 +494,7 @@ class BaseEngine:
                     [s.id for s in history_value],
                 )
                 self.sm.history_values[history.id] = history_value
+                self.sm.save_history_data(history.id, history_value)
 
         return ordered_states, result
 
@@ -502,12 +515,15 @@ class BaseEngine:
             if info.state is not None:  # pragma: no branch
                 self._invoke_manager.cancel_for_state(info.state)
 
-            args, kwargs = self._get_args_kwargs(info.transition, trigger_data)
+            args, kwargs = self._get_args_kwargs(
+                info.transition, trigger_data, scope_state=info.state
+            )
 
             # Execute `onexit` handlers — same per-block error isolation as onentry.
             if info.state is not None:  # pragma: no branch
                 self._debug("%s Exiting state: %s", self._log_id, info.state)
                 self.sm._callbacks.call(info.state.exit.key, *args, on_error=on_error, **kwargs)
+                self.sm.deactivate_state_data(info.state)
 
             self._remove_state_from_configuration(info.state)
 
@@ -549,6 +565,7 @@ class BaseEngine:
         states_to_enter = OrderedSet[StateTransition]()
         states_for_default_entry = OrderedSet[StateTransition]()
         default_history_content: Dict[str, Any] = {}
+        self.sm._pending_data_restore.clear()
 
         self.compute_entry_set(
             enabled_transitions, states_to_enter, states_for_default_entry, default_history_content
@@ -665,13 +682,14 @@ class BaseEngine:
         for info in ordered_states:
             target = info.state
             transition = info.transition
+            self._debug("%s Entering state: %s", self._log_id, target)
+            if target is not None:  # pragma: no branch
+                self.sm.activate_state_data(target)
             args, kwargs = self._get_args_kwargs(
                 transition,
                 trigger_data,
                 target=target,
             )
-
-            self._debug("%s Entering state: %s", self._log_id, target)
             self._add_state_to_configuration(target)
 
             # Execute `onentry` handlers — each handler is a separate block per
@@ -780,6 +798,7 @@ class BaseEngine:
                     [s.id for s in self.sm.history_values[state.id]],
                 )
                 for history_state in self.sm.history_values[state.id]:
+                    self.sm.schedule_data_restore(state.id, history_state.id)
                     info_to_add = StateTransition(transition=info.transition, state=history_state)
                     if state.type.is_deep:
                         states_to_enter.add(info_to_add)

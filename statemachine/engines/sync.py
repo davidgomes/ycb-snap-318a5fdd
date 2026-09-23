@@ -142,6 +142,7 @@ class SyncEngine(BaseEngine):
 
                     self._macrostep_count += 1
                     self._microstep_count = 0
+                    self.sm.clear_data_changes()
                     self._debug(
                         "%s macrostep %d: event=%s",
                         self._log_id,

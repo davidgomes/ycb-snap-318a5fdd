@@ -43,6 +43,7 @@ _event_data_kwargs = {
     "state",
     "source",
     "target",
+    "state_data",
 }
 
 

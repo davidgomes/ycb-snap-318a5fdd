@@ -94,6 +94,10 @@ class SCXMLProcessor:
         if "enter" not in initial_state:
             initial_state["enter"] = []
 
+        if getattr(definition, "root_data", None):
+            existing = initial_state.get("data") or {}
+            initial_state["data"] = {**definition.root_data, **existing}
+
         insert_pos = 0
 
         # For invoked children, insert invoke_init to pop _invoke_session/_invoke_params
@@ -206,6 +210,9 @@ class SCXMLProcessor:
 
         if state.history:
             state_dict["history"] = self._process_history(state.history)
+
+        if state.data:
+            state_dict["data"] = state.data
 
         return state_dict
 

@@ -1,5 +1,8 @@
+import ast
 import re
 import xml.etree.ElementTree as ET
+from typing import Any
+from typing import Dict
 from typing import List
 from typing import Literal
 from typing import Set
@@ -61,6 +64,12 @@ def parse_scxml(scxml_content: str) -> StateMachineDefinition:  # noqa: C901
 
     definition = StateMachineDefinition(name=name, initial_states=initial_states)
 
+    # Root <datamodel> literals become the initial state's data.
+    root_literals: Dict[str, Any] = {}
+    for datamodel_elem in scxml.findall("datamodel"):
+        root_literals.update(_literal_data_map(datamodel_elem))
+    definition.root_data = root_literals or None
+
     # Parse datamodel
     datamodel = parse_datamodel(scxml)
     if datamodel:
@@ -105,6 +114,27 @@ def _find_own_datamodel_elements(root: ET.Element) -> List[ET.Element]:
 
     _walk(root)
     return result
+
+
+def _literal_data_map(datamodel_elem: ET.Element) -> Dict[str, Any]:
+    """Parse ``<data id expr>`` children whose ``expr`` is a Python literal."""
+    values: Dict[str, Any] = {}
+    for data_elem in datamodel_elem.findall("data"):
+        data_id = data_elem.attrib.get("id")
+        if not data_id:
+            continue
+        expr = data_elem.attrib.get("expr")
+        if expr is None:
+            text = data_elem.text and data_elem.text.strip()
+            if text is None:
+                values[data_id] = None
+                continue
+            expr = text
+        try:
+            values[data_id] = ast.literal_eval(expr)
+        except (ValueError, SyntaxError):
+            continue
+    return values
 
 
 def parse_datamodel(root: ET.Element) -> "DataModel | None":
@@ -170,6 +200,11 @@ def parse_state(  # noqa: C901
 
     initial = state_id in initial_states
     state = State(id=state_id, initial=initial, final=is_final, parallel=is_parallel)
+    state_data: Dict[str, Any] = {}
+    for datamodel_elem in state_elem.findall("datamodel"):
+        state_data.update(_literal_data_map(datamodel_elem))
+    if state_data:
+        state.data = state_data
 
     # Parse onentry actions
     for onentry_elem in state_elem.findall("onentry"):

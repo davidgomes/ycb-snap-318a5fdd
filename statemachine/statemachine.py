@@ -1,4 +1,5 @@
 import warnings
+from copy import deepcopy
 from inspect import isawaitable
 from typing import TYPE_CHECKING
 from typing import Any
@@ -33,6 +34,9 @@ from .i18n import _
 from .model import Model
 from .signature import SignatureAdapter
 from .state import InstanceState
+from .state_data import DataChangeInfo
+from .state_data import check_declared_value
+from .state_data import materialize_data
 from .utils import run_async_from_sync
 
 if TYPE_CHECKING:
@@ -148,6 +152,10 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         self.history_values: Dict[
             str, List[State]
         ] = {}  # Mapping of compound states to last active state(s).
+        self._state_data: Dict[str, Dict[str, Any]] = {}
+        self._history_data: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._pending_data_restore: Dict[str, Dict[str, Any]] = {}
+        self._data_changes: List[DataChangeInfo] = []
         self.state_field = state_field
         self.start_configuration_values = (
             [start_value] if start_value is not None else list(self.start_configuration_values)
@@ -265,6 +273,113 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
             self.add_listener(*listeners.values())
         self._engine = self._get_engine()
         self._engine.start()
+        self._state_data = state.get("_state_data", {})
+        self._history_data = state.get("_history_data", {})
+        self._pending_data_restore = {}
+        self._data_changes = state.get("_data_changes", [])
+
+    def _resolve_state(self, state: "State | str") -> "State":
+        if isinstance(state, str):
+            for candidate in self.states_map.values():
+                if candidate.id == state:
+                    return candidate
+            raise InvalidDefinition(_("{!r} is not a state.").format(state))
+        if isinstance(state, InstanceState):
+            return state._state
+        return state
+
+    def _state_is_active(self, state: "State") -> bool:
+        return any(active.id == state.id for active in self.configuration)
+
+    def scoped_state_data(self, state: "State | None") -> Dict[str, Any]:
+        """Merge this state's data with ancestor data. Children shadow parents.
+
+        Parallel regions are isolated because only ancestors of ``state`` are visited.
+        """
+        if state is None:
+            return {}
+        chain = list(state.ancestors())
+        chain.reverse()
+        chain.append(state)
+        merged: Dict[str, Any] = {}
+        for item in chain:
+            data = self._state_data.get(item.id)
+            if data:
+                merged.update(data)
+        return merged
+
+    def activate_state_data(self, state: "State") -> None:
+        spec = getattr(state, "data", None)
+        if spec is None:
+            return
+        restored = self._pending_data_restore.pop(state.id, None)
+        if restored is not None:
+            values = deepcopy(restored)
+        else:
+            values = materialize_data(spec)
+        self._state_data[state.id] = values
+        for key, value in values.items():
+            self._data_changes.append(
+                DataChangeInfo(
+                    state_id=state.id,
+                    key=key,
+                    old_value=None,
+                    new_value=deepcopy(value),
+                )
+            )
+
+    def deactivate_state_data(self, state: "State") -> None:
+        self._state_data.pop(state.id, None)
+
+    def save_history_data(self, history_id: str, states: List["State"]) -> None:
+        snap: Dict[str, Dict[str, Any]] = {}
+        for item in states:
+            data = self._state_data.get(item.id)
+            if data is not None:
+                snap[item.id] = deepcopy(data)
+        self._history_data[history_id] = snap
+
+    def schedule_data_restore(self, history_id: str, state_id: str) -> None:
+        saved = self._history_data.get(history_id, {}).get(state_id)
+        if saved is not None:
+            self._pending_data_restore[state_id] = deepcopy(saved)
+
+    def get_state_data(self, state: "State | str") -> "Dict[str, Any] | None":
+        """Return the live data dict for an active state, or ``None``."""
+        resolved = self._resolve_state(state)
+        return self._state_data.get(resolved.id)
+
+    @property
+    def state_data_values(self) -> Dict[str, Dict[str, Any]]:
+        """Snapshot of active state data keyed by state id."""
+        return {state_id: deepcopy(data) for state_id, data in self._state_data.items()}
+
+    def set_state_data(self, state: "State | str", key: str, value: Any) -> None:
+        """Set one declared key on an active state's data."""
+        resolved = self._resolve_state(state)
+        if not self._state_is_active(resolved) or resolved.id not in self._state_data:
+            raise InvalidDefinition(
+                _("State {id!r} is not active.").format(id=getattr(resolved, "id", state))
+            )
+        spec = resolved.data or {}
+        if key not in spec:
+            raise InvalidDefinition(
+                _("State {id!r} has no data key {key!r}.").format(id=resolved.id, key=key)
+            )
+        check_declared_value(spec[key], value)
+        current = self._state_data[resolved.id]
+        old = current.get(key)
+        current[key] = value
+        self._data_changes.append(
+            DataChangeInfo(state_id=resolved.id, key=key, old_value=old, new_value=value)
+        )
+
+    def get_data_changes(self) -> List[DataChangeInfo]:
+        """Data changes recorded during the current macrostep."""
+        return list(self._data_changes)
+
+    def clear_data_changes(self) -> None:
+        self._data_changes.clear()
 
     def _get_initial_configuration(self):
         initial_state_values = (

@@ -271,7 +271,7 @@ class DotRenderer:
         fillcolor = self.config.state_active_fillcolor if state.is_active else "white"
         penwidth = self.config.state_active_penwidth if state.is_active else 2
 
-        if not actions:
+        if not actions and not state.data_vars:
             # Simple state: native rounded rectangle
             node = pydot.Node(
                 state.id,
@@ -318,10 +318,16 @@ class DotRenderer:
         font_size = self.config.state_font_size
         action_font_size = self.config.transition_font_size
 
-        action_lines = "<br/>".join(
+        lines = [
             f'<font point-size="{action_font_size}">{_escape_html(self._format_action(a))}</font>'
             for a in actions
-        )
+        ]
+        if state.data_vars:
+            data_text = "data / " + ", ".join(state.data_vars)
+            lines.append(
+                f'<font point-size="{action_font_size}">{_escape_html(data_text)}</font>'
+            )
+        action_lines = "<br/>".join(lines)
 
         return (
             f'<table border="0" cellborder="0" cellspacing="0" cellpadding="0">'
@@ -414,19 +420,24 @@ class DotRenderer:
     def _build_compound_label(self, state: DiagramState) -> str:
         """Build HTML label for a compound/parallel subgraph."""
         name = _escape_html(state.name)
+        prefix = f"<b>{name}</b>"
         if state.type == StateType.PARALLEL:
-            return f"<b>{name}</b> &#9783;"
+            prefix = f"{prefix} &#9783;"
 
+        rows = [prefix]
         actions = [a for a in state.actions if a.type != ActionType.INTERNAL or a.body]
-        if not actions:
-            return f"<b>{name}</b>"
-
-        rows = [f"<b>{name}</b>"]
         for action in actions:
             action_text = _escape_html(self._format_action(action))
             rows.append(
                 f'<font point-size="{self.config.transition_font_size}">{action_text}</font>'
             )
+        if state.data_vars:
+            data_text = _escape_html("data / " + ", ".join(state.data_vars))
+            rows.append(
+                f'<font point-size="{self.config.transition_font_size}">{data_text}</font>'
+            )
+        if len(rows) == 1:
+            return prefix
         return "<br/>".join(rows)
 
     def _add_transitions_for_state(
