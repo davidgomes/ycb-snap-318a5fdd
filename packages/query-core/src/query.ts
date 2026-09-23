@@ -140,6 +140,12 @@ interface SetStateAction<TData, TError> {
   setStateOptions?: SetStateOptions
 }
 
+interface RestoreAction<TData, TError> {
+  type: 'restore'
+  data: TData
+  state: Partial<QueryState<TData, TError>>
+}
+
 export type Action<TData, TError> =
   | ContinueAction
   | ErrorAction<TError>
@@ -147,8 +153,46 @@ export type Action<TData, TError> =
   | FetchAction
   | InvalidateAction
   | PauseAction
+  | RestoreAction<TData, TError>
   | SetStateAction<TData, TError>
   | SuccessAction<TData>
+
+const persisterRestoreResultBrand = Symbol()
+
+export interface PersisterRestoreResult<
+  TData = unknown,
+  TError = DefaultError,
+> {
+  [persisterRestoreResultBrand]: true
+  data: TData
+  state: Partial<QueryState<TData, TError>>
+}
+
+/**
+ * Wraps a persisted query snapshot so that it can be returned from a `persister`.
+ * The query adopts `state` as-is (with `fetchStatus` set to `idle`) instead of
+ * treating `data` as the result of a successful fetch.
+ * Fields missing from `state` fall back to what a successful fetch of `data` would produce.
+ */
+export function createPersisterRestoreResult<TData, TError = DefaultError>({
+  data,
+  state,
+}: {
+  data: TData
+  state: Partial<QueryState<TData, TError>>
+}): PersisterRestoreResult<TData, TError> {
+  return { [persisterRestoreResultBrand]: true, data, state }
+}
+
+function isPersisterRestoreResult<TData, TError>(
+  value: unknown,
+): value is PersisterRestoreResult<TData, TError> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    persisterRestoreResultBrand in value
+  )
+}
 
 export interface SetStateOptions {
   meta?: any
@@ -523,12 +567,27 @@ export class Query<
       this.#dispatch({ type: 'fetch', meta: context.fetchOptions?.meta })
     }
 
+    let restoreResult: PersisterRestoreResult<TData, TError> | undefined
+    const contextFetchFn = context.fetchFn
+    // Unwrap before the retryer resolves, so that deduplicated fetches
+    // and `query.promise` consumers receive the data, not the restore result
+    const retryerFn = context.options.persister
+      ? () =>
+          Promise.resolve(contextFetchFn()).then((result) => {
+            if (isPersisterRestoreResult<TData, TError>(result)) {
+              restoreResult = result
+              return result.data
+            }
+            return result
+          })
+      : contextFetchFn
+
     // Try to fetch the data
     this.#retryer = createRetryer({
       initialPromise: fetchOptions?.initialPromise as
         | Promise<TData>
         | undefined,
-      fn: context.fetchFn as () => Promise<TData>,
+      fn: retryerFn as () => Promise<TData>,
       onCancel: (error) => {
         if (error instanceof CancelledError && error.revert) {
           this.setState({
@@ -564,6 +623,15 @@ export class Query<
           )
         }
         throw new Error(`${this.queryHash} data is undefined`)
+      }
+
+      if (restoreResult) {
+        this.#dispatch({
+          type: 'restore',
+          data: replaceData(this.state.data, data, this.options),
+          state: restoreResult.state,
+        })
+        return data
       }
 
       this.setData(data)
@@ -672,6 +740,19 @@ export class Query<
             // flag existing data as invalidated if we get a background error
             // note that "no data" always means stale so we can set unconditionally here
             isInvalidated: true,
+          }
+        case 'restore':
+          this.#revertState = undefined
+
+          return {
+            ...state,
+            ...successState(action.data),
+            dataUpdateCount: state.dataUpdateCount + 1,
+            fetchFailureCount: 0,
+            fetchFailureReason: null,
+            ...action.state,
+            data: action.data,
+            fetchStatus: 'idle',
           }
         case 'invalidate':
           return {
