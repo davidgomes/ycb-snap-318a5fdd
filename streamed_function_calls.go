@@ -547,7 +547,7 @@ func parseJSONPathDotName(rest string) (jsonPathSegment, int, error) {
 	}
 	name := rest[1 : end+1]
 	if name == "" || name == "*" {
-		return jsonPathSegment{}, 0, errors.New("expected a member name after .")
+		return jsonPathSegment{}, 0, errors.New("expected a member name after a dot")
 	}
 	return jsonPathSegment{key: name}, end + 1, nil
 }
