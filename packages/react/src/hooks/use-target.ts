@@ -57,8 +57,9 @@ function createSubscriptions<T extends Trait>(
                 if (e === entity) setValue(entity.targetFor(relation));
             });
 
-            const onRemoveUnsub = world.onRemove(relation, (e) => {
-                if (e === entity) setValue(entity.targetFor(relation));
+            // onRemove fires before data is removed, so skip the removed target
+            const onRemoveUnsub = world.onRemove(relation, (e, t) => {
+                if (e === entity) setValue(entity.targetsFor(relation).find((p) => p !== t));
             });
 
             const onChangeUnsub = world.onChange(relation, (e) => {

@@ -239,8 +239,8 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
 
         // If this trait belongs to a relation, fire remove subscriptions for each pair
         const traitCtx = trait[$internal];
+        const instance = getTraitInstance(world[$internal].traitInstances, trait);
         if (traitCtx.relation) {
-            const instance = getTraitInstance(world[$internal].traitInstances, trait);
             if (instance) {
                 const targets = getRelationTargets(world, traitCtx.relation, entity);
                 for (const t of targets) {
@@ -248,6 +248,9 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
                 }
             }
             removeAllRelationTargets(world, traitCtx.relation, entity);
+        } else if (instance) {
+            // Call remove subscriptions before removing the trait
+            for (const sub of instance.removeSubscriptions) sub(entity);
         }
 
         // Remove the trait from the entity
@@ -501,11 +504,6 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
     const ctx = world[$internal];
     const instance = getTraitInstance(ctx.traitInstances, trait)!;
     const { generationId, bitflag, queries, trackingQueries } = instance;
-
-    // Call remove subscriptions before removing the trait
-    for (const sub of instance.removeSubscriptions) {
-        sub(entity);
-    }
 
     // Remove bitflag from entity bitmask
     const eid = getEntityId(entity);
