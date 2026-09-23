@@ -415,6 +415,19 @@ with additional API for accessing cookies by their domain or path.
 {'cookies': {'cookie_on_domain': 'hello, there!'}}
 ```
 
+For stricter, deterministic cookie handling on a client, you can use a `CookieStore`
+instead. It follows the modern cookie rules for domains, paths, expiry, `Secure`, and
+the `__Secure-` and `__Host-` prefixes, and can optionally limit how many cookies are kept.
+
+```pycon
+>>> cookies = httpx.CookieStore(max_cookies=100)
+>>> with httpx.Client(cookies=cookies) as client:
+...     r = client.get('https://httpbin.org/cookies/set?chocolate=chip')
+...
+>>> cookies['chocolate']
+'chip'
+```
+
 ## Redirection and History
 
 By default, HTTPX will **not** follow redirects for all HTTP methods, although

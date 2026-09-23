@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 * Expose `FunctionAuth` from the public API. (#3699)
+* Add `httpx.CookieStore`, a cookie container with deterministic, RFC 6265 based handling of domains, paths, expiry, `Secure`, cookie name prefixes, and optional cookie limits. It may be used anywhere that `cookies=...` is accepted.
 
 ## 0.28.1 (6th December, 2024)
 

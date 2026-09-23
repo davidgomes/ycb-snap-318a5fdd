@@ -160,6 +160,37 @@ what gets sent over the wire.*
 * `def clear([domain], [path])`
 * *Standard mutable mapping interface*
 
+## `CookieStore`
+
+*A dict-like cookie store with deterministic, RFC 6265 based cookie handling.
+May be used anywhere that `cookies=...` is accepted.*
+
+```pycon
+>>> cookies = CookieStore(max_cookies=100, max_cookies_per_domain=20)
+>>> client = Client(cookies=cookies)
+```
+
+* `def __init__([max_cookies], [max_cookies_per_domain])`
+* `.max_cookies` - **Optional[int]**
+* `.max_cookies_per_domain` - **Optional[int]**
+* `def extract_cookies(response)`
+* `def set_cookie_header(request)`
+* `def set(name, value, [domain], [path])`
+* `def get(name, [default], [domain], [path])`
+* `def delete(name, [domain], [path])`
+* `def clear([domain], [path])`
+* `def update(cookies: [CookieStore, Cookies, CookieJar, dict, list])`
+* *Standard mutable mapping interface*
+
+Compared to `Cookies`, a `CookieStore`...
+
+* Treats cookies without a `Domain` attribute as host-only, and sends cookies with a `Domain` attribute to that domain and its subdomains.
+* Only sends `Secure` cookies over `https`, and enforces the `__Secure-` and `__Host-` cookie name prefixes.
+* Gives `Max-Age` precedence over `Expires`, and deletes any matching cookie when either is in the past.
+* Orders the `Cookie` header by longest path first, then by oldest creation.
+* Evicts the oldest cookies once `max_cookies_per_domain`, and then `max_cookies`, is exceeded.
+* Sends cookies added with `set()` without a domain, or from a `dict` or `list`, to any host.
+
 ## `Proxy`
 
 *A configuration of the proxy server.*
