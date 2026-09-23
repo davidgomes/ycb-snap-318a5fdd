@@ -129,6 +129,12 @@ type TrafficPolicySpec struct {
 	// +optional
 	UrlRewrite *URLRewrite `json:"urlRewrite,omitempty"`
 
+	// ConsistentHash configures the request hash policies used by hashing load balancers
+	// (e.g. RingHash, Maglev) for the route. When set without any hash sources, the
+	// source IP is used.
+	// +optional
+	ConsistentHash *ConsistentHash `json:"consistentHash,omitempty"`
+
 	// Compression configures response compression (per-route) and request/response
 	// decompression (listener-level insertion triggered by route enable).
 	// The response compression configuration is only honored for HTTPRoute targets.

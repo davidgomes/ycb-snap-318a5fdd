@@ -59,6 +59,7 @@ func MergeTrafficPolicies(
 		mergeCompression,
 		mergeBasicAuth,
 		mergeURLRewrite,
+		mergeConsistentHash,
 		mergeAPIKeyAuth,
 		mergeOAuth,
 	}
@@ -629,6 +630,38 @@ type fieldAccessor[T any] struct {
 
 // defaultMerge is a generic merge function that can handle any field on TrafficPolicy.spec.
 // It should be used when the policy being merged does not support deep merging or custom merge logic.
+func mergeConsistentHash(
+	p1, p2 *TrafficPolicy,
+	p2Ref *ir.AttachedPolicyRef,
+	p2MergeOrigins ir.MergeOrigins,
+	opts policy.MergeOptions,
+	mergeOrigins ir.MergeOrigins,
+	_ TrafficPolicyMergeOpts,
+) {
+	const fieldName = "consistentHash"
+	if !policy.IsMergeable(p1.spec.consistentHash, p2.spec.consistentHash, opts) {
+		return
+	}
+	if p1.spec.consistentHash == nil {
+		p1.spec.consistentHash = p2.spec.consistentHash
+		mergeOrigins.SetOne(fieldName, p2Ref, p2MergeOrigins)
+		return
+	}
+
+	switch opts.Strategy {
+	case policy.AugmentedDeepMerge, policy.OverridableDeepMerge:
+		p1.spec.consistentHash = unionConsistentHash(p1.spec.consistentHash, p2.spec.consistentHash)
+		mergeOrigins.Append(fieldName, p2Ref, p2MergeOrigins)
+
+	case policy.AugmentedShallowMerge, policy.OverridableShallowMerge:
+		p1.spec.consistentHash = p2.spec.consistentHash
+		mergeOrigins.SetOne(fieldName, p2Ref, p2MergeOrigins)
+
+	default:
+		logger.Warn("unsupported merge strategy for policy", "strategy", opts.Strategy, "policy", p2Ref, "field", fieldName)
+	}
+}
+
 func defaultMerge[T any](
 	p1, p2 *TrafficPolicy,
 	p2Ref *ir.AttachedPolicyRef,

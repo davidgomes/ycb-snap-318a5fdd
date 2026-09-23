@@ -99,6 +99,7 @@ type trafficPolicySpecIr struct {
 	decompression   *decompressionIR
 	basicAuth       *basicAuthIR
 	urlRewrite      *urlRewriteIR
+	consistentHash  *consistentHashIR
 	apiKeyAuth      *apiKeyAuthIR
 	oauth2          *oauthIR
 }
@@ -170,6 +171,9 @@ func (d *TrafficPolicy) Equals(in any) bool {
 	if !d.spec.urlRewrite.Equals(d2.spec.urlRewrite) {
 		return false
 	}
+	if !d.spec.consistentHash.Equals(d2.spec.consistentHash) {
+		return false
+	}
 	if !d.spec.apiKeyAuth.Equals(d2.spec.apiKeyAuth) {
 		return false
 	}
@@ -200,6 +204,7 @@ func (p *TrafficPolicy) Validate() error {
 	validators = append(validators, p.spec.decompression.Validate)
 	validators = append(validators, p.spec.basicAuth.Validate)
 	validators = append(validators, p.spec.urlRewrite.Validate)
+	validators = append(validators, p.spec.consistentHash.Validate)
 	validators = append(validators, p.spec.apiKeyAuth.Validate)
 	validators = append(validators, p.spec.oauth2.Validate)
 	for _, validator := range validators {
@@ -663,6 +668,8 @@ func (p *trafficPolicyPluginGwPass) handlePerRoutePolicies(
 
 	// Apply URL rewrite configuration
 	applyURLRewrite(spec.urlRewrite, out)
+
+	applyConsistentHash(spec.consistentHash, action)
 }
 
 // handlePerVHostPolicies handles policies that are meant to be processed at the vhost level

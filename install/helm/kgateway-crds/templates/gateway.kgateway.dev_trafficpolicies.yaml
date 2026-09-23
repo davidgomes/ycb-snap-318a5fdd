@@ -355,6 +355,149 @@ spec:
                     must be set
                   rule: '[has(self.responseCompression),has(self.requestDecompression)].filter(x,x==true).size()
                     >= 1'
+              consistentHash:
+                description: |-
+                  ConsistentHash configures the request hash policies used by hashing load balancers
+                  (e.g. RingHash, Maglev) for the route. When set without any hash sources, the
+                  source IP is used.
+                properties:
+                  cookies:
+                    description: Cookies hashes on cookie values.
+                    items:
+                      description: |-
+                        ConsistentHashCookie hashes on a cookie. If the cookie is absent and TTL is set,
+                        Envoy generates the cookie.
+                      properties:
+                        attributes:
+                          description: Attributes of the generated cookie, such as
+                            SameSite or Secure.
+                          items:
+                            description: CookieAttribute is a name/value cookie attribute.
+                            properties:
+                              name:
+                                description: Name of the attribute.
+                                minLength: 1
+                                type: string
+                              value:
+                                description: Value of the attribute.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          maxItems: 16
+                          type: array
+                        name:
+                          description: Name is the cookie name.
+                          minLength: 1
+                          type: string
+                        path:
+                          description: Path of the generated cookie.
+                          type: string
+                        terminal:
+                          description: Terminal short-circuits hash computation if
+                            this policy produces a hash.
+                          type: boolean
+                        ttl:
+                          description: TTL of the generated cookie. Accepts a Go duration
+                            (e.g. "1h30m") or integer seconds (e.g. "3600").
+                          pattern: ^([0-9]+|([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    maxItems: 16
+                    type: array
+                  disable:
+                    description: |-
+                      Disable suppresses consistent hashing on the route, including hash policies
+                      inherited from broader-scoped policies.
+                    type: boolean
+                  filterState:
+                    description: FilterState hashes on filter state objects.
+                    items:
+                      description: ConsistentHashFilterState hashes on a filter state
+                        object.
+                      properties:
+                        key:
+                          description: Key of the filter state object.
+                          minLength: 1
+                          type: string
+                        terminal:
+                          description: Terminal short-circuits hash computation if
+                            this policy produces a hash.
+                          type: boolean
+                      required:
+                      - key
+                      type: object
+                    maxItems: 16
+                    type: array
+                  headers:
+                    description: Headers hashes on request header values.
+                    items:
+                      description: ConsistentHashHeader hashes on a request header.
+                      properties:
+                        headerName:
+                          description: HeaderName is the name of the request header.
+                          minLength: 1
+                          type: string
+                        regexRewrite:
+                          description: RegexRewrite rewrites the header value using
+                            a regex before hashing.
+                          properties:
+                            pattern:
+                              description: Pattern is the regex to match.
+                              minLength: 1
+                              type: string
+                            substitution:
+                              description: Substitution is the replacement string,
+                                which may reference capture groups.
+                              type: string
+                          required:
+                          - pattern
+                          - substitution
+                          type: object
+                        terminal:
+                          description: Terminal short-circuits hash computation if
+                            this policy produces a hash.
+                          type: boolean
+                      required:
+                      - headerName
+                      type: object
+                    maxItems: 16
+                    type: array
+                  queryParameters:
+                    description: QueryParameters hashes on query parameter values.
+                    items:
+                      description: ConsistentHashQueryParameter hashes on a query
+                        parameter.
+                      properties:
+                        name:
+                          description: Name of the query parameter.
+                          minLength: 1
+                          type: string
+                        terminal:
+                          description: Terminal short-circuits hash computation if
+                            this policy produces a hash.
+                          type: boolean
+                      required:
+                      - name
+                      type: object
+                    maxItems: 16
+                    type: array
+                  sourceIp:
+                    description: SourceIP hashes on the downstream source IP address.
+                    properties:
+                      terminal:
+                        description: Terminal short-circuits hash computation if this
+                          policy produces a hash.
+                        type: boolean
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: no other fields may be set when disable is true
+                  rule: '!has(self.disable) || !self.disable || (!has(self.headers)
+                    && !has(self.cookies) && !has(self.queryParameters) && !has(self.filterState)
+                    && !has(self.sourceIp))'
               cors:
                 description: Cors specifies the CORS configuration for the policy.
                 properties:
