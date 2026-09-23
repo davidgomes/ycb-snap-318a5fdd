@@ -15,7 +15,7 @@ import ntpath
 import os
 import shutil
 import sys
-import tempfile
+import uuid
 from collections import defaultdict
 from pathlib import Path
 
@@ -159,11 +159,9 @@ def _locked(cache_path, exclusive):
 
 
 def _atomic_write(path, data):
-    fd, tmp_name = tempfile.mkstemp(
-        dir=path.parent, prefix=path.name + ".", suffix=".tmp"
-    )
+    tmp_name = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        with os.fdopen(fd, "wb") as f:
+        with open(tmp_name, "xb") as f:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
