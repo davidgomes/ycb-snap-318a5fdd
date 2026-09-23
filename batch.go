@@ -371,6 +371,12 @@ type batchInternal struct {
 
 	commitErr error
 
+	// commitCorrelationID is copied from WriteOptions.CommitCorrelationID.
+	commitCorrelationID uint64
+	// durableSync tracks a sync commit until the WAL sync and apply have both
+	// finished. Nil for non-sync commits.
+	durableSync *durableCommitState
+
 	// Position bools together to reduce the sizeof the struct.
 
 	// ingestedSSTBatch indicates that the batch contains one or more key kinds

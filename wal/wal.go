@@ -399,6 +399,10 @@ type DeletableLog struct {
 type SyncOptions struct {
 	Done *sync.WaitGroup
 	Err  *error
+	// OnSync, when non-nil, is invoked after the WAL sync for this record
+	// completes, including when the sync fails. syncLatency is the duration of
+	// the Sync call that covered the record.
+	OnSync func(err error, syncLatency time.Duration)
 }
 
 // Writer writes to a virtual WAL. A Writer in standalone mode maps to a

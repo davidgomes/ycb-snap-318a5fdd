@@ -166,6 +166,7 @@ func Open(dirname string, opts *Options) (db *DB, err error) {
 		bgCtxCancel:         cancel,
 	}
 	d.mu.versions = &versionSet{}
+	d.durability.init(opts.DisableWAL, opts.private.reportDurableCommitMetrics)
 	d.diskAvailBytes.Store(math.MaxUint64)
 	d.problemSpans.Init(manifest.NumLevels, opts.Comparer.Compare)
 	if opts.Experimental.CompactionScheduler != nil {

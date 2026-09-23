@@ -405,6 +405,10 @@ type WriteOptions struct {
 	//
 	// The default value is true.
 	Sync bool
+
+	// CommitCorrelationID is an opaque identifier copied onto
+	// BatchDurableInfo.CorrelationID when this write is a sync commit.
+	CommitCorrelationID uint64
 }
 
 // Sync specifies the default write options for writes which synchronize to
@@ -1215,6 +1219,13 @@ type Options struct {
 		// against the FS are made after the DB is closed, the FS may leak a
 		// goroutine indefinitely.
 		fsCloser io.Closer
+
+		// reportDurableCommitMetrics accumulates Metrics durable-commit counters
+		// when EventListener.BatchDurable was configured by the caller.
+		reportDurableCommitMetrics bool
+		// durableCommitMetricsChecked records that the BatchDurable callback was
+		// inspected before EnsureDefaults installed a noop.
+		durableCommitMetricsChecked bool
 	}
 }
 
@@ -1678,6 +1689,12 @@ func (o *Options) EnsureDefaults() {
 	if o.EventListener == nil {
 		o.EventListener = &EventListener{}
 	}
+	if !o.private.durableCommitMetricsChecked {
+		o.private.durableCommitMetricsChecked = true
+		if o.EventListener.BatchDurable != nil {
+			o.private.reportDurableCommitMetrics = true
+		}
+	}
 	o.EventListener.EnsureDefaults(o.Logger)
 	if o.MaxManifestFileSize == 0 {
 		o.MaxManifestFileSize = 128 << 20 // 128 MB
@@ -1794,6 +1811,16 @@ func (o *Options) WithFSDefaults() {
 // AddEventListener adds the provided event listener to the Options, in addition
 // to any existing event listener.
 func (o *Options) AddEventListener(l EventListener) {
+	// TeeEventListener installs noop callbacks, so decide whether the caller
+	// configured BatchDurable before that happens.
+	userConfigured := l.BatchDurable != nil || o.private.reportDurableCommitMetrics
+	if !o.private.durableCommitMetricsChecked && o.EventListener != nil && o.EventListener.BatchDurable != nil {
+		userConfigured = true
+	}
+	if userConfigured {
+		o.private.reportDurableCommitMetrics = true
+	}
+	o.private.durableCommitMetricsChecked = true
 	if o.EventListener != nil {
 		l = TeeEventListener(l, *o.EventListener)
 	}

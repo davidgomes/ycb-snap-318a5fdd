@@ -1020,6 +1020,39 @@ type EventListener struct {
 
 	// PossibleAPIMisuse is invoked when a possible API misuse is detected.
 	PossibleAPIMisuse func(PossibleAPIMisuseInfo)
+
+	// BatchDurable is invoked exactly once per sync commit after the WAL sync
+	// completes, including when the sync fails. It is not invoked for non-sync
+	// commits or when the WAL is disabled.
+	BatchDurable func(BatchDurableInfo)
+}
+
+// BatchDurableInfo describes a sync commit whose WAL sync has finished.
+type BatchDurableInfo struct {
+	// JobID identifies this sync commit for WaitForJobDurability.
+	JobID int
+	// SeqNum is the base sequence number of the committed batch.
+	SeqNum base.SeqNum
+	// Err is the WAL sync error, or the apply error when the sync itself
+	// succeeded. It is nil when the sync commit succeeded.
+	Err error
+	// ApplyDuration is the wall-clock time spent applying the batch. It is
+	// positive for successful sync commits.
+	ApplyDuration time.Duration
+	// SyncDuration is the wall-clock time of the WAL sync phase. It is
+	// positive for successful sync commits.
+	SyncDuration time.Duration
+	// CorrelationID is copied from WriteOptions.CommitCorrelationID.
+	CorrelationID uint64
+	// BatchSize is the encoded batch size in bytes.
+	BatchSize int
+	// KeyCount is the number of memtable-modifying operations in the batch.
+	KeyCount uint32
+}
+
+func (i BatchDurableInfo) String() string {
+	return fmt.Sprintf("[JOB %d] batch durable seq=%d keys=%d bytes=%d correlation=%d apply=%s sync=%s err=%v",
+		i.JobID, i.SeqNum, i.KeyCount, i.BatchSize, i.CorrelationID, i.ApplyDuration, i.SyncDuration, i.Err)
 }
 
 // EnsureDefaults ensures that background error events are logged to the
@@ -1120,6 +1153,9 @@ func (l *EventListener) EnsureDefaults(logger Logger) {
 	if l.PossibleAPIMisuse == nil {
 		l.PossibleAPIMisuse = func(info PossibleAPIMisuseInfo) {}
 	}
+	if l.BatchDurable == nil {
+		l.BatchDurable = func(BatchDurableInfo) {}
+	}
 }
 
 // MakeLoggingEventListener creates an EventListener that logs all events to the
@@ -1209,6 +1245,9 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 			logger.Infof("%s", info)
 		},
 		PossibleAPIMisuse: func(info PossibleAPIMisuseInfo) {
+			logger.Infof("%s", info)
+		},
+		BatchDurable: func(info BatchDurableInfo) {
 			logger.Infof("%s", info)
 		},
 	}
@@ -1326,6 +1365,10 @@ func TeeEventListener(a, b EventListener) EventListener {
 		PossibleAPIMisuse: func(info PossibleAPIMisuseInfo) {
 			a.PossibleAPIMisuse(info)
 			b.PossibleAPIMisuse(info)
+		},
+		BatchDurable: func(info BatchDurableInfo) {
+			a.BatchDurable(info)
+			b.BatchDurable(info)
 		},
 	}
 }

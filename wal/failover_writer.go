@@ -279,6 +279,9 @@ func (q *recordQueue) pop(index uint32, err error) (numSyncsPopped int) {
 			}
 			b[i].opts.Done.Done()
 			latency := now.Sub(b[i].writeStart)
+			if b[i].opts.OnSync != nil {
+				b[i].opts.OnSync(err, latency)
+			}
 			if !addLatencySample {
 				addLatencySample = true
 				maxLatency = latency

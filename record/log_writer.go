@@ -50,8 +50,9 @@ const (
 )
 
 type syncSlot struct {
-	wg  *sync.WaitGroup
-	err *error
+	wg     *sync.WaitGroup
+	err    *error
+	onSync func(error, time.Duration)
 }
 
 // syncQueue is a lock-free fixed-size single-producer, single-consumer
@@ -93,7 +94,7 @@ func (q *syncQueue) unpack(ptrs uint64) (head, tail uint32) {
 	return head, tail
 }
 
-func (q *syncQueue) push(wg *sync.WaitGroup, err *error) {
+func (q *syncQueue) push(wg *sync.WaitGroup, err *error, onSync func(error, time.Duration)) {
 	ptrs := q.headTail.Load()
 	head, tail := q.unpack(ptrs)
 	if (tail+uint32(len(q.slots)))&(1<<dequeueBits-1) == head {
@@ -103,6 +104,7 @@ func (q *syncQueue) push(wg *sync.WaitGroup, err *error) {
 	slot := &q.slots[head&uint32(len(q.slots)-1)]
 	slot.wg = wg
 	slot.err = err
+	slot.onSync = onSync
 
 	// Increment head. This passes ownership of slot to dequeue and acts as a
 	// store barrier for writing the slot.
@@ -137,7 +139,7 @@ func (q *syncQueue) load() (head, tail, realLength uint32) {
 }
 
 // REQUIRES: queueSemChan is non-nil.
-func (q *syncQueue) pop(head, tail uint32, err error, queueSemChan chan struct{}) error {
+func (q *syncQueue) pop(head, tail uint32, err error, queueSemChan chan struct{}, syncLatency time.Duration) error {
 	if tail == head {
 		// Queue is empty.
 		return nil
@@ -150,14 +152,19 @@ func (q *syncQueue) pop(head, tail uint32, err error, queueSemChan chan struct{}
 			return errors.Errorf("nil waiter at %d", errors.Safe(tail&uint32(len(q.slots)-1)))
 		}
 		*slot.err = err
+		onSync := slot.onSync
 		slot.wg = nil
 		slot.err = nil
+		slot.onSync = nil
 		// We need to bump the tail count before releasing the queueSemChan
 		// semaphore as releasing the semaphore can cause a blocked goroutine to
 		// acquire the semaphore and enqueue before we've "freed" space in the
 		// queue.
 		q.headTail.Add(1)
 		wg.Done()
+		if onSync != nil {
+			onSync(err, syncLatency)
+		}
 		// Is always non-nil in production, unless using wal package for WAL
 		// failover.
 		if queueSemChan != nil {
@@ -188,7 +195,7 @@ type pendingSyncs interface {
 	clearBlocked()
 	empty() bool
 	snapshotForPop() pendingSyncsSnapshot
-	pop(snap pendingSyncsSnapshot, err error) error
+	pop(snap pendingSyncsSnapshot, err error, syncLatency time.Duration) error
 }
 
 type pendingSyncsSnapshot interface {
@@ -215,7 +222,7 @@ var _ pendingSyncs = &pendingSyncsWithSyncQueue{}
 
 func (q *pendingSyncsWithSyncQueue) push(ps PendingSync) {
 	ps2 := ps.(*pendingSyncForSyncQueue)
-	q.syncQueue.push(ps2.wg, ps2.err)
+	q.syncQueue.push(ps2.wg, ps2.err, ps2.onSync)
 }
 
 func (q *pendingSyncsWithSyncQueue) snapshotForPop() pendingSyncsSnapshot {
@@ -228,9 +235,9 @@ func (q *pendingSyncsWithSyncQueue) snapshotForPop() pendingSyncsSnapshot {
 	return &q.snapshotBacking
 }
 
-func (q *pendingSyncsWithSyncQueue) pop(snap pendingSyncsSnapshot, err error) error {
+func (q *pendingSyncsWithSyncQueue) pop(snap pendingSyncsSnapshot, err error, syncLatency time.Duration) error {
 	s := snap.(*syncQueueSnapshot)
-	return q.syncQueue.pop(s.head, s.tail, err, q.queueSemChan)
+	return q.syncQueue.pop(s.head, s.tail, err, q.queueSemChan, syncLatency)
 }
 
 // The implementation of pendingSyncsSnapshot in standalone mode.
@@ -244,8 +251,9 @@ func (s *syncQueueSnapshot) empty() bool {
 
 // The implementation of pendingSync in standalone mode.
 type pendingSyncForSyncQueue struct {
-	wg  *sync.WaitGroup
-	err *error
+	wg     *sync.WaitGroup
+	err    *error
+	onSync func(error, time.Duration)
 }
 
 func (ps *pendingSyncForSyncQueue) syncRequested() bool {
@@ -305,7 +313,7 @@ func (si *pendingSyncsWithHighestSyncIndex) load() int64 {
 	return index
 }
 
-func (si *pendingSyncsWithHighestSyncIndex) pop(snap pendingSyncsSnapshot, err error) error {
+func (si *pendingSyncsWithHighestSyncIndex) pop(snap pendingSyncsSnapshot, err error, _ time.Duration) error {
 	index := snap.(*PendingSyncIndex)
 	if index.Index == NoSyncIndex {
 		return nil
@@ -723,7 +731,7 @@ func (w *LogWriter) flushLoop(context.Context) {
 		if fErr != nil {
 			// NB: pop may invoke ExternalSyncQueueCallback, which is why we have
 			// called f.Unlock() above. We will acquire the lock again below.
-			_ = f.pendingSyncs.pop(snap, fErr)
+			_ = f.pendingSyncs.pop(snap, fErr, 0)
 			// Update the idleStartTime if work could not be done, so that we don't
 			// include the duration we tried to do work as idle. We don't bother
 			// with the rest of the accounting, which means we will undercount.
@@ -809,7 +817,7 @@ func (w *LogWriter) flushPending(
 			synced = false
 		}
 		f := &w.flusher
-		if popErr := f.pendingSyncs.pop(snap, err); popErr != nil {
+		if popErr := f.pendingSyncs.pop(snap, err, syncLatency); popErr != nil {
 			return synced, syncLatency, bytesWritten, firstError(err, popErr)
 		}
 	}
@@ -962,9 +970,19 @@ func (w *LogWriter) WriteRecord(p []byte) (int64, error) {
 func (w *LogWriter) SyncRecord(
 	p []byte, wg *sync.WaitGroup, err *error,
 ) (logSize int64, err2 error) {
+	return w.SyncRecordWithCallback(p, wg, err, nil)
+}
+
+// SyncRecordWithCallback is SyncRecord with an additional callback invoked
+// after the WAL sync completes, successfully or not. syncLatency is the
+// duration of the Sync call that covered this record (shared by the group).
+func (w *LogWriter) SyncRecordWithCallback(
+	p []byte, wg *sync.WaitGroup, err *error, onSync func(error, time.Duration),
+) (logSize int64, err2 error) {
 	w.pendingSyncForSyncQueueBacking = pendingSyncForSyncQueue{
-		wg:  wg,
-		err: err,
+		wg:     wg,
+		err:    err,
+		onSync: onSync,
 	}
 	return w.SyncRecordGeneralized(p, &w.pendingSyncForSyncQueueBacking)
 }

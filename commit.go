@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cockroachdb/crlib/crtime"
 	"github.com/cockroachdb/pebble/batchrepr"
@@ -286,6 +287,11 @@ func (p *commitPipeline) directWrite(b *Batch) error {
 	syncWG.Add(1)
 	p.logSyncQSem <- struct{}{}
 	_, err := p.env.write(b, &syncWG, &syncErr)
+	if b.durableSync != nil {
+		// directWrite does not apply the batch to a memtable. Record a positive
+		// apply duration so successful sync commits still satisfy the contract.
+		b.durableSync.noteApply(time.Nanosecond, nil)
+	}
 	syncWG.Wait()
 	err = firstError(err, syncErr)
 	return err
@@ -324,7 +330,13 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 	}
 
 	// Apply the batch to the memtable.
-	if err := p.env.apply(b, mem); err != nil {
+	applyStart := crtime.NowMono()
+	err = p.env.apply(b, mem)
+	applyDur := applyStart.Elapsed()
+	if b.durableSync != nil {
+		b.durableSync.noteApply(applyDur, err)
+	}
+	if err != nil {
 		b.db = nil // prevent batch reuse on error
 		// NB: we are not doing <-p.commitQueueSem since the batch is still
 		// sitting in the pending queue. We should consider fixing this by also

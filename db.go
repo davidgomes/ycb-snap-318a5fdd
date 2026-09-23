@@ -299,7 +299,8 @@ type DB struct {
 	newIters             tableNewIters
 	tableNewRangeKeyIter keyspanimpl.TableNewSpanIter
 
-	commit *commitPipeline
+	commit     *commitPipeline
+	durability durabilityCoord
 
 	// readState provides access to the state needed for reading without needing
 	// to acquire DB.mu.
@@ -805,6 +806,9 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 	if sync && d.opts.DisableWAL {
 		return errors.New("pebble: WAL disabled")
 	}
+	if opts != nil {
+		batch.commitCorrelationID = opts.CommitCorrelationID
+	}
 
 	if fmv := d.FormatMajorVersion(); fmv < batch.minimumFormatMajorVersion {
 		panic(errors.AssertionFailedf(
@@ -903,7 +907,7 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 		b.flushable.setSeqNum(b.SeqNum())
 		if !d.opts.DisableWAL {
 			var err error
-			size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr}, b)
+			size, err = d.writeWALSync(b, repr, syncWG, syncErr)
 			if err != nil {
 				panic(err)
 			}
@@ -945,7 +949,7 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 	d.logBytesIn.Add(uint64(len(repr)))
 
 	if b.flushable == nil {
-		size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr}, b)
+		size, err = d.writeWALSync(b, repr, syncWG, syncErr)
 		if err != nil {
 			panic(err)
 		}
@@ -953,6 +957,28 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 
 	d.logSize.Store(uint64(size))
 	return mem, err
+}
+
+// writeWALSync writes a batch record and, for sync commits, registers the
+// durability tracker before the record is queued.
+func (d *DB) writeWALSync(b *Batch, repr []byte, syncWG *sync.WaitGroup, syncErr *error) (int64, error) {
+	opts := wal.SyncOptions{Done: syncWG, Err: syncErr}
+	if syncWG != nil && !d.opts.DisableWAL {
+		var listener func(BatchDurableInfo)
+		if d.opts.EventListener != nil {
+			listener = d.opts.EventListener.BatchDurable
+		}
+		st := d.durability.begin(b, listener)
+		b.durableSync = st
+		opts.OnSync = st.noteSync
+	}
+	size, err := d.mu.log.writer.WriteRecord(repr, opts, b)
+	if err != nil && b.durableSync != nil {
+		// The sync callback will not run if the record was never queued.
+		b.durableSync.noteSync(err, 0)
+		b.durableSync.noteApply(0, err)
+	}
+	return size, err
 }
 
 type iterAlloc struct {
@@ -1568,6 +1594,7 @@ func (d *DB) Close() error {
 	invariants.SetFinalizer(d.closed, nil)
 
 	d.closed.Store(errors.WithStack(ErrClosed))
+	d.durability.closeDB(ErrClosed)
 	close(d.closedCh)
 	d.bgCtxCancel()
 
@@ -2079,6 +2106,7 @@ func (d *DB) Metrics() *Metrics {
 	metrics.SecondaryCacheMetrics = d.objProvider.Metrics()
 
 	metrics.Uptime = d.opts.private.timeNow().Sub(d.openedAt)
+	metrics.DurableCommitCount, metrics.DurableCommitDuration = d.durability.metricsSnapshot()
 
 	metrics.manualMemory = manual.GetMetrics()
 
