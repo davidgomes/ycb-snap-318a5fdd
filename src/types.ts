@@ -68,6 +68,20 @@ export interface FetchOptions<R extends ResponseType = ResponseType, T = any>
 
   /** Default is [408, 409, 425, 429, 500, 502, 503, 504] */
   retryStatusCodes?: number[];
+
+  /** Opt-in per-origin circuit breaker. */
+  circuitBreaker?: boolean | CircuitBreakerOptions;
+}
+
+export interface CircuitBreakerOptions {
+  /** Consecutive failures before opening the circuit. */
+  threshold: number;
+  /** Time in milliseconds before an open circuit allows half-open probes. */
+  cooldown: number;
+  /** Default is 1 */
+  halfOpenMaxRequests?: number;
+  /** Default is [408, 409, 425, 429, 500, 502, 503, 504] */
+  failureStatusCodes?: number[];
 }
 
 export interface ResolvedFetchOptions<

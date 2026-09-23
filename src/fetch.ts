@@ -16,6 +16,7 @@ import type {
   $Fetch,
   FetchRequest,
   FetchOptions,
+  CircuitBreakerOptions,
 } from "./types.ts";
 
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
@@ -30,13 +31,131 @@ const retryStatusCodes = new Set([
   504, // Gateway Timeout
 ]);
 
+type CircuitState = "closed" | "open" | "half-open";
+
+interface Circuit {
+  state: CircuitState;
+  failures: number;
+  openedAt: number;
+  probes: number;
+}
+
+interface LogicalRequest {
+  config?: Required<CircuitBreakerOptions>;
+  circuit?: Circuit;
+  isProbe: boolean;
+  gated: boolean;
+  outcome: "success" | "failure" | "neutral";
+}
+
+const kCircuits = Symbol.for("ofetch.circuits");
+
+function resolveCircuitConfig(
+  option: FetchOptions["circuitBreaker"]
+): Required<CircuitBreakerOptions> | undefined {
+  if (!option) {
+    return undefined;
+  }
+  const opts =
+    option === true ? ({} as Partial<CircuitBreakerOptions>) : option;
+  return {
+    threshold: opts.threshold ?? 5,
+    cooldown: opts.cooldown ?? 30_000,
+    halfOpenMaxRequests: opts.halfOpenMaxRequests ?? 1,
+    failureStatusCodes: opts.failureStatusCodes ?? [...retryStatusCodes],
+  };
+}
+
+function resolveOrigin(request: FetchRequest): string | undefined {
+  try {
+    if (typeof request === "string") {
+      return new URL(request).origin;
+    }
+    if (request instanceof URL) {
+      return request.origin;
+    }
+    return new URL((request as Request).url).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 // https://developer.mozilla.org/en-US/docs/Web/API/Response/body
 const nullBodyResponses = new Set([101, 204, 205, 304]);
 
 export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
   const { fetch = globalThis.fetch } = globalOptions;
+  const circuits: Map<string, Circuit> =
+    (globalOptions as any)[kCircuits] || new Map();
 
-  async function onError(context: FetchContext): Promise<FetchResponse<any>> {
+  function gateCircuit(context: FetchContext, logical: LogicalRequest) {
+    logical.gated = true;
+    const config = resolveCircuitConfig(context.options.circuitBreaker);
+    const origin = config && resolveOrigin(context.request);
+    if (!config || !origin) {
+      return;
+    }
+    let circuit = circuits.get(origin);
+    if (!circuit) {
+      circuit = { state: "closed", failures: 0, openedAt: 0, probes: 0 };
+      circuits.set(origin, circuit);
+    }
+    if (
+      circuit.state === "open" &&
+      Date.now() - circuit.openedAt >= config.cooldown
+    ) {
+      circuit.state = "half-open";
+      circuit.probes = 0;
+    }
+    if (
+      circuit.state === "open" ||
+      (circuit.state === "half-open" &&
+        circuit.probes >= config.halfOpenMaxRequests)
+    ) {
+      throw new Error(
+        `[ofetch] Circuit breaker is open for ${origin}. Request was not sent.`
+      );
+    }
+    if (circuit.state === "half-open") {
+      circuit.probes++;
+      logical.isProbe = true;
+    }
+    logical.config = config;
+    logical.circuit = circuit;
+  }
+
+  function settleCircuit(logical: LogicalRequest) {
+    const { circuit, config } = logical;
+    if (!circuit || !config) {
+      return;
+    }
+    const wasProbe = logical.isProbe && circuit.state === "half-open";
+    if (logical.isProbe && circuit.probes > 0) {
+      circuit.probes--;
+    }
+    if (logical.outcome === "success") {
+      circuit.failures = 0;
+      if (wasProbe) {
+        circuit.state = "closed";
+        circuit.probes = 0;
+      }
+    } else if (logical.outcome === "failure") {
+      circuit.failures++;
+      if (
+        wasProbe ||
+        (circuit.state === "closed" && circuit.failures >= config.threshold)
+      ) {
+        circuit.state = "open";
+        circuit.openedAt = Date.now();
+        circuit.probes = 0;
+      }
+    }
+  }
+
+  async function onError(
+    context: FetchContext,
+    logical: LogicalRequest
+  ): Promise<FetchResponse<any>> {
     // Is Abort
     // If it is an active abort, it will not retry automatically.
     // https://developer.mozilla.org/en-US/docs/Web/API/DOMException#error_names
@@ -69,10 +188,11 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         }
         // Timeout
-        return $fetchRaw(context.request, {
-          ...context.options,
-          retry: retries - 1,
-        });
+        return $fetchAttempt(
+          context.request,
+          { ...context.options, retry: retries - 1 },
+          logical
+        );
       }
     }
 
@@ -86,10 +206,36 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
     throw error;
   }
 
-  const $fetchRaw: $Fetch["raw"] = async function $fetchRaw<
-    T = any,
-    R extends ResponseType = "json",
-  >(_request: FetchRequest, _options: FetchOptions<R> = {}) {
+  const $fetchRaw: $Fetch["raw"] = async function $fetchRaw(
+    _request,
+    _options = {}
+  ) {
+    const logical: LogicalRequest = {
+      isProbe: false,
+      gated: false,
+      outcome: "failure",
+    };
+    try {
+      const response = await $fetchAttempt(_request, _options, logical);
+      settleCircuit(logical);
+      return response;
+    } catch (error) {
+      if (logical.circuit) {
+        if (logical.outcome === "success") {
+          logical.outcome = "failure";
+        }
+        settleCircuit(logical);
+      }
+      throw error;
+    }
+  };
+
+  async function $fetchAttempt<T = any, R extends ResponseType = "json">(
+    _request: FetchRequest,
+    _options: FetchOptions<R>,
+    logical: LogicalRequest
+  ): Promise<FetchResponse<any>> {
+    logical.outcome = "failure";
     const context: FetchContext = {
       request: _request,
       options: resolveFetchOptions<R, T>(
@@ -166,6 +312,10 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
       }
     }
 
+    if (!logical.gated) {
+      gateCircuit(context, logical);
+    }
+
     let abortTimeout: NodeJS.Timeout | undefined;
 
     if (context.options.timeout) {
@@ -190,7 +340,7 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
           context.options.onRequestError
         );
       }
-      return await onError(context);
+      return await onError(context, logical);
     } finally {
       if (abortTimeout) {
         clearTimeout(abortTimeout);
@@ -250,11 +400,21 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
           context.options.onResponseError
         );
       }
-      return await onError(context);
+      logical.outcome = logical.config?.failureStatusCodes.includes(
+        context.response.status
+      )
+        ? "failure"
+        : "neutral";
+      return await onError(context, logical);
     }
 
+    logical.outcome = logical.config?.failureStatusCodes.includes(
+      context.response.status
+    )
+      ? "failure"
+      : "success";
     return context.response;
-  };
+  }
 
   const $fetch = async function $fetch(request, options) {
     const r = await $fetchRaw(request, options);
@@ -268,13 +428,14 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
   $fetch.create = (defaultOptions = {}, customGlobalOptions = {}) =>
     createFetch({
       ...globalOptions,
+      [kCircuits]: circuits,
       ...customGlobalOptions,
       defaults: {
         ...globalOptions.defaults,
         ...customGlobalOptions.defaults,
         ...defaultOptions,
       },
-    });
+    } as CreateFetchOptions);
 
   return $fetch;
 }
