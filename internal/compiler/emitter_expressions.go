@@ -937,6 +937,15 @@ func (em *emitter) emitUnaryOp(expr *ast.UnaryOperator, reg int8, regType reflec
 		case *ast.Identifier:
 			if em.fb.declaredInFunc(operand.Name) {
 				r := em.fb.scopeLookup(operand.Name)
+				if regType.Kind() == reflect.Interface {
+					em.fb.enterStack()
+					tmp := em.fb.newRegister(exprType.Kind())
+					em.fb.emitNew(em.types.PointerTo(exprType), tmp)
+					em.fb.emitMove(false, -r, tmp, exprType.Kind())
+					em.changeRegister(false, tmp, reg, exprType, regType)
+					em.fb.exitStack()
+					return
+				}
 				em.fb.emitNew(em.types.PointerTo(exprType), reg)
 				em.fb.emitMove(false, -r, reg, regType.Kind())
 				return
