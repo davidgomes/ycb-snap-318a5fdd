@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Formatting Changes and Bug Fixes
+
+- sqlfmt now formats `CREATE TABLE <name> (...)` statements, with one column or table constraint per line. `CREATE TABLE AS SELECT` and `CREATE TABLE ... LIKE` are still passed through unchanged.
+- Adds a `sqlfmt.ddl` module with `parse_ddl_table`, which describes the columns and table constraints of a `CREATE TABLE` statement.
+
 ## [0.29.0] - 2026-01-12
 
 ## Breaking changes

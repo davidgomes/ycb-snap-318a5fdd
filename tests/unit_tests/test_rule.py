@@ -5,9 +5,9 @@ from typing import List
 import pytest
 
 from sqlfmt.rule import Rule
-from sqlfmt.rules import CLONE, CORE, FUNCTION, GRANT, JINJA, MAIN, WAREHOUSE
+from sqlfmt.rules import CLONE, CORE, FUNCTION, GRANT, JINJA, MAIN, TABLE, WAREHOUSE
 
-ALL_RULESETS = [CLONE, CORE, FUNCTION, GRANT, JINJA, MAIN, WAREHOUSE]
+ALL_RULESETS = [CLONE, CORE, FUNCTION, GRANT, JINJA, MAIN, TABLE, WAREHOUSE]
 
 
 def get_rule(ruleset: List[Rule], rule_name: str) -> Rule:
@@ -387,6 +387,15 @@ def get_rule(ruleset: List[Rule], rule_name: str) -> Rule:
         (CLONE, "name", "foo"),
         (CLONE, "word_operator", "at"),
         (CLONE, "word_operator", "before"),
+        (TABLE, "create_table", "create table if not exists"),
+        (TABLE, "create_table", "create or replace temporary table"),
+        (TABLE, "constraint_keyword", "not null"),
+        (TABLE, "constraint_keyword", "primary key"),
+        (TABLE, "constraint_keyword", "foreign\nkey"),
+        (TABLE, "constraint_keyword", "on delete"),
+        (TABLE, "post_body_keyword", "partition by"),
+        (TABLE, "post_body_keyword", "cluster by"),
+        (TABLE, "post_body_keyword", "options"),
     ],
 )
 def test_regex_exact_match(
@@ -426,6 +435,11 @@ def test_regex_exact_match(
         (MAIN, "unsupported_ddl", "insert('abc', 1, 2, 'Z')"),
         (MAIN, "unsupported_ddl", "get(foo, 'bar')"),
         (MAIN, "create_clone", "create table"),
+        (MAIN, "create_table", "create table foo as select"),
+        (MAIN, "create_table", "create table foo like bar"),
+        (MAIN, "create_table", "create table foo clone bar"),
+        (MAIN, "create_table", "create table function foo(x int)"),
+        (TABLE, "constraint_keyword", "nullable"),
         (JINJA, "jinja_set_block_start", "{% set foo = 'baz' %}"),
         (JINJA, "jinja_call_statement_block_start", "{% call(t) statement('main') -%}"),
         (GRANT, "unterm_keyword", "select"),
@@ -482,6 +496,19 @@ def test_regex_anti_match(
             "functions_that_overlap_with_word_operators",
             "ilike('foo', 'bar')",
             "ilike",
+        ),
+        (MAIN, "create_table", "create table foo (a int)", "create table"),
+        (
+            MAIN,
+            "create_table",
+            'CREATE TABLE IF NOT EXISTS db."Sch".foo(a int)',
+            "CREATE TABLE IF NOT EXISTS",
+        ),
+        (
+            MAIN,
+            "create_table",
+            "create or replace transient table {{ this }} (a int)",
+            "create or replace transient table",
         ),
     ],
 )
