@@ -412,14 +412,17 @@ export function createQueryInstance<T extends QueryParameter[]>(
         // For tracking queries, seed the trackers with events recorded since each
         // tracking modifier was created, then check the entity against the whole query
         // so static, tracking, pair and relation constraints all apply together.
-        const entities = ctx.entityIndex.dense;
+        const { dense: entities, aliveCount } = ctx.entityIndex;
         for (let i = 0; i < entities.length; i++) {
             const entity = entities[i];
-            seedTrackingGroups(world, query, getEntityId(entity));
+            const eid = getEntityId(entity);
+            seedTrackingGroups(world, query, eid);
             const match = hasRelationFilters
                 ? checkQueryTrackingWithRelations(world, query, entity, 'add', -1, 0)
                 : query.checkTracking(world, entity, 'add', -1, 0);
             if (match) query.add(entity);
+            // Dead entities never match later, so their seeded state must not leak to a recycled ID.
+            else if (i >= aliveCount) query.resetTrackingBitmasks(eid);
         }
     } else {
         // Non-tracking query: populate immediately
