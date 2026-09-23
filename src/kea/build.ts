@@ -8,6 +8,7 @@ import { addConnection } from '../core/connect'
 import { key, path, props } from '../core'
 import { shallowCompare } from '../utils'
 import { batchChanges } from '../react/hooks'
+import { getSelectorHealth } from '../core/atomic'
 
 // Converts `input` into `logic` by running all build steps in succession
 function applyInputToLogic(logic: BuiltLogic, input: LogicInput | LogicBuilder) {
@@ -128,6 +129,10 @@ export function getBuiltLogic<L extends Logic = Logic>(
         const newLogicProperties = typeof plugin.defaults === 'function' ? plugin.defaults() : plugin.defaults
         Object.assign(logic, newLogicProperties)
       }
+    }
+
+    if (getContext().options.atomicSelectors) {
+      logic.selectorHealth = () => getSelectorHealth(logic)
     }
 
     runPlugins('beforeBuild', logic, wrapper.inputs)

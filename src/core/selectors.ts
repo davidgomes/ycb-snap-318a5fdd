@@ -1,6 +1,7 @@
 import { Logic, LogicBuilder, LogicPropSelectors, Selector, SelectorDefinition, SelectorDefinitions } from '../types'
 import { createSelector, createSelectorCreator, defaultMemoize, ParametricSelector } from 'reselect'
 import { getStoreState } from '../kea/context'
+import { assertNoCircularSelectors, createAtomicSelector, isAtomicSelectorsEnabled, tagSelector } from './atomic'
 
 /**
   Logic builder:
@@ -25,6 +26,7 @@ export function selectors<L extends Logic = Logic>(
 ): LogicBuilder<L> {
   return (logic) => {
     const selectorInputs = typeof input === 'function' ? input(logic) : input
+    const atomic = isAtomicSelectorsEnabled()
 
     // small cache so the order would not count
     const builtSelectors: Record<string, Selector> = {}
@@ -32,9 +34,14 @@ export function selectors<L extends Logic = Logic>(
       if (typeof logic.selectors[key] !== 'undefined') {
         throw new Error(`[KEA] Logic "${logic.pathString}" selector "${key}" already exists`)
       }
-      addSelectorAndValue(logic, key, (...args) => builtSelectors[key](...args))
+      addSelectorAndValue(logic, key, (...args) => builtSelectors[key](...args), atomic ? 'selector' : undefined)
     }
 
+    const propSelector = (target: Record<string, any>, prop: string | symbol) => {
+      const selector = () => target[prop as string]
+      atomic && tagSelector(selector, logic, `props.${String(prop)}`, 'prop')
+      return selector
+    }
     const propSelectors =
       typeof Proxy !== 'undefined'
         ? new Proxy(logic.props, {
@@ -48,11 +55,11 @@ export function selectors<L extends Logic = Logic>(
                   )}: '' }) to resolve.`,
                 )
               }
-              return () => target[prop]
+              return propSelector(target, prop)
             },
           })
         : (Object.fromEntries(
-            Object.keys(logic.props).map((key) => [key, () => logic.props[key]]),
+            Object.keys(logic.props).map((key) => [key, propSelector(logic.props, key)]),
           ) as LogicPropSelectors<L>)
 
     for (const entry of Object.entries(selectorInputs)) {
@@ -68,10 +75,15 @@ export function selectors<L extends Logic = Logic>(
         const msg = `[KEA] Logic "${logic.pathString}", selector "${key}" has incorrect input: [${argTypes}].`
         throw new Error(msg)
       }
-      builtSelectors[key] = createSelector(args, func, { memoizeOptions })
+      builtSelectors[key] = atomic
+        ? createAtomicSelector(logic, key, args, func, memoizeOptions)
+        : createSelector(args, func, { memoizeOptions })
 
-      addSelectorAndValue(logic, key, (state = getStoreState(), props = logic.props) =>
-        builtSelectors[key](state, props),
+      addSelectorAndValue(
+        logic,
+        key,
+        (state = getStoreState(), props = logic.props) => builtSelectors[key](state, props),
+        atomic ? 'selector' : undefined,
       )
 
       if (!logic.values.hasOwnProperty(key)) {
@@ -83,11 +95,23 @@ export function selectors<L extends Logic = Logic>(
         })
       }
     }
+
+    if (atomic) {
+      assertNoCircularSelectors(logic)
+    }
   }
 }
 
-export function addSelectorAndValue<L extends Logic = Logic>(logic: L, key: string, selector: Selector): void {
+export function addSelectorAndValue<L extends Logic = Logic>(
+  logic: L,
+  key: string,
+  selector: Selector,
+  atomicKind?: 'reducer' | 'selector',
+): void {
   logic.selectors[key] = selector
+  if (atomicKind) {
+    tagSelector(selector, logic, key, atomicKind)
+  }
   if (!logic.values.hasOwnProperty(key)) {
     Object.defineProperty(logic.values, key, {
       get: function () {

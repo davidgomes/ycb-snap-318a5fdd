@@ -47,6 +47,9 @@ export interface Logic {
   listeners?: Record<string, ListenerFunctionWrapper[]>
   sharedListeners?: Record<string, ListenerFunction>
 
+  // atomic selectors, only defined with resetContext({ atomicSelectors: true })
+  selectorHealth?: () => SelectorHealth
+
   __keaTypeGenInternalSelectorTypes: Record<string, any>
   __keaTypeGenInternalReducerActions: Record<string, any>
   __keaTypeGenInternalExtraInput: Record<string, any>
@@ -258,6 +261,22 @@ export type SelectorTuple =
 export type SelectorDefinition<Selectors, PropSelectors, SelectorFunction extends any> =
   | [(s: Selectors, p: PropSelectors) => SelectorTuple, SelectorFunction]
   | [(s: Selectors, p: PropSelectors) => SelectorTuple, SelectorFunction, DefaultMemoizeOptions]
+
+export interface SelectorHealthEntry {
+  /** Relative leaf paths (e.g. `user.name`) or local selector names this selector read on its last evaluation */
+  dependencies: string[]
+  /** Local names of selectors that take this selector as an input */
+  dependents: string[]
+  /** How many times the compute function has been invoked */
+  evaluations: number
+  /** What caused the most recent invalidation: a leaf path (`user.name`) or `selector:<localName>` */
+  dirtyCause: string | null
+}
+
+export interface SelectorHealth {
+  selectors: Record<string, SelectorHealthEntry>
+  topologicalOrder: string[]
+}
 
 export type LogicPropSelectors<LogicType extends Logic> = {
   [PK in keyof LogicType['props']]: () => LogicType['props'][PK]
@@ -538,6 +557,8 @@ export interface InternalContextOptions {
   detachStrategy: 'dispatch' | 'replace' | 'persist'
   defaultPath: string[]
   disableAsyncActions: boolean
+  /** Track selector dependencies at the leaf level and only re-evaluate when what was read changes */
+  atomicSelectors: boolean
   // ...otherOptions
 }
 

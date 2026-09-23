@@ -8,6 +8,7 @@ import { runPlugins } from './plugins'
 import { getContext } from './context'
 import { CreateStoreOptions } from '../types'
 import { isPaused } from '../react/hooks'
+import { atomicSelectorsMiddleware } from '../core/atomic'
 
 const reduxDevToolsCompose =
   typeof window !== 'undefined' && (window as any)['__REDUX_DEVTOOLS_EXTENSION_COMPOSE__']
@@ -45,6 +46,10 @@ export function createStore(opts = {}): Store | void {
 
   // run pre-hooks
   runPlugins('beforeReduxStore', options)
+
+  if (context.options.atomicSelectors) {
+    options.middleware = [...options.middleware, atomicSelectorsMiddleware]
+  }
 
   // combine middleware into the first enhancer
   if (options.middleware.length > 0) {
