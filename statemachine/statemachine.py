@@ -33,6 +33,7 @@ from .i18n import _
 from .model import Model
 from .signature import SignatureAdapter
 from .state import InstanceState
+from .state_data import DataChangeInfo
 from .utils import run_async_from_sync
 
 if TYPE_CHECKING:
@@ -148,6 +149,9 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         self.history_values: Dict[
             str, List[State]
         ] = {}  # Mapping of compound states to last active state(s).
+        self._state_data: Dict[str, Dict[str, Any]] = {}
+        self._history_data: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._data_changes: List[DataChangeInfo] = []
         self.state_field = state_field
         self.start_configuration_values = (
             [start_value] if start_value is not None else list(self.start_configuration_values)
@@ -362,6 +366,43 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         from .contrib.diagram import DotGraphMachine
 
         return DotGraphMachine(self).get_graph()
+
+    def _resolve_state_id(self, state: "State | str") -> str:
+        return state if isinstance(state, str) else state.id
+
+    def get_state_data(self, state: "State | str") -> "Dict[str, Any] | None":
+        """Return the live data dict owned by an active ``state``, or ``None``."""
+        return self._state_data.get(self._resolve_state_id(state))
+
+    @property
+    def state_data_values(self) -> Dict[str, Dict[str, Any]]:
+        """A snapshot of the data of all active states, keyed by state id."""
+        return {state_id: dict(values) for state_id, values in self._state_data.items()}
+
+    def set_state_data(self, state: "State | str", key: str, value: Any):
+        """Set ``key`` on the data of the active ``state``, recording a :class:`DataChangeInfo`.
+
+        Raises:
+            InvalidDefinition: If the state is not active, the key is not declared or the
+                value violates the :class:`DataVar` type constraint.
+        """
+        state_id = self._resolve_state_id(state)
+        values = self._state_data.get(state_id)
+        if values is None:
+            raise InvalidDefinition(_("State {!r} is not active or has no data.").format(state_id))
+        spec = next(s for s in self.states_map.values() if s.id == state_id)._data_spec
+        if key not in spec:
+            raise InvalidDefinition(
+                _("Key {!r} is not declared on state {!r} data.").format(key, state_id)
+            )
+        spec[key].validate(key, value)
+        old_value = values[key]
+        values[key] = value
+        self._data_changes.append(DataChangeInfo(state_id, key, old_value, value))
+
+    def get_data_changes(self) -> List[DataChangeInfo]:
+        """Changes made through :meth:`set_state_data` during the current macrostep."""
+        return list(self._data_changes)
 
     @property
     def configuration_values(self) -> OrderedSet[Any]:

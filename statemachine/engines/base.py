@@ -1,4 +1,6 @@
 import logging
+from collections import ChainMap
+from copy import deepcopy
 from dataclasses import dataclass
 from dataclasses import field
 from itertools import chain
@@ -21,6 +23,7 @@ from ..invoke import InvokeManager
 from ..orderedset import OrderedSet
 from ..state import HistoryState
 from ..state import State
+from ..state_data import initial_values
 from ..transition import Transition
 
 if TYPE_CHECKING:
@@ -98,6 +101,7 @@ class BaseEngine:
         self._log_id = f"[{type(sm).__name__}]"
         self._debug = logger.debug if logger.isEnabledFor(logging.DEBUG) else lambda *a, **k: None
         self._root_parallel_final_pending: "State | None" = None
+        self._pending_data_restore: Dict[str, Dict[str, Any]] = {}
 
     def empty(self):  # pragma: no cover
         return self.external_queue.is_empty()
@@ -428,7 +432,9 @@ class BaseEngine:
 
         # Check the cache for existing results
         if cache_key in self._cache:
-            return self._cache[cache_key]
+            args, kwargs = self._cache[cache_key]
+            kwargs["state_data"] = self._data_scope(target or transition.source)
+            return args, kwargs
 
         event_data = EventData(trigger_data=trigger_data, transition=transition)
         if target:
@@ -436,6 +442,7 @@ class BaseEngine:
             event_data.target = target
 
         args, kwargs = event_data.args, event_data.extended_kwargs
+        kwargs["state_data"] = self._data_scope(target or transition.source)
 
         result = self.sm._callbacks.call(self.sm.prepare.key, *args, **kwargs)
         for new_kwargs in result:
@@ -482,8 +489,29 @@ class BaseEngine:
                     [s.id for s in history_value],
                 )
                 self.sm.history_values[history.id] = history_value
+                store = self.sm._state_data
+                # References (not copies): mutations made by exit callbacks are kept.
+                self.sm._history_data[history.id] = {
+                    s.id: store[s.id] for s in history_value if s.id in store
+                }
 
         return ordered_states, result
+
+    def _data_scope(self, state: State) -> "ChainMap[str, Any]":
+        store = self.sm._state_data
+        return ChainMap(*(store[s.id] for s in chain([state], state.ancestors()) if s.id in store))
+
+    def _init_state_data(self, state: State):
+        spec = state._data_spec
+        if not spec:
+            return
+        restored = self._pending_data_restore.pop(state.id, None)
+        self.sm._state_data[state.id] = (
+            deepcopy(restored) if restored is not None else initial_values(spec)
+        )
+
+    def _clear_state_data(self, state: State):
+        self.sm._state_data.pop(state.id, None)
 
     def _remove_state_from_configuration(self, state: State):
         """Remove a state from the configuration if not using atomic updates."""
@@ -507,7 +535,9 @@ class BaseEngine:
             # Execute `onexit` handlers — same per-block error isolation as onentry.
             if info.state is not None:  # pragma: no branch
                 self._debug("%s Exiting state: %s", self._log_id, info.state)
+                kwargs = {**kwargs, "state_data": self._data_scope(info.state)}
                 self.sm._callbacks.call(info.state.exit.key, *args, on_error=on_error, **kwargs)
+                self._clear_state_data(info.state)
 
             self._remove_state_from_configuration(info.state)
 
@@ -549,6 +579,7 @@ class BaseEngine:
         states_to_enter = OrderedSet[StateTransition]()
         states_for_default_entry = OrderedSet[StateTransition]()
         default_history_content: Dict[str, Any] = {}
+        self._pending_data_restore = {}
 
         self.compute_entry_set(
             enabled_transitions, states_to_enter, states_for_default_entry, default_history_content
@@ -665,6 +696,7 @@ class BaseEngine:
         for info in ordered_states:
             target = info.state
             transition = info.transition
+            self._init_state_data(target)
             args, kwargs = self._get_args_kwargs(
                 transition,
                 trigger_data,
@@ -779,6 +811,7 @@ class BaseEngine:
                     state.type.value,
                     [s.id for s in self.sm.history_values[state.id]],
                 )
+                self._pending_data_restore.update(self.sm._history_data.get(state.id, {}))
                 for history_state in self.sm.history_values[state.id]:
                     info_to_add = StateTransition(transition=info.transition, state=history_state)
                     if state.type.is_deep:

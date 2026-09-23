@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import Dict
 from typing import Generator
 from typing import List
 from typing import cast
@@ -13,6 +14,8 @@ from .event import _expand_event_id
 from .exceptions import InvalidDefinition
 from .i18n import _
 from .invoke import normalize_invoke_callbacks
+from .state_data import DataVar
+from .state_data import normalize_data
 from .transition import Transition
 from .transition_list import TransitionList
 
@@ -134,6 +137,9 @@ class State:
             See :ref:`actions`.
         exit: One or more callbacks assigned to be executed when the state is exited.
             See :ref:`actions`.
+        data: A mapping of variable names to default values (plain values, factory callables
+            or :class:`DataVar`). The data is owned by the state: it's initialized with a
+            fresh copy of the defaults on entry and removed on exit.
 
     State is a core component on how this library implements an expressive API to declare
     StateMachines.
@@ -214,9 +220,11 @@ class State:
         exit: Any = None,
         invoke: Any = None,
         donedata: Any = None,
+        data: "Dict[str, Any] | None" = None,
         _callbacks: Any = None,
     ):
         self.name = name
+        self._data_spec: Dict[str, DataVar] = normalize_data(data)
         self.value = value
         self._parallel = parallel
         self.states = states or []

@@ -51,7 +51,10 @@ def _actions_getter(machine: "MachineRef"):
 
 
 def _extract_state_actions(state: "State", getter) -> List[DiagramAction]:
-    actions: List[DiagramAction] = []
+    actions: List[DiagramAction] = [
+        DiagramAction(type=ActionType.DATA, body=f"{key} = {var.describe()}")
+        for key, var in getattr(state, "_data_spec", {}).items()
+    ]
 
     entry = str(getter(state.enter))
     exit_ = str(getter(state.exit))
