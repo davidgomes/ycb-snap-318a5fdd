@@ -104,6 +104,10 @@ if TYPE_CHECKING:
         CallbackManagerForChainRun,
     )
     from langchain_core.prompts.base import BasePromptTemplate
+    from langchain_core.runnables.coalesce import CoalesceBackend
+    from langchain_core.runnables.coalesce import (
+        RunnableCoalesce as RunnableCoalesceT,
+    )
     from langchain_core.runnables.fallbacks import (
         RunnableWithFallbacks as RunnableWithFallbacksT,
     )
@@ -1919,6 +1923,69 @@ class Runnable(ABC, Generic[Input, Output]):
             wait_exponential_jitter=wait_exponential_jitter,
             max_attempt_number=stop_after_attempt,
             exponential_jitter_params=exponential_jitter_params,
+        )
+
+    def with_coalesce(
+        self,
+        *,
+        backend: CoalesceBackend | None = None,
+    ) -> RunnableCoalesceT[Input, Output]:
+        """Create a new `Runnable` that coalesces concurrent identical calls.
+
+        While an execution for a given input is in flight, further calls with the
+        same input join it instead of running again, and all callers receive its
+        result. Once it completes, the next call with that input runs fresh.
+
+        Coalescing applies to `invoke`, `stream`, `batch` and `batch_as_completed`
+        (and their async versions), which all share one backend. The key is derived
+        from the input value only: config, kwargs and dictionary key order are
+        ignored. `transform`, `atransform` and `astream_events` pass through.
+
+        Args:
+            backend: Backend tracking in-flight executions. Defaults to a new
+                `InMemoryCoalesceBackend`, so separate wrappers coalesce
+                independently unless they are given the same backend.
+
+        Returns:
+            A new `Runnable` that coalesces concurrent identical calls.
+
+        Example:
+            ```python
+            import asyncio
+
+            from langchain_core.runnables import RunnableLambda
+
+            calls = 0
+
+
+            async def slow_double(x: int) -> int:
+                global calls
+                calls += 1
+                await asyncio.sleep(0.1)
+                return x * 2
+
+
+            runnable = RunnableLambda(slow_double).with_coalesce()
+
+
+            async def main() -> None:
+                results = await asyncio.gather(*(runnable.ainvoke(2) for _ in range(5)))
+                assert results == [4] * 5
+                assert calls == 1
+
+
+            asyncio.run(main())
+            ```
+        """
+        # Import locally to prevent circular import
+        from langchain_core.runnables.coalesce import (  # noqa: PLC0415
+            InMemoryCoalesceBackend,
+            RunnableCoalesce,
+        )
+
+        return RunnableCoalesce(
+            bound=self,
+            backend=backend if backend is not None else InMemoryCoalesceBackend(),
         )
 
     def map(self) -> Runnable[list[Input], list[Output]]:
