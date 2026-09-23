@@ -43,6 +43,10 @@ describe('maybe', () => {
     expect(maybe.traverse(half)([2, 3])).toEqual(maybe.nothing());
     expect(maybe.zip(maybe.just(1), maybe.just('a'))).toEqual(maybe.just([1, 'a']));
     expect(maybe.zipWith(maybe.just(1), maybe.just(2), (a, b) => a + b)).toEqual(maybe.just(3));
+    expect(maybe.zip(maybe.nothing<number>(), maybe.just(1))).toEqual(maybe.nothing());
+    expect(maybe.zipWith(maybe.just(1), maybe.nothing<number>(), (a, b) => a + b)).toEqual(
+      maybe.nothing()
+    );
     expect(maybe.compact([maybe.just(1), maybe.nothing<number>()])).toEqual([1]);
     expect(maybe.filterMap([1, 2, 4], half)).toEqual([1, 2]);
     expect(maybe.filterMap(half)([3])).toEqual([]);
@@ -63,6 +67,8 @@ describe('result', () => {
     expect(result.zipWith(result.ok(1), result.err('x'), (a, b: number) => a + b)).toEqual(
       result.err('x')
     );
+    expect(result.zip(result.err('a'), result.ok(1))).toEqual(result.err('a'));
+    expect(result.zip(result.ok(1), result.err('b'))).toEqual(result.err('b'));
     expect(result.partition([result.ok(1), result.err('e'), result.ok(2)])).toEqual([
       [1, 2],
       ['e'],
@@ -113,6 +119,12 @@ describe('toolbelt', () => {
     expect(toolbelt.sequenceMaybeAsResult('none')([maybe.nothing()])).toEqual(result.err('none'));
     expect(toolbelt.traverseMaybeAsResult('none', [1], (n) => maybe.just(n))).toEqual(
       result.ok([1])
+    );
+    expect(toolbelt.traverseMaybeAsResult('none')([1], () => maybe.nothing())).toEqual(
+      result.err('none')
+    );
+    expect(toolbelt.zipMaybeAsResult('none', maybe.just(1), maybe.just(2))).toEqual(
+      result.ok([1, 2])
     );
     expect(toolbelt.zipMaybeAsResult('none')(maybe.just(1), maybe.nothing())).toEqual(
       result.err('none')
