@@ -1,0 +1,118 @@
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: all-fields
+spec:
+  consistentHash:
+    headers:
+    - headerName: x-user-id
+      terminal: true
+    - headerName: ":authority"
+      regexRewrite:
+        pattern: "^(.*)\\.example\\.com$"
+        substitution: "\\1"
+    cookies:
+    - name: session-id
+      ttl: 1h30m
+      path: /
+      attributes:
+      - name: SameSite
+        value: Strict
+      - name: Secure
+      terminal: true
+    - name: legacy
+      ttl: "3600"
+    queryParameters:
+    - name: user
+      terminal: true
+    filterState:
+    - key: io.istio.peer_principal
+    sourceIp:
+      terminal: true
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: empty
+spec:
+  consistentHash: {}
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: disable
+spec:
+  consistentHash:
+    disable: true
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: disable-false-with-fields
+spec:
+  consistentHash:
+    disable: false
+    sourceIp: {}
+---
+_err: no other consistentHash fields may be set when disable is true
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: disable-with-headers
+spec:
+  consistentHash:
+    disable: true
+    headers:
+    - headerName: x-user-id
+---
+_err: no other consistentHash fields may be set when disable is true
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: disable-with-source-ip
+spec:
+  consistentHash:
+    disable: true
+    sourceIp: {}
+---
+_err: ttl must be a duration (e.g. 1h30m) or an integer number of seconds (e.g. 3600)
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: invalid-cookie-ttl
+spec:
+  consistentHash:
+    cookies:
+    - name: session-id
+      ttl: 1 hour
+---
+_err: ttl must be a duration (e.g. 1h30m) or an integer number of seconds (e.g. 3600)
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: negative-cookie-ttl
+spec:
+  consistentHash:
+    cookies:
+    - name: session-id
+      ttl: "-10"
+---
+_err: should match
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: invalid-header-name
+spec:
+  consistentHash:
+    headers:
+    - headerName: "x user"
+---
+_err: Required value
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: missing-filter-state-key
+spec:
+  consistentHash:
+    filterState:
+    - terminal: true
