@@ -3,6 +3,8 @@
 # Copyright (c) IPython Development Team.
 # Distributed under the terms of the Modified BSD License.
 
+from typing import Any
+
 from IPython.core import magic_arguments
 from IPython.core.error import UsageError
 from IPython.core.magic import Magics, line_magic, magics_class
@@ -34,7 +36,7 @@ class SessionBundleMagics(Magics):
         "can be repeated (start only).",
     )
     @line_magic
-    def session_bundle(self, line=""):
+    def session_bundle(self, line: str = "") -> str | dict[str, Any]:
         """Record the cells you run into a replayable session bundle.
 
         ``start PATH`` records the code, stdout, stderr, expression result and
@@ -50,6 +52,7 @@ class SessionBundleMagics(Magics):
             password = "hunter2"
             %session_bundle stop
         """
+        assert self.shell is not None
         args = magic_arguments.parse_argstring(self.session_bundle, line)
         if args.action == "start":
             if args.path is None:

@@ -1992,9 +1992,7 @@ class InteractiveShell(SingletonConfigurable):
                 "A session bundle is already being recorded to "
                 f"{self._session_bundle_recorder.path}"
             )
-        recorder = SessionBundleRecorder(
-            self, path, overwrite=overwrite, redact=redact
-        )
+        recorder = SessionBundleRecorder(self, path, overwrite=overwrite, redact=redact)
         recorder.start()
         self._session_bundle_recorder = recorder
         return str(recorder.path)

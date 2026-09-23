@@ -358,14 +358,16 @@ def _redaction_errors(metadata: dict[str, Any], events_text: str) -> list[str]:
         return []
     # Ignore the markers themselves, in case a pattern is part of "<redacted>".
     unredacted_parts = events_text.split(REDACTED)
-    return [
-        # Refer to the pattern by position: it is what should stay secret.
-        f"{EVENTS_NAME}: redacted pattern #{index} appears in the recorded events"
-        for index, pattern in enumerate(redactions, start=1)
-        if _is_str(pattern)
-        and pattern
-        and any(pattern in part for part in unredacted_parts)
-    ]
+    errors = []
+    for index, pattern in enumerate(redactions, start=1):
+        if not _is_str(pattern) or not pattern:
+            continue
+        if any(pattern in part for part in unredacted_parts):
+            # Refer to the pattern by position: it is what should stay secret.
+            errors.append(
+                f"{EVENTS_NAME}: redacted pattern #{index} appears in the recorded events"
+            )
+    return errors
 
 
 def _bundle_errors(bundle: _RawBundle) -> list[str]:
@@ -546,13 +548,17 @@ class _CellCapture:
     def _is_user_output(self) -> bool:
         # Expression results and tracebacks are recorded in their own fields.
         shell = self.shell
-        return not (
-            getattr(shell.display_pub, "is_publishing", False)
-            or getattr(shell.displayhook, "is_active", False)
-            or getattr(shell, "showing_traceback", False)
+        return not any(
+            [
+                getattr(shell.display_pub, "is_publishing", False),
+                getattr(shell.displayhook, "is_active", False),
+                getattr(shell, "showing_traceback", False),
+            ]
         )
 
-    def _wrap_write(self, chunks: list[str], write: Callable[..., Any]) -> Callable[..., Any]:
+    def _wrap_write(
+        self, chunks: list[str], write: Callable[..., Any]
+    ) -> Callable[..., Any]:
         def recording_write(data: Any, *args: Any, **kwargs: Any) -> Any:
             result = write(data, *args, **kwargs)
             if self._active and isinstance(data, str) and self._is_user_output():
@@ -666,7 +672,9 @@ class SessionBundleRecorder:
         except OSError as e:
             warn(f"Could not update session bundle {self.path}: {e}", stacklevel=2)
 
-    def _cell_event(self, cell: _CellCapture, result: ExecutionResult) -> dict[str, Any]:
+    def _cell_event(
+        self, cell: _CellCapture, result: ExecutionResult
+    ) -> dict[str, Any]:
         event: dict[str, Any] = {
             "type": "cell",
             "seq": len(self._event_lines) + 1,
