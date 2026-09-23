@@ -207,7 +207,7 @@ func TestFormatterSeverityColors(t *testing.T) {
 			payload := WebhookPayload{
 				Event:     tt.event,
 				Target:    "API",
-				URL:       "https://api.example.com",
+				URL:       _testAPIURL,
 				Timestamp: time.Date(2025, 10, 7, 12, 0, 0, 0, time.UTC),
 				Reason:    "because",
 				Region:    "us-east-1",

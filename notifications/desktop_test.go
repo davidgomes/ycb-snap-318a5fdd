@@ -32,7 +32,7 @@ func TestHandleAlertDecisionSkipsUndeliverable(t *testing.T) {
 		{State: alerts.StateDown},
 		{Event: alerts.EventTargetDown, State: alerts.StateDown, Suppressed: true},
 	} {
-		if err := HandleAlertDecision(decision, "API", "https://api.example.com"); err != nil {
+		if err := HandleAlertDecision(decision, "API", _testAPIURL); err != nil {
 			t.Errorf("HandleAlertDecision(%+v) = %v, want nil", decision, err)
 		}
 	}

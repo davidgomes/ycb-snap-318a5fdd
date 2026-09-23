@@ -10,6 +10,8 @@ import (
 	"github.com/Owloops/updo/alerts"
 )
 
+const _testAPIURL = "https://api.example.com"
+
 func TestSendWebhook(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -256,7 +258,7 @@ func TestHandleWebhookDecision(t *testing.T) {
 			}))
 			defer server.Close()
 
-			err := HandleWebhookDecision(server.URL, server.Client(), tc.decision, "API", "https://api.example.com", 1500*time.Millisecond, 503, "Non-success status code: 503", "eu-west-1")
+			err := HandleWebhookDecision(server.URL, server.Client(), tc.decision, "API", _testAPIURL, 1500*time.Millisecond, 503, "Non-success status code: 503", "eu-west-1")
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -271,7 +273,7 @@ func TestHandleWebhookDecision(t *testing.T) {
 			want := WebhookPayload{
 				Event:               "target_down",
 				Target:              "API",
-				URL:                 "https://api.example.com",
+				URL:                 _testAPIURL,
 				ResponseTimeMs:      1500,
 				StatusCode:          503,
 				Error:               "Non-success status code: 503",
@@ -292,7 +294,7 @@ func TestHandleWebhookDecision(t *testing.T) {
 
 func TestHandleWebhookDecisionEmptyURL(t *testing.T) {
 	decision := alerts.Decision{Event: alerts.EventTargetDown, State: alerts.StateDown, Reason: "down"}
-	if err := HandleWebhookDecision("", nil, decision, "API", "https://api.example.com", 0, 0, "", ""); err != nil {
+	if err := HandleWebhookDecision("", nil, decision, "API", _testAPIURL, 0, 0, "", ""); err != nil {
 		t.Errorf("Expected no error for empty webhook URL, got %v", err)
 	}
 }
@@ -318,7 +320,7 @@ func TestHandleWebhookDecisionWithHeaders(t *testing.T) {
 	}
 
 	headers := []string{"Authorization: Bearer secret", "X-Service: updo"}
-	if err := HandleWebhookDecisionWithHeaders(server.URL, headers, decision, "", "https://api.example.com", 100*time.Millisecond, 200, "", ""); err != nil {
+	if err := HandleWebhookDecisionWithHeaders(server.URL, headers, decision, "", _testAPIURL, 100*time.Millisecond, 200, "", ""); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
@@ -328,7 +330,7 @@ func TestHandleWebhookDecisionWithHeaders(t *testing.T) {
 	if got := receivedHeaders.Get("X-Service"); got != "updo" {
 		t.Errorf("X-Service header = %q, want %q", got, "updo")
 	}
-	if received["target"] != "https://api.example.com" {
+	if received["target"] != _testAPIURL {
 		t.Errorf("target = %v, want URL fallback", received["target"])
 	}
 	if received["event"] != "target_recovered" {
@@ -351,7 +353,7 @@ func TestHandleWebhookDecisionWithHeadersSkipsSuppressed(t *testing.T) {
 	defer server.Close()
 
 	decision := alerts.Decision{Event: alerts.EventTargetDegraded, State: alerts.StateDegraded, Reason: "slow", Suppressed: true}
-	if err := HandleWebhookDecisionWithHeaders(server.URL, nil, decision, "API", "https://api.example.com", 0, 200, "", ""); err != nil {
+	if err := HandleWebhookDecisionWithHeaders(server.URL, nil, decision, "API", _testAPIURL, 0, 200, "", ""); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	if called {
@@ -366,7 +368,7 @@ func TestHandleWebhookDecisionReturnsDeliveryError(t *testing.T) {
 	defer server.Close()
 
 	decision := alerts.Decision{Event: alerts.EventSSLExpiring, State: alerts.StateHealthy, Reason: "expiring"}
-	if err := HandleWebhookDecision(server.URL, server.Client(), decision, "API", "https://api.example.com", 0, 200, "", ""); err == nil {
+	if err := HandleWebhookDecision(server.URL, server.Client(), decision, "API", _testAPIURL, 0, 200, "", ""); err == nil {
 		t.Error("Expected an error when the webhook endpoint fails")
 	}
 }
