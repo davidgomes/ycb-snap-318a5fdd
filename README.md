@@ -233,6 +233,28 @@ Vulture also detects unreachable code by looking for code after
 `return`, `break`, `continue` and `raise` statements, and by searching
 for unsatisfiable `if`- and `while`-conditions.
 
+## Caching
+
+For large code bases, use `--cache` to store analysis results between
+runs. Subsequent runs only analyze files that changed and the files that
+transitively import them; all other results are loaded from the cache.
+
+    $ vulture --cache myproject/
+
+The cache lives in `.vulture-cache/` by default. Use `--cache-dir=PATH`
+to store it elsewhere and `--cache-clear` to remove all contents of the
+cache directory before running (both options imply `--cache`).
+
+The cache is invalidated automatically when the Python or Vulture
+version, the `--ignore-names` or `--ignore-decorators` options, or
+whitelist files change. Deleted and renamed files are removed from the
+cache. If the cache is corrupted, Vulture prints a warning and performs
+a full scan.
+
+When using Vulture programmatically, pass `cache_dir` (and optionally a
+`cache_settings` dict whose changes trigger a full rescan) to the
+`Vulture` constructor.
+
 ## Sort by size
 
 When using the `--sort-by-size` option, Vulture sorts unused code by its

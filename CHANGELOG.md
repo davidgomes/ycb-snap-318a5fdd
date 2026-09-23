@@ -1,4 +1,5 @@
 # next (unreleased)
+* Add `--cache`, `--cache-clear` and `--cache-dir` options for incremental analysis.
 * Use `ty` instead of `pytype` for testing type annotations (Jendrik Seipp).
 
 # 2.15 (2026-03-04)
