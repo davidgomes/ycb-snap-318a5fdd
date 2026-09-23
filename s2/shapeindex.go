@@ -15,6 +15,8 @@
 package s2
 
 import (
+	"fmt"
+	"io"
 	"math"
 	"slices"
 	"sort"
@@ -1539,4 +1541,344 @@ func maxLevelForEdge(edge Edge) int {
 // removeShapeInternal does the actual work for removing a given shape from the index.
 func (s *ShapeIndex) removeShapeInternal(removed *removedShape, allEdges [][]faceEdge, t *tracker) {
 	// TODO(roberts): finish the implementation of this.
+}
+
+const shapeIndexEncodingVersion = uint8(1)
+
+// Tags identifying the concrete type of each shape in an encoded ShapeIndex.
+// The first five share their values with the corresponding typeTag.
+const (
+	encodedShapePolygon uint8 = iota + 1
+	encodedShapePolyline
+	encodedShapePointVector
+	encodedShapeLaxPolyline
+	encodedShapeLaxPolygon
+	encodedShapeLoop
+	encodedShapeLaxLoop
+)
+
+// Encode encodes the ShapeIndex: its shapes, keyed by their shape IDs, and
+// its full cell structure, so that the decoded index can be queried and
+// iterated without being rebuilt. Any pending updates are applied first.
+//
+// All of the Shape types defined in this package can be encoded.
+func (s *ShapeIndex) Encode(w io.Writer) error {
+	s.maybeApplyUpdates()
+	e := &encoder{w: w}
+	s.encode(e)
+	return e.err
+}
+
+// The encoding is:
+//
+//	version          uint8
+//	maxEdgesPerCell  uvarint
+//	nextID           uvarint
+//	numShapes        uvarint
+//	numShapes times, in increasing shape ID order:
+//	  shape ID       uvarint, as the gap after the previous shape ID
+//	  shape type     uint8, one of the encodedShape tags
+//	  shape data
+//	numCells         uvarint
+//	numCells times, in increasing CellID order:
+//	  CellID         uvarint, as the difference from the previous CellID
+//	  numClipped     uvarint
+//	  numClipped times, in increasing shape ID order:
+//	    shape ID     uvarint, as the gap after the previous shape ID
+//	    numEdges<<1 | containsCenter  uvarint
+//	    numEdges times, edge ID as the gap after the previous edge ID  uvarint
+//
+// A gap after x is encoded as y-x-1, where x starts at -1.
+func (s *ShapeIndex) encode(e *encoder) {
+	ids := make([]int32, 0, len(s.shapes))
+	for id := range s.shapes {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+
+	e.writeUint8(shapeIndexEncodingVersion)
+	e.writeUvarint(uint64(s.maxEdgesPerCell))
+	e.writeUvarint(uint64(s.nextID))
+	e.writeUvarint(uint64(len(ids)))
+	prevID := int32(-1)
+	for _, id := range ids {
+		e.writeUvarint(uint64(id - prevID - 1))
+		encodeIndexedShape(e, s.shapes[id])
+		prevID = id
+	}
+
+	// Removing a shape does not yet update the cells that reference it, so
+	// leave out references to removed shapes and cells left with none.
+	type indexCell struct {
+		id     CellID
+		shapes []*clippedShape
+	}
+	cells := make([]indexCell, 0, len(s.cells))
+	for _, id := range s.cells {
+		var shapes []*clippedShape
+		for _, c := range s.cellMap[id].shapes {
+			if s.shapes[c.shapeID] != nil {
+				shapes = append(shapes, c)
+			}
+		}
+		if len(shapes) > 0 {
+			cells = append(cells, indexCell{id, shapes})
+		}
+	}
+
+	e.writeUvarint(uint64(len(cells)))
+	var prevCellID CellID
+	for _, cell := range cells {
+		e.writeUvarint(uint64(cell.id - prevCellID))
+		prevCellID = cell.id
+		e.writeUvarint(uint64(len(cell.shapes)))
+		prevID := int32(-1)
+		for _, c := range cell.shapes {
+			e.writeUvarint(uint64(c.shapeID - prevID - 1))
+			prevID = c.shapeID
+			countAndCenter := uint64(len(c.edges)) << 1
+			if c.containsCenter {
+				countAndCenter |= 1
+			}
+			e.writeUvarint(countAndCenter)
+			prevEdge := -1
+			for _, edge := range c.edges {
+				e.writeUvarint(uint64(edge - prevEdge - 1))
+				prevEdge = edge
+			}
+		}
+	}
+}
+
+func encodeIndexedShape(e *encoder, shape Shape) {
+	switch shape := shape.(type) {
+	case *Polygon:
+		e.writeUint8(encodedShapePolygon)
+		shape.encodeLossless(e)
+	case *Polyline:
+		e.writeUint8(encodedShapePolyline)
+		shape.encode(e)
+	case *PointVector:
+		e.writeUint8(encodedShapePointVector)
+		shape.encode(e)
+	case *LaxPolyline:
+		e.writeUint8(encodedShapeLaxPolyline)
+		shape.encode(e)
+	case *LaxPolygon:
+		e.writeUint8(encodedShapeLaxPolygon)
+		shape.encode(e)
+	case *Loop:
+		e.writeUint8(encodedShapeLoop)
+		shape.encode(e)
+	case *LaxLoop:
+		e.writeUint8(encodedShapeLaxLoop)
+		shape.encode(e)
+	default:
+		if e.err == nil {
+			e.err = fmt.Errorf("cannot encode shape of type %T", shape)
+		}
+	}
+}
+
+// Decode replaces the contents of the ShapeIndex with an index written by
+// Encode. The decoded index keeps the original shape IDs and cell structure,
+// and is ready to be queried without calling Build. If an error is returned,
+// the ShapeIndex is left unchanged.
+func (s *ShapeIndex) Decode(r io.Reader) error {
+	d := &decoder{r: asByteReader(r)}
+	decoded := NewShapeIndex()
+	decoded.decode(d)
+	if d.err != nil {
+		return d.err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shapes = decoded.shapes
+	s.maxEdgesPerCell = decoded.maxEdgesPerCell
+	s.nextID = decoded.nextID
+	s.cellMap = decoded.cellMap
+	s.cells = decoded.cells
+	s.pendingAdditionsPos = decoded.nextID
+	s.pendingRemovals = nil
+	atomic.StoreInt32(&s.status, fresh)
+	return nil
+}
+
+func (s *ShapeIndex) decode(d *decoder) {
+	version := d.readUint8()
+	if d.err != nil {
+		return
+	}
+	if version != shapeIndexEncodingVersion {
+		d.err = fmt.Errorf("unsupported ShapeIndex encoding version %d", version)
+		return
+	}
+
+	maxEdgesPerCell := d.readUvarint()
+	nextID := d.readUvarint()
+	numShapes := d.readUvarint()
+	if d.err != nil {
+		return
+	}
+	if maxEdgesPerCell == 0 || maxEdgesPerCell > math.MaxInt32 {
+		d.err = fmt.Errorf("invalid max edges per cell %d", maxEdgesPerCell)
+		return
+	}
+	if nextID > math.MaxInt32 {
+		d.err = fmt.Errorf("next shape ID %d out of range", nextID)
+		return
+	}
+	if numShapes > nextID {
+		d.err = fmt.Errorf("%d shapes exceed next shape ID %d", numShapes, nextID)
+		return
+	}
+	s.maxEdgesPerCell = int(maxEdgesPerCell)
+	s.nextID = int32(nextID)
+
+	prevID := int32(-1)
+	for range numShapes {
+		id := d.readIDAfter(prevID, s.nextID, "shape ID")
+		shape := decodeIndexedShape(d)
+		if d.err != nil {
+			return
+		}
+		s.shapes[id] = shape
+		prevID = id
+	}
+
+	numCells := d.readUvarint()
+	if d.err != nil {
+		return
+	}
+	s.cells = make([]CellID, 0, decodePrealloc(numCells))
+	var prevCellID CellID
+	for i := range numCells {
+		delta := d.readUvarint()
+		if d.err != nil {
+			return
+		}
+		id := prevCellID + CellID(delta)
+		if !id.IsValid() || (i > 0 && id.RangeMin() <= prevCellID.RangeMax()) {
+			d.err = fmt.Errorf("invalid or out of order index cell %v", id)
+			return
+		}
+		cell := s.decodeCell(d)
+		if d.err != nil {
+			return
+		}
+		s.cellMap[id] = cell
+		s.cells = append(s.cells, id)
+		prevCellID = id
+	}
+}
+
+// decodeCell decodes one ShapeIndexCell. The shapes of the index must already
+// be decoded, since every clipped shape has to refer to one of them.
+func (s *ShapeIndex) decodeCell(d *decoder) *ShapeIndexCell {
+	numClipped := d.readUvarint()
+	if d.err != nil {
+		return nil
+	}
+	if numClipped == 0 || numClipped > uint64(len(s.shapes)) {
+		d.err = fmt.Errorf("invalid number of shapes %d in index cell", numClipped)
+		return nil
+	}
+	cell := &ShapeIndexCell{shapes: make([]*clippedShape, 0, decodePrealloc(numClipped))}
+	prevID := int32(-1)
+	for range numClipped {
+		id := d.readIDAfter(prevID, s.nextID, "clipped shape ID")
+		countAndCenter := d.readUvarint()
+		if d.err != nil {
+			return nil
+		}
+		shape := s.shapes[id]
+		if shape == nil {
+			d.err = fmt.Errorf("index cell refers to missing shape %d", id)
+			return nil
+		}
+		numShapeEdges := int32(min(shape.NumEdges(), math.MaxInt32))
+		numEdges := countAndCenter >> 1
+		if numEdges > uint64(numShapeEdges) {
+			d.err = fmt.Errorf("index cell has %d edges of shape %d, which has %d", numEdges, id, numShapeEdges)
+			return nil
+		}
+		c := &clippedShape{
+			shapeID:        id,
+			containsCenter: countAndCenter&1 != 0,
+			edges:          make([]int, 0, decodePrealloc(numEdges)),
+		}
+		prevEdge := int32(-1)
+		for range numEdges {
+			edge := d.readIDAfter(prevEdge, numShapeEdges, "edge ID")
+			if d.err != nil {
+				return nil
+			}
+			c.edges = append(c.edges, int(edge))
+			prevEdge = edge
+		}
+		cell.shapes = append(cell.shapes, c)
+		prevID = id
+	}
+	return cell
+}
+
+// readIDAfter reads an ID encoded as the gap after prev, and requires it to
+// be less than limit.
+func (d *decoder) readIDAfter(prev, limit int32, what string) int32 {
+	gap := d.readUvarint()
+	if d.err != nil {
+		return 0
+	}
+	if gap >= uint64(limit-prev-1) {
+		d.err = fmt.Errorf("%s out of range", what)
+		return 0
+	}
+	return prev + 1 + int32(gap)
+}
+
+func decodeIndexedShape(d *decoder) Shape {
+	tag := d.readUint8()
+	if d.err != nil {
+		return nil
+	}
+	switch tag {
+	case encodedShapePolygon:
+		version := int8(d.readUint8())
+		if d.err == nil && version != encodingVersion {
+			d.err = fmt.Errorf("unsupported polygon encoding version %d", version)
+		}
+		if d.err != nil {
+			return nil
+		}
+		p := &Polygon{}
+		p.decode(d)
+		return p
+	case encodedShapePolyline:
+		p := &Polyline{}
+		p.decode(d)
+		return p
+	case encodedShapePointVector:
+		p := &PointVector{}
+		p.decode(d)
+		return p
+	case encodedShapeLaxPolyline:
+		l := &LaxPolyline{}
+		l.decode(d)
+		return l
+	case encodedShapeLaxPolygon:
+		p := &LaxPolygon{}
+		p.decode(d)
+		return p
+	case encodedShapeLoop:
+		l := &Loop{}
+		l.decode(d)
+		return l
+	case encodedShapeLaxLoop:
+		l := &LaxLoop{}
+		l.decode(d)
+		return l
+	}
+	d.err = fmt.Errorf("unknown encoded shape type %d", tag)
+	return nil
 }
