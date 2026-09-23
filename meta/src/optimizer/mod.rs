@@ -20,6 +20,7 @@ macro_rules! box_tree {
     ($expr:expr) => ($expr);
 }
 
+mod char_class;
 mod concatenator;
 mod factorizer;
 mod lister;
@@ -46,6 +47,7 @@ pub fn optimize(rules: Vec<Rule>) -> Vec<OptimizedRule> {
     optimized
         .into_iter()
         .map(|rule| restorer::restore_on_err(rule, &optimized_map))
+        .map(char_class::coalesce)
         .collect()
 }
 
@@ -130,6 +132,10 @@ pub enum OptimizedExpr {
     Insens(String),
     /// Matches one character in the range, e.g. `'a'..'z'`
     Range(String, String),
+    /// Matches one character in any of the inclusive ranges.
+    CharClass(Vec<(String, String)>),
+    /// Matches one character outside the inclusive ranges.
+    NegCharClass(Vec<(String, String)>),
     /// Matches the rule with the given name, e.g. `a`
     Ident(String),
     /// Matches a custom part of the stack, e.g. `PEEK[..]`
@@ -278,6 +284,8 @@ impl core::fmt::Display for OptimizedExpr {
                 let end = end.chars().next().expect("Empty range end.");
                 write!(f, "({:?}..{:?})", start, end)
             }
+            OptimizedExpr::CharClass(ranges) => write!(f, "[{}]", format_ranges(ranges)),
+            OptimizedExpr::NegCharClass(ranges) => write!(f, "![{}]", format_ranges(ranges)),
             OptimizedExpr::Ident(id) => write!(f, "{}", id),
             OptimizedExpr::PeekSlice(start, end) => match end {
                 Some(end) => write!(f, "PEEK[{}..{}]", start, end),
@@ -339,6 +347,22 @@ impl core::fmt::Display for OptimizedExpr {
             OptimizedExpr::RestoreOnErr(expr) => core::fmt::Display::fmt(expr.as_ref(), f),
         }
     }
+}
+
+fn format_ranges(ranges: &[(String, String)]) -> String {
+    ranges
+        .iter()
+        .map(|(start, end)| {
+            let start = start.chars().next().expect("Empty range start.");
+            let end = end.chars().next().expect("Empty range end.");
+            if start == end {
+                format!("{:?}", start)
+            } else {
+                format!("({:?}..{:?})", start, end)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 /// A top-down iterator over an `OptimizedExpr`.
@@ -422,17 +446,11 @@ mod tests {
             }]
         };
         let rotated = {
-            use crate::optimizer::OptimizedExpr::*;
             vec![OptimizedRule {
                 name: "rule".to_owned(),
                 ty: RuleType::Normal,
-                expr: box_tree!(Choice(
-                    Str(String::from("a")),
-                    Choice(
-                        Str(String::from("b")),
-                        Choice(Str(String::from("c")), Str(String::from("d")))
-                    )
-                )),
+                // Rotated choice chain of adjacent characters coalesces to one range.
+                expr: OptimizedExpr::Range(String::from("a"), String::from("d")),
             }]
         };
 

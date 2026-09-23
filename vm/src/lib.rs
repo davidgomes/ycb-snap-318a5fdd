@@ -193,6 +193,12 @@ impl Vm {
 
                 state.match_range(start..end)
             }
+            OptimizedExpr::CharClass(ref ranges) => {
+                state.match_char_by(|c| char_in_ranges(c, ranges))
+            }
+            OptimizedExpr::NegCharClass(ref ranges) => {
+                state.match_char_by(|c| !char_in_ranges(c, ranges))
+            }
             OptimizedExpr::Ident(ref name) => self.parse_rule(name, state),
             OptimizedExpr::PeekSlice(start, end) => {
                 state.stack_match_peek_slice(start, end, MatchDir::BottomToTop)
@@ -300,4 +306,12 @@ impl Vm {
             }
         }
     }
+}
+
+fn char_in_ranges(c: char, ranges: &[(String, String)]) -> bool {
+    ranges.iter().any(|(start, end)| {
+        let start = start.chars().next().expect("empty char literal");
+        let end = end.chars().next().expect("empty char literal");
+        start <= c && c <= end
+    })
 }

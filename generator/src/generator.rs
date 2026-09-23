@@ -434,6 +434,8 @@ fn generate_expr(expr: OptimizedExpr) -> TokenStream {
                 state.match_range(#start..#end)
             }
         }
+        OptimizedExpr::CharClass(ranges) => generate_char_class(ranges, false),
+        OptimizedExpr::NegCharClass(ranges) => generate_char_class(ranges, true),
         OptimizedExpr::Ident(ident) => {
             let ident = format_ident!("r#{}", ident);
             quote! { self::#ident(state) }
@@ -643,6 +645,8 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
                 state.match_range(#start..#end)
             }
         }
+        OptimizedExpr::CharClass(ranges) => generate_char_class(ranges, false),
+        OptimizedExpr::NegCharClass(ranges) => generate_char_class(ranges, true),
         OptimizedExpr::Ident(ident) => {
             let ident = format_ident!("r#{}", ident);
             quote! { self::#ident(state) }
@@ -801,6 +805,29 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
                 }
             }
         },
+    }
+}
+
+fn generate_char_class(ranges: Vec<(String, String)>, negated: bool) -> TokenStream {
+    let checks: Vec<TokenStream> = ranges
+        .into_iter()
+        .map(|(start, end)| {
+            let start = start.chars().next().expect("empty char literal");
+            let end = end.chars().next().expect("empty char literal");
+            quote! { (#start <= c && c <= #end) }
+        })
+        .collect();
+
+    if checks.is_empty() {
+        if negated {
+            quote! { state.match_char_by(|_c| true) }
+        } else {
+            quote! { state.match_char_by(|_c| false) }
+        }
+    } else if negated {
+        quote! { state.match_char_by(|c| !(#(#checks)||*)) }
+    } else {
+        quote! { state.match_char_by(|c| #(#checks)||*) }
     }
 }
 
