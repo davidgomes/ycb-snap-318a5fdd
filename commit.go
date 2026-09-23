@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cockroachdb/crlib/crtime"
 	"github.com/cockroachdb/pebble/batchrepr"
@@ -316,6 +317,10 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 	// for reuse. See Batch.release().
 	mem, err := p.prepare(b, syncWAL, noSyncWait)
 	if err != nil {
+		// The WAL sync may already be in flight (large flushable batches write
+		// the WAL before memtable rotation). Finish the durability callback
+		// before returning so it still runs on this failure.
+		p.maybeFinishDurable(b, noSyncWait, 0, err)
 		b.db = nil // prevent batch reuse on error
 		// NB: we are not doing <-p.commitQueueSem since the batch is still
 		// sitting in the pending queue. We should consider fixing this by also
@@ -324,13 +329,16 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 	}
 
 	// Apply the batch to the memtable.
-	if err := p.env.apply(b, mem); err != nil {
+	applyStart := crtime.NowMono()
+	if err = p.env.apply(b, mem); err != nil {
+		p.maybeFinishDurable(b, noSyncWait, applyStart.Elapsed(), err)
 		b.db = nil // prevent batch reuse on error
 		// NB: we are not doing <-p.commitQueueSem since the batch is still
 		// sitting in the pending queue. We should consider fixing this by also
 		// removing the batch from the pending queue.
 		return err
 	}
+	applyDur := applyStart.Elapsed()
 
 	// Publish the batch sequence number.
 	p.publish(b)
@@ -348,9 +356,35 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 	// b.commitErr. We will read b.commitErr in Batch.SyncWait after the
 	// LogWriter is done writing.
 
+	// For synchronous commits this runs only after the WAL sync has completed,
+	// and before Commit returns (so a sync error is reported to BatchDurable
+	// before the caller treats the commit as fatal). noSyncWait arms a
+	// goroutine that fires the callback when the sync later completes.
+	p.maybeFinishDurable(b, noSyncWait, applyDur, err)
+
 	b.commitStats.TotalDuration = commitStartTime.Elapsed()
 
 	return err
+}
+
+// maybeFinishDurable emits the BatchDurable callback for a Sync commit. applyDur
+// is the measured memtable apply time; it may be zero when prepare failed
+// before apply.
+func (p *commitPipeline) maybeFinishDurable(
+	b *Batch, noSyncWait bool, applyDur time.Duration, commitErr error,
+) {
+	dc := b.durable
+	if dc == nil {
+		return
+	}
+	// Detach so a later path cannot finish the same commit twice.
+	b.durable = nil
+	dc.applyDur = applyDur
+	if noSyncWait && commitErr == nil {
+		go dc.db.finishDurable(dc)
+		return
+	}
+	dc.db.finishDurable(dc)
 }
 
 // AllocateSeqNum allocates count sequence numbers, invokes the prepare
@@ -463,6 +497,9 @@ func (p *commitPipeline) prepare(b *Batch, syncWAL bool, noSyncWait bool) (*memT
 	// here to handle concurrent reads of logSeqNum. commitPipeline.mu provides
 	// mutual exclusion for other goroutines writing to logSeqNum.
 	b.setSeqNum(p.env.logSeqNum.Add(base.SeqNum(n)) - base.SeqNum(n))
+	if syncWAL {
+		b.reportDurability = true
+	}
 
 	// Write the data to the WAL.
 	mem, err := p.env.write(b, syncWG, syncErr)

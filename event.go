@@ -6,6 +6,7 @@ package pebble
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -1020,6 +1021,67 @@ type EventListener struct {
 
 	// PossibleAPIMisuse is invoked when a possible API misuse is detected.
 	PossibleAPIMisuse func(PossibleAPIMisuseInfo)
+
+	// BatchDurable is invoked exactly once per Sync commit after the WAL sync
+	// completes, including when the sync fails. It is not invoked for non-sync
+	// commits or when Options.DisableWAL is set. The callback runs synchronously
+	// on a commit or WAL goroutine and must not block or call back into the DB.
+	BatchDurable func(BatchDurableInfo)
+}
+
+// BatchDurableInfo describes a Sync commit whose WAL sync has finished.
+type BatchDurableInfo struct {
+	// JobID identifies this durability notification. It can be passed to
+	// DB.WaitForJobDurability.
+	JobID int
+	// SeqNum is the first sequence number assigned to the batch.
+	SeqNum base.SeqNum
+	// Err is the WAL sync error, or nil when the batch reached stable storage.
+	Err error
+	// ApplyDuration is the wall-clock time spent applying the batch to the
+	// memtable. It is positive when the sync succeeds.
+	ApplyDuration time.Duration
+	// SyncDuration is the wall-clock time of the WAL sync phase for this
+	// commit, not the total commit time. It is positive when the sync succeeds.
+	SyncDuration time.Duration
+	// CorrelationID is WriteOptions.CommitCorrelationID.
+	CorrelationID uint64
+	// BatchSize is the encoded batch size in bytes.
+	BatchSize int
+	// KeyCount is the number of memtable-modifying operations in the batch.
+	KeyCount uint32
+}
+
+func (i BatchDurableInfo) String() string {
+	return redact.StringWithoutMarkers(i)
+}
+
+// SafeFormat implements redact.SafeFormatter.
+func (i BatchDurableInfo) SafeFormat(w redact.SafePrinter, _ rune) {
+	if i.Err != nil {
+		w.Printf("[JOB %d] batch durable error: %s (seq=%s bytes=%d keys=%d corr=%d)",
+			redact.Safe(i.JobID), i.Err, i.SeqNum, redact.Safe(i.BatchSize),
+			redact.Safe(i.KeyCount), redact.Safe(i.CorrelationID))
+		return
+	}
+	w.Printf("[JOB %d] batch durable seq=%s bytes=%d keys=%d apply=%s sync=%s corr=%d",
+		redact.Safe(i.JobID), i.SeqNum, redact.Safe(i.BatchSize), redact.Safe(i.KeyCount),
+		redact.Safe(i.ApplyDuration), redact.Safe(i.SyncDuration), redact.Safe(i.CorrelationID))
+}
+
+// noopBatchDurable is the default BatchDurable handler. Metrics for durable
+// commits are recorded only when a caller configures a different callback.
+func noopBatchDurable(BatchDurableInfo) {}
+
+func sameBatchDurable(a, b func(BatchDurableInfo)) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
+}
+
+func batchDurableConfigured(l *EventListener) bool {
+	return l != nil && l.BatchDurable != nil && !sameBatchDurable(l.BatchDurable, noopBatchDurable)
 }
 
 // EnsureDefaults ensures that background error events are logged to the
@@ -1120,6 +1182,9 @@ func (l *EventListener) EnsureDefaults(logger Logger) {
 	if l.PossibleAPIMisuse == nil {
 		l.PossibleAPIMisuse = func(info PossibleAPIMisuseInfo) {}
 	}
+	if l.BatchDurable == nil {
+		l.BatchDurable = noopBatchDurable
+	}
 }
 
 // MakeLoggingEventListener creates an EventListener that logs all events to the
@@ -1211,6 +1276,9 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 		PossibleAPIMisuse: func(info PossibleAPIMisuseInfo) {
 			logger.Infof("%s", info)
 		},
+		BatchDurable: func(info BatchDurableInfo) {
+			logger.Infof("%s", info)
+		},
 	}
 }
 
@@ -1218,6 +1286,14 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 func TeeEventListener(a, b EventListener) EventListener {
 	a.EnsureDefaults(nil)
 	b.EnsureDefaults(nil)
+	batchDurable := noopBatchDurable
+	if !sameBatchDurable(a.BatchDurable, noopBatchDurable) || !sameBatchDurable(b.BatchDurable, noopBatchDurable) {
+		aBatchDurable, bBatchDurable := a.BatchDurable, b.BatchDurable
+		batchDurable = func(info BatchDurableInfo) {
+			aBatchDurable(info)
+			bBatchDurable(info)
+		}
+	}
 	return EventListener{
 		BackgroundError: func(err error) {
 			a.BackgroundError(err)
@@ -1327,6 +1403,7 @@ func TeeEventListener(a, b EventListener) EventListener {
 			a.PossibleAPIMisuse(info)
 			b.PossibleAPIMisuse(info)
 		},
+		BatchDurable: batchDurable,
 	}
 }
 

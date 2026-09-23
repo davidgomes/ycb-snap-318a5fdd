@@ -385,6 +385,14 @@ type Metrics struct {
 	}
 
 	manualMemory manual.Metrics
+
+	// DurableCommitCount is the number of Sync commits whose WAL sync succeeded.
+	// It stays at zero unless EventListener.BatchDurable is configured.
+	DurableCommitCount uint64
+	// DurableCommitDuration is the cumulative WAL sync phase time of those
+	// commits. It is not the total commit latency, and it stays at zero unless
+	// EventListener.BatchDurable is configured.
+	DurableCommitDuration time.Duration
 }
 
 // CompactMetrics contains metric related to compaction activity.

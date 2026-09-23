@@ -371,6 +371,18 @@ type batchInternal struct {
 
 	commitErr error
 
+	// commitCorrelationID is copied from WriteOptions.CommitCorrelationID for
+	// the commit currently in progress.
+	commitCorrelationID uint64
+
+	// reportDurability is set for Sync commits that should emit BatchDurable
+	// after the WAL sync completes.
+	reportDurability bool
+
+	// durable tracks an in-flight Sync commit. It is set only while the commit
+	// pipeline is committing this batch.
+	durable *durableCommit
+
 	// Position bools together to reduce the sizeof the struct.
 
 	// ingestedSSTBatch indicates that the batch contains one or more key kinds

@@ -270,6 +270,14 @@ type DB struct {
 	// envelopes.
 	logBytesIn atomic.Uint64
 
+	// durableCommitCount and durableCommitNanos accumulate only when
+	// EventListener.BatchDurable is configured. The duration is the WAL sync
+	// phase, not the total commit time.
+	durableCommitCount  atomic.Uint64
+	durableCommitNanos  atomic.Int64
+	trackDurableMetrics bool
+	durability          *durabilityTracker
+
 	// The number of bytes available on disk.
 	diskAvailBytes       atomic.Uint64
 	lowDiskSpaceReporter lowDiskSpaceReporter
@@ -805,6 +813,11 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 	if sync && d.opts.DisableWAL {
 		return errors.New("pebble: WAL disabled")
 	}
+	if opts != nil {
+		batch.commitCorrelationID = opts.CommitCorrelationID
+	} else {
+		batch.commitCorrelationID = 0
+	}
 
 	if fmv := d.FormatMajorVersion(); fmv < batch.minimumFormatMajorVersion {
 		panic(errors.AssertionFailedf(
@@ -903,7 +916,7 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 		b.flushable.setSeqNum(b.SeqNum())
 		if !d.opts.DisableWAL {
 			var err error
-			size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr}, b)
+			size, err = d.mu.log.writer.WriteRecord(repr, d.syncRecordOpts(b, syncWG, syncErr), b)
 			if err != nil {
 				panic(err)
 			}
@@ -945,7 +958,7 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 	d.logBytesIn.Add(uint64(len(repr)))
 
 	if b.flushable == nil {
-		size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr}, b)
+		size, err = d.mu.log.writer.WriteRecord(repr, d.syncRecordOpts(b, syncWG, syncErr), b)
 		if err != nil {
 			panic(err)
 		}
@@ -1569,6 +1582,9 @@ func (d *DB) Close() error {
 
 	d.closed.Store(errors.WithStack(ErrClosed))
 	close(d.closedCh)
+	if d.durability != nil {
+		d.durability.closeDB(ErrClosed)
+	}
 	d.bgCtxCancel()
 
 	defer d.cacheHandle.Close()
@@ -2081,6 +2097,10 @@ func (d *DB) Metrics() *Metrics {
 	metrics.Uptime = d.opts.private.timeNow().Sub(d.openedAt)
 
 	metrics.manualMemory = manual.GetMetrics()
+	if d.trackDurableMetrics {
+		metrics.DurableCommitCount = d.durableCommitCount.Load()
+		metrics.DurableCommitDuration = time.Duration(d.durableCommitNanos.Load())
+	}
 
 	return metrics
 }
