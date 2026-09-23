@@ -180,6 +180,12 @@ export const enum Errors {
   InvalidEscapedImportMeta,
   InvalidAwaitAsIdentifier,
   InvalidAwaitInStaticBlock,
+  UsingNotInGlobal,
+  AwaitUsingNotInAsync,
+  UsingMissingInitializer,
+  ForInUsing,
+  UsingBindingPattern,
+  UsingInSwitch,
 }
 
 const errorMessages: {
@@ -371,6 +377,12 @@ const errorMessages: {
   [Errors.InvalidEscapedImportMeta]: "'import.meta' must not contain escaped characters",
   [Errors.InvalidAwaitAsIdentifier]: 'cannot use "await" as identifier inside an async function',
   [Errors.InvalidAwaitInStaticBlock]: 'cannot use "await" in static blocks',
+  [Errors.UsingNotInGlobal]: 'Using declaration not allowed in the global scope',
+  [Errors.AwaitUsingNotInAsync]: "'await using' is only allowed inside async functions and at the top level of modules",
+  [Errors.UsingMissingInitializer]: '%0 declaration must have an initializer',
+  [Errors.ForInUsing]: 'Using declaration not allowed in for-in loops',
+  [Errors.UsingBindingPattern]: 'Using declaration cannot have destructuring patterns',
+  [Errors.UsingInSwitch]: 'Using declaration not allowed directly inside a switch case',
 };
 
 export class ParseError extends SyntaxError implements _Node {

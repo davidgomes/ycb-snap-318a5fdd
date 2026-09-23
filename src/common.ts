@@ -28,6 +28,9 @@ export const enum Context {
   DisallowIn = 1 << 17,
   AllowEscapedKeyword = 1 << 18,
   InStaticBlock = 1 << 19,
+  // Script body and bare switch cases cannot contain `using` / `await using`.
+  // Cleared for nested blocks and function bodies. For-heads are exempt.
+  DisallowUsing = 1 << 20,
 }
 
 /**
@@ -69,12 +72,14 @@ export const enum BindingKind {
   CatchIdentifier = 1 << 9,
   Async = 1 << 10,
   Generator = 1 << 10,
+  Using = 1 << 11,
+  AwaitUsing = 1 << 12,
   AsyncFunctionLexical = Async | FunctionLexical,
   GeneratorFunctionLexical = Generator | FunctionLexical,
   AsyncGeneratorFunctionLexical = Async | Generator | FunctionLexical,
   CatchIdentifierOrPattern = CatchIdentifier | CatchPattern,
   LexicalOrFunction = Variable | FunctionLexical,
-  LexicalBinding = Let | Const | FunctionLexical | FunctionStatement | Class,
+  LexicalBinding = Let | Const | FunctionLexical | FunctionStatement | Class | Using | AwaitUsing,
 }
 
 /**
@@ -289,7 +294,10 @@ export function validateBindingIdentifier(
   // The BoundNames of LexicalDeclaration and ForDeclaration must not
   // contain 'let'. (CatchParameter is the only lexical binding form
   // without this restriction.)
-  if (kind & (BindingKind.Let | BindingKind.Const) && (t & Token.Type) === (Token.LetKeyword & Token.Type)) {
+  if (
+    kind & (BindingKind.Let | BindingKind.Const | BindingKind.Using) &&
+    (t & Token.Type) === (Token.LetKeyword & Token.Type)
+  ) {
     parser.report(Errors.InvalidLetConstBinding);
   }
 

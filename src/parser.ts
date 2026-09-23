@@ -1,3 +1,4 @@
+import { Chars } from './chars';
 import {
   AssignmentKind,
   BindingKind,
@@ -28,6 +29,8 @@ import {
 import { Errors, ParseError } from './errors';
 import type * as ESTree from './estree';
 import { nextToken, skipHashBang } from './lexer';
+import { isIdentifierPart, isIdentifierStart } from './lexer/charClassifier';
+import { isExoticECMAScriptWhitespace } from './lexer/common';
 import { nextJSXToken, rescanJSXIdentifier, scanJSXAttributeValue } from './lexer/jsx';
 import { scanTemplateTail } from './lexer/template';
 import { type Options } from './options';
@@ -69,7 +72,7 @@ export function parseSource(source: string, rawOptions: Options = {}, context: C
       }
     }
   } else {
-    body = parseStatementList(parser, context | Context.InGlobal, scope);
+    body = parseStatementList(parser, context | Context.InGlobal | Context.DisallowUsing, scope);
   }
 
   return parser.finishNode<ESTree.Program>(
@@ -275,8 +278,21 @@ function parseStatementListItem(
     //   async [no LineTerminator here] ArrowFormalParameters ...
     case Token.AsyncKeyword:
       return parseAsyncArrowOrAsyncFunctionDeclaration(parser, context, scope, privateScope, origin, labels, 1);
-    default:
+    default: {
+      if (parser.options.next) {
+        if (parser.getToken() === Token.AwaitKeyword && isAwaitUsingDeclaration(parser)) {
+          // Async-context failure wins over the script-global / switch prohibition.
+          if (!canAwaitUsing(context)) parser.report(Errors.AwaitUsingNotInAsync);
+          reportDisallowedUsing(parser, context);
+          return parseUsingDeclaration(parser, context, scope, privateScope, 'await using', Origin.None);
+        }
+        if (parser.getToken() === Token.UsingKeyword && isUsingDeclaration(parser, 0)) {
+          reportDisallowedUsing(parser, context);
+          return parseUsingDeclaration(parser, context, scope, privateScope, 'using', Origin.None);
+        }
+      }
       return parseStatement(parser, context, scope, privateScope, origin, labels, 1);
+    }
   }
 }
 
@@ -536,6 +552,9 @@ function parseBlock<T extends ESTree.BlockStatement | ESTree.StaticBlock = ESTre
   const body: ESTree.Statement[] = [];
 
   consume(parser, context | Context.AllowRegExp, Token.LeftBrace);
+  // Nested blocks are their own statement lists, so `using` is allowed here
+  // even when the enclosing script or switch case forbids it.
+  context = (context | Context.DisallowUsing) ^ Context.DisallowUsing;
   while (parser.getToken() !== Token.RightBrace) {
     body.push(
       parseStatementListItem(parser, context, scope, privateScope, Origin.BlockStatement, { $: labels }) as any,
@@ -1081,9 +1100,16 @@ function parseSwitchStatement(
       parser.getToken() !== Token.DefaultKeyword
     ) {
       consequent.push(
-        parseStatementListItem(parser, context | Context.InSwitch, scope, privateScope, Origin.BlockStatement, {
-          $: labels,
-        }) as ESTree.Statement,
+        parseStatementListItem(
+          parser,
+          context | Context.InSwitch | Context.DisallowUsing,
+          scope,
+          privateScope,
+          Origin.BlockStatement,
+          {
+            $: labels,
+          },
+        ) as ESTree.Statement,
       );
     }
 
@@ -1657,6 +1683,226 @@ function parseLetIdentOrVarDeclarationStatement(
 }
 
 /**
+ * `await using` is allowed in async functions and at module top level.
+ */
+function canAwaitUsing(context: Context): boolean {
+  return (
+    (context & Context.InAwaitContext) !== 0 || ((context & Context.Module) !== 0 && (context & Context.InGlobal) !== 0)
+  );
+}
+
+function reportDisallowedUsing(parser: Parser, context: Context): void {
+  if ((context & Context.DisallowUsing) === 0) return;
+  parser.report(context & Context.InSwitch ? Errors.UsingInSwitch : Errors.UsingNotInGlobal);
+}
+
+function isUsingLineTerminator(ch: number): boolean {
+  return (
+    ch === Chars.LineFeed ||
+    ch === Chars.CarriageReturn ||
+    ch === Chars.LineSeparator ||
+    ch === Chars.ParagraphSeparator
+  );
+}
+
+/**
+ * Skip whitespace and comments without mutating the parser.
+ * A line comment or a line terminator sets `lineBreak`.
+ */
+function skipUsingTrivia(parser: Parser, index: number): { index: number; lineBreak: boolean } {
+  const { source, end } = parser;
+  let lineBreak = false;
+
+  while (index < end) {
+    const ch = source.charCodeAt(index);
+
+    if (ch === Chars.CarriageReturn) {
+      lineBreak = true;
+      index++;
+      if (source.charCodeAt(index) === Chars.LineFeed) index++;
+      continue;
+    }
+
+    if (ch === Chars.LineFeed || ch === Chars.LineSeparator || ch === Chars.ParagraphSeparator) {
+      lineBreak = true;
+      index++;
+      continue;
+    }
+
+    if (
+      ch === Chars.Space ||
+      ch === Chars.Tab ||
+      ch === Chars.VerticalTab ||
+      ch === Chars.FormFeed ||
+      isExoticECMAScriptWhitespace(ch)
+    ) {
+      index++;
+      continue;
+    }
+
+    if (ch === Chars.Slash) {
+      const next = source.charCodeAt(index + 1);
+      if (next === Chars.Slash) {
+        index += 2;
+        while (index < end && !isUsingLineTerminator(source.charCodeAt(index))) index++;
+        lineBreak = true;
+        continue;
+      }
+      if (next === Chars.Asterisk) {
+        index += 2;
+        let closed = false;
+        while (index < end) {
+          const commentChar = source.charCodeAt(index);
+          if (isUsingLineTerminator(commentChar)) lineBreak = true;
+          if (commentChar === Chars.Asterisk && source.charCodeAt(index + 1) === Chars.Slash) {
+            index += 2;
+            closed = true;
+            break;
+          }
+          index++;
+        }
+        if (!closed) return { index, lineBreak: true };
+        continue;
+      }
+    }
+
+    break;
+  }
+
+  return { index, lineBreak };
+}
+
+function readIdentifierName(
+  source: string,
+  index: number,
+  end: number,
+): { end: number; text: string; escaped: boolean } | undefined {
+  if (index >= end) return undefined;
+
+  let ch = source.charCodeAt(index);
+  if (ch === Chars.Backslash) return { end: index, text: '', escaped: true };
+
+  let width = 1;
+  if ((ch & 0xfc00) === Chars.LeadSurrogateMin) {
+    const low = source.charCodeAt(index + 1);
+    if ((low & 0xfc00) === Chars.TrailSurrogateMin) {
+      ch = Chars.NonBMPMin + ((ch & 0x3ff) << 10) + (low & 0x3ff);
+      width = 2;
+    }
+  }
+  if (!isIdentifierStart(ch)) return undefined;
+
+  let cursor = index + width;
+  let escaped = false;
+  while (cursor < end) {
+    ch = source.charCodeAt(cursor);
+    if (ch === Chars.Backslash) {
+      escaped = true;
+      break;
+    }
+    width = 1;
+    if ((ch & 0xfc00) === Chars.LeadSurrogateMin) {
+      const low = source.charCodeAt(cursor + 1);
+      if ((low & 0xfc00) === Chars.TrailSurrogateMin) {
+        ch = Chars.NonBMPMin + ((ch & 0x3ff) << 10) + (low & 0x3ff);
+        width = 2;
+      }
+    }
+    if (!isIdentifierPart(ch)) break;
+    cursor += width;
+  }
+
+  return { end: cursor, text: source.slice(index, cursor), escaped };
+}
+
+/**
+ * `for (using of = …)` is a declaration; `for (using of x)` is a for-of.
+ * `=` (not `==` or `=>`), `;`, and `:` keep `of` as the binding name.
+ */
+function continuesUsingOfBinding(parser: Parser, index: number): boolean {
+  const trivia = skipUsingTrivia(parser, index);
+  if (trivia.index >= parser.end) return false;
+  const ch = parser.source.charCodeAt(trivia.index);
+  if (ch === Chars.Semicolon || ch === Chars.Colon) return true;
+  if (ch !== Chars.EqualSign) return false;
+  const next = parser.source.charCodeAt(trivia.index + 1);
+  return next !== Chars.EqualSign && next !== Chars.GreaterThan;
+}
+
+/**
+ * True when [no LineTerminator here] BindingIdentifier or `{` follows.
+ * `{` is included so `using { … }` can report the destructuring error.
+ * `[` is not: `using[x] = y` is a member assignment.
+ */
+function peekUsingBinding(parser: Parser, index: number, forHead: 0 | 1): 0 | 1 {
+  const trivia = skipUsingTrivia(parser, index);
+  if (trivia.lineBreak || trivia.index >= parser.end) return 0;
+  if (parser.source.charCodeAt(trivia.index) === Chars.LeftBrace) return 1;
+
+  const id = readIdentifierName(parser.source, trivia.index, parser.end);
+  if (!id) return 0;
+  if (id.escaped) return 1;
+  if (id.text === 'in' || id.text === 'instanceof') return 0;
+  if (forHead && id.text === 'of' && !continuesUsingOfBinding(parser, id.end)) return 0;
+  return 1;
+}
+
+function isUsingDeclaration(parser: Parser, forHead: 0 | 1): boolean {
+  return parser.getToken() === Token.UsingKeyword && peekUsingBinding(parser, parser.index, forHead) === 1;
+}
+
+function isAwaitUsingDeclaration(parser: Parser): boolean {
+  if (parser.getToken() !== Token.AwaitKeyword) return false;
+  const afterAwait = skipUsingTrivia(parser, parser.index);
+  if (afterAwait.lineBreak || afterAwait.index >= parser.end) return false;
+  const using = readIdentifierName(parser.source, afterAwait.index, parser.end);
+  if (!using || using.escaped || using.text !== 'using') return false;
+  // The `of` exception applies only to plain `using`, not `await using`.
+  return peekUsingBinding(parser, using.end, 0) === 1;
+}
+
+/**
+ * Parses `using` / `await using` BindingList.
+ *
+ * @see [Link](https://tc39.es/ecma262/#prod-UsingDeclaration)
+ */
+function parseUsingDeclaration(
+  parser: Parser,
+  context: Context,
+  scope: Scope | undefined,
+  privateScope: PrivateScope | undefined,
+  kind: 'using' | 'await using',
+  origin: Origin,
+): ESTree.VariableDeclaration {
+  const start = parser.tokenStart;
+
+  if (kind === 'await using') nextToken(parser, context);
+  nextToken(parser, context);
+
+  const declarations = parseVariableDeclarationList(
+    parser,
+    context,
+    scope,
+    privateScope,
+    kind === 'await using' ? BindingKind.Using | BindingKind.AwaitUsing : BindingKind.Using,
+    origin,
+  );
+
+  if ((origin & Origin.ForStatement) === 0) {
+    matchOrInsertSemicolon(parser, context | Context.AllowRegExp);
+  }
+
+  return parser.finishNode<ESTree.VariableDeclaration>(
+    {
+      type: 'VariableDeclaration',
+      kind,
+      declarations,
+    },
+    start,
+  );
+}
+
+/**
  * Parses a `const` or `let` lexical declaration statement
  *
  * @param parser  Parser object
@@ -1795,6 +2041,10 @@ function parseVariableDeclaration(
 
   let init: ESTree.Expression | ESTree.BindingPattern | ESTree.Identifier | null = null;
 
+  if ((kind & BindingKind.Using) > 0 && (parser.getToken() & Token.IsPatternStart) === Token.IsPatternStart) {
+    parser.report(Errors.UsingBindingPattern);
+  }
+
   const id = parseBindingPattern(parser, context, scope, privateScope, kind, origin);
 
   if (parser.getToken() === Token.Assign) {
@@ -1808,6 +2058,9 @@ function parseVariableDeclaration(
         (parser.getToken() === Token.InKeyword &&
           (token & Token.IsPatternStart || (kind & BindingKind.Variable) === 0 || context & Context.Strict))
       ) {
+        if ((kind & BindingKind.Using) > 0 && parser.getToken() === Token.InKeyword) {
+          parser.report(Errors.ForInUsing);
+        }
         throw new ParseError(
           tokenStart,
           parser.currentLocation,
@@ -1817,6 +2070,8 @@ function parseVariableDeclaration(
       }
     }
     // Normal const declarations, and const declarations in for(;;) heads, must be initialized.
+  } else if ((kind & BindingKind.Using) > 0 && (parser.getToken() & Token.IsInOrOf) !== Token.IsInOrOf) {
+    parser.report(Errors.UsingMissingInitializer, (kind & BindingKind.AwaitUsing) > 0 ? 'await using' : 'using');
   } else if (
     (kind & BindingKind.Const || (token & Token.IsPatternStart) > 0) &&
     (parser.getToken() & Token.IsInOrOf) !== Token.IsInOrOf
@@ -1867,7 +2122,14 @@ function parseForStatement(
   let update: ESTree.Expression | null = null;
   let destructible: AssignmentKind | DestructuringKind = 0;
   let init = null;
+  let usingKind: 'using' | 'await using' | undefined;
+  if (parser.options.next) {
+    if (isAwaitUsingDeclaration(parser)) usingKind = 'await using';
+    else if (isUsingDeclaration(parser, 1)) usingKind = 'using';
+  }
+
   let isVarDecl =
+    usingKind !== undefined ||
     parser.getToken() === Token.VarKeyword ||
     parser.getToken() === Token.LetKeyword ||
     parser.getToken() === Token.ConstKeyword;
@@ -1877,7 +2139,18 @@ function parseForStatement(
   const token = parser.getToken();
 
   if (isVarDecl) {
-    if (token === Token.LetKeyword) {
+    if (usingKind) {
+      if (usingKind === 'await using' && !canAwaitUsing(context)) parser.report(Errors.AwaitUsingNotInAsync);
+      init = parseUsingDeclaration(
+        parser,
+        context | Context.DisallowIn,
+        scope,
+        privateScope,
+        usingKind,
+        Origin.ForStatement,
+      );
+      parser.assignable = AssignmentKind.Assignable;
+    } else if (token === Token.LetKeyword) {
       init = parseIdentifier(parser, context);
       if (parser.getToken() & (Token.IsIdentifier | Token.IsPatternStart)) {
         if (parser.getToken() === Token.InKeyword) {
@@ -1997,6 +2270,8 @@ function parseForStatement(
   }
 
   if ((parser.getToken() & Token.IsInOrOf) === Token.IsInOrOf) {
+    if (usingKind && parser.getToken() === Token.InKeyword) parser.report(Errors.ForInUsing);
+
     if (parser.getToken() === Token.OfKeyword) {
       if (parser.assignable & AssignmentKind.CannotAssign)
         parser.report(Errors.CantAssignToInOfForLoop, forAwait ? 'await' : 'of');
@@ -2737,6 +3012,19 @@ function parseExportDeclaration(
     case Token.ConstKeyword:
       declaration = parseLexicalDeclaration(parser, context, scope, undefined, BindingKind.Const, Origin.Export);
       break;
+    case Token.UsingKeyword:
+      if (parser.options.next && isUsingDeclaration(parser, 0)) {
+        declaration = parseUsingDeclaration(parser, context, scope, undefined, 'using', Origin.Export);
+        break;
+      }
+      parser.report(Errors.UnexpectedToken, KeywordDescTable[parser.getToken() & Token.Type]);
+    case Token.AwaitKeyword:
+      if (parser.options.next && isAwaitUsingDeclaration(parser)) {
+        if (!canAwaitUsing(context)) parser.report(Errors.AwaitUsingNotInAsync);
+        declaration = parseUsingDeclaration(parser, context, scope, undefined, 'await using', Origin.Export);
+        break;
+      }
+      parser.report(Errors.UnexpectedToken, KeywordDescTable[parser.getToken() & Token.Type]);
     case Token.VarKeyword:
       declaration = parseVariableStatement(parser, context, scope, undefined, Origin.Export);
       break;
@@ -3381,6 +3669,8 @@ function parseFunctionBody(
   const { tokenStart } = parser;
 
   consume(parser, context | Context.AllowRegExp, Token.LeftBrace);
+
+  context = (context | Context.DisallowUsing) ^ Context.DisallowUsing;
 
   const body: ESTree.Statement[] = [];
 
@@ -8285,7 +8575,7 @@ function parseAndClassifyIdentifier(
   }
 
   if ((token & Token.Type) === (Token.LetKeyword & Token.Type)) {
-    if (kind & (BindingKind.Let | BindingKind.Const)) parser.report(Errors.InvalidLetConstBinding);
+    if (kind & (BindingKind.Let | BindingKind.Const | BindingKind.Using)) parser.report(Errors.InvalidLetConstBinding);
   }
   if (token === Token.AwaitKeyword) {
     if (context & Context.InAwaitContext) parser.report(Errors.InvalidAwaitAsIdentifier);
