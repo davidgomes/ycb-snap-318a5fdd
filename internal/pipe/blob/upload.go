@@ -15,6 +15,7 @@ import (
 	"github.com/caarlos0/log"
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/extrafiles"
+	"github.com/goreleaser/goreleaser/v2/internal/publishretry"
 	"github.com/goreleaser/goreleaser/v2/internal/semerrgroup"
 	"github.com/goreleaser/goreleaser/v2/internal/tmpl"
 	"github.com/goreleaser/goreleaser/v2/pkg/config"
@@ -125,7 +126,34 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 		}
 	}
 
-	if err := up.Open(ctx, bucketURL); err != nil {
+	instance, err := instanceFor(ctx, conf)
+	if err != nil {
+		return err
+	}
+
+	return publish(ctx, conf, up, dir, bucketURL, instance)
+}
+
+// instanceFor returns the provider://bucket identifier of the blob config.
+func instanceFor(ctx *context.Context, conf config.Blob) (string, error) {
+	bucket, err := tmpl.New(ctx).Apply(conf.Bucket)
+	if err != nil {
+		return "", err
+	}
+	provider, err := tmpl.New(ctx).Apply(conf.Provider)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s://%s", provider, bucket), nil
+}
+
+func publish(ctx *context.Context, conf config.Blob, up uploader, dir, bucketURL, instance string) error {
+	if err := publishretry.Do(ctx, conf.Retry, publishretry.IsTransient, func(uint) error {
+		return up.Open(ctx, bucketURL)
+	}); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return handleError(err, bucketURL)
 	}
 	defer up.Close()
@@ -137,18 +165,24 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 			dataFile := artifact.Path
 			uploadFile := path.Join(dir, artifact.Name)
 
-			return uploadData(ctx, conf, up, dataFile, uploadFile, bucketURL)
+			return uploadData(ctx, conf, up, artifact, dataFile, uploadFile, bucketURL, instance)
 		})
 	}
 
 	files, err := extrafiles.Find(ctx, conf.ExtraFiles)
 	if err != nil {
+		_ = g.Wait()
 		return err
 	}
 	for name, fullpath := range files {
 		g.Go(func() error {
 			uploadFile := path.Join(dir, name)
-			return uploadData(ctx, conf, up, fullpath, uploadFile, bucketURL)
+			extra := &artifact.Artifact{
+				Name: name,
+				Path: fullpath,
+				Type: artifact.UploadableFile,
+			}
+			return uploadData(ctx, conf, up, extra, fullpath, uploadFile, bucketURL, instance)
 		})
 	}
 
@@ -182,13 +216,23 @@ func artifactList(ctx *context.Context, conf config.Blob) []*artifact.Artifact {
 	)).List()
 }
 
-func uploadData(ctx *context.Context, conf config.Blob, up uploader, dataFile, uploadFile, bucketURL string) error {
+func uploadData(ctx *context.Context, conf config.Blob, up uploader, a *artifact.Artifact, dataFile, uploadFile, bucketURL, instance string) error {
 	data, err := getData(ctx, conf, dataFile)
 	if err != nil {
 		return err
 	}
 
-	if err := up.Upload(ctx, uploadFile, data); err != nil {
+	if err := publishretry.Do(ctx, conf.Retry, publishretry.IsTransient, func(attempt uint) error {
+		err := up.Upload(ctx, uploadFile, data)
+		if err != nil && ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		a.RecordPublishAttempt("blob", instance, uploadFile, attempt, err)
+		return err
+	}); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return handleError(err, bucketURL)
 	}
 	return nil
