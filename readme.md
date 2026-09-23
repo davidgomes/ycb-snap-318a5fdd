@@ -991,10 +991,11 @@ You can also set it as a percentage of the parent size.
 ##### display
 
 Type: `string`\
-Allowed values: `flex` `none`\
+Allowed values: `flex` `none` `grid`\
 Default: `flex`
 
 Set this property to `none` to hide the element.
+Set it to `grid` to place children into explicit rows and columns.
 
 ##### overflowX
 
@@ -1019,6 +1020,44 @@ Allowed values: `visible` `hidden`\
 Default: `visible`
 
 A shortcut for setting `overflowX` and `overflowY` at the same time.
+
+#### Grid
+
+Grid layout is enabled with `display="grid"`. Column tracks are set with `gridTemplateColumns`. Row tracks are set with `gridTemplateRows`. When `gridTemplateRows` is omitted, Ink creates an `auto` row for every occupied row.
+
+Track lists are space-separated sizes:
+
+- a fixed number, such as `10`
+- a fractional unit, such as `1fr` or `2fr`
+- `auto`, which sizes the track to its content
+- `minmax(min, max)`, where `min` is a fixed number and `max` is a fixed number or an `fr` unit
+
+`fr` tracks and `minmax()` tracks whose maximum is `fr` share the space left after every track's minimum is satisfied. `gap`, `columnGap`, and `rowGap` insert space between those tracks.
+
+Children flow across each row, then onto the next row. Place a child explicitly with `gridColumn` and `gridRow`. Each accepts a 1-based index (`2`) or grid lines (`"1 / 3"`). Line `1 / 3` starts on line 1 and ends on line 3, so it covers the first two tracks.
+
+```jsx
+<Box display="grid" gridTemplateColumns="10 1fr" columnGap={1} width={21}>
+	<Text>Name</Text>
+	<Text>Ada</Text>
+	<Text>Role</Text>
+	<Text>Engineer</Text>
+</Box>
+// Name       Ada
+// Role       Engineer
+```
+
+```jsx
+<Box display="grid" gridTemplateColumns="1fr 1fr 1fr" width={12}>
+	<Box gridColumn="1 / 3">
+		<Text>Wide</Text>
+	</Box>
+	<Box gridColumn={3}>
+		<Text>End</Text>
+	</Box>
+</Box>
+// Wide    End
+```
 
 #### Borders
 
