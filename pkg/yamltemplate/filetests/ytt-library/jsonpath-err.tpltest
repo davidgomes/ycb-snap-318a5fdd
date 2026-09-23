@@ -1,0 +1,10 @@
+#@ load("@ytt:jsonpath", "jsonpath")
+
+result: #@ jsonpath.query({"a": 1}, "$.a[")
+
++++
+
+ERR: 
+- jsonpath.query: syntax error at position 4: unexpected end of path, expected a quoted name or an index
+    in <toplevel>
+      stdin:3 | result: #@ jsonpath.query({"a": 1}, "$.a[")

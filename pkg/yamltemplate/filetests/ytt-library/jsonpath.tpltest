@@ -1,0 +1,52 @@
+#@ load("@ytt:jsonpath", "jsonpath")
+
+#@ doc = {"store": {"book": [{"title": "A", "price": 8}, {"title": "B", "price": 12.5}], "bicycle": {"color": "red"}}, "my-key": [1, 2, 3]}
+
+#@ def fragment():
+items:
+- name: a
+  tags: [x, y]
+- name: b
+  tags: [z]
+#@ end
+
+query:
+  titles: #@ jsonpath.query(doc, "$.store.book[*].title")
+  cheap: #@ jsonpath.query(doc, "$.store.book[?(@.price < 10)].title")
+  union: #@ jsonpath.query(doc, "$['my-key'][2, 0]")
+  descent: #@ jsonpath.query(doc, "$..price")
+  length: #@ jsonpath.query(doc, "$.my-key.length()")
+  last: #@ jsonpath.query(doc["my-key"], "$[(@.length-1)]")
+  fragment: #@ jsonpath.query(fragment(), "$.items[?(@.tags.length() > 1)].name")
+  none: #@ jsonpath.query(doc, "$.missing")
+query_one:
+  color: #@ jsonpath.query_one(doc, "$..color")
+  map: #@ jsonpath.query_one(doc, "$.store.bicycle")
+  missing: #@ jsonpath.query_one(doc, "$.missing")
+
++++
+
+query:
+  titles:
+  - A
+  - B
+  cheap:
+  - A
+  union:
+  - 3
+  - 1
+  descent:
+  - 8
+  - 12.5
+  length:
+  - 3
+  last:
+  - 3
+  fragment:
+  - a
+  none: []
+query_one:
+  color: red
+  map:
+    color: red
+  missing: null
