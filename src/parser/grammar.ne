@@ -44,6 +44,22 @@ const addComments = (node: AstNode, { leading, trailing }: CommentAttachments): 
   return node;
 };
 
+const attachLeadingComments = <T extends { nameKw?: KeywordNode; limitKw?: KeywordNode }>(
+  clause: T,
+  comments: CommentNode[]
+): T => {
+  if (!comments?.length) {
+    return clause;
+  }
+  if (clause.limitKw) {
+    return { ...clause, limitKw: addComments(clause.limitKw, { leading: comments }) as KeywordNode };
+  }
+  if (clause.nameKw) {
+    return { ...clause, nameKw: addComments(clause.nameKw, { leading: comments }) as KeywordNode };
+  }
+  return clause;
+};
+
 const addCommentsToArray = (nodes: AstNode[], { leading, trailing }: CommentAttachments): AstNode[] => {
   if (leading?.length) {
     const [first, ...rest] = nodes;
@@ -88,10 +104,23 @@ statement -> expressions_or_clauses (%DELIMITER | %EOF) {%
   })
 %}
 
-# To avoid ambiguity, plain expressions can only come before clauses
-expressions_or_clauses -> free_form_sql:* clause:* {%
+# To avoid ambiguity, plain expressions can only come before clauses.
+# Pipe steps (|> clause) may follow clauses, including inside parentheses.
+expressions_or_clauses -> free_form_sql:* clause_or_pipe:* {%
   ([expressions, clauses]) => [...expressions, ...clauses]
 %}
+
+clause_or_pipe -> (clause | pipe_step) {% unwrap %}
+
+pipe_step -> %PIPE _ pipe_inner {%
+  ([pipeToken, comments, clause]) => ({
+    type: NodeType.pipe_clause,
+    operator: pipeToken.text,
+    clause: attachLeadingComments(clause, comments),
+  })
+%}
+
+pipe_inner -> (limit_clause | select_clause | other_clause) {% unwrap %}
 
 clause ->
   ( limit_clause

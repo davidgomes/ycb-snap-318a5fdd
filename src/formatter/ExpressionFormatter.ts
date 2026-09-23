@@ -13,6 +13,7 @@ import {
   ClauseNode,
   FunctionCallNode,
   LimitClauseNode,
+  PipeClauseNode,
   NodeType,
   ParenthesisNode,
   LiteralNode,
@@ -122,6 +123,8 @@ export default class ExpressionFormatter {
         return this.formatSetOperation(node);
       case NodeType.limit_clause:
         return this.formatLimitClause(node);
+      case NodeType.pipe_clause:
+        return this.formatPipeClause(node);
       case NodeType.all_columns_asterisk:
         return this.formatAllColumnsAsterisk(node);
       case NodeType.literal:
@@ -289,6 +292,51 @@ export default class ExpressionFormatter {
     this.layout.add(WS.NEWLINE, WS.INDENT, this.showKw(node.nameKw), WS.NEWLINE);
     this.layout.add(WS.INDENT);
     this.layout = this.formatSubExpression(node.children);
+  }
+
+  private formatPipeClause(node: PipeClauseNode) {
+    this.layout.add(WS.NEWLINE, WS.INDENT, node.operator, WS.SPACE);
+    if (node.clause.type === NodeType.limit_clause) {
+      this.formatPipeLimit(node.clause);
+      return;
+    }
+
+    const { clause } = node;
+    this.withComments(clause.nameKw, () => {
+      this.layout.add(this.showKw(clause.nameKw));
+    });
+
+    // Bare DROP is an oneline clause in traditional SQL ("DROP [IF EXISTS]"),
+    // but a pipe DROP removes columns and uses the indented clause layout.
+    const oneline = this.isOnelineClause(clause) && clause.nameKw.text !== 'DROP';
+    if (oneline) {
+      this.layout.add(WS.SPACE);
+      this.layout = this.formatSubExpression(clause.children);
+    } else if (isTabularStyle(this.cfg)) {
+      this.layout.add(WS.SPACE);
+      this.layout.indentation.increaseTopLevel();
+      this.layout = this.formatSubExpression(clause.children);
+      this.layout.indentation.decreaseTopLevel();
+    } else {
+      this.layout.add(WS.NEWLINE);
+      this.layout.indentation.increaseTopLevel();
+      this.layout.add(WS.INDENT);
+      this.layout = this.formatSubExpression(clause.children);
+      this.layout.indentation.decreaseTopLevel();
+    }
+  }
+
+  private formatPipeLimit(node: LimitClauseNode) {
+    this.withComments(node.limitKw, () => {
+      this.layout.add(this.showKw(node.limitKw), WS.SPACE);
+    });
+    if (node.offset) {
+      this.layout = this.formatSubExpression(node.offset);
+      this.layout.add(WS.NO_SPACE, ',', WS.SPACE);
+      this.layout = this.formatSubExpression(node.count);
+    } else {
+      this.layout = this.formatSubExpression(node.count);
+    }
   }
 
   private formatLimitClause(node: LimitClauseNode) {

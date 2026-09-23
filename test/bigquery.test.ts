@@ -601,4 +601,128 @@ describe('BigQueryFormatter', () => {
       expect(format(input, { linesBetweenQueries: 0 })).toBe(input);
     });
   });
+
+  describe('BigQuery pipe syntax', () => {
+    it('places each pipe step on its own line at the base indent', () => {
+      expect(
+        format(
+          `FROM orders |> WHERE status = 'active' |> SELECT customer_id, amount |> ORDER BY amount DESC`
+        )
+      ).toBe(dedent`
+        FROM
+          orders
+        |> WHERE
+          status = 'active'
+        |> SELECT
+          customer_id,
+          amount
+        |> ORDER BY
+          amount DESC
+      `);
+    });
+
+    it('keeps LIMIT, JOIN, and AS on one line and indents pipe-exclusive clauses', () => {
+      expect(
+        format(
+          `FROM orders |> JOIN customers ON orders.customer_id = customers.id |> EXTEND amount * 2 AS doubled |> SET status = 'done' |> DROP customer_id |> AS cleaned |> LIMIT 10`
+        )
+      ).toBe(dedent`
+        FROM
+          orders
+        |> JOIN customers ON orders.customer_id = customers.id
+        |> EXTEND
+          amount * 2 AS doubled
+        |> SET
+          status = 'done'
+        |> DROP
+          customer_id
+        |> AS cleaned
+        |> LIMIT 10
+      `);
+    });
+
+    it('nests GROUP BY inside AGGREGATE at its own indentation level', () => {
+      expect(
+        format(
+          `FROM produce |> AGGREGATE SUM(sales) AS total_sales GROUP BY item |> ORDER BY total_sales DESC`
+        )
+      ).toBe(dedent`
+        FROM
+          produce
+        |> AGGREGATE
+          SUM(sales) AS total_sales
+          GROUP BY
+            item
+        |> ORDER BY
+          total_sales DESC
+      `);
+    });
+
+    it('formats pipe queries nested as subqueries', () => {
+      expect(format(`SELECT * FROM (FROM orders |> WHERE amount > 100 |> SELECT amount) t`)).toBe(
+        dedent`
+          SELECT
+            *
+          FROM
+            (
+              FROM
+                orders
+              |> WHERE
+                amount > 100
+              |> SELECT
+                amount
+            ) t
+        `
+      );
+    });
+
+    it('applies keywordCase to pipe keywords including pipe-exclusive ones', () => {
+      expect(
+        format(`from t |> where a > 1 |> aggregate count(*) |> extend a + 1 as b`, {
+          keywordCase: 'upper',
+        })
+      ).toBe(dedent`
+        FROM
+          t
+        |> WHERE
+          a > 1
+        |> AGGREGATE
+          count(*)
+        |> EXTEND
+          a + 1 AS b
+      `);
+    });
+
+    it('attaches the semicolon to the final pipe step', () => {
+      expect(format(`FROM t |> WHERE a > 1;`)).toBe(dedent`
+        FROM
+          t
+        |> WHERE
+          a > 1;
+      `);
+    });
+
+    it('formats mixed pipe and traditional statements independently', () => {
+      expect(format(`SELECT a FROM t; FROM t |> WHERE a > 1;`)).toBe(dedent`
+        SELECT
+          a
+        FROM
+          t;
+
+        FROM
+          t
+        |> WHERE
+          a > 1;
+      `);
+    });
+
+    it('tokenizes |> separately from bitwise OR and greater-than', () => {
+      expect(format(`SELECT a | b > c FROM t`)).toBe(dedent`
+        SELECT
+          a | b > c
+        FROM
+          t
+      `);
+    });
+  });
 });

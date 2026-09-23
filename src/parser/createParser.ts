@@ -6,6 +6,7 @@ import { ParamTypes } from '../lexer/TokenizerOptions.js';
 import { StatementNode } from './ast.js';
 import grammar from './grammar.js';
 import LexerAdapter from './LexerAdapter.js';
+import { nestPipeAggregateGroupBy } from './nestPipeAggregate.js';
 import { createEofToken } from '../lexer/token.js';
 
 const { Parser: NearleyParser, Grammar } = nearley;
@@ -33,7 +34,10 @@ export function createParser(tokenizer: Tokenizer): Parser {
       const { results } = parser.feed(sql);
 
       if (results.length === 1) {
-        return results[0];
+        return (results[0] as StatementNode[]).map(statement => ({
+          ...statement,
+          children: nestPipeAggregateGroupBy(statement.children),
+        }));
       } else if (results.length === 0) {
         // Ideally we would report a line number where the parser failed,
         // but I haven't found a way to get this info from Nearley :(

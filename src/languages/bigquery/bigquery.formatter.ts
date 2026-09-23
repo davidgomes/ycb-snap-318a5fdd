@@ -1,6 +1,7 @@
 import { DialectOptions } from '../../dialect.js';
 import { expandPhrases } from '../../expandPhrases.js';
 import { EOF_TOKEN, isToken, Token, TokenType } from '../../lexer/token.js';
+import { equalizeWhitespace } from '../../utils.js';
 import { functions } from './bigquery.functions.js';
 import { dataTypes, keywords } from './bigquery.keywords.js';
 
@@ -190,16 +191,53 @@ export const bigquery: DialectOptions = {
     variableTypes: [{ regex: String.raw`@@\w+` }],
     lineCommentTypes: ['--', '#'],
     operators: ['&', '|', '^', '~', '>>', '<<', '||', '=>'],
+    pipeOperator: true,
     postProcess,
   },
   formatOptions: {
-    onelineClauses: [...standardOnelineClauses, ...tabularOnelineClauses],
+    // JOIN variants and AS stay on one line when used as pipe steps.
+    // They are not clauses in traditional queries, so this does not change those.
+    onelineClauses: [...standardOnelineClauses, ...tabularOnelineClauses, ...reservedJoins, 'AS'],
     tabularOnelineClauses,
   },
 };
 
 function postProcess(tokens: Token[]): Token[] {
-  return detectArraySubscripts(combineParameterizedTypes(tokens));
+  return promotePipeClauses(detectArraySubscripts(combineParameterizedTypes(tokens)));
+}
+
+// Pipe-exclusive words (and JOIN / AS) become clauses only when they follow |>.
+const PIPE_CLAUSE_WORDS = new Set(['AGGREGATE', 'EXTEND', 'DROP', 'AS']);
+
+function promotePipeClauses(tokens: Token[]): Token[] {
+  return tokens.map((token, i) => {
+    const prev = prevNonComment(tokens, i);
+    if (!prev || prev.type !== TokenType.PIPE) {
+      return token;
+    }
+    if (token.type === TokenType.RESERVED_JOIN || PIPE_CLAUSE_WORDS.has(token.text.toUpperCase())) {
+      return {
+        ...token,
+        type: TokenType.RESERVED_CLAUSE,
+        text: equalizeWhitespace(token.text.toUpperCase()),
+      };
+    }
+    return token;
+  });
+}
+
+function prevNonComment(tokens: Token[], index: number): Token | undefined {
+  for (let i = index - 1; i >= 0; i--) {
+    const token = tokens[i];
+    if (
+      token.type !== TokenType.LINE_COMMENT &&
+      token.type !== TokenType.BLOCK_COMMENT &&
+      token.type !== TokenType.DISABLE_COMMENT
+    ) {
+      return token;
+    }
+  }
+  return undefined;
 }
 
 // Converts OFFSET token inside array from RESERVED_CLAUSE to RESERVED_FUNCTION_NAME

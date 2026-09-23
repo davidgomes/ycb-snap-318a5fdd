@@ -14,6 +14,7 @@ export enum NodeType {
   case_when = 'case_when',
   case_else = 'case_else',
   limit_clause = 'limit_clause',
+  pipe_clause = 'pipe_clause',
   all_columns_asterisk = 'all_columns_asterisk',
   literal = 'literal',
   identifier = 'identifier',
@@ -105,6 +106,13 @@ export interface CaseElseNode extends BaseNode {
   type: NodeType.case_else;
   elseKw: KeywordNode;
   result: AstNode[];
+}
+
+// |> <clause> in BigQuery pipe syntax
+export interface PipeClauseNode extends BaseNode {
+  type: NodeType.pipe_clause;
+  operator: string;
+  clause: ClauseNode | LimitClauseNode;
 }
 
 // LIMIT <count>
@@ -200,6 +208,7 @@ export type AstNode =
   | CaseWhenNode
   | CaseElseNode
   | LimitClauseNode
+  | PipeClauseNode
   | AllColumnsAsteriskNode
   | LiteralNode
   | IdentifierNode
