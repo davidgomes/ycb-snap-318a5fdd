@@ -56,6 +56,7 @@ class FollowEndScrollView(ScrollView):
     """Automatically scroll to new content while following the end."""
 
     _following_end: bool = True
+    _deciding_follow: bool = False
 
     @property
     def is_following_end(self) -> bool:
@@ -72,8 +73,8 @@ class FollowEndScrollView(ScrollView):
         Args:
             animate: Animate the scroll to the end.
         """
-        self._set_following_end(True)
         self.scroll_end(animate=animate, immediate=True, x_axis=False)
+        self._set_following_end(True)
 
     def _set_following_end(self, following: bool) -> None:
         """Update the follow state, posting `FollowChanged` if it changed.
@@ -122,24 +123,32 @@ class FollowEndScrollView(ScrollView):
                 following = True
             elif target_y < max(self.scroll_y, self.scroll_target_y):
                 following = False
-        scrolled = super()._scroll_to(
-            x,
-            y,
-            animate=animate,
-            speed=speed,
-            duration=duration,
-            easing=easing,
-            force=force,
-            on_complete=on_complete,
-            level=level,
-            release_anchor=release_anchor,
-        )
+        self._deciding_follow = following is not None
+        try:
+            scrolled = super()._scroll_to(
+                x,
+                y,
+                animate=animate,
+                speed=speed,
+                duration=duration,
+                easing=easing,
+                force=force,
+                on_complete=on_complete,
+                level=level,
+                release_anchor=release_anchor,
+            )
+        finally:
+            self._deciding_follow = False
         if following is not None:
             self._set_following_end(following)
         return scrolled
 
     def _watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        if self._is_scroll_end(new_value):
+        if self._deciding_follow:
+            return
+        # Compared exactly, so the first frame of an animation away from the end
+        # (which may round to the end) stops following.
+        if new_value >= self.max_scroll_y:
             self._set_following_end(True)
         elif new_value < old_value:
             self._set_following_end(False)
@@ -180,10 +189,11 @@ class FollowEndScrollView(ScrollView):
             animate: Animate the scroll to the end.
         """
         if follow:
-            self._set_following_end(True)
             if immediate:
                 self.scroll_end(animate=animate, immediate=True, x_axis=False)
+                self._set_following_end(True)
             else:
+                self._set_following_end(True)
                 self._scroll_end_after_refresh(animate)
             return
         if removed_lines and self.scroll_y:
