@@ -1,5 +1,5 @@
 //! Visitors for traversing and manipulating nodes of an xml document
-use std::{cell::RefCell, path::PathBuf};
+use std::{cell::RefCell, collections::HashSet, path::PathBuf};
 
 use lightningcss::rules::CssRuleList;
 
@@ -50,6 +50,11 @@ pub struct Context<'input, 'arena, 'i> {
     pub flags: ContextFlags,
     /// Info about how the program is using the document
     pub info: &'i Info<'input, 'arena>,
+    /// Elements whose structure a selector relationship depends on.
+    ///
+    /// Populated from the document as it exists before a rewrite. Jobs that
+    /// flatten, move, or rename those elements must leave them in place.
+    pub structural_implications: RefCell<HashSet<crate::node::AllocationID>>,
 }
 
 impl<'input, 'arena, 'i> Context<'input, 'arena, 'i> {
@@ -66,7 +71,28 @@ impl<'input, 'arena, 'i> Context<'input, 'arena, 'i> {
             root,
             flags,
             info,
+            structural_implications: RefCell::new(HashSet::new()),
         }
+    }
+
+    /// Records elements implicated by structure-sensitive selectors.
+    ///
+    /// The document structure must still be the one those selectors were written
+    /// against. Call this before flattening or moving containers.
+    #[cfg(feature = "selectors")]
+    pub fn record_structural_implications(&mut self, root: &Element<'input, 'arena>) {
+        self.query_has_stylesheet(root);
+        let implicated =
+            crate::structural::implicated_elements(root, &self.query_has_stylesheet_result);
+        *self.structural_implications.borrow_mut() = implicated;
+    }
+
+    /// Whether `element` participates in a structure-sensitive selector match.
+    #[cfg(feature = "selectors")]
+    pub fn is_structurally_implicated(&self, element: &Element<'_, '_>) -> bool {
+        self.structural_implications
+            .borrow()
+            .contains(&element.id())
     }
 
     /// Queries whether a `<script>` element is within the document

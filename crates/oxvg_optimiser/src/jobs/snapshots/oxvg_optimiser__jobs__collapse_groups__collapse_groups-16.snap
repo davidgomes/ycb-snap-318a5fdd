@@ -1,0 +1,14 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- A nearby class is not enough; the child combinator has to match -->\n    <style>\n        .a > .b { fill: red }\n    </style>\n    <g class=\"a\">\n        <rect class=\"b\"/>\n    </g>\n    <g>\n        <g>\n            <rect class=\"c\"/>\n        </g>\n    </g>\n</svg>\"#),)?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- A nearby class is not enough; the child combinator has to match -->
+    <style>
+        .a>.b{fill:red}
+    </style>
+    <g class="a">
+        <rect class="b"/>
+    </g>
+    <rect class="c"/>
+</svg>

@@ -1,0 +1,17 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Sibling anchors sit outside each other's subtrees -->\n    <style>\n        .a + .b { fill: red }\n    </style>\n    <g class=\"a\"><rect/></g>\n    <g class=\"b\"><rect/></g>\n    <g><g><rect class=\"c\"/></g></g>\n</svg>\"#),)?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Sibling anchors sit outside each other's subtrees -->
+    <style>
+        .a+.b{fill:red}
+    </style>
+    <g class="a">
+        <rect/>
+    </g>
+    <g class="b">
+        <rect/>
+    </g>
+    <rect class="c"/>
+</svg>

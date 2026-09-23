@@ -54,5 +54,7 @@ pub mod xmlwriter;
 
 #[cfg(feature = "selectors")]
 pub mod selectors;
+#[cfg(feature = "selectors")]
+pub mod structural;
 
 pub mod style;

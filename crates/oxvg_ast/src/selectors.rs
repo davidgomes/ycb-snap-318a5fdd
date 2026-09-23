@@ -272,6 +272,11 @@ impl<'input, 'arena> Iterator for Select<'input, 'arena> {
 }
 
 impl Selector {
+    /// Complex selectors in this list, in source order.
+    pub fn complexes(&self) -> &[selectors::parser::Selector<SelectorImpl>] {
+        self.0.slice()
+    }
+
     /// # Errors
     /// If the selector fails to parse
     pub fn new(

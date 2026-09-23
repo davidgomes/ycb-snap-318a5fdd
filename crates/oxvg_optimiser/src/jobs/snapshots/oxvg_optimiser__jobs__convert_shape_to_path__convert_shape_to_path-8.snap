@@ -1,0 +1,10 @@
+---
+source: crates/oxvg_optimiser/src/jobs/convert_shape_to_path.rs
+expression: "test_config(r#\"{ \"convertShapeToPath\": {} }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <style>\n        rect { fill: red }\n    </style>\n    <rect width=\"10\" height=\"10\"/>\n</svg>\"#),)?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <style>
+        rect{fill:red}
+    </style>
+    <rect width="10" height="10"/>
+</svg>

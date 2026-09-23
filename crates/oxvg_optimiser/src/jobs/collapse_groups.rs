@@ -45,21 +45,25 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
 
     fn prepare(
         &self,
-        _document: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        document: &Element<'input, 'arena>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
-        Ok(if self.0 {
-            PrepareOutcome::none
+        if self.0 {
+            context.record_structural_implications(document);
+            Ok(PrepareOutcome::none)
         } else {
-            PrepareOutcome::skip
-        })
+            Ok(PrepareOutcome::skip)
+        }
     }
 
     fn exit_element(
         &self,
         element: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<(), Self::Error> {
+        if context.is_structurally_implicated(element) {
+            return Ok(());
+        }
         let Some(parent) = Element::parent_element(element) else {
             return Ok(());
         };
@@ -491,6 +495,61 @@ fn collapse_groups() -> anyhow::Result<()> {
     <circle cx="25" cy="15" r="10" stroke="black" stroke-width=".1" fill="none"/>
 </svg>"#
         )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Preserve only the group that completes g > .a; collapse the unrelated wrapper -->
+    <style>
+        g > .a { fill: red }
+    </style>
+    <g>
+        <rect class="a"/>
+    </g>
+    <g>
+        <g>
+            <rect class="b"/>
+        </g>
+    </g>
+</svg>"#
+        ),
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- A nearby class is not enough; the child combinator has to match -->
+    <style>
+        .a > .b { fill: red }
+    </style>
+    <g class="a">
+        <rect class="b"/>
+    </g>
+    <g>
+        <g>
+            <rect class="c"/>
+        </g>
+    </g>
+</svg>"#
+        ),
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Sibling anchors sit outside each other's subtrees -->
+    <style>
+        .a + .b { fill: red }
+    </style>
+    <g class="a"><rect/></g>
+    <g class="b"><rect/></g>
+    <g><g><rect class="c"/></g></g>
+</svg>"#
+        ),
     )?);
 
     Ok(())

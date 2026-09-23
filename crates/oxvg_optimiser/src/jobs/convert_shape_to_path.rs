@@ -1,6 +1,12 @@
-use std::cell;
+use std::{cell, collections::HashSet};
 
-use lightningcss::{selector::Component, visit_types, visitor::Visit};
+use lightningcss::{
+    printer::PrinterOptions,
+    selector::Component,
+    traits::ToCss,
+    visit_types,
+    visitor::Visit,
+};
 use oxvg_ast::{
     element::Element,
     get_attribute, has_attribute, remove_attribute, set_attribute,
@@ -73,6 +79,10 @@ impl<'input, 'arena> Visitor<'input, 'arena> for ConvertShapeToPath {
         let mut state = State {
             options: self,
             referenced_shapes: ReferencedShapes::empty(),
+            implicated: oxvg_ast::structural::implicated_elements(
+                document,
+                &context.query_has_stylesheet_result,
+            ),
         };
         for styles in &context.query_has_stylesheet_result {
             styles.borrow_mut().0.visit(&mut state)?;
@@ -87,6 +97,7 @@ impl<'input, 'arena> Visitor<'input, 'arena> for ConvertShapeToPath {
 struct State<'o> {
     options: &'o ConvertShapeToPath,
     referenced_shapes: ReferencedShapes,
+    implicated: HashSet<oxvg_ast::node::AllocationID>,
 }
 
 bitflags! {
@@ -113,6 +124,14 @@ impl<'input> lightningcss::visitor::Visitor<'input> for State<'_> {
         &mut self,
         selector: &mut lightningcss::selector::Selector<'input>,
     ) -> Result<(), Self::Error> {
+        if selector
+            .to_css_string(PrinterOptions::default())
+            .ok()
+            .and_then(|css| oxvg_ast::selectors::Selector::new(&css).ok())
+            .is_some_and(|parsed| oxvg_ast::structural::is_structure_sensitive(&parsed))
+        {
+            return Ok(());
+        }
         let mut iter = selector.iter();
         loop {
             for token in &mut iter {
@@ -146,6 +165,9 @@ impl<'input, 'arena> Visitor<'input, 'arena> for State<'_> {
         element: &Element<'input, 'arena>,
         context: &mut Context<'input, 'arena, '_>,
     ) -> Result<(), Self::Error> {
+        if self.implicated.contains(&element.id()) {
+            return Ok(());
+        }
         let name = element.qual_name();
 
         let options = &self.options;
@@ -493,6 +515,31 @@ fn convert_shape_to_path() -> anyhow::Result<()> {
   <defs>
     <rect id="rect1" width="120" height="120" />
   </defs>
+</svg>"#
+        ),
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "convertShapeToPath": {} }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>
+        g > rect { fill: red }
+    </style>
+    <g><rect width="10" height="10"/></g>
+    <rect x="5" y="5" width="10" height="10"/>
+</svg>"#
+        ),
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "convertShapeToPath": {} }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>
+        rect { fill: red }
+    </style>
+    <rect width="10" height="10"/>
 </svg>"#
         ),
     )?);

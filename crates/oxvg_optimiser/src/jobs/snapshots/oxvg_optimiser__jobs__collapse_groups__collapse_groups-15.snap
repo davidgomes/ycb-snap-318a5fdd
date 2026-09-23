@@ -1,0 +1,14 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Preserve only the group that completes g > .a; collapse the unrelated wrapper -->\n    <style>\n        g > .a { fill: red }\n    </style>\n    <g>\n        <rect class=\"a\"/>\n    </g>\n    <g>\n        <g>\n            <rect class=\"b\"/>\n        </g>\n    </g>\n</svg>\"#),)?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Preserve only the group that completes g > .a; collapse the unrelated wrapper -->
+    <style>
+        g>.a{fill:red}
+    </style>
+    <g>
+        <rect class="a"/>
+    </g>
+    <rect class="b"/>
+</svg>

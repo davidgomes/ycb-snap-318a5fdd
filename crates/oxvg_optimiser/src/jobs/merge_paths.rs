@@ -66,7 +66,7 @@ impl<'input, 'arena> Visitor<'input, 'arena> for MergePaths {
         document: &Element<'input, 'arena>,
         context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
-        context.query_has_stylesheet(document);
+        context.record_structural_implications(document);
         Ok(PrepareOutcome::none)
     }
 
@@ -92,6 +92,14 @@ impl<'input, 'arena> Visitor<'input, 'arena> for MergePaths {
                     }
                     prev_path_data = None;
                 };
+            }
+
+            if context.is_structurally_implicated(&prev_child)
+                || context.is_structurally_implicated(&child)
+            {
+                log::debug!("ending merge, structure-sensitive selector");
+                update_previous_path!(prev_child);
+                continue;
             }
 
             if !is_element!(prev_child, Path)

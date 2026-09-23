@@ -41,7 +41,7 @@ impl<'input, 'arena> Visitor<'input, 'arena> for RemoveEmptyContainers {
         context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
         Ok(if self.0 {
-            context.query_has_stylesheet(document);
+            context.record_structural_implications(document);
             context.query_has_script(document);
             PrepareOutcome::none
         } else {
@@ -54,6 +54,9 @@ impl<'input, 'arena> Visitor<'input, 'arena> for RemoveEmptyContainers {
         element: &Element<'input, 'arena>,
         context: &mut Context<'input, 'arena, '_>,
     ) -> Result<(), Self::Error> {
+        if context.is_structurally_implicated(element) {
+            return Ok(());
+        }
         let name = element.qual_name();
 
         if !name.categories().contains(ElementCategory::Container) || !element.is_empty() {
