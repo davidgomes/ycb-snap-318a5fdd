@@ -2,6 +2,7 @@ from typing import TypeVar, overload
 
 from returns.context import NoDeps
 from returns.interfaces.failable import DiverseFailableN, SingleFailableN
+from returns.interfaces.specific.validated import ValidatedLikeN
 from returns.primitives.hkt import KindN, kinded
 
 _ValueType = TypeVar('_ValueType')
@@ -9,6 +10,7 @@ _ErrorType = TypeVar('_ErrorType')
 
 _SingleFailableKind = TypeVar('_SingleFailableKind', bound=SingleFailableN)
 _DiverseFailableKind = TypeVar('_DiverseFailableKind', bound=DiverseFailableN)
+_ValidatedLikeKind = TypeVar('_ValidatedLikeKind', bound=ValidatedLikeN)
 
 
 @overload
@@ -28,8 +30,21 @@ def internal_cond(
 ) -> KindN[_DiverseFailableKind, _ValueType, _ErrorType, NoDeps]: ...
 
 
+@overload
 def internal_cond(
-    container_type: (type[_SingleFailableKind] | type[_DiverseFailableKind]),
+    container_type: type[_ValidatedLikeKind],
+    is_success: bool,  # noqa: FBT001
+    success_value: _ValueType,
+    error_value: _ErrorType,
+) -> KindN[_ValidatedLikeKind, _ValueType, _ErrorType, NoDeps]: ...
+
+
+def internal_cond(
+    container_type: (
+        type[_SingleFailableKind]
+        | type[_DiverseFailableKind]
+        | type[_ValidatedLikeKind]
+    ),
     is_success: bool,  # noqa: FBT001
     success_value: _ValueType,
     error_value: _ErrorType | None = None,
@@ -37,8 +52,9 @@ def internal_cond(
     """
     Reduce the boilerplate when choosing paths.
 
-    Works with ``SingleFailableN`` (e.g. ``Maybe``)
-    and ``DiverseFailableN`` (e.g. ``Result``).
+    Works with ``SingleFailableN`` (e.g. ``Maybe``),
+    ``DiverseFailableN`` (e.g. ``Result``),
+    and ``ValidatedLikeN`` (e.g. ``Validated``).
 
     Example using ``cond`` with the ``Result`` container:
 
@@ -70,11 +86,25 @@ def internal_cond(
       >>> assert is_positive(10) == Some(10)
       >>> assert is_positive(-10) == Nothing
 
+    Example using ``cond`` with the ``Validated`` container:
+
+    .. code:: python
+
+      >>> from returns.validated import Invalid, Valid, Validated
+
+      >>> def is_even(number: int) -> Validated[int, str]:
+      ...     return cond(Validated, number % 2 == 0, number, 'Odd number')
+
+      >>> assert is_even(2) == Valid(2)
+      >>> assert is_even(1) == Invalid(('Odd number',))
+
     """
     if is_success:
         return container_type.from_value(success_value)
 
     if issubclass(container_type, DiverseFailableN):
+        return container_type.from_failure(error_value)
+    if issubclass(container_type, ValidatedLikeN):
         return container_type.from_failure(error_value)
     return container_type.empty
 
