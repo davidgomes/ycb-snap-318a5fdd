@@ -1,0 +1,60 @@
+version: '3'
+
+includes:
+  lib: ./lib
+
+tasks:
+  default:
+    desc: Default task
+    deps: [build]
+
+  build:
+    desc: Build everything
+    deps: [compile, generate]
+    cmds:
+      - task: lib:package
+        vars:
+          MODE: release
+      - echo build
+
+  compile:
+    deps: [generate]
+
+  generate:
+    method: timestamp
+    cmds:
+      - echo generate
+
+  fanout:
+    deps:
+      - for: [a, b, c]
+        task: generate
+        vars:
+          TARGET: '{{.ITEM}}'
+
+  aliased:
+    aliases: [al]
+    deps: [generate]
+
+  wild-*:
+    deps: [generate]
+
+  fresh:
+    status:
+      - 'true'
+
+  uses-fresh:
+    deps: [fresh]
+
+  cycle-a:
+    deps: [cycle-b]
+
+  cycle-b:
+    cmds:
+      - task: cycle-c
+
+  cycle-c:
+    deps: [cycle-a]
+
+  broken:
+    deps: [does-not-exist]

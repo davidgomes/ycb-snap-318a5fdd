@@ -1,0 +1,9 @@
+version: '3'
+
+tasks:
+  package:
+    deps: [prepare]
+
+  prepare:
+    cmds:
+      - echo prepare
