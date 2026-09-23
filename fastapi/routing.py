@@ -57,6 +57,7 @@ from fastapi.exceptions import (
     ResponseValidationError,
     WebSocketRequestValidationError,
 )
+from fastapi.middleware.methods import IMPLICIT_METHOD_RECORDERS_KEY
 from fastapi.sse import (
     _PING_INTERVAL,
     KEEPALIVE_COMMENT,
@@ -85,9 +86,45 @@ from starlette.routing import (
     get_name,
 )
 from starlette.routing import Mount as Mount  # noqa
-from starlette.types import AppType, ASGIApp, Lifespan, Receive, Scope, Send
+from starlette.types import (
+    AppType,
+    ASGIApp,
+    Lifespan,
+    Message,
+    Receive,
+    Scope,
+    Send,
+)
 from starlette.websockets import WebSocket
 from typing_extensions import deprecated
+
+_METHOD_ORDER = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE")
+
+
+def _sort_methods(methods: Collection[str]) -> list[str]:
+    known = [method for method in _METHOD_ORDER if method in methods]
+    return known + sorted(set(methods).difference(_METHOD_ORDER))
+
+
+def _resolve_flag(*values: bool | DefaultPlaceholder) -> bool:
+    value = get_value_or_default(*values)
+    if isinstance(value, DefaultPlaceholder):
+        return bool(value.value)
+    return bool(value)
+
+
+def _without_body(send: Send) -> Send:
+    async def wrapped_send(message: Message) -> None:
+        if message["type"] == "http.response.body":
+            message = {**message, "body": b""}
+        await send(message)
+
+    return wrapped_send
+
+
+def _record_implicit_hit(scope: Scope, method: str, path: str) -> None:
+    for recorder in scope.get(IMPLICIT_METHOD_RECORDERS_KEY, ()):
+        recorder(method, path, scope.get("root_path", ""))
 
 
 # Copy of starlette.routing.request_response modified to include the
@@ -836,9 +873,33 @@ class APIRoute(routing.Route):
         generate_unique_id_function: Callable[["APIRoute"], str]
         | DefaultPlaceholder = Default(generate_unique_id),
         strict_content_type: bool | DefaultPlaceholder = Default(True),
+        auto_head: Annotated[
+            bool | DefaultPlaceholder,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for this *path operation* if it
+                handles `GET`, sending the `GET` response without a body.
+
+                When not set, the value of the router serving the route is used.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool | DefaultPlaceholder,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the path of this *path
+                operation*, describing the methods and OpenAPI operations of the path.
+
+                When not set, the value of the router serving the route is used.
+                """
+            ),
+        ] = Default(False),
     ) -> None:
         self.path = path
         self.endpoint = endpoint
+        self.auto_head = auto_head
+        self.auto_options = auto_options
         self.stream_item_type: Any | None = None
         if isinstance(response_model, DefaultPlaceholder):
             return_annotation = get_typed_return_annotation(endpoint)
@@ -1262,6 +1323,47 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(True),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for the *path operations* in this
+                router that handle `GET`.
+
+                The `GET` *path operation* is run as normal, including its
+                dependencies, status code, headers, and validation, but the response
+                is sent without a body. An explicit `HEAD` *path operation* for the
+                same path takes precedence. Implicit `HEAD` operations are not
+                included in the generated OpenAPI.
+
+                A value set in a *path operation* or in `include_router()` takes
+                precedence over this one. When not set anywhere, the value of the
+                router (or app) that includes this router is used. It is enabled by
+                default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the paths of the *path
+                operations* in this router.
+
+                The response is a JSON object with the `path`, the allowed `methods`,
+                and the OpenAPI `operations` of that path (excluding `HEAD` and
+                `OPTIONS`), with an `Allow` header. An explicit `OPTIONS` *path
+                operation* for the same path takes precedence. One implicit
+                `OPTIONS` response is generated per path when any of its *path
+                operations* enables it.
+
+                A value set in a *path operation* or in `include_router()` takes
+                precedence over this one. When not set anywhere, the value of the
+                router (or app) that includes this router is used. It is disabled by
+                default.
+                """
+            ),
+        ] = Default(False),
     ) -> None:
         # Determine the lifespan context to use
         if lifespan is None:
@@ -1309,6 +1411,87 @@ class APIRouter(routing.Router):
         self.default_response_class = default_response_class
         self.generate_unique_id_function = generate_unique_id_function
         self.strict_content_type = strict_content_type
+        self.auto_head = auto_head
+        self.auto_options = auto_options
+
+    async def app(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["method"] in ("HEAD", "OPTIONS"):
+            if await self._handle_implicit_method(scope, receive, send):
+                return
+        await super().app(scope, receive, send)
+
+    def _implicit_head_enabled(self, route: APIRoute) -> bool:
+        return "GET" in route.methods and _resolve_flag(route.auto_head, self.auto_head)
+
+    async def _handle_implicit_method(
+        self, scope: Scope, receive: Receive, send: Send
+    ) -> bool:
+        # Only answer implicitly when no route explicitly accepts the method,
+        # otherwise let the regular Starlette routing handle the request.
+        candidates: list[tuple[routing.Route, Scope]] = []
+        for route in self.routes:
+            match, child_scope = route.matches(scope)
+            if match == Match.FULL:
+                return False
+            if match == Match.PARTIAL and isinstance(route, routing.Route):
+                candidates.append((route, child_scope))
+        if "router" not in scope:
+            scope["router"] = self
+        if scope["method"] == "HEAD":
+            for route, child_scope in candidates:
+                if isinstance(route, APIRoute) and self._implicit_head_enabled(route):
+                    scope.update(child_scope)
+                    _record_implicit_hit(scope, "HEAD", route.path_format)
+                    await route.app(scope, receive, _without_body(send))
+                    return True
+            return False
+        for path_format in dict.fromkeys(route.path_format for route, _ in candidates):
+            path_routes = [
+                route for route, _ in candidates if route.path_format == path_format
+            ]
+            if not any(
+                isinstance(route, APIRoute)
+                and _resolve_flag(route.auto_options, self.auto_options)
+                for route in path_routes
+            ):
+                continue
+            methods = {"OPTIONS"}
+            for route in path_routes:
+                methods.update(route.methods or ())
+                if isinstance(route, APIRoute) and self._implicit_head_enabled(route):
+                    methods.add("HEAD")
+            ordered_methods = _sort_methods(methods)
+            _record_implicit_hit(scope, "OPTIONS", path_format)
+            response = JSONResponse(
+                {
+                    "path": path_format,
+                    "methods": ordered_methods,
+                    "operations": self._openapi_operations(scope, path_format),
+                },
+                headers={"Allow": ", ".join(ordered_methods)},
+            )
+            await response(scope, receive, send)
+            return True
+        return False
+
+    def _openapi_operations(self, scope: Scope, path_format: str) -> dict[str, Any]:
+        app = scope.get("app")
+        if (
+            app is not None
+            and getattr(app, "router", None) is self
+            and hasattr(app, "openapi")
+        ):
+            schema = app.openapi()
+        else:
+            from fastapi.openapi.utils import get_openapi
+
+            schema = get_openapi(title="", version="", routes=self.routes)
+        path_item = schema.get("paths", {}).get(path_format, {})
+        return {
+            key: value
+            for key, value in path_item.items()
+            if key not in ("head", "options")
+        }
 
     def route(
         self,
@@ -1360,6 +1543,28 @@ class APIRouter(routing.Router):
         generate_unique_id_function: Callable[[APIRoute], str]
         | DefaultPlaceholder = Default(generate_unique_id),
         strict_content_type: bool | DefaultPlaceholder = Default(True),
+        auto_head: Annotated[
+            bool | DefaultPlaceholder,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for this *path operation* if it
+                handles `GET`, sending the `GET` response without a body.
+
+                When not set, the value of the router is used.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool | DefaultPlaceholder,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the path of this *path
+                operation*, describing the methods and OpenAPI operations of the path.
+
+                When not set, the value of the router is used.
+                """
+            ),
+        ] = Default(False),
     ) -> None:
         route_class = route_class_override or self.route_class
         responses = responses or {}
@@ -1409,6 +1614,8 @@ class APIRouter(routing.Router):
             strict_content_type=get_value_or_default(
                 strict_content_type, self.strict_content_type
             ),
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
         self.routes.append(route)
 
@@ -1441,6 +1648,28 @@ class APIRouter(routing.Router):
         generate_unique_id_function: Callable[[APIRoute], str] = Default(
             generate_unique_id
         ),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for this *path operation* if it
+                handles `GET`, sending the `GET` response without a body.
+
+                When not set, the value of the router is used.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the path of this *path
+                operation*, describing the methods and OpenAPI operations of the path.
+
+                When not set, the value of the router is used.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         def decorator(func: DecoratedCallable) -> DecoratedCallable:
             self.add_api_route(
@@ -1469,6 +1698,8 @@ class APIRouter(routing.Router):
                 callbacks=callbacks,
                 openapi_extra=openapi_extra,
                 generate_unique_id_function=generate_unique_id_function,
+                auto_head=auto_head,
+                auto_options=auto_options,
             )
             return func
 
@@ -1682,6 +1913,31 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for the *path operations* in this
+                router that handle `GET`, sending the `GET` response without a body.
+
+                A value set in a *path operation* takes precedence over this one, and
+                this one takes precedence over the value of the included router.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the paths of the *path
+                operations* in this router, describing the methods and OpenAPI
+                operations of each path.
+
+                A value set in a *path operation* takes precedence over this one, and
+                this one takes precedence over the value of the included router.
+                """
+            ),
+        ] = Default(False),
     ) -> None:
         """
         Include another `APIRouter` in the same current `APIRouter`.
@@ -1788,6 +2044,12 @@ class APIRouter(routing.Router):
                         route.strict_content_type,
                         router.strict_content_type,
                         self.strict_content_type,
+                    ),
+                    auto_head=get_value_or_default(
+                        route.auto_head, auto_head, router.auto_head
+                    ),
+                    auto_options=get_value_or_default(
+                        route.auto_options, auto_options, router.auto_options
                     ),
                 )
             elif isinstance(route, routing.Route):
@@ -2155,6 +2417,40 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for this *path operation* if it
+                handles `GET`.
+
+                The `GET` *path operation* is run as normal, including its
+                dependencies, status code, headers, and validation, but the response
+                is sent without a body. An explicit `HEAD` *path operation* for the
+                same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the path of this *path
+                operation*.
+
+                The response is a JSON object with the `path`, the allowed `methods`,
+                and the OpenAPI `operations` of that path (excluding `HEAD` and
+                `OPTIONS`), with an `Allow` header. An explicit `OPTIONS` *path
+                operation* for the same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP GET operation.
@@ -2199,6 +2495,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def put(
@@ -2532,6 +2830,40 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for this *path operation* if it
+                handles `GET`.
+
+                The `GET` *path operation* is run as normal, including its
+                dependencies, status code, headers, and validation, but the response
+                is sent without a body. An explicit `HEAD` *path operation* for the
+                same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the path of this *path
+                operation*.
+
+                The response is a JSON object with the `path`, the allowed `methods`,
+                and the OpenAPI `operations` of that path (excluding `HEAD` and
+                `OPTIONS`), with an `Allow` header. An explicit `OPTIONS` *path
+                operation* for the same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP PUT operation.
@@ -2581,6 +2913,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def post(
@@ -2914,6 +3248,40 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for this *path operation* if it
+                handles `GET`.
+
+                The `GET` *path operation* is run as normal, including its
+                dependencies, status code, headers, and validation, but the response
+                is sent without a body. An explicit `HEAD` *path operation* for the
+                same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the path of this *path
+                operation*.
+
+                The response is a JSON object with the `path`, the allowed `methods`,
+                and the OpenAPI `operations` of that path (excluding `HEAD` and
+                `OPTIONS`), with an `Allow` header. An explicit `OPTIONS` *path
+                operation* for the same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP POST operation.
@@ -2963,6 +3331,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def delete(
@@ -3296,6 +3666,40 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for this *path operation* if it
+                handles `GET`.
+
+                The `GET` *path operation* is run as normal, including its
+                dependencies, status code, headers, and validation, but the response
+                is sent without a body. An explicit `HEAD` *path operation* for the
+                same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the path of this *path
+                operation*.
+
+                The response is a JSON object with the `path`, the allowed `methods`,
+                and the OpenAPI `operations` of that path (excluding `HEAD` and
+                `OPTIONS`), with an `Allow` header. An explicit `OPTIONS` *path
+                operation* for the same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP DELETE operation.
@@ -3340,6 +3744,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def options(
@@ -3673,6 +4079,40 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for this *path operation* if it
+                handles `GET`.
+
+                The `GET` *path operation* is run as normal, including its
+                dependencies, status code, headers, and validation, but the response
+                is sent without a body. An explicit `HEAD` *path operation* for the
+                same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the path of this *path
+                operation*.
+
+                The response is a JSON object with the `path`, the allowed `methods`,
+                and the OpenAPI `operations` of that path (excluding `HEAD` and
+                `OPTIONS`), with an `Allow` header. An explicit `OPTIONS` *path
+                operation* for the same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP OPTIONS operation.
@@ -3717,6 +4157,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def head(
@@ -4050,6 +4492,40 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for this *path operation* if it
+                handles `GET`.
+
+                The `GET` *path operation* is run as normal, including its
+                dependencies, status code, headers, and validation, but the response
+                is sent without a body. An explicit `HEAD` *path operation* for the
+                same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the path of this *path
+                operation*.
+
+                The response is a JSON object with the `path`, the allowed `methods`,
+                and the OpenAPI `operations` of that path (excluding `HEAD` and
+                `OPTIONS`), with an `Allow` header. An explicit `OPTIONS` *path
+                operation* for the same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP HEAD operation.
@@ -4099,6 +4575,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def patch(
@@ -4432,6 +4910,40 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for this *path operation* if it
+                handles `GET`.
+
+                The `GET` *path operation* is run as normal, including its
+                dependencies, status code, headers, and validation, but the response
+                is sent without a body. An explicit `HEAD` *path operation* for the
+                same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the path of this *path
+                operation*.
+
+                The response is a JSON object with the `path`, the allowed `methods`,
+                and the OpenAPI `operations` of that path (excluding `HEAD` and
+                `OPTIONS`), with an `Allow` header. An explicit `OPTIONS` *path
+                operation* for the same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP PATCH operation.
@@ -4481,6 +4993,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def trace(
@@ -4814,6 +5328,40 @@ class APIRouter(routing.Router):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `HEAD` requests for this *path operation* if it
+                handles `GET`.
+
+                The `GET` *path operation* is run as normal, including its
+                dependencies, status code, headers, and validation, but the response
+                is sent without a body. An explicit `HEAD` *path operation* for the
+                same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                enabled by default.
+                """
+            ),
+        ] = Default(True),
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Automatically handle `OPTIONS` requests for the path of this *path
+                operation*.
+
+                The response is a JSON object with the `path`, the allowed `methods`,
+                and the OpenAPI `operations` of that path (excluding `HEAD` and
+                `OPTIONS`), with an `Allow` header. An explicit `OPTIONS` *path
+                operation* for the same path takes precedence.
+
+                When not set, the value of the router (or app) is used. It is
+                disabled by default.
+                """
+            ),
+        ] = Default(False),
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP TRACE operation.
@@ -4863,6 +5411,8 @@ class APIRouter(routing.Router):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     # TODO: remove this once the lifespan (or alternative) interface is improved
