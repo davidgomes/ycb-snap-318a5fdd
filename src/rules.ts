@@ -9,6 +9,7 @@ import {
 import {LinterError} from './linter-error';
 import {getTextInLanguage, LanguageStringKey} from './lang/helpers';
 import {ignoreListOfTypes, IgnoreType} from './utils/ignore-types';
+import {replaceDisabledLines} from './utils/disable-markers';
 import {LinterSettings} from './settings-data';
 import {App} from 'obsidian';
 import {YAMLParseError} from 'yaml';
@@ -110,7 +111,12 @@ export class Rule {
   }
 
   public apply(text: string, options?: Options): string {
-    return ignoreListOfTypes(this.ignoreTypes, text, (textAfterIgnore: string) => {
+    const disabledLinesIgnore: IgnoreType = {
+      replaceAction: (textToCheck: string, placeholder: string) => replaceDisabledLines(textToCheck, placeholder, this.alias, new Set(Object.keys(rulesDict))),
+      placeholder: '{LINTER_DISABLED_PLACEHOLDER}',
+    };
+
+    return ignoreListOfTypes([disabledLinesIgnore, ...this.ignoreTypes], text, (textAfterIgnore: string) => {
       return this.applyAfterIgnore(textAfterIgnore, options);
     });
   }
