@@ -33,6 +33,17 @@ class test_Direct(ExchangeCase):
         assert self.e.lookup(
             self.table, exchange, routing_key, default) == expected
 
+    def test_deliver(self):
+        self.e.channel = Mock()
+        self.e.channel._lookup.return_value = ('a', 'b')
+        message = Mock()
+        self.e.deliver(message, 'exchange', 'rkey')
+
+        assert self.e.channel.put.call_args_list == [
+            (('a', message), {}),
+            (('b', message), {}),
+        ]
+
 
 class test_Fanout(ExchangeCase):
     type = exchange.FanoutExchange
@@ -96,7 +107,7 @@ class test_Topic(ExchangeCase):
         message = Mock()
         self.e.deliver(message, 'exchange', 'rkey')
 
-        assert self.e.channel._put.call_args_list == [
+        assert self.e.channel.put.call_args_list == [
             (('a', message), {}),
             (('b', message), {}),
         ]
