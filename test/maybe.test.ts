@@ -1453,3 +1453,238 @@ describe('`Maybe` class', () => {
     });
   });
 });
+
+describe('`Maybe` iteration', () => {
+  test('`Just` yields its value exactly once', () => {
+    const theJust = maybe.just(42);
+    expect([...theJust]).toEqual([42]);
+    expect(Array.from(theJust)).toEqual([42]);
+    expectTypeOf([...theJust]).toEqualTypeOf<number[]>();
+  });
+
+  test('`Nothing` yields nothing', () => {
+    expect([...maybe.nothing<number>()]).toEqual([]);
+  });
+
+  test('works with `for...of`', () => {
+    const seen: string[] = [];
+    for (const value of maybe.just('hello')) {
+      seen.push(value);
+    }
+    for (const value of maybe.nothing<string>()) {
+      seen.push(value);
+    }
+    expect(seen).toEqual(['hello']);
+  });
+
+  test('produces a fresh iterator each time', () => {
+    const theJust = maybe.just('again');
+    expect([...theJust]).toEqual(['again']);
+    expect([...theJust]).toEqual(['again']);
+  });
+});
+
+describe('`Maybe` collection helpers', () => {
+  const parse = (s: string): Maybe<number> => {
+    const n = Number.parseInt(s, 10);
+    return Number.isNaN(n) ? maybe.nothing() : maybe.just(n);
+  };
+
+  /** Wrap `items` in a generator which records every item pulled from it. */
+  function tracked<T>(items: readonly T[]): { iterable: Iterable<T>; pulled: T[] } {
+    const pulled: T[] = [];
+    function* generate() {
+      for (const item of items) {
+        pulled.push(item);
+        yield item;
+      }
+    }
+    return { iterable: generate(), pulled };
+  }
+
+  describe('`sequence`', () => {
+    test('with all `Just`s', () => {
+      const sequenced = maybe.sequence([maybe.just(1), maybe.just(2), maybe.just(3)]);
+      expect(sequenced).toEqual(maybe.just([1, 2, 3]));
+      expectTypeOf(sequenced).toEqualTypeOf<Maybe<number[]>>();
+    });
+
+    test('with a `Nothing`', () => {
+      const sequenced = maybe.sequence([maybe.just(1), maybe.nothing<number>(), maybe.just(3)]);
+      expect(sequenced).toEqual(maybe.nothing());
+    });
+
+    test('with an empty iterable', () => {
+      expect(maybe.sequence<number>([])).toEqual(maybe.just([]));
+    });
+
+    test('with a non-array iterable', () => {
+      const maybes = new Set([maybe.just('a'), maybe.just('b')]);
+      expect(maybe.sequence(maybes)).toEqual(maybe.just(['a', 'b']));
+    });
+
+    test('stops advancing the iterator after the first `Nothing`', () => {
+      const first = maybe.just(1);
+      const bad = maybe.nothing<number>();
+      const { iterable, pulled } = tracked([first, bad, maybe.just(3), maybe.nothing<number>()]);
+
+      expect(maybe.sequence(iterable)).toEqual(maybe.nothing());
+      expect(pulled).toEqual([first, bad]);
+    });
+  });
+
+  describe('`traverse`', () => {
+    test('when every call produces `Just`', () => {
+      const traversed = maybe.traverse(['1', '2', '3'], parse);
+      expect(traversed).toEqual(maybe.just([1, 2, 3]));
+      expectTypeOf(traversed).toEqualTypeOf<Maybe<number[]>>();
+    });
+
+    test('when a call produces `Nothing`', () => {
+      expect(maybe.traverse(['1', 'two', '3'], parse)).toEqual(maybe.nothing());
+    });
+
+    test('with an empty iterable', () => {
+      expect(maybe.traverse([], parse)).toEqual(maybe.just([]));
+    });
+
+    test('calls `fn` with only the item', () => {
+      const calls: unknown[][] = [];
+      maybe.traverse(['a', 'b'], (...args: [string]) => {
+        calls.push(args);
+        return maybe.just(args[0]);
+      });
+      expect(calls).toEqual([['a'], ['b']]);
+    });
+
+    test('stops calling `fn` and advancing the iterator after the first `Nothing`', () => {
+      const { iterable, pulled } = tracked(['1', 'two', '3', '4']);
+      const seen: string[] = [];
+
+      const traversed = maybe.traverse(iterable, (s) => {
+        seen.push(s);
+        return parse(s);
+      });
+
+      expect(traversed).toEqual(maybe.nothing());
+      expect(seen).toEqual(['1', 'two']);
+      expect(pulled).toEqual(['1', 'two']);
+    });
+
+    test('curried form', () => {
+      const parseAll = maybe.traverse(parse);
+      expectTypeOf(parseAll).toEqualTypeOf<(items: Iterable<string>) => Maybe<number[]>>();
+      expect(parseAll(['4', '5'])).toEqual(maybe.just([4, 5]));
+      expect(parseAll(new Set(['4', 'five']))).toEqual(maybe.nothing());
+    });
+  });
+
+  describe('`zip`', () => {
+    test('with two `Just`s', () => {
+      const zipped = maybe.zip(maybe.just(1), maybe.just('a'));
+      expect(zipped).toEqual(maybe.just([1, 'a']));
+      expectTypeOf(zipped).toEqualTypeOf<Maybe<[number, string]>>();
+    });
+
+    test('with a `Nothing`', () => {
+      expect(maybe.zip(maybe.nothing<number>(), maybe.just('a'))).toEqual(maybe.nothing());
+      expect(maybe.zip(maybe.just(1), maybe.nothing<string>())).toEqual(maybe.nothing());
+      expect(maybe.zip(maybe.nothing<number>(), maybe.nothing<string>())).toEqual(maybe.nothing());
+    });
+  });
+
+  describe('`zipWith`', () => {
+    const label = (n: number, s: string) => `${s}: ${n}`;
+
+    test('with two `Just`s', () => {
+      const zipped = maybe.zipWith(maybe.just(1), maybe.just('count'), label);
+      expect(zipped).toEqual(maybe.just('count: 1'));
+      expectTypeOf(zipped).toEqualTypeOf<Maybe<string>>();
+    });
+
+    test('with a `Nothing` does not call `fn`', () => {
+      let called = false;
+      const spy = (n: number, s: string) => {
+        called = true;
+        return label(n, s);
+      };
+
+      expect(maybe.zipWith(maybe.nothing<number>(), maybe.just('a'), spy)).toEqual(maybe.nothing());
+      expect(maybe.zipWith(maybe.just(1), maybe.nothing<string>(), spy)).toEqual(maybe.nothing());
+      expect(called).toBe(false);
+    });
+  });
+
+  describe('`compact`', () => {
+    test('drops every `Nothing`', () => {
+      const compacted = maybe.compact([
+        maybe.just(1),
+        maybe.nothing<number>(),
+        maybe.just(3),
+        maybe.nothing<number>(),
+      ]);
+      expect(compacted).toEqual([1, 3]);
+      expectTypeOf(compacted).toEqualTypeOf<number[]>();
+    });
+
+    test('with only `Nothing`s or no items', () => {
+      expect(maybe.compact([maybe.nothing<number>()])).toEqual([]);
+      expect(maybe.compact<number>([])).toEqual([]);
+    });
+
+    test('with a non-array iterable', () => {
+      function* generate() {
+        yield maybe.just('a');
+        yield maybe.nothing<string>();
+        yield maybe.just('c');
+      }
+      expect(maybe.compact(generate())).toEqual(['a', 'c']);
+    });
+  });
+
+  describe('`filterMap`', () => {
+    test('keeps only the `Just` results', () => {
+      const filtered = maybe.filterMap(['1', 'two', '3'], parse);
+      expect(filtered).toEqual([1, 3]);
+      expectTypeOf(filtered).toEqualTypeOf<number[]>();
+    });
+
+    test('calls `fn` with only the item', () => {
+      const calls: unknown[][] = [];
+      maybe.filterMap(['a', 'b'], (...args: [string]) => {
+        calls.push(args);
+        return maybe.nothing<string>();
+      });
+      expect(calls).toEqual([['a'], ['b']]);
+    });
+
+    test('curried form', () => {
+      const parseValid = maybe.filterMap(parse);
+      expectTypeOf(parseValid).toEqualTypeOf<(items: Iterable<string>) => number[]>();
+      expect(parseValid(new Set(['4', 'five', '6']))).toEqual([4, 6]);
+    });
+  });
+
+  describe('`firstJust`', () => {
+    test('returns the first `Just`', () => {
+      const second = maybe.just(2);
+      const found = maybe.firstJust([maybe.nothing<number>(), second, maybe.just(3)]);
+      expect(found).toBe(second);
+      expectTypeOf(found).toEqualTypeOf<Maybe<number>>();
+    });
+
+    test('returns `Nothing` if there is no `Just`', () => {
+      expect(maybe.firstJust([maybe.nothing<number>(), maybe.nothing<number>()])).toEqual(
+        maybe.nothing()
+      );
+      expect(maybe.firstJust<number>([])).toEqual(maybe.nothing());
+    });
+
+    test('stops at the first `Just`', () => {
+      const first = maybe.just('a');
+      const { iterable, pulled } = tracked([maybe.nothing<string>(), first, maybe.just('b')]);
+      expect(maybe.firstJust(iterable)).toBe(first);
+      expect(pulled).toHaveLength(2);
+    });
+  });
+});
