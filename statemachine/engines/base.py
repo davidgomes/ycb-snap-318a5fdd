@@ -384,6 +384,7 @@ class BaseEngine:
             transitions,
         )
         previous_configuration = self.sm.configuration
+        data_checkpoint = self.sm._state_data.checkpoint()
         try:
             result = self._execute_transition_content(
                 transitions, trigger_data, lambda t: t.before.key
@@ -394,10 +395,10 @@ class BaseEngine:
                 transitions, trigger_data, states_to_exit, previous_configuration
             )
         except InvalidDefinition:
-            self.sm.configuration = previous_configuration
+            self._rollback_microstep(previous_configuration, data_checkpoint)
             raise
         except Exception as e:
-            self.sm.configuration = previous_configuration
+            self._rollback_microstep(previous_configuration, data_checkpoint)
             self._handle_error(e, trigger_data)
             return None
 
@@ -419,6 +420,12 @@ class BaseEngine:
             result = result[0]
 
         return result
+
+    def _rollback_microstep(
+        self, previous_configuration: OrderedSet[State], data_checkpoint: Dict[str, Any]
+    ):
+        self.sm.configuration = previous_configuration
+        self.sm._state_data.rollback(data_checkpoint)
 
     def _get_args_kwargs(
         self, transition: Transition, trigger_data: TriggerData, target: "State | None" = None
@@ -482,6 +489,7 @@ class BaseEngine:
                     [s.id for s in history_value],
                 )
                 self.sm.history_values[history.id] = history_value
+                self.sm._state_data.begin_history(history.id, (s.id for s in history_value))
 
         return ordered_states, result
 
@@ -503,6 +511,7 @@ class BaseEngine:
                 self._invoke_manager.cancel_for_state(info.state)
 
             args, kwargs = self._get_args_kwargs(info.transition, trigger_data)
+            kwargs = self._with_state_data(kwargs, info.state)
 
             # Execute `onexit` handlers — same per-block error isolation as onentry.
             if info.state is not None:  # pragma: no branch
@@ -510,8 +519,17 @@ class BaseEngine:
                 self.sm._callbacks.call(info.state.exit.key, *args, on_error=on_error, **kwargs)
 
             self._remove_state_from_configuration(info.state)
+            self.sm._state_data.deactivate(info.state.id)
 
         return result
+
+    def _with_state_data(self, kwargs: Dict[str, Any], state: State) -> Dict[str, Any]:
+        """Copy of the (cached) ``kwargs`` with ``state_data`` bound to ``state``.
+
+        Exit callbacks share the kwargs of the transition source, but each exited state
+        must see its own data.
+        """
+        return {**kwargs, "state_data": self.sm._state_data.view(state)}
 
     def _execute_transition_content(
         self,
@@ -574,6 +592,18 @@ class BaseEngine:
         """Add a state to the configuration if not using atomic updates."""
         if not self.sm.atomic_configuration_update:
             self.sm._config.add(target)
+
+    def _history_data_to_restore(
+        self, default_history_content: Dict[str, Any]
+    ) -> Dict[str, Dict[str, Any]]:
+        """State data recorded by the history pseudo-states resolved in the entry set.
+
+        Each ``default_history_content`` entry starts with the history pseudo-state that
+        was targeted; its snapshot holds the data of the states it will restore.
+        """
+        return self.sm._state_data.history_data(
+            entries[0].state.id for entries in default_history_content.values()
+        )
 
     def stop(self):
         """Stop this engine externally (e.g. when a parent cancels a child invocation)."""
@@ -662,6 +692,7 @@ class BaseEngine:
         if self.sm.atomic_configuration_update:
             self.sm.configuration = new_configuration
 
+        restored_data = self._history_data_to_restore(default_history_content)
         for info in ordered_states:
             target = info.state
             transition = info.transition
@@ -673,6 +704,7 @@ class BaseEngine:
 
             self._debug("%s Entering state: %s", self._log_id, target)
             self._add_state_to_configuration(target)
+            self.sm._state_data.activate(target, restored_data.get(target.id))
 
             # Execute `onentry` handlers — each handler is a separate block per
             # SCXML spec: errors in one block MUST NOT affect other blocks.

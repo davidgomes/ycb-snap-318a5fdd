@@ -33,11 +33,13 @@ from .i18n import _
 from .model import Model
 from .signature import SignatureAdapter
 from .state import InstanceState
+from .state import State
+from .state_data import DataChangeInfo
+from .state_data import StateDataStore
 from .utils import run_async_from_sync
 
 if TYPE_CHECKING:
     from .event import Event
-    from .state import State
     from .states import States
 
 TModel = TypeVar("TModel")
@@ -148,6 +150,7 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         self.history_values: Dict[
             str, List[State]
         ] = {}  # Mapping of compound states to last active state(s).
+        self._state_data = StateDataStore()
         self.state_field = state_field
         self.start_configuration_values = (
             [start_value] if start_value is not None else list(self.start_configuration_values)
@@ -169,6 +172,11 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         # after state machine creation.
         self._engine = self._get_engine()
         self._engine.start(**kwargs)
+        # A configuration restored from the model skips state entry.
+        states_map = self.states_map
+        self._state_data.activate_all(
+            states_map[value] for value in self.configuration_values if value in states_map
+        )
 
     def _get_engine(self):
         if self._callbacks.has_async_callbacks:
@@ -408,6 +416,46 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
     @current_state.setter
     def current_state(self, value):  # pragma: no cover
         self.current_state_value = value.value
+
+    def _resolve_state(self, state: "State | str") -> "State":
+        if isinstance(state, State):
+            return state
+        found = self.states_map.get(state)
+        if found is None:
+            found = next((s for s in self.states_map.values() if s.id == state), None)
+        if found is None:
+            raise InvalidStateValue(state)
+        return found
+
+    def get_state_data(self, state: "State | str") -> "Dict[str, Any] | None":
+        """The data owned by ``state`` while it is active, or ``None`` otherwise.
+
+        Args:
+            state: A :ref:`State`, or its id or value.
+
+        .. seealso::
+
+            :ref:`state-data`.
+        """
+        return self._state_data.get(self._resolve_state(state).id)
+
+    def set_state_data(self, state: "State | str", key: str, value: Any) -> None:
+        """Assign the data variable ``key`` owned by the active ``state``.
+
+        Raises:
+            InvalidDefinition: If the state is not active, doesn't declare ``key``, or
+                ``value`` violates the :class:`~statemachine.state_data.DataVar` type.
+        """
+        self._state_data.set(self._resolve_state(state), key, value)
+
+    @property
+    def state_data_values(self) -> Dict[str, Dict[str, Any]]:
+        """A snapshot of the data of all active states, keyed by state id."""
+        return self._state_data.snapshot()
+
+    def get_data_changes(self) -> List[DataChangeInfo]:
+        """The state data assignments made during the current macrostep."""
+        return self._state_data.changes
 
     @property
     def events(self) -> "List[Event]":

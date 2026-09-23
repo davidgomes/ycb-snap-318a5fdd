@@ -2,6 +2,8 @@ from .event import Event
 from .state import HistoryState
 from .state import HistoryType
 from .state import State
+from .state_data import DataChangeInfo
+from .state_data import DataVar
 from .statemachine import StateChart
 from .statemachine import StateMachine
 from .statemachine import TModel
@@ -16,6 +18,8 @@ __all__ = [
     "State",
     "HistoryState",
     "HistoryType",
+    "DataVar",
+    "DataChangeInfo",
     "Event",
     "TModel",
 ]
