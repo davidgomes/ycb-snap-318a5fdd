@@ -1284,6 +1284,7 @@ class Database:
         :param records: Records to insert
         :param strict: Raise an exception after rolling back instead of returning a failure
           result. Invariant failures raise ``ImportValidationError``, other errors are re-raised.
+          This is unrelated to SQLite ``STRICT`` tables, so it cannot be used to create one.
         :param kwargs: Other options are passed to :meth:`.Table.insert_all`
         """
         return self._run_safe_import(

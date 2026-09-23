@@ -1065,7 +1065,7 @@ On success these methods return ``{"success": True}``. If the import fails or br
 
 ``failures`` is empty if the import failed because of an error such as a primary key conflict, in which case ``error_report`` describes that error. The ``checkpoint_id`` refers to the checkpoint that was rolled back - you can pass it to ``db.cleanup_checkpoint()`` once you no longer need it.
 
-Pass ``strict=True`` to raise an exception after rolling back instead. Invariant failures raise ``sqlite_utils.db.ImportValidationError``, which has ``checkpoint_id``, ``failures`` and ``error_report`` attributes. Any other error is re-raised unchanged.
+Pass ``strict=True`` to raise an exception after rolling back instead. Invariant failures raise ``sqlite_utils.db.ImportValidationError``, which has ``checkpoint_id``, ``failures`` and ``error_report`` attributes. Any other error is re-raised unchanged. Unlike the ``strict=`` option to ``insert_all()``, this has nothing to do with SQLite ``STRICT`` tables - use ``Database(..., strict=True)`` or create the table first if you need one.
 
 These methods work whether or not safe import mode has been enabled for the database.
 
@@ -1095,7 +1095,7 @@ Once a checkpoint has been committed or rolled back, trying to commit or roll it
 
 Checkpoints can be nested. Rolling back or committing a checkpoint also rolls back or commits any checkpoints that were created after it and are still active.
 
-A checkpoint is a complete copy of the database, taken using the `SQLite backup API <https://www.sqlite.org/backup.html>`__ - in memory for in-memory databases, or in a temporary file otherwise. This means creating a checkpoint takes time and space proportional to the size of the database. Checkpoints are deleted when they are committed, rolled back or cleaned up, and when the database is closed. Creating a checkpoint commits any pending transaction first.
+A checkpoint is a complete copy of the main database (attached databases are not included), taken using the `SQLite backup API <https://www.sqlite.org/backup.html>`__ - in memory for in-memory databases, or in a temporary file otherwise. This means creating a checkpoint takes time and space proportional to the size of the database. Checkpoints are deleted when they are committed, rolled back or cleaned up, and when the database is closed. Creating a checkpoint commits any pending transaction first.
 
 Changes made after a checkpoint are written to the database as normal, so other connections can see them before they are committed or rolled back. If your process crashes in the middle of an import those changes will not be rolled back.
 
