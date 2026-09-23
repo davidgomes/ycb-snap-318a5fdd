@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/muesli/termenv/ansi"
 	"github.com/rivo/uniseg"
 )
 
@@ -24,7 +25,8 @@ const (
 type Style struct {
 	profile Profile
 	string
-	styles []string
+	styles         []string
+	preserveResets bool
 }
 
 // String returns a new Style.
@@ -53,7 +55,41 @@ func (t Style) Styled(s string) string {
 		return s
 	}
 
-	return fmt.Sprintf("%s%sm%s%sm", CSI, seq, s, CSI+ResetSeq)
+	open := CSI + seq + "m"
+	if t.preserveResets {
+		s = reopenAfterResets(s, open)
+	}
+
+	return fmt.Sprintf("%s%s%sm", open, s, CSI+ResetSeq)
+}
+
+// PreserveResets re-opens the style after every SGR reset contained in the
+// styled string, so nested styled strings don't cancel the outer style.
+func (t Style) PreserveResets() Style {
+	t.preserveResets = true
+	return t
+}
+
+// Truncate renders the style and truncates the result to at most width
+// visible cells without splitting escape sequences. Under the Ascii profile
+// the plain text is truncated and no tail is appended.
+func (t Style) Truncate(width int, opts TruncateOptions) string {
+	if t.profile == Ascii {
+		return ansi.TruncateANSI(ansi.StripANSI(t.string), width, TruncateOptions{})
+	}
+
+	preserve := t.preserveResets || opts.PreserveResets
+	if len(t.styles) > 0 {
+		// The style's own sequence is re-opened by Styled; letting
+		// TruncateANSI detect the enclosing style as well would pick up
+		// leading sequences from the content.
+		t.preserveResets = preserve
+		preserve = false
+	}
+	return ansi.TruncateANSI(t.Styled(t.string), width, TruncateOptions{
+		Tail:           opts.Tail,
+		PreserveResets: preserve,
+	})
 }
 
 // Foreground sets a foreground color.

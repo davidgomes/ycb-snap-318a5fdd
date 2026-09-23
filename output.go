@@ -4,6 +4,8 @@ import (
 	"io"
 	"os"
 	"sync"
+
+	"github.com/muesli/termenv/ansi"
 )
 
 // output is the default global output.
@@ -33,6 +35,8 @@ type Output struct {
 	fgColor   Color
 	bgSync    *sync.Once
 	bgColor   Color
+
+	preserveResets bool
 }
 
 // Environ is an interface for getting environment variables.
@@ -131,6 +135,33 @@ func WithUnsafe() OutputOption {
 	return func(o *Output) {
 		o.unsafe = true
 	}
+}
+
+// WithPreserveResets returns a new OutputOption that makes styles created by
+// the Output, and its Truncate method, preserve resets by default.
+func WithPreserveResets(v bool) OutputOption {
+	return func(o *Output) {
+		o.preserveResets = v
+	}
+}
+
+// String returns a new Style that inherits the Output's defaults.
+func (o *Output) String(s ...string) Style {
+	st := o.Profile.String(s...)
+	st.preserveResets = o.preserveResets
+	return st
+}
+
+// Truncate truncates s to at most width visible cells without splitting
+// escape sequences. Resets are preserved if the Output default or
+// opts.PreserveResets is set. Under the Ascii profile escape sequences are
+// stripped and the plain text is truncated with the tail.
+func (o *Output) Truncate(s string, width int, opts TruncateOptions) string {
+	if o.Profile == Ascii {
+		return ansi.TruncateANSI(ansi.StripANSI(s), width, TruncateOptions{Tail: opts.Tail})
+	}
+	opts.PreserveResets = o.preserveResets || opts.PreserveResets
+	return ansi.TruncateANSI(s, width, opts)
 }
 
 // ForegroundColor returns the terminal's default foreground color.
