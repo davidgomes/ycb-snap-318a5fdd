@@ -75,6 +75,24 @@ class Channel(virtual.Channel):
         q.queue.clear()
         return size
 
+    def drain_expired(self, queue):
+        q = self._queue_for(queue)
+        expired, survivors = [], []
+        with q.mutex:
+            for message in q.queue:
+                (expired if self._is_expired(message) else survivors).append(
+                    message)
+            if expired:
+                q.queue.clear()
+                q.queue.extend(survivors)
+        for message in expired:
+            self.dead_letter(message, queue, 'expired')
+        return len(expired)
+
+    def expire_messages(self, queue):
+        """Dead-letter expired messages in `queue`, return expired count."""
+        return self.drain_expired(queue)
+
     def close(self):
         super().close()
         for queue in self.queues.values():
