@@ -105,3 +105,35 @@ export const isEntityAlive = /* @inline @pure */ (index: EntityIndex, entity: En
 export const getAliveEntities = (index: EntityIndex): Entity[] => {
     return index.dense.slice(0, index.aliveCount);
 };
+
+/**
+ * Allocates a specific entity ID. The ID must not currently be alive.
+ * @param index - The EntityIndex to allocate from.
+ * @param id - The entity ID to allocate.
+ * @returns The packed entity.
+ */
+export const allocateEntityWithId = (index: EntityIndex, id: number): Entity => {
+    while (index.maxId <= id) {
+        const newId = index.maxId++;
+        index.dense.push(packEntity(index.worldId, 0, newId));
+        index.sparse[newId] = index.dense.length - 1;
+    }
+
+    const denseIndex = index.sparse[id];
+    if (denseIndex < index.aliveCount) throw new Error(`Koota: Entity ID ${id} is already alive.`);
+
+    // Swap the requested entity into the first free slot.
+    const swapIndex = index.aliveCount;
+    const swapEntity = index.dense[swapIndex];
+    const entity = index.dense[denseIndex];
+    index.dense[swapIndex] = entity;
+    index.sparse[id] = swapIndex;
+    index.dense[denseIndex] = swapEntity;
+    index.sparse[getEntityId(swapEntity)] = denseIndex;
+
+    const allocated = incrementGeneration(entity);
+    index.dense[swapIndex] = allocated;
+    index.aliveCount++;
+
+    return allocated;
+};

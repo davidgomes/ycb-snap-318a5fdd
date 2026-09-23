@@ -5,7 +5,7 @@ import type { ConfigurableTrait } from '../trait/types';
 import { universe } from '../universe/universe';
 import type { World } from '../world';
 import type { Entity } from './types';
-import { allocateEntity, releaseEntity } from './utils/entity-index';
+import { allocateEntity, allocateEntityWithId, releaseEntity } from './utils/entity-index';
 import { getEntityId, getEntityWorldId } from './utils/pack-entity';
 
 // Ensure entity methods are patched.
@@ -24,6 +24,21 @@ export function createEntity(world: World, ...traits: ConfigurableTrait[]): Enti
 
     ctx.entityTraits.set(entity, new Set());
     addTrait(world, entity, ...traits);
+
+    return entity;
+}
+
+export function createEntityWithId(world: World, id: number): Entity {
+    const ctx = world[$internal];
+    const entity = allocateEntityWithId(ctx.entityIndex, id);
+
+    for (const query of ctx.notQueries) {
+        const match = query.check(world, entity);
+        if (match) query.add(entity);
+        query.resetTrackingBitmasks(getEntityId(entity));
+    }
+
+    ctx.entityTraits.set(entity, new Set());
 
     return entity;
 }

@@ -55,6 +55,24 @@ export type {
 } from './trait/types';
 export type { AoSFactory, Norm, Schema, Store, StoreType } from './storage/types';
 export type { TraitType } from './trait/types';
+export {
+    createTraitRegistry,
+    diffEntitySnapshots,
+    diffWorldSnapshots,
+    rollbackEntity,
+    rollbackWorld,
+    snapshotEntity,
+    snapshotWorld,
+} from './snapshot/snapshot';
+export type {
+    EntitySnapshot,
+    EntitySnapshotDiff,
+    RelationSnapshot,
+    TraitRegistry,
+    TraitRegistryEntry,
+    WorldSnapshot,
+    WorldSnapshotDiff,
+} from './snapshot/snapshot';
 export { universe } from './universe/universe';
 export type { World, WorldOptions } from './world';
 export { createWorld } from './world';

@@ -1,3 +1,4 @@
+import type { EntitySnapshot, TraitRegistry } from '../snapshot/snapshot';
 import type { Relation, RelationPair } from '../relation/types';
 import type {
     ConfigurableTrait,
@@ -25,4 +26,6 @@ export type Entity = number & {
     id: () => number;
     generation: () => number;
     isAlive: () => boolean;
+    snapshot: (registry: TraitRegistry) => EntitySnapshot;
+    rollback: (registry: TraitRegistry, snapshot: EntitySnapshot) => void;
 };
