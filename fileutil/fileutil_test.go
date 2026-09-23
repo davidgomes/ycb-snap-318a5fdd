@@ -12,20 +12,43 @@ import (
 )
 
 func TestEnsureFileName(t *testing.T) {
-	p := EnsureFileName("/Users/jack/Desktop/hello.sql", true, false)
+	p := EnsureFileName("/Users/jack/Desktop/hello.sql", true, false, false)
 	assert.Equal(t, "/Users/jack/Desktop/hello.sql.gz", p)
+
+	p = EnsureFileName("/Users/jack/Desktop/hello.sql", true, true, false)
+	assert.Equal(t, "/Users/jack/Desktop/hello.sql.gz.enc", p)
+
+	p = EnsureFileName("/Users/jack/Desktop/hello.sql", true, true, true)
+	dir, filename := filepath.Split(p)
+	assert.Equal(t, "/Users/jack/Desktop/", dir)
+	assert.True(t, strings.HasSuffix(filename, "-hello.sql.gz.enc"))
 }
 
 func TestEnsureFileSuffix(t *testing.T) {
-	assert := assert.New(t)
-	f := EnsureFileSuffix("test.sql", true)
-	assert.Equal("test.sql.gz", f)
+	tests := []struct {
+		filename      string
+		shouldGzip    bool
+		shouldEncrypt bool
+		expected      string
+	}{
+		{"test.sql", false, false, "test.sql"},
+		{"test.sql", true, false, "test.sql.gz"},
+		{"test.sql.gz", true, false, "test.sql.gz"},
+		{"test.sql", false, true, "test.sql.enc"},
+		{"test.sql.enc", false, true, "test.sql.enc"},
+		{"test.sql", true, true, "test.sql.gz.enc"},
+		{"test.sql.gz", true, true, "test.sql.gz.enc"},
+		{"test.sql.enc", true, true, "test.sql.gz.enc"},
+		{"test.sql.gz.enc", true, true, "test.sql.gz.enc"},
+	}
 
-	f = EnsureFileSuffix("test.sql.gz", true)
-	assert.Equal("test.sql.gz", f)
+	for _, tt := range tests {
+		f := EnsureFileSuffix(tt.filename, tt.shouldGzip, tt.shouldEncrypt)
+		assert.Equal(t, tt.expected, f, "EnsureFileSuffix(%q, %v, %v)", tt.filename, tt.shouldGzip, tt.shouldEncrypt)
 
-	f = EnsureFileSuffix("test.sql", false)
-	assert.Equal("test.sql", f)
+		again := EnsureFileSuffix(f, tt.shouldGzip, tt.shouldEncrypt)
+		assert.Equal(t, f, again, "EnsureFileSuffix should be idempotent for %q", f)
+	}
 }
 
 func TestEnsureUniqueness(t *testing.T) {
