@@ -154,6 +154,46 @@ export interface SetStateOptions {
   meta?: any
 }
 
+const persisterRestoreResultBrand = Symbol.for(
+  '@tanstack/query-core/persisterRestoreResult',
+)
+
+export interface PersisterRestoreResult<
+  TData = unknown,
+  TError = DefaultError,
+> {
+  readonly [persisterRestoreResultBrand]: true
+  data: TData
+  state: QueryState<TData, TError>
+}
+
+/**
+ * Wraps a persisted query snapshot so that it can be returned from a `persister`.
+ * The query will adopt the given state as-is instead of treating it as a fresh fetch.
+ */
+export function createPersisterRestoreResult<
+  TData = unknown,
+  TError = DefaultError,
+>({
+  data,
+  state,
+}: {
+  data: TData
+  state: QueryState<TData, TError>
+}): PersisterRestoreResult<TData, TError> {
+  return { [persisterRestoreResultBrand]: true, data, state }
+}
+
+function isPersisterRestoreResult(
+  value: unknown,
+): value is PersisterRestoreResult<any, any> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as any)[persisterRestoreResultBrand] === true
+  )
+}
+
 // CLASS
 
 export class Query<
@@ -523,12 +563,28 @@ export class Query<
       this.#dispatch({ type: 'fetch', meta: context.fetchOptions?.meta })
     }
 
+    let restoredState: QueryState<TData, TError> | undefined
+
     // Try to fetch the data
     this.#retryer = createRetryer({
       initialPromise: fetchOptions?.initialPromise as
         | Promise<TData>
         | undefined,
-      fn: context.fetchFn as () => Promise<TData>,
+      fn: () => {
+        restoredState = undefined
+        const unwrap = (result: unknown) => {
+          if (isPersisterRestoreResult(result)) {
+            restoredState = result.state
+            return result.data as TData
+          }
+          return result as TData
+        }
+        const result = context.fetchFn()
+        return typeof (result as PromiseLike<unknown> | undefined)?.then ===
+          'function'
+          ? Promise.resolve(result).then(unwrap)
+          : unwrap(result)
+      },
       onCancel: (error) => {
         if (error instanceof CancelledError && error.revert) {
           this.setState({
@@ -564,6 +620,17 @@ export class Query<
           )
         }
         throw new Error(`${this.queryHash} data is undefined`)
+      }
+
+      if (restoredState) {
+        this.#revertState = undefined
+        const restoredData = replaceData(this.state.data, data, this.options)
+        this.setState({
+          ...restoredState,
+          data: restoredData,
+          fetchStatus: 'idle',
+        })
+        return restoredData
       }
 
       this.setData(data)

@@ -1,4 +1,5 @@
 import {
+  createPersisterRestoreResult,
   hashKey,
   matchQuery,
   notifyManager,
@@ -78,6 +79,64 @@ export interface StoragePersisterOptions<TStorageValue = string> {
 export const PERSISTER_KEY_PREFIX = 'tanstack-query'
 
 /**
+ * Merges a persisted snapshot into the state of a query that already exists in memory.
+ * Data freshness and error freshness are resolved independently, so newer data is kept
+ * alongside a newer error from the other side (resulting in a refetch error).
+ * Returns `undefined` when the in-memory state is already at least as fresh on both axes.
+ */
+function mergeRestoredState(
+  current: QueryState,
+  persisted: QueryState,
+): Partial<QueryState> | undefined {
+  const persistedHasNewerData =
+    persisted.data !== undefined &&
+    (current.data === undefined ||
+      persisted.dataUpdatedAt > current.dataUpdatedAt)
+  const persistedHasNewerError =
+    persisted.errorUpdatedAt > current.errorUpdatedAt
+
+  if (!persistedHasNewerData && !persistedHasNewerError) {
+    return undefined
+  }
+
+  const dataSource = persistedHasNewerData ? persisted : current
+  const errorSource = persistedHasNewerError ? persisted : current
+
+  const isError =
+    errorSource.error != null &&
+    (dataSource.data === undefined ||
+      errorSource.errorUpdatedAt >= dataSource.dataUpdatedAt)
+
+  if (isError) {
+    return {
+      data: dataSource.data,
+      dataUpdateCount: dataSource.dataUpdateCount,
+      dataUpdatedAt: dataSource.dataUpdatedAt,
+      error: errorSource.error,
+      errorUpdateCount: errorSource.errorUpdateCount,
+      errorUpdatedAt: errorSource.errorUpdatedAt,
+      fetchFailureCount: errorSource.fetchFailureCount,
+      fetchFailureReason: errorSource.fetchFailureReason,
+      isInvalidated: true,
+      status: 'error',
+    }
+  }
+
+  return {
+    data: dataSource.data,
+    dataUpdateCount: dataSource.dataUpdateCount,
+    dataUpdatedAt: dataSource.dataUpdatedAt,
+    error: null,
+    errorUpdateCount: errorSource.errorUpdateCount,
+    errorUpdatedAt: errorSource.errorUpdatedAt,
+    fetchFailureCount: dataSource.fetchFailureCount,
+    fetchFailureReason: dataSource.fetchFailureReason,
+    isInvalidated: dataSource.isInvalidated,
+    status: dataSource.data === undefined ? dataSource.status : 'success',
+  }
+}
+
+/**
  * Warning: experimental feature.
  * This utility function enables fine-grained query persistence.
  * Simple add it as a `persister` parameter to `useQuery` or `defaultOptions` on `queryClient`.
@@ -126,6 +185,18 @@ export function experimental_createQueryPersister<TStorageValue = string>({
     queryHash: string,
     afterRestoreMacroTask?: (persistedQuery: PersistedQuery) => void,
   ) {
+    const persistedQuery = await retrievePersistedQuery(
+      queryHash,
+      afterRestoreMacroTask,
+    )
+    // We must resolve the promise here, as otherwise we will have `loading` state in the app until `queryFn` resolves
+    return persistedQuery?.state.data as T | undefined
+  }
+
+  async function retrievePersistedQuery(
+    queryHash: string,
+    afterRestoreMacroTask?: (persistedQuery: PersistedQuery) => void,
+  ): Promise<PersistedQuery | undefined> {
     if (storage != null) {
       const storageKey = `${prefix}-${queryHash}`
       try {
@@ -148,8 +219,7 @@ export function experimental_createQueryPersister<TStorageValue = string>({
                 afterRestoreMacroTask(persistedQuery),
               )
             }
-            // We must resolve the promise here, as otherwise we will have `loading` state in the app until `queryFn` resolves
-            return persistedQuery.state.data as T
+            return persistedQuery
           }
         }
       } catch (err) {
@@ -209,13 +279,12 @@ export function experimental_createQueryPersister<TStorageValue = string>({
 
     // Try to restore only if we do not have any data in the cache and we have persister defined
     if (matchesFilter && query.state.data === undefined && storage != null) {
-      const restoredData = await retrieveQuery(
+      const persistedQuery = await retrievePersistedQuery(
         query.queryHash,
-        (persistedQuery: PersistedQuery) => {
-          // Set proper updatedAt, since resolving in the first pass overrides those values
+        (restoredQuery: PersistedQuery) => {
           query.setState({
-            dataUpdatedAt: persistedQuery.state.dataUpdatedAt,
-            errorUpdatedAt: persistedQuery.state.errorUpdatedAt,
+            dataUpdatedAt: restoredQuery.state.dataUpdatedAt,
+            errorUpdatedAt: restoredQuery.state.errorUpdatedAt,
           })
 
           if (
@@ -227,8 +296,11 @@ export function experimental_createQueryPersister<TStorageValue = string>({
         },
       )
 
-      if (restoredData !== undefined) {
-        return Promise.resolve(restoredData as T)
+      if (persistedQuery?.state.data !== undefined) {
+        return createPersisterRestoreResult({
+          data: persistedQuery.state.data as T,
+          state: persistedQuery.state as QueryState<T>,
+        })
       }
     }
 
@@ -303,13 +375,27 @@ export function experimental_createQueryPersister<TStorageValue = string>({
             }
           }
 
-          queryClient.setQueryData(
-            persistedQuery.queryKey,
-            persistedQuery.state.data,
-            {
-              updatedAt: persistedQuery.state.dataUpdatedAt,
-            },
-          )
+          const queryCache = queryClient.getQueryCache()
+          const existingQuery = queryCache.get(persistedQuery.queryHash)
+
+          if (existingQuery) {
+            const mergedState = mergeRestoredState(
+              existingQuery.state,
+              persistedQuery.state,
+            )
+            if (mergedState) {
+              existingQuery.setState(mergedState)
+            }
+          } else {
+            queryCache.build(
+              queryClient,
+              queryClient.defaultQueryOptions({
+                queryKey: persistedQuery.queryKey,
+                queryHash: persistedQuery.queryHash,
+              }),
+              { ...persistedQuery.state, fetchStatus: 'idle' },
+            )
+          }
         }
       }
     } else if (process.env.NODE_ENV === 'development') {
