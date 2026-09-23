@@ -366,6 +366,16 @@ Or stream the text, on a line-by-line basis...
 
 HTTPX will use universal line endings, normalising all cases to `\n`.
 
+Or stream JSON values, such as the elements of a JSON array...
+
+```pycon
+>>> with httpx.stream("GET", "https://www.example.com/items") as r:
+...     for item in r.iter_json():
+...         print(item)
+```
+
+The response must have an `application/json` or `application/*+json` content type, in which case each element of a top-level array is returned in turn, or any other top-level value is returned by itself. Newline delimited JSON (`application/ndjson` or `application/x-ndjson`) and JSON text sequences (`application/json-seq`) are also supported, returning each JSON value in turn. Other content types, or malformed content, will raise a `DecodingError`.
+
 In some cases you might want to access the raw bytes on the response without applying any HTTP content decoding. In this case any content encoding that the web server has applied such as `gzip`, `deflate`, `brotli`, or `zstd` will
 not be automatically decoded.
 
