@@ -1631,6 +1631,20 @@ class tube(Timeout, Logger):
         # raise NotImplementedError()
         # But this causes issues with the unit tests.
 
+    def mux(self, **kwargs):
+        """mux(**kwargs) -> TubeMultiplexer
+
+        Wrap this tube in a :class:`pwnlib.tubes.mux.TubeMultiplexer`.
+
+        Keyword arguments are forwarded to the multiplexer constructor
+        (``max_channels``, ``high_water_mark``, and ``low_water_mark``).
+
+        Returns:
+            A new :class:`~pwnlib.tubes.mux.TubeMultiplexer` that owns this tube.
+        """
+        from pwnlib.tubes.mux import TubeMultiplexer
+        return TubeMultiplexer(self, **kwargs)
+
     def fileno(self):
         """fileno() -> int
 
