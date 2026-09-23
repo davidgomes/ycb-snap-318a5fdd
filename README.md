@@ -1263,6 +1263,49 @@ class DataClass(DataClassDictMixin):
 x = DataClass.from_dict({"FieldA": 1, "#invalid": 2})  # DataClass(a=1, b=2)
 ```
 
+#### `flatten` option
+
+This option merges the keys of a nested dataclass field into the parent
+dictionary. The nested dataclass keeps its own config (aliases, `omit_none`,
+etc.). Keys of a flattened field can be transformed with one of two mutually
+exclusive options:
+
+* `flatten_prefix` — a string prepended to every key, or `True` to use
+  the field name followed by an underscore
+* `flatten_rename` — a mapping from nested keys to new keys; unlisted keys
+  stay unchanged
+
+A flattened `Optional` field is serialized without any keys when its value is
+`None`, and it's deserialized as `None` when none of its keys are present.
+
+Invalid configurations are detected when the class is compiled, raising
+`InvalidFlattenedField`: key collisions with other fields (including all
+kinds of aliases), non-dataclass field types, and unknown or duplicate target
+keys in `flatten_rename`.
+
+```python
+from dataclasses import dataclass, field
+from typing import Optional
+from mashumaro import DataClassDictMixin, field_options
+
+@dataclass
+class Address(DataClassDictMixin):
+    city: str
+    street: str
+
+@dataclass
+class Person(DataClassDictMixin):
+    name: str
+    home: Address = field(metadata=field_options(flatten=True))
+    work: Optional[Address] = field(
+        default=None,
+        metadata=field_options(flatten=True, flatten_prefix=True),
+    )
+
+Person("John", Address("Paris", "Main")).to_dict()
+# {'name': 'John', 'city': 'Paris', 'street': 'Main'}
+```
+
 ### Config options
 
 If inheritance is not an empty word for you, you'll fall in love with the
