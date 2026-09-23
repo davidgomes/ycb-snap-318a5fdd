@@ -10,6 +10,9 @@ import {
   fromResult,
   fromMaybe,
   toMaybe,
+  sequenceMaybeAsResult,
+  traverseMaybeAsResult,
+  zipMaybeAsResult,
 } from 'true-myth/toolbelt';
 
 describe('transposeResult', () => {
@@ -114,4 +117,91 @@ test('`fromResult`', () => {
   const reason = 'oh teh noes';
   const anErr = Result.err<number, string>(reason);
   expect(fromResult(anErr)).toEqual(Maybe.nothing());
+});
+
+describe('`sequenceMaybeAsResult`', () => {
+  test('all `Just`', () => {
+    let result = sequenceMaybeAsResult('missing', [Maybe.just(1), Maybe.just(2)]);
+    expect(result).toEqual(Result.ok([1, 2]));
+    expectTypeOf(result).toEqualTypeOf<Result<number[], string>>();
+  });
+
+  test('with a `Nothing`, stopping after it', () => {
+    let pulled: Array<Maybe<number>> = [];
+    function* items() {
+      for (let m of [Maybe.just(1), Maybe.nothing<number>(), Maybe.just(3)]) {
+        pulled.push(m);
+        yield m;
+      }
+    }
+    expect(sequenceMaybeAsResult('missing', items())).toEqual(Result.err('missing'));
+    expect(pulled).toEqual([Maybe.just(1), Maybe.nothing()]);
+  });
+
+  test('curried', () => {
+    let orMissing = sequenceMaybeAsResult('missing');
+    let result = orMissing([Maybe.just('a'), Maybe.just('b')]);
+    expect(result).toEqual(Result.ok(['a', 'b']));
+    expectTypeOf(result).toEqualTypeOf<Result<string[], string>>();
+    expect(orMissing([Maybe.nothing<string>()])).toEqual(Result.err('missing'));
+  });
+
+  test('with an `undefined` error value', () => {
+    let result = sequenceMaybeAsResult(undefined, [Maybe.nothing<number>()]);
+    expect(result).toEqual(Result.err(undefined));
+    expectTypeOf(result).toEqualTypeOf<Result<number[], undefined>>();
+  });
+});
+
+describe('`traverseMaybeAsResult`', () => {
+  const positive = (n: number) => (n > 0 ? Maybe.just(n) : Maybe.nothing<number>());
+
+  test('all `Just`', () => {
+    let result = traverseMaybeAsResult('not positive', [1, 2], positive);
+    expect(result).toEqual(Result.ok([1, 2]));
+    expectTypeOf(result).toEqualTypeOf<Result<number[], string>>();
+  });
+
+  test('with a `Nothing`, not calling `fn` after it', () => {
+    let called: number[] = [];
+    let result = traverseMaybeAsResult('not positive', [1, -2, 3], (n) => {
+      called.push(n);
+      return positive(n);
+    });
+    expect(result).toEqual(Result.err('not positive'));
+    expect(called).toEqual([1, -2]);
+  });
+
+  test('curried', () => {
+    let orNotPositive = traverseMaybeAsResult('not positive');
+    let result = orNotPositive([1, 2], positive);
+    expect(result).toEqual(Result.ok([1, 2]));
+    expectTypeOf(result).toEqualTypeOf<Result<number[], string>>();
+    expect(orNotPositive([-1], positive)).toEqual(Result.err('not positive'));
+  });
+});
+
+describe('`zipMaybeAsResult`', () => {
+  test('both `Just`', () => {
+    let result = zipMaybeAsResult('missing', Maybe.just(1), Maybe.just('a'));
+    expect(result).toEqual(Result.ok([1, 'a']));
+    expectTypeOf(result).toEqualTypeOf<Result<[number, string], string>>();
+  });
+
+  test('either `Nothing`', () => {
+    expect(zipMaybeAsResult('missing', Maybe.nothing<number>(), Maybe.just('a'))).toEqual(
+      Result.err('missing')
+    );
+    expect(zipMaybeAsResult('missing', Maybe.just(1), Maybe.nothing<string>())).toEqual(
+      Result.err('missing')
+    );
+  });
+
+  test('curried', () => {
+    let orMissing = zipMaybeAsResult('missing');
+    let result = orMissing(Maybe.just(1), Maybe.just(true));
+    expect(result).toEqual(Result.ok([1, true]));
+    expectTypeOf(result).toEqualTypeOf<Result<[number, boolean], string>>();
+    expect(orMissing(Maybe.nothing<number>(), Maybe.just(true))).toEqual(Result.err('missing'));
+  });
 });
