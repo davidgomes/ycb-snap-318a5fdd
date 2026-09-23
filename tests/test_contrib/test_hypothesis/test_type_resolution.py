@@ -32,11 +32,13 @@ from returns.maybe import Maybe
 from returns.pipeline import is_successful
 from returns.primitives.laws import Lawful
 from returns.result import Result, ResultE
+from returns.validated import Validated
 from test_hypothesis.test_laws import test_custom_type_applicative
 
 _all_containers: Sequence[type[Lawful]] = (
     Maybe,
     Result,
+    Validated,
     IO,
     IOResult,
     Future,
@@ -99,6 +101,19 @@ def test_reader_result_error_alias_resolves(
     """Ensures that type aliases are resolved correctly."""
     real_result = thing(RequiresContextResultE.no_args)
     assert isinstance(real_result.failure(), Exception)
+
+
+CustomValidated = Validated[int, str]
+
+
+@given(st.from_type(CustomValidated))
+def test_custom_validated_types_resolve(thing: CustomValidated) -> None:
+    """Ensures that ``Validated`` generic arguments are resolved correctly."""
+    if is_successful(thing):
+        assert isinstance(thing.unwrap(), int)
+    else:
+        assert len(thing.failure()) == 1
+        assert isinstance(thing.failure()[0], str)
 
 
 CustomReaderResult = RequiresContextResult[int, str, bool]
