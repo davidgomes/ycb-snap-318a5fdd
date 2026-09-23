@@ -431,6 +431,41 @@ import { Or } from 'koota'
 const movingOrVisible = world.query(Or(Velocity, Renderable))
 ```
 
+#### Predicates
+
+`createPredicate` filters entities by trait values. Pass the dependency traits and a function that receives those traits' data, in order, as one array. Each call returns a distinct predicate. Tag traits and relations are rejected as dependencies.
+
+A predicate matches when every dependency is present and the function returns a truthy value. It adds no data to `updateEach` / `readEach` tuples. `set` or `add` on a dependency re-evaluates it. Changes made while `updateEach` is running are applied after that iteration finishes.
+
+```js
+import { createPredicate, Not, Or, createAdded, createRemoved, createChanged } from 'koota'
+
+const isFast = createPredicate([Velocity], ([velocity]) => velocity.x > 10)
+
+// Entities whose velocity is above the threshold
+const fast = world.query(isFast)
+
+// Missing a dependency, or the function returned false
+const notFast = world.query(Not(isFast))
+
+// Either predicate may match. Traits are allowed in the same Or.
+const fastOrNamed = world.query(Or(isFast, isNamed))
+
+const Added = createAdded()
+const Removed = createRemoved()
+const Changed = createChanged()
+
+// Satisfies the predicate and was not in the previous result
+world.query(Added(isFast))
+// Was a match and is now false (including a removed dependency)
+world.query(Removed(isFast))
+// Truthiness flipped since the previous result
+world.query(Changed(isFast))
+
+// Predicates compose with relation pairs
+world.query(ChildOf(parent), isFast)
+```
+
 #### Added
 
 The `Added` modifier tracks all entities that have added the specified traits or relations since the last time the query was run. A new instance of the modifier must be created for tracking to be unique.

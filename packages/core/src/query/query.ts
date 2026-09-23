@@ -11,6 +11,14 @@ import { universe } from '../universe/universe';
 import { SparseSet } from '../utils/sparse-set';
 import type { World } from '../world';
 import { getTrackingType, isModifier, isOrWithModifiers, isTrackingModifier } from './modifier';
+import {
+    commitPredicateTracking,
+    isPredicate,
+    queryUsesPredicates,
+    updatePredicateLatches,
+    type Predicate,
+    type PredicateTrackingGroup,
+} from './predicate';
 import { createQueryResult } from './query-result';
 import { $queryRef } from './symbols';
 import {
@@ -43,6 +51,7 @@ export function runQuery<T extends QueryParameter[]>(
 
     // Clear so it can accumulate again.
     if (query.isTracking) {
+        commitPredicateTracking(query);
         query.entities.clear();
         // PERF: Use indexed loop instead of for...of
         const len = entities.length;
@@ -194,6 +203,12 @@ export function createQueryInstance<T extends QueryParameter[]>(
         addSubscriptions: new Set<QuerySubscriber>(),
         removeSubscriptions: new Set<QuerySubscriber>(),
         relationFilters: [],
+        predicateFilters: {
+            required: [],
+            forbidden: [],
+            or: [],
+        },
+        predicateTrackingGroups: [],
 
         run: (world: World, params: QueryParameter[]) => runQuery(world, query, params),
         add: (entity: Entity) => addEntityToQuery(query, entity),
@@ -217,6 +232,12 @@ export function createQueryInstance<T extends QueryParameter[]>(
     // Process all parameters
     for (let i = 0; i < parameters.length; i++) {
         const parameter = parameters[i];
+
+        if (isPredicate(parameter)) {
+            query.predicateFilters.required.push(parameter);
+            watchPredicate(world, query, parameter);
+            continue;
+        }
 
         // Handle relation pairs
         if (isRelationPair(parameter)) {
@@ -246,23 +267,38 @@ export function createQueryInstance<T extends QueryParameter[]>(
                 query.traitInstances.forbidden.push(
                     ...traits.map((t) => getTraitInstance(ctx.traitInstances, t)!)
                 );
+                watchModifierPredicates(world, query, parameter.predicates, 'forbidden');
             } else if (parameter.type === 'or') {
                 // Handle regular traits in Or
                 query.traitInstances.or.push(
                     ...traits.map((t) => getTraitInstance(ctx.traitInstances, t)!)
                 );
+                watchModifierPredicates(world, query, parameter.predicates, 'or');
 
                 // Handle nested tracking modifiers in Or
                 if (isOrWithModifiers(parameter)) {
                     for (const nestedModifier of parameter.modifiers) {
                         if (isTrackingModifier(nestedModifier)) {
-                            processTrackingModifier(world, query, nestedModifier, 'or', ctx, trackingGroupsMap);
+                            if (nestedModifier.traits.length > 0 || nestedModifier.predicates.length === 0) {
+                                processTrackingModifier(
+                                    world,
+                                    query,
+                                    nestedModifier,
+                                    'or',
+                                    ctx,
+                                    trackingGroupsMap
+                                );
+                            }
+                            addPredicateTracking(world, query, nestedModifier, 'or');
                         }
                     }
                 }
             } else if (isTrackingModifier(parameter)) {
                 // Top-level tracking modifiers use AND logic
-                processTrackingModifier(world, query, parameter, 'and', ctx, trackingGroupsMap);
+                if (parameter.traits.length > 0 || parameter.predicates.length === 0) {
+                    processTrackingModifier(world, query, parameter, 'and', ctx, trackingGroupsMap);
+                }
+                addPredicateTracking(world, query, parameter, 'and');
             }
         } else {
             // Regular trait
@@ -425,7 +461,7 @@ export function createQueryInstance<T extends QueryParameter[]>(
                 }
             }
         }
-    } else {
+    } else if (!queryUsesPredicates(query)) {
         // Non-tracking query: populate immediately
         const entities = ctx.entityIndex.dense;
         for (let i = 0; i < entities.length; i++) {
@@ -437,7 +473,73 @@ export function createQueryInstance<T extends QueryParameter[]>(
         }
     }
 
+    if (queryUsesPredicates(query)) {
+        const hasTraitTracking = query.trackingGroups.length > 0;
+        const entities = ctx.entityIndex.dense;
+        for (let i = 0; i < entities.length; i++) {
+            const entity = entities[i];
+            if (query.predicateTrackingGroups.length > 0) {
+                updatePredicateLatches(world, query, entity);
+            }
+            const match = hasRelationFilters
+                ? checkQueryWithRelations(world, query, entity)
+                : query.check(world, entity);
+            if (hasTraitTracking) {
+                if (!match) query.remove(world, entity);
+            } else if (match) query.add(entity);
+            else query.remove(world, entity);
+        }
+    }
+
     return query;
+}
+
+function watchPredicate(world: World, query: QueryInstance, predicate: Predicate) {
+    const ctx = world[$internal];
+    const dependencies = predicate.dependencies;
+    for (let i = 0; i < dependencies.length; i++) {
+        const dependency = dependencies[i];
+        if (!hasTraitInstance(ctx.traitInstances, dependency)) registerTrait(world, dependency);
+        getTraitInstance(ctx.traitInstances, dependency)!.predicateQueries.add(query);
+    }
+}
+
+function watchModifierPredicates(
+    world: World,
+    query: QueryInstance,
+    predicates: Predicate[],
+    mode: 'forbidden' | 'or'
+) {
+    for (let i = 0; i < predicates.length; i++) {
+        query.predicateFilters[mode].push(predicates[i]);
+        watchPredicate(world, query, predicates[i]);
+    }
+}
+
+function addPredicateTracking(
+    world: World,
+    query: QueryInstance,
+    modifier: Modifier,
+    logic: 'and' | 'or'
+) {
+    if (modifier.predicates.length === 0) return;
+    const type = getTrackingType(modifier);
+    if (!type) return;
+
+    const group: PredicateTrackingGroup = {
+        logic,
+        type,
+        predicates: modifier.predicates.slice(),
+        committed: modifier.predicates.map(() => []),
+        current: modifier.predicates.map(() => []),
+        latched: [],
+    };
+    query.predicateTrackingGroups.push(group);
+    query.isTracking = true;
+
+    for (let i = 0; i < modifier.predicates.length; i++) {
+        watchPredicate(world, query, modifier.predicates[i]);
+    }
 }
 
 let queryId = 0;

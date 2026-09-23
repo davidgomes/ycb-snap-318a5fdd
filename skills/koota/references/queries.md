@@ -55,6 +55,41 @@ world.query(Or(IsPlayer, IsEnemy))
 world.query(Position, Not(Velocity), Or(IsPlayer, IsEnemy))
 ```
 
+## Predicates
+
+`createPredicate` filters on trait values. The function receives one array of dependency data, in dependency order. Each call returns a distinct predicate. Tags and relations are not valid dependencies.
+
+Predicates add nothing to `updateEach` / `readEach` tuples. `entity.set` or `entity.add` on a dependency re-evaluates the predicate. Writes during `updateEach` re-evaluate after the iteration ends.
+
+```typescript
+import { createPredicate, Not, Or, createAdded, createRemoved, createChanged } from 'koota'
+
+const isFast = createPredicate([Velocity], ([velocity]) => velocity.x > 10)
+
+world.query(isFast)
+world.query(Position, isFast) // tuple is still just Position
+
+// Missing any dependency, or the function returned false
+world.query(Not(isFast))
+
+// Predicates, or a mix of predicates and traits
+world.query(Or(isFast, IsPlayer))
+
+const Added = createAdded()
+const Removed = createRemoved()
+const Changed = createChanged()
+
+// True now, and not in the previous result
+world.query(Added(isFast))
+// Transitioned to false
+world.query(Removed(isFast))
+// Any truthiness change since the previous result
+world.query(Changed(isFast))
+
+// Relation pair + predicate
+world.query(ChildOf(parent), isFast)
+```
+
 ## Tracking modifiers
 
 Track structural and data changes. Each tracking modifier must be created as a unique instance.

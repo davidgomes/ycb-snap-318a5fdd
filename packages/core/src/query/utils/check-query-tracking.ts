@@ -2,6 +2,7 @@ import { $internal } from '../../common';
 import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
+import { passesPredicates, queryUsesPredicates } from '../predicate';
 import { EventType, QueryInstance } from '../types';
 
 /**
@@ -32,9 +33,12 @@ export function checkQueryTracking(
 
     const generationsLen = generations.length;
     const trackingGroupsLen = trackingGroups.length;
+    const usesPredicates = queryUsesPredicates(query);
+    let hasOrTraits = false;
+    let orFailed = false;
 
     // Early exit: no traits to check
-    if (traitInstancesAll.length === 0) return false;
+    if (traitInstancesAll.length === 0 && !usesPredicates) return false;
 
     // 1. Check static constraints (required/forbidden/or)
     for (let i = 0; i < generationsLen; i++) {
@@ -56,8 +60,14 @@ export function checkQueryTracking(
         // Check required traits
         if (required && (entityMask & required) !== required) return false;
 
-        // Check Or traits
-        if (or !== 0 && (entityMask & or) === 0) return false;
+        // Check Or traits. Predicate alternatives can still satisfy the group.
+        if (or !== 0) {
+            hasOrTraits = true;
+            if ((entityMask & or) === 0) {
+                if (query.predicateFilters.or.length === 0) return false;
+                orFailed = true;
+            }
+        }
     }
 
     // 2. Process tracking groups - update trackers and check cross-event invalidation
@@ -137,10 +147,12 @@ export function checkQueryTracking(
         }
     }
 
-    // If we have OR groups, at least one must match
-    if (hasOrGroup && !anyOrMatched) {
-        return false;
+    if (!usesPredicates) {
+        // If we have OR groups, at least one must match
+        if (hasOrGroup && !anyOrMatched) return false;
+        return true;
     }
 
-    return true;
+    const traitOrState = hasOrGroup ? (anyOrMatched ? 'matched' : 'failed') : 'none';
+    return passesPredicates(world, query, entity, orFailed, hasOrTraits, traitOrState);
 }

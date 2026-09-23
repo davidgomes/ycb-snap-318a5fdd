@@ -3,6 +3,8 @@ export type { Actions, ActionsInitializer, ActionRecord } from './actions/types'
 export { $internal } from './common';
 export type { Entity } from './entity/types';
 export { unpackEntity } from './entity/utils/pack-entity';
+export { createPredicate } from './query/predicate';
+export type { Predicate } from './query/predicate';
 export { createAdded } from './query/modifiers/added';
 export { createChanged } from './query/modifiers/changed';
 export { Not } from './query/modifiers/not';

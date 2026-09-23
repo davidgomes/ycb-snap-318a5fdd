@@ -5,6 +5,7 @@ import { isRelation } from '../../relation/utils/is-relation';
 import { hasTrait, registerTrait } from '../../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../../trait/trait-instance';
 import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
+import { isPredicate, type Predicate } from '../predicate';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
 import { createModifier } from '../modifier';
@@ -20,14 +21,26 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    function changed<T extends TraitOrRelation[]>(
         ...inputs: T
-    ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`changed-${id}`, id, traits);
-    };
+    ): Modifier<ExtractTraits<T>, `changed-${number}`>;
+    function changed(...inputs: Array<TraitOrRelation | Predicate>): Modifier;
+    function changed(...inputs: Array<TraitOrRelation | Predicate>): Modifier {
+        const traits: Trait[] = [];
+        const predicates: Predicate[] = [];
+
+        for (let i = 0; i < inputs.length; i++) {
+            const input = inputs[i];
+            if (isPredicate(input)) predicates.push(input);
+            else traits.push(isRelation(input) ? input[$internal].trait : input);
+        }
+
+        const modifier = createModifier(`changed-${id}`, id, traits);
+        modifier.predicates = predicates;
+        return modifier;
+    }
+
+    return changed;
 }
 
 /** @inline */

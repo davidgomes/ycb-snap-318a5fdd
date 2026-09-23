@@ -43,6 +43,9 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    /** Depth of updateEach loops that should defer predicate re-evaluation */
+    predicateDeferDepth: number;
+    predicateDirty: { entity: Entity; trait: Trait }[];
 };
 
 export type World = {

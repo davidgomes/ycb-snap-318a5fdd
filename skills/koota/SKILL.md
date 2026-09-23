@@ -204,7 +204,7 @@ world.query(Or(IsPlayer, IsEnemy)) // Has either trait
 
 Prefer `updateEach`/`readEach` over `for...of` + `entity.get()` for data-bearing queries. `readEach` still gives you the entity as the second argument.
 
-**Note:** `updateEach`/`readEach` only return data-bearing traits (SoA/AoS). Tags, `Not()`, and relation filters are **excluded**:
+**Note:** `updateEach`/`readEach` only return data-bearing traits (SoA/AoS). Tags, `Not()`, predicates, and relation filters are **excluded**:
 
 ```typescript
 world.query(IsPlayer, Position, Velocity).updateEach(([pos, vel]) => {

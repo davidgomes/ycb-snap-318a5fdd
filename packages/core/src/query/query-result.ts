@@ -10,6 +10,11 @@ import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
 import { isModifier } from './modifier';
 import { setChanged } from './modifiers/changed';
+import { isPredicate } from './predicate';
+import {
+    flushPredicateReevaluations,
+    schedulePredicateReevaluationForTraits,
+} from './predicate-reactivity';
 import type {
     InstancesFromParameters,
     QueryInstance,
@@ -54,7 +59,10 @@ export function createQueryResult<T extends QueryParameter[]>(
             options: QueryResultOptions = { changeDetection: 'auto' }
         ) {
             const state = Array.from({ length: traits.length });
+            const worldCtx = world[$internal];
+            worldCtx.predicateDeferDepth++;
 
+            try {
             // Inline all three permutations of updateEach for performance.
             if (options.changeDetection === 'auto') {
                 const changedPairs: [Entity, Trait][] = [];
@@ -104,6 +112,8 @@ export function createQueryResult<T extends QueryParameter[]>(
                         const store = stores[index];
                         ctx.fastSet(eid, store, state[index]);
                     }
+
+                    schedulePredicateReevaluationForTraits(world, entity, traits);
                 }
 
                 // Trigger change events for each entity that was modified.
@@ -144,6 +154,8 @@ export function createQueryResult<T extends QueryParameter[]>(
                         // Collect changed traits.
                         if (changed) changedPairs.push([entity, trait] as const);
                     }
+
+                    schedulePredicateReevaluationForTraits(world, entity, traits);
                 }
 
                 // Trigger change events for each entity that was modified.
@@ -167,7 +179,14 @@ export function createQueryResult<T extends QueryParameter[]>(
                         const ctx = trait[$internal];
                         ctx.fastSet(eid, stores[j], state[j]);
                     }
+
+                    schedulePredicateReevaluationForTraits(world, entity, traits);
                 }
+            }
+
+            } finally {
+                worldCtx.predicateDeferDepth--;
+                if (worldCtx.predicateDeferDepth === 0) flushPredicateReevaluations(world);
             }
 
             return results;
@@ -263,6 +282,8 @@ export function createQueryResult<T extends QueryParameter[]>(
             }
             continue;
         }
+
+        if (isPredicate(param)) continue;
 
         if (isModifier(param)) {
             // Skip not modifier.
