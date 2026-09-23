@@ -57,6 +57,25 @@ type ScriggoType interface {
 	GoType() reflect.Type
 }
 
+// A Proxy is a Go value that holds a value of a Scriggo type, so that it can
+// be stored in an interface value.
+type Proxy interface {
+	// ProxiedValue returns the held value.
+	ProxiedValue() reflect.Value
+
+	// ProxiedType returns the Scriggo type of the held value.
+	ProxiedType() ScriggoType
+}
+
+// A Methoder is implemented by the Scriggo types that can have methods
+// declared in Scriggo code.
+type Methoder interface {
+	// ScriggoMethod returns the function that implements the method with the
+	// given name in the method set of the type, and reports whether the
+	// receiver must be dereferenced before being passed to the function.
+	ScriggoMethod(name string) (fn *Function, deref bool, ok bool)
+}
+
 type StackShift [4]int8
 
 type Instruction struct {

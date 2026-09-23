@@ -22,9 +22,29 @@ const (
 func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 	isMacro := tok.typ == tokenMacro
 	pos := tok.pos
+	// Parses the method receiver if present.
+	var recv *ast.Parameter
+	tok = p.next()
+	if kind == parseFuncDecl && !isMacro && tok.typ == tokenLeftParenthesis {
+		recvPos := tok.pos
+		var params []*ast.Parameter
+		var isVariadic bool
+		params, isVariadic, _, tok = p.parseFuncParameters(tok, false, false)
+		switch {
+		case len(params) == 0:
+			panic(syntaxError(recvPos, "method has no receiver"))
+		case len(params) > 1:
+			panic(syntaxError(recvPos, "method has multiple receivers"))
+		case isVariadic:
+			panic(syntaxError(recvPos, "invalid use of ..."))
+		}
+		recv = params[0]
+		if tok.typ != tokenIdentifier {
+			panic(syntaxError(tok.pos, "unexpected %s, expecting name", tok.txt))
+		}
+	}
 	// Parses the function name if present.
 	var ident *ast.Identifier
-	tok = p.next()
 	if tok.typ == tokenIdentifier {
 		if kind&parseFuncDecl == 0 {
 			panic(syntaxError(tok.pos, "unexpected %s, expecting (", tok))
@@ -32,11 +52,6 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 		ident = ast.NewIdentifier(tok.pos, string(tok.txt))
 		tok = p.next()
 	} else if kind == parseFuncDecl {
-		// This check could be avoided (the code panics anyway) but improves the
-		// readability of the error message.
-		if !isMacro && tok.typ == tokenLeftParenthesis {
-			panic(syntaxError(tok.pos, "method declarations are not supported in this release of Scriggo"))
-		}
 		// Node to parse must be a function declaration.
 		panic(syntaxError(tok.pos, "unexpected %s, expecting name", tok.txt))
 	}
@@ -59,6 +74,11 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 		panic(syntaxError(tok.pos, "unexpected %s, expecting string, html, css, js, json or markdown", tok))
 	}
 
+	// The receiver is the first parameter of the method.
+	if recv != nil {
+		parameters = append([]*ast.Parameter{recv}, parameters...)
+	}
+
 	// Make the nodes.
 	typ := ast.NewFuncType(pos, isMacro, parameters, result, isVariadic)
 	if kind == parseFuncType || kind&parseFuncType != 0 && tok.typ != tokenLeftBrace {
@@ -66,6 +86,7 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 		return typ, tok
 	}
 	node := ast.NewFunc(pos, ident, typ, nil, false, ast.Format(tok.ctx))
+	node.Recv = recv
 	if !isMacro && tok.typ != tokenLeftBrace {
 		return node, tok
 	}

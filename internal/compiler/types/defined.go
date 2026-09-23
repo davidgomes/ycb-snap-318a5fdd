@@ -27,6 +27,10 @@ type definedType struct {
 	// represents are identical (every defined type, in Go, is different from
 	// every other type).
 	sign *byte
+
+	// methods holds the methods declared on the type. It is shared by all
+	// the copies of the definedType value.
+	methods *methodSet
 }
 
 // DefinedOf returns the defined type with the given name and underlying type.
@@ -36,7 +40,7 @@ func (types *Types) DefinedOf(name string, underlyingType reflect.Type) reflect.
 	if name == "" {
 		panic(internalError("name cannot be empty"))
 	}
-	return definedType{Type: underlyingType, name: name, sign: new(byte)}
+	return definedType{Type: underlyingType, name: name, sign: new(byte), methods: &methodSet{}}
 }
 
 func (x definedType) Name() string {
@@ -55,9 +59,45 @@ func (x definedType) Implements(y reflect.Type) bool {
 	return Implements(x, y)
 }
 
-func (x definedType) MethodByName(string) (reflect.Method, bool) {
-	// TODO.
+// Method returns the i-th exported method, with a value receiver, in the
+// method set of x.
+func (x definedType) Method(i int) reflect.Method {
+	if x.Type.Kind() == reflect.Interface {
+		return x.Type.Method(i)
+	}
+	methods := x.methods.exported(false)
+	if i < 0 || i >= len(methods) {
+		panic("reflect: Method index out of range")
+	}
+	return toReflectMethod(methods[i], i)
+}
+
+// MethodByName returns the exported method, with a value receiver, with the
+// given name in the method set of x.
+func (x definedType) MethodByName(name string) (reflect.Method, bool) {
+	if x.Type.Kind() == reflect.Interface {
+		return x.Type.MethodByName(name)
+	}
+	for i, m := range x.methods.exported(false) {
+		if m.Name == name {
+			return toReflectMethod(m, i), true
+		}
+	}
 	return reflect.Method{}, false
+}
+
+// NumMethod returns the number of exported methods, with a value receiver,
+// in the method set of x.
+func (x definedType) NumMethod() int {
+	if x.Type.Kind() == reflect.Interface {
+		return x.Type.NumMethod()
+	}
+	return len(x.methods.exported(false))
+}
+
+// ScriggoMethod implements the interface runtime.Methoder.
+func (x definedType) ScriggoMethod(name string) (*runtime.Function, bool, bool) {
+	return scriggoMethod(x, name, false)
 }
 
 func (x definedType) String() string {

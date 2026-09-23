@@ -171,7 +171,11 @@ func (vm *VM) run() (Addr, bool) {
 					v, ok = w.Unwrap(v)
 				} else {
 					if t.Kind() == reflect.Interface {
-						ok = v.Type().Implements(t)
+						if p, isProxy := v.Interface().(Proxy); isProxy {
+							ok = p.ProxiedType().Implements(t)
+						} else {
+							ok = v.Type().Implements(t)
+						}
 					} else {
 						ok = v.Type() == t
 					}
@@ -185,6 +189,9 @@ func (vm *VM) run() (Addr, bool) {
 					var method string
 					if v.IsValid() {
 						concrete = v.Type()
+						if p, isProxy := v.Interface().(Proxy); isProxy {
+							concrete = p.ProxiedType()
+						}
 						if t.Kind() == reflect.Interface {
 							method = missingMethod(concrete, t)
 						}
@@ -219,6 +226,10 @@ func (vm *VM) run() (Addr, bool) {
 					}
 					vm.setString(c, s)
 				default:
+					if ok && t.Kind() == reflect.Interface {
+						vm.setGeneral(c, v)
+						break
+					}
 					if w, ok := t.(ScriggoType); ok {
 						t = w.GoType()
 					}
@@ -1092,7 +1103,16 @@ func (vm *VM) run() (Addr, bool) {
 				panic(errNilPointer)
 			}
 			method := vm.stringk(b, true)
-			vm.setGeneral(c, reflect.ValueOf(&callable{value: receiver.MethodByName(method)}))
+			var fn reflect.Value
+			if receiver.CanInterface() {
+				if p, ok := receiver.Interface().(Proxy); ok {
+					fn, _ = boundMethod(vm.env, p.ProxiedType(), p.ProxiedValue(), method)
+				}
+			}
+			if !fn.IsValid() {
+				fn = receiver.MethodByName(method)
+			}
+			vm.setGeneral(c, reflect.ValueOf(&callable{value: fn}))
 
 		// Move
 		case OpMove, -OpMove:
@@ -1797,7 +1817,7 @@ func (vm *VM) run() (Addr, bool) {
 			rv := reflect.New(t).Elem()
 			vm.getIntoReflectValue(b, rv, op < 0)
 			if st != nil {
-				rv = st.Wrap(rv)
+				rv = vm.wrap(st, rv)
 			}
 			var v interface{}
 			if rv.IsValid() {
@@ -1952,7 +1972,7 @@ func (vm *VM) run() (Addr, bool) {
 			v := reflect.New(t).Elem()
 			vm.getIntoReflectValue(b, v, op < 0)
 			if st != nil {
-				v = st.Wrap(v)
+				v = vm.wrap(st, v)
 			}
 			vm.setGeneral(c, v)
 
