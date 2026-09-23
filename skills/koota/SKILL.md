@@ -218,7 +218,7 @@ For tracking changes, caching queries, and advanced patterns, see [references/qu
 
 **Imports:** Core types (`World`, `Entity`) from `'koota'`. React hooks from `'koota/react'`.
 
-**Change detection:** `entity.set()` and `world.set()` trigger change events that cause hooks like `useTrait` to rerender. For AoS traits where you mutate objects directly, manually signal with `entity.changed(Trait)`.
+**Change detection:** `entity.set()` and `world.set()` trigger change events that cause hooks like `useTrait` to rerender. For AoS traits where you mutate objects directly, manually signal with `entity.changed(Trait)`, or `entity.changed(Relation(target))` for a single relation pair.
 
 For React hooks and actions, see [references/react-hooks.md](references/react-hooks.md).
 

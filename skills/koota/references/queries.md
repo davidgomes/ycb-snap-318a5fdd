@@ -95,6 +95,29 @@ const movedEntities = world.query(Changed(Position))
 const updatedChildren = world.query(Changed(ChildOf))
 ```
 
+**Relation pairs** - Track a specific target, or any target with `'*'`:
+
+```typescript
+// A relation tracks the trait as a whole: gaining a 2nd parent is not "added"
+world.query(Added(ChildOf))
+
+// A pair tracks targets individually
+world.query(Added(ChildOf(parent))) // became a child of parent
+world.query(Removed(ChildOf(parent))) // lost parent, or was destroyed
+world.query(Changed(Contains(gold))) // gold data changed
+world.query(Added(ChildOf('*'))) // gained any parent, even with one already
+
+// readEach/updateEach give the data for that target
+world.query(Changed(Contains(gold))).readEach(([contains]) => {
+  contains.amount // gold's amount only
+})
+
+// Manually flag a pair (or all pairs with '*') as changed
+inventory.changed(Contains(gold))
+```
+
+Pair events are net per query run: add then remove of the same pair cancels. Exclusive relation replacement reports both a removal (old target) and an addition (new target).
+
 **Logical AND (default):**
 
 When multiple traits are passed to a tracking modifier, it uses logical AND. Only entities where **all** specified traits match the condition are returned:
@@ -129,9 +152,10 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 
 **Key points:**
 
-- Create instances at module scope, not inside functions
+- Create instances at module scope, not inside functions (they survive `world.reset()`)
 - Tracking resets after each query execution
 - Changed only tracks `set()` calls and `entity.changed()` signals
+- Use a pair like `Changed(ChildOf(parent))` to react to one target instead of every target
 
 ## Caching queries
 

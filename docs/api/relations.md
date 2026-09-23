@@ -227,16 +227,37 @@ const orphaned = world.query(Removed(ChildOf))
 const updated = world.query(Changed(ChildOf))
 ```
 
-
-> [!IMPORTANT]  
-> Tracking modifiers do not accept pairs directly such as `Changed(ChildOf(parent))`. Instead, pass the base relation to the modifier and add the pair as a separate query parameter to filter by target.
-
+Passing the relation tracks it as a whole, so an entity gaining a second target or losing one of several targets is not reported. Pass a relation pair to track a specific target instead, or use the `*` wildcard to track every target.
 
 ```js
 const parent = world.spawn()
 
-// Filter changed entities by a specific target
-const changedChildren = world.query(Changed(ChildOf), ChildOf(parent))
+// Track when an entity becomes a child of parent
+const newChildren = world.query(Added(ChildOf(parent)))
+
+// Track when an entity stops being a child of parent, including when either is destroyed
+const orphaned = world.query(Removed(ChildOf(parent)))
+
+// Track when the relation data for parent changes
+const updated = world.query(Changed(ChildOf(parent)))
+
+// Track when an entity gains any parent, even if it already had one
+const reparented = world.query(Added(ChildOf('*')))
+```
+
+Pairs are tracked by their net change since the query last ran, so adding and then removing the same pair cancels out. Replacing the target of an exclusive relation is reported as a removal of the old target and an addition of the new one. Pair modifiers combine with other parameters and `Or` like any other modifier.
+
+When iterating with `readEach` or `updateEach`, a pair with a specific target gives the data for that target. A removed pair has no data.
+
+```js
+const Contains = relation({ store: { amount: 0 } })
+
+world.query(Changed(Contains(gold))).updateEach(([contains]) => {
+  contains.amount += 1 // Reads and writes only the data for gold
+})
+
+// Manually flag a pair as changed, or every pair of a relation with '*'
+inventory.changed(Contains(gold))
 ```
 
 ## Relation events

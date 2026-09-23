@@ -28,7 +28,7 @@ const movingOrVisible = world.query(Or(Velocity, Renderable))
 
 ## Added
 
-The `Added` modifier tracks all entities that have added the specified traits or relations since the last time the query was run. A new instance of the modifier must be created for tracking to be unique.
+The `Added` modifier tracks all entities that have added the specified traits, relations or relation pairs since the last time the query was run. A new instance of the modifier must be created for tracking to be unique.
 
 When multiple traits are passed to `Added` it uses logical `AND`. Only entities where **all** specified traits have been added will be returned.
 
@@ -43,6 +43,9 @@ const newPositions = world.query(Added(Position))
 // Track entities that added a ChildOf relation
 const newChildren = world.query(Added(ChildOf))
 
+// Track entities that added a ChildOf relation to parent
+const newChildrenOfParent = world.query(Added(ChildOf(parent)))
+
 // Track entities where BOTH Position AND Velocity were added
 const fullyAdded = world.query(Added(Position, Velocity))
 
@@ -54,7 +57,7 @@ const eitherAdded = world.query(Or(Added(Position), Added(Velocity)))
 
 ## Removed
 
-The `Removed` modifier tracks all entities that have removed the specified traits or relations since the last time the query was run. This includes entities that have been destroyed. A new instance of the modifier must be created for tracking to be unique.
+The `Removed` modifier tracks all entities that have removed the specified traits, relations or relation pairs since the last time the query was run. This includes entities that have been destroyed. A new instance of the modifier must be created for tracking to be unique.
 
 When multiple traits are passed to `Removed` it uses logical `AND`. Only entities where **all** specified traits have been removed will be returned.
 
@@ -68,6 +71,9 @@ const stoppedEntities = world.query(Removed(Velocity))
 
 // Track entities that removed a ChildOf relation
 const orphaned = world.query(Removed(ChildOf))
+
+// Track entities that removed a ChildOf relation to parent
+const orphanedFromParent = world.query(Removed(ChildOf(parent)))
 
 // Track entities where BOTH Position AND Velocity were removed
 const fullyRemoved = world.query(Removed(Position, Velocity))
@@ -95,6 +101,9 @@ const movedEntities = world.query(Changed(Position))
 // Track entities whose ChildOf relation data has changed
 const updatedChildren = world.query(Changed(ChildOf))
 
+// Track entities whose ChildOf relation data for parent has changed
+const updatedChildrenOfParent = world.query(Changed(ChildOf(parent)))
+
 // Track entities where BOTH Position AND Velocity have changed
 const fullyUpdated = world.query(Changed(Position, Velocity))
 
@@ -110,7 +119,7 @@ Koota allows you to subscribe to add, remove, and change events for specific tra
 
 - `onAdd` triggers when `entity.add()` is called after the initial value has been set on the trait.
 - `onRemove` triggers when `entity.remove()` is called, but before any data has been removed.
-- `onChange` triggers when an entity's trait value has been set with `entity.set()` or when it is manually flagged with `entity.changed()`.
+- `onChange` triggers when an entity's trait value has been set with `entity.set()` or when it is manually flagged with `entity.changed()`. Pass a relation pair such as `entity.changed(Contains(gold))` to flag a single target.
 
 ```js
 // Subscribe to Position changes
