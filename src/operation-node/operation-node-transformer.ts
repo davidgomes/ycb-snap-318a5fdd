@@ -1085,6 +1085,7 @@ export class OperationNodeTransformer {
       aggregated: this.transformNodeList(node.aggregated, queryId),
       distinct: node.distinct,
       orderBy: this.transformNode(node.orderBy, queryId),
+      nullTreatment: node.nullTreatment,
       withinGroup: this.transformNode(node.withinGroup, queryId),
       filter: this.transformNode(node.filter, queryId),
       over: this.transformNode(node.over, queryId),

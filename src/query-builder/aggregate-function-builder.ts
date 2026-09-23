@@ -103,6 +103,88 @@ export class AggregateFunctionBuilder<DB, TB extends keyof DB, O = unknown>
   }
 
   /**
+   * Adds a `respect nulls` null treatment after the function's arguments.
+   *
+   * Applicable to value window functions such as {@link FunctionModule.firstValue},
+   * {@link FunctionModule.lastValue}, {@link FunctionModule.nthValue},
+   * {@link FunctionModule.lag} and {@link FunctionModule.lead}.
+   *
+   * This is only supported by some dialects like MySQL or MS SQL Server.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn
+   *       .lag('middle_name')
+   *       .respectNulls()
+   *       .over((ob) => ob.orderBy('id'))
+   *       .as('previous_middle_name')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (MS SQL Server):
+   *
+   * ```sql
+   * select lag("middle_name") respect nulls over(order by "id") as "previous_middle_name"
+   * from "person"
+   * ```
+   */
+  respectNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNullTreatment(
+        this.#props.aggregateFunctionNode,
+        'respect nulls',
+      ),
+    })
+  }
+
+  /**
+   * Adds an `ignore nulls` null treatment after the function's arguments.
+   *
+   * Applicable to value window functions such as {@link FunctionModule.firstValue},
+   * {@link FunctionModule.lastValue}, {@link FunctionModule.nthValue},
+   * {@link FunctionModule.lag} and {@link FunctionModule.lead}.
+   *
+   * This is only supported by some dialects like MS SQL Server.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * const result = await db
+   *   .selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn
+   *       .firstValue('middle_name')
+   *       .ignoreNulls()
+   *       .over((ob) => ob.orderBy('id'))
+   *       .as('first_middle_name')
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (MS SQL Server):
+   *
+   * ```sql
+   * select first_value("middle_name") ignore nulls over(order by "id") as "first_middle_name"
+   * from "person"
+   * ```
+   */
+  ignoreNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNullTreatment(
+        this.#props.aggregateFunctionNode,
+        'ignore nulls',
+      ),
+    })
+  }
+
+  /**
    * Adds an `order by` clause inside the aggregate function.
    *
    * ### Examples

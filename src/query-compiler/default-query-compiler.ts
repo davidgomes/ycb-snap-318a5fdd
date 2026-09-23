@@ -1498,6 +1498,11 @@ export class DefaultQueryCompiler
 
     this.append(')')
 
+    if (node.nullTreatment) {
+      this.append(' ')
+      this.append(node.nullTreatment)
+    }
+
     if (node.withinGroup) {
       this.append(' within group (')
       this.visitNode(node.withinGroup)
