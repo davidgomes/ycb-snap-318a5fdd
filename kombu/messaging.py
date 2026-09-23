@@ -317,6 +317,7 @@ class Consumer:
         on_message (Callable): See :attr:`on_message`
         on_decode_error (Callable): see :attr:`on_decode_error`.
         prefetch_count (int): see :attr:`prefetch_count`.
+        on_cancel (Callable): added to :attr:`cancel_notify_callbacks`.
     """
 
     ContentDisallowed = ContentDisallowed
@@ -387,6 +388,14 @@ class Consumer:
     #: Can also be changed using :meth:`qos`.
     prefetch_count = None
 
+    #: List of callbacks called with the consumer tag when the broker
+    #: cancels a consumer (e.g. queue deleted, or demoted from being the
+    #: single active consumer).
+    #:
+    #: Only consumers started while this list is non-empty are
+    #: registered for cancel notifications.
+    cancel_notify_callbacks = None
+
     #: Mapping of queues we consume from.
     _queues = None
 
@@ -394,12 +403,16 @@ class Consumer:
 
     def __init__(self, channel, queues=None, no_ack=None, auto_declare=None,
                  callbacks=None, on_decode_error=None, on_message=None,
-                 accept=None, prefetch_count=None, tag_prefix=None):
+                 accept=None, prefetch_count=None, tag_prefix=None,
+                 on_cancel=None):
         self.channel = channel
         self.queues = maybe_list(queues or [])
         self.no_ack = self.no_ack if no_ack is None else no_ack
         self.callbacks = (self.callbacks or [] if callbacks is None
                           else callbacks)
+        self.cancel_notify_callbacks = []
+        if on_cancel is not None:
+            self.cancel_notify_callbacks.append(on_cancel)
         self.on_message = on_message
         self.tag_prefix = tag_prefix
         self._active_tags = {}
@@ -459,6 +472,11 @@ class Consumer:
             and the :class:`~kombu.Message` instance.
         """
         self.callbacks.append(callback)
+
+    def on_cancel_notify(self, callback):
+        """Register callback called with the consumer tag on cancel notify."""
+        self.cancel_notify_callbacks.append(callback)
+        return self
 
     def __enter__(self):
         self.consume()
@@ -546,6 +564,34 @@ class Consumer:
         if isinstance(queue, Queue):
             name = queue.name
         return name in self._active_tags
+
+    def consuming_from_sac(self, queue):
+        """Return :const:`True` if consuming from single active consumer
+        `queue`."""
+        name = queue.name if isinstance(queue, Queue) else queue
+        if name not in self._active_tags:
+            return False
+        declared = self._queues.get(name)
+        if declared is not None and declared.is_single_active_consumer:
+            return True
+        is_sac = getattr(self.channel, 'is_single_active_consumer', None)
+        return bool(is_sac is not None and is_sac(name))
+
+    def is_active_on(self, queue):
+        """Return :const:`True` if holding the active consumer tag of
+        `queue`."""
+        name = queue.name if isinstance(queue, Queue) else queue
+        tag = self._active_tags.get(name)
+        if tag is None:
+            return False
+        get_active = getattr(self.channel, 'get_active_consumer', None)
+        return get_active is None or get_active(name) == tag
+
+    @property
+    def active_consumer_tags(self):
+        """Tags of the consumers currently receiving messages."""
+        return [tag for name, tag in self._active_tags.items()
+                if self.is_active_on(name)]
 
     def purge(self):
         """Purge messages from all queues.
@@ -638,9 +684,16 @@ class Consumer:
         tag = self._active_tags.get(queue.name)
         if tag is None:
             tag = self._add_tag(queue, consumer_tag)
+            # py-amqp raises ConsumerCancelled only when no on_cancel is set.
+            on_cancel = (self._on_cancel_notify
+                         if self.cancel_notify_callbacks else None)
             queue.consume(tag, self._receive_callback,
-                          no_ack=no_ack, nowait=nowait)
+                          no_ack=no_ack, nowait=nowait, on_cancel=on_cancel)
         return tag
+
+    def _on_cancel_notify(self, consumer_tag):
+        for callback in list(self.cancel_notify_callbacks):
+            callback(consumer_tag)
 
     def _add_tag(self, queue, consumer_tag=None):
         tag = consumer_tag or '{}{}'.format(
