@@ -1,7 +1,8 @@
 import {obsidianMultilineCommentRegex, tagWithLeadingWhitespaceRegex, wikiLinkRegex, yamlRegex, escapeDollarSigns, genericLinkRegex, urlRegex, anchorTagRegex, templaterCommandRegex, footnoteDefinitionIndicatorAtStartOfLine} from './regex';
-import {getAllCustomIgnoreSectionsInText, getAllTablesInText, getPositions, MDAstTypes} from './mdast';
+import {getAllTablesInText, getPositions, MDAstTypes} from './mdast';
 import type {Position} from 'unist';
 import {replaceTextBetweenStartAndEndWithNewValue} from './strings';
+import {getDisabledSectionsInText} from './disable-markers';
 
 export type IgnoreFunction = ((text: string, placeholder: string) => [string[], string]);
 export type IgnoreType = {replaceAction: MDAstTypes | RegExp | IgnoreFunction, placeholder: string};
@@ -33,8 +34,21 @@ export const IgnoreTypes: Record<string, IgnoreType> = {
   link: {replaceAction: replaceMarkdownLinks, placeholder: '{REGULAR_LINK_PLACEHOLDER}'},
   tag: {replaceAction: replaceTags, placeholder: '#tag-placeholder'},
   table: {replaceAction: replaceTables, placeholder: '{TABLE_PLACEHOLDER}'},
-  customIgnore: {replaceAction: replaceCustomIgnore, placeholder: '{CUSTOM_IGNORE_PLACEHOLDER}'},
+  customIgnore: {replaceAction: (text: string, placeholder: string) => replaceCustomIgnore(text, placeholder, null), placeholder: '{CUSTOM_IGNORE_PLACEHOLDER}'},
 } as const;
+
+/**
+ * Gets the custom ignore for a rule which ignores the linter disable and enable markers as well as what they disable for the rule.
+ * @param {string} ruleAlias - The alias of the rule to get the custom ignore for.
+ * @return {IgnoreType} The custom ignore for the rule.
+ */
+export function getCustomIgnoreForRule(ruleAlias: string): IgnoreType {
+  return {
+    replaceAction: (text: string, placeholder: string) => replaceCustomIgnore(text, placeholder, ruleAlias),
+    // an HTML comment keeps rules from treating the placeholder as part of an adjacent paragraph and adding to its line
+    placeholder: '<!--{RULE_CUSTOM_IGNORE_PLACEHOLDER}-->',
+  };
+}
 
 export function ignoreListOfTypes(ignoreTypes: IgnoreType[], text: string, func: ((text: string) => string)): string {
   let setOfPlaceholders: {placeholder: string, replacedValues: string[]}[] = [];
@@ -199,8 +213,8 @@ function replaceTables(text: string, tablePlaceholder: string): [string[], strin
 }
 
 
-function replaceCustomIgnore(text: string, customIgnorePlaceholder: string): [string[], string] {
-  const customIgnorePositions = getAllCustomIgnoreSectionsInText(text);
+function replaceCustomIgnore(text: string, customIgnorePlaceholder: string, ruleAlias: string | null): [string[], string] {
+  const customIgnorePositions = getDisabledSectionsInText(text, ruleAlias);
 
   const replacedSections: string[] = new Array(customIgnorePositions.length);
   let index = 0;

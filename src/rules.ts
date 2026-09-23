@@ -9,6 +9,7 @@ import {
 import {LinterError} from './linter-error';
 import {getTextInLanguage, LanguageStringKey} from './lang/helpers';
 import {ignoreListOfTypes, IgnoreType} from './utils/ignore-types';
+import {registerRuleAlias} from './utils/disable-markers';
 import {LinterSettings} from './settings-data';
 import {App} from 'obsidian';
 import {YAMLParseError} from 'yaml';
@@ -174,6 +175,7 @@ export const ruleTypeToRules = new Map<RuleType, Rule[]>;
 export function registerRule(rule: Rule): void {
   rules.push(rule);
   rulesDict[rule.alias] = rule;
+  registerRuleAlias(rule.alias);
 
   if (ruleTypeToRules.has(rule.type)) {
     ruleTypeToRules.get(rule.type).push(rule);
