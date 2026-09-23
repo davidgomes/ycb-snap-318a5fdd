@@ -11,6 +11,13 @@ import {
   generateReferentialEqualityAnnotations,
   walker,
 } from './plainer.js';
+import {
+  ErrorStackOptions,
+  NormalizedErrorStackOptions,
+  normalizeErrorStackOptions,
+} from './error-options.js';
+import { ErrorClassRegistry, Processor } from './error-class-registry.js';
+import type { ErrorCauseContext } from './transformer.js';
 import { copy } from 'copy-anything';
 
 export default class SuperJSON {
@@ -20,17 +27,33 @@ export default class SuperJSON {
   private readonly dedupe: boolean;
 
   /**
+   * Normalized `errorStack` options, or `undefined` to keep the default Error behaviour.
+   */
+  readonly errorStackOptions: NormalizedErrorStackOptions | undefined;
+
+  /**
    * @param dedupeReferentialEqualities  If true, SuperJSON will make sure only one instance of referentially equal objects are serialized and the rest are replaced with `null`.
+   * @param errorStack  Controls how Error stacks, messages and causes are serialized. Omit to keep the default behaviour.
    */
   constructor({
     dedupe = false,
+    errorStack,
   }: {
     dedupe?: boolean;
+    errorStack?: ErrorStackOptions;
   } = {}) {
     this.dedupe = dedupe;
+    this.errorStackOptions = normalizeErrorStackOptions(errorStack);
   }
 
+  /**
+   * Per-serialization bookkeeping for Error causes that are still to be walked.
+   * @internal
+   */
+  errorCauseContexts = new WeakMap<object, ErrorCauseContext>();
+
   serialize(object: SuperJSONValue): SuperJSONResult {
+    this.errorCauseContexts = new WeakMap();
     const identities = new Map<any, any[][]>();
     const output = walker(object, identities, this, this.dedupe);
     const res: SuperJSONResult = {
@@ -114,6 +137,11 @@ export default class SuperJSON {
     this.allowedErrorProps.push(...props);
   }
 
+  readonly errorClassRegistry = new ErrorClassRegistry();
+  registerErrorStackProcessor(className: string, fn: Processor) {
+    this.errorClassRegistry.register(className, fn);
+  }
+
   private static defaultInstance = new SuperJSON();
   static serialize = SuperJSON.defaultInstance.serialize.bind(
     SuperJSON.defaultInstance
@@ -142,6 +170,7 @@ export default class SuperJSON {
 }
 
 export { SuperJSON, SuperJSONResult, SuperJSONValue };
+export type { ErrorStackOptions } from './error-options.js';
 
 export const serialize = SuperJSON.serialize;
 export const deserialize = SuperJSON.deserialize;

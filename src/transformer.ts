@@ -16,6 +16,10 @@ import {
 } from './is.js';
 import { findArr } from './util.js';
 import SuperJSON from './index.js';
+import { initialCauseDepth, matchesClassFilter } from './error-options.js';
+import { processStackFrames, processStackString } from './error-stack.js';
+import { sanitizeMessage } from './error-sanitizer.js';
+import { SerializedError } from './error-class-registry.js';
 
 export type PrimitiveTypeAnnotation = 'number' | 'undefined' | 'bigint';
 
@@ -26,7 +30,13 @@ type ClassTypeAnnotation = ['class', string];
 type SymbolTypeAnnotation = ['symbol', string];
 type CustomTypeAnnotation = ['custom', string];
 
-type SimpleTypeAnnotation = LeafTypeAnnotation | 'map' | 'set' | 'Error';
+type ErrorTypeAnnotation = 'Error' | 'Error/stack' | 'Error/frames';
+
+type SimpleTypeAnnotation =
+  | LeafTypeAnnotation
+  | 'map'
+  | 'set'
+  | ErrorTypeAnnotation;
 
 type CompositeTypeAnnotation =
   | TypedArrayAnnotation
@@ -48,6 +58,164 @@ function simpleTransformation<I, O, A extends SimpleTypeAnnotation>(
     transform,
     untransform,
   };
+}
+
+export interface ErrorCauseContext {
+  remainingCauseDepth: number;
+  sanitize: boolean;
+}
+
+function errorAnnotationFor(
+  error: Error,
+  superJson: SuperJSON
+): ErrorTypeAnnotation {
+  const options = superJson.errorStackOptions;
+  if (
+    !options ||
+    options.mode === 'off' ||
+    !matchesClassFilter(options, error.name)
+  ) {
+    return 'Error';
+  }
+  return options.mode === 'string' ? 'Error/stack' : 'Error/frames';
+}
+
+function isAggregateError(error: Error): boolean {
+  return (
+    isArray((error as any).errors) &&
+    (error.name === 'AggregateError' ||
+      (typeof AggregateError === 'function' &&
+        error instanceof AggregateError))
+  );
+}
+
+function applyErrorProcessor(
+  error: Error,
+  serialized: SerializedError,
+  superJson: SuperJSON
+): SerializedError {
+  const registry = superJson.errorClassRegistry;
+  const processor =
+    registry.getProcessor(error.name) ??
+    registry.getProcessor(error.constructor?.name);
+  if (!processor) {
+    return serialized;
+  }
+  const replacement = processor(serialized);
+  return typeof replacement === 'object' && replacement !== null
+    ? replacement
+    : serialized;
+}
+
+function transformError(
+  v: Error,
+  superJson: SuperJSON,
+  annotation: ErrorTypeAnnotation
+): SerializedError {
+  const options = superJson.errorStackOptions;
+  const baseError: SerializedError = {
+    name: v.name,
+    message: v.message,
+  };
+
+  if (!options) {
+    if ('cause' in v) {
+      baseError.cause = v.cause;
+    }
+
+    superJson.allowedErrorProps.forEach(prop => {
+      baseError[prop] = (v as any)[prop];
+    });
+
+    return applyErrorProcessor(v, baseError, superJson);
+  }
+
+  const allowedProps = superJson.allowedErrorProps;
+  allowedProps.forEach(prop => {
+    // stack data and causes are governed by the errorStack options
+    if (prop !== 'stack' && prop !== 'stackFrames' && prop !== 'cause') {
+      baseError[prop] = (v as any)[prop];
+    }
+  });
+
+  if (typeof v.stack === 'string') {
+    if (annotation === 'Error/stack' && allowedProps.includes('stack')) {
+      baseError.stack = processStackString(v.stack, options);
+    } else if (
+      annotation === 'Error/frames' &&
+      allowedProps.includes('stackFrames')
+    ) {
+      baseError.stackFrames = processStackFrames(v.stack, options);
+    }
+  }
+
+  const context = superJson.errorCauseContexts.get(v);
+  superJson.errorCauseContexts.delete(v);
+
+  const sanitize =
+    options.sanitizeMessage &&
+    (!!context?.sanitize || matchesClassFilter(options, v.name));
+  if (sanitize) {
+    baseError.message = sanitizeMessage(baseError.message);
+  }
+
+  const remainingCauseDepth = context
+    ? context.remainingCauseDepth
+    : initialCauseDepth(options);
+  if (remainingCauseDepth > 0 && isError(v.cause)) {
+    baseError.cause = v.cause;
+    superJson.errorCauseContexts.set(v.cause, {
+      remainingCauseDepth: remainingCauseDepth - 1,
+      sanitize,
+    });
+  }
+
+  if (isAggregateError(v)) {
+    baseError.errors = (v as any).errors;
+  }
+
+  return applyErrorProcessor(v, baseError, superJson);
+}
+
+function untransformError(
+  v: any,
+  superJson: SuperJSON,
+  annotation: ErrorTypeAnnotation
+): Error {
+  let e: Error;
+  if (annotation === 'Error' && !superJson.errorStackOptions) {
+    e = new Error(v.message, { cause: v.cause });
+  } else {
+    const errorOptions = 'cause' in v ? { cause: v.cause } : undefined;
+    e =
+      v.name === 'AggregateError' &&
+      isArray(v.errors) &&
+      typeof AggregateError === 'function'
+        ? new AggregateError(v.errors, v.message, errorOptions)
+        : new Error(v.message, errorOptions);
+  }
+  e.name = v.name;
+  e.stack = v.stack;
+
+  if (annotation === 'Error/frames' && 'stackFrames' in v) {
+    (e as any).stackFrames = v.stackFrames;
+  }
+
+  superJson.allowedErrorProps.forEach(prop => {
+    (e as any)[prop] = v[prop];
+  });
+
+  return e;
+}
+
+function errorTransformation<A extends ErrorTypeAnnotation>(annotation: A) {
+  return simpleTransformation(
+    (v, superJson): v is Error =>
+      isError(v) && errorAnnotationFor(v, superJson) === annotation,
+    annotation,
+    (v, superJson) => transformError(v, superJson, annotation),
+    (v, superJson) => untransformError(v, superJson, annotation)
+  );
 }
 
 const simpleRules = [
@@ -78,37 +246,9 @@ const simpleRules = [
     v => new Date(v)
   ),
 
-  simpleTransformation(
-    isError,
-    'Error',
-    (v, superJson) => {
-      const baseError: any = {
-        name: v.name,
-        message: v.message,
-      };
-
-      if ('cause' in v) {
-        baseError.cause = v.cause;
-      }
-
-      superJson.allowedErrorProps.forEach(prop => {
-        baseError[prop] = (v as any)[prop];
-      });
-
-      return baseError;
-    },
-    (v, superJson) => {
-      const e = new Error(v.message, { cause: v.cause });
-      e.name = v.name;
-      e.stack = v.stack;
-
-      superJson.allowedErrorProps.forEach(prop => {
-        (e as any)[prop] = v[prop];
-      });
-
-      return e;
-    }
-  ),
+  errorTransformation('Error'),
+  errorTransformation('Error/stack'),
+  errorTransformation('Error/frames'),
 
   simpleTransformation(
     isRegExp,
