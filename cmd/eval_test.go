@@ -1904,6 +1904,35 @@ time.clock(input.y, time.clock(input.x))
 	}
 }
 
+func TestEvalPartialTemplateStringSource(t *testing.T) {
+	files := map[string]string{
+		"policy.rego": `package test
+
+p := $"hello {input.name}"
+`,
+	}
+	test.WithTempFS(files, func(path string) {
+		buf := new(bytes.Buffer)
+		params := newEvalCommandParams()
+		params.partial = true
+		params.dataPaths = newrepeatedStringFlag([]string{path})
+		if err := params.outputFormat.Set(formats.Source); err != nil {
+			t.Fatal(err)
+		}
+		_, err := eval([]string{"data.test.p"}, params, buf, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := buf.String()
+		if strings.Contains(got, "internal.template_string") {
+			t.Fatalf("source output leaked internal.template_string:\n%s", got)
+		}
+		if !strings.Contains(got, `$"hello {input.name}"`) {
+			t.Fatalf("source output lost the template string:\n%s", got)
+		}
+	})
+}
+
 func TestEvalPartialOutput_RegoVersion(t *testing.T) {
 	tests := []struct {
 		note                string

@@ -2657,6 +2657,10 @@ func (r *Rego) partial(ctx context.Context, ectx *EvalContext) (*PartialQueries,
 		Queries: queries,
 		Support: support,
 	}
+	// Template strings are lowered to internal.template_string during
+	// compilation. Put user-facing template syntax back before returning
+	// residual queries and support modules.
+	reconstructPartialTemplateStrings(pq)
 
 	return pq, nil
 }
