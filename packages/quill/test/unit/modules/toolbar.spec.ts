@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import Quill from '../../../src/core/quill.js';
 import Toolbar, { addControls } from '../../../src/modules/toolbar.js';
 import { normalizeHTML } from '../__helpers__/utils.js';
@@ -243,6 +243,235 @@ describe('Toolbar', () => {
       expect(boldButton?.classList.contains('ql-active')).toBe(false);
       quill.format('bold', true, 'user');
       expect(boldButton?.classList.contains('ql-active')).toBe(true);
+    });
+  });
+
+  describe('shared toolbar container', () => {
+    const registerModules = () => {
+      Quill.register(
+        {
+          'themes/snow': SnowTheme,
+          'modules/toolbar': Toolbar,
+          'modules/clipboard': Clipboard,
+          'modules/keyboard': Keyboard,
+          'modules/history': History,
+          'modules/uploader': Uploader,
+          'modules/input': Input,
+          'modules/uiNode': UINode,
+        },
+        true,
+      );
+    };
+
+    const setupShared = () => {
+      registerModules();
+      const toolbar = createContainer(`
+        <button class="ql-bold" type="button"></button>
+        <button class="ql-italic" type="button"></button>
+        <button class="ql-image" type="button"></button>
+        <select class="ql-size">
+          <option selected="selected"></option>
+          <option value="small"></option>
+          <option value="large"></option>
+        </select>
+      `);
+      const editorA = createContainer('<p><strong>Bold</strong> plain</p>');
+      const editorB = createContainer('<p>Second editor</p>');
+      const registry = () =>
+        createRegistry([SizeClass, Bold, AlignClass, Link]);
+      const quillA = new Quill(editorA, {
+        modules: { toolbar: { container: toolbar } },
+        theme: 'snow',
+        registry: registry(),
+      });
+      const quillB = new Quill(editorB, {
+        modules: { toolbar: { container: toolbar } },
+        theme: 'snow',
+        registry: registry(),
+      });
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLButtonElement;
+      const image = toolbar.querySelector(
+        'button.ql-image',
+      ) as HTMLButtonElement;
+      const size = toolbar.querySelector('select.ql-size') as HTMLSelectElement;
+      return { toolbar, quillA, quillB, bold, image, size };
+    };
+
+    test('formats the editor that most recently had focus', () => {
+      const { quillA, quillB, bold } = setupShared();
+      quillA.setSelection(7, 5);
+      bold.click();
+      expect(quillA.getFormat(7, 1).bold).toBe(true);
+      expect(quillB.getFormat(0, 1).bold).toBeFalsy();
+
+      quillB.setSelection(0, 6);
+      expect(bold.classList.contains('ql-active')).toBe(false);
+      bold.click();
+      expect(quillB.getFormat(0, 1).bold).toBe(true);
+      expect(quillA.getFormat(7, 1).bold).toBe(true);
+
+      quillA.setSelection(0, 4);
+      expect(bold.classList.contains('ql-active')).toBe(true);
+      expect(quillB.hasFocus()).toBe(false);
+      expect(quillB.getSelection()).toBe(null);
+      expect(quillA.hasFocus()).toBe(true);
+    });
+
+    test('toolbar click keeps the caret in the active editor', () => {
+      const { quillA, quillB, bold } = setupShared();
+      quillA.setSelection(0, 4);
+      quillB.setSelection(1, 2);
+      bold.click();
+      expect(quillB.hasFocus()).toBe(true);
+      expect(quillA.hasFocus()).toBe(false);
+      expect(quillA.getSelection()).toBe(null);
+      const selection = quillB.getSelection();
+      expect(selection?.index).toBe(1);
+      expect(selection?.length).toBe(2);
+      expect(quillA.getFormat(0, 1).bold).toBe(true);
+      expect(quillB.getFormat(1, 1).bold).toBe(true);
+    });
+
+    test('does not duplicate theme-managed toolbar UI', () => {
+      const { toolbar, quillA, quillB, image } = setupShared();
+      expect(toolbar.querySelectorAll('.ql-picker').length).toBe(1);
+      expect(toolbar.querySelectorAll('.ql-picker-options').length).toBe(1);
+      expect(toolbar.querySelectorAll('input.ql-image').length).toBe(0);
+
+      const originalClick = HTMLInputElement.prototype.click;
+      HTMLInputElement.prototype.click = function click() {
+        if (this.type === 'file') return;
+        return originalClick.call(this);
+      };
+      try {
+        quillA.focus();
+        image.click();
+        quillB.focus();
+        image.click();
+      } finally {
+        HTMLInputElement.prototype.click = originalClick;
+      }
+      expect(toolbar.querySelectorAll('input.ql-image').length).toBe(1);
+    });
+
+    test('hidden image input follows the active editor', () => {
+      const { toolbar, quillA, quillB, image } = setupShared();
+      const originalClick = HTMLInputElement.prototype.click;
+      HTMLInputElement.prototype.click = function click() {
+        if (this.type === 'file') return;
+        return originalClick.call(this);
+      };
+      const uploadA = vi.spyOn(quillA.uploader, 'upload');
+      const uploadB = vi.spyOn(quillB.uploader, 'upload');
+      try {
+        quillA.setSelection(0, 1);
+        image.click();
+        const input = toolbar.querySelector(
+          'input.ql-image[type=file]',
+        ) as HTMLInputElement;
+        const mimetypes = (
+          quillA.uploader as unknown as { options: { mimetypes: string[] } }
+        ).options.mimetypes;
+        expect(input.getAttribute('accept')).toBe(mimetypes.join(', '));
+        (
+          quillB.uploader as unknown as { options: { mimetypes: string[] } }
+        ).options.mimetypes = ['image/gif'];
+        quillB.setSelection(0, 1);
+        expect(input.getAttribute('accept')).toBe('image/gif');
+        const file = new File(['x'], 'a.gif', { type: 'image/gif' });
+        Object.defineProperty(input, 'files', {
+          configurable: true,
+          value: [file],
+        });
+        input.dispatchEvent(new Event('change'));
+        expect(uploadB).toHaveBeenCalledTimes(1);
+        expect(uploadA).not.toHaveBeenCalled();
+      } finally {
+        HTMLInputElement.prototype.click = originalClick;
+      }
+    });
+
+    test('removing the active editor clears shared toolbar state', () => {
+      const { toolbar, quillA, quillB, bold, image } = setupShared();
+      const originalClick = HTMLInputElement.prototype.click;
+      HTMLInputElement.prototype.click = function click() {
+        if (this.type === 'file') return;
+        return originalClick.call(this);
+      };
+      try {
+        quillB.setSelection(0, 4);
+        bold.click();
+        expect(bold.classList.contains('ql-active')).toBe(true);
+        image.click();
+        expect(toolbar.querySelectorAll('input.ql-image').length).toBe(1);
+        quillB.container.remove();
+        expect(bold.classList.contains('ql-active')).toBe(false);
+        expect(toolbar.querySelectorAll('input.ql-image').length).toBe(0);
+        const before = quillA.getSemanticHTML();
+        bold.click();
+        expect(quillA.getSemanticHTML()).toBe(before);
+        quillA.setSelection(7, 5);
+        bold.click();
+        expect(quillA.getFormat(7, 1).bold).toBe(true);
+      } finally {
+        HTMLInputElement.prototype.click = originalClick;
+      }
+    });
+
+    test('disables shared controls while the active editor is read-only', () => {
+      const { toolbar, quillA, quillB, bold, size } = setupShared();
+      quillA.setSelection(7, 5);
+      quillA.disable();
+      expect(bold.disabled).toBe(true);
+      expect(size.disabled).toBe(true);
+      const picker = toolbar.querySelector('.ql-picker') as HTMLElement;
+      const label = picker.querySelector('.ql-picker-label') as HTMLElement;
+      expect(picker.classList.contains('ql-disabled')).toBe(true);
+      expect(picker.getAttribute('aria-disabled')).toBe('true');
+      expect(label.getAttribute('aria-disabled')).toBe('true');
+      label.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      expect(picker.classList.contains('ql-expanded')).toBe(false);
+      bold.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(quillA.getFormat(7, 1).bold).toBeFalsy();
+
+      quillB.setSelection(0, 6);
+      expect(bold.disabled).toBe(false);
+      expect(size.disabled).toBe(false);
+      expect(picker.classList.contains('ql-disabled')).toBe(false);
+      expect(bold.classList.contains('ql-active')).toBe(false);
+      bold.click();
+      expect(quillB.getFormat(0, 1).bold).toBe(true);
+      expect(quillA.getFormat(7, 1).bold).toBeFalsy();
+    });
+
+    test('binds toolbar controls added later exactly once', () => {
+      const { toolbar, quillA, quillB } = setupShared();
+      const button = document.createElement('button');
+      button.classList.add('ql-bold');
+      let bindings = 0;
+      const real = button.addEventListener.bind(button);
+      button.addEventListener = ((
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | AddEventListenerOptions,
+      ) => {
+        if (type === 'click') bindings += 1;
+        return real(type, listener, options);
+      }) as typeof button.addEventListener;
+
+      quillA.setSelection(0, 4);
+      toolbar.appendChild(button);
+      expect(bindings).toBe(1);
+      button.remove();
+      toolbar.appendChild(button);
+      expect(bindings).toBe(1);
+
+      quillB.setSelection(0, 6);
+      button.click();
+      expect(quillB.getFormat(0, 1).bold).toBe(true);
+      expect(quillA.getFormat(0, 1).bold).toBe(true);
+      button.click();
+      expect(quillB.getFormat(0, 1).bold).toBeFalsy();
     });
   });
 });

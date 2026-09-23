@@ -9,14 +9,34 @@ function toggleAriaAttribute(element: HTMLElement, attribute: string) {
   );
 }
 
+const pickerInstances = new WeakMap<HTMLElement, Picker>();
+
+function pickerFromContainer(container: HTMLElement | null): Picker | null {
+  if (container == null) return null;
+  return pickerInstances.get(container) ?? null;
+}
+
+function pickerForSelect(select: HTMLSelectElement): Picker | null {
+  const sibling = select.previousElementSibling;
+  if (
+    sibling instanceof HTMLElement &&
+    sibling.classList.contains('ql-picker')
+  ) {
+    return pickerFromContainer(sibling);
+  }
+  return null;
+}
+
 class Picker {
   select: HTMLSelectElement;
   container: HTMLElement;
   label: HTMLElement;
+  private disabled = false;
 
   constructor(select: HTMLSelectElement) {
     this.select = select;
     this.container = document.createElement('span');
+    pickerInstances.set(this.container, this);
     this.buildPicker();
     this.select.style.display = 'none';
     // @ts-expect-error Fix me later
@@ -40,7 +60,24 @@ class Picker {
     this.select.addEventListener('change', this.update.bind(this));
   }
 
+  setDisabled(disabled: boolean) {
+    if (this.disabled === disabled) return;
+    this.disabled = disabled;
+    this.container.classList.toggle('ql-disabled', disabled);
+    if (disabled) {
+      this.container.setAttribute('aria-disabled', 'true');
+      this.label.setAttribute('aria-disabled', 'true');
+      this.label.setAttribute('disabled', 'disabled');
+      this.close();
+      return;
+    }
+    this.container.removeAttribute('aria-disabled');
+    this.label.removeAttribute('aria-disabled');
+    this.label.removeAttribute('disabled');
+  }
+
   togglePicker() {
+    if (this.disabled) return;
     this.container.classList.toggle('ql-expanded');
     // Toggle aria-expanded and aria-hidden to make the picker accessible
     toggleAriaAttribute(this.label, 'aria-expanded');
@@ -145,6 +182,7 @@ class Picker {
   }
 
   selectItem(item: HTMLElement | null, trigger = false) {
+    if (this.disabled && trigger) return;
     const selected = this.container.querySelector('.ql-selected');
     if (item === selected) return;
     if (selected != null) {
@@ -195,4 +233,4 @@ class Picker {
   }
 }
 
-export default Picker;
+export { Picker as default, pickerForSelect, pickerFromContainer };
