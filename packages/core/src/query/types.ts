@@ -46,10 +46,10 @@ export type StoresFromParameters<T extends QueryParameter[]> = T extends [infer 
           ...(First extends Aspect<infer C>
               ? StoresFromParameters<C>
               : First extends Trait
-              ? [ExtractStore<First>]
-              : First extends Modifier
-                ? StoresFromParameters<UnwrapModifierData<First>>
-                : []),
+                ? [ExtractStore<First>]
+                : First extends Modifier<any>
+                  ? StoresFromParameters<UnwrapModifierData<First>>
+                  : []),
           ...(Rest extends QueryParameter[] ? StoresFromParameters<Rest> : []),
       ]
     : [];
@@ -64,16 +64,16 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
                   ? []
                   : [AspectRecord<First>]
               : First extends Trait
-              ? IsTag<First> extends false
-                  ? ExtractSchema<First> extends AoSFactory
-                      ? [ReturnType<ExtractSchema<First>>]
-                      : [TraitRecord<First>]
-                  : []
-              : First extends Modifier
-                ? IsNotModifier<First> extends true
-                    ? []
-                    : InstancesFromParameters<UnwrapModifierData<First>>
-                : []),
+                ? IsTag<First> extends false
+                    ? ExtractSchema<First> extends AoSFactory
+                        ? [ReturnType<ExtractSchema<First>>]
+                        : [TraitRecord<First>]
+                    : []
+                : First extends Modifier<any>
+                  ? IsNotModifier<First> extends true
+                      ? []
+                      : InstancesFromParameters<UnwrapModifierData<First>>
+                  : []),
           ...(Rest extends QueryParameter[] ? InstancesFromParameters<Rest> : []),
       ]
     : [];

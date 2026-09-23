@@ -16,14 +16,7 @@ import type { Relation, RelationPair } from '../relation/types';
 import { isRelation, isRelationPair } from '../relation/utils/is-relation';
 import { addTrait, getTrait, hasTrait, registerTrait, removeTrait, setTrait } from '../trait/trait';
 import { clearTraitInstance, getTraitInstance, hasTraitInstance } from '../trait/trait-instance';
-import type {
-    ConfigurableTrait,
-    ExtractSchema,
-    SetTraitCallback,
-    Trait,
-    TraitRecord,
-    TraitValue,
-} from '../trait/types';
+import type { ConfigurableTrait, Trait } from '../trait/types';
 import { universe } from '../universe/universe';
 import type { World, WorldInternal, WorldOptions } from './types';
 import { allocateWorldId, releaseWorldId } from './utils/world-index';
@@ -111,7 +104,8 @@ export function createWorld(
         },
 
         has(target: Entity | Trait | Aspect): boolean {
-            if (typeof target === 'number') return isEntityAlive(world[$internal].entityIndex, target);
+            if (typeof target === 'number')
+                return isEntityAlive(world[$internal].entityIndex, target);
             if (isAspect(target)) return hasAspect(world, world[$internal].worldEntity, target);
             return hasTrait(world, world[$internal].worldEntity, target);
         },
@@ -130,7 +124,8 @@ export function createWorld(
         },
 
         set(trait: Trait | Aspect, value: any) {
-            if (isAspect(trait)) return setAspect(world, world[$internal].worldEntity, trait, value, true);
+            if (isAspect(trait))
+                return setAspect(world, world[$internal].worldEntity, trait, value, true);
             setTrait(world, world[$internal].worldEntity, trait, value, true);
         },
 

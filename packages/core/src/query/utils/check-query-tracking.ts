@@ -105,7 +105,13 @@ export function checkQueryTracking(
                 const counts = !group.isAspect
                     ? true
                     : eventType === 'remove'
-                      ? wasAspectComplete(entityMasks, eid, groupBitmasks, eventGenerationId, eventBitflag)
+                      ? wasAspectComplete(
+                            entityMasks,
+                            eid,
+                            groupBitmasks,
+                            eventGenerationId,
+                            eventBitflag
+                        )
                       : isAspectComplete(entityMasks, eid, groupBitmasks);
 
                 if (counts) {

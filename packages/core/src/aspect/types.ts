@@ -24,7 +24,11 @@ type Merge<U> = [U] extends [never] ? {} : Simplify<UnionToIntersection<U>>;
 
 /** The merged record of all constituent trait records of an aspect. */
 export type AspectRecord<T extends Aspect<any> | Trait[]> =
-    T extends Aspect<infer C> ? Merge<DataRecord<C[number]>> : T extends Trait[] ? Merge<DataRecord<T[number]>> : never;
+    T extends Aspect<infer C>
+        ? Merge<DataRecord<C[number]>>
+        : T extends Trait[]
+          ? Merge<DataRecord<T[number]>>
+          : never;
 
 export type AspectSchema<T extends Trait[]> = Merge<DataSchema<T[number]>>;
 
@@ -63,8 +67,8 @@ export type AspectInput = Trait | Aspect<any>;
 export type FlattenAspectInputs<T extends readonly AspectInput[]> = T extends readonly []
     ? []
     : T extends readonly [infer First, ...infer Rest]
-    ? [
-          ...(First extends Aspect<infer C> ? C : First extends Trait ? [First] : []),
-          ...(Rest extends AspectInput[] ? FlattenAspectInputs<Rest> : []),
-      ]
-    : Trait[];
+      ? [
+            ...(First extends Aspect<infer C> ? C : First extends Trait ? [First] : []),
+            ...(Rest extends AspectInput[] ? FlattenAspectInputs<Rest> : []),
+        ]
+      : Trait[];
