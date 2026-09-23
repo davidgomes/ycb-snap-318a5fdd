@@ -677,3 +677,44 @@ describe('getTemplateData', function() {
   });
 
 });
+
+describe('report_file templates', function() {
+  it('returns null when report_file is unset', function() {
+    let config = new Config('ci', {});
+    expect(config.getExpandedReportFile('Chrome')).to.equal(null);
+    expect(config.hasLauncherTemplate()).to.equal(false);
+    expect(config.hasDateTemplate()).to.equal(false);
+    expect(config.hasTimestampTemplate()).to.equal(false);
+    expect(config.hasAnyReportTemplate()).to.equal(false);
+    expect(config.validateReportFile()).to.deep.equal({ valid: true, errors: [], warnings: [] });
+  });
+
+  it('detects template variables', function() {
+    let config = new Config('ci', { report_file: 'out/<launcher>-<date>-<timestamp>.xml' });
+    expect(config.hasLauncherTemplate()).to.equal(true);
+    expect(config.hasDateTemplate()).to.equal(true);
+    expect(config.hasTimestampTemplate()).to.equal(true);
+    expect(config.hasAnyReportTemplate()).to.equal(true);
+    expect(config.getExpandedReportFile('A/B')).to.match(/^out\/A_B-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.xml$/);
+  });
+
+  it('expands a launcher template', function() {
+    let config = new Config('ci', { report_file: 'out/<launcher>.xml' });
+    expect(config.getExpandedReportFile('Headless Chrome')).to.equal('out/Headless_Chrome.xml');
+    expect(config.getExpandedReportFile()).to.equal('out/<launcher>.xml');
+  });
+
+  it('errors on unknown templates and warns when <launcher> has no extension', function() {
+    let config = new Config('ci', { report_file: 'out/<launcher>/<nope>' });
+    let result = config.validateReportFile();
+    expect(result.valid).to.equal(false);
+    expect(result.errors).to.deep.equal(['Unknown report_file template variable: <nope>']);
+    expect(result.warnings).to.deep.equal(['report_file <launcher> template should include a file extension']);
+  });
+
+  it('accepts known templates that include an extension', function() {
+    let config = new Config('ci', { report_file: 'out/<date>/<launcher>.xml' });
+    expect(config.validateReportFile()).to.deep.equal({ valid: true, errors: [], warnings: [] });
+    expect(config.hasAnyReportTemplate()).to.equal(true);
+  });
+});

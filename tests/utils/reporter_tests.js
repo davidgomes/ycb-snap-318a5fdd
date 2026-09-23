@@ -5,9 +5,11 @@ const expect = require('chai').expect;
 const sinon = require('sinon');
 const tmp = require('tmp');
 const fs = require('fs');
+const path = require('path');
 const PassThrough = require('stream').PassThrough;
 
 const tmpNameAsync = Bluebird.promisify(tmp.tmpName);
+const tmpDirAsync = Bluebird.promisify(tmp.dir);
 
 const Reporter = require('../../lib/utils/reporter');
 const FakeReporter = require('../support/fake_reporter');
@@ -377,6 +379,96 @@ describe('Reporter', function() {
       reporter.report('test', {});
 
       expect(reporter.hasTests()).to.be.true();
+    });
+  });
+
+  describe('per-launcher report files', function() {
+    function configFor(reporterName, extra) {
+      return {
+        config: {
+          get: function(key) {
+            if (extra && Object.prototype.hasOwnProperty.call(extra, key)) {
+              return extra[key];
+            }
+            if (key === 'reporter') {
+              return reporterName;
+            }
+          }
+        }
+      };
+    }
+
+    it('routes each browser to its own file and keeps combined stdout', function() {
+      return tmpDirAsync({ unsafeCleanup: true }).then(function(dir) {
+        let template = path.join(dir, '<date>', '<launcher>.tap');
+        let stream = new PassThrough();
+        let reporter = new Reporter(configFor('tap'), stream, template);
+        let fixed = reporter.reportDate;
+        fixed.setFullYear(2024, 0, 2);
+        fixed.setHours(3, 4, 5, 0);
+
+        reporter.report('Headless Chrome', { name: 'chrome works', passed: true });
+        reporter.report('Firefox (Nightly)', { name: 'firefox fails', passed: false, error: { message: 'nope' } });
+        reporter.report('testem', { name: 'internal failure', passed: false, error: { message: 'hidden' } });
+        reporter.finish();
+        reporter.finish();
+
+        return reporter.close().then(function() {
+          let stdout = stream.read().toString();
+          expect(stdout).to.match(/chrome works/);
+          expect(stdout).to.match(/firefox fails/);
+          expect(stdout).to.match(/internal failure/);
+          expect(stdout.match(/1\.\.3/g)).to.have.length(1);
+
+          let chromePath = path.join(dir, '2024-01-02', 'Headless_Chrome.tap');
+          let firefoxPath = path.join(dir, '2024-01-02', 'Firefox__Nightly_.tap');
+          expect(fs.existsSync(path.join(dir, '2024-01-02', 'testem.tap'))).to.equal(false);
+          expect(fs.existsSync(chromePath)).to.equal(true);
+          expect(fs.existsSync(firefoxPath)).to.equal(true);
+
+          let chrome = fs.readFileSync(chromePath, 'utf8');
+          let firefox = fs.readFileSync(firefoxPath, 'utf8');
+          expect(chrome).to.match(/chrome works/);
+          expect(chrome).to.not.match(/firefox fails/);
+          expect(chrome).to.not.match(/internal failure/);
+          expect(firefox).to.match(/firefox fails/);
+          expect(firefox).to.not.match(/chrome works/);
+          expect(chrome.match(/1\.\.1/g)).to.have.length(1);
+        });
+      });
+    });
+
+    it('keeps a single file when only date or timestamp templates are used', function() {
+      return tmpDirAsync({ unsafeCleanup: true }).then(function(dir) {
+        let template = path.join(dir, 'results-<date>.tap');
+        let reporter = new Reporter(configFor('tap'), new PassThrough(), template);
+        reporter.report('Chrome', { name: 'from chrome', passed: true });
+        reporter.report('Firefox', { name: 'from firefox', passed: true });
+        reporter.onStart('testem', { launcherId: 0 });
+
+        return reporter.close().then(function() {
+          let written = fs.readdirSync(dir);
+          expect(written).to.have.length(1);
+          expect(written[0]).to.match(/^results-\d{4}-\d{2}-\d{2}\.tap$/);
+          let output = fs.readFileSync(path.join(dir, written[0]), 'utf8');
+          expect(output).to.match(/from chrome/);
+          expect(output).to.match(/from firefox/);
+        });
+      });
+    });
+
+    it('close resolves after every per-launcher file is written', function() {
+      return tmpDirAsync({ unsafeCleanup: true }).then(function(dir) {
+        let template = path.join(dir, '<launcher>.tap');
+        let reporter = new Reporter(configFor('tap'), new PassThrough(), template);
+        reporter.report('Chrome', { name: 'one', passed: true });
+        reporter.report('Firefox', { name: 'two', passed: true });
+
+        return reporter.close().then(function() {
+          expect(fs.readFileSync(path.join(dir, 'Chrome.tap'), 'utf8')).to.match(/one/);
+          expect(fs.readFileSync(path.join(dir, 'Firefox.tap'), 'utf8')).to.match(/two/);
+        });
+      });
     });
   });
 });

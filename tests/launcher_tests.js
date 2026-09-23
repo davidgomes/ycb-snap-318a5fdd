@@ -29,6 +29,13 @@ describe('Launcher', function() {
       expect(launcher.name).to.equal('say hello');
       expect(launcher.settings).to.equal(settings);
     });
+    it('sanitizes launcher names for filenames', function() {
+      expect(launcher.getSanitizedName()).to.equal('say_hello');
+      expect(Launcher.sanitizeLauncherName(null)).to.equal('unknown');
+      expect(Launcher.sanitizeLauncherName(undefined)).to.equal('unknown');
+      expect(Launcher.sanitizeLauncherName('Chrome  Headless')).to.equal('Chrome_Headless');
+      expect(Launcher.sanitizeLauncherName('a/b\\c:d*e?f"g<h>i|j(k)l')).to.equal('a_b_c_d_e_f_g_h_i_j_k_l');
+    });
     it('should be process if protocol is not browser', function() {
       settings.protocol = 'browser';
       expect(launcher.isProcess()).not.to.be.ok();
