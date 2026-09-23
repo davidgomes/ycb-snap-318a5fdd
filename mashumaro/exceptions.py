@@ -92,6 +92,14 @@ class UnsupportedSerializationEngine(UnserializableField):
         )
 
 
+class InvalidFlattenedField(UnserializableField):
+    def __str__(self) -> str:
+        return (
+            f'Field "{self.field_name}" of type {self.field_type_name} '
+            f"in {self.holder_class_name} can't be flattened: {self.msg}"
+        )
+
+
 class UnsupportedDeserializationEngine(UnserializableField):
     def __init__(
         self,
