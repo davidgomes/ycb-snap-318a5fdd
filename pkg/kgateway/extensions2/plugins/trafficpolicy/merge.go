@@ -61,6 +61,7 @@ func MergeTrafficPolicies(
 		mergeURLRewrite,
 		mergeAPIKeyAuth,
 		mergeOAuth,
+		mergeConsistentHash,
 	}
 
 	for _, mergeFunc := range mergeFuncs {
@@ -406,6 +407,70 @@ func mergeCompression(
 		}
 
 		defaultMerge(p1, p2, p2Ref, p2MergeOrigins, opts, mergeOrigins, accessor, "decompression")
+	}
+}
+
+func mergeConsistentHash(
+	p1, p2 *TrafficPolicy,
+	p2Ref *ir.AttachedPolicyRef,
+	p2MergeOrigins ir.MergeOrigins,
+	opts policy.MergeOptions,
+	mergeOrigins ir.MergeOrigins,
+	_ TrafficPolicyMergeOpts,
+) {
+	switch opts.Strategy {
+	case policy.AugmentedDeepMerge, policy.AugmentedShallowMerge, policy.OverridableDeepMerge, policy.OverridableShallowMerge:
+	default:
+		logger.Warn("unsupported merge strategy for policy", "strategy", opts.Strategy, "policy", p2Ref, "field", "consistentHash")
+		return
+	}
+
+	// Augmented strategies prefer p1 (already accumulated, higher priority).
+	// Overridable strategies prefer p2.
+	higher := p1.spec.consistentHash
+	lower := p2.spec.consistentHash
+	higherIsP2 := false
+	switch opts.Strategy {
+	case policy.OverridableDeepMerge, policy.OverridableShallowMerge:
+		higher, lower = lower, higher
+		higherIsP2 = true
+	}
+
+	if higher == nil && lower == nil {
+		return
+	}
+	if higher == nil {
+		// p2 is unset under an overridable strategy, so the accumulated policy stands.
+		if higherIsP2 {
+			return
+		}
+		p1.spec.consistentHash = lower.clone()
+		mergeOrigins.SetOne("consistentHash", p2Ref, p2MergeOrigins)
+		return
+	}
+	if lower == nil {
+		if higherIsP2 {
+			p1.spec.consistentHash = higher.clone()
+			mergeOrigins.SetOne("consistentHash", p2Ref, p2MergeOrigins)
+		}
+		return
+	}
+
+	// Union array fields with the higher-priority policy's entries first, then re-emit
+	// them in canonical type order. sourceIp stays with the higher-priority policy,
+	// including when that policy left it unset.
+	merged, lowerContributed := unionConsistentHash(higher, lower)
+	p1.spec.consistentHash = merged
+	if higherIsP2 {
+		if higher.disable || !lowerContributed {
+			mergeOrigins.SetOne("consistentHash", p2Ref, p2MergeOrigins)
+			return
+		}
+		mergeOrigins.Append("consistentHash", p2Ref, p2MergeOrigins)
+		return
+	}
+	if lowerContributed {
+		mergeOrigins.Append("consistentHash", p2Ref, p2MergeOrigins)
 	}
 }
 

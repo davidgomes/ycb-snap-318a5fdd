@@ -15,11 +15,14 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	apisettings "github.com/kgateway-dev/kgateway/v2/api/settings"
+	"github.com/kgateway-dev/kgateway/v2/pkg/kgateway/extensions2/plugins/trafficpolicy"
 	"github.com/kgateway-dev/kgateway/v2/pkg/kgateway/translator/routeutils"
 	"github.com/kgateway-dev/kgateway/v2/pkg/kgateway/utils"
+	"github.com/kgateway-dev/kgateway/v2/pkg/kgateway/wellknown"
 	"github.com/kgateway-dev/kgateway/v2/pkg/pluginsdk/ir"
 	reportssdk "github.com/kgateway-dev/kgateway/v2/pkg/pluginsdk/reporter"
 	"github.com/kgateway-dev/kgateway/v2/pkg/reports"
@@ -145,7 +148,7 @@ func (h *httpRouteConfigurationTranslator) computeVirtualHost(
 			routeReport = h.reporter.Route(route.Parent.SourceObject).ParentRef(&route.ParentRef)
 		}
 		generatedName := fmt.Sprintf("%s-route-%d", virtualHost.Name, i)
-		computedRoute := h.envoyRoutes(ctx, routeReport, route, generatedName)
+		computedRoute := h.envoyRoutes(ctx, routeReport, route, generatedName, virtualHost.AttachedPolicies)
 		if computedRoute != nil {
 			envoyRoutes = append(envoyRoutes, computedRoute)
 		}
@@ -225,6 +228,7 @@ func (h *httpRouteConfigurationTranslator) envoyRoutes(
 	routeReport reportssdk.ParentRefReporter,
 	in ir.HttpRouteRuleMatchIR,
 	generatedName string,
+	listenerPolicies ir.AttachedPolicies,
 ) *envoyroutev3.Route {
 	out := h.initRoutes(in, generatedName)
 
@@ -239,7 +243,7 @@ func (h *httpRouteConfigurationTranslator) envoyRoutes(
 	}
 
 	// Run plugins here that may set action. Handle the routeProcessingErr error later.
-	routeProcessingErr := h.runRoutePlugins(in, out, backendConfigCtx.typedPerFilterConfigRoute)
+	routeProcessingErr := h.runRoutePlugins(in, out, backendConfigCtx.typedPerFilterConfigRoute, listenerPolicies)
 
 	// Apply typed per filter config from translating route action and route plugins
 	typedPerFilterConfig := backendConfigCtx.typedPerFilterConfigRoute.ToAnyMap()
@@ -376,6 +380,7 @@ func (h *httpRouteConfigurationTranslator) runRoutePlugins(
 	in ir.HttpRouteRuleMatchIR,
 	out *envoyroutev3.Route,
 	typedPerFilterConfig ir.TypedFilterConfigMap,
+	listenerPolicies ir.AttachedPolicies,
 ) error {
 	// all policies up to listener have been applied as vhost polices; we need to apply the httproute policies and below
 	//
@@ -402,6 +407,16 @@ func (h *httpRouteConfigurationTranslator) runRoutePlugins(
 			delegatingParent.ExtensionRefs, delegatingParent.AttachedPolicies, delegatingParent.Parent.AttachedPolicies)
 		delegatingParent = delegatingParent.DelegatingParent
 	}
+
+	// Listener and gateway TrafficPolicies are broader than route policies. Only consistentHash
+	// is inherited here; other fields stay on the vhost or route configuration where they apply.
+	// Listener policies outrank gateway policies. Both outrank nothing already attached above.
+	hierarchicalPriority--
+	inheritedListener := consistentHashInheritancePolicies(listenerPolicies)
+	inheritedListener.Append(consistentHashInheritancePolicies(h.attachedPolicies))
+	attachedPolicies.AppendWithPriority(hierarchicalPriority, inheritedListener)
+	hierarchicalPriority--
+	attachedPolicies.AppendWithPriority(hierarchicalPriority, consistentHashInheritancePolicies(h.gw.AttachedHttpPolicies))
 
 	var errs []error
 	for _, gk := range attachedPolicies.ApplyOrderedGroupKinds() {
@@ -442,6 +457,46 @@ func (h *httpRouteConfigurationTranslator) runRoutePlugins(
 	}
 
 	return errors.Join(errs...)
+}
+
+// consistentHashInheritancePolicies returns TrafficPolicy attachments that carry only
+// consistentHash. Listener and gateway policies are inherited onto routes through this
+// view so other TrafficPolicy fields stay at the scope they were attached to.
+// PolicyRef is cleared so route translation does not overwrite the policy's attachment
+// status. Merge metadata still records the original policy via MergeOrigins.
+func consistentHashInheritancePolicies(in ir.AttachedPolicies) ir.AttachedPolicies {
+	gk := wellknown.TrafficPolicyGVK.GroupKind()
+	pols := in.Policies[gk]
+	if len(pols) == 0 {
+		return ir.AttachedPolicies{}
+	}
+	out := make([]ir.PolicyAtt, 0, len(pols))
+	for _, pol := range pols {
+		if len(pol.Errors) > 0 {
+			continue
+		}
+		inherited := trafficpolicy.InheritConsistentHashPolicy(pol.PolicyIr)
+		if inherited == nil {
+			continue
+		}
+		copied := pol
+		copied.PolicyIr = inherited
+		if copied.PolicyRef != nil {
+			origins := ir.MergeOrigins{}
+			origins.SetOne("consistentHash", copied.PolicyRef, nil)
+			copied.MergeOrigins = origins
+			copied.PolicyRef = nil
+		}
+		out = append(out, copied)
+	}
+	if len(out) == 0 {
+		return ir.AttachedPolicies{}
+	}
+	return ir.AttachedPolicies{
+		Policies: map[schema.GroupKind][]ir.PolicyAtt{
+			gk: out,
+		},
+	}
 }
 
 func mergePolicies(pass *TranslationPass, policies []ir.PolicyAtt) ([]ir.PolicyAtt, ir.MergeOrigins) {

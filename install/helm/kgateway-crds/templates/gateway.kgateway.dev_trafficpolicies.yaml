@@ -355,6 +355,193 @@ spec:
                     must be set
                   rule: '[has(self.responseCompression),has(self.requestDecompression)].filter(x,x==true).size()
                     >= 1'
+              consistentHash:
+                description: |-
+                  ConsistentHash configures route-level consistent hashing.
+                  When set, including as an empty object, the route is configured with Envoy hash policies.
+                  An empty object defaults to hashing on the downstream source IP.
+                  Hash policies from multiple TrafficPolicies targeting the same route are merged.
+                  Set disable to suppress hashing, including policies inherited from broader scopes.
+                properties:
+                  cookies:
+                    description: |-
+                      Cookies are cookies whose values are mixed into the hash key.
+                      Entries are deduplicated by cookie name and the first occurrence is kept.
+                    items:
+                      description: ConsistentHashCookie hashes a cookie value.
+                      properties:
+                        attributes:
+                          description: Attributes are cookie attributes passed through
+                            to Envoy, such as SameSite or Secure.
+                          items:
+                            description: ConsistentHashCookieAttribute is a name/value
+                              pair passed through to Envoy as a cookie attribute.
+                            properties:
+                              name:
+                                description: Name is the attribute name, such as SameSite
+                                  or Secure.
+                                maxLength: 256
+                                minLength: 1
+                                type: string
+                              value:
+                                description: Value is the attribute value passed through
+                                  unchanged.
+                                maxLength: 256
+                                type: string
+                            required:
+                            - name
+                            - value
+                            type: object
+                          maxItems: 16
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        name:
+                          description: Name is the cookie name.
+                          maxLength: 256
+                          minLength: 1
+                          type: string
+                        path:
+                          description: Path is the cookie path attribute.
+                          type: string
+                        terminal:
+                          description: Terminal stops evaluation of later hash policies
+                            once this policy produces a key.
+                          type: boolean
+                        ttl:
+                          description: |-
+                            TTL is how long a generated cookie remains valid when the request did not include one.
+                            The value is a Go duration string, such as "1h30m", or a plain integer number of seconds, such as "3600".
+                          maxLength: 64
+                          minLength: 1
+                          pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$|^[0-9]+$
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  disable:
+                    description: |-
+                      Disable suppresses consistent hashing on the route.
+                      When true, no hash policies are produced and hash policies inherited from
+                      broader-scoped TrafficPolicies are suppressed.
+                      When true, no other fields may be set.
+                    type: boolean
+                  filterState:
+                    description: |-
+                      FilterState entries mix Envoy filter-state values into the hash key.
+                      Entries are deduplicated by key and the first occurrence is kept.
+                    items:
+                      description: ConsistentHashFilterState hashes a value stored
+                        in Envoy filter state.
+                      properties:
+                        key:
+                          description: Key is the filter state key.
+                          maxLength: 256
+                          minLength: 1
+                          type: string
+                        terminal:
+                          description: Terminal stops evaluation of later hash policies
+                            once this policy produces a key.
+                          type: boolean
+                      required:
+                      - key
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - key
+                    x-kubernetes-list-type: map
+                  headers:
+                    description: |-
+                      Headers are HTTP headers whose values are mixed into the hash key.
+                      Entries are deduplicated by header name. Header names are compared
+                      case-insensitively and the first occurrence is kept.
+                    items:
+                      description: ConsistentHashHeader hashes an HTTP header value.
+                      properties:
+                        headerName:
+                          description: HeaderName is the name of the header to hash.
+                          maxLength: 256
+                          minLength: 1
+                          type: string
+                        regexRewrite:
+                          description: RegexRewrite rewrites the header value before
+                            it is hashed.
+                          properties:
+                            pattern:
+                              description: Pattern is the RE2 regular expression matched
+                                against the header value.
+                              maxLength: 1024
+                              minLength: 1
+                              type: string
+                            substitution:
+                              description: |-
+                                Substitution replaces the matched portion of the header value.
+                                It may include RE2 backreferences such as \1 or \g<name>.
+                              maxLength: 1024
+                              type: string
+                          required:
+                          - pattern
+                          - substitution
+                          type: object
+                        terminal:
+                          description: Terminal stops evaluation of later hash policies
+                            once this policy produces a key.
+                          type: boolean
+                      required:
+                      - headerName
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - headerName
+                    x-kubernetes-list-type: map
+                  queryParameters:
+                    description: |-
+                      QueryParameters are URL query parameters whose values are mixed into the hash key.
+                      Entries are deduplicated by name and the first occurrence is kept.
+                    items:
+                      description: ConsistentHashQueryParameter hashes a URL query
+                        parameter value.
+                      properties:
+                        name:
+                          description: Name is the query parameter name.
+                          maxLength: 256
+                          minLength: 1
+                          type: string
+                        terminal:
+                          description: Terminal stops evaluation of later hash policies
+                            once this policy produces a key.
+                          type: boolean
+                      required:
+                      - name
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  sourceIp:
+                    description: |-
+                      SourceIp uses the downstream connection source IP as a hash policy.
+                      This is a single scalar value. When policies are merged, the higher-priority
+                      policy's sourceIp is kept even when that policy leaves it unset.
+                    properties:
+                      terminal:
+                        description: Terminal stops evaluation of later hash policies
+                          once this policy produces a key.
+                        type: boolean
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: no other fields may be set when disable is true
+                  rule: '!has(self.disable) || !self.disable || (!has(self.headers)
+                    && !has(self.cookies) && !has(self.queryParameters) && !has(self.filterState)
+                    && !has(self.sourceIp))'
               cors:
                 description: Cors specifies the CORS configuration for the policy.
                 properties:

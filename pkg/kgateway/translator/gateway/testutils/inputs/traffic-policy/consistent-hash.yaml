@@ -1,0 +1,262 @@
+# Consistent hash policies on TrafficPolicy.
+# listener `plain` has no listener policy, so an empty consistentHash defaults to source IP.
+# listener `http` has a listener policy that is inherited and merged with route policies.
+kind: Gateway
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: example-gateway
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - protocol: HTTP
+      port: 8080
+      name: http
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - protocol: HTTP
+      port: 8081
+      name: plain
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-svc
+spec:
+  selector:
+    test: example-gateway
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: empty-hash
+spec:
+  parentRefs:
+    - name: example-gateway
+      namespace: default
+      sectionName: plain
+  hostnames:
+    - "empty.example.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /empty
+      backendRefs:
+        - name: example-svc
+          port: 8000
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: empty-hash-policy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: empty-hash
+  consistentHash: {}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: inherit-hash
+spec:
+  parentRefs:
+    - name: example-gateway
+      namespace: default
+      sectionName: http
+  hostnames:
+    - "inherit.example.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /inherit
+      backendRefs:
+        - name: example-svc
+          port: 8000
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: listener-hash-policy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: example-gateway
+      sectionName: http
+  consistentHash:
+    cookies:
+      - name: session
+        ttl: "1h30m"
+        path: /app
+        attributes:
+          - name: SameSite
+            value: Lax
+          - name: Secure
+            value: "true"
+        terminal: true
+    queryParameters:
+      - name: user
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: full-hash
+spec:
+  parentRefs:
+    - name: example-gateway
+      namespace: default
+      sectionName: http
+  hostnames:
+    - "full.example.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /full
+      backendRefs:
+        - name: example-svc
+          port: 8000
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: full-hash-policy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: full-hash
+  consistentHash:
+    filterState:
+      - key: envoy.lb
+        terminal: true
+    sourceIp:
+      terminal: true
+    headers:
+      - headerName: X-User
+        terminal: true
+        regexRewrite:
+          pattern: "^user-(.*)$"
+          substitution: "\\1"
+      # duplicate of X-User; first occurrence is kept
+      - headerName: x-user
+      - headerName: X-Tenant
+    cookies:
+      - name: sticky
+        ttl: "3600"
+        attributes:
+          - name: HttpOnly
+            value: "true"
+      # duplicate cookie name; first occurrence is kept
+      - name: sticky
+        ttl: "1s"
+        path: /ignored
+    queryParameters:
+      # route wins over the listener policy's user query parameter
+      - name: user
+        terminal: true
+      - name: region
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: merged-hash
+spec:
+  parentRefs:
+    - name: example-gateway
+      namespace: default
+      sectionName: http
+  hostnames:
+    - "merged.example.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /merged
+      backendRefs:
+        - name: example-svc
+          port: 8000
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: merge-high
+  creationTimestamp: "2024-01-01T00:00:00Z"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: merged-hash
+  consistentHash:
+    headers:
+      - headerName: X-User
+        terminal: true
+    cookies:
+      - name: high
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: merge-low
+  creationTimestamp: "2024-06-01T00:00:00Z"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: merged-hash
+  consistentHash:
+    headers:
+      # case-insensitive duplicate of the higher-priority header
+      - headerName: x-user
+      - headerName: X-Extra
+    cookies:
+      - name: low
+        ttl: "30s"
+    filterState:
+      - key: io.kgateway.user
+    # sourceIp on the lower-priority policy is dropped
+    sourceIp:
+      terminal: true
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: disabled-hash
+spec:
+  parentRefs:
+    - name: example-gateway
+      namespace: default
+      sectionName: http
+  hostnames:
+    - "disabled.example.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /disabled
+      backendRefs:
+        - name: example-svc
+          port: 8000
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: disable-hash-policy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: disabled-hash
+  consistentHash:
+    disable: true
