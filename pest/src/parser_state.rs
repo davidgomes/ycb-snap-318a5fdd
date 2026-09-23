@@ -215,6 +215,16 @@ impl Display for ParsingToken {
         }
     }
 }
+
+fn char_class_token((start, end): (char, char)) -> ParsingToken {
+    if start == end {
+        ParsingToken::Sensitive {
+            token: String::from(start),
+        }
+    } else {
+        ParsingToken::Range { start, end }
+    }
+}
 /// A helper that provides efficient string handling without unnecessary copying.
 /// We use `Arc<String>` instead of `Cow<'i, str>` to avoid copying strings when cloning the `Owned` variant, since
 /// `Arc::clone` only increments a reference count. [SpanOrLiteral] needs to be [Send] and [Sync]`, so we use [Arc]
@@ -1221,6 +1231,116 @@ impl<'i, R: RuleType> ParserState<'i, R> {
         if self.parse_attempts.enabled {
             self.handle_token_parse_result(start_position, token, succeeded);
         }
+        if succeeded {
+            Ok(self)
+        } else {
+            Err(self)
+        }
+    }
+
+    /// Attempts to match a single character from any of the given `ranges`. Returns `Ok` with
+    /// the updated `Box<ParserState>` if successful, or `Err` with the updated `Box<ParserState>`
+    /// otherwise.
+    ///
+    /// # Caution
+    /// The provided `ranges` are interpreted as inclusive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use pest;
+    /// # #[allow(non_camel_case_types)]
+    /// # #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    /// enum Rule {}
+    ///
+    /// let input = "_a";
+    /// let mut state: Box<pest::ParserState<'_, Rule>> = pest::ParserState::new(input);
+    /// let mut result = state.match_char_class(&[('A', 'Z'), ('_', '_'), ('a', 'z')]);
+    /// assert!(result.is_ok());
+    /// assert_eq!(result.unwrap().position().pos(), 1);
+    ///
+    /// state = pest::ParserState::new(input);
+    /// result = state.match_char_class(&[('0', '9'), ('a', 'z')]);
+    /// assert!(result.is_err());
+    /// assert_eq!(result.unwrap_err().position().pos(), 0);
+    /// ```
+    #[inline]
+    pub fn match_char_class(
+        mut self: Box<Self>,
+        ranges: &[(char, char)],
+    ) -> ParseResult<Box<Self>> {
+        let start_position = self.position.pos();
+        let mut matched = None;
+        let succeeded = self.position.match_char_by(|c| {
+            matched = ranges
+                .iter()
+                .copied()
+                .find(|&(start, end)| start <= c && c <= end);
+            matched.is_some()
+        });
+        if self.parse_attempts.enabled {
+            // Tracks the same tokens as a choice between the ranges would.
+            match matched {
+                Some(range) => {
+                    self.handle_token_parse_result(start_position, char_class_token(range), true)
+                }
+                None => {
+                    for &range in ranges {
+                        self.handle_token_parse_result(
+                            start_position,
+                            char_class_token(range),
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+        if succeeded {
+            Ok(self)
+        } else {
+            Err(self)
+        }
+    }
+
+    /// Attempts to match a single character that is not in any of the given `ranges`, like
+    /// `!ranges ~ ANY` would. Returns `Ok` with the updated `Box<ParserState>` if successful, or
+    /// `Err` with the updated `Box<ParserState>` otherwise.
+    ///
+    /// # Caution
+    /// The provided `ranges` are interpreted as inclusive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use pest;
+    /// # #[allow(non_camel_case_types)]
+    /// # #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    /// enum Rule {}
+    ///
+    /// let input = "a\"";
+    /// let mut state: Box<pest::ParserState<'_, Rule>> = pest::ParserState::new(input);
+    /// let mut result = state.match_negated_char_class(&[('"', '"'), ('\\', '\\')]);
+    /// assert!(result.is_ok());
+    /// assert_eq!(result.as_ref().unwrap().position().pos(), 1);
+    ///
+    /// result = result.unwrap().match_negated_char_class(&[('"', '"'), ('\\', '\\')]);
+    /// assert!(result.is_err());
+    /// assert_eq!(result.unwrap_err().position().pos(), 1);
+    /// ```
+    #[inline]
+    pub fn match_negated_char_class(
+        mut self: Box<Self>,
+        ranges: &[(char, char)],
+    ) -> ParseResult<Box<Self>> {
+        if self.parse_attempts.enabled {
+            // Detailed errors need the tokens that `!ranges ~ ANY` would track.
+            return self
+                .lookahead(false, |state| state.match_char_class(ranges))
+                .and_then(|state| state.skip(1));
+        }
+        let succeeded = self
+            .position
+            .match_char_by(|c| !ranges.iter().any(|&(start, end)| start <= c && c <= end));
         if succeeded {
             Ok(self)
         } else {

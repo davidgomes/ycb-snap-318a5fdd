@@ -110,7 +110,9 @@ impl ParsingToken {
         match self {
             ParsingToken::Sensitive { token } => is_whitespace(token.clone()),
             ParsingToken::Insensitive { token } => is_whitespace(token.clone()),
-            ParsingToken::Range { .. } => false,
+            ParsingToken::Range { start, end } => {
+                (*start..=*end).all(|c| is_whitespace(c.to_string()))
+            }
             ParsingToken::BuiltInRule => false,
         }
     }
