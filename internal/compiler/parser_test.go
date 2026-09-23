@@ -589,6 +589,20 @@ var goContextTreeTests = []struct {
 		}, ast.FormatText)},
 	{"func f() int {}", ast.NewTree("", []ast.Node{
 		ast.NewFunc(p(1, 1, 0, 14), ast.NewIdentifier(p(1, 6, 5, 5), "f"), ast.NewFuncType(p(1, 1, 0, 14), false, nil, []*ast.Parameter{ast.NewParameter(nil, ast.NewIdentifier(p(1, 10, 9, 11), "int"))}, false), ast.NewBlock(p(1, 14, 13, 14), nil), false, ast.FormatText)}, ast.FormatText)},
+	{"func (t T) m() {}", ast.NewTree("", []ast.Node{
+		withReceiver(
+			ast.NewFunc(p(1, 1, 0, 16), ast.NewIdentifier(p(1, 12, 11, 11), "m"), ast.NewFuncType(p(1, 1, 0, 16), false, nil, nil, false), ast.NewBlock(p(1, 16, 15, 16), nil), false, ast.FormatText),
+			ast.NewParameter(ast.NewIdentifier(p(1, 7, 6, 6), "t"), ast.NewIdentifier(p(1, 9, 8, 8), "T")),
+		)}, ast.FormatText)},
+	{"func (*T) m(a int) int {}", ast.NewTree("", []ast.Node{
+		withReceiver(
+			ast.NewFunc(p(1, 1, 0, 24), ast.NewIdentifier(p(1, 11, 10, 10), "m"), ast.NewFuncType(p(1, 1, 0, 24), false, []*ast.Parameter{
+				ast.NewParameter(ast.NewIdentifier(p(1, 13, 12, 12), "a"), ast.NewIdentifier(p(1, 15, 14, 16), "int")),
+			}, []*ast.Parameter{
+				ast.NewParameter(nil, ast.NewIdentifier(p(1, 20, 19, 21), "int")),
+			}, false), ast.NewBlock(p(1, 24, 23, 24), nil), false, ast.FormatText),
+			ast.NewParameter(nil, ast.NewUnaryOperator(p(1, 7, 6, 7), ast.OperatorPointer, ast.NewIdentifier(p(1, 8, 7, 7), "T"))),
+		)}, ast.FormatText)},
 	{"func f() int { return 5 }", ast.NewTree("", []ast.Node{
 		ast.NewFunc(p(1, 1, 0, 24), ast.NewIdentifier(p(1, 6, 5, 5), "f"), ast.NewFuncType(p(1, 1, 0, 24), false, nil, []*ast.Parameter{ast.NewParameter(nil, ast.NewIdentifier(p(1, 10, 9, 11), "int"))}, false), ast.NewBlock(p(1, 14, 13, 24), []ast.Node{
 			ast.NewReturn(p(1, 16, 15, 22), []ast.Expression{ast.NewBasicLiteral(p(1, 23, 22, 22), ast.IntLiteral, "5")}),
@@ -1444,6 +1458,34 @@ func fileTests() map[string]struct {
 			"<div>{{ content }}</div>",
 			nil,
 		},
+	}
+}
+
+// withReceiver sets the receiver of the function fn and returns fn.
+func withReceiver(fn *ast.Func, recv *ast.Parameter) *ast.Func {
+	fn.Recv = recv
+	return fn
+}
+
+func TestMethodDeclarationSyntaxErrors(t *testing.T) {
+	tests := []struct {
+		src string
+		err string
+	}{
+		{"func () m() {}", ":1:6: syntax error: method has no receiver"},
+		{"func (a, b T) m() {}", ":1:6: syntax error: method has multiple receivers"},
+		{"func (a ...T) m() {}", ":1:12: syntax error: cannot use ... in receiver or result parameter list"},
+		{"func (t T) () {}", ":1:12: syntax error: unexpected (, expecting name"},
+	}
+	for _, test := range tests {
+		_, err := parseSource([]byte(test.src), true)
+		if err == nil {
+			t.Errorf("source: %q, expecting error %q, got no error", test.src, test.err)
+			continue
+		}
+		if err.Error() != test.err {
+			t.Errorf("source: %q, expecting error %q, got %q", test.src, test.err, err)
+		}
 	}
 }
 
@@ -2456,6 +2498,21 @@ func equals(n1, n2 ast.Node, p int) error {
 		err = equals(nn1.Type, nn2.Type, p)
 		if err != nil {
 			return err
+		}
+		if (nn1.Recv == nil) != (nn2.Recv == nil) {
+			return fmt.Errorf("unexpected receiver %v, expecting %v", nn1.Recv, nn2.Recv)
+		}
+		if nn1.Recv != nil {
+			if nn1.Recv.Ident == nil || nn2.Recv.Ident == nil {
+				if nn1.Recv.Ident != nn2.Recv.Ident {
+					return fmt.Errorf("unexpected receiver name %v, expecting %v", nn1.Recv.Ident, nn2.Recv.Ident)
+				}
+			} else if err = equals(nn1.Recv.Ident, nn2.Recv.Ident, p); err != nil {
+				return err
+			}
+			if err = equals(nn1.Recv.Type, nn2.Recv.Type, p); err != nil {
+				return err
+			}
 		}
 		if len(nn1.Body.Nodes) != len(nn2.Body.Nodes) {
 			return fmt.Errorf("unexpected body nodes len %d, expecting %d", len(nn1.Body.Nodes), len(nn2.Body.Nodes))
