@@ -240,9 +240,7 @@ class BlendRangeChannel:
 
 def _luminosity(color: np.ndarray) -> np.ndarray:
     if color.shape[2] >= 3:
-        return (
-            0.299 * color[:, :, 0] + 0.587 * color[:, :, 1] + 0.114 * color[:, :, 2]
-        )
+        return 0.299 * color[:, :, 0] + 0.587 * color[:, :, 1] + 0.114 * color[:, :, 2]
     return color[:, :, 0]
 
 
@@ -372,9 +370,7 @@ class BlendRanges:
             channel = self.channels[index]
             if channel.is_default:
                 continue
-            value = channel.compute_weight(
-                source[:, :, index], backdrop[:, :, index]
-            )
+            value = channel.compute_weight(source[:, :, index], backdrop[:, :, index])
             if value is not None:
                 weight = weight * value
 
