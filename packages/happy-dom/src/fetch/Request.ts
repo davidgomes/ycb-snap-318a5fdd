@@ -17,7 +17,6 @@ import type { TRequestCredentials } from './types/TRequestCredentials.js';
 import type FormData from '../form-data/FormData.js';
 import MultipartFormDataParser from './multipart/MultipartFormDataParser.js';
 import type BrowserWindow from '../window/BrowserWindow.js';
-import WindowBrowserContext from '../window/WindowBrowserContext.js';
 import type { TRequestMode } from './types/TRequestMode.js';
 
 /**
@@ -303,24 +302,9 @@ export default class Request implements Request {
 			);
 		}
 
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
 		this[PropertySymbol.bodyUsed] = true;
 
-		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
-			this.signal[PropertySymbol.abort]();
-		});
-		let buffer: Buffer;
-
-		try {
-			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-		} catch (error) {
-			asyncTaskManager.endTask(taskID);
-			throw error;
-		}
-
-		asyncTaskManager.endTask(taskID);
+		const buffer = await this.#consumeBody(() => FetchBodyUtility.consumeBodyStream(window, this));
 
 		return <ArrayBuffer>(
 			buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
@@ -354,26 +338,9 @@ export default class Request implements Request {
 			);
 		}
 
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
 		this[PropertySymbol.bodyUsed] = true;
 
-		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
-			this.signal[PropertySymbol.abort]();
-		});
-		let buffer: Buffer;
-
-		try {
-			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-		} catch (error) {
-			asyncTaskManager.endTask(taskID);
-			throw error;
-		}
-
-		asyncTaskManager.endTask(taskID);
-
-		return buffer;
+		return this.#consumeBody(() => FetchBodyUtility.consumeBodyStream(window, this));
 	}
 
 	/**
@@ -391,24 +358,9 @@ export default class Request implements Request {
 			);
 		}
 
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
 		this[PropertySymbol.bodyUsed] = true;
 
-		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
-			this.signal[PropertySymbol.abort]();
-		});
-		let buffer: Buffer;
-
-		try {
-			buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-		} catch (error) {
-			asyncTaskManager.endTask(taskID);
-			throw error;
-		}
-
-		asyncTaskManager.endTask(taskID);
+		const buffer = await this.#consumeBody(() => FetchBodyUtility.consumeBodyStream(window, this));
 
 		return new TextDecoder().decode(buffer);
 	}
@@ -430,8 +382,6 @@ export default class Request implements Request {
 	 */
 	public async formData(): Promise<FormData> {
 		const window = this[PropertySymbol.window];
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
-
 		const contentType = this[PropertySymbol.contentType];
 
 		if (this.body && contentType && /multipart/i.test(contentType)) {
@@ -444,21 +394,9 @@ export default class Request implements Request {
 
 			this[PropertySymbol.bodyUsed] = true;
 
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
-				this.signal[PropertySymbol.abort]();
-			});
-			let formData: FormData;
-
-			try {
-				const result = await MultipartFormDataParser.streamToFormData(window, this, contentType);
-				formData = result.formData;
-			} catch (error) {
-				asyncTaskManager.endTask(taskID);
-				throw error;
-			}
-
-			asyncTaskManager.endTask(taskID);
+			const { formData } = await this.#consumeBody(() =>
+				MultipartFormDataParser.streamToFormData(window, this, contentType)
+			);
 
 			return formData;
 		}
@@ -487,5 +425,21 @@ export default class Request implements Request {
 	 */
 	public clone(): Request {
 		return new this[PropertySymbol.window].Request(this);
+	}
+
+	/**
+	 * Consumes the body as an async task of the window.
+	 *
+	 * @param consume Function that consumes the body.
+	 * @returns Promise.
+	 */
+	#consumeBody<T>(consume: () => Promise<T>): Promise<T> {
+		return FetchBodyUtility.consumeBodyAsAsyncTask({
+			window: this[PropertySymbol.window],
+			requestOrResponse: this,
+			isBuffered: !!this[PropertySymbol.bodyBuffer],
+			consume,
+			onAbort: () => this.signal[PropertySymbol.abort]()
+		});
 	}
 }

@@ -229,6 +229,7 @@ export const globalObject = Symbol('globalObject');
 export const destroyed = Symbol('destroyed');
 export const aborted = Symbol('aborted');
 export const browserFrames = Symbol('browserFrames');
+export const asyncTaskManagers = Symbol('asyncTaskManagers');
 export const windowInternalId = Symbol('windowInternalId');
 export const getItemList = Symbol('getItemList');
 export const requiredExtensions = Symbol('requiredExtensions');

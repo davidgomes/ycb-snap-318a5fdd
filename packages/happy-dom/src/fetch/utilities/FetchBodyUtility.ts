@@ -11,6 +11,7 @@ import type { TResponseBody } from '../types/TResponseBody.js';
 import { Buffer } from 'buffer';
 import Stream from 'stream';
 import type BrowserWindow from '../../window/BrowserWindow.js';
+import WindowBrowserContext from '../../window/WindowBrowserContext.js';
 
 /**
  * Fetch body utility.
@@ -241,6 +242,67 @@ export default class FetchBodyUtility {
 			);
 		}
 	}
+
+	/**
+	 * Consumes a request or response body as an async task of the window.
+	 *
+	 * The returned promise is rejected with an "AbortError" as soon as the task is aborted (e.g. when the page is closed or navigated), even if the body stream never ends.
+	 *
+	 * @param options Options.
+	 * @param options.window Window.
+	 * @param options.requestOrResponse Request or response.
+	 * @param options.requestOrResponse.body Body stream.
+	 * @param options.isBuffered "true" if the body is fully buffered, which makes it possible to consume it after the window has been closed.
+	 * @param options.consume Function that consumes the body.
+	 * @param [options.onAbort] Called when the task is aborted.
+	 * @returns Promise.
+	 */
+	public static consumeBodyAsAsyncTask<T>(options: {
+		window: BrowserWindow;
+		requestOrResponse: {
+			body: ReadableStream | null;
+			[PropertySymbol.aborted]: boolean;
+		};
+		isBuffered: boolean;
+		consume: () => Promise<T>;
+		onAbort?: () => void;
+	}): Promise<T> {
+		const { window, requestOrResponse, isBuffered, consume, onAbort } = options;
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+
+		if (!asyncTaskManager) {
+			if (isBuffered || !requestOrResponse.body) {
+				return consume();
+			}
+			return Promise.reject(
+				new window.DOMException('The operation was aborted.', DOMExceptionNameEnum.abortError)
+			);
+		}
+
+		return new Promise((resolve, reject) => {
+			const taskID = asyncTaskManager.startTask(() => {
+				requestOrResponse[PropertySymbol.aborted] = true;
+				if (onAbort) {
+					onAbort();
+				}
+				reject(
+					new window.DOMException('The operation was aborted.', DOMExceptionNameEnum.abortError)
+				);
+			});
+
+			consume().then(
+				(result) => {
+					asyncTaskManager.endTask(taskID);
+					resolve(result);
+				},
+				(error) => {
+					asyncTaskManager.endTask(taskID);
+					reject(error);
+				}
+			);
+		});
+	}
+
 	/**
 	 * Wraps a given value in a browser ReadableStream.
 	 *
