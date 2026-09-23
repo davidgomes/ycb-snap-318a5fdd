@@ -242,7 +242,8 @@ class RemoteProtocolError(ProtocolError):
 
 class DecodingError(RequestError):
     """
-    Decoding of the response failed, due to a malformed encoding.
+    Decoding of the response failed, due to a malformed encoding
+    or a malformed multipart body.
     """
 
 
