@@ -178,9 +178,12 @@ class AsyncEngine(BaseEngine):
 
             if info.state is not None:  # pragma: no branch
                 self._debug("%s Exiting state: %s", self._log_id, info.state)
+                exit_kwargs = dict(kwargs)
+                exit_kwargs["state_data"] = self.sm.scoped_state_data(info.state)
                 await self.sm._callbacks.async_call(
-                    info.state.exit.key, *args, on_error=on_error, **kwargs
+                    info.state.exit.key, *args, on_error=on_error, **exit_kwargs
                 )
+                self.sm.deactivate_state_data(info.state)
 
             self._remove_state_from_configuration(info.state)
 
@@ -234,6 +237,7 @@ class AsyncEngine(BaseEngine):
 
             self._debug("%s Entering state: %s", self._log_id, target)
             self._add_state_to_configuration(target)
+            self.sm.activate_state_data(target)
 
             on_entry_result = await self.sm._callbacks.async_call(
                 target.enter.key, *args, on_error=on_error, **kwargs
@@ -280,6 +284,7 @@ class AsyncEngine(BaseEngine):
             transitions,
         )
         previous_configuration = self.sm.configuration
+        previous_data = self._snapshot_state_data()
         try:
             result = await self._execute_transition_content(
                 transitions, trigger_data, lambda t: t.before.key
@@ -291,9 +296,11 @@ class AsyncEngine(BaseEngine):
             )
         except InvalidDefinition:
             self.sm.configuration = previous_configuration
+            self._restore_state_data(previous_data)
             raise
         except Exception as e:
             self.sm.configuration = previous_configuration
+            self._restore_state_data(previous_data)
             self._handle_error(e, trigger_data)
             return None
 
@@ -425,6 +432,7 @@ class AsyncEngine(BaseEngine):
 
                     self._macrostep_count += 1
                     self._microstep_count = 0
+                    self.sm.begin_data_macrostep()
                     self._debug(
                         "%s macrostep %d: event=%s",
                         self._log_id,
@@ -517,6 +525,7 @@ class AsyncEngine(BaseEngine):
                             "target": transition.target,
                             "state": state,
                             "transition": transition,
+                            "state_data": sm.scoped_state_data(state),
                         }
                     )
                     try:

@@ -3,6 +3,8 @@ from typing import List
 from typing import Set
 from typing import Union
 
+from statemachine.data import format_data_item
+
 from .model import ActionType
 from .model import DiagramAction
 from .model import DiagramGraph
@@ -89,6 +91,8 @@ def _extract_state(
         children.append(_extract_state(history_state, machine, getter, active_values))
 
     actions = _extract_state_actions(state, getter)
+    declaration = getattr(state, "data", None) or {}
+    data_lines = [format_data_item(key, spec) for key, spec in declaration.items()]
 
     return DiagramState(
         id=state.id,
@@ -99,6 +103,7 @@ def _extract_state(
         is_active=is_active,
         is_parallel_area=is_parallel_area,
         is_initial=getattr(state, "initial", False),
+        data=data_lines,
     )
 
 

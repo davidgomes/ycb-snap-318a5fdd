@@ -9,6 +9,7 @@ from weakref import ref
 from .callbacks import CallbackGroup
 from .callbacks import CallbackPriority
 from .callbacks import CallbackSpecList
+from .data import validate_data_declaration
 from .event import _expand_event_id
 from .exceptions import InvalidDefinition
 from .i18n import _
@@ -134,6 +135,15 @@ class State:
             See :ref:`actions`.
         exit: One or more callbacks assigned to be executed when the state is exited.
             See :ref:`actions`.
+        data: Optional mapping of string keys to default values owned by this state.
+            On entry the machine stores a fresh copy; on exit the copy is removed.
+            Values may be plain defaults, callables (called on each entry), or
+            :class:`~statemachine.data.DataVar` declarations. Runtime values live
+            on the state machine instance, not on this shared state object.
+
+            >>> counting = State("Counting", data={"total": 0})
+            >>> counting.data
+            {'total': 0}
 
     State is a core component on how this library implements an expressive API to declare
     StateMachines.
@@ -215,6 +225,7 @@ class State:
         invoke: Any = None,
         donedata: Any = None,
         _callbacks: Any = None,
+        data: Any = None,
     ):
         self.name = name
         self.value = value
@@ -245,6 +256,7 @@ class State:
             self.enter.add(donedata, priority=CallbackPriority.INLINE)
         self.document_order = 0
         self._hash = id(self)
+        self._data_decl = validate_data_declaration(data)
         self._init_states()
 
     def _init_states(self):
@@ -328,6 +340,11 @@ class State:
     @property
     def parallel(self):
         return self._parallel
+
+    @property
+    def data(self) -> "dict | None":
+        """Declared data defaults, or ``None`` when this state owns no data."""
+        return self._data_decl
 
     @property
     def is_compound(self):

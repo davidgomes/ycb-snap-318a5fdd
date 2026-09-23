@@ -1,3 +1,4 @@
+import copy
 import logging
 from dataclasses import dataclass
 from dataclasses import field
@@ -25,6 +26,12 @@ from ..transition import Transition
 
 if TYPE_CHECKING:
     from ..statemachine import StateChart
+
+    _StateDataSnapshot = tuple[
+        Dict[str, Dict[str, Any]],
+        List[Any],
+        Dict[str, Dict[str, Dict[str, Any]]],
+    ]
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +105,7 @@ class BaseEngine:
         self._log_id = f"[{type(sm).__name__}]"
         self._debug = logger.debug if logger.isEnabledFor(logging.DEBUG) else lambda *a, **k: None
         self._root_parallel_final_pending: "State | None" = None
+        self._history_data_restore: Dict[str, Dict[str, Any]] = {}
 
     def empty(self):  # pragma: no cover
         return self.external_queue.is_empty()
@@ -384,6 +392,7 @@ class BaseEngine:
             transitions,
         )
         previous_configuration = self.sm.configuration
+        previous_data = self._snapshot_state_data()
         try:
             result = self._execute_transition_content(
                 transitions, trigger_data, lambda t: t.before.key
@@ -395,9 +404,11 @@ class BaseEngine:
             )
         except InvalidDefinition:
             self.sm.configuration = previous_configuration
+            self._restore_state_data(previous_data)
             raise
         except Exception as e:
             self.sm.configuration = previous_configuration
+            self._restore_state_data(previous_data)
             self._handle_error(e, trigger_data)
             return None
 
@@ -452,6 +463,19 @@ class BaseEngine:
         self.sm._callbacks.call(transition.validators.key, *args, on_error=None, **kwargs)
         return self.sm._callbacks.all(transition.cond.key, *args, on_error=on_error, **kwargs)
 
+    def _snapshot_state_data(self) -> "_StateDataSnapshot":
+        return (
+            copy.deepcopy(self.sm._state_data),
+            list(self.sm._data_changes),
+            copy.deepcopy(self.sm._history_data),
+        )
+
+    def _restore_state_data(self, snapshot: "_StateDataSnapshot") -> None:
+        data, changes, history = snapshot
+        self.sm._state_data = data
+        self.sm._data_changes = changes
+        self.sm._history_data = history
+
     def _prepare_exit_states(
         self,
         enabled_transitions: List[Transition],
@@ -482,6 +506,12 @@ class BaseEngine:
                     [s.id for s in history_value],
                 )
                 self.sm.history_values[history.id] = history_value
+                snapshots: Dict[str, Dict[str, Any]] = {}
+                for remembered in history_value:
+                    current = self.sm._state_data.get(remembered.id)
+                    if current is not None:
+                        snapshots[remembered.id] = copy.deepcopy(dict(current))
+                self.sm._history_data[history.id] = snapshots
 
         return ordered_states, result
 
@@ -505,9 +535,16 @@ class BaseEngine:
             args, kwargs = self._get_args_kwargs(info.transition, trigger_data)
 
             # Execute `onexit` handlers — same per-block error isolation as onentry.
+            # Data stays available through the callbacks, scoped to the state
+            # that is exiting (not the transition source).
             if info.state is not None:  # pragma: no branch
                 self._debug("%s Exiting state: %s", self._log_id, info.state)
-                self.sm._callbacks.call(info.state.exit.key, *args, on_error=on_error, **kwargs)
+                exit_kwargs = dict(kwargs)
+                exit_kwargs["state_data"] = self.sm.scoped_state_data(info.state)
+                self.sm._callbacks.call(
+                    info.state.exit.key, *args, on_error=on_error, **exit_kwargs
+                )
+                self.sm.deactivate_state_data(info.state)
 
             self._remove_state_from_configuration(info.state)
 
@@ -546,6 +583,7 @@ class BaseEngine:
         Returns:
             (ordered_states, states_for_default_entry, default_history_content, new_configuration)
         """
+        self._history_data_restore = {}
         states_to_enter = OrderedSet[StateTransition]()
         states_for_default_entry = OrderedSet[StateTransition]()
         default_history_content: Dict[str, Any] = {}
@@ -673,6 +711,7 @@ class BaseEngine:
 
             self._debug("%s Entering state: %s", self._log_id, target)
             self._add_state_to_configuration(target)
+            self.sm.activate_state_data(target)
 
             # Execute `onentry` handlers — each handler is a separate block per
             # SCXML spec: errors in one block MUST NOT affect other blocks.
@@ -779,6 +818,10 @@ class BaseEngine:
                     state.type.value,
                     [s.id for s in self.sm.history_values[state.id]],
                 )
+                saved_data = self.sm._history_data.get(state.id, {})
+                for history_state in self.sm.history_values[state.id]:
+                    if history_state.id in saved_data:
+                        self._history_data_restore[history_state.id] = saved_data[history_state.id]
                 for history_state in self.sm.history_values[state.id]:
                     info_to_add = StateTransition(transition=info.transition, state=history_state)
                     if state.type.is_deep:

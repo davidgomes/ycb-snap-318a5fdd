@@ -45,6 +45,7 @@ class SyncEngine(BaseEngine):
         may depend on async code from the StateMachine.__init__ method.
         """
         if self.sm.current_state_value is None:
+            self.sm.begin_data_macrostep()
             trigger_data = BoundEvent("__initial__", _sm=self.sm).build_trigger(
                 machine=self.sm, **kwargs
             )
@@ -142,6 +143,7 @@ class SyncEngine(BaseEngine):
 
                     self._macrostep_count += 1
                     self._microstep_count = 0
+                    self.sm.begin_data_macrostep()
                     self._debug(
                         "%s macrostep %d: event=%s",
                         self._log_id,
@@ -193,6 +195,7 @@ class SyncEngine(BaseEngine):
                             "target": transition.target,
                             "state": state,
                             "transition": transition,
+                            "state_data": sm.scoped_state_data(state),
                         }
                     )
                     try:

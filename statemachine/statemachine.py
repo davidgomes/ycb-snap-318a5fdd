@@ -1,3 +1,4 @@
+import copy
 import warnings
 from inspect import isawaitable
 from typing import TYPE_CHECKING
@@ -17,6 +18,11 @@ from .callbacks import CallbacksRegistry
 from .callbacks import SpecListGrouper
 from .callbacks import SpecReference
 from .configuration import Configuration
+from .data import DataChangeInfo
+from .data import DataVar
+from .data import ScopedStateData
+from .data import materialize_state_data
+from .data import snapshot_value
 from .dispatcher import Listener
 from .dispatcher import Listeners
 from .engines.async_ import AsyncEngine
@@ -33,6 +39,7 @@ from .i18n import _
 from .model import Model
 from .signature import SignatureAdapter
 from .state import InstanceState
+from .state import State
 from .utils import run_async_from_sync
 
 if TYPE_CHECKING:
@@ -148,6 +155,11 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         self.history_values: Dict[
             str, List[State]
         ] = {}  # Mapping of compound states to last active state(s).
+        self._history_data: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._state_data: Dict[str, Dict[str, Any]] = {}
+        self._data_changes: List[DataChangeInfo] = []
+        root_decl = getattr(type(self), "_root_state_data", None)
+        self._root_data: Dict[str, Any] = copy.deepcopy(root_decl) if root_decl else {}
         self.state_field = state_field
         self.start_configuration_values = (
             [start_value] if start_value is not None else list(self.start_configuration_values)
@@ -276,6 +288,104 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
             return [self.states_map[value] for value in initial_state_values]
         except KeyError as err:
             raise InvalidStateValue(initial_state_values) from err
+
+    def begin_data_macrostep(self) -> None:
+        """Drop data-change records at a macrostep boundary."""
+        self._data_changes.clear()
+
+    def _record_data_change(self, state_id: str, key: str, old_value: Any, new_value: Any) -> None:
+        self._data_changes.append(
+            DataChangeInfo(
+                state_id=state_id,
+                key=key,
+                old_value=snapshot_value(old_value),
+                new_value=snapshot_value(new_value),
+            )
+        )
+
+    def _resolve_state(self, state: "State | str") -> "State":
+        if isinstance(state, str):
+            for candidate in self.states_map.values():
+                if candidate.id == state:
+                    return candidate
+            if state in self.states_map:
+                return self.states_map[state]
+            raise InvalidDefinition(_("'{}' is not a state.").format(state))
+        if isinstance(state, InstanceState):
+            return state._state
+        if isinstance(state, State):
+            return state
+        raise InvalidDefinition(_("Expected a state or state id, got {!r}.").format(state))
+
+    def _state_is_active(self, state: "State") -> bool:
+        return any(active.id == state.id for active in self.configuration)
+
+    def scoped_state_data(self, state: "State | str") -> ScopedStateData:
+        """Merged ancestor data visible to callbacks running in ``state``."""
+        return ScopedStateData(self, self._resolve_state(state))
+
+    def activate_state_data(self, state: "State") -> None:
+        """Materialize this state's data, or restore a history snapshot."""
+        state_id = state.id
+        restore = self._engine._history_data_restore
+        if state_id in restore:
+            self._state_data[state_id] = copy.deepcopy(restore[state_id])
+            return
+        declaration = state._data_decl
+        if not declaration:
+            return
+        self._state_data[state_id] = materialize_state_data(declaration)
+
+    def deactivate_state_data(self, state: "State") -> None:
+        """Refresh history snapshots, then drop runtime data for ``state``."""
+        state_id = state.id
+        current = self._state_data.get(state_id)
+        if current is not None:
+            frozen = copy.deepcopy(current)
+            for snapshots in self._history_data.values():
+                if state_id in snapshots:
+                    snapshots[state_id] = copy.deepcopy(frozen)
+        self._state_data.pop(state_id, None)
+
+    def get_state_data(self, state: "State | str") -> "Dict[str, Any] | None":
+        """Return the active data dict for ``state``, or ``None`` when inactive."""
+        resolved = self._resolve_state(state)
+        if not self._state_is_active(resolved):
+            return None
+        return self._state_data.get(resolved.id)
+
+    @property
+    def state_data_values(self) -> Dict[str, Dict[str, Any]]:
+        """Snapshot of every active state's data, keyed by state id."""
+        return {
+            state_id: copy.deepcopy(dict(values)) for state_id, values in self._state_data.items()
+        }
+
+    def set_state_data(self, state: "State | str", key: str, value: Any) -> None:
+        """Assign ``key`` on an active state's data.
+
+        Raises :class:`InvalidDefinition` when the state is inactive, ``key`` was
+        not declared, or the value fails a :class:`DataVar` type constraint.
+        """
+        resolved = self._resolve_state(state)
+        if not self._state_is_active(resolved) or resolved.id not in self._state_data:
+            raise InvalidDefinition(_("'{}' is not an active state.").format(resolved.id))
+        declaration = resolved._data_decl or {}
+        if key not in declaration:
+            raise InvalidDefinition(
+                _("'{}' is not a data key of state '{}'.").format(key, resolved.id)
+            )
+        spec = declaration[key]
+        if isinstance(spec, DataVar):
+            spec.validate(key, value)
+        data = self._state_data[resolved.id]
+        old_value = data[key]
+        data[key] = value
+        self._record_data_change(resolved.id, key, old_value, value)
+
+    def get_data_changes(self) -> List[DataChangeInfo]:
+        """Data assignments recorded since the current macrostep started."""
+        return list(self._data_changes)
 
     def bind_events_to(self, *targets):
         """Bind the state machine events to the target objects."""

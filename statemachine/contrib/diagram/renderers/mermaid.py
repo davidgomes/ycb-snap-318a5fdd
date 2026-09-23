@@ -164,6 +164,11 @@ class MermaidRenderer:
             else:
                 self._render_atomic_state(state, lines, indent)
 
+    def _render_data_notes(self, state: DiagramState, lines: List[str], indent: int) -> None:
+        pad = "    " * indent
+        for item in state.data:
+            lines.append(f"{pad}{state.id} : {item}")
+
     def _render_atomic_state(
         self,
         state: DiagramState,
@@ -179,6 +184,7 @@ class MermaidRenderer:
         if actions:
             for action in actions:
                 lines.append(f"{pad}{state.id} : {self._format_action(action)}")
+        self._render_data_notes(state, lines, indent)
 
         if state.is_active:
             self._active_ids.append(state.id)
@@ -194,6 +200,7 @@ class MermaidRenderer:
 
         if state.type == StateType.PARALLEL:
             lines.append(f'{pad}state "{state.name}" as {state.id} {{')
+            self._render_data_notes(state, lines, indent + 1)
             regions = [c for c in state.children if c.is_parallel_area or c.children]
             for i, region in enumerate(regions):
                 if i > 0:
@@ -206,6 +213,8 @@ class MermaidRenderer:
                 lines.append(f'{pad}state "{label}" as {state.id} {{')
             else:
                 lines.append(f"{pad}state {state.id} {{")
+
+            self._render_data_notes(state, lines, indent + 1)
 
             initial_child = next((c for c in state.children if c.is_initial), None)
             if initial_child:

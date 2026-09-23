@@ -1,5 +1,7 @@
+import ast
 import re
 import xml.etree.ElementTree as ET
+from typing import Any
 from typing import List
 from typing import Literal
 from typing import Set
@@ -65,6 +67,7 @@ def parse_scxml(scxml_content: str) -> StateMachineDefinition:  # noqa: C901
     datamodel = parse_datamodel(scxml)
     if datamodel:
         definition.datamodel = datamodel
+    definition.root_data = literals_from_data_items(_direct_data_items(scxml))
 
     # Parse states
     for state_elem in scxml:
@@ -107,26 +110,67 @@ def _find_own_datamodel_elements(root: ET.Element) -> List[ET.Element]:
     return result
 
 
+_NOT_A_LITERAL = object()
+
+
+def _parse_data_element(data_elem: ET.Element) -> DataItem:
+    content = data_elem.text and re.sub(r"\s+", " ", data_elem.text).strip() or None
+    src = data_elem.attrib.get("src")
+    src_parsed = urlparse(src) if src else None
+    if src_parsed and src_parsed.scheme == "file" and content is None:
+        with open(src_parsed.path) as f:
+            content = f.read()
+    return DataItem(
+        id=data_elem.attrib["id"],
+        src=src_parsed,
+        expr=data_elem.attrib.get("expr"),
+        content=content,
+    )
+
+
+def _direct_data_items(elem: ET.Element) -> List[DataItem]:
+    """``<data>`` elements that belong directly to ``elem``, not to descendants."""
+    items: List[DataItem] = []
+    for child in elem:
+        if child.tag != "datamodel":
+            continue
+        for data_elem in child.findall("data"):
+            items.append(_parse_data_element(data_elem))
+    return items
+
+
+def python_literal(expr: str) -> Any:
+    """Parse ``expr`` as a Python literal.
+
+    Returns a private sentinel when ``expr`` is not a literal (for example an
+    arithmetic expression). Callers keep the existing expression evaluator for
+    those values.
+    """
+    try:
+        return ast.literal_eval(expr)
+    except (ValueError, SyntaxError, MemoryError, TypeError):
+        return _NOT_A_LITERAL
+
+
+def literals_from_data_items(items: List[DataItem]) -> "dict | None":
+    """Map ``id``/``expr`` pairs that are Python literals to their values."""
+    declared: dict = {}
+    for item in items:
+        if not item.expr:
+            continue
+        value = python_literal(item.expr)
+        if value is _NOT_A_LITERAL:
+            continue
+        declared[item.id] = value
+    return declared or None
+
+
 def parse_datamodel(root: ET.Element) -> "DataModel | None":
     data_model = DataModel()
 
     for datamodel_elem in _find_own_datamodel_elements(root):
         for data_elem in datamodel_elem.findall("data"):
-            content = data_elem.text and re.sub(r"\s+", " ", data_elem.text).strip() or None
-            src = data_elem.attrib.get("src")
-            src_parsed = urlparse(src) if src else None
-            if src_parsed and src_parsed.scheme == "file" and content is None:
-                with open(src_parsed.path) as f:
-                    content = f.read()
-
-            data_model.data.append(
-                DataItem(
-                    id=data_elem.attrib["id"],
-                    src=src_parsed,
-                    expr=data_elem.attrib.get("expr"),
-                    content=content,
-                )
-            )
+            data_model.data.append(_parse_data_element(data_elem))
 
     # Parse <script> elements outside of <datamodel>
     for script_elem in root.findall("script"):
@@ -228,6 +272,10 @@ def parse_state(  # noqa: C901
         donedata_elem = state_elem.find("donedata")
         if donedata_elem is not None:
             state.donedata = parse_donedata(donedata_elem)
+
+    direct_items = _direct_data_items(state_elem)
+    if direct_items:
+        state.datamodel = DataModel(data=direct_items)
 
     return state
 

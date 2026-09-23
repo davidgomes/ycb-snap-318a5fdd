@@ -91,4 +91,5 @@ class EventData:
         kwargs["state"] = self.state
         kwargs["source"] = self.source
         kwargs["target"] = self.target
+        kwargs["state_data"] = self.machine.scoped_state_data(self.state)
         return kwargs

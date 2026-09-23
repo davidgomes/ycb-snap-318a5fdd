@@ -21,6 +21,7 @@ from .actions import ExecuteBlock
 from .actions import create_datamodel_action_callable
 from .actions import create_invoke_init_callable
 from .invoke import SCXMLInvoker
+from .parser import literals_from_data_items
 from .parser import parse_scxml
 from .schema import HistoryState
 from .schema import InvokeDefinition
@@ -111,17 +112,18 @@ class SCXMLProcessor:
                 ):
                     initial_state["enter"].insert(insert_pos, datamodel)  # type: ignore[arg-type]
 
-        self._add(
-            location,
-            {
-                "states": states_dict,
-                "prepare_event": self._prepare_event,
-                "validate_disconnected_states": False,
-                "validate_trap_states": False,
-                "validate_final_reachability": False,
-                "start_configuration_values": list(definition.initial_states),
-            },
-        )
+        class_attrs: Dict[str, Any] = {
+            "states": states_dict,
+            "prepare_event": self._prepare_event,
+            "validate_disconnected_states": False,
+            "validate_trap_states": False,
+            "validate_final_reachability": False,
+            "start_configuration_values": list(definition.initial_states),
+        }
+        if definition.root_data:
+            class_attrs["_root_state_data"] = definition.root_data
+
+        self._add(location, class_attrs)
 
     def _prepare_event(self, *args, event: Event, **kwargs):
         machine = kwargs["machine"]
@@ -206,6 +208,11 @@ class SCXMLProcessor:
 
         if state.history:
             state_dict["history"] = self._process_history(state.history)
+
+        if state.datamodel:
+            declared = literals_from_data_items(state.datamodel.data)
+            if declared:
+                state_dict["data"] = declared
 
         return state_dict
 
