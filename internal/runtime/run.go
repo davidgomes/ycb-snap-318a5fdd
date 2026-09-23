@@ -172,6 +172,11 @@ func (vm *VM) run() (Addr, bool) {
 				} else {
 					if t.Kind() == reflect.Interface {
 						ok = v.Type().Implements(t)
+						if !ok {
+							if st, isScriggoType := vm.env.typeof(v).(ScriggoType); isScriggoType {
+								ok = st.Implements(t)
+							}
+						}
 					} else {
 						ok = v.Type() == t
 					}
@@ -184,7 +189,7 @@ func (vm *VM) run() (Addr, bool) {
 					var concrete reflect.Type
 					var method string
 					if v.IsValid() {
-						concrete = v.Type()
+						concrete = vm.env.typeof(v)
 						if t.Kind() == reflect.Interface {
 							method = missingMethod(concrete, t)
 						}
@@ -219,6 +224,15 @@ func (vm *VM) run() (Addr, bool) {
 					}
 					vm.setString(c, s)
 				default:
+					if t.Kind() == reflect.Interface {
+						// v can be a proxy of a value with a Scriggo type, so
+						// it may not be assignable to a value of type t.
+						if !ok {
+							v = reflect.Value{}
+						}
+						vm.setGeneral(c, v)
+						break
+					}
 					if w, ok := t.(ScriggoType); ok {
 						t = w.GoType()
 					}
@@ -1092,6 +1106,17 @@ func (vm *VM) run() (Addr, bool) {
 				panic(errNilPointer)
 			}
 			method := vm.stringk(b, true)
+			if receiver.Kind() == reflect.Struct && receiver.CanInterface() {
+				if p, ok := receiver.Interface().(MethodProxy); ok {
+					if fn, rcvr, ok := p.ScriggoMethod(method); ok {
+						if !rcvr.IsValid() {
+							panic(errNilPointer)
+						}
+						vm.setGeneral(c, reflect.ValueOf(&callable{fn: fn, vars: []reflect.Value{rcvr}}))
+						break
+					}
+				}
+			}
 			vm.setGeneral(c, reflect.ValueOf(&callable{value: receiver.MethodByName(method)}))
 
 		// Move

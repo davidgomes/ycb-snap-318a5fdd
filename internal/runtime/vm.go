@@ -57,6 +57,19 @@ type ScriggoType interface {
 	GoType() reflect.Type
 }
 
+// A MethodProxy is implemented by the values that wrap a value with a Scriggo
+// type, as returned by the Wrap method of ScriggoType, so that the methods
+// declared in Scriggo can be called through interfaces.
+type MethodProxy interface {
+
+	// ScriggoMethod returns the function that implements the method with the
+	// given name and the receiver to bind to it as its first closure
+	// variable. The returned receiver is not valid if the wrapped value is a
+	// nil pointer and the method has a value receiver. If there is no method
+	// with the given name, ScriggoMethod returns false.
+	ScriggoMethod(name string) (*Function, reflect.Value, bool)
+}
+
 type StackShift [4]int8
 
 type Instruction struct {

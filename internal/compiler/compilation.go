@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/open2b/scriggo/ast"
+	"github.com/open2b/scriggo/internal/compiler/types"
 )
 
 // A compilation holds the state of a single compilation.
@@ -76,6 +77,9 @@ type compilation struct {
 	// This information must be kept here because it becomes lost after
 	// transforming the tree in case of extends.
 	extendedTrees map[string]bool
+
+	// methods maps the methods declared in Scriggo to their information.
+	methods map[*types.Method]*scriggoMethod
 }
 
 type renderIR struct {
@@ -96,6 +100,7 @@ func newCompilation(globalScope map[string]scopeName) *compilation {
 		globalScope:       globalScope,
 		extendingTrees:    map[string]bool{},
 		extendedTrees:     map[string]bool{},
+		methods:           map[*types.Method]*scriggoMethod{},
 	}
 }
 

@@ -36,9 +36,26 @@ func unwrap(x runtime.ScriggoType, v reflect.Value) (reflect.Value, bool) {
 	return p.value, true
 }
 
-// emptyInterfaceProxy is a proxy for values of types that have an empty
-// method set.
+// emptyInterfaceProxy is a proxy for values with a Scriggo type. Its method
+// set, for the gc compiled code, is empty; the methods declared in Scriggo
+// are available to the VM through the ScriggoMethod method.
 type emptyInterfaceProxy struct {
 	value reflect.Value
 	sign  runtime.ScriggoType
+}
+
+// ScriggoMethod implements the runtime.MethodProxy interface.
+func (p emptyInterfaceProxy) ScriggoMethod(name string) (*runtime.Function, reflect.Value, bool) {
+	m, ok := LookupMethod(p.sign, name)
+	if !ok || m.Function == nil {
+		return nil, reflect.Value{}, false
+	}
+	rcvr := p.value
+	if _, isPtr := methodsBaseType(p.sign); isPtr && !m.PointerReceiver {
+		if rcvr.IsNil() {
+			return m.Function, reflect.Value{}, true
+		}
+		rcvr = rcvr.Elem()
+	}
+	return m.Function, rcvr, true
 }

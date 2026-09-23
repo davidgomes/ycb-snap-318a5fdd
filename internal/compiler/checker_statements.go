@@ -880,6 +880,9 @@ nodesLoop:
 
 			// Handle function and macro declarations in templates.
 			if fun, ok := node.(*ast.Func); ok && fun.Ident != nil && tc.opts.mod != programMod {
+				if fun.Recv != nil {
+					panic(tc.errorf(fun, "method declarations are not supported in templates"))
+				}
 				if fun.Type.Macro && len(fun.Type.Result) == 0 {
 					tc.makeMacroResultExplicit(fun)
 				}
@@ -1120,7 +1123,12 @@ func (tc *typechecker) checkFunc(node *ast.Func) {
 	tc.scopes.Enter(node)
 	tc.addToAncestors(node)
 
-	// Adds parameters to the function body scope.
+	// Adds the receiver and the parameters to the function body scope.
+	if recv := node.Recv; recv != nil && recv.Ident != nil && !isBlankIdentifier(recv.Ident) {
+		recvType := tc.compilation.typeInfos[recv.Type].Type
+		tc.scopes.Declare(recv.Ident.Name, &typeInfo{Type: recvType, Properties: propertyAddressable}, recv.Ident, nil)
+		tc.scopes.Use(recv.Ident.Name)
+	}
 	t := node.Type.Reflect
 	for i := 0; i < t.NumIn(); i++ {
 		param := node.Type.Parameters[i]

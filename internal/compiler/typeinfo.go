@@ -38,10 +38,11 @@ type typeInfo struct {
 	Properties        properties   // Properties.
 	Constant          constant     // Constant value.
 	NativePackageName string       // Name of the package. Empty string if non-native.
-	MethodType        methodType   // Method type.
-	value             interface{}  // value; for packages has type *Package.
-	valueType         reflect.Type // When value is a native type holds the original type of value.
-	replacement       ast.Node     // Replacement node.
+	MethodType        methodType     // Method type.
+	value             interface{}    // value; for packages has type *Package.
+	valueType         reflect.Type   // When value is a native type holds the original type of value.
+	replacement       ast.Node       // Replacement node.
+	method            *scriggoMethod // Scriggo method, for method declarations, values, calls and expressions.
 }
 
 // methodType represents the type of a method, intended as a combination of a

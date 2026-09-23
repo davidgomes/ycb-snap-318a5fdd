@@ -732,6 +732,12 @@ func (em *emitter) emitSelector(v *ast.Selector, reg int8, dstType reflect.Type)
 		return
 	}
 
+	// Method value or method expression of a method declared in Scriggo.
+	if ti.method != nil {
+		em.emitScriggoMethodSelector(v, ti, reg, dstType)
+		return
+	}
+
 	// Method value on concrete and interface values.
 	if ti.MethodType == methodValueConcrete || ti.MethodType == methodValueInterface {
 		expr := v.Expr

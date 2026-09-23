@@ -160,8 +160,25 @@ func ConvertibleTo(x, y reflect.Type) bool {
 
 // Implements reports whether x implements the interface type y.
 func Implements(x, y reflect.Type) bool {
-	if _, ok := x.(runtime.ScriggoType); ok {
-		return y.NumMethod() == 0
+	if st, ok := x.(runtime.ScriggoType); ok {
+		n := y.NumMethod()
+		if n == 0 {
+			return true
+		}
+		if x.Kind() == reflect.Interface {
+			return st.GoType().Implements(y)
+		}
+		for i := 0; i < n; i++ {
+			ym := y.Method(i)
+			if ym.PkgPath != "" {
+				return false
+			}
+			m, ok := LookupMethod(x, ym.Name)
+			if !ok || m.Type != ym.Type {
+				return false
+			}
+		}
+		return true
 	}
 	if _, ok := y.(runtime.ScriggoType); ok {
 		return true

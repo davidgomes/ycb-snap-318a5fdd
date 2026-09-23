@@ -740,12 +740,18 @@ func (tc *typechecker) typeof(expr ast.Expression, typeExpected bool) *typeInfo 
 		}
 		if t.IsType() {
 			// Method expression.
+			if me, ok := tc.checkScriggoMethodExpression(t, expr); ok {
+				return me
+			}
 			return tc.checkMethodExpression(t, expr)
 		}
 		if expr.Ident == "_" {
 			panic(tc.errorf(expr, "cannot refer to blank field or method"))
 		}
 		// Method value.
+		if mv, ok := tc.checkScriggoMethodSelector(t, expr); ok {
+			return mv
+		}
 		if mv, ok := tc.checkMethodValue(t, expr); ok {
 			return mv
 		}

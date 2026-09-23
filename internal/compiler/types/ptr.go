@@ -45,8 +45,40 @@ func (x ptrType) Implements(y reflect.Type) bool {
 	return Implements(x, y)
 }
 
+func (x ptrType) Method(i int) reflect.Method {
+	if !HasMethods(x) {
+		return x.Type.Method(i)
+	}
+	return reflectMethod(x, exportedMethodSet(x)[i], i)
+}
+
+func (x ptrType) MethodByName(name string) (reflect.Method, bool) {
+	if !HasMethods(x) {
+		return x.Type.MethodByName(name)
+	}
+	m, ok := LookupMethod(x, name)
+	if !ok {
+		return reflect.Method{}, false
+	}
+	i := 0
+	for _, m2 := range exportedMethodSet(x) {
+		if m2 == m {
+			break
+		}
+		i++
+	}
+	return reflectMethod(x, m, i), true
+}
+
 func (x ptrType) Name() string {
 	return "" // composite types do not have a name.
+}
+
+func (x ptrType) NumMethod() int {
+	if !HasMethods(x) {
+		return x.Type.NumMethod()
+	}
+	return len(exportedMethodSet(x))
 }
 
 func (x ptrType) String() string {
