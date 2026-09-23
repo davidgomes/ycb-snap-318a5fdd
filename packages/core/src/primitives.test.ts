@@ -18,13 +18,22 @@ import { map, multiple, optional, withDefault } from "@optique/core/modifiers";
 import {
   argument,
   command,
+  conditionalOption,
   constant,
   flag,
   option,
+  optionalWhen,
   passThrough,
+  requiredWhen,
 } from "@optique/core/primitives";
 import { choice, integer, string } from "@optique/core/valueparser";
-import { type InferValue, parseSync } from "@optique/core/parser";
+import {
+  getDocPageSync,
+  type InferValue,
+  parseSync,
+  type Result,
+  suggestSync,
+} from "@optique/core/parser";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
@@ -3777,6 +3786,298 @@ describe("hidden option", () => {
       const term = parser.usage[0];
       assert.equal(term.type, "passthrough");
       assert.equal("hidden" in term && term.hidden, true);
+    });
+  });
+});
+
+describe("option dependencies", () => {
+  function expectFailure<T>(result: Result<T>): Message {
+    if (result.success) throw new assert.AssertionError({ message: "Fail." });
+    return result.error;
+  }
+
+  function expectSuccess<T>(result: Result<T>): T {
+    if (!result.success) {
+      throw new assert.AssertionError({ message: formatMessage(result.error) });
+    }
+    return result.value;
+  }
+
+  function docOptionNames(
+    parser: Parameters<typeof getDocPageSync>[0],
+    args: readonly string[] = [],
+  ): string[] {
+    const page = getDocPageSync(parser, args);
+    if (page == null) throw new assert.AssertionError({ message: "No page." });
+    return page.sections.flatMap((s) =>
+      s.entries.flatMap((e) => e.term.type === "option" ? e.term.names : [])
+    );
+  }
+
+  function suggestTexts(
+    parser: Parameters<typeof suggestSync>[0],
+    args: readonly [string, ...string[]],
+  ): string[] {
+    return suggestSync(parser, args).flatMap((s) =>
+      s.kind === "literal" ? [s.text] : []
+    );
+  }
+
+  describe("single dependency", () => {
+    const parser = object({
+      verbose: option("--verbose"),
+      level: optional(
+        option("--level", string(), { dependsOn: { option: "verbose" } }),
+      ),
+    });
+
+    it("stores dependency metadata on the usage term", () => {
+      const term = parser.usage.find((t) =>
+        t.type === "optional" && t.terms[0]?.type === "option" &&
+        t.terms[0].names.includes("--level")
+      );
+      const inner = term?.type === "optional" ? term.terms[0] : undefined;
+      if (inner?.type !== "option") {
+        throw new assert.AssertionError({ message: "Expected option." });
+      }
+      assert.deepEqual(inner.dependsOn, { option: "verbose" });
+    });
+
+    it("parses when the dependency is satisfied", () => {
+      const result = parseSync(parser, ["--verbose", "--level", "debug"]);
+      assert.deepEqual(expectSuccess(result), {
+        verbose: true,
+        level: "debug",
+      });
+    });
+
+    it("parses a hidden dependent option when explicitly provided", () => {
+      const result = parseSync(parser, ["--level", "debug"]);
+      assert.deepEqual(expectSuccess(result), {
+        verbose: false,
+        level: "debug",
+      });
+    });
+
+    it("hides the dependent option from help when unsatisfied", () => {
+      assert.deepEqual(docOptionNames(parser), ["--verbose"]);
+      assert.deepEqual(docOptionNames(parser, ["--verbose"]), [
+        "--verbose",
+        "--level",
+      ]);
+    });
+
+    it("hides the dependent option from completion when unsatisfied", () => {
+      assert.ok(!suggestTexts(parser, ["--"]).includes("--level"));
+      assert.ok(suggestTexts(parser, ["--verbose", "--"]).includes("--level"));
+    });
+
+    it("accepts a CLI flag string as the dependee", () => {
+      const p = object({
+        verbose: option("--verbose", "-v"),
+        level: optional(
+          option("--level", string(), { dependsOn: { option: "-v" } }),
+        ),
+      });
+      assert.deepEqual(docOptionNames(p, ["-v"]), [
+        "--verbose",
+        "-v",
+        "--level",
+      ]);
+      assert.deepEqual(docOptionNames(p), ["--verbose", "-v"]);
+    });
+  });
+
+  describe("value constraints", () => {
+    const parser = object({
+      mode: withDefault(option("--mode", choice(["dev", "prod"])), "prod"),
+      port: optional(
+        option("--port", integer(), {
+          dependsOn: { option: "--mode", value: "dev" },
+        }),
+      ),
+    });
+
+    it("is satisfied only when the value equals", () => {
+      assert.ok(docOptionNames(parser, ["--mode", "dev"]).includes("--port"));
+      assert.ok(!docOptionNames(parser, ["--mode", "prod"]).includes("--port"));
+    });
+
+    it("includes the expected value in required errors", () => {
+      const p = object({
+        mode: withDefault(option("--mode", choice(["dev", "prod"])), "prod"),
+        port: optional(requiredWhen(
+          { option: "mode", value: "dev" },
+          "--port",
+          integer(),
+        )),
+      });
+      const result = parseSync(p, ["--port", "8080"]);
+      const resultError = expectFailure(result);
+      assertErrorIncludes(resultError, "requires option");
+      assertErrorIncludes(resultError, "--mode");
+      assertErrorIncludes(resultError, "dev");
+      const ok = parseSync(p, ["--mode", "dev", "--port", "8080"]);
+      assert.deepEqual(expectSuccess(ok), { mode: "dev", port: 8080 });
+    });
+  });
+
+  describe("required dependencies", () => {
+    const parser = object({
+      verbose: option("--verbose"),
+      level: optional(requiredWhen("verbose", "--level", string())),
+    });
+
+    it("fails when the dependent is given without the dependee", () => {
+      const result = parseSync(parser, ["--level", "debug"]);
+      const resultError = expectFailure(result);
+      assertErrorIncludes(resultError, "requires option");
+      assertErrorIncludes(resultError, "--verbose");
+    });
+
+    it("succeeds when the dependent is omitted", () => {
+      const result = parseSync(parser, []);
+      assert.deepEqual(expectSuccess(result), {
+        verbose: false,
+        level: undefined,
+      });
+    });
+
+    it("stays visible in help even when unsatisfied", () => {
+      assert.ok(docOptionNames(parser).includes("--level"));
+    });
+
+    it("resolves the dependency through withDefault()", () => {
+      const p = object({
+        verbose: option("--verbose"),
+        level: withDefault(requiredWhen("verbose", "--level", string()), "x"),
+      });
+      const result = parseSync(p, ["--level", "debug"]);
+      const resultError = expectFailure(result);
+      assertErrorIncludes(resultError, "requires option");
+      const ok = parseSync(p, []);
+      assert.deepEqual(expectSuccess(ok), { verbose: false, level: "x" });
+    });
+
+    it("treats missing keys as unsatisfied", () => {
+      const p = object({
+        level: optional(requiredWhen("nonexistent", "--level", string())),
+      });
+      const result = parseSync(p, ["--level", "debug"]);
+      const resultError = expectFailure(result);
+      assertErrorIncludes(resultError, "requires option");
+      assertErrorIncludes(resultError, "nonexistent");
+    });
+  });
+
+  describe("falsy dependee", () => {
+    it("fails when the dependee is explicitly falsy", () => {
+      const parser = object({
+        colors: withDefault(option("--colors", integer()), 256),
+        theme: optional(optionalWhen("colors", "--theme", string())),
+      });
+      const result = parseSync(parser, ["--colors=0", "--theme", "dark"]);
+      const resultError = expectFailure(result);
+      assertErrorIncludes(resultError, "requires option");
+      assertErrorIncludes(resultError, "--colors");
+      assert.ok(
+        parseSync(parser, ["--colors=16", "--theme", "dark"]).success,
+      );
+      assert.ok(parseSync(parser, ["--theme", "dark"]).success);
+    });
+  });
+
+  describe("compound dependencies", () => {
+    it("supports anyOf", () => {
+      const parser = object({
+        a: option("--a"),
+        b: option("--b"),
+        c: optional(conditionalOption({ anyOf: ["a", "--b"] }, "--c")),
+      });
+      assert.ok(!docOptionNames(parser).includes("--c"));
+      assert.ok(docOptionNames(parser, ["--a"]).includes("--c"));
+      assert.ok(docOptionNames(parser, ["--b"]).includes("--c"));
+    });
+
+    it("supports allOf", () => {
+      const parser = object({
+        a: option("--a"),
+        b: option("--b"),
+        c: optional(
+          conditionalOption({ allOf: ["a", { option: "b" }] }, "--c"),
+        ),
+      });
+      assert.ok(!docOptionNames(parser, ["--a"]).includes("--c"));
+      assert.ok(docOptionNames(parser, ["--a", "--b"]).includes("--c"));
+    });
+
+    it("treats empty allOf as satisfied and empty anyOf as not", () => {
+      const parser = object({
+        x: optional(conditionalOption({ allOf: [] }, "--x")),
+        y: optional(conditionalOption({ anyOf: [] }, "--y")),
+      });
+      const names = docOptionNames(parser);
+      assert.ok(names.includes("--x"));
+      assert.ok(!names.includes("--y"));
+    });
+
+    it("accepts a full dependsOn configuration with required", () => {
+      const parser = object({
+        a: option("--a"),
+        b: option("--b"),
+        c: optional(
+          conditionalOption({ anyOf: ["a", "b"], required: true }, "--c"),
+        ),
+      });
+      const result = parseSync(parser, ["--c"]);
+      const resultError = expectFailure(result);
+      assertErrorIncludes(resultError, "requires option");
+      assertErrorIncludes(resultError, "--a");
+      assertErrorIncludes(resultError, "--b");
+      assert.ok(parseSync(parser, ["--b", "--c"]).success);
+    });
+  });
+
+  describe("transitive dependencies", () => {
+    const parser = object({
+      c: option("--c"),
+      b: optional(requiredWhen("c", "--b")),
+      a: optional(optionalWhen("b", "--a")),
+    });
+
+    it("evaluates each link independently", () => {
+      assert.deepEqual(docOptionNames(parser), ["--c", "--b"]);
+      assert.deepEqual(docOptionNames(parser, ["--c", "--b"]), [
+        "--c",
+        "--b",
+        "--a",
+      ]);
+      const r = parseSync(parser, ["--b"]);
+      const rError = expectFailure(r);
+      assertErrorIncludes(rError, "--c");
+      assert.ok(parseSync(parser, ["--c", "--b", "--a"]).success);
+    });
+  });
+
+  describe("helpers", () => {
+    it("build options equivalent to option() with dependsOn", () => {
+      const r = requiredWhen({ option: "x", value: 1 }, "--r", integer());
+      const o = optionalWhen("x", ["--o", "-o"]);
+      const c = conditionalOption({ option: "x", required: true }, "--c");
+      const term = (u: typeof r.usage) => {
+        const t = u[0].type === "optional" ? u[0].terms[0] : u[0];
+        if (t.type !== "option") {
+          throw new assert.AssertionError({ message: "Expected option." });
+        }
+        return t;
+      };
+      const rt = term(r.usage);
+      const ot = term(o.usage);
+      const ct = term(c.usage);
+      assert.deepEqual(rt.dependsOn, { option: "x", value: 1, required: true });
+      assert.deepEqual(ot.dependsOn, { option: "x", required: false });
+      assert.deepEqual(ot.names, ["--o", "-o"]);
+      assert.deepEqual(ct.dependsOn, { option: "x", required: true });
     });
   });
 });

@@ -541,6 +541,46 @@ To be released.
     }))
     ~~~~
 
+ -  Added conditional option dependencies. The new `dependsOn` field of
+    `OptionOptions` makes an option depend on the presence or value of other
+    options in the enclosing `object()` parser. A dependency can be a single
+    condition (`{ option, value? }`) or a compound one (`{ anyOf, allOf }`),
+    and `option` may be either the object key or a CLI flag name of
+    the dependee. While the dependency is not satisfied, the dependent option
+    is hidden from help text and completion suggestions but is still accepted
+    if given explicitly, unless the dependee was explicitly given a falsy
+    value. With `required: true`, providing the dependent option while
+    the dependency is not satisfied is a validation error.
+
+    New exports from `@optique/core/primitives`:
+
+     -  `requiredWhen()`, `optionalWhen()`, and `conditionalOption()`:
+        Shorthands for `option()` with a `dependsOn` configuration.
+     -  `OptionDependsOn`, `OptionDependencyCondition`,
+        `OptionDependencyCompound`, `OptionDependencyConditionLike`,
+        `OptionDependencyInput`, and `ConditionalOptionOptions` types.
+
+
+    ~~~~ typescript
+    import { object } from "@optique/core/constructs";
+    import { optional } from "@optique/core/modifiers";
+    import { option, requiredWhen } from "@optique/core/primitives";
+    import { choice, integer, string } from "@optique/core/valueparser";
+
+    const parser = object({
+      verbose: option("--verbose"),
+      mode: option("--mode", choice(["dev", "prod"])),
+      // Only shown in help when --verbose is given:
+      level: optional(
+        option("--level", string(), { dependsOn: { option: "verbose" } }),
+      ),
+      // Error unless --mode is dev:
+      port: optional(
+        requiredWhen({ option: "--mode", value: "dev" }, "--port", integer()),
+      ),
+    });
+    ~~~~
+
  -  Removed deprecated `run` export. Use `runParser()` instead. The old name
     was deprecated in v0.9.0 due to naming conflicts with `@optique/run`'s
     `run()` function. [[#65]]
