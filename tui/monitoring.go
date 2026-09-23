@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Owloops/updo/alerts"
 	"github.com/Owloops/updo/aws"
 	"github.com/Owloops/updo/config"
 	"github.com/Owloops/updo/metrics"
@@ -87,7 +88,6 @@ func StartMonitoring(targets []config.Target, options Options) {
 	monitors := make(map[string]*stats.Monitor, len(allKeys))
 	sequences := make(map[string]*int, len(allKeys))
 	alertStates := make(map[string]*bool, len(allKeys))
-	webhookAlertStates := make(map[string]*bool, len(allKeys))
 
 	for _, key := range allKeys {
 		monitor, err := stats.NewMonitor()
@@ -97,10 +97,8 @@ func StartMonitoring(targets []config.Target, options Options) {
 		monitors[key.String()] = monitor
 		seq := 0
 		alert := false
-		webhookAlert := false
 		sequences[key.String()] = &seq
 		alertStates[key.String()] = &alert
-		webhookAlertStates[key.String()] = &webhookAlert
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -113,7 +111,7 @@ func StartMonitoring(targets []config.Target, options Options) {
 		wg.Add(1)
 		go func(t config.Target, index int) {
 			defer wg.Done()
-			monitorTargetTUI(ctx, t, index, monitors, sequences, alertStates, webhookAlertStates, dataChannel, options)
+			monitorTargetTUI(ctx, t, index, monitors, sequences, alertStates, dataChannel, options)
 		}(target, i)
 	}
 
@@ -261,11 +259,12 @@ func StartMonitoring(targets []config.Target, options Options) {
 	}
 }
 
-func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int, monitors map[string]*stats.Monitor, sequences map[string]*int, alertStates map[string]*bool, webhookAlertStates map[string]*bool, dataChannel chan<- TargetData, options Options) {
+func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int, monitors map[string]*stats.Monitor, sequences map[string]*int, alertStates map[string]*bool, dataChannel chan<- TargetData, options Options) {
 	ticker := time.NewTicker(target.GetRefreshInterval())
 	defer ticker.Stop()
 
 	attemptCount := 0
+	trackers := make(map[string]*alerts.Tracker)
 
 	makeRequest := func() {
 		attemptCount++
@@ -333,28 +332,13 @@ func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int
 						}
 					}
 
-					if target.WebhookURL != "" {
-						errorMsg := ""
-						if !lambdaResult.Result.IsUp {
-							switch {
-							case lambdaResult.Result.StatusCode > 0:
-								errorMsg = fmt.Sprintf("Non-success status code: %d", lambdaResult.Result.StatusCode)
-							case lambdaResult.Result.AssertText != "" && !lambdaResult.Result.AssertionPassed:
-								errorMsg = "Assertion failed"
-							default:
-								errorMsg = "Request failed"
-							}
-						}
-						if webhookAlertSent, exists := webhookAlertStates[targetKeyStr]; exists {
-							if err := notifications.HandleWebhookAlert(target.WebhookURL, target.WebhookHeaders, lambdaResult.Result.IsUp, webhookAlertSent, target.Name, lambdaResult.Result.URL, lambdaResult.Result.ResponseTime, lambdaResult.Result.StatusCode, errorMsg); err != nil {
-								dataChannel <- TargetData{
-									Target:       target,
-									Result:       lambdaResult.Result,
-									Stats:        stats.Stats{},
-									TargetKey:    targetKey,
-									WebhookError: err,
-								}
-							}
+					if err := notifyWebhook(trackers, targetKeyStr, target, lambdaResult.Result, lambdaResult.Region); err != nil {
+						dataChannel <- TargetData{
+							Target:       target,
+							Result:       lambdaResult.Result,
+							Stats:        stats.Stats{},
+							TargetKey:    targetKey,
+							WebhookError: err,
 						}
 					}
 
@@ -394,31 +378,13 @@ func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int
 					}
 				}
 
-				if target.WebhookURL != "" {
-					errorMsg := ""
-					if !result.IsUp {
-						errorMsg = fmt.Sprintf("Status code: %d", result.StatusCode)
-					}
-					if webhookAlertSent, exists := webhookAlertStates[targetKeyStr]; exists {
-						if err := notifications.HandleWebhookAlert(
-							target.WebhookURL,
-							target.WebhookHeaders,
-							result.IsUp,
-							webhookAlertSent,
-							target.Name,
-							target.URL,
-							result.ResponseTime,
-							result.StatusCode,
-							errorMsg,
-						); err != nil {
-							dataChannel <- TargetData{
-								Target:       target,
-								Result:       result,
-								Stats:        stats.Stats{},
-								TargetKey:    targetKey,
-								WebhookError: err,
-							}
-						}
+				if err := notifyWebhook(trackers, targetKeyStr, target, result, ""); err != nil {
+					dataChannel <- TargetData{
+						Target:       target,
+						Result:       result,
+						Stats:        stats.Stats{},
+						TargetKey:    targetKey,
+						WebhookError: err,
 					}
 				}
 
@@ -448,5 +414,58 @@ func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int
 				return
 			}
 		}
+	}
+}
+
+func notifyWebhook(trackers map[string]*alerts.Tracker, key string, target config.Target, result net.WebsiteCheckResult, region string) error {
+	tracker, ok := trackers[key]
+	if !ok {
+		tracker = alerts.NewTracker(target.AlertPolicy.ToAlertsPolicy())
+		trackers[key] = tracker
+	}
+
+	sslDays := -1
+	checkedURL := result.URL
+	if checkedURL == "" {
+		checkedURL = target.URL
+	}
+	if target.AlertPolicy.SSLExpiryThresholdDays > 0 {
+		sslDays = net.GetSSLCertExpiry(checkedURL)
+	}
+
+	decision := tracker.Evaluate(alerts.Check{
+		IsUp:             result.IsUp,
+		ResponseTime:     result.ResponseTime,
+		SSLDaysRemaining: sslDays,
+	}, time.Now())
+
+	if target.WebhookURL == "" {
+		return nil
+	}
+
+	return notifications.HandleWebhookDecisionWithHeaders(
+		target.WebhookURL,
+		target.WebhookHeaders,
+		decision,
+		target.Name,
+		checkedURL,
+		result.ResponseTime,
+		result.StatusCode,
+		webhookErrorMessage(result),
+		region,
+	)
+}
+
+func webhookErrorMessage(result net.WebsiteCheckResult) string {
+	if result.IsUp {
+		return ""
+	}
+	switch {
+	case result.StatusCode > 0:
+		return fmt.Sprintf("Non-success status code: %d", result.StatusCode)
+	case result.AssertText != "" && !result.AssertionPassed:
+		return "Assertion failed"
+	default:
+		return "Request failed"
 	}
 }

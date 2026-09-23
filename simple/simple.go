@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Owloops/updo/alerts"
 	"github.com/Owloops/updo/config"
 	"github.com/Owloops/updo/net"
 	"github.com/Owloops/updo/stats"
@@ -84,24 +85,39 @@ func (m *OutputManager) PrintResult(result TargetResult) {
 		regionInfo = fmt.Sprintf(" [%s]", result.Region)
 	}
 
+	alertInfo := alertSuffix(result.AlertDecision)
+
 	if m.isSingle {
-		fmt.Printf("Response%s%s: seq=%d time=%dms %s uptime=%.1f%%\n",
+		fmt.Printf("Response%s%s: seq=%d time=%dms %s uptime=%.1f%%%s\n",
 			ipInfo,
 			regionInfo,
 			result.Sequence,
 			result.Result.ResponseTime.Milliseconds(),
 			statusInfo,
-			result.Stats.UptimePercent)
+			result.Stats.UptimePercent,
+			alertInfo)
 	} else {
-		fmt.Printf("%s response%s%s: seq=%d time=%dms %s uptime=%.1f%%\n",
+		fmt.Printf("%s response%s%s: seq=%d time=%dms %s uptime=%.1f%%%s\n",
 			result.Target.Name,
 			ipInfo,
 			regionInfo,
 			result.Sequence,
 			result.Result.ResponseTime.Milliseconds(),
 			statusInfo,
-			result.Stats.UptimePercent)
+			result.Stats.UptimePercent,
+			alertInfo)
 	}
+}
+
+func alertSuffix(decision alerts.Decision) string {
+	state := decision.State
+	if state == "" {
+		state = alerts.StateHealthy
+	}
+	if decision.Event == alerts.EventNone {
+		return fmt.Sprintf(" alert=%s", state)
+	}
+	return fmt.Sprintf(" alert=%s event=%s", state, decision.Event)
 }
 
 func (m *OutputManager) PrintFinalStatistics(monitors map[string]*stats.Monitor, targets []config.Target, logMode bool) {

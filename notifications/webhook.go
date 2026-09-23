@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Owloops/updo/alerts"
 )
 
 const (
@@ -27,16 +29,33 @@ func parseHeaders(headers []string) map[string]string {
 }
 
 type WebhookPayload struct {
-	Event          string    `json:"event"`
-	Target         string    `json:"target"`
-	URL            string    `json:"url"`
-	Timestamp      time.Time `json:"timestamp"`
-	ResponseTimeMs int64     `json:"response_time_ms"`
-	Error          string    `json:"error,omitempty"`
-	StatusCode     int       `json:"status_code,omitempty"`
+	Event                 string    `json:"event"`
+	Target                string    `json:"target"`
+	URL                   string    `json:"url"`
+	Timestamp             time.Time `json:"timestamp"`
+	ResponseTimeMs        int64     `json:"response_time_ms"`
+	Error                 string    `json:"error,omitempty"`
+	StatusCode            int       `json:"status_code,omitempty"`
+	State                 string    `json:"state"`
+	PreviousState         string    `json:"previous_state"`
+	Reason                string    `json:"reason"`
+	ConsecutiveFailures   int       `json:"consecutive_failures"`
+	ConsecutiveRecoveries int       `json:"consecutive_recoveries"`
+	LatencyBreaches       int       `json:"latency_breaches"`
+	SSLExpiryDays         int       `json:"ssl_expiry_days"`
+	Region                string    `json:"region"`
 }
 
 func SendWebhook(webhookURL string, headers map[string]string, payload WebhookPayload) error {
+	client := &http.Client{Timeout: _webhookTimeout}
+	return postWebhook(client, webhookURL, headers, payload)
+}
+
+func postWebhook(client *http.Client, webhookURL string, headers map[string]string, payload WebhookPayload) error {
+	if client == nil {
+		client = &http.Client{Timeout: _webhookTimeout}
+	}
+
 	formatter := SelectFormatter(webhookURL)
 	data, err := formatter.Format(payload)
 	if err != nil {
@@ -53,10 +72,6 @@ func SendWebhook(webhookURL string, headers map[string]string, payload WebhookPa
 		req.Header.Set(key, value)
 	}
 
-	client := &http.Client{
-		Timeout: _webhookTimeout,
-	}
-
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send webhook: %w", err)
@@ -71,6 +86,53 @@ func SendWebhook(webhookURL string, headers map[string]string, payload WebhookPa
 		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
 	}
 
+	return nil
+}
+
+// HandleWebhookDecision posts decision to url using client.
+// Nothing is sent when the decision has no event or is suppressed.
+func HandleWebhookDecision(url string, client *http.Client, decision alerts.Decision, name string, urlStr string, respTime time.Duration, status int, errStr string, region string) error {
+	return sendDecisionWebhook(url, nil, client, decision, name, urlStr, respTime, status, errStr, region)
+}
+
+// HandleWebhookDecisionWithHeaders posts decision to url with extra headers.
+// Header entries use the "Name: value" form. Nothing is sent when the decision
+// has no event or is suppressed.
+func HandleWebhookDecisionWithHeaders(url string, headers []string, decision alerts.Decision, name string, urlStr string, respTime time.Duration, status int, errStr string, region string) error {
+	return sendDecisionWebhook(url, headers, nil, decision, name, urlStr, respTime, status, errStr, region)
+}
+
+func sendDecisionWebhook(webhookURL string, headers []string, client *http.Client, decision alerts.Decision, name string, urlStr string, respTime time.Duration, status int, errStr string, region string) error {
+	if decision.Event == alerts.EventNone || decision.Suppressed || webhookURL == "" {
+		return nil
+	}
+
+	displayName := name
+	if displayName == "" {
+		displayName = urlStr
+	}
+
+	payload := WebhookPayload{
+		Event:                 string(decision.Event),
+		Target:                displayName,
+		URL:                   urlStr,
+		Timestamp:             time.Now().UTC(),
+		ResponseTimeMs:        respTime.Milliseconds(),
+		StatusCode:            status,
+		Error:                 errStr,
+		State:                 string(decision.State),
+		PreviousState:         string(decision.PreviousState),
+		Reason:                decision.Reason,
+		ConsecutiveFailures:   decision.ConsecutiveFailures,
+		ConsecutiveRecoveries: decision.ConsecutiveRecoveries,
+		LatencyBreaches:       decision.LatencyBreaches,
+		SSLExpiryDays:         decision.SSLDaysRemaining,
+		Region:                region,
+	}
+
+	if err := postWebhook(client, webhookURL, parseHeaders(headers), payload); err != nil {
+		return fmt.Errorf("failed to send webhook for %s: %w", displayName, err)
+	}
 	return nil
 }
 
