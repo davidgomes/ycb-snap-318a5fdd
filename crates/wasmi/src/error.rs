@@ -8,6 +8,7 @@ use super::errors::{
 };
 use crate::{
     TrapCode,
+    coredump::CoreDump,
     engine::{ResumableHostTrapError, ResumableOutOfFuelError, TranslationError},
     module::ReadError,
 };
@@ -23,7 +24,16 @@ use wat::Error as WatError;
 #[derive(Debug)]
 pub struct Error {
     /// The underlying kind of the error and its specific information.
-    kind: Box<ErrorKind>,
+    inner: Box<ErrorInner>,
+}
+
+/// The boxed contents of an [`Error`].
+#[derive(Debug)]
+struct ErrorInner {
+    /// The underlying kind of the error and its specific information.
+    kind: ErrorKind,
+    /// The Wasm coredump if the error was caused by a Wasm trap and coredumps are enabled.
+    coredump: Option<Box<CoreDump>>,
 }
 
 #[test]
@@ -36,7 +46,10 @@ impl Error {
     /// Creates a new [`Error`] from the [`ErrorKind`].
     fn from_kind(kind: ErrorKind) -> Self {
         Self {
-            kind: Box::new(kind),
+            inner: Box::new(ErrorInner {
+                kind,
+                coredump: None,
+            }),
         }
     }
 
@@ -73,7 +86,27 @@ impl Error {
 
     /// Returns the [`ErrorKind`] of the [`Error`].
     pub fn kind(&self) -> &ErrorKind {
-        &self.kind
+        &self.inner.kind
+    }
+
+    /// Returns the Wasm coredump bytes if any.
+    ///
+    /// # Note
+    ///
+    /// Coredumps are only generated for Wasm traps and only if enabled via
+    /// [`Config::generate_coredump`](crate::Config::generate_coredump).
+    pub fn coredump(&self) -> Option<&[u8]> {
+        self.inner.coredump.as_deref().map(CoreDump::bytes)
+    }
+
+    /// Takes the [`CoreDump`] out of `self` if any.
+    pub(crate) fn take_coredump(&mut self) -> Option<Box<CoreDump>> {
+        self.inner.coredump.take()
+    }
+
+    /// Attaches the [`CoreDump`] to `self`.
+    pub(crate) fn set_coredump(&mut self, coredump: Box<CoreDump>) {
+        self.inner.coredump = Some(coredump);
     }
 
     /// Returns a reference to [`TrapCode`] if [`Error`] is a [`TrapCode`].
@@ -96,7 +129,8 @@ impl Error {
     where
         T: HostError,
     {
-        self.kind
+        self.inner
+            .kind
             .as_host()
             .and_then(<dyn HostError + 'static>::downcast_ref)
     }
@@ -109,7 +143,8 @@ impl Error {
     where
         T: HostError,
     {
-        self.kind
+        self.inner
+            .kind
             .as_host_mut()
             .and_then(<dyn HostError + 'static>::downcast_mut)
     }
@@ -122,7 +157,8 @@ impl Error {
     where
         T: HostError,
     {
-        self.kind
+        self.inner
+            .kind
             .into_host()
             .and_then(|error| error.downcast().ok())
             .map(|boxed| *boxed)
@@ -146,7 +182,7 @@ impl core::error::Error for Error {}
 
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(&self.kind, f)
+        Display::fmt(&self.inner.kind, f)
     }
 }
 

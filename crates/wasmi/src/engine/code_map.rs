@@ -10,6 +10,7 @@ use crate::{
     Config,
     Error,
     TrapCode,
+    ValType,
     collections::arena::{Arena, ArenaKey},
     core::{Fuel, FuelCostsProvider},
     engine::{ResumableOutOfFuelError, utils::unreachable_unchecked},
@@ -317,7 +318,7 @@ impl CodeMap {
 
     /// Returns the [`CompiledFuncRef`] of `func` if possible, otherwise returns `None`.
     #[inline]
-    fn get_compiled(&self, func: EngineFunc) -> Option<CompiledFuncRef<'_>> {
+    pub(crate) fn get_compiled(&self, func: EngineFunc) -> Option<CompiledFuncRef<'_>> {
         let funcs = self.funcs.lock();
         let entity = match funcs.get(func) {
             Ok(entity) => entity,
@@ -802,9 +803,21 @@ pub struct CompiledFuncEntity {
     /// This includes stack slots to store the function local constant values,
     /// function parameters, function locals and dynamically used stack slots.
     len_stack_slots: u16,
+    /// The types of the function parameters and locals.
+    ///
+    /// # Note
+    ///
+    /// Only populated if coredump generation is enabled.
+    local_types: Box<[ValType]>,
 }
 
 impl CompiledFuncEntity {
+    /// Sets the types of the function parameters and locals.
+    pub fn with_local_types(mut self, local_types: Box<[ValType]>) -> Self {
+        self.local_types = local_types;
+        self
+    }
+
     /// Create a new initialized [`CompiledFuncEntity`].
     ///
     /// # Panics
@@ -829,6 +842,7 @@ impl CompiledFuncEntity {
         Self {
             ops,
             len_stack_slots,
+            local_types: Box::default(),
         }
     }
 }
@@ -840,6 +854,8 @@ pub struct CompiledFuncRef<'a> {
     ops: Pin<&'a [u8]>,
     /// The number of stack slots used by the [`EngineFunc`] in total.
     len_stack_slots: u16,
+    /// The types of the function parameters and locals.
+    local_types: &'a [ValType],
 }
 
 impl<'a> From<&'a CompiledFuncEntity> for CompiledFuncRef<'a> {
@@ -848,6 +864,7 @@ impl<'a> From<&'a CompiledFuncEntity> for CompiledFuncRef<'a> {
         Self {
             ops: func.ops.as_ref(),
             len_stack_slots: func.len_stack_slots,
+            local_types: &func.local_types,
         }
     }
 }
@@ -863,5 +880,15 @@ impl<'a> CompiledFuncRef<'a> {
     #[inline]
     pub fn len_stack_slots(&self) -> u16 {
         self.len_stack_slots
+    }
+
+    /// Returns the types of the function parameters and locals.
+    ///
+    /// # Note
+    ///
+    /// This is empty unless coredump generation is enabled.
+    #[inline]
+    pub fn local_types(&self) -> &'a [ValType] {
+        self.local_types
     }
 }

@@ -9,6 +9,7 @@ use crate::{
         LiftFromCells,
         LowerToCells,
         executor::handler::{
+            coredump::attach_coredump,
             dispatch::{ExecutionOutcome, execute_until_done},
             state::{Inst, Ip, Sp, Stack, VmState},
             utils::{self, resolve_instance},
@@ -105,14 +106,18 @@ impl<'a, T, State: state::Execute> WasmFuncCall<'a, T, State> {
         let store = self.store.prune();
         let (mem0, mem0_len) = utils::extract_mem0(store, self.instance);
         let mut state = VmState::new(store, self.stack, self.code);
-        execute_until_done(
+        let mut outcome = execute_until_done(
             &mut state,
             self.callee_ip,
             self.callee_sp,
             mem0,
             mem0_len,
             self.instance,
-        )
+        );
+        if let Err(outcome) = &mut outcome {
+            attach_coredump(state.store.inner(), state.stack, self.code, outcome);
+        }
+        outcome
     }
 }
 

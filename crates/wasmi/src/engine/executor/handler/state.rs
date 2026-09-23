@@ -280,6 +280,11 @@ impl<'a> From<&'a [u8]> for Ip {
 }
 
 impl Ip {
+    /// Returns the address of the [`Ip`].
+    pub fn addr(self) -> usize {
+        self.value as usize
+    }
+
     /// Decodes a value of type `T` from the instruction stream at the [`Ip`].
     ///
     /// # Returns
@@ -580,6 +585,26 @@ impl Stack {
         };
         let sp = self.values.sp_or_dangling(start);
         (ip, sp, instance)
+    }
+
+    /// Returns the [`Ip`], frame start and [`Inst`] of all frames ordered from youngest to oldest.
+    pub fn coredump_frames(&self) -> Vec<(Ip, usize, Inst)> {
+        let mut frames = Vec::new();
+        let Some(mut instance) = self.frames.instance else {
+            return frames;
+        };
+        for frame in self.frames.frames.iter().rev() {
+            frames.push((frame.ip, frame.start.into_inner(), instance));
+            if let Some(prev) = frame.instance {
+                instance = prev;
+            }
+        }
+        frames
+    }
+
+    /// Returns the raw bits of the [`Cell`] at `index` of the value stack if any.
+    pub fn coredump_cell(&self, index: usize) -> Option<u64> {
+        self.values.cells.get(index).copied().map(u64::from)
     }
 
     /// Prepares `self` for a host function tail call.

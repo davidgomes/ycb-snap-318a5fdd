@@ -190,10 +190,14 @@ impl WasmTranslator<'_> for FuncTranslator {
         let Some(frame_size) = self.frame_size() else {
             return Err(Error::from(TranslationError::AllocatedTooManySlots));
         };
-        finalize(CompiledFuncEntity::new(
-            frame_size,
-            self.instrs.encoded_ops(),
-        ));
+        let mut entity = CompiledFuncEntity::new(frame_size, self.instrs.encoded_ops());
+        if self.engine.config().get_generate_coredump() {
+            let local_types = (0..self.locals.len())
+                .map(|index| self.locals.ty(LocalIdx::from(index as u32)))
+                .collect();
+            entity = entity.with_local_types(local_types);
+        }
+        finalize(entity);
         Ok(self.into_allocations())
     }
 }
