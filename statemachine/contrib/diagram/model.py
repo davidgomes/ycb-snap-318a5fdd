@@ -20,6 +20,7 @@ class StateType(Enum):
 
 
 class ActionType(Enum):
+    DATA = "data"
     ENTRY = "entry"
     EXIT = "exit"
     INTERNAL = "internal"
