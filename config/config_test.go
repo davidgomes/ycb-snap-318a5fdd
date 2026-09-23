@@ -108,6 +108,83 @@ url = "https://example.com"
 	if target.Method != _defaultMethod {
 		t.Errorf("Expected default Method=%s, got %s", _defaultMethod, target.Method)
 	}
+	wantPolicy := AlertPolicy{ConsecutiveFailures: 1, ConsecutiveRecoveries: 1}
+	if target.AlertPolicy != wantPolicy {
+		t.Errorf("Expected default AlertPolicy=%+v, got %+v", wantPolicy, target.AlertPolicy)
+	}
+}
+
+func TestLoadConfigAlertPolicyInheritance(t *testing.T) {
+	configContent := `
+[global.alert_policy]
+consecutive_failures = 3
+cooldown_seconds = 300
+latency_threshold_ms = 800
+
+[[targets]]
+url = "https://inherits.example.com"
+
+[[targets]]
+url = "https://overrides.example.com"
+
+[targets.alert_policy]
+consecutive_failures = 5
+consecutive_recoveries = 2
+latency_breach_count = 4
+ssl_expiry_threshold_days = 14
+`
+
+	tmpFile, err := os.CreateTemp("", "test-config-alert-policy-*.toml")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer func() {
+		if err := os.Remove(tmpFile.Name()); err != nil {
+			t.Logf("Failed to remove temp file: %v", err)
+		}
+	}()
+
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatalf("Failed to close temp file: %v", err)
+	}
+
+	config, err := LoadConfig(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if len(config.Targets) != 2 {
+		t.Fatalf("Expected 2 targets, got %d", len(config.Targets))
+	}
+
+	inherited := AlertPolicy{
+		ConsecutiveFailures:   3,
+		ConsecutiveRecoveries: 1,
+		CooldownSeconds:       300,
+		LatencyThresholdMs:    800,
+	}
+	if got := config.Targets[0].AlertPolicy; got != inherited {
+		t.Errorf("inherited AlertPolicy = %+v, want %+v", got, inherited)
+	}
+
+	overridden := AlertPolicy{
+		ConsecutiveFailures:    5,
+		ConsecutiveRecoveries:  2,
+		CooldownSeconds:        300,
+		LatencyThresholdMs:     800,
+		LatencyBreachCount:     4,
+		SSLExpiryThresholdDays: 14,
+	}
+	if got := config.Targets[1].AlertPolicy; got != overridden {
+		t.Errorf("overridden AlertPolicy = %+v, want %+v", got, overridden)
+	}
+
+	policy := overridden.ToAlertsPolicy()
+	if policy.Cooldown != 300*time.Second || policy.LatencyThreshold != 800*time.Millisecond {
+		t.Errorf("ToAlertsPolicy() durations = %v/%v", policy.Cooldown, policy.LatencyThreshold)
+	}
 }
 
 func TestTargetGetMethods(t *testing.T) {
