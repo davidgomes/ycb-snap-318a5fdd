@@ -17,11 +17,13 @@ package util
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"testing"
 
 	"helm.sh/helm/v4/pkg/chart/common"
+	"helm.sh/helm/v4/pkg/chart/common/util"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 )
@@ -567,4 +569,66 @@ func TestChartWithDependencyAliasedTwiceAndDoublyReferencedSubDependency(t *test
 		t.Fatal("expected two dependencies after processing aliases")
 	}
 	validateDependencyTree(t, c)
+}
+
+func TestProcessDependenciesWithMergeStrategies(t *testing.T) {
+	tests := []struct {
+		name        string
+		vals        map[string]any
+		wantList    []any
+		wantSubList []any
+	}{
+		{
+			name: "user values for both charts",
+			vals: map[string]any{
+				"list": []any{"user"},
+				"sub":  map[string]any{"list": []any{"user-for-sub"}},
+			},
+			wantList:    []any{"parent-default", "user"},
+			wantSubList: []any{"sub-default", "user-for-sub"},
+		},
+		{
+			name:        "no user values applies subchart defaults once",
+			vals:        map[string]any{},
+			wantList:    []any{"parent-default"},
+			wantSubList: []any{"sub-default"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sub := &chart.Chart{
+				Metadata: &chart.Metadata{
+					Name:        "sub",
+					Version:     "0.1.0",
+					Annotations: map[string]string{"helm.sh/merge-strategy/list": "append"},
+				},
+				Values: map[string]any{"list": []any{"sub-default"}},
+			}
+			parent := &chart.Chart{
+				Metadata: &chart.Metadata{
+					Name:         "parent",
+					Version:      "0.1.0",
+					Annotations:  map[string]string{"helm.sh/merge-strategy/list": "append"},
+					Dependencies: []*chart.Dependency{{Name: "sub", Version: "0.1.0"}},
+				},
+				Values: map[string]any{"list": []any{"parent-default"}},
+			}
+			parent.AddDependency(sub)
+
+			if err := ProcessDependencies(parent, tt.vals); err != nil {
+				t.Fatal(err)
+			}
+			out, err := util.CoalesceValues(parent, tt.vals)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got := out["list"]; !reflect.DeepEqual(got, tt.wantList) {
+				t.Errorf("list: expected %v, got %v", tt.wantList, got)
+			}
+			if got := out["sub"].(map[string]any)["list"]; !reflect.DeepEqual(got, tt.wantSubList) {
+				t.Errorf("sub.list: expected %v, got %v", tt.wantSubList, got)
+			}
+		})
+	}
 }

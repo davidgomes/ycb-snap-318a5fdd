@@ -224,6 +224,57 @@ func TestValidateChartIconURL(t *testing.T) {
 }
 
 func TestV3Chartfile(t *testing.T) {
+	t.Run("Chart.yaml merge strategy annotation issues", func(t *testing.T) {
+		dir := t.TempDir()
+		chartYaml := `apiVersion: v3
+name: mergestrategies
+version: 0.1.0
+icon: https://example.com/icon.png
+annotations:
+  helm.sh/merge-strategy/env: append
+  helm.sh/merge-strategy/bad: prepend
+  helm.sh/merge-strategy/nokey: merge
+  helm.sh/merge-key/orphan: name
+  helm.sh/merge-strategy/missing: append
+  helm.sh/merge-strategy/scalar: append
+`
+		valuesYaml := `env: []
+bad: []
+nokey: []
+scalar: x
+`
+		if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), []byte(chartYaml), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "values.yaml"), []byte(valuesYaml), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		linter := support.Linter{ChartDir: dir}
+		Chartfile(&linter)
+
+		expected := [][]string{
+			{"unsupported", "bad"},
+			{"missing", "not found"},
+			{"nokey", "helm.sh/merge-key/nokey"},
+			{"orphan"},
+			{"scalar", "non-array"},
+		}
+		if len(linter.Messages) != len(expected) {
+			t.Fatalf("Expected %d messages, got %d: %v", len(expected), len(linter.Messages), linter.Messages)
+		}
+		for i, msg := range linter.Messages {
+			if msg.Severity != support.WarningSev {
+				t.Errorf("Expected message %d to be a warning, got severity %d", i, msg.Severity)
+			}
+			for _, want := range expected[i] {
+				if !strings.Contains(msg.Err.Error(), want) {
+					t.Errorf("Expected message %d to contain %q, got: %s", i, want, msg.Err)
+				}
+			}
+		}
+	})
+
 	t.Run("Chart.yaml basic validity issues", func(t *testing.T) {
 		linter := support.Linter{ChartDir: badChartDir}
 		Chartfile(&linter)

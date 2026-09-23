@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/cli-runtime/pkg/resource"
 
+	"helm.sh/helm/v4/pkg/chart/common/util"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/kube"
 	kubefake "helm.sh/helm/v4/pkg/kube/fake"
@@ -801,4 +802,84 @@ func TestUpgradeRelease_WaitOptionsPassedDownstream(t *testing.T) {
 
 	// Verify that WaitOptions were passed to GetWaiter
 	is.NotEmpty(failer.RecordedWaitOptions, "WaitOptions should be passed to GetWaiter")
+}
+
+func TestUpgradeRelease_ReuseValuesMergeStrategies(t *testing.T) {
+	annotations := map[string]string{"helm.sh/merge-strategy/list": "append"}
+	newChart := func() *chart.Chart {
+		c := buildChart(withValues(map[string]any{"list": []any{"new-default"}}))
+		c.Metadata.Annotations = annotations
+		return c
+	}
+	current := func() *release.Release {
+		rel := releaseStub()
+		rel.Chart = buildChart(withValues(map[string]any{"list": []any{"old-default"}}))
+		rel.Chart.Metadata.Annotations = annotations
+		rel.Config = map[string]any{"list": []any{"old"}}
+		return rel
+	}
+
+	tests := []struct {
+		name         string
+		configure    func(u *Upgrade)
+		wantNewVals  map[string]any
+		wantRendered []any
+	}{
+		{
+			name:         "reset values ignores strategies",
+			configure:    func(u *Upgrade) { u.ResetValues = true },
+			wantNewVals:  map[string]any{"list": []any{"new"}},
+			wantRendered: []any{"new-default", "new"},
+		},
+		{
+			name:         "reuse values appends old before new",
+			configure:    func(u *Upgrade) { u.ReuseValues = true },
+			wantNewVals:  map[string]any{"list": []any{"old", "new"}},
+			wantRendered: []any{"old-default", "old", "new"},
+		},
+		{
+			name:         "reset then reuse values uses new chart defaults",
+			configure:    func(u *Upgrade) { u.ResetThenReuseValues = true },
+			wantNewVals:  map[string]any{"list": []any{"old", "new"}},
+			wantRendered: []any{"new-default", "old", "new"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upAction := upgradeAction(t)
+			tt.configure(upAction)
+			c := newChart()
+
+			newVals, err := upAction.reuseValues(c, current(), map[string]any{"list": []any{"new"}})
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantNewVals, newVals)
+
+			rendered, err := util.CoalesceValues(c, newVals)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantRendered, rendered["list"])
+		})
+	}
+
+	t.Run("overrides take precedence over annotations", func(t *testing.T) {
+		upAction := upgradeAction(t)
+		upAction.ReuseValues = true
+		upAction.MergeStrategies = []string{"items=merge"}
+		upAction.MergeKeys = []string{"items=name"}
+
+		rel := current()
+		rel.Config = map[string]any{"items": []any{map[string]any{"name": "a", "v": "old", "w": "old"}}}
+		newVals, err := upAction.reuseValues(newChart(), rel, map[string]any{
+			"items": []any{map[string]any{"name": "a", "v": "new"}},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []any{map[string]any{"name": "a", "v": "new", "w": "old"}}, newVals["items"])
+	})
+
+	t.Run("invalid override", func(t *testing.T) {
+		upAction := upgradeAction(t)
+		upAction.ReuseValues = true
+		upAction.MergeStrategies = []string{"items"}
+		_, err := upAction.reuseValues(newChart(), current(), nil)
+		assert.Error(t, err)
+	})
 }
