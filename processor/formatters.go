@@ -280,6 +280,17 @@ func toJSON2(input chan *FileJob) string {
 		sumComplexity += l.Complexity
 	}
 
+	j2 := buildJson2(language, sumCode, sumComplexity)
+
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
+	jsonString, _ := json.Marshal(j2)
+
+	printDebugF("milliseconds to build formatted string: %d", makeTimestampMilli()-startTime)
+
+	return string(jsonString)
+}
+
+func buildJson2(language []LanguageSummary, sumCode, sumComplexity int64) Json2 {
 	cost, schedule, people := esstimateCostScheduleMonths(sumCode)
 
 	j2 := Json2{
@@ -301,12 +312,7 @@ func toJSON2(input chan *FileJob) string {
 		j2.EstimatedLLMCycles = &result.IterationFactor
 	}
 
-	json := jsoniter.ConfigCompatibleWithStandardLibrary
-	jsonString, _ := json.Marshal(j2)
-
-	printDebugF("milliseconds to build formatted string: %d", makeTimestampMilli()-startTime)
-
-	return string(jsonString)
+	return j2
 }
 
 func toCSV(input chan *FileJob) string {
@@ -410,38 +416,55 @@ func getCSVFilesSortFunc(sortBy string) func(a, b []string) int {
 	}
 }
 
+var csvFilesHeader = []string{
+	"Language",
+	"Provider",
+	"Filename",
+	"Lines",
+	"Code",
+	"Comments",
+	"Blanks",
+	"Complexity",
+	"Bytes",
+	"ULOC",
+}
+
+func csvFileRecord(result *FileJob) []string {
+	return []string{
+		result.Language,
+		result.Location,
+		result.Filename,
+		strconv.FormatInt(result.Lines, 10),
+		strconv.FormatInt(result.Code, 10),
+		strconv.FormatInt(result.Comment, 10),
+		strconv.FormatInt(result.Blank, 10),
+		strconv.FormatInt(result.Complexity, 10),
+		strconv.FormatInt(result.Bytes, 10),
+		strconv.Itoa(result.Uloc),
+	}
+}
+
+// compareCSVFileRecords falls back to the provider so the ordering is deterministic
+func compareCSVFileRecords(sortBy string) func(a, b []string) int {
+	sortFunc := getCSVFilesSortFunc(sortBy)
+	return func(a, b []string) int {
+		if order := sortFunc(a, b); order != 0 {
+			return order
+		}
+		return strings.Compare(a[1], b[1])
+	}
+}
+
 func toCSVFiles(input chan *FileJob) string {
 	records := [][]string{}
 
 	for result := range input {
-		records = append(records, []string{
-			result.Language,
-			result.Location,
-			result.Filename,
-			strconv.FormatInt(result.Lines, 10),
-			strconv.FormatInt(result.Code, 10),
-			strconv.FormatInt(result.Comment, 10),
-			strconv.FormatInt(result.Blank, 10),
-			strconv.FormatInt(result.Complexity, 10),
-			strconv.FormatInt(result.Bytes, 10),
-			strconv.Itoa(result.Uloc),
-		})
+		records = append(records, csvFileRecord(result))
 	}
 
-	slices.SortFunc(records, getCSVFilesSortFunc(SortBy))
+	slices.SortFunc(records, compareCSVFileRecords(SortBy))
 
-	recordsEnd := [][]string{{
-		"Language",
-		"Provider",
-		"Filename",
-		"Lines",
-		"Code",
-		"Comments",
-		"Blanks",
-		"Complexity",
-		"Bytes",
-		"ULOC",
-	}}
+	recordsEnd := [][]string{slices.Clone(csvFilesHeader)}
 
 	recordsEnd = append(recordsEnd, records...)
 
@@ -499,30 +522,39 @@ func toOpenMetricsFiles(input chan *FileJob) string {
 // with the express idea of lowering memory usage, see https://github.com/boyter/scc/issues/210 for
 // the background on why this might be needed
 func toCSVStream(input chan *FileJob) string {
-	fmt.Println("Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc")
+	fmt.Print(csvStreamHeader)
 
-	var quoteRegex = regexp.MustCompile("\"")
+	// Sorting needs every row so it is only done when explicitly asked for
+	if SortBySet {
+		records := [][]string{}
+		for result := range input {
+			records = append(records, csvFileRecord(result))
+		}
+		slices.SortFunc(records, compareCSVFileRecords(SortBy))
+		for _, record := range records {
+			fmt.Print(formatCSVStreamRecord(record))
+		}
+		return ""
+	}
 
 	for result := range input {
-		// Escape quotes in location and filename then surround with quotes.
-		var location = "\"" + quoteRegex.ReplaceAllString(result.Location, "\"\"") + "\""
-		var filename = "\"" + quoteRegex.ReplaceAllString(result.Filename, "\"\"") + "\""
-
-		fmt.Printf("%s,%s,%s,%d,%d,%d,%d,%d,%d,%d\n",
-			result.Language,
-			location,
-			filename,
-			result.Lines,
-			result.Code,
-			result.Comment,
-			result.Blank,
-			result.Complexity,
-			result.Bytes,
-			result.Uloc,
-		)
+		fmt.Print(formatCSVStreamRecord(csvFileRecord(result)))
 	}
 
 	return ""
+}
+
+var csvStreamHeader = "Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc\n"
+
+var csvStreamQuoteRegex = regexp.MustCompile("\"")
+
+// formatCSVStreamRecord renders a csvFileRecord as a csv-stream row
+func formatCSVStreamRecord(record []string) string {
+	// Escape quotes in location and filename then surround with quotes.
+	var location = "\"" + csvStreamQuoteRegex.ReplaceAllString(record[1], "\"\"") + "\""
+	var filename = "\"" + csvStreamQuoteRegex.ReplaceAllString(record[2], "\"\"") + "\""
+
+	return record[0] + "," + location + "," + filename + "," + strings.Join(record[3:], ",") + "\n"
 }
 
 func toHtml(input chan *FileJob) string {
@@ -548,7 +580,7 @@ func toHtmlTable(input chan *FileJob) string {
 
 		if !ok {
 			files := []*FileJob{}
-			files = append(files, res)
+			files = appendSummaryFile(files, res)
 
 			languages[res.Language] = LanguageSummary{
 				Name:       res.Language,
@@ -563,7 +595,7 @@ func toHtmlTable(input chan *FileJob) string {
 			}
 		} else {
 			tmp := languages[res.Language]
-			files := append(tmp.Files, res)
+			files := appendSummaryFile(tmp.Files, res)
 
 			languages[res.Language] = LanguageSummary{
 				Name:       res.Language,
@@ -585,6 +617,9 @@ func toHtmlTable(input chan *FileJob) string {
 	}
 
 	language = sortLanguageSummary(language)
+
+	fileSource := newLanguageFileSource(language, summaryFileKey)
+	defer fileSource.close()
 
 	str := &strings.Builder{}
 
@@ -613,12 +648,10 @@ func toHtmlTable(input chan *FileJob) string {
 		<th>%d</th>
 		<th>%d</th>
 		<th>%d</th>
-	</tr>`, r.Name, len(r.Files), r.Lines, r.Blank, r.Comment, r.Code, r.Complexity, r.Bytes, len(ulocLanguageCount[r.Name]))
+	</tr>`, r.Name, r.Count, r.Lines, r.Blank, r.Comment, r.Code, r.Complexity, r.Bytes, len(ulocLanguageCount[r.Name]))
 
 		if Files {
-			sortSummaryFiles(&r)
-
-			for _, res := range r.Files {
+			for res := range fileSource.files(&r) {
 				_, _ = fmt.Fprintf(str, `<tr>
 		<td>%s</td>
 		<td></td>
@@ -792,6 +825,10 @@ create table t        (
 }
 
 func fileSummarize(input chan *FileJob) string {
+	if BoundedMemory {
+		return boundedFileSummarize(input)
+	}
+
 	if FormatMulti != "" {
 		return fileSummarizeMulti(input)
 	}
@@ -929,7 +966,7 @@ func fileSummarizeLong(input chan *FileJob) string {
 
 		if !ok {
 			files := []*FileJob{}
-			files = append(files, res)
+			files = appendSummaryFile(files, res)
 
 			langs[res.Language] = LanguageSummary{
 				Name:               res.Language,
@@ -945,7 +982,7 @@ func fileSummarizeLong(input chan *FileJob) string {
 			}
 		} else {
 			tmp := langs[res.Language]
-			files := append(tmp.Files, res)
+			files := appendSummaryFile(tmp.Files, res)
 			lineLength := append(tmp.LineLength, res.LineLength...)
 
 			langs[res.Language] = LanguageSummary{
@@ -970,6 +1007,9 @@ func fileSummarizeLong(input chan *FileJob) string {
 
 	language = sortLanguageSummary(language)
 
+	fileSource := newLanguageFileSource(language, summaryFileKey)
+	defer fileSource.close()
+
 	startTime := makeTimestampMilli()
 	for _, summary := range language {
 		if Files {
@@ -986,7 +1026,7 @@ func fileSummarizeLong(input chan *FileJob) string {
 		if Percent {
 			_, _ = fmt.Fprintf(str,
 				tabularWideFormatBodyPercent,
-				float64(len(summary.Files))/float64(sumFiles)*100,
+				float64(summary.Count)/float64(sumFiles)*100,
 				float64(summary.Lines)/float64(sumLines)*100,
 				float64(summary.Blank)/float64(sumBlank)*100,
 				float64(summary.Comment)/float64(sumComment)*100,
@@ -1013,10 +1053,9 @@ func fileSummarizeLong(input chan *FileJob) string {
 		}
 
 		if Files {
-			sortSummaryFiles(&summary)
 			str.WriteString(getTabularWideBreak())
 
-			for _, res := range summary.Files {
+			for res := range fileSource.files(&summary) {
 				tmp := unicodeAwareTrim(res.Location, wideFormatFileTruncate)
 				tmp = unicodeAwareRightPad(tmp, 43)
 
@@ -1116,7 +1155,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 
 		if !ok {
 			files := []*FileJob{}
-			files = append(files, res)
+			files = appendSummaryFile(files, res)
 
 			lang[res.Language] = LanguageSummary{
 				Name:       res.Language,
@@ -1131,7 +1170,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 			}
 		} else {
 			tmp := lang[res.Language]
-			files := append(tmp.Files, res)
+			files := appendSummaryFile(tmp.Files, res)
 			lineLength := append(tmp.LineLength, res.LineLength...)
 
 			lang[res.Language] = LanguageSummary{
@@ -1155,6 +1194,9 @@ func fileSummarizeShort(input chan *FileJob) string {
 
 	language = sortLanguageSummary(language)
 
+	fileSource := newLanguageFileSource(language, summaryFileKey)
+	defer fileSource.close()
+
 	startTime := makeTimestampMilli()
 	for _, summary := range language {
 		addBreak := false
@@ -1175,7 +1217,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 			if !Complexity {
 				_, _ = p.Fprintf(str,
 					tabularShortPercentLanguageFormatBody,
-					float64(len(summary.Files))/float64(sumFiles)*100,
+					float64(summary.Count)/float64(sumFiles)*100,
 					float64(summary.Lines)/float64(sumLines)*100,
 					float64(summary.Blank)/float64(sumBlank)*100,
 					float64(summary.Comment)/float64(sumComment)*100,
@@ -1185,7 +1227,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 			} else {
 				_, _ = p.Fprintf(str,
 					tabularShortPercentLanguageFormatBodyNoComplexity,
-					float64(len(summary.Files))/float64(sumFiles)*100,
+					float64(summary.Count)/float64(sumFiles)*100,
 					float64(summary.Lines)/float64(sumLines)*100,
 					float64(summary.Blank)/float64(sumBlank)*100,
 					float64(summary.Comment)/float64(sumComment)*100,
@@ -1207,10 +1249,9 @@ func fileSummarizeShort(input chan *FileJob) string {
 		}
 
 		if Files {
-			sortSummaryFiles(&summary)
 			str.WriteString(getTabularShortBreak())
 
-			for _, res := range summary.Files {
+			for res := range fileSource.files(&summary) {
 				tmp := unicodeAwareTrim(res.Location, shortFormatFileTruncate)
 
 				if !Complexity {
@@ -1441,7 +1482,7 @@ func aggregateLanguageSummary(input chan *FileJob) []LanguageSummary {
 		if !ok {
 			files := []*FileJob{}
 			if Files {
-				files = append(files, res)
+				files = appendSummaryFile(files, res)
 			}
 
 			langs[res.Language] = LanguageSummary{
@@ -1460,7 +1501,7 @@ func aggregateLanguageSummary(input chan *FileJob) []LanguageSummary {
 			tmp := langs[res.Language]
 			files := tmp.Files
 			if Files {
-				files = append(files, res)
+				files = appendSummaryFile(files, res)
 			}
 
 			langs[res.Language] = LanguageSummary{

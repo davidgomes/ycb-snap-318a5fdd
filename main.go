@@ -84,6 +84,7 @@ func main() {
 			processor.LocomoOutputPriceSet = cmd.PersistentFlags().Changed("locomo-output-price")
 			processor.LocomoTPSSet = cmd.PersistentFlags().Changed("locomo-tps")
 			processor.LocomoCyclesSet = cmd.PersistentFlags().Changed("locomo-cycles")
+			processor.SortBySet = cmd.PersistentFlags().Changed("sort")
 
 			processor.Process()
 		},
@@ -441,6 +442,30 @@ func main() {
 		"format-multi",
 		"",
 		"have multiple format output overriding --format [e.g. tabular:stdout,csv:file.csv,json:file.json]",
+	)
+	flags.BoolVar(
+		&processor.BoundedMemory,
+		"bounded-memory",
+		false,
+		"hold at most --bounded-memory-max-in-memory-files per-file records in memory, spilling the rest to --bounded-memory-dir",
+	)
+	flags.StringVar(
+		&processor.BoundedMemoryDir,
+		"bounded-memory-dir",
+		"",
+		"directory to spill per-file records to, created if missing and excluded from counting (required with --bounded-memory)",
+	)
+	flags.IntVar(
+		&processor.BoundedMemoryMaxInMemoryFiles,
+		"bounded-memory-max-in-memory-files",
+		0,
+		"maximum number of per-file records held in memory at once, must be > 0 (required with --bounded-memory)",
+	)
+	flags.BoolVar(
+		&processor.BoundedMemoryStats,
+		"bounded-memory-stats",
+		false,
+		"print a bounded-memory: statistics line to stderr",
 	)
 	flags.StringVar(
 		&processor.SQLProject,

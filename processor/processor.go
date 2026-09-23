@@ -582,6 +582,17 @@ func Process() {
 	ProcessConstants()
 	processFlags()
 
+	if err := validateBoundedMemory(); err != nil {
+		printError(err.Error())
+		os.Exit(1)
+	}
+	if BoundedMemory {
+		if err := setupBoundedMemoryDir(); err != nil {
+			printError(fmt.Sprintf("unable to create --bounded-memory-dir %s: %s", BoundedMemoryDir, err))
+			os.Exit(1)
+		}
+	}
+
 	// Clean up any invalid arguments before setting everything up
 	if len(DirFilePaths) == 0 {
 		DirFilePaths = append(DirFilePaths, ".")
@@ -654,6 +665,10 @@ func Process() {
 
 	go func() {
 		for _, f := range filePaths {
+			if isInBoundedMemoryDir(f) {
+				continue
+			}
+
 			fileInfo, err := os.Lstat(f)
 			if err != nil {
 				continue
@@ -673,7 +688,7 @@ func Process() {
 					break
 				}
 			}
-			if shouldExclude {
+			if shouldExclude || isInBoundedMemoryDir(fi.Location) {
 				continue
 			}
 
