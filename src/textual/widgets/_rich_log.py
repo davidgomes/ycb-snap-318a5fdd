@@ -219,7 +219,9 @@ class RichLog(ScrollView, can_focus=True):
         render_options = console.options
 
         if isinstance(renderable, Text) and not self.wrap:
-            render_options = render_options.update(overflow="ignore", no_wrap=True)
+            # Rich skips justification when overflow is "ignore", and strips are
+            # cropped to the render width regardless, so crop here instead.
+            render_options = render_options.update(overflow="crop", no_wrap=True)
 
         if width is not None:
             # Use the width specified by the caller.
