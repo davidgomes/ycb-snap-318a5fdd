@@ -832,6 +832,44 @@ class Queue(MaybeChannelBound):
             expiring_queue = False
         return not expiring_queue and not self.auto_delete
 
+    @property
+    def is_single_active_consumer(self):
+        """Whether the queue is declared with ``x-single-active-consumer``."""
+        return bool((self.queue_arguments or {}).get(
+            'x-single-active-consumer', False))
+
+    @property
+    def consumer_priority(self):
+        """Consumer priority from the ``x-priority`` consumer argument."""
+        return (self.consumer_arguments or {}).get('x-priority', 0)
+
+    @classmethod
+    def with_consumer_priority(cls, name, exchange, priority=0, **kwargs):
+        """Create queue consumed from with consumer priority `priority`."""
+        consumer_arguments = dict(kwargs.pop('consumer_arguments', None) or {})
+        consumer_arguments['x-priority'] = priority
+        return cls(name, exchange,
+                   consumer_arguments=consumer_arguments, **kwargs)
+
+    @classmethod
+    def with_single_active_consumer(cls, name, exchange, durable=True,
+                                    **kwargs):
+        """Create queue with single active consumer semantics."""
+        queue_arguments = dict(kwargs.pop('queue_arguments', None) or {})
+        queue_arguments['x-single-active-consumer'] = True
+        return cls(name, exchange, durable=durable,
+                   queue_arguments=queue_arguments, **kwargs)
+
+    @classmethod
+    def with_priority_and_sac(cls, name, exchange, priority=0, durable=True,
+                              **kwargs):
+        """Create single active consumer queue with consumer priority."""
+        queue_arguments = dict(kwargs.pop('queue_arguments', None) or {})
+        queue_arguments['x-single-active-consumer'] = True
+        return cls.with_consumer_priority(
+            name, exchange, priority=priority, durable=durable,
+            queue_arguments=queue_arguments, **kwargs)
+
     @classmethod
     def from_dict(cls, queue, **options):
         binding_key = options.get('binding_key') or options.get('routing_key')
