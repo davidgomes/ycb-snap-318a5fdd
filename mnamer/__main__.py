@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import sys
+
 from mnamer import tty
 from mnamer.const import IS_DEBUG
 from mnamer.exceptions import MnamerException
@@ -18,6 +20,17 @@ def main():  # pragma: no cover
     except MnamerException as e:
         tty.error(e)
         raise SystemExit(2) from None
+    from mnamer.daemon import handle, requested
+
+    if requested(settings):
+        try:
+            code = handle(settings)
+        except SystemExit:
+            raise
+        except Exception as exc:
+            print(f"daemon error: {exc}", file=sys.stderr)
+            raise SystemExit(2) from None
+        raise SystemExit(code)
     try:
         frontend = Cli(settings)
         frontend.launch()

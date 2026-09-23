@@ -65,6 +65,10 @@ class Frontend(ABC):
 
 class Cli(Frontend):
     def __init__(self, settings: SettingStore):
+        from mnamer.daemon import handle, requested
+
+        if requested(settings):
+            raise SystemExit(handle(settings))
         super().__init__(settings)
         if not settings.targets:
             tty.error(USAGE)
