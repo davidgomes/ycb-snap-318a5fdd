@@ -73,8 +73,11 @@ def to_inline_table(key_path: str, doc: _D) -> _D:
     inline.trivia.trail = "\n"
 
     entry = _line(first.keys[:-1], _key(first.keys[-1]), inline)
-    _detach_all(hits, first.anchor.container)
-    _place_values(first.anchor, [entry])
+    home, prefix = _values_home(doc, first.anchor, first.parents)
+    closing = _closing_section(doc)
+    _detach_all(hits, home.container)
+    _place_values(home, _prefixed(prefix, [entry]))
+    _tidy_end(doc, closing)
 
     return doc
 
@@ -135,10 +138,9 @@ def to_dotted_keys(key_path: str, doc: _D, max_depth: int | None = None) -> _D:
 
     :Example:
 
-    >>> doc = parse('[server]\\nhost = "localhost"\\n\\n[server.tls]\\ncert = "a"\\n')
+    >>> doc = parse('[server]\\nhost = "localhost"\\n[server.tls]\\ncert = "a"\\n')
     >>> print(to_dotted_keys("server", doc).as_string())
     server.host = "localhost"
-    <BLANKLINE>
     server.tls.cert = "a"
     """
     if max_depth is not None and (not isinstance(max_depth, int) or max_depth < 1):
@@ -172,8 +174,11 @@ def to_dotted_keys(key_path: str, doc: _D, max_depth: int | None = None) -> _D:
     while isinstance(entries[-1][1], Whitespace):
         entries.pop()
 
-    _detach_all(hits, first.anchor.container)
-    _place_values(first.anchor, entries)
+    home, prefix = _values_home(doc, first.anchor, first.parents)
+    closing = _closing_section(doc)
+    _detach_all(hits, home.container)
+    _place_values(home, _prefixed(prefix, entries))
+    _tidy_end(doc, closing)
 
     return doc
 
@@ -264,8 +269,8 @@ def to_super_table(dotted_prefix: str, doc: _D) -> _D:
     _refresh(container, owner)
 
     if existing:
-        table = existing[0]
-        _place_values(_Slot(table.value, table, len(table.value.body)), entries)
+        table = next((t for t in existing if not t.is_super_table()), existing[0])
+        _place_values(_end_of_values(table), entries)
         if comment is not None and not table.trivia.comment:
             _set_comment(table.trivia, comment[1])
     else:
@@ -309,7 +314,8 @@ class _Hit:
     defined by dotted keys occurs once per assignment. ``top`` is the position
     in ``trail`` of the entry sitting directly in the enclosing container, the
     anchor. It precedes the last position when the occurrence is part of a
-    dotted-key chain, and ``keys`` holds the key path relative to the anchor.
+    dotted-key chain. ``keys`` holds the key path relative to the anchor and
+    ``parents`` the names leading to the anchor.
     """
 
     def __init__(self, trail: list[_Slot]) -> None:
@@ -321,6 +327,8 @@ class _Hit:
         self.top = top
         self.item = trail[-1].item
         self.keys = [slot.key for slot in trail[top:]]
+        self.parents = [slot.key.key for slot in trail[:top]]
+        self.dotted = top < len(trail) - 1 or trail[-1].key.is_dotted()
 
     @property
     def anchor(self) -> _Slot:
@@ -379,6 +387,14 @@ def _parse_path(key_path: str) -> list[SingleKey]:
 
 def _resolve(doc: Container, key_path: str) -> list[_Hit]:
     names = [key.key for key in _parse_path(key_path)]
+    hits = _find(_check(doc), names, key_path)
+    if not hits:
+        raise ConversionError(key_path, "Key does not exist")
+
+    return hits
+
+
+def _find(doc: Container, names: list[str], key_path: str) -> list[_Hit]:
     hits: list[_Hit] = []
 
     def walk(
@@ -400,9 +416,8 @@ def _resolve(doc: Container, key_path: str) -> list[_Hit]:
                 name = ".".join(names[: depth + 1])
                 raise ConversionError(key_path, f'"{name}" is not a table')
 
-    walk(_check(doc), None, 0, [])
-    if not hits:
-        raise ConversionError(key_path, "Key does not exist")
+    if names:
+        walk(doc, None, 0, [])
 
     return hits
 
@@ -853,23 +868,28 @@ def _detach_all(hits: list[_Hit], container: Container) -> None:
     # The container receiving the converted entries must survive, so pruning
     # stops at the anchor of the hits located in it.
     for hit in hits:
-        slot = hit.anchor
-        closes_document = (
-            slot.owner is None
-            and _is_header(slot.key, slot.item)
-            and _previous(slot.container, len(slot.container.body)) is slot.item
-        )
-        _detach(hit.trail, hit.top if slot.container is container else 0)
-        if closes_document:
-            _trim_last_section(slot.container)
+        _detach(hit.trail, hit.top if hit.anchor.container is container else 0)
 
 
-def _trim_last_section(container: Container) -> None:
-    """Drop the blank lines that separated the last section from a removed one."""
-    body = container.body
+def _closing_section(doc: Container) -> Item | None:
+    """The header table or array of tables ending the document, if any."""
+    for key, item in reversed(doc.body):
+        if not isinstance(item, Null):
+            return item if _is_header(key, item) else None
+
+    return None
+
+
+def _tidy_end(doc: Container, closing: Item | None) -> None:
+    """Drop the blank lines that separated content from a removed closing section."""
+    if closing is None or any(item is closing for _, item in doc.body):
+        return
+
+    body = doc.body
     while True:
         index = len(body) - 1
-        while index >= 0 and isinstance(body[index][1], Null):
+        while index >= 0 and isinstance(body[index][1], (Null, Whitespace)):
+            body[index] = (None, Null())
             index -= 1
         if index < 0 or not _is_header(*body[index]):
             return
@@ -881,10 +901,6 @@ def _trim_last_section(container: Container) -> None:
             item = item.body[-1]
 
         body = item.value.body
-        index = len(body) - 1
-        while index >= 0 and isinstance(body[index][1], (Null, Whitespace)):
-            body[index] = (None, Null())
-            index -= 1
 
 
 def _trim_plain_region(container: Container) -> None:
@@ -922,16 +938,58 @@ def _normalize_inline(table: InlineTable) -> None:
     _refresh(container, table)
 
 
+def _values_home(
+    doc: Container, anchor: _Slot, parents: list[str]
+) -> tuple[_Slot, list[Key]]:
+    """Where plain entries meant for the anchor's container belong.
+
+    ``parents`` is the key path of that container. An implicit table holds no
+    values, so they go where the table is defined: its [header], or next to
+    the dotted keys defining it, prefixed with the dotted path, as a [header]
+    cannot follow a definition by dotted keys. Returns the slot to insert at
+    and the key prefix to apply.
+    """
+    owner = anchor.owner
+    if not (isinstance(owner, Table) and owner.is_super_table()):
+        return anchor, []
+
+    hits = _find(doc, parents, ".".join(parents))
+    for hit in hits:
+        item = hit.item
+        if not hit.dotted and isinstance(item, Table) and not item.is_super_table():
+            return _end_of_values(item), []
+
+    chains = [hit for hit in hits if hit.dotted]
+    if chains:
+        slot = chains[-1].anchor
+        return _Slot(slot.container, slot.owner, slot.index + 1), chains[-1].keys
+
+    return anchor, []
+
+
+def _end_of_values(table: Table) -> _Slot:
+    return _Slot(table.value, table, table.value._get_last_index_before_table())
+
+
+def _prefixed(
+    prefix: list[Key], entries: list[tuple[Key | None, Item]]
+) -> list[tuple[Key | None, Item]]:
+    return [
+        (key, item) if key is None else _line(prefix, key, item)
+        for key, item in entries
+    ]
+
+
 def _place_values(anchor: _Slot, entries: list[tuple[Key | None, Item]]) -> None:
     """Insert plain entries at the anchor, or where plain values are allowed."""
     container, owner = anchor.container, anchor.owner
+    if isinstance(owner, Table) and any(key is not None for key, _ in entries):
+        _make_explicit(owner)
+
     if isinstance(owner, InlineTable):
         _insert(container, anchor.index, [e for e in entries if e[0] is not None])
         _normalize_inline(owner)
         return
-
-    if any(key is not None for key, _ in entries):
-        _make_explicit(owner)
 
     index = anchor.index
     if index > _first_header(container):
