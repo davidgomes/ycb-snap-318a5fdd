@@ -5,21 +5,45 @@ import (
 )
 
 // TemplateFuncs returns template helpers for the given output.
+// Helpers inherit the output profile and the preserve-resets default.
 func (o Output) TemplateFuncs() template.FuncMap {
-	return TemplateFuncs(o.Profile)
+	return makeTemplateFuncs(o.Profile, o.String, func(s string, width int, tail string) string {
+		return o.Truncate(s, width, TruncateOptions{Tail: tail})
+	})
 }
 
 // TemplateFuncs contains a few useful template helpers.
-//
-//nolint:mnd
 func TemplateFuncs(p Profile) template.FuncMap {
+	return makeTemplateFuncs(p, p.String, func(s string, width int, tail string) string {
+		if p == Ascii {
+			return TruncateANSI(StripANSI(s), width, TruncateOptions{Tail: StripANSI(tail)})
+		}
+		return TruncateANSI(s, width, TruncateOptions{Tail: tail})
+	})
+}
+
+func makeTemplateFuncs(p Profile, newStyle func(...string) Style, truncate func(string, int, string) string) template.FuncMap {
 	if p == Ascii {
-		return noopTemplateFuncs
+		funcs := template.FuncMap{
+			"Color":      noColorFunc,
+			"Foreground": noColorFunc,
+			"Background": noColorFunc,
+			"Bold":       noStyleFunc,
+			"Faint":      noStyleFunc,
+			"Italic":     noStyleFunc,
+			"Underline":  noStyleFunc,
+			"Overline":   noStyleFunc,
+			"Blink":      noStyleFunc,
+			"Reverse":    noStyleFunc,
+			"CrossOut":   noStyleFunc,
+		}
+		addTruncateFuncs(funcs, truncate)
+		return funcs
 	}
 
-	return template.FuncMap{
+	funcs := template.FuncMap{
 		"Color": func(values ...interface{}) string {
-			s := p.String(values[len(values)-1].(string))
+			s := newStyle(values[len(values)-1].(string))
 			switch len(values) {
 			case 2:
 				s = s.Foreground(p.Color(values[0].(string)))
@@ -32,7 +56,7 @@ func TemplateFuncs(p Profile) template.FuncMap {
 			return s.String()
 		},
 		"Foreground": func(values ...interface{}) string {
-			s := p.String(values[len(values)-1].(string))
+			s := newStyle(values[len(values)-1].(string))
 			if len(values) == 2 {
 				s = s.Foreground(p.Color(values[0].(string)))
 			}
@@ -40,43 +64,41 @@ func TemplateFuncs(p Profile) template.FuncMap {
 			return s.String()
 		},
 		"Background": func(values ...interface{}) string {
-			s := p.String(values[len(values)-1].(string))
+			s := newStyle(values[len(values)-1].(string))
 			if len(values) == 2 {
 				s = s.Background(p.Color(values[0].(string)))
 			}
 
 			return s.String()
 		},
-		"Bold":      styleFunc(p, Style.Bold),
-		"Faint":     styleFunc(p, Style.Faint),
-		"Italic":    styleFunc(p, Style.Italic),
-		"Underline": styleFunc(p, Style.Underline),
-		"Overline":  styleFunc(p, Style.Overline),
-		"Blink":     styleFunc(p, Style.Blink),
-		"Reverse":   styleFunc(p, Style.Reverse),
-		"CrossOut":  styleFunc(p, Style.CrossOut),
+		"Bold":      styleFunc(newStyle, Style.Bold),
+		"Faint":     styleFunc(newStyle, Style.Faint),
+		"Italic":    styleFunc(newStyle, Style.Italic),
+		"Underline": styleFunc(newStyle, Style.Underline),
+		"Overline":  styleFunc(newStyle, Style.Overline),
+		"Blink":     styleFunc(newStyle, Style.Blink),
+		"Reverse":   styleFunc(newStyle, Style.Reverse),
+		"CrossOut":  styleFunc(newStyle, Style.CrossOut),
+	}
+	addTruncateFuncs(funcs, truncate)
+	return funcs
+}
+
+func addTruncateFuncs(funcs template.FuncMap, truncate func(string, int, string) string) {
+	// Truncate(width, tail, string) and truncate(width, string).
+	funcs["Truncate"] = func(width int, tail, s string) string {
+		return truncate(s, width, tail)
+	}
+	funcs["truncate"] = func(width int, s string) string {
+		return truncate(s, width, "")
 	}
 }
 
-func styleFunc(p Profile, f func(Style) Style) func(...interface{}) string {
+func styleFunc(newStyle func(...string) Style, f func(Style) Style) func(...interface{}) string {
 	return func(values ...interface{}) string {
-		s := p.String(values[0].(string))
+		s := newStyle(values[0].(string))
 		return f(s).String()
 	}
-}
-
-var noopTemplateFuncs = template.FuncMap{
-	"Color":      noColorFunc,
-	"Foreground": noColorFunc,
-	"Background": noColorFunc,
-	"Bold":       noStyleFunc,
-	"Faint":      noStyleFunc,
-	"Italic":     noStyleFunc,
-	"Underline":  noStyleFunc,
-	"Overline":   noStyleFunc,
-	"Blink":      noStyleFunc,
-	"Reverse":    noStyleFunc,
-	"CrossOut":   noStyleFunc,
 }
 
 func noColorFunc(values ...interface{}) string {

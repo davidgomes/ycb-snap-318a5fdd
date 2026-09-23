@@ -26,13 +26,14 @@ type Output struct {
 	w       io.Writer
 	environ Environ
 
-	assumeTTY bool
-	unsafe    bool
-	cache     bool
-	fgSync    *sync.Once
-	fgColor   Color
-	bgSync    *sync.Once
-	bgColor   Color
+	assumeTTY      bool
+	unsafe         bool
+	cache          bool
+	preserveResets bool
+	fgSync         *sync.Once
+	fgColor        Color
+	bgSync         *sync.Once
+	bgColor        Color
 }
 
 // Environ is an interface for getting environment variables.
@@ -118,6 +119,23 @@ func WithTTY(v bool) OutputOption {
 	return func(o *Output) {
 		o.assumeTTY = v
 	}
+}
+
+// WithPreserveResets sets the default PreserveResets flag for styles created
+// by this Output. Output.Truncate and template helpers inherit the same default.
+func WithPreserveResets(enabled bool) OutputOption {
+	return func(o *Output) {
+		o.preserveResets = enabled
+	}
+}
+
+// String returns a new Style for s, inheriting the output's preserve-resets default.
+func (o Output) String(s ...string) Style {
+	st := o.Profile.String(s...)
+	if o.preserveResets {
+		st.preserveResets = true
+	}
+	return st
 }
 
 // WithUnsafe returns a new OutputOption with unsafe mode enabled. Unsafe mode doesn't

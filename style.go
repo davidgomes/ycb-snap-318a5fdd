@@ -1,7 +1,7 @@
 package termenv
 
 import (
-	"fmt"
+	"math"
 	"strings"
 
 	"github.com/rivo/uniseg"
@@ -24,7 +24,8 @@ const (
 type Style struct {
 	profile Profile
 	string
-	styles []string
+	styles         []string
+	preserveResets bool
 }
 
 // String returns a new Style.
@@ -44,16 +45,22 @@ func (t Style) Styled(s string) string {
 	if t.profile == Ascii {
 		return s
 	}
-	if len(t.styles) == 0 {
-		return s
-	}
 
 	seq := strings.Join(t.styles, ";")
-	if seq == "" {
-		return s
+	opened := s
+	if seq != "" {
+		opened = openStyle(seq, s)
 	}
+	if !t.preserveResets {
+		return opened
+	}
+	return TruncateANSI(opened, math.MaxInt, TruncateOptions{PreserveResets: true})
+}
 
-	return fmt.Sprintf("%s%sm%s%sm", CSI, seq, s, CSI+ResetSeq)
+// PreserveResets re-opens this style after SGR resets inside the text.
+func (t Style) PreserveResets() Style {
+	t.preserveResets = true
+	return t
 }
 
 // Foreground sets a foreground color.
