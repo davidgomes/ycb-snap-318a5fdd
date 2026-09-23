@@ -51,8 +51,12 @@ disabled rules: [all]
 ### Range Ignore
 
 When there is a need to disable the Linter for part of a file, ranged ignores can be used. The syntax for a ranged ignore
-is `<!-- linter-disable -->` or `%%linter-disable%%` with an optional `<!-- linter-enable -->` or `%%linter-disable%%` where you want the Linter to start back up with its linting.
+is `<!-- linter-disable -->` or `%%linter-disable%%` with an optional `<!-- linter-enable -->` or `%%linter-enable%%` where you want the Linter to start back up with its linting.
 Leaving off the ending of a range ignore will assume you want to ignore the file contents from the start of the range ignore to the end of the file. So be careful when not ending a range ignore.
+
+Markers are only recognized when they are on a line by themselves (leading and trailing spaces or tabs are allowed).
+Markers inside of YAML frontmatter, code blocks, inline code, or math blocks are not recognized.
+Marker lines themselves are never modified by any rule.
 
 !!! warning
     Ranged ignores only prevent the values in the ranged ignore from being linted. It *does not* prevent whitespace or other additions around the ranged ignore.
@@ -76,6 +80,45 @@ Here is some text
                           This area will not be formatted
 This content is also not formatted either.
 ```
+
+#### Disabling Specific Rules
+
+A comma-separated list of rule aliases can be added to a marker to only disable those rules. Rule aliases are case-insensitive,
+and unknown rule aliases are ignored. If none of the listed rule aliases are valid, the marker has no effect.
+
+``` markdown
+<!-- linter-disable capitalize-headings, header-increment -->
+##### this heading keeps its level and capitalization
+<!-- linter-enable -->
+```
+
+Ranged ignores can be nested. `linter-enable` without a rule list ends the most recently started ranged ignore.
+`linter-enable` with a rule list re-enables just those rules, which makes it possible to disable all rules and then re-enable a few of them:
+
+``` markdown
+%% linter-disable %%
+Only trailing spaces are removed here
+%% linter-enable trailing-spaces %%
+Still only trailing spaces are removed here
+%% linter-enable %%
+```
+
+#### Disabling the Next Line or Lines
+
+`linter-disable-next-line` disables rules for just the line after the marker, and `linter-disable-next-n-lines: N` disables rules
+for the `N` lines after the marker, where `N` is a positive whole number. Both accept an optional rule list.
+
+``` markdown
+<!-- linter-disable-next-line header-increment -->
+##### This heading keeps its level
+%% linter-disable-next-n-lines: 2 remove-multiple-spaces %%
+These   two   lines
+keep   their   spacing
+```
+
+!!! note
+    These markers apply to the physical lines that follow them. Rules that add lines, like blank lines around headings,
+    can move content away from the marker, so consider including those rules in the marker's rule list as well.
 
 !!! info
     Paste rules are not affected by ranged ignores as that would require the copied text to have a ranged ignore in it.
