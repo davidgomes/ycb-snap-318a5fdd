@@ -34,10 +34,10 @@ These features need to be enabled with the `next` option.
 
 - [Decorators](https://github.com/tc39/proposal-decorators)
 - [JSON Modules](https://github.com/tc39/proposal-json-modules)
+- [Explicit resource management](https://github.com/tc39/proposal-explicit-resource-management) (`using` and `await using` declarations)
 
 ### Not yet supported stage 3 features:
 
-- [Explicit resource management](https://github.com/tc39/proposal-explicit-resource-management)
 - [Source phase import](https://github.com/tc39/proposal-source-phase-imports)
 
 ## RegExp support
