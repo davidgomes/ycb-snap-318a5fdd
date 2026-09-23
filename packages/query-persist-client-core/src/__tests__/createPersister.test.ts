@@ -764,4 +764,50 @@ describe('createPersister', () => {
       expect(await storage.entries()).toHaveLength(0)
     })
   })
+
+  test('should preserve refetch error state when restoring via prefetchQuery', async () => {
+    const storage = getFreshStorage()
+    const persister = experimental_createQueryPersister({ storage })
+    const queryClient = new QueryClient()
+    const queryKey = ['restore-error']
+    const now = Date.now()
+    await storage.setItem(
+      `${PERSISTER_KEY_PREFIX}-${hashKey(queryKey)}`,
+      JSON.stringify({
+        buster: '',
+        queryKey,
+        queryHash: hashKey(queryKey),
+        state: {
+          data: 'cached',
+          dataUpdatedAt: now - 10,
+          dataUpdateCount: 3,
+          error: { message: 'boom' },
+          errorUpdatedAt: now - 5,
+          errorUpdateCount: 2,
+          fetchFailureCount: 2,
+          fetchFailureReason: { message: 'boom' },
+          fetchMeta: null,
+          isInvalidated: true,
+          status: 'error',
+          fetchStatus: 'idle',
+        },
+      }),
+    )
+    const queryFn = vi.fn()
+    await queryClient.prefetchQuery({
+      queryKey,
+      queryFn,
+      persister: persister.persisterFn,
+      staleTime: Infinity,
+    })
+    const state = queryClient.getQueryState(queryKey)!
+    expect(queryFn).not.toHaveBeenCalled()
+    expect(state.status).toBe('error')
+    expect(state.fetchStatus).toBe('idle')
+    expect(state.data).toBe('cached')
+    expect(state.fetchFailureCount).toBe(2)
+    expect(state.errorUpdatedAt).toBe(now - 5)
+    expect(state.dataUpdateCount).toBe(3)
+    expect(state.isInvalidated).toBe(true)
+  })
 })

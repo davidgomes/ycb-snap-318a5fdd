@@ -1,3 +1,4 @@
+import { isPersisterRestoreResult } from './persisterRestore'
 import {
   ensureQueryFn,
   noop,
@@ -555,6 +556,21 @@ export class Query<
 
     try {
       const data = await this.#retryer.start()
+
+      if (isPersisterRestoreResult(data)) {
+        this.#revertState = undefined
+        this.#dispatch({
+          type: 'setState',
+          state: {
+            ...data.state,
+            data: data.data,
+            fetchStatus: 'idle',
+            fetchMeta: data.state.fetchMeta ?? null,
+          },
+        })
+        return data.data
+      }
+
       // this is more of a runtime guard
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (data === undefined) {
