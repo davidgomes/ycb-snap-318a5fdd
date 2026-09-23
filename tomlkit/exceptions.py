@@ -232,3 +232,18 @@ class ConvertError(TypeError, ValueError, TOMLKitError):
     It should be a TypeError, but due to historical reasons
     it needs to subclass ValueError as well.
     """
+
+
+class ConversionError(TOMLKitError):
+    """
+    A table could not be converted between the standard, inline
+    and dotted-key forms. ``key_path`` is the requested dotted key path.
+    """
+
+    def __init__(self, key_path: str, message: str | None = None) -> None:
+        self.key_path = key_path
+
+        if message is None:
+            message = "Conversion failed"
+
+        super().__init__(f'Cannot convert "{key_path}": {message}')
