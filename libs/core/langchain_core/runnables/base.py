@@ -104,6 +104,7 @@ if TYPE_CHECKING:
         CallbackManagerForChainRun,
     )
     from langchain_core.prompts.base import BasePromptTemplate
+    from langchain_core.runnables.coalesce import CoalesceBackend, RunnableCoalesce
     from langchain_core.runnables.fallbacks import (
         RunnableWithFallbacks as RunnableWithFallbacksT,
     )
@@ -1920,6 +1921,63 @@ class Runnable(ABC, Generic[Input, Output]):
             max_attempt_number=stop_after_attempt,
             exponential_jitter_params=exponential_jitter_params,
         )
+
+    def with_coalesce(
+        self,
+        *,
+        backend: CoalesceBackend | None = None,
+    ) -> RunnableCoalesce[Input, Output]:
+        """Create a new `Runnable` that coalesces concurrent identical requests.
+
+        While an execution for an input is in flight, other calls with an equal
+        input wait for it and receive its result instead of running this
+        `Runnable` again. Once the execution completes, the next call runs fresh.
+
+        The coalescing key is derived from the input value only; config, call
+        kwargs, and dictionary key order do not affect it.
+
+        Args:
+            backend: Backend that tracks in-flight executions. Defaults to a new
+                `InMemoryCoalesceBackend`, so separate wrappers coalesce
+                independently unless they are given the same backend.
+
+        Returns:
+            A new `Runnable` that coalesces concurrent calls with equal inputs.
+
+        Example:
+            ```python
+            import asyncio
+
+            from langchain_core.runnables import RunnableLambda
+
+            calls = 0
+
+
+            async def _slow_double(x: int) -> int:
+                global calls
+                calls += 1
+                await asyncio.sleep(0.1)
+                return x * 2
+
+
+            runnable = RunnableLambda(_slow_double).with_coalesce()
+
+
+            async def main() -> None:
+                results = await asyncio.gather(*(runnable.ainvoke(2) for _ in range(5)))
+                assert results == [4] * 5
+                assert calls == 1
+
+
+            asyncio.run(main())
+            ```
+        """
+        # Import locally to prevent circular import
+        from langchain_core.runnables.coalesce import RunnableCoalesce  # noqa: PLC0415
+
+        if backend is None:
+            return RunnableCoalesce(bound=self)
+        return RunnableCoalesce(bound=self, backend=backend)
 
     def map(self) -> Runnable[list[Input], list[Output]]:
         """Return a new `Runnable` that maps a list of inputs to a list of outputs.
