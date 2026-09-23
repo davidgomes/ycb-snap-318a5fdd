@@ -509,6 +509,46 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 // After running the query, the Changed modifier is reset
 ```
 
+### Predicates
+
+Predicates filter entities by trait values instead of trait presence. `createPredicate` takes an array of dependency traits and a function that receives an array with each dependency's data, in order. Each call creates a distinct predicate, so create them once at module scope. Tags and relations cannot be dependencies.
+
+```js
+import { createPredicate } from 'koota'
+
+const IsLowHealth = createPredicate([Health], ([health]) => health.value < 20)
+const IsFast = createPredicate([Velocity], ([vel]) => Math.hypot(vel.x, vel.y) > 10)
+
+// Entities with Health where value < 20
+const lowHealth = world.query(IsLowHealth)
+
+// Predicates add nothing to the updateEach/readEach tuple
+world.query(IsLowHealth, Position).updateEach(([position]) => {})
+```
+
+A predicate is re-evaluated when a dependency is added, set or removed. An entity missing any dependency never matches. Changes made during `updateEach` are evaluated once iteration ends.
+
+Predicates work with the other query modifiers and with relation pairs.
+
+```js
+const Added = createAdded()
+const Removed = createRemoved()
+const Changed = createChanged()
+
+// Missing Health, or Health value >= 20
+world.query(Not(IsLowHealth))
+// Either predicate is true
+world.query(Or(IsLowHealth, IsFast))
+// Became true since the last query
+world.query(Added(IsLowHealth))
+// Became false since the last query
+world.query(Removed(IsLowHealth))
+// Became true or false since the last query
+world.query(Changed(IsLowHealth))
+// Low health children of parent
+world.query(IsLowHealth, ChildOf(parent))
+```
+
 ### Add, remove and change events
 
 Koota allows you to subscribe to add, remove, and change events for specific traits.

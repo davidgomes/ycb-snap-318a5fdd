@@ -200,6 +200,10 @@ const player = world.queryFirst(IsPlayer, Position)
 // Filter with modifiers
 world.query(Position, Not(Velocity)) // Has Position but not Velocity
 world.query(Or(IsPlayer, IsEnemy)) // Has either trait
+
+// Filter by trait values
+const IsLowHealth = createPredicate([Health], ([health]) => health.value < 20)
+world.query(IsLowHealth)
 ```
 
 Prefer `updateEach`/`readEach` over `for...of` + `entity.get()` for data-bearing queries. `readEach` still gives you the entity as the second argument.

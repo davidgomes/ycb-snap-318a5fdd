@@ -55,7 +55,7 @@ export function createPredicate<T extends Trait[]>(
 function evaluatePredicate(world: World, entity: Entity, predicate: Trait): boolean {
     const { dependencies, fn } = predicate[$internal].predicate!;
     const eid = getEntityId(entity);
-    const values = new Array(dependencies.length);
+    const values: unknown[] = Array.from({ length: dependencies.length });
 
     for (let i = 0; i < dependencies.length; i++) {
         const dependency = dependencies[i];

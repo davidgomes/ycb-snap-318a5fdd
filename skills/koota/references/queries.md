@@ -7,6 +7,7 @@ Complete guide to querying entities in Koota.
 - [Basic queries](#basic-queries)
 - [Query modifiers](#query-modifiers) - Not, Or
 - [Tracking modifiers](#tracking-modifiers) - Added, Removed, Changed
+- [Predicates](#predicates) - Filter by trait values
 - [Caching queries](#caching-queries) - createQuery for performance
 - [Change detection](#change-detection) - updateEach options
 - [Query + select](#query--select) - Select subset of traits for updates
@@ -132,6 +133,33 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 - Create instances at module scope, not inside functions
 - Tracking resets after each query execution
 - Changed only tracks `set()` calls and `entity.changed()` signals
+
+## Predicates
+
+Filter by trait values with `createPredicate(dependencies, fn)`. `fn` receives one array with each dependency's data in order. Each call returns a distinct predicate, so create them at module scope. Tags and relations as dependencies throw.
+
+```typescript
+import { createPredicate } from 'koota'
+
+const IsLowHealth = createPredicate([Health], ([health]) => health.value < 20)
+
+world.query(IsLowHealth, Position).updateEach(([pos]) => {
+  // Predicates add no data to the tuple
+})
+
+world.query(Not(IsLowHealth)) // Missing Health, or predicate false
+world.query(Or(IsLowHealth, IsStunned)) // Either predicate true
+world.query(Added(IsLowHealth)) // Became true since last query
+world.query(Removed(IsLowHealth)) // Became false since last query
+world.query(Changed(IsLowHealth)) // Became true or false since last query
+world.query(IsLowHealth, ChildOf(parent)) // Composes with relation pairs
+```
+
+**Key points:**
+
+- Re-evaluated when a dependency is added, set or removed
+- Entities missing any dependency never match
+- Dependency changes during `updateEach` are evaluated after iteration ends
 
 ## Caching queries
 
