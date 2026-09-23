@@ -104,6 +104,7 @@ type EvalContext struct {
 	instrumentation             *topdown.Instrumentation
 	partialNamespace            string
 	queryTracers                []topdown.QueryTracer
+	ruleProfile                 *bool
 	compiledQuery               compiledQuery
 	unknowns                    []string
 	disableInlining             []ast.Ref
@@ -628,6 +629,7 @@ type Rego struct {
 	txn                         storage.Transaction
 	metrics                     metrics.Metrics
 	queryTracers                []topdown.QueryTracer
+	ruleProfile                 bool
 	tracebuf                    *topdown.BufferTracer
 	trace                       bool
 	instrumentation             *topdown.Instrumentation
@@ -2285,6 +2287,16 @@ func (r *Rego) eval(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
 		q = q.WithQueryTracer(ectx.queryTracers[i])
 	}
 
+	profiling := r.ruleProfile
+	if ectx.ruleProfile != nil {
+		profiling = *ectx.ruleProfile
+	}
+	var profiler *ruleProfiler
+	if profiling {
+		profiler = newRuleProfiler()
+		q = q.WithQueryTracer(profiler)
+	}
+
 	if ectx.parsedInput != nil {
 		q = q.WithInput(ast.NewTerm(ectx.parsedInput))
 	}
@@ -2323,6 +2335,12 @@ func (r *Rego) eval(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if profiler != nil {
+		for i := range rs {
+			rs[i].Profile = profiler.profile
+		}
 	}
 
 	if len(rs) == 0 {
