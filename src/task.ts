@@ -969,7 +969,7 @@ class TaskImpl<T, E> implements PromiseLike<Result<T, E>> {
     }
 
     for await (const outcome of task.reject('whoops')) {
-      console.log(outcome.toString()); // Err(whoops)
+      console.log(outcome.toString()); // Err("whoops")
     }
     ```
    */
@@ -1362,7 +1362,7 @@ export function race(tasks: [] | AnyTask[]): AnyTask {
   console.log(theResult.toString()); // Ok(1,2)
 
   let theRejection = await task.sequence([task.resolve(1), task.reject('nope')]);
-  console.log(theRejection.toString()); // Err(nope)
+  console.log(theRejection.toString()); // Err("nope")
   ```
 
   @template T The type of the values the `Task`s resolve with.
@@ -2734,7 +2734,7 @@ export function tap<T, E>(
 
   let theTask = task.tapRejected(task.reject('whoops'), (reason) => console.error(reason)); // logs "whoops"
   let theResult = await theTask;
-  console.log(theResult.toString()); // Err(whoops)
+  console.log(theResult.toString()); // Err("whoops")
   ```
 
   @template T The type of the value when the `Task` resolves successfully.
