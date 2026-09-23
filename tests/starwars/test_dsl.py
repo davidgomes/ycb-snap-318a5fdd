@@ -1,13 +1,18 @@
 import pytest
 from graphql import (
     FloatValueNode,
+    GraphQLDeferDirective,
     GraphQLError,
+    GraphQLField,
     GraphQLFloat,
     GraphQLID,
     GraphQLInputObjectType,
     GraphQLInt,
     GraphQLList,
     GraphQLNonNull,
+    GraphQLSchema,
+    GraphQLStreamDirective,
+    GraphQLString,
     IntValueNode,
     ListTypeNode,
     NamedTypeNode,
@@ -21,6 +26,8 @@ from graphql import (
     build_ast_schema,
     parse,
     print_ast,
+    specified_directives,
+    validate,
 )
 from graphql.utilities import get_introspection_query
 from packaging import version
@@ -719,6 +726,119 @@ def test_fragments(ds):
 
     assert query == print_ast(document)
     assert node_tree(document) == node_tree(gql(print_ast(document)).document)
+
+
+def test_defer_and_stream(ds):
+    query = """fragment NameFragment on Character {
+  name
+}
+
+fragment IdFragment on Character {
+  id
+}
+
+{
+  hero {
+    ...NameFragment @defer(label: "name")
+    ...IdFragment @defer
+    ... on Human @defer(label: "human") {
+      homePlanet
+    }
+    friends @stream(label: "friends", initialCount: 1) {
+      name
+    }
+    appearsIn @stream(initialCount: 0)
+  }
+}"""
+
+    name_fragment = (
+        DSLFragment("NameFragment").on(ds.Character).select(ds.Character.name)
+    )
+    id_fragment = DSLFragment("IdFragment").on(ds.Character).select(ds.Character.id)
+
+    query_dsl = DSLQuery(
+        ds.Query.hero.select(
+            name_fragment.defer(label="name"),
+            id_fragment.spread().defer(),
+            DSLInlineFragment()
+            .on(ds.Human)
+            .select(ds.Human.homePlanet)
+            .defer(label="human"),
+            ds.Character.friends.stream(label="friends", initial_count=1).select(
+                ds.Character.name
+            ),
+            ds.Character.appearsIn.stream(initial_count=0),
+        )
+    )
+
+    request = dsl_gql(name_fragment, id_fragment, query_dsl)
+
+    assert query == print_ast(request.document)
+    assert node_tree(request.document) == node_tree(gql(query).document)
+
+    schema_with_incremental_directives = GraphQLSchema(
+        query=StarWarsSchema.query_type,
+        directives=[
+            *specified_directives,
+            GraphQLDeferDirective,
+            GraphQLStreamDirective,
+        ],
+    )
+    assert validate(schema_with_incremental_directives, request.document) == []
+
+
+def test_defer_is_not_added_to_fragment_definition(ds):
+    fragment = DSLFragment("NameFragment").on(ds.Character).select(ds.Character.name)
+
+    assert fragment.defer() is fragment
+    assert print_ast(fragment.executable_ast) == (
+        "fragment NameFragment on Character {\n  name\n}"
+    )
+    assert str(fragment) == "...NameFragment @defer"
+
+
+def test_defer_and_stream_return_self(ds):
+    spread = DSLFragment("F").on(ds.Character).select(ds.Character.name).spread()
+    inline_fragment = DSLInlineFragment().on(ds.Human).select(ds.Human.name)
+    field = ds.Character.friends
+
+    assert spread.defer() is spread
+    assert inline_fragment.defer() is inline_fragment
+    assert field.stream() is field
+
+
+def test_defer_with_other_directives(ds, var):
+    spread = (
+        DSLFragment("F")
+        .on(ds.Character)
+        .select(ds.Character.name)
+        .spread()
+        .directives(ds("@include")(**{"if": var.show}))
+        .defer(label="f")
+    )
+
+    assert str(spread) == '...F @include(if: $show) @defer(label: "f")'
+
+
+def test_stream_on_non_list_field_error(ds):
+    with pytest.raises(GraphQLError, match="@stream can only be used on list fields"):
+        ds.Character.name.stream()
+
+    with pytest.raises(GraphQLError, match="@stream can only be used on list fields"):
+        ds.Query.hero.stream()
+
+
+def test_stream_on_non_null_list_field(ds):
+    query_type = StarWarsSchema.query_type
+    assert query_type is not None
+
+    field = DSLField(
+        "episodes",
+        query_type,
+        GraphQLField(GraphQLNonNull(GraphQLList(GraphQLNonNull(GraphQLString)))),
+    )
+
+    assert str(field.stream(label="episodes")) == 'episodes @stream(label: "episodes")'
 
 
 def test_fragment_without_type_condition_error(ds):
