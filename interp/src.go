@@ -143,6 +143,8 @@ func (interp *Interpreter) importSrc(rPath, importPath string, skipTest bool) (s
 
 	interp.frame.mutex.Lock()
 	interp.resizeFrame()
+	// Install //go:embed values before init functions and other package statements.
+	interp.applyEmbeds(rootNodes...)
 	interp.frame.mutex.Unlock()
 	interp.mutex.Unlock()
 

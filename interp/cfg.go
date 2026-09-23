@@ -2296,6 +2296,15 @@ func (interp *Interpreter) cfg(root *node, sc *scope, importPath, pkgName string
 				c.typ = n.typ
 				c.findex = index
 			}
+			if len(n.embedPatterns) > 0 {
+				if !sc.global {
+					err = n.cfgErrorf("go:embed cannot apply to var inside func")
+					return
+				}
+				if err = interp.embedVar(n); err != nil {
+					return
+				}
+			}
 		}
 	})
 

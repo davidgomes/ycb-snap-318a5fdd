@@ -53,6 +53,12 @@ type node struct {
 	ident      string         // set if node is a var or func
 	redeclared bool           // set if node is a redeclared variable (CFG)
 	meta       interface{}    // meta stores meta information between gta runs, like errors
+
+	// embedPatterns are //go:embed patterns attached to a package-level variable.
+	// embedValue is that variable's embedded content. It is installed before the
+	// first interpreted statement runs; variable initialization must not clear it.
+	embedPatterns []string
+	embedValue    reflect.Value
 }
 
 func (n *node) shouldBreak() bool {

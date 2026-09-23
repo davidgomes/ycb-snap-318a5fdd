@@ -41,6 +41,14 @@ Will ensure that an import of a package will exclude files containing
 And include files containing
 
 	// +build noasm
+
+# Embedding files
+
+Source files may embed file contents into package-level variables with a
+//go:embed directive, in both standalone and grouped var declarations.
+Patterns are resolved relative to the source file's directory through the
+interpreter's source filesystem. Supported variable types are string, []byte,
+and embed.FS.
 */
 package interp
 

@@ -3557,6 +3557,25 @@ func _make(n *node) {
 func reset(n *node) {
 	next := getExec(n.tnext)
 
+	// Embedded variables already hold their contents. Installing a zero here
+	// would discard that data before the first interpreted statement.
+	if n.embedValue.IsValid() {
+		i := n.child[0].findex
+		v := n.embedValue
+		n.exec = func(f *frame) bltn {
+			cur := valueOf(f.data, i)
+			if !cur.IsValid() || cur.IsZero() {
+				slot := reflect.New(v.Type()).Elem()
+				slot.Set(v)
+				if i >= 0 && i < len(f.data) {
+					f.data[i] = slot
+				}
+			}
+			return next
+		}
+		return
+	}
+
 	switch l := len(n.child) - 1; l {
 	case 1:
 		typ := n.child[0].typ.frameType()

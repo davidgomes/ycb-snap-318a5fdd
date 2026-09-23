@@ -366,7 +366,10 @@ func wrapInMain(src string) string {
 }
 
 func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err error) {
-	mode := parser.DeclarationErrors
+	// Parse comments so //go:embed directives are visible on declarations.
+	// yaegi:tags are still applied from the header in buildOk; incremental
+	// input also scans the whole file below.
+	mode := parser.DeclarationErrors | parser.ParseComments
 
 	// Allow incremental parsing of declarations or statements, by inserting
 	// them in a pseudo file package or function. Those statements or
@@ -384,8 +387,6 @@ func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err
 			inFunc = true
 			src = wrapInMain(src)
 		}
-		// Parse comments in REPL mode, to allow tag setting.
-		mode |= parser.ParseComments
 	}
 
 	if ok, err := interp.buildOk(&interp.context, name, src); !ok || err != nil {
@@ -417,7 +418,11 @@ func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err
 		return f.Decls[0].(*ast.FuncDecl).Body, nil
 	}
 
-	setYaegiTags(&interp.context, f.Comments)
+	// Header directives are consumed by buildOk. Scanning every comment here
+	// would change which // yaegi:tags lines apply for file input.
+	if inc {
+		setYaegiTags(&interp.context, f.Comments)
+	}
 	return f, nil
 }
 
@@ -434,6 +439,13 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 	var anc astNode
 	var st nodestack
 	pkgName := "main"
+	var embedBySpec map[*ast.ValueSpec][]string
+	if file, ok := f.(*ast.File); ok {
+		embedBySpec, err = interp.embedSpecs(file)
+		if err != nil {
+			return "", nil, err
+		}
+	}
 
 	addChild := func(root **node, anc astNode, pos token.Pos, kind nkind, act action) *node {
 		var i interface{}
@@ -926,6 +938,9 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 			n := addChild(&root, anc, pos, kind, act)
 			n.nleft = len(a.Names)
 			n.nright = len(a.Values)
+			if pats := embedBySpec[a]; len(pats) > 0 {
+				n.embedPatterns = pats
+			}
 			st.push(n, nod)
 
 		default:

@@ -158,6 +158,9 @@ func (interp *Interpreter) Execute(p *Program) (res reflect.Value, err error) {
 	interp.frame.setrunid(interp.runid())
 	interp.frame.mutex.Lock()
 	interp.resizeFrame()
+	// Install //go:embed values before any interpreted statement, including
+	// the variable-initialization pass below, which must not overwrite them.
+	interp.applyEmbeds(p.root)
 	interp.frame.mutex.Unlock()
 
 	// Execute node closures.
