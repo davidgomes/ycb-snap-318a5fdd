@@ -64,7 +64,7 @@ The hash looks up an existing `QueryInstance`. On a miss a new instance is creat
 query.run(world, params)
 ```
 
-Flushes any deferred removals, then snapshots the instance's entity set. For tracking queries (e.g. `Added`, `Removed`, `Changed`) the set is cleared and bitmasks reset so changes can accumulate again before the next call.
+Flushes any deferred removals, then snapshots the instance's entity set. For tracking queries (e.g. `Added`, `Removed`, `Changed`) the set is cleared and bitmasks reset so changes can accumulate again before the next call. Tracked relation pairs such as `Added(ChildOf(parent))` keep their pending targets per entity, which are cleared for the returned entities in the same way.
 
 **5. Return result**
 
