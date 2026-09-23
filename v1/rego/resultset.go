@@ -30,6 +30,11 @@ func (v Vars) WithoutWildcards() Vars {
 type Result struct {
 	Expressions []*ExpressionValue `json:"expressions"`
 	Bindings    Vars               `json:"bindings,omitempty"`
+
+	// Profile holds the rule evaluation profile of the query that produced
+	// this result. It is nil unless rule profiling was enabled, which is only
+	// possible in builds using the "profile" build tag.
+	Profile *EvalProfile `json:"profile,omitempty"`
 }
 
 func newResult() Result {
