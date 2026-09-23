@@ -55,4 +55,7 @@ pub mod xmlwriter;
 #[cfg(feature = "selectors")]
 pub mod selectors;
 
+#[cfg(feature = "serialize")]
+pub mod structure_sensitive;
+
 pub mod style;

@@ -67,6 +67,7 @@ impl<'input, 'arena> Visitor<'input, 'arena> for MergePaths {
         context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
         context.query_has_stylesheet(document);
+        context.load_structure_implication(document);
         Ok(PrepareOutcome::none)
     }
 
@@ -190,6 +191,13 @@ impl<'input, 'arena> Visitor<'input, 'arena> for MergePaths {
                     prev_path_data.0.pop();
                 }
                 if self.force || !prev_path_data.intersects(&current_path_data) {
+                    if context.is_structurally_implicated(&prev_child)
+                        || context.is_structurally_implicated(&child)
+                    {
+                        log::debug!("ending merge, structure-sensitive selector");
+                        update_previous_path!(prev_child);
+                        continue;
+                    }
                     log::debug!("merging, current doesn't intersect prev");
                     prev_path_data.0.extend(current_path_data.0.clone());
                     prev_child.remove();

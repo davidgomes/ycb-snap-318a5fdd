@@ -45,20 +45,20 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
 
     fn prepare(
         &self,
-        _document: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        document: &Element<'input, 'arena>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
-        Ok(if self.0 {
-            PrepareOutcome::none
-        } else {
-            PrepareOutcome::skip
-        })
+        if !self.0 {
+            return Ok(PrepareOutcome::skip);
+        }
+        context.load_structure_implication(document);
+        Ok(PrepareOutcome::none)
     }
 
     fn exit_element(
         &self,
         element: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<(), Self::Error> {
         let Some(parent) = Element::parent_element(element) else {
             return Ok(());
@@ -68,6 +68,9 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
             return Ok(());
         }
         if !is_element!(element, G) || !element.has_child_elements() {
+            return Ok(());
+        }
+        if context.is_structurally_implicated(element) {
             return Ok(());
         }
 
@@ -493,5 +496,71 @@ fn collapse_groups() -> anyhow::Result<()> {
         )
     )?);
 
+    Ok(())
+}
+
+#[test]
+fn collapse_groups_protects_only_implicated_relationships() -> anyhow::Result<()> {
+    use crate::test_config;
+
+    let protected = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>g > .keep { fill: red }</style>
+    <g>
+        <g class="keep"><rect width="10" height="10"/></g>
+    </g>
+    <g class="drop"><rect width="10" height="10"/></g>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        protected.contains("class=\"keep\""),
+        "matched target must stay wrapped: {protected}"
+    );
+    assert!(
+        !protected.contains("<g class=\"drop\""),
+        "unrelated group must still collapse: {protected}"
+    );
+    let compact: String = protected.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        compact.contains("<g> <g class=\"keep\">"),
+        "the child-combinator anchor must not be flattened: {protected}"
+    );
+
+    let plain = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>.drop { fill: blue }</style>
+    <g class="drop"><rect width="10" height="10"/></g>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        !plain.contains("<g"),
+        "a non-structural selector must not block collapse: {plain}"
+    );
+
+    let siblings = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>.a + .b { fill: red }</style>
+    <g class="a"><rect width="10" height="10"/></g>
+    <g class="b"><rect width="10" height="10"/></g>
+    <g class="c"><rect width="10" height="10"/></g>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        siblings.contains("<g class=\"a\"") && siblings.contains("<g class=\"b\""),
+        "both sides of the adjacent-sibling relationship must stay: {siblings}"
+    );
+    assert!(
+        !siblings.contains("<g class=\"c\""),
+        "a group outside the sibling relationship must still collapse: {siblings}"
+    );
     Ok(())
 }

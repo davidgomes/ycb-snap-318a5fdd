@@ -1,5 +1,5 @@
 //! Visitors for traversing and manipulating nodes of an xml document
-use std::{cell::RefCell, path::PathBuf};
+use std::{cell::RefCell, collections::HashSet, path::PathBuf};
 
 use lightningcss::rules::CssRuleList;
 
@@ -7,7 +7,7 @@ use crate::{
     arena::Allocator,
     element::Element,
     is_element,
-    node::{self, Ref},
+    node::{self, AllocationID, Ref},
     style,
 };
 
@@ -50,6 +50,12 @@ pub struct Context<'input, 'arena, 'i> {
     pub flags: ContextFlags,
     /// Info about how the program is using the document
     pub info: &'i Info<'input, 'arena>,
+    /// Elements whose removal or flattening would change a structure-sensitive
+    /// selector match. Populated by [`Context::load_structure_implication`].
+    pub implicated_structural: HashSet<AllocationID>,
+    /// Elements whose local name is part of a structure-sensitive selector match,
+    /// including elements that would newly match if converted to `path`.
+    pub implicated_type: HashSet<AllocationID>,
 }
 
 impl<'input, 'arena, 'i> Context<'input, 'arena, 'i> {
@@ -66,6 +72,8 @@ impl<'input, 'arena, 'i> Context<'input, 'arena, 'i> {
             root,
             flags,
             info,
+            implicated_structural: HashSet::new(),
+            implicated_type: HashSet::new(),
         }
     }
 
@@ -82,6 +90,31 @@ impl<'input, 'arena, 'i> Context<'input, 'arena, 'i> {
             ContextFlags::query_has_stylesheet_result,
             !self.query_has_stylesheet_result.is_empty(),
         );
+    }
+
+    /// Records elements implicated by structure-sensitive selectors in `root`.
+    ///
+    /// The snapshot is taken from the document as it exists when this is called,
+    /// before a job rewrites the tree.
+    #[cfg(feature = "serialize")]
+    pub fn load_structure_implication(&mut self, root: &Element<'input, 'arena>) {
+        if self.query_has_stylesheet_result.is_empty() {
+            self.query_has_stylesheet(root);
+        }
+        let implication =
+            crate::structure_sensitive::collect(&self.query_has_stylesheet_result, root);
+        self.implicated_structural = implication.structural;
+        self.implicated_type = implication.type_sensitive;
+    }
+
+    /// Whether flattening or removing `element` would change a structure-sensitive match.
+    pub fn is_structurally_implicated(&self, element: &Element<'_, '_>) -> bool {
+        self.implicated_structural.contains(&element.id())
+    }
+
+    /// Whether changing `element`'s local name would change a structure-sensitive match.
+    pub fn is_type_implicated(&self, element: &Element<'_, '_>) -> bool {
+        self.implicated_type.contains(&element.id())
     }
 }
 

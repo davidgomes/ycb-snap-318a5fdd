@@ -70,6 +70,7 @@ impl<'input, 'arena> Visitor<'input, 'arena> for ConvertShapeToPath {
         context: &mut Context<'input, 'arena, '_>,
     ) -> Result<oxvg_ast::visitor::PrepareOutcome, Self::Error> {
         context.query_has_stylesheet(document);
+        context.load_structure_implication(document);
         let mut state = State {
             options: self,
             referenced_shapes: ReferencedShapes::empty(),
@@ -113,6 +114,9 @@ impl<'input> lightningcss::visitor::Visitor<'input> for State<'_> {
         &mut self,
         selector: &mut lightningcss::selector::Selector<'input>,
     ) -> Result<(), Self::Error> {
+        if oxvg_ast::structure_sensitive::selector_is_structure_sensitive(selector) {
+            return Ok(());
+        }
         let mut iter = selector.iter();
         loop {
             for token in &mut iter {
@@ -156,26 +160,42 @@ impl<'input, 'arena> Visitor<'input, 'arena> for State<'_> {
         let convert_arcs = options.convert_arcs;
 
         match name {
-            ElementId::Rect if !self.referenced_shapes.contains(ReferencedShapes::Rect) => {
+            ElementId::Rect
+                if !self.referenced_shapes.contains(ReferencedShapes::Rect)
+                    && !context.is_type_implicated(element) =>
+            {
                 ConvertShapeToPath::rect_to_path(element, path_options, context.info);
             }
-            ElementId::Line if !self.referenced_shapes.contains(ReferencedShapes::Line) => {
+            ElementId::Line
+                if !self.referenced_shapes.contains(ReferencedShapes::Line)
+                    && !context.is_type_implicated(element) =>
+            {
                 ConvertShapeToPath::line_to_path(element, path_options, context.info);
             }
-            ElementId::Polyline if !self.referenced_shapes.contains(ReferencedShapes::Polyline) => {
+            ElementId::Polyline
+                if !self.referenced_shapes.contains(ReferencedShapes::Polyline)
+                    && !context.is_type_implicated(element) =>
+            {
                 ConvertShapeToPath::poly_to_path(element, path_options, false, context.info);
             }
-            ElementId::Polygon if !self.referenced_shapes.contains(ReferencedShapes::Polygon) => {
+            ElementId::Polygon
+                if !self.referenced_shapes.contains(ReferencedShapes::Polygon)
+                    && !context.is_type_implicated(element) =>
+            {
                 ConvertShapeToPath::poly_to_path(element, path_options, true, context.info);
             }
             ElementId::Circle
-                if convert_arcs && !self.referenced_shapes.contains(ReferencedShapes::Circle) =>
+                if convert_arcs
+                    && !self.referenced_shapes.contains(ReferencedShapes::Circle)
+                    && !context.is_type_implicated(element) =>
             {
                 ConvertShapeToPath::circle_to_path(element, path_options, context.info);
             }
 
             ElementId::Ellipse
-                if convert_arcs && !self.referenced_shapes.contains(ReferencedShapes::Circle) =>
+                if convert_arcs
+                    && !self.referenced_shapes.contains(ReferencedShapes::Circle)
+                    && !context.is_type_implicated(element) =>
             {
                 ConvertShapeToPath::ellipse_to_path(element, path_options, context.info);
             }
@@ -497,5 +517,49 @@ fn convert_shape_to_path() -> anyhow::Result<()> {
         ),
     )?);
 
+    Ok(())
+}
+
+#[test]
+fn convert_shape_to_path_protects_only_implicated_shapes() -> anyhow::Result<()> {
+    use crate::test_config;
+
+    let selective = test_config(
+        r#"{ "convertShapeToPath": {} }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>g > rect { fill: red }</style>
+    <g><rect width="10" height="10"/></g>
+    <rect width="10" height="10"/>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        selective.contains("<rect"),
+        "the rect that completes g > rect must stay a rect: {selective}"
+    );
+    assert!(
+        selective.contains("<path"),
+        "a rect outside that relationship must still convert: {selective}"
+    );
+
+    let prospective = test_config(
+        r#"{ "convertShapeToPath": {} }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>g > path { fill: red }</style>
+    <g><rect width="10" height="10"/></g>
+    <rect width="10" height="10"/>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        prospective.contains("<rect"),
+        "converting the child of g would create a g > path match: {prospective}"
+    );
+    assert!(
+        prospective.contains("<path"),
+        "a rect that would not match g > path must still convert: {prospective}"
+    );
     Ok(())
 }

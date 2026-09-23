@@ -43,6 +43,7 @@ impl<'input, 'arena> Visitor<'input, 'arena> for RemoveEmptyContainers {
         Ok(if self.0 {
             context.query_has_stylesheet(document);
             context.query_has_script(document);
+            context.load_structure_implication(document);
             PrepareOutcome::none
         } else {
             PrepareOutcome::skip
@@ -82,6 +83,9 @@ impl<'input, 'arena> Visitor<'input, 'arena> for RemoveEmptyContainers {
             if has_computed_style!(computed_styles, Filter) {
                 return Ok(());
             }
+        }
+        if context.is_structurally_implicated(element) {
+            return Ok(());
         }
 
         element.remove();
