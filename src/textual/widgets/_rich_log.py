@@ -19,6 +19,7 @@ from textual.geometry import Size
 from textual.reactive import var
 from textual.scroll_view import ScrollView
 from textual.strip import Strip
+from textual.widgets._log_follow import FollowChangedMessage, FollowEndMixin
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -44,8 +45,35 @@ class DeferredRender(NamedTuple):
     """Enable automatic scroll to end, or `None` to use `self.auto_scroll`."""
 
 
-class RichLog(ScrollView, can_focus=True):
+class _LogEntry:
+    """Bookkeeping for a single call to `RichLog.write`."""
+
+    __slots__ = ["renderable", "shrink", "line_count", "pruned", "render_key"]
+
+    def __init__(
+        self,
+        renderable: RenderableType | None,
+        shrink: bool,
+        line_count: int,
+        render_key: tuple[int, int],
+    ) -> None:
+        self.renderable = renderable
+        """The renderable, retained only for expanded entries which may be re-rendered."""
+        self.shrink = shrink
+        """Shrink setting used when writing."""
+        self.line_count = line_count
+        """Number of lines of this entry currently in the log."""
+        self.pruned = 0
+        """Number of leading lines of this entry removed due to `max_lines`."""
+        self.render_key = render_key
+        """The (content width, min width) this entry was last rendered with."""
+
+
+class RichLog(FollowEndMixin, ScrollView, can_focus=True):
     """A widget for logging Rich renderables and text."""
+
+    class FollowChanged(FollowChangedMessage):
+        """Posted when [`is_following_end`][textual.widgets.RichLog.is_following_end] changes."""
 
     DEFAULT_CSS = """
     RichLog{
@@ -105,6 +133,8 @@ class RichLog(ScrollView, can_focus=True):
         self._line_cache = LRUCache(1024)
         self._deferred_renders: deque[DeferredRender] = deque()
         """Queue of deferred renderables to be rendered."""
+        self._entries: deque[_LogEntry] = deque()
+        """One entry per write, in the same order as `lines`."""
         self.min_width = min_width
         """Minimum width of renderables."""
         self.wrap = wrap
@@ -137,6 +167,12 @@ class RichLog(ScrollView, can_focus=True):
             while deferred_renders:
                 deferred_render = deferred_renders.popleft()
                 self.write(*deferred_render)
+        else:
+            self._rerender_expanded()
+
+    def watch_min_width(self) -> None:
+        if self.is_mounted:
+            self._rerender_expanded()
 
     def get_content_width(self, container: Size, viewport: Size) -> int:
         if self._size_known:
@@ -196,7 +232,8 @@ class RichLog(ScrollView, can_focus=True):
                 If `width` is specified, then `expand` will be ignored.
             shrink: Permit shrinking of content to fit within the content region of the RichLog.
                 If `width` is specified, then `shrink` will be ignored.
-            scroll_end: Enable automatic scroll to end, or `None` to use `self.auto_scroll`.
+            scroll_end: Enable automatic scroll to end, or `None` to scroll only if
+                `self.auto_scroll` is enabled and the log is following the end.
             animate: Enable animation if the log will scroll.
 
         Returns:
@@ -213,15 +250,60 @@ class RichLog(ScrollView, can_focus=True):
             return self
 
         renderable = self._make_renderable(content)
-        auto_scroll = self.auto_scroll if scroll_end is None else scroll_end
+        expand = expand and width is None
+        render_key = self._render_key
+        strips, widest_line_width = self._render_strips(
+            renderable, width, expand, shrink
+        )
+        self.lines.extend(strips)
+        if expand and isinstance(renderable, Text):
+            renderable = renderable.copy()
+        self._entries.append(
+            _LogEntry(renderable if expand else None, shrink, len(strips), render_key)
+        )
+        removed_lines = self._prune_max_lines()
 
+        # Compute the width after wrapping and trimming
+        # TODO - this is wrong because if we trim a long line, the max width
+        #  could decrease, but we don't look at which lines were trimmed here.
+        self._widest_line_width = max(self._widest_line_width, widest_line_width)
+
+        # Update the virtual size - the width may have changed after adding
+        # the new line(s), and the height will definitely have changed.
+        self.virtual_size = Size(self._widest_line_width, len(self.lines))
+
+        self._after_write(scroll_end, removed_lines, animate=animate, immediate=False)
+        return self
+
+    @property
+    def _render_key(self) -> tuple[int, int]:
+        """The widths which determine how expanded content is rendered."""
+        return (self.scrollable_content_region.width, self.min_width)
+
+    def _render_strips(
+        self,
+        renderable: RenderableType,
+        width: int | None,
+        expand: bool,
+        shrink: bool,
+    ) -> tuple[list[Strip], int]:
+        """Render a renderable into strips.
+
+        Args:
+            renderable: A Rich renderable.
+            width: Width to render, or `None` to calculate from the content and widget.
+            expand: Permit expanding of content to the width of the content region.
+            shrink: Permit shrinking of content to fit within the content region.
+
+        Returns:
+            The rendered strips, and the width of the widest rendered line.
+        """
         console = self.app.console
         render_options = console.options
 
-        if isinstance(renderable, Text) and not self.wrap:
-            # Rich skips justification when overflow is "ignore", and strips are
-            # cropped to the render width regardless, so crop here instead.
-            render_options = render_options.update(overflow="crop", no_wrap=True)
+        no_wrap_text = isinstance(renderable, Text) and not self.wrap
+        if no_wrap_text:
+            render_options = render_options.update(overflow="ignore", no_wrap=True)
 
         if width is not None:
             # Use the width specified by the caller.
@@ -249,41 +331,98 @@ class RichLog(ScrollView, can_focus=True):
             render_width = max(render_width, self.min_width)
 
         render_options = render_options.update_width(render_width)
+        if no_wrap_text:
+            # Rich skips justification when overflow is "ignore", so crop instead,
+            # at a width which fits the longest line so that nothing is cropped.
+            assert isinstance(renderable, Text)
+            text_width = renderable.__rich_measure__(console, render_options).maximum
+            render_options = render_options.update(
+                width=max(render_width, text_width), overflow="crop"
+            )
 
         # Render into (possibly) wrapped lines.
-        segments = self.app.console.render(renderable, render_options)
+        segments = console.render(renderable, render_options)
         lines = list(Segment.split_lines(segments))
 
         if not lines:
-            self._widest_line_width = max(render_width, self._widest_line_width)
-            self.lines.append(Strip.blank(render_width))
-        else:
-            strips = Strip.from_lines(lines)
-            for strip in strips:
-                strip.adjust_cell_length(render_width)
-            self.lines.extend(strips)
+            return [Strip.blank(render_width)], render_width
 
-            if self.max_lines is not None and len(self.lines) > self.max_lines:
-                self._start_line += len(self.lines) - self.max_lines
-                self.refresh()
-                self.lines = self.lines[-self.max_lines :]
+        strips = Strip.from_lines(lines)
+        for strip in strips:
+            strip.adjust_cell_length(render_width)
+        widest_line_width = max(
+            sum([segment.cell_length for segment in _line]) for _line in lines
+        )
+        return strips, widest_line_width
 
-            # Compute the width after wrapping and trimming
-            # TODO - this is wrong because if we trim a long line, the max width
-            #  could decrease, but we don't look at which lines were trimmed here.
-            self._widest_line_width = max(
-                self._widest_line_width,
-                max(sum([segment.cell_length for segment in _line]) for _line in lines),
-            )
+    def _prune_max_lines(self) -> int:
+        """Remove lines from the start of the log in excess of `max_lines`.
 
-        # Update the virtual size - the width may have changed after adding
-        # the new line(s), and the height will definitely have changed.
+        Returns:
+            The number of lines removed.
+        """
+        if self.max_lines is None or len(self.lines) <= self.max_lines:
+            return 0
+        removed_lines = len(self.lines) - self.max_lines
+        self._start_line += removed_lines
+        del self.lines[:removed_lines]
+
+        entries = self._entries
+        remaining = removed_lines
+        while remaining and entries:
+            entry = entries[0]
+            if entry.line_count <= remaining:
+                remaining -= entry.line_count
+                entries.popleft()
+            else:
+                entry.line_count -= remaining
+                entry.pruned += remaining
+                remaining = 0
+
+        self.refresh()
+        return removed_lines
+
+    def _rerender_expanded(self) -> None:
+        """Re-render expanded entries whose available width has changed."""
+        if not self._size_known:
+            return
+        render_key = self._render_key
+        if not render_key[0]:
+            return
+        if not any(
+            entry.renderable is not None and entry.render_key != render_key
+            for entry in self._entries
+        ):
+            return
+
+        lines = self.lines
+        new_lines: list[Strip] = []
+        offset = 0
+        for entry in self._entries:
+            line_count = entry.line_count
+            if entry.renderable is not None and entry.render_key != render_key:
+                strips, _ = self._render_strips(
+                    entry.renderable, None, True, entry.shrink
+                )
+                strips = strips[entry.pruned :]
+                entry.line_count = len(strips)
+                entry.render_key = render_key
+                new_lines.extend(strips)
+            else:
+                new_lines.extend(lines[offset : offset + line_count])
+            offset += line_count
+
+        self.lines = new_lines
+        self._line_cache.clear()
+        removed_lines = self._prune_max_lines()
+        self._widest_line_width = max(
+            (line.cell_length for line in self.lines), default=0
+        )
         self.virtual_size = Size(self._widest_line_width, len(self.lines))
-
-        if auto_scroll:
-            self.scroll_end(animate=animate, immediate=False, x_axis=False)
-
-        return self
+        self._after_write(
+            self._following_end or None, removed_lines, immediate=False
+        )
+        self.refresh()
 
     def clear(self) -> Self:
         """Clear the text log.
@@ -296,7 +435,9 @@ class RichLog(ScrollView, can_focus=True):
         self._start_line = 0
         self._widest_line_width = 0
         self._deferred_renders.clear()
+        self._entries.clear()
         self.virtual_size = Size(0, len(self.lines))
+        self._set_following_end(True)
         self.refresh()
         return self
 
