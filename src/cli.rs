@@ -27,7 +27,7 @@ use crate::filter::SizeFilter;
     max_term_width = 98,
     args_override_self = true,
     group(ArgGroup::new("execs").args(&["exec", "exec_batch", "list_details"]).conflicts_with_all(&[
-            "max_results", "quiet", "max_one_result"])),
+            "max_results", "quiet", "max_one_result", "sort"])),
 )]
 pub struct Opts {
     /// Include hidden directories and files in the search results (default:
@@ -467,6 +467,108 @@ pub struct Opts {
     )]
     pub format: Option<String>,
 
+    /// Sort the search results by the given field before printing them. This
+    /// option can be specified multiple times: keys are applied from left to
+    /// right, and later keys break ties from earlier ones. Remaining ties are
+    /// broken by path, so the output is always deterministic.
+    /// Sorting requires collecting all results before printing anything.
+    ///
+    /// Available fields: path, name, extension, size, modified, created,
+    /// accessed, depth, type, name-length, path-length, random.
+    ///
+    /// Examples:
+    /// {n}    --sort size
+    /// {n}    --sort extension --sort name
+    #[arg(
+        long,
+        value_name = "field",
+        value_enum,
+        hide_possible_values = true,
+        action = ArgAction::Append,
+        help = "Sort results by the given field (can be repeated)",
+        long_help
+    )]
+    pub sort: Vec<SortKey>,
+
+    /// Reverse the final sorted order. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Reverse the sort order",
+        long_help
+    )]
+    pub reverse: bool,
+
+    /// List directories before all other entries. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        conflicts_with = "files_first",
+        hide_short_help = true,
+        help = "Sort directories before other entries",
+        long_help
+    )]
+    pub dirs_first: bool,
+
+    /// List regular files before all other entries. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Sort regular files before other entries",
+        long_help
+    )]
+    pub files_first: bool,
+
+    /// Compare text sort fields case-sensitively (default: case-insensitive).
+    /// Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Use case-sensitive text comparisons when sorting",
+        long_help
+    )]
+    pub sort_case_sensitive: bool,
+
+    /// Place entries with a missing sort value (e.g. no extension, or the size
+    /// of a directory) after entries that have one (default: before).
+    /// Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Sort entries with missing values last",
+        long_help
+    )]
+    pub sort_missing_last: bool,
+
+    /// Compare embedded runs of digits in the 'path', 'name' and 'extension'
+    /// sort fields numerically (e.g. file9 < file10 < file20).
+    /// Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Use natural order for text sort fields",
+        long_help
+    )]
+    pub sort_natural: bool,
+
+    /// Seed for '--sort random', making the shuffled order reproducible.
+    /// Without this option, a seed derived from the current time is used.
+    /// Requires '--sort'.
+    #[arg(
+        long,
+        value_name = "n",
+        requires = "sort",
+        hide_short_help = true,
+        help = "Seed for '--sort random'",
+        long_help
+    )]
+    pub sort_seed: Option<u64>,
+
     #[command(flatten)]
     pub exec: Exec,
 
@@ -797,6 +899,22 @@ pub enum FileType {
     Socket,
     #[value(alias = "p")]
     Pipe,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
+pub enum SortKey {
+    Path,
+    Name,
+    Extension,
+    Size,
+    Modified,
+    Created,
+    Accessed,
+    Depth,
+    Type,
+    NameLength,
+    PathLength,
+    Random,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]

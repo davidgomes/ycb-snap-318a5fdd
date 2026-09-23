@@ -183,6 +183,8 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
     /// Receive the next worker result.
     fn recv(&self) -> Result<Batch, RecvTimeoutError> {
         match self.mode {
+            // Sorted output needs every result, so never switch to streaming
+            ReceiverMode::Buffering if self.config.sort.is_some() => Ok(self.rx.recv()?),
             ReceiverMode::Buffering => {
                 // Wait at most until we should switch to streaming
                 self.rx.recv_deadline(self.deadline)
@@ -203,6 +205,11 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                         WorkerResult::Entry(dir_entry) => {
                             if self.config.quiet {
                                 return Err(ExitCode::HasResults(true));
+                            }
+
+                            if self.config.sort.is_some() {
+                                self.buffer.push(dir_entry);
+                                continue;
                             }
 
                             match self.mode {
@@ -280,7 +287,15 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
 
     /// Stop looping.
     fn stop(&mut self) -> Result<(), ExitCode> {
-        if self.mode == ReceiverMode::Buffering {
+        if let Some(sort) = &self.config.sort {
+            let mut entries = sort.sort(mem::take(&mut self.buffer), self.config);
+            if let Some(max_results) = self.config.max_results {
+                entries.truncate(max_results);
+            }
+            self.num_results = entries.len();
+            self.buffer = entries;
+            self.stream()?;
+        } else if self.mode == ReceiverMode::Buffering {
             self.buffer.sort();
             self.stream()?;
         }

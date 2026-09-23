@@ -11,6 +11,7 @@ mod fmt;
 mod hyperlink;
 mod output;
 mod regex_helper;
+mod sort;
 mod walk;
 
 use std::env;
@@ -33,6 +34,7 @@ use crate::filetypes::FileTypes;
 use crate::filter::OwnerFilter;
 use crate::filter::TimeFilter;
 use crate::regex_helper::{pattern_has_uppercase_char, pattern_matches_strings_with_leading_dot};
+use crate::sort::{Grouping, SortConfig};
 
 // We use jemalloc for performance reasons, see https://github.com/sharkdp/fd/pull/481
 // FIXME: re-enable jemalloc on macOS, see comment in Cargo.toml file for more infos
@@ -244,6 +246,21 @@ fn construct_config(mut opts: Opts, pattern_regexps: &[String]) -> Result<Config
     };
     let command = extract_command(&mut opts, colored_output)?;
     let has_command = command.is_some();
+    let sort = (!opts.sort.is_empty()).then(|| SortConfig {
+        keys: std::mem::take(&mut opts.sort),
+        reverse: opts.reverse,
+        grouping: if opts.dirs_first {
+            Grouping::DirsFirst
+        } else if opts.files_first {
+            Grouping::FilesFirst
+        } else {
+            Grouping::None
+        },
+        case_sensitive: opts.sort_case_sensitive,
+        missing_last: opts.sort_missing_last,
+        natural: opts.sort_natural,
+        seed: opts.sort_seed.unwrap_or_else(SortConfig::default_seed),
+    });
 
     Ok(Config {
         case_sensitive,
@@ -327,6 +344,7 @@ fn construct_config(mut opts: Opts, pattern_regexps: &[String]) -> Result<Config
         max_results: opts.max_results(),
         strip_cwd_prefix: opts.strip_cwd_prefix(|| !(opts.null_separator || has_command)),
         ignore_contain: opts.ignore_contain,
+        sort,
     })
 }
 
