@@ -14,6 +14,8 @@
 
 package s2
 
+import "fmt"
+
 // Shape interface enforcement
 var _ Shape = (*LaxPolygon)(nil)
 
@@ -218,6 +220,48 @@ func (p *LaxPolygon) ChainPosition(e int) ChainPosition {
 	}
 
 	return ChainPosition{p.cumulativeVertices[nextLoop] - p.cumulativeVertices[1], e - p.cumulativeVertices[nextLoop-1]}
+}
+
+func (p *LaxPolygon) encode(e *encoder) {
+	e.writeUvarint(uint64(p.numLoops))
+	for i := range p.numLoops {
+		e.writeUvarint(uint64(p.numLoopVertices(i)))
+	}
+	e.writePoints(p.vertices[:p.numVertices()])
+}
+
+func (p *LaxPolygon) decode(d *decoder) {
+	numLoops := d.readUvarint()
+	if d.err != nil {
+		return
+	}
+	if numLoops > maxEncodedLoops {
+		d.err = fmt.Errorf("too many loops (%d; max is %d)", numLoops, maxEncodedLoops)
+		return
+	}
+	loopSizes := make([]uint64, 0, decodePrealloc(numLoops))
+	var numVertices uint64
+	for i := uint64(0); i < numLoops; i++ {
+		n := d.readUvarint()
+		if d.err != nil {
+			return
+		}
+		if n > maxEncodedVertices-numVertices {
+			d.err = fmt.Errorf("too many vertices (max is %d)", maxEncodedVertices)
+			return
+		}
+		numVertices += n
+		loopSizes = append(loopSizes, n)
+	}
+	vertices := d.readPoints(numVertices)
+	if d.err != nil {
+		return
+	}
+	loops := make([][]Point, len(loopSizes))
+	for i, n := range loopSizes {
+		loops[i], vertices = vertices[:n:n], vertices[n:]
+	}
+	*p = *LaxPolygonFromPoints(loops)
 }
 
 // TODO(roberts): Remaining to port from C++:

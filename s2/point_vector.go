@@ -40,3 +40,12 @@ func (p *PointVector) IsEmpty() bool                     { return defaultShapeIs
 func (p *PointVector) IsFull() bool                      { return defaultShapeIsFull(p) }
 func (p *PointVector) typeTag() typeTag                  { return typeTagPointVector }
 func (p *PointVector) privateInterface()                 {}
+
+func (p *PointVector) encode(e *encoder) {
+	e.writeUvarint(uint64(len(*p)))
+	e.writePoints(*p)
+}
+
+func (p *PointVector) decode(d *decoder) {
+	*p = d.readPoints(d.readUvarint())
+}

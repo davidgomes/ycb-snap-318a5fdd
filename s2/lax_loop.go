@@ -84,6 +84,16 @@ func (l *LaxLoop) IsFull() bool                      { return defaultShapeIsFull
 func (l *LaxLoop) typeTag() typeTag                  { return typeTagNone }
 func (l *LaxLoop) privateInterface()                 {}
 
+func (l *LaxLoop) encode(e *encoder) {
+	e.writeUvarint(uint64(l.numVertices))
+	e.writePoints(l.vertices[:l.numVertices])
+}
+
+func (l *LaxLoop) decode(d *decoder) {
+	l.vertices = d.readPoints(d.readUvarint())
+	l.numVertices = len(l.vertices)
+}
+
 // TODO(roberts): Remaining to be ported from C++:
 // LaxClosedPolyline
 // VertexIDLaxLoop

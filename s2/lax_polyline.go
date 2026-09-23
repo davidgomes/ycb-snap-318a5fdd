@@ -53,6 +53,15 @@ func (l *LaxPolyline) IsFull() bool                      { return defaultShapeIs
 func (l *LaxPolyline) typeTag() typeTag                  { return typeTagLaxPolyline }
 func (l *LaxPolyline) privateInterface()                 {}
 
+func (l *LaxPolyline) encode(e *encoder) {
+	e.writeUvarint(uint64(len(l.vertices)))
+	e.writePoints(l.vertices)
+}
+
+func (l *LaxPolyline) decode(d *decoder) {
+	l.vertices = d.readPoints(d.readUvarint())
+}
+
 // TODO(roberts):
 // Add Encode/Decode support
 // Add EncodedLaxPolyline type
