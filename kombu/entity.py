@@ -825,6 +825,39 @@ class Queue(MaybeChannelBound):
         )
 
     @property
+    def is_single_active_consumer(self):
+        return bool((self.queue_arguments or {}).get(
+            'x-single-active-consumer'))
+
+    @property
+    def consumer_priority(self):
+        return (self.consumer_arguments or {}).get('x-priority') or 0
+
+    @classmethod
+    def with_consumer_priority(cls, name, exchange, priority=0, **kwargs):
+        consumer_arguments = dict(kwargs.pop('consumer_arguments', None) or {})
+        consumer_arguments['x-priority'] = priority
+        return cls(name, exchange,
+                   consumer_arguments=consumer_arguments, **kwargs)
+
+    @classmethod
+    def with_single_active_consumer(cls, name, exchange, durable=True,
+                                    **kwargs):
+        queue_arguments = dict(kwargs.pop('queue_arguments', None) or {})
+        queue_arguments['x-single-active-consumer'] = True
+        return cls(name, exchange, durable=durable,
+                   queue_arguments=queue_arguments, **kwargs)
+
+    @classmethod
+    def with_priority_and_sac(cls, name, exchange, priority=0, durable=True,
+                              **kwargs):
+        consumer_arguments = dict(kwargs.pop('consumer_arguments', None) or {})
+        consumer_arguments['x-priority'] = priority
+        return cls.with_single_active_consumer(
+            name, exchange, durable=durable,
+            consumer_arguments=consumer_arguments, **kwargs)
+
+    @property
     def can_cache_declaration(self):
         if self.queue_arguments:
             expiring_queue = "x-expires" in self.queue_arguments

@@ -394,8 +394,12 @@ class Consumer:
 
     def __init__(self, channel, queues=None, no_ack=None, auto_declare=None,
                  callbacks=None, on_decode_error=None, on_message=None,
-                 accept=None, prefetch_count=None, tag_prefix=None):
+                 accept=None, prefetch_count=None, tag_prefix=None,
+                 on_cancel=None):
         self.channel = channel
+        self.cancel_notify_callbacks = []
+        if on_cancel is not None:
+            self.cancel_notify_callbacks.append(on_cancel)
         self.queues = maybe_list(queues or [])
         self.no_ack = self.no_ack if no_ack is None else no_ack
         self.callbacks = (self.callbacks or [] if callbacks is None
@@ -547,6 +551,43 @@ class Consumer:
             name = queue.name
         return name in self._active_tags
 
+    def on_cancel_notify(self, callback):
+        """Register callback called with the consumer tag on cancel."""
+        self.cancel_notify_callbacks.append(callback)
+        return self
+
+    def _on_cancel(self, consumer_tag):
+        for callback in self.cancel_notify_callbacks:
+            callback(consumer_tag)
+
+    def consuming_from_sac(self, queue):
+        """Return :const:`True` if consuming from a SAC queue."""
+        name = queue.name if isinstance(queue, Queue) else queue
+        if name not in self._active_tags:
+            return False
+        is_sac = getattr(self.channel, 'is_single_active_consumer', None)
+        if callable(is_sac):
+            result = is_sac(name)
+            if isinstance(result, bool):
+                return result
+        q = self._queues.get(name)
+        return bool(q is not None and q.is_single_active_consumer)
+
+    def is_active_on(self, queue):
+        """Return :const:`True` if this consumer holds the active tag."""
+        name = queue.name if isinstance(queue, Queue) else queue
+        tag = self._active_tags.get(name)
+        if tag is None:
+            return False
+        get_active = getattr(self.channel, 'get_active_consumer', None)
+        if not callable(get_active):
+            return True
+        return get_active(name) == tag
+
+    @property
+    def active_consumer_tags(self):
+        return list(self._active_tags.values())
+
     def purge(self):
         """Purge messages from all queues.
 
@@ -639,7 +680,8 @@ class Consumer:
         if tag is None:
             tag = self._add_tag(queue, consumer_tag)
             queue.consume(tag, self._receive_callback,
-                          no_ack=no_ack, nowait=nowait)
+                          no_ack=no_ack, nowait=nowait,
+                          on_cancel=self._on_cancel)
         return tag
 
     def _add_tag(self, queue, consumer_tag=None):
