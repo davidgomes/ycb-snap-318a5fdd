@@ -816,7 +816,14 @@ label values are equal, elements are sorted by their full label sets.
 Please note that `sort_by_label` only affects the results of instant queries, as
 range query results always have a fixed output ordering.
 
-`sort_by_label` uses [natural sort
+`sort_by_label` compares label values by their typed interpretation. Values
+with leading whitespace sort first, followed by `+Inf`, finite numbers
+(including scientific notation), `-Inf`, durations (e.g. `1h30m`, `-1.5e3ms`),
+byte sizes (e.g. `10KB`, `1.5GiB`), semantic versions (with an optional `v`
+prefix), IP addresses (IPv4 before IPv6), CIDR prefixes (IPv4 before IPv6, then
+by network address, then by prefix length), RFC 3339 timestamps, and finally all
+other values. Values that are not typed, as well as typed values that compare
+equal, are ordered using [natural sort
 order](https://en.wikipedia.org/wiki/Natural_sort_order).
 
 ## `sort_by_label_desc()`
