@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 from mnamer import tty
 from mnamer.const import SYSTEM, USAGE, VERSION
+from mnamer.daemon import daemon_requested, dispatch
 from mnamer.exceptions import (
     MnamerAbortException,
     MnamerException,
@@ -65,6 +66,12 @@ class Frontend(ABC):
 
 class Cli(Frontend):
     def __init__(self, settings: SettingStore):
+        if daemon_requested(settings):
+            self.settings = settings
+            self.targets = []
+            self.success_count = 0
+            tty.configure(settings)
+            return
         super().__init__(settings)
         if not settings.targets:
             tty.error(USAGE)
@@ -76,6 +83,15 @@ class Cli(Frontend):
         return len(self.targets)
 
     def launch(self) -> None:
+        if daemon_requested(self.settings):
+            try:
+                dispatch(self.settings)
+            except SystemExit:
+                raise
+            except Exception:
+                print("daemon error")
+                raise SystemExit(2) from None
+            return
         tty.msg("Starting mnamer", MessageType.HEADING)
         self._ensure_targets()
         self._process_targets()
