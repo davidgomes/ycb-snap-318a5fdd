@@ -3,6 +3,7 @@ package blob
 import (
 	"errors"
 
+	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/pipe"
 	"github.com/goreleaser/goreleaser/v2/internal/semerrgroup"
 	"github.com/goreleaser/goreleaser/v2/internal/tmpl"
@@ -39,6 +40,8 @@ func (Pipe) Default(ctx *context.Context) error {
 
 // Publish to specified blob bucket url.
 func (Pipe) Publish(ctx *context.Context) error {
+	attempts := &artifact.PublishAttempts{}
+	defer attempts.Apply()
 	g := semerrgroup.NewSkipAware(semerrgroup.New(ctx.Parallelism))
 	for _, conf := range ctx.Config.Blobs {
 		g.Go(func() error {
@@ -49,7 +52,7 @@ func (Pipe) Publish(ctx *context.Context) error {
 			if b {
 				return pipe.Skip("configuration is disabled")
 			}
-			return doUpload(ctx, conf)
+			return doUpload(ctx, conf, attempts)
 		})
 	}
 	return g.Wait()
