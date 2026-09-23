@@ -293,6 +293,7 @@ func (b *OpenAPIBuilder) getAllPathDefinitions() *orderedmap.Map[string, *v3.Pat
 	// Status endpoints.
 	paths.Set("/status/config", b.statusConfigPath())
 	paths.Set("/status/runtimeinfo", b.statusRuntimeInfoPath())
+	paths.Set("/status/reload", b.statusReloadPath())
 	paths.Set("/status/buildinfo", b.statusBuildInfoPath())
 	paths.Set("/status/flags", b.statusFlagsPath())
 	paths.Set("/status/tsdb", b.statusTSDBPath())

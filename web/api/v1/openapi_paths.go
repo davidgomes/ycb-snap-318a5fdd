@@ -389,6 +389,17 @@ func (*OpenAPIBuilder) statusRuntimeInfoPath() *v3.PathItem {
 	}
 }
 
+func (*OpenAPIBuilder) statusReloadPath() *v3.PathItem {
+	return &v3.PathItem{
+		Get: &v3.Operation{
+			OperationId: "get-status-reload",
+			Summary:     "Get status of the most recent configuration reload",
+			Tags:        []string{"status"},
+			Responses:   responsesWithErrorExamples("StatusReloadOutputBody", statusReloadResponseExamples(), errorResponseExamples(), "Reload status retrieved successfully.", "Error retrieving reload status."),
+		},
+	}
+}
+
 func (*OpenAPIBuilder) statusBuildInfoPath() *v3.PathItem {
 	return &v3.PathItem{
 		Get: &v3.Operation{

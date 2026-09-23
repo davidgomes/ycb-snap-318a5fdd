@@ -20,6 +20,7 @@ import (
 	"github.com/pb33f/libopenapi/datamodel/high/base"
 	v3 "github.com/pb33f/libopenapi/datamodel/high/v3"
 	"github.com/pb33f/libopenapi/orderedmap"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 // Schema definitions and components builder.
@@ -98,6 +99,8 @@ func (b *OpenAPIBuilder) buildComponents() *v3.Components {
 	schemas.Set("StatusConfigOutputBody", b.refResponseBodySchema("StatusConfigData", "Response body for status config endpoint."))
 	schemas.Set("RuntimeInfo", b.runtimeInfoSchema())
 	schemas.Set("StatusRuntimeInfoOutputBody", b.refResponseBodySchema("RuntimeInfo", "Response body for status runtime info endpoint."))
+	schemas.Set("ReloadStatus", b.reloadStatusSchema())
+	schemas.Set("StatusReloadOutputBody", b.refResponseBodySchema("ReloadStatus", "Response body for status reload endpoint."))
 	schemas.Set("PrometheusVersion", b.prometheusVersionSchema())
 	schemas.Set("StatusBuildInfoOutputBody", b.refResponseBodySchema("PrometheusVersion", "Response body for status build info endpoint."))
 	schemas.Set("StatusFlagsOutputBody", b.statusFlagsOutputBodySchema())
@@ -1058,6 +1061,41 @@ func (*OpenAPIBuilder) runtimeInfoSchema() *base.SchemaProxy {
 		Description:          "Prometheus runtime information.",
 		AdditionalProperties: &base.DynamicValue[*base.SchemaProxy, bool]{N: 1, B: false},
 		Required:             []string{"startTime", "CWD", "hostname", "serverTime", "reloadConfigSuccess", "lastConfigTime", "corruptionCount", "goroutineCount", "GOMAXPROCS", "GOMEMLIMIT", "GOGC", "GODEBUG", "storageRetention"},
+		Properties:           props,
+	})
+}
+
+func (*OpenAPIBuilder) reloadStatusSchema() *base.SchemaProxy {
+	props := orderedmap.New[string, *base.SchemaProxy]()
+	props.Set("last_reload_id", base.CreateSchemaProxy(&base.Schema{Type: []string{"string"}, Description: "RFC3339 timestamp identifying the reload attempt, empty if no attempt was recorded."}))
+	props.Set("last_reload_successful", base.CreateSchemaProxy(&base.Schema{Type: []string{"boolean"}}))
+	props.Set("error_category", base.CreateSchemaProxy(&base.Schema{
+		Type: []string{"string"},
+		Enum: []*yaml.Node{
+			{Kind: yaml.ScalarNode, Value: ReloadErrorCategoryNone},
+			{Kind: yaml.ScalarNode, Value: ReloadErrorCategoryLoad},
+			{Kind: yaml.ScalarNode, Value: ReloadErrorCategoryApply},
+			{Kind: yaml.ScalarNode, Value: ReloadErrorCategoryRollback},
+		},
+	}))
+	props.Set("error_message", stringSchema())
+	props.Set("applied_reloaders", base.CreateSchemaProxy(&base.Schema{
+		Type:  []string{"array"},
+		Items: &base.DynamicValue[*base.SchemaProxy, bool]{A: stringSchema()},
+	}))
+	props.Set("rollback_attempted", base.CreateSchemaProxy(&base.Schema{Type: []string{"boolean"}}))
+	props.Set("rollback_successful", base.CreateSchemaProxy(&base.Schema{Type: []string{"boolean"}}))
+	props.Set("failed_reloader", stringSchema())
+	props.Set("reloader_timings_ms", base.CreateSchemaProxy(&base.Schema{
+		Type:                 []string{"object"},
+		AdditionalProperties: &base.DynamicValue[*base.SchemaProxy, bool]{A: base.CreateSchemaProxy(&base.Schema{Type: []string{"number"}})},
+	}))
+
+	return base.CreateSchemaProxy(&base.Schema{
+		Type:                 []string{"object"},
+		Description:          "Outcome of the most recent configuration reload attempt.",
+		AdditionalProperties: &base.DynamicValue[*base.SchemaProxy, bool]{N: 1, B: false},
+		Required:             []string{"last_reload_id", "last_reload_successful", "error_category", "error_message", "applied_reloaders", "rollback_attempted", "rollback_successful", "failed_reloader", "reloader_timings_ms"},
 		Properties:           props,
 	})
 }

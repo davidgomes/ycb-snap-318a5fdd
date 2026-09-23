@@ -715,6 +715,37 @@ func statusRuntimeInfoResponseExamples() *orderedmap.Map[string, *base.Example] 
 	return examples
 }
 
+// statusReloadResponseExamples returns examples for /status/reload response.
+func statusReloadResponseExamples() *orderedmap.Map[string, *base.Example] {
+	examples := orderedmap.New[string, *base.Example]()
+
+	examples.Set("rolledBack", &base.Example{
+		Summary: "Reload failed and was rolled back",
+		Value: createYAMLNode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"last_reload_id":         "2026-01-02T13:37:00.123456789Z",
+				"last_reload_successful": false,
+				"error_category":         "apply_error",
+				"error_message":          "failed to apply configuration in reloader \"scrape\"",
+				"applied_reloaders":      []string{"db_storage", "remote_storage", "web_handler", "query_engine"},
+				"rollback_attempted":     true,
+				"rollback_successful":    true,
+				"failed_reloader":        "scrape",
+				"reloader_timings_ms": map[string]any{
+					"db_storage":     0.02,
+					"remote_storage": 0.5,
+					"web_handler":    0.01,
+					"query_engine":   0.01,
+					"scrape":         1.2,
+				},
+			},
+		}),
+	})
+
+	return examples
+}
+
 // statusBuildInfoResponseExamples returns examples for /status/buildinfo response.
 func statusBuildInfoResponseExamples() *orderedmap.Map[string, *base.Example] {
 	examples := orderedmap.New[string, *base.Example]()
