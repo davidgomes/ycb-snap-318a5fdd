@@ -154,6 +154,54 @@ export interface SetStateOptions {
   meta?: any
 }
 
+const persisterRestoreResultBrand = Symbol.for(
+  'tanstack-query-persister-restore-result',
+)
+
+export interface PersisterRestoreSnapshot<
+  TData = unknown,
+  TError = DefaultError,
+> {
+  data: TData
+  state: Partial<QueryState<TData, TError>>
+}
+
+export interface PersisterRestoreResult<
+  TData = unknown,
+  TError = DefaultError,
+> extends PersisterRestoreSnapshot<TData, TError> {
+  readonly [persisterRestoreResultBrand]: true
+}
+
+/**
+ * Wraps a persisted query snapshot so it can be returned from a `persister`.
+ * The query adopts the snapshot state as-is instead of treating it as a
+ * freshly fetched result.
+ */
+export function createPersisterRestoreResult<
+  TData = unknown,
+  TError = DefaultError,
+>(
+  snapshot: PersisterRestoreSnapshot<TData, TError>,
+): PersisterRestoreResult<TData, TError> {
+  return {
+    data: snapshot.data,
+    state: snapshot.state,
+    [persisterRestoreResultBrand]: true,
+  }
+}
+
+export function isPersisterRestoreResult(
+  value: unknown,
+): value is PersisterRestoreResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Partial<PersisterRestoreResult>)[persisterRestoreResultBrand] ===
+      true
+  )
+}
+
 // CLASS
 
 export class Query<
@@ -246,6 +294,19 @@ export class Query<
     setStateOptions?: SetStateOptions,
   ): void {
     this.#dispatch({ type: 'setState', state, setStateOptions })
+  }
+
+  #restore({ data, state }: PersisterRestoreResult<TData, TError>): void {
+    const restoredData = replaceData(this.state.data, data, this.options)
+    this.#revertState = undefined
+    this.setState({
+      ...state,
+      data: restoredData,
+      status:
+        state.status ??
+        (restoredData !== undefined ? 'success' : this.state.status),
+      fetchStatus: 'idle',
+    })
   }
 
   cancel(options?: CancelOptions): Promise<void> {
@@ -523,12 +584,33 @@ export class Query<
       this.#dispatch({ type: 'fetch', meta: context.fetchOptions?.meta })
     }
 
+    // A persister can hand back a restored snapshot instead of fetched data.
+    // Unwrap it here so the retryer promise only ever resolves with data.
+    let restoreResult: PersisterRestoreResult<TData, TError> | undefined
+    const unwrapRestoreResult = (value: unknown) => {
+      if (isPersisterRestoreResult(value)) {
+        restoreResult = value as PersisterRestoreResult<TData, TError>
+        return value.data
+      }
+      return value
+    }
+    const fn = context.options.persister
+      ? () => {
+          restoreResult = undefined
+          const result = context.fetchFn()
+          return typeof (result as Promise<unknown> | undefined)?.then ===
+            'function'
+            ? (result as Promise<unknown>).then(unwrapRestoreResult)
+            : unwrapRestoreResult(result)
+        }
+      : context.fetchFn
+
     // Try to fetch the data
     this.#retryer = createRetryer({
       initialPromise: fetchOptions?.initialPromise as
         | Promise<TData>
         | undefined,
-      fn: context.fetchFn as () => Promise<TData>,
+      fn: fn as () => Promise<TData>,
       onCancel: (error) => {
         if (error instanceof CancelledError && error.revert) {
           this.setState({
@@ -564,6 +646,11 @@ export class Query<
           )
         }
         throw new Error(`${this.queryHash} data is undefined`)
+      }
+
+      if (restoreResult) {
+        this.#restore(restoreResult)
+        return this.state.data as TData
       }
 
       this.setData(data)
