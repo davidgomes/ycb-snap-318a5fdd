@@ -7,19 +7,16 @@ import {
 import {
   CancelledError,
   Query,
+  QueryCache,
   QueryClient,
   QueryObserver,
+  createPersisterRestoreResult,
   dehydrate,
   hydrate,
 } from '..'
 import { hashQueryKeyByOptions } from '../utils'
 import { mockOnlineManagerIsOnline, setIsServer } from './utils'
-import type {
-  QueryCache,
-  QueryFunctionContext,
-  QueryKey,
-  QueryObserverResult,
-} from '..'
+import type { QueryFunctionContext, QueryKey, QueryObserverResult } from '..'
 
 describe('query', () => {
   let queryClient: QueryClient
@@ -1162,6 +1159,104 @@ describe('query', () => {
 
     const query = queryCache.find({ queryKey: key })!
     expect(query.state.data).toBe('persisted data')
+  })
+
+  test('should adopt the state of a restored persister snapshot', async () => {
+    const key = queryKey()
+    const onSuccess = vi.fn()
+    const onSettled = vi.fn()
+    const client = new QueryClient({
+      queryCache: new QueryCache({ onSuccess, onSettled }),
+    })
+    const error = new Error('persisted error')
+    const queryFn = vi.fn(() => 'fresh data')
+
+    await client.prefetchQuery({
+      queryKey: key,
+      queryFn,
+      persister: () =>
+        Promise.resolve(
+          createPersisterRestoreResult({
+            data: 'persisted data',
+            state: {
+              data: 'persisted data',
+              dataUpdateCount: 3,
+              dataUpdatedAt: 1000,
+              error,
+              errorUpdateCount: 2,
+              errorUpdatedAt: 2000,
+              fetchFailureCount: 4,
+              fetchFailureReason: error,
+              fetchMeta: null,
+              isInvalidated: true,
+              status: 'error',
+              fetchStatus: 'fetching',
+            },
+          }),
+        ),
+    })
+
+    const query = client.getQueryCache().find({ queryKey: key })!
+    expect(queryFn).not.toHaveBeenCalled()
+    expect(onSuccess).not.toHaveBeenCalled()
+    expect(onSettled).not.toHaveBeenCalled()
+    expect(query.state).toEqual({
+      data: 'persisted data',
+      dataUpdateCount: 3,
+      dataUpdatedAt: 1000,
+      error,
+      errorUpdateCount: 2,
+      errorUpdatedAt: 2000,
+      fetchFailureCount: 4,
+      fetchFailureReason: error,
+      fetchMeta: null,
+      isInvalidated: true,
+      status: 'error',
+      fetchStatus: 'idle',
+    })
+
+    const observer = new QueryObserver(client, {
+      queryKey: key,
+      queryFn,
+      enabled: false,
+    })
+    expect(observer.getCurrentResult()).toMatchObject({
+      data: 'persisted data',
+      error,
+      errorUpdatedAt: 2000,
+      dataUpdatedAt: 1000,
+      failureCount: 4,
+      failureReason: error,
+      isError: true,
+      isRefetchError: true,
+      fetchStatus: 'idle',
+    })
+
+    client.clear()
+  })
+
+  test('should resolve fetch with the restored data and derive status from partial snapshots', async () => {
+    const key = queryKey()
+
+    const data = await queryClient.fetchQuery({
+      queryKey: key,
+      queryFn: () => 'fresh data',
+      persister: () =>
+        createPersisterRestoreResult({
+          data: 'persisted data',
+          state: { dataUpdatedAt: 1234 },
+        }),
+    })
+
+    const query = queryCache.find({ queryKey: key })!
+    expect(data).toBe('persisted data')
+    expect(query.state).toMatchObject({
+      data: 'persisted data',
+      dataUpdatedAt: 1234,
+      status: 'success',
+      fetchStatus: 'idle',
+      error: null,
+    })
   })
 
   test('should use queryFn from observer if not provided in options', async () => {

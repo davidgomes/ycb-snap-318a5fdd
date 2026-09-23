@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { queryKey, sleep } from '@tanstack/query-test-utils'
-import { CancelledError, InfiniteQueryObserver, QueryClient } from '..'
+import {
+  CancelledError,
+  InfiniteQueryObserver,
+  QueryClient,
+  createPersisterRestoreResult,
+} from '..'
 import type { InfiniteData, InfiniteQueryObserverResult, QueryCache } from '..'
 
 describe('InfiniteQueryBehavior', () => {
@@ -486,6 +491,57 @@ describe('InfiniteQueryBehavior', () => {
 
     await vi.advanceTimersByTimeAsync(0)
     expect(persisterSpy).toHaveBeenCalledTimes(1)
+
+    unsubscribe()
+  })
+
+  test('should keep page params of a restored persister snapshot', async () => {
+    const key = queryKey()
+    const queryFn = vi.fn(({ pageParam }: { pageParam: number }) =>
+      sleep(0).then(() => pageParam),
+    )
+    const error = new Error('persisted error')
+    const persistedData = { pages: [10, 11], pageParams: [10, 11] }
+
+    const observer = new InfiniteQueryObserver(queryClient, {
+      queryKey: key,
+      queryFn,
+      getNextPageParam: (lastPage) => lastPage + 1,
+      initialPageParam: 1,
+      staleTime: Infinity,
+      persister: () =>
+        Promise.resolve(
+          createPersisterRestoreResult({
+            data: persistedData,
+            state: {
+              data: persistedData,
+              dataUpdatedAt: 1000,
+              dataUpdateCount: 2,
+              error,
+              errorUpdatedAt: 2000,
+              errorUpdateCount: 1,
+              fetchFailureCount: 3,
+              fetchFailureReason: error,
+              isInvalidated: true,
+              status: 'error',
+            },
+          }),
+        ),
+    })
+
+    const unsubscribe = observer.subscribe(() => {})
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(queryFn).not.toHaveBeenCalled()
+    expect(observer.getCurrentResult()).toMatchObject({
+      data: persistedData,
+      hasNextPage: true,
+      isRefetchError: true,
+      failureCount: 3,
+      errorUpdatedAt: 2000,
+      dataUpdatedAt: 1000,
+      fetchStatus: 'idle',
+    })
 
     unsubscribe()
   })
