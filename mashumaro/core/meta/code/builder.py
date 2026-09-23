@@ -31,6 +31,11 @@ from mashumaro.config import (
 from mashumaro.core.const import Sentinel
 from mashumaro.core.helpers import ConfigValue
 from mashumaro.core.meta.code.lines import CodeLines
+from mashumaro.core.meta.flatten import (
+    FlattenSpec,
+    _unwrap,
+    collect_flatten_specs,
+)
 from mashumaro.core.meta.helpers import (
     get_args,
     get_class_that_defines_field,
@@ -38,6 +43,7 @@ from mashumaro.core.meta.helpers import (
     get_literal_values,
     get_name_error_name,
     get_type_annotations,
+    get_type_origin,
     hash_type_args,
     is_annotated,
     is_class_var,
@@ -427,6 +433,7 @@ class CodeBuilder:
             add_kwargs = False
             kw_only_fields = set()
             field_blocks = []
+            flatten_specs = collect_flatten_specs(self)
             for fname, ftype in field_types.items():
                 field = self.dataclass_fields.get(fname)
                 if field and not field.init:
@@ -450,7 +457,11 @@ class CodeBuilder:
                 filtered_fields.append((fname, alias, ftype))
             if filtered_fields:
                 if config.forbid_extra_keys:
-                    allowed_keys = {f[1] or f[0] for f in filtered_fields}
+                    allowed_keys = {
+                        f[1] or f[0]
+                        for f in filtered_fields
+                        if f[0] not in flatten_specs
+                    }
 
                     # If a discriminator with a field is set via config,
                     # we should allow this field to be present in the input
@@ -460,7 +471,13 @@ class CodeBuilder:
                         allowed_keys.add(discr.field)
 
                     if config.allow_deserialization_not_by_alias:
-                        allowed_keys |= {f[0] for f in filtered_fields}
+                        allowed_keys |= {
+                            f[0]
+                            for f in filtered_fields
+                            if f[0] not in flatten_specs
+                        }
+                    for spec in flatten_specs.values():
+                        allowed_keys |= spec.output_keys
 
                     allowed_keys_str = "'" + "', '".join(allowed_keys) + "'"
 
@@ -478,14 +495,20 @@ class CodeBuilder:
                     for fname, alias, ftype in filtered_fields:
                         self.add_type_modules(ftype)
                         metadata = self.metadatas.get(fname, {})
-                        field_block = FieldUnpackerCodeBlockBuilder(
-                            self, CodeLines()
-                        ).build(
-                            fname=fname,
-                            ftype=ftype,
-                            metadata=metadata,
-                            alias=alias,
-                        )
+                        spec = flatten_specs.get(fname)
+                        if spec is not None:
+                            field_block = self._build_flatten_unpack_block(
+                                spec
+                            )
+                        else:
+                            field_block = FieldUnpackerCodeBlockBuilder(
+                                self, CodeLines()
+                            ).build(
+                                fname=fname,
+                                ftype=ftype,
+                                metadata=metadata,
+                                alias=alias,
+                            )
                         if field_block.in_kwargs:
                             add_kwargs = True
                         field_blocks.append(field_block)
@@ -863,6 +886,7 @@ class CodeBuilder:
             aliases = {}
             nullable_fields = set()
             nontrivial_nullable_fields = set()
+            flatten_specs = collect_flatten_specs(self)
             fnames_and_types: typing.Iterable[
                 typing.Tuple[str, typing.Any]
             ] = field_types.items()
@@ -871,6 +895,8 @@ class CodeBuilder:
 
             for fname, ftype in fnames_and_types:
                 if self.metadatas.get(fname, {}).get("serialize") == "omit":
+                    continue
+                if fname in flatten_specs:
                     continue
                 packer, alias, could_be_none = self._get_field_packer(
                     fname, ftype, config, force_value
@@ -889,9 +915,20 @@ class CodeBuilder:
                 or by_alias_feature
                 and aliases
                 or omit_default
+                or flatten_specs
             ):
                 kwargs = "kwargs"
                 self.add_line("kwargs = {}")
+                for fname, ftype in fnames_and_types:
+                    spec = flatten_specs.get(fname)
+                    if spec is None:
+                        continue
+                    if (
+                        self.metadatas.get(fname, {}).get("serialize")
+                        == "omit"
+                    ):
+                        continue
+                    self._emit_flatten_pack(spec)
                 for fname, packer in packers.items():
                     if force_value:
                         self.add_line(f"value = self.{fname}")
@@ -1149,6 +1186,155 @@ class CodeBuilder:
                     )
         else:
             self.add_line(f"cls.{cache_name}[dialect] = {method_name}")
+
+    def _compile_nested_pack_method(
+        self, origin: typing.Type, type_args: typing.Tuple[typing.Any, ...]
+    ) -> str:
+        method_name = self.get_pack_method_name(type_args, self.format_name)
+        method_loc = origin if self.is_nailed else self.attrs
+        if get_class_that_defines_method(
+            method_name, method_loc
+        ) != method_loc and (
+            origin is not self.cls
+            or self.get_pack_method_name(
+                type_args=type_args,
+                format_name=self.format_name,
+                encoder=self.encoder,
+            )
+            != method_name
+        ):
+            builder = self.__class__(
+                origin,
+                type_args,
+                dialect=self.dialect,
+                format_name=self.format_name,
+                default_dialect=self.default_dialect,
+                attrs=method_loc,
+                attrs_registry=(
+                    self.attrs_registry if not self.is_nailed else None
+                ),
+            )
+            builder.add_pack_method()
+        return str(method_name)
+
+    def _compile_nested_unpack_method(
+        self, origin: typing.Type, type_args: typing.Tuple[typing.Any, ...]
+    ) -> str:
+        method_name = self.get_unpack_method_name(type_args, self.format_name)
+        method_loc = origin if self.is_nailed else self.attrs
+        if get_class_that_defines_method(
+            method_name, method_loc
+        ) != method_loc and (
+            origin is not self.cls
+            or self.get_unpack_method_name(
+                type_args=type_args,
+                format_name=self.format_name,
+                decoder=self.decoder,
+            )
+            != method_name
+        ):
+            builder = self.__class__(
+                origin,
+                type_args,
+                dialect=self.dialect,
+                format_name=self.format_name,
+                default_dialect=self.default_dialect,
+                attrs=method_loc,
+                attrs_registry=(
+                    self.attrs_registry if not self.is_nailed else None
+                ),
+            )
+            builder.add_unpack_method()
+        return str(method_name)
+
+    def _flatten_type_args(
+        self, spec: FlattenSpec
+    ) -> typing.Tuple[typing.Any, ...]:
+        ftype = self.get_field_types(include_extras=True)[spec.fname]
+        inner, _optional = _unwrap(ftype)
+        if inner is not None and get_type_origin(inner) is not inner:
+            return get_args(inner)
+        return ()
+
+    def _emit_flatten_pack(self, spec: FlattenSpec) -> None:
+        type_args = self._flatten_type_args(spec)
+        method_name = self._compile_nested_pack_method(spec.origin, type_args)
+        could_be_none = (
+            spec.optional or self.get_field_default(spec.fname) is None
+        )
+        self.add_line(f"value = self.{spec.fname}")
+        if self.is_nailed:
+            call = f"value.{method_name}()"
+        else:
+            cls_alias = clean_id(type_name(spec.origin))
+            method_alias = f"{cls_alias}_{method_name}"
+            self.ensure_object_imported(
+                getattr(self.attrs, method_name), method_alias
+            )
+            call = f"{method_alias}(value)"
+        map_name = f"_fmap_{spec.fname}"
+        flat_name = f"_flat_{spec.fname}"
+
+        def _emit_merge() -> None:
+            self.add_line(f"{flat_name} = {call}")
+            self.add_line(f"{map_name} = {spec.key_map!r}")
+            self.add_line(f"for _fk, _fv in {flat_name}.items():")
+            self.add_line(f"    kwargs[{map_name}[_fk]] = _fv")
+
+        if could_be_none:
+            with self.indent("if value is not None:"):
+                _emit_merge()
+        else:
+            _emit_merge()
+
+    def _flatten_unpack_call(self, spec: FlattenSpec, method_name: str) -> str:
+        cls_alias = clean_id(type_name(spec.origin))
+        flags = self.get_unpack_method_flags(spec.origin)
+        sub = f"_sub_{spec.fname}"
+        if self.is_nailed:
+            self.ensure_object_imported(spec.origin, cls_alias)
+            callee = f"{cls_alias}.{method_name}"
+        else:
+            method_alias = f"{cls_alias}_{method_name}"
+            self.ensure_object_imported(
+                getattr(self.attrs, method_name), method_alias
+            )
+            callee = method_alias
+        if flags:
+            return f"{callee}({sub}, {flags})"
+        return f"{callee}({sub})"
+
+    def _build_flatten_unpack_block(
+        self, spec: FlattenSpec
+    ) -> "FieldUnpackerCodeBlock":
+        lines = CodeLines()
+        block = FieldUnpackerCodeBlockBuilder(self, lines)
+        default = self.get_field_default(spec.fname)
+        has_default = default is not MISSING
+        type_args = self._flatten_type_args(spec)
+        method_name = self._compile_nested_unpack_method(
+            spec.origin, type_args
+        )
+        call = self._flatten_unpack_call(spec, method_name)
+        present = f"_present_{spec.fname}"
+        keys = tuple(spec.reverse)
+        block.add_line(f"{present} = any(k in d for k in {keys!r})")
+        with block.indent(f"if {present}:"):
+            block.add_line(f"_sub_{spec.fname} = {{}}")
+            for out_key, child_key in spec.reverse.items():
+                with block.indent(f"if {out_key!r} in d:"):
+                    block.add_line(
+                        f"_sub_{spec.fname}[{child_key!r}] = d[{out_key!r}]"
+                    )
+            block._set_value(spec.fname, call, has_default)
+        if not has_default:
+            with block.indent("else:"):
+                if spec.optional:
+                    block._set_value(spec.fname, "None", False)
+                else:
+                    block.add_line(f"_sub_{spec.fname} = {{}}")
+                    block._set_value(spec.fname, call, False)
+        return FieldUnpackerCodeBlock(lines, spec.fname, has_default)
 
     def _get_field_packer(
         self,

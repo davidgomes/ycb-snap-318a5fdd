@@ -214,3 +214,7 @@ class UnresolvedTypeReferenceError(NameError):
 
 class BadDialect(ValueError):
     pass
+
+
+class BadFlatten(ValueError):
+    """Invalid ``flatten`` field options or flattened key collisions."""
