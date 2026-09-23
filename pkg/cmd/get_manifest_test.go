@@ -23,11 +23,47 @@ import (
 )
 
 func TestGetManifest(t *testing.T) {
+	withHooks := release.Mock(&release.MockReleaseOptions{Name: "vesta"})
+	withHooks.Manifest = `---
+# Source: foo/templates/b.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: b
+---
+# Source: foo/templates/a.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: a
+`
+	withHooks.Hooks = []*release.Hook{
+		{
+			Name:     "z-hook",
+			Kind:     "Job",
+			Path:     "foo/templates/z.yaml",
+			Manifest: "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: z-hook\n  annotations:\n    \"helm.sh/hook\": post-install\n",
+			Events:   []release.HookEvent{release.HookPostInstall},
+		},
+		{
+			Name:     "b-hook",
+			Kind:     "Job",
+			Path:     "foo/templates/b.yaml",
+			Manifest: "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: b-hook\n  annotations:\n    \"helm.sh/hook\": pre-install\n",
+			Events:   []release.HookEvent{release.HookPreInstall},
+		},
+	}
+
 	tests := []cmdTestCase{{
 		name:   "get manifest with release",
 		cmd:    "get manifest juno",
 		golden: "output/get-manifest.txt",
 		rels:   []*release.Release{release.Mock(&release.MockReleaseOptions{Name: "juno"})},
+	}, {
+		name:   "get manifest with hooks sharing a source path",
+		cmd:    "get manifest vesta",
+		golden: "output/get-manifest-with-hooks.txt",
+		rels:   []*release.Release{withHooks},
 	}, {
 		name:      "get manifest without args",
 		cmd:       "get manifest",

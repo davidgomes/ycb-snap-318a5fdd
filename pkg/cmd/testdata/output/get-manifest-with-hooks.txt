@@ -1,0 +1,28 @@
+---
+# Source: foo/templates/a.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: a
+---
+# Source: foo/templates/b.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: b-hook
+  annotations:
+    "helm.sh/hook": pre-install
+---
+# Source: foo/templates/b.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: b
+---
+# Source: foo/templates/z.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: z-hook
+  annotations:
+    "helm.sh/hook": post-install
