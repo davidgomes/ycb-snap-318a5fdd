@@ -8,8 +8,8 @@ Every function mutates the given document in place and returns it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from typing import TypeVar
-from typing import Union
 
 from tomlkit.container import Container
 from tomlkit.container import ends_with_whitespace
@@ -31,8 +31,10 @@ from tomlkit.parser import Parser
 
 __all__ = ["to_dotted_keys", "to_inline_table", "to_standard_table", "to_super_table"]
 
-D = TypeVar("D", bound=Union[Container, AbstractTable])
-_Entry = tuple[Union[Key, None], Item]
+if TYPE_CHECKING:
+    _Entry = tuple[Key | None, Item]
+
+D = TypeVar("D", bound="Container | AbstractTable")
 
 
 def to_inline_table(key_path: str, doc: D) -> D:
@@ -68,12 +70,11 @@ def to_inline_table(key_path: str, doc: D) -> D:
     inline.trivia.trail = "\n"
 
     body = list(loc.container.body)
-    del body[loc.index]
-    _inherit_trailing_whitespace(body, loc.index, target)
+    entries, position = _detach(body, loc.index)
 
-    entries: list[_Entry] = [(None, c) for c in comments]
+    entries.extend((None, c) for c in comments)
     entries.append((_leaf_key(loc.key), inline))
-    _insert_plain(body, _plain_insert_index(body, loc.index), entries)
+    _insert_plain(body, _plain_insert_index(body, position), entries)
 
     _set_body(loc.container, loc.owner, body)
     _make_explicit(loc)
@@ -106,7 +107,8 @@ def to_standard_table(key_path: str, doc: D) -> D:
     for key, item in loc.ancestors:
         if not isinstance(item, Table) or key.is_dotted():
             raise ConversionError(
-                key_path, "a header table cannot be nested in an inline table or dotted key"
+                key_path,
+                "a header table cannot be nested in an inline table or dotted key",
             )
 
     node = _Node(target.trivia)
@@ -114,8 +116,8 @@ def to_standard_table(key_path: str, doc: D) -> D:
     table = _node_to_table(node, loc.key)
 
     body = list(loc.container.body)
-    del body[loc.index]
-    _insert_table(body, _table_key(loc.key), table, loc.index)
+    comments, position = _detach(body, loc.index)
+    _insert_table(body, _table_key(loc.key), table, position, comments)
 
     _set_body(loc.container, loc.owner, body)
 
@@ -159,7 +161,9 @@ def to_dotted_keys(key_path: str, doc: D, max_depth: int | None = None) -> D:
         # An empty table has no dotted-key form, keep it as an empty inline table.
         return to_inline_table(key_path, doc)
 
-    flattener = _Flattener(max_depth, target.trivia.indent if node.inline else "", in_inline)
+    flattener = _Flattener(
+        max_depth, target.trivia.indent if node.inline else "", in_inline
+    )
     flattener.comment(_header_comment(target.trivia)[1])
     flattener.flatten(node, [loc.key], 1)
     entries = flattener.entries
@@ -172,9 +176,8 @@ def to_dotted_keys(key_path: str, doc: D, max_depth: int | None = None) -> D:
         _ensure_previous_newline(body, loc.index)
         body[loc.index : loc.index + 1] = entries
     else:
-        del body[loc.index]
-        _inherit_trailing_whitespace(body, loc.index, target)
-        _insert_plain(body, _plain_insert_index(body, loc.index), entries)
+        comments, position = _detach(body, loc.index)
+        _insert_plain(body, _plain_insert_index(body, position), comments + entries)
 
     _set_body(loc.container, loc.owner, body)
     _make_explicit(loc)
@@ -235,11 +238,11 @@ def to_super_table(dotted_prefix: str, doc: D) -> D:
         raise ConversionError(dotted_prefix, "no matching dotted keys")
 
     trivia = Trivia()
-    if first_match > 0 and isinstance(body[first_match - 1][1], Comment):
-        comment = body.pop(first_match - 1)[1]
-        first_match -= 1
+    comments, first_match = _take_leading_comments(body, first_match)
+    _merge_whitespace(body, first_match)
+    if comments:
         trivia.comment_ws = " "
-        trivia.comment = comment.trivia.comment
+        trivia.comment = comments.pop()[1].trivia.comment
 
     key: Key = SingleKey(rest[-1])
     new_item: Item = _make_table(table_body, trivia, key.key)
@@ -249,7 +252,7 @@ def to_super_table(dotted_prefix: str, doc: D) -> D:
         new_item = Table(container, Trivia(), False, is_super_table=True, name=name)
         key = SingleKey(name)
 
-    _insert_table(body, key, new_item, first_match)
+    _insert_table(body, key, new_item, first_match, comments)
     _set_body(host, owner, body)
 
     return doc
@@ -508,7 +511,9 @@ def _resolve(doc: Container | AbstractTable, key_path: str) -> _Location:
             return _Location(container, owner, owner_key, idx, key, item, ancestors)
 
         if not isinstance(item, (Table, InlineTable)):
-            raise ConversionError(key_path, f'"{".".join(names[: i + 1])}" is not a table')
+            raise ConversionError(
+                key_path, f'"{".".join(names[: i + 1])}" is not a table'
+            )
 
         ancestors.append((key, item))
         owner, owner_key, container = item, key, item.value
@@ -528,17 +533,24 @@ def _find_dotted_host(
         if idx is None:
             break
 
-        entries = [container.body[j] for j in (idx if isinstance(idx, tuple) else (idx,))]
+        entries = [
+            container.body[j] for j in (idx if isinstance(idx, tuple) else (idx,))
+        ]
         rest = names[i:]
         for key, item in entries:
             if not key.is_dotted():
                 continue
             for keys, _ in _chain_leaves(item, [key]):
-                if len(keys) >= len(rest) and [k.key for k in keys[: len(rest)]] == rest:
+                if (
+                    len(keys) >= len(rest)
+                    and [k.key for k in keys[: len(rest)]] == rest
+                ):
                     return container, owner, rest
 
         headers = [
-            item for key, item in entries if isinstance(item, Table) and not key.is_dotted()
+            item
+            for key, item in entries
+            if isinstance(item, Table) and not key.is_dotted()
         ]
         if len(headers) != 1:
             break
@@ -620,10 +632,24 @@ def _insert_plain(body: list[_Entry], idx: int, entries: list[_Entry]) -> None:
             body.insert(end, (None, Whitespace("\n")))
 
 
-def _insert_table(body: list[_Entry], key: Key, table: Table, fallback: int) -> None:
+def _insert_table(
+    body: list[_Entry],
+    key: Key,
+    table: Table,
+    fallback: int,
+    leading: list[_Entry] | None = None,
+) -> None:
+    """Insert ``table``, preceded by the ``leading`` comments, after the
+    key/value pairs of ``body``."""
+    leading = list(leading or [])
     first_header = _first_header(body)
     last = _last_pair(body, first_header)
-    idx = min(fallback, first_header) if last is None else last + 1
+    if last is None:
+        idx = min(fallback, first_header)
+    else:
+        idx = last + 1
+        while idx < first_header and isinstance(body[idx][1], (Whitespace, Null)):
+            idx += 1
 
     previous = _previous(body, idx)[1]
     if (
@@ -633,33 +659,81 @@ def _insert_table(body: list[_Entry], key: Key, table: Table, fallback: int) -> 
         and "\n" not in table.trivia.indent
     ):
         _ensure_previous_newline(body, idx)
-        table.trivia.indent = "\n" + table.trivia.indent
+        if leading:
+            leading.insert(0, (None, Whitespace("\n")))
+        else:
+            table.trivia.indent = "\n" + table.trivia.indent
 
     following = next((v for _, v in body[idx:] if not isinstance(v, Null)), None)
     if following is not None and not isinstance(following, Whitespace):
         _tail(table)._raw_append(None, Whitespace("\n"))
 
-    body.insert(idx, (key, table))
+    body[idx:idx] = [*leading, (key, table)]
+
+
+def _detach(body: list[_Entry], idx: int) -> tuple[list[_Entry], int]:
+    """Remove ``body[idx]`` along with the comment lines directly above it.
+    Returns those comments and the position the entry was removed from."""
+    key, removed = body.pop(idx)
+    comments, idx = _take_leading_comments(body, idx)
+
+    if _is_header(key, removed):
+        previous_key, previous = _previous(body, idx)
+        if not comments and previous is not None and _is_header(previous_key, previous):
+            # Lines above a header are stored at the end of the preceding table.
+            tail = _tail(previous)
+            while tail.body and isinstance(tail.body[-1][1], (Comment, Null)):
+                item = tail.body.pop()[1]
+                if isinstance(item, Comment):
+                    comments.insert(0, (None, item))
+
+        _inherit_trailing_whitespace(body, idx, removed)
+    else:
+        _merge_whitespace(body, idx)
+
+    return comments, idx
+
+
+def _merge_whitespace(body: list[_Entry], idx: int) -> None:
+    """Avoid doubling blank lines when the entry between two of them left."""
+    if (
+        0 < idx < len(body)
+        and isinstance(body[idx - 1][1], Whitespace)
+        and isinstance(body[idx][1], Whitespace)
+    ):
+        del body[idx]
+
+
+def _take_leading_comments(body: list[_Entry], idx: int) -> tuple[list[_Entry], int]:
+    """Remove the comment lines directly above position ``idx``."""
+    start = idx
+    while start > 0 and isinstance(body[start - 1][1], (Comment, Null)):
+        start -= 1
+
+    comments = [e for e in body[start:idx] if isinstance(e[1], Comment)]
+    del body[start:idx]
+
+    return comments, start
 
 
 def _inherit_trailing_whitespace(body: list[_Entry], idx: int, removed: Table) -> None:
-    """The blank lines separating the table preceding a removed table from it
-    are stored inside the preceding table; replace them with the ones that
-    followed the removed table."""
+    """Blank lines following a table are stored inside it. Keep the ones that
+    followed the removed table, replacing those stored in the preceding table
+    which used to separate it from the removed one."""
+    trailing = []
+    for _, item in reversed(_tail(removed).body):
+        if not isinstance(item, (Whitespace, Null)):
+            break
+        trailing.insert(0, item)
+
     key, previous = _previous(body, idx)
     if previous is None or not _is_header(key, previous):
+        body[idx:idx] = [(None, item) for item in trailing]
         return
 
     tail = _tail(previous)
     while tail.body and isinstance(tail.body[-1][1], (Whitespace, Null)):
         tail.body.pop()
-
-    removed_tail = _tail(removed)
-    trailing = []
-    for _, item in reversed(removed_tail.body):
-        if not isinstance(item, (Whitespace, Null)):
-            break
-        trailing.insert(0, item)
 
     for item in trailing:
         tail._raw_append(None, item)
