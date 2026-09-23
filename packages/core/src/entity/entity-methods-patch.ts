@@ -4,6 +4,13 @@
 // that the methods are only called on entities.
 
 import { $internal } from '../common';
+import {
+    deferredGet,
+    deferredHas,
+    deferredTargets,
+    flushIfPending,
+    shouldReadDeferred,
+} from '../deferred/deferred';
 import { setChanged } from '../query/modifiers/changed';
 import { getFirstRelationTarget, getRelationTargets, hasRelationPair } from '../relation/relation';
 import type { Relation, RelationPair } from '../relation/types';
@@ -15,26 +22,43 @@ import type { Entity } from './types';
 import { isEntityAlive } from './utils/entity-index';
 import { getEntityGeneration, getEntityId } from './utils/pack-entity';
 
+function stillAlive(world: ReturnType<typeof getEntityWorld>, entity: Entity, wasAlive: boolean) {
+    return isEntityAlive(world[$internal].entityIndex, entity) || !wasAlive;
+}
+
 // @ts-expect-error
 Number.prototype.add = function (this: Entity, ...traits: ConfigurableTrait[]) {
-    return addTrait(getEntityWorld(this), this, ...traits);
+    const world = getEntityWorld(this);
+    const wasAlive = isEntityAlive(world[$internal].entityIndex, this);
+    flushIfPending(world, this);
+    if (!stillAlive(world, this, wasAlive)) return;
+    return addTrait(world, this, ...traits);
 };
 
 // @ts-expect-error
 Number.prototype.remove = function (this: Entity, ...traits: (Trait | RelationPair)[]) {
-    return removeTrait(getEntityWorld(this), this, ...traits);
+    const world = getEntityWorld(this);
+    const wasAlive = isEntityAlive(world[$internal].entityIndex, this);
+    flushIfPending(world, this);
+    if (!stillAlive(world, this, wasAlive)) return;
+    return removeTrait(world, this, ...traits);
 };
 
 // @ts-expect-error
 Number.prototype.has = function (this: Entity, trait: Trait | RelationPair) {
     const world = getEntityWorld(this);
+    if (shouldReadDeferred(world)) return deferredHas(world, this, trait);
     if (isRelationPair(trait)) return hasRelationPair(world, this, trait);
     return /* @inline @pure */ hasTrait(world, this, trait);
 };
 
 // @ts-expect-error
 Number.prototype.destroy = function (this: Entity) {
-    return destroyEntity(getEntityWorld(this), this);
+    const world = getEntityWorld(this);
+    const wasAlive = isEntityAlive(world[$internal].entityIndex, this);
+    flushIfPending(world, this);
+    if (!stillAlive(world, this, wasAlive)) return;
+    return destroyEntity(world, this);
 };
 
 // @ts-expect-error
@@ -44,7 +68,9 @@ Number.prototype.changed = function (this: Entity, trait: Trait) {
 
 // @ts-expect-error
 Number.prototype.get = function (this: Entity, trait: Trait | RelationPair) {
-    return getTrait(getEntityWorld(this), this, trait);
+    const world = getEntityWorld(this);
+    if (shouldReadDeferred(world)) return deferredGet(world, this, trait);
+    return getTrait(world, this, trait);
 };
 
 // @ts-expect-error
@@ -54,17 +80,25 @@ Number.prototype.set = function (
     value: any,
     triggerChanged = true
 ) {
-    setTrait(getEntityWorld(this), this, trait, value, triggerChanged);
+    const world = getEntityWorld(this);
+    const wasAlive = isEntityAlive(world[$internal].entityIndex, this);
+    flushIfPending(world, this);
+    if (!stillAlive(world, this, wasAlive)) return;
+    setTrait(world, this, trait, value, triggerChanged);
 };
 
 //@ts-expect-error
 Number.prototype.targetsFor = function (this: Entity, relation: Relation<any>) {
-    return getRelationTargets(getEntityWorld(this), relation, this);
+    const world = getEntityWorld(this);
+    if (shouldReadDeferred(world)) return deferredTargets(world, this, relation);
+    return getRelationTargets(world, relation, this);
 };
 
 //@ts-expect-error
 Number.prototype.targetFor = function (this: Entity, relation: Relation<any>) {
-    return getFirstRelationTarget(getEntityWorld(this), relation, this);
+    const world = getEntityWorld(this);
+    if (shouldReadDeferred(world)) return deferredTargets(world, this, relation)[0];
+    return getFirstRelationTarget(world, relation, this);
 };
 
 //@ts-expect-error

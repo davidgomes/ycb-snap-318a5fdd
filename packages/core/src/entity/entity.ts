@@ -11,9 +11,13 @@ import { getEntityId, getEntityWorldId } from './utils/pack-entity';
 // Ensure entity methods are patched.
 import './entity-methods-patch';
 
-export function createEntity(world: World, ...traits: ConfigurableTrait[]): Entity {
+export function initAllocatedEntity(
+    world: World,
+    entity: Entity,
+    traits: ConfigurableTrait[]
+): void {
     const ctx = world[$internal];
-    const entity = allocateEntity(ctx.entityIndex);
+    if (ctx.entityTraits.has(entity)) return;
 
     for (const query of ctx.notQueries) {
         const match = query.check(world, entity);
@@ -24,7 +28,12 @@ export function createEntity(world: World, ...traits: ConfigurableTrait[]): Enti
 
     ctx.entityTraits.set(entity, new Set());
     addTrait(world, entity, ...traits);
+}
 
+export function createEntity(world: World, ...traits: ConfigurableTrait[]): Entity {
+    const ctx = world[$internal];
+    const entity = allocateEntity(ctx.entityIndex);
+    initAllocatedEntity(world, entity, traits);
     return entity;
 }
 

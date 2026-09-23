@@ -1,4 +1,5 @@
 import { $internal } from '../common';
+import { enterDeferredScope, exitDeferredScope } from '../deferred/deferred';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { isRelationPair } from '../relation/utils/is-relation';
@@ -53,6 +54,8 @@ export function createQueryResult<T extends QueryParameter[]>(
             callback: (state: InstancesFromParameters<T>, entity: Entity, index: number) => void,
             options: QueryResultOptions = { changeDetection: 'auto' }
         ) {
+            enterDeferredScope(world);
+            try {
             const state = Array.from({ length: traits.length });
 
             // Inline all three permutations of updateEach for performance.
@@ -171,6 +174,9 @@ export function createQueryResult<T extends QueryParameter[]>(
             }
 
             return results;
+            } finally {
+                exitDeferredScope(world);
+            }
         },
 
         useStores(callback: (stores: StoresFromParameters<T>, entities: readonly Entity[]) => void) {
@@ -327,11 +333,20 @@ const relationOnlyMethods = {
  * Skips store/trait setup since we only need to iterate entities.
  */
 export function createRelationOnlyQueryResult<T extends QueryParameter[]>(
+    world: World,
     entities: Entity[]
 ): QueryResult<T> {
     const results = Object.assign(entities, {
         readEach: relationOnlyMethods.readEach,
-        updateEach: relationOnlyMethods.updateEach,
+        updateEach(callback: (state: never[], entity: Entity, index: number) => void) {
+            enterDeferredScope(world);
+            try {
+                for (let i = 0; i < entities.length; i++) callback([], entities[i], i);
+            } finally {
+                exitDeferredScope(world);
+            }
+            return results;
+        },
         useStores: relationOnlyMethods.useStores,
         select: relationOnlyMethods.select,
         sort(

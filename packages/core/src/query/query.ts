@@ -1,4 +1,5 @@
 import { $internal } from '../common';
+import { areSubscriptionsSuppressed } from '../deferred/flags';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import type { Relation } from '../relation/types';
@@ -58,8 +59,10 @@ export function addEntityToQuery(query: QueryInstance, entity: Entity) {
     query.entities.add(entity);
 
     // Notify subscriptions.
-    for (const sub of query.addSubscriptions) {
-        sub(entity);
+    if (!areSubscriptionsSuppressed()) {
+        for (const sub of query.addSubscriptions) {
+            sub(entity);
+        }
     }
 
     query.version++;
@@ -74,8 +77,10 @@ export function removeEntityFromQuery(world: World, query: QueryInstance, entity
     ctx.dirtyQueries.add(query);
 
     // Notify subscriptions.
-    for (const sub of query.removeSubscriptions) {
-        sub(entity);
+    if (!areSubscriptionsSuppressed()) {
+        for (const sub of query.removeSubscriptions) {
+            sub(entity);
+        }
     }
 
     query.version++;

@@ -1,4 +1,5 @@
 import { $internal } from '../common';
+import { areSubscriptionsSuppressed } from '../deferred/flags';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { setChanged, setPairChanged } from '../query/modifiers/changed';
@@ -169,7 +170,9 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
         }
 
         // Call add subscriptions after values are set
-        for (const sub of data.addSubscriptions) sub(entity);
+        if (!areSubscriptionsSuppressed()) {
+            for (const sub of data.addSubscriptions) sub(entity);
+        }
     }
 }
 
@@ -197,7 +200,7 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
         const oldTarget = getFirstRelationTarget(world, relation, entity);
         if (oldTarget !== undefined && oldTarget !== target) {
             const instance = getTraitInstance(world[$internal].traitInstances, relationTrait);
-            if (instance) {
+            if (instance && !areSubscriptionsSuppressed()) {
                 for (const sub of instance.removeSubscriptions) sub(entity, oldTarget);
             }
             removeRelationTarget(world, relation, entity, oldTarget);
@@ -221,7 +224,9 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
 
     // Fire add subscription for this pair
     instance = instance ?? getTraitInstance(world[$internal].traitInstances, relationTrait)!;
-    for (const sub of instance.addSubscriptions) sub(entity, target);
+    if (!areSubscriptionsSuppressed()) {
+        for (const sub of instance.addSubscriptions) sub(entity, target);
+    }
 }
 
 export function removeTrait(world: World, entity: Entity, ...traits: (Trait | RelationPair)[]) {
@@ -241,7 +246,7 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
         const traitCtx = trait[$internal];
         if (traitCtx.relation) {
             const instance = getTraitInstance(world[$internal].traitInstances, trait);
-            if (instance) {
+            if (instance && !areSubscriptionsSuppressed()) {
                 const targets = getRelationTargets(world, traitCtx.relation, entity);
                 for (const t of targets) {
                     for (const sub of instance.removeSubscriptions) sub(entity, t);
@@ -273,7 +278,7 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
     // Handle wildcard target -- remove all targets and the base trait.
     if (target === '*') {
         // Fire remove subscription for each pair
-        if (instance) {
+        if (instance && !areSubscriptionsSuppressed()) {
             const targets = getRelationTargets(world, relation, entity);
             for (const t of targets) {
                 for (const sub of instance.removeSubscriptions) sub(entity, t);
@@ -288,7 +293,7 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
     // Remove specific target.
     if (typeof target === 'number') {
         // Fire remove subscription for this pair
-        if (instance) {
+        if (instance && !areSubscriptionsSuppressed()) {
             for (const sub of instance.removeSubscriptions) sub(entity, target);
         }
 
@@ -315,7 +320,7 @@ export function cleanupRelationTarget(
 
     // Fire remove subscription for this pair
     const instance = getTraitInstance(world[$internal].traitInstances, relationTrait);
-    if (instance) {
+    if (instance && !areSubscriptionsSuppressed()) {
         for (const sub of instance.removeSubscriptions) sub(entity, target);
     }
 
@@ -503,8 +508,10 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
     const { generationId, bitflag, queries, trackingQueries } = instance;
 
     // Call remove subscriptions before removing the trait
-    for (const sub of instance.removeSubscriptions) {
-        sub(entity);
+    if (!areSubscriptionsSuppressed()) {
+        for (const sub of instance.removeSubscriptions) {
+            sub(entity);
+        }
     }
 
     // Remove bitflag from entity bitmask

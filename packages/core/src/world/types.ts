@@ -9,7 +9,7 @@ import type {
     QueryResult,
     QueryUnsubscriber,
 } from '../query/types';
-import type { Relation } from '../relation/types';
+import type { Relation, RelationPair } from '../relation/types';
 import type {
     ConfigurableTrait,
     ExtractSchema,
@@ -43,6 +43,20 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    deferredStack: { commands: any[]; entities: Set<Entity> }[];
+    deferredPending: number;
+    deferredFlushing: boolean;
+    deferredVersion: number;
+    stagedSpawns: Set<Entity>;
+};
+
+export type Deferred = {
+    spawn(...traits: ConfigurableTrait[]): Entity;
+    destroy(entity: Entity): void;
+    add(entity: Entity, ...traits: ConfigurableTrait[]): void;
+    remove(entity: Entity, ...traits: (Trait | RelationPair)[]): void;
+    addExclusive(entity: Entity, pair: RelationPair): void;
+    flush(): void;
 };
 
 export type World = {
@@ -97,4 +111,5 @@ export type World = {
         relation: Relation<T>,
         callback: (entity: Entity, target: Entity) => void
     ): QueryUnsubscriber;
+    deferred: Deferred;
 };
