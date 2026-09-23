@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Optional
 
+from sqlfmt.ddl import DdlFormatter, is_create_table_node
 from sqlfmt.jinjafmt import JinjaFormatter
 from sqlfmt.line import Line
 from sqlfmt.merger import LineMerger
@@ -9,6 +10,7 @@ from sqlfmt.node import Node
 from sqlfmt.node_manager import NodeManager
 from sqlfmt.query import Query
 from sqlfmt.splitter import LineSplitter
+from sqlfmt.tokens import TokenType
 
 
 @dataclass
@@ -48,6 +50,35 @@ class QueryFormatter:
         merger = LineMerger(mode=self.mode)
         lines = merger.maybe_merge_lines(lines)
         return lines
+
+    def _merge_lines_and_format_ddl(self, lines: List[Line]) -> List[Line]:
+        """
+        CREATE TABLE statements have a fixed layout (one column per line),
+        so they are formatted by the DdlFormatter instead of being merged.
+        All other lines are merged.
+        """
+        node_manager = NodeManager(self.mode.dialect.case_sensitive_names)
+        ddl_formatter = DdlFormatter(mode=self.mode, node_manager=node_manager)
+        new_lines: List[Line] = []
+        head = 0
+        i = 0
+        while i < len(lines):
+            if not (lines[i].nodes and is_create_table_node(lines[i].nodes[0])):
+                i += 1
+                continue
+            end = i
+            while end < len(lines) - 1 and not any(
+                node.token.type is TokenType.SEMICOLON for node in lines[end].nodes
+            ):
+                end += 1
+            ddl_lines = ddl_formatter.format_lines(lines[i : end + 1])
+            if ddl_lines is not None:
+                new_lines.extend(self._merge_lines(lines[head:i]))
+                new_lines.extend(ddl_lines)
+                head = end + 1
+            i = end + 1
+        new_lines.extend(self._merge_lines(lines[head:]))
+        return new_lines
 
     def _dedent_jinja_blocks(self, lines: List[Line]) -> List[Line]:
         """
@@ -102,7 +133,7 @@ class QueryFormatter:
         1. Splits lines
         2. Formats jinja tags
         3. Dedents jinja block tags to match their least-indented contents
-        4. Merges lines
+        4. Merges lines (and formats CREATE TABLE statements)
         5. Removes extra blank lines
         """
         lines = raw_query.lines
@@ -111,7 +142,7 @@ class QueryFormatter:
             self._split_lines,
             self._format_jinja,
             self._dedent_jinja_blocks,
-            self._merge_lines,
+            self._merge_lines_and_format_ddl,
             self._remove_extra_blank_lines,
         ]
 

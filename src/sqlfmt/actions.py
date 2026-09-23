@@ -1,5 +1,5 @@
 import re
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 from jinja2 import Environment
 
@@ -196,6 +196,119 @@ def handle_ddl_as(
             f"{source_string[analyzer.pos : analyzer.pos + 50]}"
         )
         analyzer.pop_rules()
+
+
+def _find_create_table_body(
+    analyzer: "Analyzer", source_string: str, pos: int
+) -> Optional[Tuple[int, int]]:
+    """
+    Starting at pos (just after the table name), return the positions of the
+    opening paren of the column list and the end of its matching closing paren,
+    or None if the parens are not balanced before the end of the statement.
+    """
+    quoted_name_pattern = analyzer.get_rule("quoted_name").pattern
+    comment_pattern = analyzer.get_rule("comment").pattern
+    program = re.compile(
+        group(
+            quoted_name_pattern,
+            comment_pattern,
+            r"\{\{.*?\}\}",
+            r"\{%.*?%\}",
+            r"\{#.*?#\}",
+            r"[();]",
+        ),
+        re.IGNORECASE | re.DOTALL,
+    )
+    depth = 0
+    open_pos = -1
+    for match in program.finditer(source_string, pos):
+        token = match.group(0)
+        if token == "(":
+            if depth == 0:
+                open_pos = match.start()
+            depth += 1
+        elif token == ")":
+            depth -= 1
+            if depth == 0:
+                return open_pos, match.end()
+            elif depth < 0:
+                return None
+        elif token == ";":
+            return None
+    return None
+
+
+def handle_create_table(
+    analyzer: "Analyzer",
+    source_string: str,
+    match: re.Match,
+    new_ruleset: List["Rule"],
+    fallback_ruleset: List["Rule"],
+) -> None:
+    """
+    Lex CREATE TABLE <name> (<columns>) ... using new_ruleset. CREATE TABLE
+    AS SELECT and CREATE TABLE ... (LIKE ...) are lexed with fallback_ruleset
+    instead, so they pass through unchanged.
+    """
+    _, keyword_end = match.span(1)
+    body = _find_create_table_body(analyzer, source_string, keyword_end)
+    comment_pattern = analyzer.get_rule("comment").pattern
+    if (
+        body is None
+        or re.compile(r"\s*like\b", re.IGNORECASE).match(source_string, body[0] + 1)
+        or re.compile(rf"({comment_pattern}|\s)*as\b", re.IGNORECASE | re.DOTALL).match(
+            source_string, body[1]
+        )
+    ):
+        lex_ruleset(analyzer, source_string, match, new_ruleset=fallback_ruleset)
+    else:
+        add_node_to_buffer(
+            analyzer=analyzer,
+            source_string=source_string,
+            match=match,
+            token_type=TokenType.WORD_OPERATOR,
+        )
+        lex_ruleset(analyzer, source_string, match, new_ruleset=new_ruleset)
+
+
+def handle_ddl_trailing_comma(
+    analyzer: "Analyzer",
+    source_string: str,
+    match: re.Match,
+) -> None:
+    """
+    A comma directly before the paren that closes a CREATE TABLE column list
+    is dropped; any other comma is lexed normally.
+    """
+    token = Token.from_match(source_string, match, TokenType.COMMA)
+    node = analyzer.node_manager.create_node(
+        token=token, previous_node=analyzer.previous_node
+    )
+    in_column_list = len(node.open_brackets) == 1 and node.open_brackets[0].value == "("
+    if not in_column_list:
+        analyzer.node_buffer.append(node)
+    analyzer.pos = token.epos
+
+
+def handle_keyword_outside_brackets(
+    analyzer: "Analyzer",
+    source_string: str,
+    match: re.Match,
+    token_type: TokenType,
+) -> None:
+    """
+    Lex the match as token_type, unless it is inside an explicit bracket,
+    in which case it is lexed as a name
+    """
+    token = Token.from_match(source_string, match, token_type=TokenType.NAME)
+    node = analyzer.node_manager.create_node(
+        token=token, previous_node=analyzer.previous_node
+    )
+    if any(bracket.is_opening_bracket for bracket in node.open_brackets):
+        analyzer.node_buffer.append(node)
+        analyzer.pos = token.epos
+    else:
+        add_node_to_buffer(analyzer, source_string, match, token_type=token_type)
 
 
 def handle_closing_angle_bracket(
