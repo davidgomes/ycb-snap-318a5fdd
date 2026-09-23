@@ -15,6 +15,7 @@ import * as math from 'lib0/math'
 import * as encoding from 'lib0/encoding'
 import * as decoding from 'lib0/decoding'
 import * as traits from 'lib0/traits'
+import { noteMapDelete } from './MapConflict.js'
 
 export class IdRange {
   /**
@@ -774,6 +775,9 @@ export const readAndApplyDeleteSet = (decoder, transaction, store) => {
           // @ts-ignore
           struct = structs[index++]
           if (struct.id.clock < clockEnd) {
+            if (struct instanceof Item && struct.parentSub != null && transaction.doc.mapConflictPolicy !== 'allow') {
+              noteMapDelete(transaction, /** @type {import('../ytype.js').YType} */ (struct.parent), struct.parentSub, struct)
+            }
             if (!struct.deleted) {
               if (struct instanceof Item) {
                 if (clockEnd < struct.id.clock + struct.length) {

@@ -28,6 +28,7 @@ import {
 import * as error from 'lib0/error'
 import * as binary from 'lib0/binary'
 import * as array from 'lib0/array'
+import { noteMapInsert } from '../utils/MapConflict.js'
 
 /**
  * @todo This should return several items
@@ -550,6 +551,9 @@ export class Item extends AbstractStruct {
       if ((/** @type {YType} */ (this.parent)._item !== null && /** @type {YType} */ (this.parent)._item.deleted) || (this.parentSub !== null && this.right !== null)) {
         // delete if parent is deleted or if this is not the current attribute value of parent
         this.delete(transaction)
+      }
+      if (this.parentSub !== null && transaction.doc.mapConflictPolicy !== 'allow') {
+        noteMapInsert(transaction, this)
       }
     } else {
       // parent is not defined. Integrate GC struct instead

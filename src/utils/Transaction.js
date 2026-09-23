@@ -21,6 +21,7 @@ import * as math from 'lib0/math'
 import * as set from 'lib0/set'
 import * as logging from 'lib0/logging'
 import { callAll } from 'lib0/function'
+import { finalizeMapConflicts, MapConflictError, restoreDoc, snapshotDoc } from './MapConflict.js'
 
 /**
  * A transaction is created for every change on the Yjs model. It is possible
@@ -130,6 +131,16 @@ export class Transaction {
      */
     this._needFormattingCleanup = false
     this._done = false
+    /**
+     * Map-key writes observed while conflict tracking is enabled.
+     * @type {Map<import('../ytype.js').YType, Map<string, import('./MapConflict.js').MapConflictGroup>> | null}
+     */
+    this._mapGroups = null
+    /**
+     * Pre-transaction document snapshot used to roll back error-policy conflicts.
+     * @type {import('./MapConflict.js').DocRollback | null}
+     */
+    this._mapRollback = null
   }
 
   /**
@@ -639,6 +650,10 @@ export const transact = (doc, f, origin = null, local = true) => {
    * @type {any}
    */
   let result = null
+  /**
+   * @type {MapConflictError | null}
+   */
+  let mapConflictError = null
   if (doc._transaction === null) {
     initialCall = true
     doc._transaction = new Transaction(doc, origin, local)
@@ -647,25 +662,47 @@ export const transact = (doc, f, origin = null, local = true) => {
       doc.emit('beforeAllTransactions', [doc])
     }
     doc.emit('beforeTransaction', [doc._transaction, doc])
+    if (doc.mapConflictPolicy === 'error') {
+      doc._transaction._mapRollback = snapshotDoc(doc)
+    }
   }
   try {
     result = f(doc._transaction)
+    if (initialCall && doc._transaction != null && doc.mapConflictPolicy !== 'allow') {
+      const conflicts = finalizeMapConflicts(doc._transaction)
+      if (doc.mapConflictPolicy === 'collect') {
+        if (conflicts.length > 0) doc._mapConflicts.push(...conflicts)
+      } else if (doc.mapConflictPolicy === 'error' && conflicts.length > 0) {
+        restoreDoc(doc, doc._transaction._mapRollback)
+        mapConflictError = new MapConflictError(conflicts)
+      }
+    }
   } finally {
     if (initialCall) {
-      const finishCleanup = doc._transaction === transactionCleanups[0]
-      doc._transaction = null
-      if (finishCleanup) {
-        // The first transaction ended, now process observer calls.
-        // Observer call may create new transactions for which we need to call the observers and do cleanup.
-        // We don't want to nest these calls, so we execute these calls one after
-        // another.
-        // Also we need to ensure that all cleanups are called, even if the
-        // observes throw errors.
-        // This file is full of hacky try {} finally {} blocks to ensure that an
-        // event can throw errors and also that the cleanup is called.
-        cleanupTransactions(transactionCleanups, 0)
+      if (mapConflictError) {
+        const rejected = doc._transaction
+        if (rejected != null) {
+          const index = transactionCleanups.indexOf(rejected)
+          if (index >= 0) transactionCleanups.splice(index, 1)
+        }
+        doc._transaction = null
+      } else {
+        const finishCleanup = doc._transaction === transactionCleanups[0]
+        doc._transaction = null
+        if (finishCleanup) {
+          // The first transaction ended, now process observer calls.
+          // Observer call may create new transactions for which we need to call the observers and do cleanup.
+          // We don't want to nest these calls, so we execute these calls one after
+          // another.
+          // Also we need to ensure that all cleanups are called, even if the
+          // observes throw errors.
+          // This file is full of hacky try {} finally {} blocks to ensure that an
+          // event can throw errors and also that the cleanup is called.
+          cleanupTransactions(transactionCleanups, 0)
+        }
       }
     }
   }
+  if (mapConflictError) throw mapConflictError
   return result
 }

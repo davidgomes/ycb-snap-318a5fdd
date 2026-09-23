@@ -16,6 +16,7 @@ import * as random from 'lib0/random'
 import * as map from 'lib0/map'
 import * as array from 'lib0/array'
 import * as promise from 'lib0/promise'
+import { normalizeMapConflictPolicy, summarizeMapConflicts } from './MapConflict.js'
 
 export const generateNewClientId = random.uint32
 
@@ -31,6 +32,7 @@ export const generateNewClientId = random.uint32
  * @property {boolean} [DocOpts.isSuggestionDoc] Set to true if this document merely suggests
  * changes. If this flag is not set in a suggestion document, automatic formatting changes will be
  * displayed as suggestions, which might not be intended.
+ * @property {'allow'|'collect'|'error'} [DocOpts.mapConflictPolicy='allow'] How same-key map writes are handled when they overlap in one transaction or merged update.
  */
 
 /**
@@ -57,8 +59,14 @@ export class Doc extends ObservableV2 {
   /**
    * @param {DocOpts} opts configuration
    */
-  constructor ({ guid = random.uuidv4(), collectionid = null, gc = true, gcFilter = () => true, meta = null, autoLoad = false, shouldLoad = true, isSuggestionDoc = false } = {}) {
+  constructor ({ guid = random.uuidv4(), collectionid = null, gc = true, gcFilter = () => true, meta = null, autoLoad = false, shouldLoad = true, isSuggestionDoc = false, mapConflictPolicy = 'allow' } = {}) {
     super()
+    this.mapConflictPolicy = normalizeMapConflictPolicy(mapConflictPolicy)
+    /**
+     * Conflicts recorded while `mapConflictPolicy` is `collect`.
+     * @type {Array<import('./MapConflict.js').MapConflict>}
+     */
+    this._mapConflicts = []
     this.gc = gc
     this.gcFilter = gcFilter
     this.clientID = generateNewClientId()
@@ -160,6 +168,22 @@ export class Doc extends ObservableV2 {
       }, null, true)
     }
     this.shouldLoad = true
+  }
+
+  /**
+   * Conflicts collected for this document when `mapConflictPolicy` is `collect`.
+   * @return {Array<import('./MapConflict.js').MapConflict>}
+   */
+  getMapConflicts () {
+    return this._mapConflicts.slice()
+  }
+
+  /**
+   * Counts of collected map conflicts by type, key, parent, and source.
+   * @return {{ byType: Object<string, number>, byKey: Object<string, number>, byParent: Object<string, number>, bySource: Object<string, number>, count: number, total: number }}
+   */
+  getMapConflictSummary () {
+    return summarizeMapConflicts(this._mapConflicts)
   }
 
   getSubdocs () {

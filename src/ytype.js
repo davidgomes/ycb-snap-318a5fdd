@@ -34,6 +34,7 @@ import * as math from 'lib0/math'
 import * as log from 'lib0/logging'
 import * as object from 'lib0/object'
 import * as s from 'lib0/schema'
+import { noteMapDelete } from './utils/MapConflict.js'
 
 /**
  * @typedef {Object<string,any>|Array<any>|number|null|string|Uint8Array|BigInt|YType<any>} YValue
@@ -1739,6 +1740,9 @@ export const typeListDelete = (transaction, parent, index, length) => {
  */
 export const typeMapDelete = (transaction, parent, key) => {
   const c = parent._map.get(key)
+  if (transaction.doc.mapConflictPolicy !== 'allow') {
+    noteMapDelete(transaction, parent, key, c || null)
+  }
   if (c !== undefined) {
     c.delete(transaction)
   }
