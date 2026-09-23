@@ -8,6 +8,7 @@ import { getStore } from '../trait/trait';
 import type { Trait } from '../trait/types';
 import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
+import { beginDeferredScope, endDeferredScope } from '../world/deferred';
 import { isModifier } from './modifier';
 import { setChanged } from './modifiers/changed';
 import type {
@@ -53,6 +54,8 @@ export function createQueryResult<T extends QueryParameter[]>(
             callback: (state: InstancesFromParameters<T>, entity: Entity, index: number) => void,
             options: QueryResultOptions = { changeDetection: 'auto' }
         ) {
+            beginDeferredScope(world);
+            try {
             const state = Array.from({ length: traits.length });
 
             // Inline all three permutations of updateEach for performance.
@@ -171,6 +174,9 @@ export function createQueryResult<T extends QueryParameter[]>(
             }
 
             return results;
+            } finally {
+                endDeferredScope(world);
+            }
         },
 
         useStores(callback: (stores: StoresFromParameters<T>, entities: readonly Entity[]) => void) {
@@ -327,11 +333,19 @@ const relationOnlyMethods = {
  * Skips store/trait setup since we only need to iterate entities.
  */
 export function createRelationOnlyQueryResult<T extends QueryParameter[]>(
+    world: World,
     entities: Entity[]
 ): QueryResult<T> {
     const results = Object.assign(entities, {
         readEach: relationOnlyMethods.readEach,
-        updateEach: relationOnlyMethods.updateEach,
+        updateEach(this: QueryResult<any>, callback: any) {
+            beginDeferredScope(world);
+            try {
+                return relationOnlyMethods.updateEach.call(this, callback);
+            } finally {
+                endDeferredScope(world);
+            }
+        },
         useStores: relationOnlyMethods.useStores,
         select: relationOnlyMethods.select,
         sort(

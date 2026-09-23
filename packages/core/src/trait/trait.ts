@@ -33,6 +33,7 @@ import {
     validateSchema,
 } from '../storage';
 import type { World } from '../world';
+import { noteTraitSub } from '../world/subscription-log';
 import { incrementWorldBitflag } from '../world/utils/increment-world-bit-flag';
 import { getTraitInstance, hasTraitInstance, setTraitInstance } from './trait-instance';
 import type {
@@ -169,7 +170,9 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
         }
 
         // Call add subscriptions after values are set
-        for (const sub of data.addSubscriptions) sub(entity);
+        if (!noteTraitSub(world, 'add', data, entity)) {
+            for (const sub of data.addSubscriptions) sub(entity);
+        }
     }
 }
 
@@ -197,7 +200,7 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
         const oldTarget = getFirstRelationTarget(world, relation, entity);
         if (oldTarget !== undefined && oldTarget !== target) {
             const instance = getTraitInstance(world[$internal].traitInstances, relationTrait);
-            if (instance) {
+            if (instance && !noteTraitSub(world, 'remove', instance, entity, oldTarget)) {
                 for (const sub of instance.removeSubscriptions) sub(entity, oldTarget);
             }
             removeRelationTarget(world, relation, entity, oldTarget);
@@ -221,7 +224,9 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
 
     // Fire add subscription for this pair
     instance = instance ?? getTraitInstance(world[$internal].traitInstances, relationTrait)!;
-    for (const sub of instance.addSubscriptions) sub(entity, target);
+    if (!noteTraitSub(world, 'add', instance, entity, target)) {
+        for (const sub of instance.addSubscriptions) sub(entity, target);
+    }
 }
 
 export function removeTrait(world: World, entity: Entity, ...traits: (Trait | RelationPair)[]) {
@@ -244,7 +249,9 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
             if (instance) {
                 const targets = getRelationTargets(world, traitCtx.relation, entity);
                 for (const t of targets) {
-                    for (const sub of instance.removeSubscriptions) sub(entity, t);
+                    if (!noteTraitSub(world, 'remove', instance, entity, t)) {
+                        for (const sub of instance.removeSubscriptions) sub(entity, t);
+                    }
                 }
             }
             removeAllRelationTargets(world, traitCtx.relation, entity);
@@ -276,7 +283,9 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
         if (instance) {
             const targets = getRelationTargets(world, relation, entity);
             for (const t of targets) {
-                for (const sub of instance.removeSubscriptions) sub(entity, t);
+                if (!noteTraitSub(world, 'remove', instance, entity, t)) {
+                    for (const sub of instance.removeSubscriptions) sub(entity, t);
+                }
             }
         }
 
@@ -288,7 +297,7 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
     // Remove specific target.
     if (typeof target === 'number') {
         // Fire remove subscription for this pair
-        if (instance) {
+        if (instance && !noteTraitSub(world, 'remove', instance, entity, target)) {
             for (const sub of instance.removeSubscriptions) sub(entity, target);
         }
 
@@ -315,7 +324,7 @@ export function cleanupRelationTarget(
 
     // Fire remove subscription for this pair
     const instance = getTraitInstance(world[$internal].traitInstances, relationTrait);
-    if (instance) {
+    if (instance && !noteTraitSub(world, 'remove', instance, entity, target)) {
         for (const sub of instance.removeSubscriptions) sub(entity, target);
     }
 
@@ -503,8 +512,10 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
     const { generationId, bitflag, queries, trackingQueries } = instance;
 
     // Call remove subscriptions before removing the trait
-    for (const sub of instance.removeSubscriptions) {
-        sub(entity);
+    if (!noteTraitSub(world, 'remove', instance, entity)) {
+        for (const sub of instance.removeSubscriptions) {
+            sub(entity);
+        }
     }
 
     // Remove bitflag from entity bitmask

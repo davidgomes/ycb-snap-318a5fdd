@@ -9,7 +9,7 @@ import type {
     QueryResult,
     QueryUnsubscriber,
 } from '../query/types';
-import type { Relation } from '../relation/types';
+import type { Relation, RelationPair } from '../relation/types';
 import type {
     ConfigurableTrait,
     ExtractSchema,
@@ -19,6 +19,26 @@ import type {
     TraitRecord,
     TraitValue,
 } from '../trait/types';
+
+export type DeferredSubEvent =
+    | {
+          kind: 'add' | 'remove' | 'change';
+          instance: TraitInstance;
+          entity: Entity;
+          target?: Entity;
+      }
+    | {
+          kind: 'query-add' | 'query-remove';
+          query: QueryInstance;
+          entity: Entity;
+      };
+
+export type DeferredCommand =
+    | { type: 'spawn'; entity: Entity; traits: ConfigurableTrait[] }
+    | { type: 'destroy'; entity: Entity }
+    | { type: 'add'; entity: Entity; traits: ConfigurableTrait[] }
+    | { type: 'remove'; entity: Entity; traits: (Trait | RelationPair)[] }
+    | { type: 'addExclusive'; entity: Entity; pair: RelationPair };
 
 export type WorldOptions = {
     traits?: ConfigurableTrait[];
@@ -43,6 +63,18 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    deferredStack: { commands: DeferredCommand[] }[];
+    deferredSubLog: DeferredSubEvent[] | null;
+    deferredFlushing: boolean;
+};
+
+export type Deferred = {
+    spawn(...traits: ConfigurableTrait[]): Entity;
+    destroy(entity: Entity): void;
+    add(entity: Entity, ...traits: ConfigurableTrait[]): void;
+    remove(entity: Entity, ...traits: (Trait | RelationPair)[]): void;
+    addExclusive(entity: Entity, pair: RelationPair): void;
+    flush(): void;
 };
 
 export type World = {
@@ -97,4 +129,5 @@ export type World = {
         relation: Relation<T>,
         callback: (entity: Entity, target: Entity) => void
     ): QueryUnsubscriber;
+    deferred: Deferred;
 };

@@ -1,5 +1,7 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
+import { getEntityWorld } from '../entity/entity';
+import { noteQuerySub } from '../world/subscription-log';
 import { getEntityId } from '../entity/utils/pack-entity';
 import type { Relation } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
@@ -58,8 +60,10 @@ export function addEntityToQuery(query: QueryInstance, entity: Entity) {
     query.entities.add(entity);
 
     // Notify subscriptions.
-    for (const sub of query.addSubscriptions) {
-        sub(entity);
+    if (!noteQuerySub(getEntityWorld(entity), 'query-add', query, entity)) {
+        for (const sub of query.addSubscriptions) {
+            sub(entity);
+        }
     }
 
     query.version++;
@@ -74,8 +78,10 @@ export function removeEntityFromQuery(world: World, query: QueryInstance, entity
     ctx.dirtyQueries.add(query);
 
     // Notify subscriptions.
-    for (const sub of query.removeSubscriptions) {
-        sub(entity);
+    if (!noteQuerySub(world, 'query-remove', query, entity)) {
+        for (const sub of query.removeSubscriptions) {
+            sub(entity);
+        }
     }
 
     query.version++;

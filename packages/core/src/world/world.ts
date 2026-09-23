@@ -24,6 +24,15 @@ import type {
 import { universe } from '../universe/universe';
 import type { World, WorldInternal, WorldOptions } from './types';
 import { allocateWorldId, releaseWorldId } from './utils/world-index';
+import {
+    clearDeferredCommands,
+    createDeferredApi,
+    createDeferredBuffer,
+    flushDeferredForEntity,
+    hasDeferredCommands,
+    previewGet,
+    previewHas,
+} from './deferred';
 
 export function createWorld(options: WorldOptions): World;
 export function createWorld(...traits: ConfigurableTrait[]): World;
@@ -54,6 +63,9 @@ export function createWorld(
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
+            deferredStack: [createDeferredBuffer()],
+            deferredSubLog: null,
+            deferredFlushing: false,
         } as WorldInternal,
 
         traits: new Set<Trait>(),
@@ -89,26 +101,39 @@ export function createWorld(
         },
 
         has(target: Entity | Trait): boolean {
-            return typeof target === 'number'
-                ? isEntityAlive(world[$internal].entityIndex, target)
-                : hasTrait(world, world[$internal].worldEntity, target);
+            if (typeof target === 'number') return isEntityAlive(world[$internal].entityIndex, target);
+            if (hasDeferredCommands(world)) {
+                const preview = previewHas(world, world[$internal].worldEntity, target);
+                if (preview !== undefined) return preview;
+            }
+            return hasTrait(world, world[$internal].worldEntity, target);
         },
 
         add(...addTraits: ConfigurableTrait[]) {
+            flushDeferredForEntity(world, world[$internal].worldEntity);
             addTrait(world, world[$internal].worldEntity, ...addTraits);
         },
 
         remove(...removeTraits: Trait[]) {
+            flushDeferredForEntity(world, world[$internal].worldEntity);
             removeTrait(world, world[$internal].worldEntity, ...removeTraits);
         },
 
         get<T extends Trait>(trait: T): TraitRecord<ExtractSchema<T>> | undefined {
+            if (hasDeferredCommands(world)) {
+                return previewGet(world, world[$internal].worldEntity, trait) as
+                    | TraitRecord<ExtractSchema<T>>
+                    | undefined;
+            }
             return getTrait(world, world[$internal].worldEntity, trait);
         },
 
         set<T extends Trait>(trait: T, value: TraitValue<ExtractSchema<T>> | SetTraitCallback<T>) {
+            flushDeferredForEntity(world, world[$internal].worldEntity);
             setTrait(world, world[$internal].worldEntity, trait, value, true);
         },
+
+        deferred: null as unknown as World['deferred'],
 
         destroy() {
             // Destroy world entity.
@@ -125,6 +150,7 @@ export function createWorld(
         reset() {
             lazyTraits = undefined;
             const ctx = world[$internal];
+            clearDeferredCommands(world);
 
             // Destroy all entities so any cleanup is done.
             world.entities.forEach((entity) => {
@@ -201,7 +227,7 @@ export function createWorld(
                             relation as Relation<Trait>,
                             target as Entity
                         );
-                        return createRelationOnlyQueryResult(entities.slice() as Entity[]);
+                        return createRelationOnlyQueryResult(world, entities.slice() as Entity[]);
                     }
                 }
 
@@ -352,6 +378,8 @@ export function createWorld(
             };
         },
     } as World;
+
+    world.deferred = createDeferredApi(world);
 
     // Read-only properties via getters
     Object.defineProperty(world, 'id', {

@@ -7,6 +7,7 @@ import { getTraitInstance, hasTraitInstance } from '../../trait/trait-instance';
 import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
+import { noteTraitSub } from '../../world/subscription-log';
 import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
@@ -77,11 +78,15 @@ function markChanged(world: World, entity: Entity, trait: Trait) {
 export function setChanged(world: World, entity: Entity, trait: Trait) {
     const data = markChanged(world, entity, trait);
     if (!data) return;
-    for (const sub of data.changeSubscriptions) sub(entity);
+    if (!noteTraitSub(world, 'change', data, entity)) {
+        for (const sub of data.changeSubscriptions) sub(entity);
+    }
 }
 
 export function setPairChanged(world: World, entity: Entity, trait: Trait, target: Entity) {
     const data = markChanged(world, entity, trait);
     if (!data) return;
-    for (const sub of data.changeSubscriptions) sub(entity, target);
+    if (!noteTraitSub(world, 'change', data, entity, target)) {
+        for (const sub of data.changeSubscriptions) sub(entity, target);
+    }
 }
