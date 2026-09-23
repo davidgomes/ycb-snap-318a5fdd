@@ -4,17 +4,22 @@ package http
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	h "net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/caarlos0/log"
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/extrafiles"
 	"github.com/goreleaser/goreleaser/v2/internal/pipe"
+	"github.com/goreleaser/goreleaser/v2/internal/publishretry"
 	"github.com/goreleaser/goreleaser/v2/internal/semerrgroup"
 	"github.com/goreleaser/goreleaser/v2/internal/tmpl"
 	"github.com/goreleaser/goreleaser/v2/pkg/config"
@@ -308,12 +313,13 @@ func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact
 		return fmt.Errorf("%s: %s: error while building target URL: %w", upload.Name, kind, err)
 	}
 
-	// Handle the artifact
-	asset, err := assetOpen(kind, artifact)
+	// Open the artifact upfront so invalid assets fail before anything else.
+	// Retries reopen it so each attempt sends the full content.
+	firstAsset, err := assetOpen(kind, artifact)
 	if err != nil {
 		return err
 	}
-	defer asset.ReadCloser.Close()
+	defer firstAsset.ReadCloser.Close()
 
 	// target url need to contain the artifact name unless the custom
 	// artifact name is used
@@ -346,15 +352,94 @@ func uploadAsset(ctx *context.Context, upload *config.Upload, artifact *artifact
 		WithField("file", artifact.Name).
 		Info("uploading")
 
+	return publishretry.Do(ctx, upload.Retry, isRetriable, func(attempt uint) error {
+		asset := firstAsset
+		if attempt > 1 {
+			var err error
+			asset, err = assetOpen(kind, artifact)
+			if err != nil {
+				artifact.RecordPublishAttempt(kind, upload.Name, targetURL, attempt, err)
+				return err
+			}
+			defer asset.ReadCloser.Close()
+		}
+		err := uploadAttempt(ctx, upload, kind, targetURL, username, secret, headers, asset, check)
+		artifact.RecordPublishAttempt(kind, upload.Name, targetURL, attempt, err)
+		return err
+	})
+}
+
+// uploadAttempt sends the full content of the asset to target.
+func uploadAttempt(ctx *context.Context, upload *config.Upload, kind, targetURL, username, secret string, headers map[string]string, asset *asset, check ResponseChecker) error {
 	res, err := uploadAssetToServer(ctx, upload, targetURL, username, secret, headers, asset, check)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("%s: %s: upload failed: %w", upload.Name, kind, err)
 	}
 	if err := res.Body.Close(); err != nil {
 		log.WithError(err).Warn("failed to close response body")
 	}
-
 	return nil
+}
+
+// transportError is an error that happened while sending the request or
+// receiving the response, before any HTTP status was available.
+type transportError struct{ err error }
+
+func (e *transportError) Error() string { return e.err.Error() }
+func (e *transportError) Unwrap() error { return e.err }
+
+// statusError is an error caused by a non-successful HTTP response.
+type statusError struct {
+	err           error
+	statusCode    int
+	retryAfter    time.Duration
+	hasRetryAfter bool
+}
+
+func (e *statusError) Error() string { return e.err.Error() }
+func (e *statusError) Unwrap() error { return e.err }
+
+// RetryAfter implements [publishretry.RetryAfterError].
+func (e *statusError) RetryAfter() (time.Duration, bool) {
+	return e.retryAfter, e.hasRetryAfter
+}
+
+func isRetriable(err error) bool {
+	if _, ok := errors.AsType[*transportError](err); ok {
+		return true
+	}
+	if se, ok := errors.AsType[*statusError](err); ok {
+		switch se.statusCode {
+		case h.StatusRequestTimeout,
+			h.StatusTooManyRequests,
+			h.StatusInternalServerError,
+			h.StatusBadGateway,
+			h.StatusServiceUnavailable,
+			h.StatusGatewayTimeout:
+			return true
+		}
+	}
+	return false
+}
+
+// parseRetryAfter parses a Retry-After header value, which can be either
+// delta-seconds or an HTTP-date.
+func parseRetryAfter(value string) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	if secs, err := strconv.ParseUint(value, 10, 64); err == nil {
+		const maxSecs = uint64(math.MaxInt64 / int64(time.Second))
+		return time.Duration(min(secs, maxSecs)) * time.Second, true
+	}
+	if t, err := h.ParseTime(value); err == nil {
+		return max(time.Until(t), 0), true
+	}
+	return 0, false
 }
 
 // uploadAssetToServer uploads the asset file to target.
@@ -433,16 +518,20 @@ func executeHTTPRequest(ctx *context.Context, upload *config.Upload, req *h.Requ
 			return nil, ctx.Err()
 		default:
 		}
-		return nil, err
+		return nil, &transportError{err: err}
 	}
 
 	defer resp.Body.Close()
 
 	err = check(resp)
 	if err != nil {
+		serr := &statusError{err: err, statusCode: resp.StatusCode}
+		if resp.StatusCode == h.StatusTooManyRequests || resp.StatusCode == h.StatusServiceUnavailable {
+			serr.retryAfter, serr.hasRetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"))
+		}
 		// even though there was an error, we still return the response
 		// in case the caller wants to inspect it further
-		return resp, err
+		return resp, serr
 	}
 
 	return resp, err
