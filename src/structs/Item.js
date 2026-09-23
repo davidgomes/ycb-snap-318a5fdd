@@ -26,6 +26,7 @@ import {
 } from '../internals.js'
 
 import * as error from 'lib0/error'
+import { noteRemoteMapInsert } from '../utils/MapConflict.js'
 import * as binary from 'lib0/binary'
 import * as array from 'lib0/array'
 
@@ -547,6 +548,9 @@ export class Item extends AbstractStruct {
       this.content.integrate(transaction, this)
       // add parent to transaction.changed
       addChangedTypeToTransaction(transaction, /** @type {YType} */ (this.parent), this.parentSub)
+      if (this.parentSub !== null) {
+        noteRemoteMapInsert(transaction, this)
+      }
       if ((/** @type {YType} */ (this.parent)._item !== null && /** @type {YType} */ (this.parent)._item.deleted) || (this.parentSub !== null && this.right !== null)) {
         // delete if parent is deleted or if this is not the current attribute value of parent
         this.delete(transaction)

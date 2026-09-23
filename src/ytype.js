@@ -23,6 +23,7 @@ import {
 } from './internals.js'
 
 import * as contentType from './structs/ContentType.js'
+import { noteLocalMapWrite } from './utils/MapConflict.js'
 
 import * as traits from 'lib0/traits'
 import * as delta from 'lib0/delta'
@@ -1739,7 +1740,8 @@ export const typeListDelete = (transaction, parent, index, length) => {
  */
 export const typeMapDelete = (transaction, parent, key) => {
   const c = parent._map.get(key)
-  if (c !== undefined) {
+  if (c !== undefined && !c.deleted) {
+    noteLocalMapWrite(transaction, parent, key, 'delete', undefined, c)
     c.delete(transaction)
   }
 }
@@ -1754,6 +1756,7 @@ export const typeMapDelete = (transaction, parent, key) => {
  * @function
  */
 export const typeMapSet = (transaction, parent, key, value) => {
+  noteLocalMapWrite(transaction, parent, key, 'set', value, null)
   const left = parent._map.get(key) || null
   const doc = transaction.doc
   const ownClientId = doc.clientID

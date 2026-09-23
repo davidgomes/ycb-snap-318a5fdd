@@ -39,6 +39,7 @@ import {
   createID,
   IdRange
 } from '../internals.js'
+import { finalizeRemoteMapConflicts, MapConflictError } from './MapConflict.js'
 
 import * as encoding from 'lib0/encoding'
 import * as decoding from 'lib0/decoding'
@@ -343,8 +344,39 @@ export const writeStructsFromTransaction = (encoder, transaction) => writeStruct
  *
  * @function
  */
-export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = new UpdateDecoderV2(decoder)) =>
-  transact(ydoc, transaction => {
+/**
+ * Reject a merged update before it mutates `ydoc` when map conflicts are errors.
+ *
+ * @param {Doc} ydoc
+ * @param {UpdateDecoderV1 | UpdateDecoderV2} structDecoder
+ */
+const guardMapUpdate = (ydoc, structDecoder) => {
+  if (ydoc.mapConflictPolicy !== 'error' || ydoc._inMapConflictGuard) return
+  const rest = structDecoder.restDecoder
+  const bytes = rest.arr.subarray(rest.pos)
+  const Decoder = structDecoder.constructor
+  ydoc._inMapConflictGuard = true
+  try {
+    const shadow = new Doc({ guid: ydoc.guid, gc: ydoc.gc, mapConflictPolicy: 'allow' })
+    shadow.clientID = ydoc.clientID
+    shadow._inMapConflictGuard = true
+    applyUpdate(shadow, encodeStateAsUpdate(ydoc))
+    shadow.clientID = ydoc.clientID
+    shadow.mapConflictPolicy = 'collect'
+    shadow._mapConflicts = []
+    applyUpdateV2(shadow, bytes, null, /** @type {any} */ (Decoder))
+    if (shadow._mapConflicts.length > 0) {
+      ydoc._mapConflicts.push(...shadow._mapConflicts)
+      throw new MapConflictError(shadow._mapConflicts.slice())
+    }
+  } finally {
+    ydoc._inMapConflictGuard = false
+  }
+}
+
+export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = new UpdateDecoderV2(decoder)) => {
+  guardMapUpdate(ydoc, structDecoder)
+  return transact(ydoc, transaction => {
     // force that transaction.local is set to non-local
     transaction.local = false
     let retry = false
@@ -424,7 +456,9 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
       store.pendingStructs = null
       applyUpdateV2(transaction.doc, update)
     }
+    finalizeRemoteMapConflicts(transaction)
   }, transactionOrigin, false)
+}
 
 /**
  * Read and apply a document update.

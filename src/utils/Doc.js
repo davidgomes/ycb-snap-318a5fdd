@@ -11,6 +11,7 @@ import {
 } from '../internals.js'
 
 import { YType } from '../ytype.js'
+import { summarizeMapConflicts } from './MapConflict.js'
 import { ObservableV2 } from 'lib0/observable'
 import * as random from 'lib0/random'
 import * as map from 'lib0/map'
@@ -31,6 +32,10 @@ export const generateNewClientId = random.uint32
  * @property {boolean} [DocOpts.isSuggestionDoc] Set to true if this document merely suggests
  * changes. If this flag is not set in a suggestion document, automatic formatting changes will be
  * displayed as suggestions, which might not be intended.
+ * @property {'allow'|'collect'|'error'} [DocOpts.mapConflictPolicy] How same-key map writes are
+ * handled when they overlap in one transaction or merged update. `allow` (default) keeps
+ * last-write-wins. `collect` records conflicts. `error` throws {@link MapConflictError} and
+ * rejects the update.
  */
 
 /**
@@ -57,7 +62,7 @@ export class Doc extends ObservableV2 {
   /**
    * @param {DocOpts} opts configuration
    */
-  constructor ({ guid = random.uuidv4(), collectionid = null, gc = true, gcFilter = () => true, meta = null, autoLoad = false, shouldLoad = true, isSuggestionDoc = false } = {}) {
+  constructor ({ guid = random.uuidv4(), collectionid = null, gc = true, gcFilter = () => true, meta = null, autoLoad = false, shouldLoad = true, isSuggestionDoc = false, mapConflictPolicy = 'allow' } = {}) {
     super()
     this.gc = gc
     this.gcFilter = gcFilter
@@ -65,6 +70,17 @@ export class Doc extends ObservableV2 {
     this.guid = guid
     this.collectionid = collectionid
     this.isSuggestionDoc = isSuggestionDoc
+    /**
+     * `allow` applies overlapping map writes. `collect` records them.
+     * `error` throws MapConflictError before a conflicting merged update is applied.
+     * @type {'allow'|'collect'|'error'}
+     */
+    this.mapConflictPolicy = mapConflictPolicy === 'collect' || mapConflictPolicy === 'error' ? mapConflictPolicy : 'allow'
+    /**
+     * Conflicts recorded while `mapConflictPolicy` is `collect` or `error`.
+     * @type {Array<import('./MapConflict.js').MapConflict>}
+     */
+    this._mapConflicts = []
     this.cleanupFormatting = !isSuggestionDoc
     /**
      * @type {Map<string, YType>}
@@ -185,6 +201,22 @@ export class Doc extends ObservableV2 {
    */
   transact (f, origin = null) {
     return transact(this, f, origin)
+  }
+
+  /**
+   * Map-key conflicts recorded for this document (collect and error policies).
+   * @return {Array<import('./MapConflict.js').MapConflict>}
+   */
+  getMapConflicts () {
+    return this._mapConflicts.slice()
+  }
+
+  /**
+   * Counts of recorded map conflicts grouped for index access (`summary.byType[type]`).
+   * @return {{ count: number, total: number, byType: Record<string, number>, byKey: Record<string, number>, byParent: Record<string, number>, bySource: Record<string, number> }}
+   */
+  getMapConflictSummary () {
+    return summarizeMapConflicts(this._mapConflicts)
   }
 
   /**

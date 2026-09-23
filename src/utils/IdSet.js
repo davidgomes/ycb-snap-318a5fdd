@@ -15,6 +15,7 @@ import * as math from 'lib0/math'
 import * as encoding from 'lib0/encoding'
 import * as decoding from 'lib0/decoding'
 import * as traits from 'lib0/traits'
+import { noteNetworkMapDelete } from './MapConflict.js'
 
 export class IdRange {
   /**
@@ -779,6 +780,7 @@ export const readAndApplyDeleteSet = (decoder, transaction, store) => {
                 if (clockEnd < struct.id.clock + struct.length) {
                   structs.splice(index, 0, splitItem(transaction, struct, clockEnd - struct.id.clock))
                 }
+                noteNetworkMapDelete(transaction, struct)
                 struct.delete(transaction)
               } else { // is a Skip - add range to unappliedDS
                 const c = math.max(struct.id.clock, clock)

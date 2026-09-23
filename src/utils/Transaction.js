@@ -21,6 +21,8 @@ import * as math from 'lib0/math'
 import * as set from 'lib0/set'
 import * as logging from 'lib0/logging'
 import { callAll } from 'lib0/function'
+import { encodeStateAsUpdate } from './encoding.js'
+import { restoreDocSnapshot } from './MapConflict.js'
 
 /**
  * A transaction is created for every change on the Yjs model. It is possible
@@ -639,8 +641,13 @@ export const transact = (doc, f, origin = null, local = true) => {
    * @type {any}
    */
   let result = null
+  /** @type {Uint8Array | null} */
+  let conflictSnapshot = null
   if (doc._transaction === null) {
     initialCall = true
+    if (doc.mapConflictPolicy === 'error' && !doc._inMapConflictGuard) {
+      conflictSnapshot = encodeStateAsUpdate(doc)
+    }
     doc._transaction = new Transaction(doc, origin, local)
     transactionCleanups.push(doc._transaction)
     if (transactionCleanups.length === 1) {
@@ -648,13 +655,21 @@ export const transact = (doc, f, origin = null, local = true) => {
     }
     doc.emit('beforeTransaction', [doc._transaction, doc])
   }
+  /** @type {any} */
+  let caught = null
   try {
     result = f(doc._transaction)
+  } catch (e) {
+    caught = e
   } finally {
     if (initialCall) {
       const finishCleanup = doc._transaction === transactionCleanups[0]
+      const rejectConflict = caught != null && caught.name === 'MapConflictError' && conflictSnapshot != null && doc.mapConflictPolicy === 'error'
       doc._transaction = null
-      if (finishCleanup) {
+      if (rejectConflict) {
+        doc._transactionCleanups = []
+        restoreDocSnapshot(doc, conflictSnapshot)
+      } else if (finishCleanup) {
         // The first transaction ended, now process observer calls.
         // Observer call may create new transactions for which we need to call the observers and do cleanup.
         // We don't want to nest these calls, so we execute these calls one after
@@ -667,5 +682,6 @@ export const transact = (doc, f, origin = null, local = true) => {
       }
     }
   }
+  if (caught) throw caught
   return result
 }
