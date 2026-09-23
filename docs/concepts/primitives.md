@@ -163,6 +163,101 @@ const parser = option("-v", "--verbose", {
 > than plain strings. This provides consistent formatting and enables rich text
 > with semantic components like option names and metavariables.
 
+### Conditional options
+
+*This feature is available since Optique 0.10.0.*
+
+Some options only make sense together with other options.  The `dependsOn`
+option declares such a dependency, and the enclosing
+[`object()`](./constructs.md) parser checks it.  A dependency refers to another
+option in the same `object()` either by its key or by one of its option names:
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { optional } from "@optique/core/modifiers";
+import { option } from "@optique/core/primitives";
+import { choice, integer, string } from "@optique/core/valueparser";
+
+const parser = object({
+  mode: optional(option("--mode", choice(["dev", "prod"]))),
+  verbose: option("--verbose"),
+  // Only valid when --mode is "prod":
+  key: optional(option("--key", string(), {
+    dependsOn: { option: "mode", value: "prod", required: true },
+  })),
+  // Only offered when --verbose is given:
+  level: optional(option("--level", integer(), {
+    dependsOn: { option: "--verbose" },
+  })),
+});
+~~~~
+
+When `value` is given, the referenced option must have exactly that value.
+Otherwise, it only needs to have a truthy value, so `--verbose` must be
+present in the example above.  The `required` setting decides what happens
+when the dependency does not hold:
+
+`required: true`
+:   Providing the option is an error, e.g.:
+    ``Option `--key` requires option `--mode` to be "prod".``
+
+`required: false` (default)
+:   The option is hidden from help text and shell completion suggestions.
+    It is still accepted if the user provides it anyway, unless the referenced
+    option was explicitly given a contradicting value, such as `--flag=false`.
+
+Several conditions can be combined with `anyOf` (at least one must hold) and
+`allOf` (all must hold).  Conditions in these arrays can be option keys or
+names, single conditions, or nested compound conditions:
+
+~~~~ typescript twoslash
+import { option } from "@optique/core/primitives";
+// ---cut-before---
+const upload = option("--upload", {
+  dependsOn: {
+    allOf: ["token", { anyOf: ["--bucket", { option: "target", value: "s3" }] }],
+    required: true,
+  },
+});
+~~~~
+
+Referencing an option that does not exist in the `object()` makes
+the dependency unsatisfied.  An empty `allOf` always holds, while an empty
+`anyOf` never does.
+
+For brevity, `requiredWhen()`, `optionalWhen()`, and `conditionalOption()`
+create such options from a condition, option names, and an optional value
+parser.  `requiredWhen()` always makes the dependency required,
+`optionalWhen()` never does, and `conditionalOption()` takes `required` from
+the condition:
+
+~~~~ typescript twoslash
+import { object } from "@optique/core/constructs";
+import { optional, withDefault } from "@optique/core/modifiers";
+import {
+  conditionalOption,
+  option,
+  optionalWhen,
+  requiredWhen,
+} from "@optique/core/primitives";
+import { choice, integer, string } from "@optique/core/valueparser";
+
+const parser = object({
+  mode: optional(option("--mode", choice(["dev", "prod"]))),
+  verbose: option("-v", "--verbose"),
+  key: optional(requiredWhen({ option: "mode", value: "prod" }, "--key", string())),
+  level: withDefault(optionalWhen("verbose", ["-l", "--level"], integer()), 1),
+  debug: conditionalOption({ option: "verbose", required: true }, "--debug"),
+});
+~~~~
+
+> [!NOTE]
+> A dependency does not make the option itself optional.  Wrap it with
+> [`optional()`](./modifiers.md) or [`withDefault()`](./modifiers.md) if it
+> may be omitted even when its dependency holds.  Also, dependencies are only
+> resolved within the same `object()`, so an option cannot depend on options
+> in another `object()` combined with `merge()`.
+
 
 `flag()` parser
 ---------------

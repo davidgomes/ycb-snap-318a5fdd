@@ -541,6 +541,54 @@ To be released.
     }))
     ~~~~
 
+ -  Added conditional option dependencies.  An option can now declare, through
+    the new `dependsOn` option of `option()`, that it depends on the presence
+    or value of other options in the same `object()` parser.  A dependency
+    refers to another option either by its object key or by its CLI flag name,
+    and can be a single condition (`{ option, value }`) or a compound one
+    (`{ anyOf, allOf }`).
+
+     -  When a dependency with `required: true` does not hold, providing
+        the dependent option fails with an error like
+        ``Option `--key` requires option `--mode` to be "prod".``
+     -  When a non-required dependency does not hold, the dependent option is
+        hidden from help and completion suggestions, but it is still accepted
+        unless the referenced option was explicitly given a contradicting
+        value (e.g., `--flag=false`).
+
+
+    ~~~~ typescript
+    import { object } from "@optique/core/constructs";
+    import { optional } from "@optique/core/modifiers";
+    import { option, optionalWhen, requiredWhen } from "@optique/core/primitives";
+    import { choice, integer, string } from "@optique/core/valueparser";
+
+    const parser = object({
+      mode: optional(option("--mode", choice(["dev", "prod"]))),
+      verbose: option("--verbose"),
+      key: optional(
+        requiredWhen({ option: "mode", value: "prod" }, "--key", string()),
+      ),
+      level: optional(optionalWhen("--verbose", "--level", integer())),
+    });
+    ~~~~
+
+    New exports from `@optique/core/primitives`:
+
+     -  `requiredWhen()`: Creates an option with a required dependency.
+     -  `optionalWhen()`: Creates an option with a non-required dependency.
+     -  `conditionalOption()`: Creates an option with the given dependency.
+     -  `ConditionalOptionOptions`: Options for the above functions.
+
+    New exports from `@optique/core/usage`:
+
+     -  `OptionDependency`, `OptionDependencyCondition`,
+        `OptionDependencyGroup`, `OptionDependencyConditionLike`, and
+        `OptionDependencyOptions`: Types describing option dependencies.
+
+    Added `OptionOptions.dependsOn` option and the `dependsOn` field to option
+    `UsageTerm`s.
+
  -  Removed deprecated `run` export. Use `runParser()` instead. The old name
     was deprecated in v0.9.0 due to naming conflicts with `@optique/run`'s
     `run()` function. [[#65]]
