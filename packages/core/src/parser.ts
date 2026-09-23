@@ -1,6 +1,10 @@
 import type { DocEntry, DocFragments, DocPage, DocSection } from "./doc.ts";
 import { type Message, message } from "./message.ts";
 import type { DependencyRegistryLike } from "./registry-types.ts";
+import {
+  filterUsageByDependencies,
+  usageHasOptionDependencies,
+} from "./option-dependency.ts";
 import { normalizeUsage, type Usage, type UsageTerm } from "./usage.ts";
 import type { ValueParserResult } from "./valueparser.ts";
 import { annotationKey, type ParseOptions } from "./annotations.ts";
@@ -1000,7 +1004,12 @@ function buildDocPage(
   if (entries.length > 0) {
     sections.push({ entries });
   }
-  const usage = [...normalizeUsage(parser.usage)];
+  const normalized = normalizeUsage(parser.usage);
+  const usage = [
+    ...(usageHasOptionDependencies(normalized)
+      ? filterUsageByDependencies(normalized, context.state)
+      : normalized),
+  ];
   let i = 0;
   for (const arg of args) {
     if (i >= usage.length) break;

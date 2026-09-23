@@ -1,4 +1,16 @@
+import type { OptionDependsOn } from "./option-dependency.ts";
 import type { NonEmptyString } from "./nonempty.ts";
+
+/**
+ * Symbol storing the {@link object} field key on an option usage term.
+ * Wrappers such as `withDefault()` keep the original term nested, so
+ * dependency resolution reads this key from the term rather than from
+ * the wrapper parser.
+ * @internal
+ */
+export const usageFieldKey: unique symbol = Symbol.for(
+  "@optique/core/usage/fieldKey",
+);
 
 /**
  * Represents the name of a command-line option.  There are four types of
@@ -65,6 +77,19 @@ export type UsageTerm =
      * @since 0.9.0
      */
     readonly hidden?: boolean;
+    /**
+     * Conditional dependency on other options in the same object parser.
+     * Visibility and validation read this metadata from the usage term so
+     * it survives wrappers such as `withDefault()`.
+     * @since 0.10.0
+     */
+    readonly dependsOn?: OptionDependsOn;
+    /**
+     * Object field that owns this option. Set when the option is placed
+     * in an {@link object} parser so flag names can be mapped back to keys.
+     * @internal
+     */
+    readonly [usageFieldKey]?: string | symbol;
   }
   /**
    * A command term, which represents a subcommand in the command-line

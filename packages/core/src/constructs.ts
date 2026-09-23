@@ -10,6 +10,12 @@ import {
   wrappedDependencySourceMarker,
 } from "./dependency.ts";
 import { dispatchByMode, dispatchIterableByMode } from "./mode-dispatch.ts";
+import {
+  annotateUsageFieldKeys,
+  buildOptionIndex,
+  isDependencyHidden,
+  optionDependencyError,
+} from "./option-dependency.ts";
 import type { DocEntry, DocFragment, DocSection } from "./doc.ts";
 import {
   type Message,
@@ -2098,6 +2104,7 @@ function* suggestObjectSync<
 
   // Create context with dependency registry for child parsers
   const contextWithRegistry = { ...context, dependencyRegistry: registry };
+  const optionIndex = buildOptionIndex(parserPairs);
 
   // Check if the last token in the buffer is an option that requires a value.
   // If so, only suggest values for that specific option parser, not all parsers.
@@ -2108,6 +2115,10 @@ function* suggestObjectSync<
 
     // Find if any parser has this token as an option requiring a value
     for (const [field, parser] of parserPairs) {
+      if (parser == null) continue;
+      if (isDependencyHidden(parser.usage, context.state, optionIndex)) {
+        continue;
+      }
       if (isOptionRequiringValue(parser.usage, lastToken)) {
         // Only get suggestions from the parser that owns this option
         const fieldState =
@@ -2128,6 +2139,10 @@ function* suggestObjectSync<
   // Default behavior: try getting suggestions from each parser
   const suggestions: Suggestion[] = [];
   for (const [field, parser] of parserPairs) {
+    if (parser == null) continue;
+    if (isDependencyHidden(parser.usage, context.state, optionIndex)) {
+      continue;
+    }
     const fieldState = (context.state && typeof context.state === "object" &&
         field in context.state)
       ? (context.state as Record<string | symbol, unknown>)[field]
@@ -2167,6 +2182,7 @@ async function* suggestObjectAsync<
 
   // Create context with dependency registry for child parsers
   const contextWithRegistry = { ...context, dependencyRegistry: registry };
+  const optionIndex = buildOptionIndex(parserPairs);
 
   // Check if the last token in the buffer is an option that requires a value.
   if (context.buffer.length > 0) {
@@ -2174,6 +2190,10 @@ async function* suggestObjectAsync<
 
     // Find if any parser has this token as an option requiring a value
     for (const [field, parser] of parserPairs) {
+      if (parser == null) continue;
+      if (isDependencyHidden(parser.usage, context.state, optionIndex)) {
+        continue;
+      }
       if (isOptionRequiringValue(parser.usage, lastToken)) {
         // Only get suggestions from the parser that owns this option
         const fieldState =
@@ -2197,6 +2217,10 @@ async function* suggestObjectAsync<
   // Default behavior: try getting suggestions from each parser
   const suggestions: Suggestion[] = [];
   for (const [field, parser] of parserPairs) {
+    if (parser == null) continue;
+    if (isDependencyHidden(parser.usage, context.state, optionIndex)) {
+      continue;
+    }
     const fieldState = (context.state && typeof context.state === "object" &&
         field in context.state)
       ? (context.state as Record<string | symbol, unknown>)[field]
@@ -2879,7 +2903,7 @@ export function object<
     $valueType: [],
     $stateType: [],
     priority: Math.max(...parserKeys.map((k) => parsers[k].priority)),
-    usage: parserPairs.flatMap(([_, p]) => p.usage),
+    usage: annotateUsageFieldKeys(parserPairs),
     initialState: initialState as {
       readonly [K in keyof T]: T[K]["$stateType"][number] extends (infer U3)
         ? U3
@@ -2898,6 +2922,10 @@ export function object<
       return dispatchByMode(
         combinedMode,
         () => {
+          const dependencyError = optionDependencyError(parserPairs, state);
+          if (dependencyError != null) {
+            return { success: false as const, error: dependencyError };
+          }
           // Phase 1: Pre-complete fields with PendingDependencySourceState to get
           // DependencySourceState with default values. This is needed for
           // withDefault(option(..., dependencySource), defaultValue) pattern.
@@ -3008,6 +3036,10 @@ export function object<
           return { success: true as const, value: result };
         },
         async () => {
+          const dependencyError = optionDependencyError(parserPairs, state);
+          if (dependencyError != null) {
+            return { success: false as const, error: dependencyError };
+          }
           // Phase 1: Pre-complete fields with PendingDependencySourceState
           const preCompletedState: Record<string | symbol, unknown> = {};
           const preCompletedKeys = new Set<string | symbol>();
@@ -3134,7 +3166,15 @@ export function object<
       state: DocState<{ readonly [K in keyof T]: unknown }>,
       defaultValue?: { readonly [K in keyof T]: unknown },
     ) {
+      const optionIndex = buildOptionIndex(parserPairs);
       const fragments = parserPairs.flatMap(([field, p]) => {
+        if (p == null) return [];
+        if (
+          state.kind === "available" &&
+          isDependencyHidden(p.usage, state.state, optionIndex)
+        ) {
+          return [];
+        }
         const fieldState: DocState<unknown> = state.kind === "unavailable"
           ? { kind: "unavailable" }
           : { kind: "available", state: state.state[field] };
