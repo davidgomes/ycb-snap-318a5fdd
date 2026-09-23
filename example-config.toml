@@ -8,6 +8,14 @@ count = 0
 skip = ["GitHub-API"]
 # regions = ["us-east-1", "eu-central-1", "ap-southeast-1"]
 
+[global.alert_policy]
+consecutive_failures = 2
+consecutive_recoveries = 1
+cooldown_seconds = 300
+# latency_threshold_ms = 1000
+# latency_breach_count = 3
+# ssl_expiry_threshold_days = 14
+
 [[targets]]
 url = "https://www.github.com"
 name = "GitHub"
@@ -37,6 +45,10 @@ url = "https://httpbin.org/delay/2"
 name = "HTTPBin-Slow"
 refresh_interval = 5
 timeout = 15
+
+[targets.alert_policy]
+latency_threshold_ms = 1500
+latency_breach_count = 2
 
 [[targets]]
 url = "https://jsonplaceholder.typicode.com/posts/1"
