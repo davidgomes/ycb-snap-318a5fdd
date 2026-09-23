@@ -40,7 +40,7 @@ The example below shows an application showing a `RichLog` with different kinds 
 
 ## Messages
 
-This widget sends no messages.
+- [RichLog.FollowChanged][textual.widgets.RichLog.FollowChanged]
 
 ## Bindings
 

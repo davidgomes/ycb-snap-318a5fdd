@@ -39,7 +39,7 @@ The example below shows how to write text to a `Log` widget:
 
 ## Messages
 
-This widget posts no messages.
+- [Log.FollowChanged][textual.widgets.Log.FollowChanged]
 
 ## Bindings
 
