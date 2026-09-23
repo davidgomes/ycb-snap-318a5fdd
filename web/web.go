@@ -310,6 +310,10 @@ type Options struct {
 	Registerer      prometheus.Registerer
 	FeatureRegistry features.Collector
 
+	// ReloadStatus reports the most recent configuration reload outcome.
+	// When nil, the status endpoint reports that no reload has been attempted.
+	ReloadStatus func() api_v1.ReloadStatus
+
 	// Parser is the PromQL parser used for parsing query expressions.
 	Parser parser.Parser
 }
@@ -427,6 +431,9 @@ func New(logger *slog.Logger, o *Options) *Handler {
 		},
 		o.Parser,
 	)
+	if o.ReloadStatus != nil {
+		h.apiV1.SetReloadStatus(o.ReloadStatus)
+	}
 
 	if r := o.FeatureRegistry; r != nil {
 		// Set dynamic API features (based on configuration).

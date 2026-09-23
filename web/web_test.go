@@ -609,6 +609,7 @@ func TestAgentAPIEndPoints(t *testing.T) {
 		"/targets/metadata":   {http.MethodGet},
 		"/metadata":           {http.MethodGet},
 		"/status/config":      {http.MethodGet},
+		"/status/reload":      {http.MethodGet},
 		"/status/runtimeinfo": {http.MethodGet},
 		"/status/flags":       {http.MethodGet},
 	} {

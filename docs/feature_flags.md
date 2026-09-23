@@ -140,6 +140,14 @@ fixes the possible problem with the feature flag.)
 
 It is possible to craft a query that aggregates by `__name__` and puts samples with and without delayed name removal into the same group. In that case, the name is removed from the affected group. Note that this case hardly occurs in queries that fulfill a practical purpose.
 
+## Transactional reload
+
+`--enable-feature=transactional-reload-config`
+
+When enabled, configuration reloads apply each component in order and record a single outcome for the attempt. If loading or parsing the configuration file fails, Prometheus leaves the running configuration in place and does not roll back. If at least one component accepts the new configuration and a later component fails, Prometheus attempts to restore the last known-good configuration, including the configuration that was loaded successfully at startup.
+
+The most recent outcome is available at `GET /api/v1/status/reload` and is written to `reload_status.json` in the TSDB storage directory (`--storage.tsdb.path`, or `--storage.agent.path` in agent mode). The file is created on the first reload attempt, not at startup. A missing or unreadable file does not prevent startup; the status endpoint then reports that no reload has been attempted. The feature is reported as `prometheus.transactional_reload_config` by `GET /api/v1/features`.
+
 ## Auto Reload Config
 
 `--enable-feature=auto-reload-config`

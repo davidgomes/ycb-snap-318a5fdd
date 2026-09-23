@@ -95,7 +95,7 @@ func TestOpenAPIPathFiltering(t *testing.T) {
 		{
 			name:         "filter status paths",
 			includePaths: []string{"/status"},
-			wantPaths:    []string{"/status/config", "/status/flags", "/status/runtimeinfo"},
+			wantPaths:    []string{"/status/config", "/status/flags", "/status/reload", "/status/runtimeinfo"},
 			excludePaths: []string{"/query", "/alerts", "/targets"},
 		},
 		{

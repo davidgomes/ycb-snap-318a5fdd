@@ -1314,6 +1314,51 @@ curl http://localhost:9090/api/v1/status/flags
 
 *New in v2.2*
 
+### Reload
+
+The following endpoint returns the most recent configuration reload outcome:
+
+```
+GET /api/v1/status/reload
+```
+
+Before the first reload attempt, `last_reload_id` is empty, `last_reload_successful` is `false`, `error_category` is `none`, `applied_reloaders` is empty, and `reloader_timings_ms` is an empty object. No outcome file is written until a reload is attempted.
+
+`error_category` is one of:
+
+- `none`: the attempt succeeded, or no reload has been attempted.
+- `load_error`: the configuration file could not be loaded or parsed. Rollback is not attempted.
+- `apply_error`: a component rejected the new configuration. When an earlier component had already applied it, Prometheus tries to restore the last known-good configuration.
+- `rollback_error`: that restore did not fully succeed.
+
+`last_reload_id` is an RFC3339 timestamp. When `--enable-feature=transactional-reload-config` is set, the same JSON object is stored as `reload_status.json` under the TSDB storage directory and loaded again on startup. A missing or corrupted file does not prevent the server or this endpoint from working.
+
+```bash
+curl http://localhost:9090/api/v1/status/reload
+```
+
+```json
+{
+  "status": "success",
+  "data": {
+    "last_reload_id": "2026-09-23T11:11:00.123456789Z",
+    "last_reload_successful": false,
+    "error_category": "apply_error",
+    "error_message": "can't create json log file: open /tmp/missing/query.log: no such file or directory",
+    "applied_reloaders": ["db_storage", "remote_storage", "web_handler"],
+    "rollback_attempted": true,
+    "rollback_successful": true,
+    "failed_reloader": "query_engine",
+    "reloader_timings_ms": {
+      "db_storage": 1,
+      "query_engine": 2,
+      "remote_storage": 1,
+      "web_handler": 0
+    }
+  }
+}
+```
+
 ### Runtime Information
 
 The following endpoint returns various runtime information properties about the Prometheus server:
