@@ -24,6 +24,9 @@ DEFAULTS = {
     "make_whitelist": False,
     "sort_by_size": False,
     "verbose": False,
+    "cache": False,
+    "cache_clear": False,
+    "cache_dir": ".vulture-cache",
 }
 
 
@@ -159,6 +162,26 @@ def _parse_args(args=None):
         action="store_true",
         default=missing,
         help="Sort unused functions and classes by their lines of code.",
+    )
+    parser.add_argument(
+        "--cache",
+        action="store_true",
+        default=missing,
+        help="Cache analysis results and only re-analyze changed files"
+        " and files that import them.",
+    )
+    parser.add_argument(
+        "--cache-clear",
+        action="store_true",
+        default=missing,
+        help="Remove all contents of the cache directory before running.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        metavar="PATH",
+        type=str,
+        default=missing,
+        help="Cache directory (default: .vulture-cache/).",
     )
     parser.add_argument(
         "--config",
