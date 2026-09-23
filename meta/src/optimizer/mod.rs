@@ -130,6 +130,10 @@ pub enum OptimizedExpr {
     Insens(String),
     /// Matches one character in the range, e.g. `'a'..'z'`
     Range(String, String),
+    /// Matches one character in any of the inclusive ranges, e.g. `'a'..'z' | 'A'..'Z' | "_"`
+    CharClass(Vec<(String, String)>),
+    /// Matches one character outside all of the inclusive ranges, e.g. `!('a'..'z' | "_") ~ ANY`
+    NegCharClass(Vec<(String, String)>),
     /// Matches the rule with the given name, e.g. `a`
     Ident(String),
     /// Matches a custom part of the stack, e.g. `PEEK[..]`
@@ -278,6 +282,10 @@ impl core::fmt::Display for OptimizedExpr {
                 let end = end.chars().next().expect("Empty range end.");
                 write!(f, "({:?}..{:?})", start, end)
             }
+            OptimizedExpr::CharClass(ranges) => write!(f, "({})", display_char_ranges(ranges)),
+            OptimizedExpr::NegCharClass(ranges) => {
+                write!(f, "(!({}) ~ ANY)", display_char_ranges(ranges))
+            }
             OptimizedExpr::Ident(id) => write!(f, "{}", id),
             OptimizedExpr::PeekSlice(start, end) => match end {
                 Some(end) => write!(f, "PEEK[{}..{}]", start, end),
@@ -339,6 +347,20 @@ impl core::fmt::Display for OptimizedExpr {
             OptimizedExpr::RestoreOnErr(expr) => core::fmt::Display::fmt(expr.as_ref(), f),
         }
     }
+}
+
+fn display_char_ranges(ranges: &[(String, String)]) -> String {
+    ranges
+        .iter()
+        .map(|(start, end)| {
+            if start == end {
+                OptimizedExpr::Str(start.clone()).to_string()
+            } else {
+                OptimizedExpr::Range(start.clone(), end.clone()).to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 /// A top-down iterator over an `OptimizedExpr`.

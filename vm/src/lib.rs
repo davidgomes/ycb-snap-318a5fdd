@@ -193,6 +193,10 @@ impl Vm {
 
                 state.match_range(start..end)
             }
+            OptimizedExpr::CharClass(ref ranges) => state.match_char_class(&char_ranges(ranges)),
+            OptimizedExpr::NegCharClass(ref ranges) => {
+                state.match_negated_char_class(&char_ranges(ranges))
+            }
             OptimizedExpr::Ident(ref name) => self.parse_rule(name, state),
             OptimizedExpr::PeekSlice(start, end) => {
                 state.stack_match_peek_slice(start, end, MatchDir::BottomToTop)
@@ -300,4 +304,16 @@ impl Vm {
             }
         }
     }
+}
+
+fn char_ranges(ranges: &[(String, String)]) -> Vec<(char, char)> {
+    ranges
+        .iter()
+        .map(|(start, end)| {
+            let start = start.chars().next().expect("empty char literal");
+            let end = end.chars().next().expect("empty char literal");
+
+            (start, end)
+        })
+        .collect()
 }

@@ -434,6 +434,20 @@ fn generate_expr(expr: OptimizedExpr) -> TokenStream {
                 state.match_range(#start..#end)
             }
         }
+        OptimizedExpr::CharClass(ranges) => {
+            let ranges = char_class_ranges(ranges);
+
+            quote! {
+                state.match_char_class(&[#(#ranges),*])
+            }
+        }
+        OptimizedExpr::NegCharClass(ranges) => {
+            let ranges = char_class_ranges(ranges);
+
+            quote! {
+                state.match_negated_char_class(&[#(#ranges),*])
+            }
+        }
         OptimizedExpr::Ident(ident) => {
             let ident = format_ident!("r#{}", ident);
             quote! { self::#ident(state) }
@@ -643,6 +657,20 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
                 state.match_range(#start..#end)
             }
         }
+        OptimizedExpr::CharClass(ranges) => {
+            let ranges = char_class_ranges(ranges);
+
+            quote! {
+                state.match_char_class(&[#(#ranges),*])
+            }
+        }
+        OptimizedExpr::NegCharClass(ranges) => {
+            let ranges = char_class_ranges(ranges);
+
+            quote! {
+                state.match_negated_char_class(&[#(#ranges),*])
+            }
+        }
         OptimizedExpr::Ident(ident) => {
             let ident = format_ident!("r#{}", ident);
             quote! { self::#ident(state) }
@@ -802,6 +830,18 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
             }
         },
     }
+}
+
+fn char_class_ranges(ranges: Vec<(String, String)>) -> Vec<TokenStream> {
+    ranges
+        .into_iter()
+        .map(|(start, end)| {
+            let start = start.chars().next().unwrap();
+            let end = end.chars().next().unwrap();
+
+            quote! { (#start, #end) }
+        })
+        .collect()
 }
 
 struct QuoteOption<T>(Option<T>);
