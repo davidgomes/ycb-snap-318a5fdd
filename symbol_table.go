@@ -79,6 +79,13 @@ func (t *SymbolTable) DefineBuiltin(index int, name string) *Symbol {
 	return symbol
 }
 
+// IsDefined reports whether name is declared in this table.
+// Locals that are not yet assigned still count. Parent scopes are ignored.
+func (t *SymbolTable) IsDefined(name string) bool {
+	_, ok := t.store[name]
+	return ok
+}
+
 // Resolve resolves a symbol with a given name.
 func (t *SymbolTable) Resolve(
 	name string,

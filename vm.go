@@ -587,6 +587,22 @@ func (v *VM) run() {
 						v.sp = spStart + 1
 					}
 				}
+				if callee.AcceptFewer && numArgs < callee.NumParameters {
+					for numArgs < callee.NumParameters {
+						var filler Object = missingValue
+						if callee.VarArgs && numArgs == callee.NumParameters-1 {
+							filler = &Array{Value: []Object{}}
+							v.allocs--
+							if v.allocs == 0 {
+								v.err = ErrObjectAllocLimit
+								return
+							}
+						}
+						v.stack[v.sp] = filler
+						v.sp++
+						numArgs++
+					}
+				}
 				if numArgs != callee.NumParameters {
 					if callee.VarArgs {
 						v.err = fmt.Errorf(
@@ -770,6 +786,7 @@ func (v *VM) run() {
 				NumLocals:     fn.NumLocals,
 				NumParameters: fn.NumParameters,
 				VarArgs:       fn.VarArgs,
+				AcceptFewer:   fn.AcceptFewer,
 				SourceMap:     fn.SourceMap,
 				Free:          free,
 			}
@@ -867,6 +884,44 @@ func (v *VM) run() {
 			val := iterator.(Iterator).Value()
 			v.stack[v.sp] = val
 			v.sp++
+		case parser.OpDup:
+			v.stack[v.sp] = v.stack[v.sp-1]
+			v.sp++
+		case parser.OpIndexOrMissing:
+			v.ip++
+			mode := int(v.curInsts[v.ip])
+			index := v.stack[v.sp-1]
+			left := v.stack[v.sp-2]
+			v.sp -= 2
+			val, err := destructureIndex(left, index, mode == parser.DestructureMap)
+			if err != nil {
+				v.err = err
+				return
+			}
+			v.stack[v.sp] = val
+			v.sp++
+		case parser.OpJumpIfNotMissing:
+			v.ip += 4
+			if v.stack[v.sp-1] != missingValue {
+				pos := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8 | int(v.curInsts[v.ip-2])<<16 | int(v.curInsts[v.ip-3])<<24
+				v.ip = pos - 1
+			} else {
+				v.sp--
+			}
+		case parser.OpArrayTail:
+			v.ip += 2
+			start := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
+			arr, err := destructureTail(v.stack[v.sp-1], start)
+			if err != nil {
+				v.err = err
+				return
+			}
+			v.allocs--
+			if v.allocs == 0 {
+				v.err = ErrObjectAllocLimit
+				return
+			}
+			v.stack[v.sp-1] = arr
 		case parser.OpSuspend:
 			return
 		default:

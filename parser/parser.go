@@ -92,18 +92,20 @@ func (p ErrorList) Err() error {
 // Parser parses the Tengo source files. It's based on Go's parser
 // implementation.
 type Parser struct {
-	file      *SourceFile
-	errors    ErrorList
-	scanner   *Scanner
-	pos       Pos
-	token     token.Token
-	tokenLit  string
-	exprLevel int // < 0: in control clause, >= 0: in expression
-	syncPos   Pos // last sync position
-	syncCount int // number of advance calls without progress
-	trace     bool
-	indent    int
-	traceOut  io.Writer
+	file        *SourceFile
+	errors      ErrorList
+	scanner     *Scanner
+	pos         Pos
+	token       token.Token
+	tokenLit    string
+	exprLevel   int // < 0: in control clause, >= 0: in expression
+	syncPos     Pos // last sync position
+	syncCount   int // number of advance calls without progress
+	trace       bool
+	indent      int
+	traceOut    io.Writer
+	speculative bool
+	specErrors  ErrorList
 }
 
 // NewParser creates a Parser.
@@ -640,40 +642,6 @@ func (p *Parser) parseIdent() *Ident {
 	}
 }
 
-func (p *Parser) parseIdentList() *IdentList {
-	if p.trace {
-		defer untracep(tracep(p, "IdentList"))
-	}
-
-	var params []*Ident
-	lparen := p.expect(token.LParen)
-	isVarArgs := false
-	if p.token != token.RParen {
-		if p.token == token.Ellipsis {
-			isVarArgs = true
-			p.next()
-		}
-
-		params = append(params, p.parseIdent())
-		for !isVarArgs && p.token == token.Comma {
-			p.next()
-			if p.token == token.Ellipsis {
-				isVarArgs = true
-				p.next()
-			}
-			params = append(params, p.parseIdent())
-		}
-	}
-
-	rparen := p.expect(token.RParen)
-	return &IdentList{
-		LParen:  lparen,
-		RParen:  rparen,
-		VarArgs: isVarArgs,
-		List:    params,
-	}
-}
-
 func (p *Parser) parseStmt() (stmt Stmt) {
 	if p.trace {
 		defer untracep(tracep(p, "Statement"))
@@ -901,6 +869,9 @@ func (p *Parser) makeExpr(s Stmt, want string) Expr {
 	if _, isAss := s.(*AssignStmt); isAss {
 		found = "assignment"
 	}
+	if _, isDes := s.(*DestructureStmt); isDes {
+		found = "destructuring assignment"
+	}
 	p.error(s.Pos(), fmt.Sprintf("expected %s, found %s", want, found))
 	return &BadExpr{From: s.Pos(), To: p.safePos(s.End())}
 }
@@ -942,6 +913,15 @@ func (p *Parser) parseExportStmt() Stmt {
 func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 	if p.trace {
 		defer untracep(tracep(p, "SimpleStmt"))
+	}
+
+	// for-init is parsed with forIn set, before the parser knows whether
+	// the clause is `for x in y` or `for init; cond; post`. Try a pattern
+	// anyway; anything that is not `:=` or `=` is restored.
+	if p.token == token.LBrack || p.token == token.LBrace {
+		if stmt, ok := p.tryParseDestructure(); ok {
+			return stmt
+		}
 	}
 
 	x := p.parseExprList()
@@ -1130,6 +1110,17 @@ func (p *Parser) advance(to map[token.Token]bool) {
 
 func (p *Parser) error(pos Pos, msg string) {
 	filePos := p.file.Position(pos)
+	if p.speculative {
+		n := len(p.specErrors)
+		if n > 0 && p.specErrors[n-1].Pos.Line == filePos.Line {
+			return
+		}
+		if n > 10 {
+			return
+		}
+		p.specErrors.Add(filePos, msg)
+		return
+	}
 
 	n := len(p.errors)
 	if n > 0 && p.errors[n-1].Pos.Line == filePos.Line {

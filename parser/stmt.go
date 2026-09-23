@@ -44,6 +44,48 @@ func (s *AssignStmt) String() string {
 		" " + strings.Join(rhs, ", ")
 }
 
+// DestructureStmt represents a destructuring declaration.
+// Only := introduces bindings; = is rejected by the compiler.
+type DestructureStmt struct {
+	Pattern  *Pattern
+	RHS      []Expr
+	Token    token.Token
+	TokenPos Pos
+}
+
+func (s *DestructureStmt) stmtNode() {}
+
+// Pos returns the position of first character belonging to the node.
+func (s *DestructureStmt) Pos() Pos {
+	if s.Pattern != nil {
+		return s.Pattern.Pos()
+	}
+	return s.TokenPos
+}
+
+// End returns the position of first character immediately after the node.
+func (s *DestructureStmt) End() Pos {
+	if n := len(s.RHS); n > 0 && s.RHS[n-1] != nil {
+		return s.RHS[n-1].End()
+	}
+	if s.Pattern != nil {
+		return s.Pattern.End()
+	}
+	return s.TokenPos
+}
+
+func (s *DestructureStmt) String() string {
+	var rhs []string
+	for _, e := range s.RHS {
+		rhs = append(rhs, e.String())
+	}
+	pat := nullRep
+	if s.Pattern != nil {
+		pat = s.Pattern.String()
+	}
+	return pat + " " + s.Token.String() + " " + strings.Join(rhs, ", ")
+}
+
 // BadStmt represents a bad statement.
 type BadStmt struct {
 	From Pos

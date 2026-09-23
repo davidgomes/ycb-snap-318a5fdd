@@ -312,6 +312,10 @@ func (c *Compiler) Compile(node parser.Node) error {
 		if err != nil {
 			return err
 		}
+	case *parser.DestructureStmt:
+		if err := c.compileDestructure(node); err != nil {
+			return err
+		}
 	case *parser.Ident:
 		symbol, _, ok := c.symbolTable.Resolve(node.Name, false)
 		if !ok {
@@ -389,11 +393,9 @@ func (c *Compiler) Compile(node parser.Node) error {
 	case *parser.FuncLit:
 		c.enterScope()
 
-		for _, p := range node.Type.Params.List {
-			s := c.symbolTable.Define(p.Name)
-
-			// function arguments is not assigned directly.
-			s.LocalAssigned = true
+		numParams, acceptFewer, perr := c.prepareFuncParams(node)
+		if perr != nil {
+			return perr
 		}
 
 		if err := c.Compile(node.Body); err != nil {
@@ -463,8 +465,9 @@ func (c *Compiler) Compile(node parser.Node) error {
 		compiledFunction := &CompiledFunction{
 			Instructions:  instructions,
 			NumLocals:     numLocals,
-			NumParameters: len(node.Type.Params.List),
+			NumParameters: numParams,
 			VarArgs:       node.Type.Params.VarArgs,
+			AcceptFewer:   acceptFewer,
 			SourceMap:     sourceMap,
 		}
 		if len(freeSymbols) > 0 {
@@ -1199,7 +1202,8 @@ func (c *Compiler) optimizeFunc(node parser.Node) {
 		func(pos int, opcode parser.Opcode, operands []int) bool {
 			switch opcode {
 			case parser.OpJump, parser.OpJumpFalsy,
-				parser.OpAndJump, parser.OpOrJump:
+				parser.OpAndJump, parser.OpOrJump,
+				parser.OpJumpIfNotMissing:
 				dsts[operands[0]] = true
 			}
 			return true
@@ -1240,7 +1244,7 @@ func (c *Compiler) optimizeFunc(node parser.Node) {
 		func(pos int, opcode parser.Opcode, operands []int) bool {
 			switch opcode {
 			case parser.OpJump, parser.OpJumpFalsy, parser.OpAndJump,
-				parser.OpOrJump:
+				parser.OpOrJump, parser.OpJumpIfNotMissing:
 				newDst, ok := posMap[operands[0]]
 				if ok {
 					copy(newInsts[pos:],

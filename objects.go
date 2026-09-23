@@ -23,6 +23,24 @@ var (
 	UndefinedValue Object = &Undefined{}
 )
 
+// missing is an internal sentinel meaning a destructure position or key was
+// absent. It is distinct from undefined so defaults do not replace an
+// explicit undefined value. User code never observes it.
+type missing struct {
+	ObjectImpl
+}
+
+func (o *missing) TypeName() string { return "missing" }
+func (o *missing) String() string   { return "<missing>" }
+func (o *missing) IsFalsy() bool    { return true }
+func (o *missing) Copy() Object     { return o }
+func (o *missing) Equals(x Object) bool {
+	_, ok := x.(*missing)
+	return ok
+}
+
+var missingValue Object = &missing{}
+
 // Object represents an object in the VM.
 type Object interface {
 	// TypeName should return the name of the type.
@@ -574,8 +592,11 @@ type CompiledFunction struct {
 	NumLocals     int // number of local variables (including function parameters)
 	NumParameters int
 	VarArgs       bool
-	SourceMap     map[int]parser.Pos
-	Free          []*ObjectPtr
+	// AcceptFewer allows calls with fewer arguments. Omitted arguments are
+	// the internal missing value so parameter defaults can run.
+	AcceptFewer bool
+	SourceMap   map[int]parser.Pos
+	Free        []*ObjectPtr
 }
 
 // TypeName returns the name of the type.
@@ -600,6 +621,7 @@ func (o *CompiledFunction) Copy() Object {
 		NumLocals:     o.NumLocals,
 		NumParameters: o.NumParameters,
 		VarArgs:       o.VarArgs,
+		AcceptFewer:   o.AcceptFewer,
 		Free:          append([]*ObjectPtr{}, o.Free...), // DO NOT Copy() of elements; these are variable pointers
 	}
 }
