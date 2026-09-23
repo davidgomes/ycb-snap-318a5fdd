@@ -1,10 +1,12 @@
+import type Document from '../nodes/document/Document.js';
 import type Element from '../nodes/element/Element.js';
 
 export default interface IIntersectionObserverInit {
 	/**
 	 * A specific ancestor of the target element against which the intersection is to be calculated.
+	 * `null` uses the viewport. A document uses that document's viewport.
 	 */
-	root?: Element;
+	root?: Element | Document | null;
 	/**
 	 * A string which specifies a specific property to observe on the intersection target.
 	 */
