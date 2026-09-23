@@ -1,5 +1,6 @@
 //! Types used for selecting elements with css selectors.
 use std::{
+    collections::HashSet,
     hash::{DefaultHasher, Hash as _, Hasher},
     marker::PhantomData,
     ops::Deref,
@@ -18,7 +19,9 @@ use precomputed_hash::PrecomputedHash;
 use selectors::{
     context::SelectorCaches,
     matching,
-    parser::{ParseRelative, SelectorParseErrorKind},
+    parser::{
+        Combinator, Component, NthSelectorData, NthType, ParseRelative, SelectorParseErrorKind,
+    },
     SelectorList,
 };
 
@@ -221,6 +224,53 @@ pub struct Select<'input, 'arena> {
 /// A parsed selector.
 pub struct Selector(selectors::parser::SelectorList<SelectorImpl>);
 
+bitflags! {
+    /// What a selector relies on for it to match an element, as reported by
+    /// [`Selector::dependencies`].
+    ///
+    /// Changes to the document that keep each of these intact won't change whether the
+    /// selector matches.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub struct Dependency: u16 {
+        /// The element is the subject of the selector, or the anchor matched by one of the
+        /// compounds to the subject's left.
+        const MATCHED = 1 << 0;
+        /// The element's attributes, such as for `.a`, `#a`, or `[a]`.
+        const ATTRIBUTES = 1 << 1;
+        /// The element's parent, such as for the `b` of `a > b`, or for `:root`.
+        const PARENT = 1 << 2;
+        /// An ancestor of the element, such as for the `b` of `a b`.
+        const ANCESTOR = 1 << 3;
+        /// A preceding sibling of the element, such as for the `b` of `a + b` or `a ~ b`.
+        const PREVIOUS_SIBLING = 1 << 4;
+        /// Every preceding sibling of the element, such as for `b:not(a + b)`.
+        const PREVIOUS_SIBLINGS = 1 << 5;
+        /// The element's following siblings and their descendants, such as for `a:has(~ b)`.
+        const NEXT_SIBLINGS = 1 << 6;
+        /// How many sibling elements precede the element, such as for `:first-child`.
+        const INDEX = 1 << 7;
+        /// How many sibling elements of the same type precede the element, such as for
+        /// `:first-of-type`.
+        const INDEX_OF_TYPE = 1 << 8;
+        /// How many sibling elements follow the element, such as for `:last-child`.
+        const INDEX_FROM_END = 1 << 9;
+        /// How many sibling elements of the same type follow the element, such as for
+        /// `:last-of-type`.
+        const INDEX_OF_TYPE_FROM_END = 1 << 10;
+        /// The element's child nodes, such as for `:empty`.
+        const CHILDREN = 1 << 11;
+        /// The element's descendants, such as for `:has(a)`.
+        const DESCENDANTS = 1 << 12;
+    }
+}
+
+impl Dependency {
+    /// Returns whether anything besides the element's own name and attributes is relied on.
+    pub fn is_structural(self) -> bool {
+        !(Self::MATCHED | Self::ATTRIBUTES).contains(self)
+    }
+}
+
 /// A parser for selectors.
 pub struct Parser;
 
@@ -309,6 +359,197 @@ impl<'input, 'arena> Selector {
     pub fn matches_naive(&self, element: &SelectElement<'input, 'arena>) -> bool {
         self.matches_with_scope_and_cache(element, None, &mut SelectorCaches::default())
     }
+
+    /// Returns whether the selector matches an element, reporting each element the match relies
+    /// on to `dependency` along with how it's relied on.
+    ///
+    /// For each complex selector in the list that matches, the element and the nearest anchor
+    /// matching each compound to its left are reported with [`Dependency::MATCHED`]. Elements
+    /// that could otherwise match within a negation, such as the parent for `b:not(a > b)`, are
+    /// reported with what the negation relies on.
+    pub fn dependencies(
+        &self,
+        element: &Element<'input, 'arena>,
+        mut dependency: impl FnMut(&Element<'input, 'arena>, Dependency),
+    ) -> bool {
+        let selector_caches = &mut SelectorCaches::default();
+        let mut context = matching::MatchingContext::new(
+            matching::MatchingMode::Normal,
+            None,
+            selector_caches,
+            matching::QuirksMode::NoQuirks,
+            matching::NeedsSelectorFlags::No,
+            matching::MatchingForInvalidation::No,
+        );
+        let element = SelectElement::new(element.clone());
+        let mut is_match = false;
+        for selector in self.0.slice() {
+            if matching::matches_selector(selector, 0, None, &element, &mut context) {
+                is_match = true;
+                match_dependencies(selector, &element, &mut context, &mut dependency);
+            }
+        }
+        is_match
+    }
+}
+
+fn match_dependencies<'input, 'arena>(
+    selector: &selectors::parser::Selector<SelectorImpl>,
+    element: &SelectElement<'input, 'arena>,
+    context: &mut matching::MatchingContext<SelectorImpl>,
+    dependency: &mut dyn FnMut(&Element<'input, 'arena>, Dependency),
+) {
+    let components = selector.iter_raw_match_order().as_slice();
+    let mut element = element.clone();
+    let mut offset = 0;
+    loop {
+        let end = components[offset..]
+            .iter()
+            .position(Component::is_combinator)
+            .map_or(components.len(), |index| offset + index);
+        let combinator = (end < components.len()).then(|| selector.combinator_at_match_order(end));
+        let flags = Dependency::MATCHED
+            | compound_dependencies(&components[offset..end], &element, dependency)
+            | combinator.map_or(Dependency::empty(), |c| combinator_dependency(c, true));
+        dependency(&element.element, flags);
+
+        let Some(combinator) = combinator else {
+            return;
+        };
+        offset = end + 1;
+        // Whether the compounds to the left of a combinator match never depends on the elements
+        // to its right, so the nearest anchor is enough to satisfy the rest of the selector.
+        let Some(anchor) = related_elements(&element, combinator)
+            .find(|anchor| matching::matches_selector(selector, offset, None, anchor, context))
+        else {
+            return;
+        };
+        element = anchor;
+    }
+}
+
+/// Reports what a selector relies on for each element it could match against, for when there's
+/// no match to take anchors from, such as within `:not()`.
+fn candidate_dependencies<'input, 'arena>(
+    selector: &selectors::parser::Selector<SelectorImpl>,
+    element: &SelectElement<'input, 'arena>,
+    dependency: &mut dyn FnMut(&Element<'input, 'arena>, Dependency),
+) {
+    let mut iter = selector.iter();
+    let mut candidates = vec![element.clone()];
+    loop {
+        let compound: Vec<_> = iter.by_ref().collect();
+        let combinator = iter.next_sequence();
+        for candidate in &candidates {
+            let flags = compound_dependencies(compound.iter().copied(), candidate, dependency)
+                | combinator.map_or(Dependency::empty(), |c| combinator_dependency(c, false));
+            if !flags.is_empty() {
+                dependency(&candidate.element, flags);
+            }
+        }
+
+        let Some(combinator) = combinator else {
+            return;
+        };
+        let mut seen = HashSet::new();
+        candidates = candidates
+            .iter()
+            .flat_map(|candidate| related_elements(candidate, combinator))
+            .filter(|candidate| seen.insert(candidate.element.id()))
+            .collect();
+    }
+}
+
+fn compound_dependencies<'a, 'input, 'arena>(
+    compound: impl IntoIterator<Item = &'a Component<SelectorImpl>>,
+    element: &SelectElement<'input, 'arena>,
+    dependency: &mut dyn FnMut(&Element<'input, 'arena>, Dependency),
+) -> Dependency {
+    compound
+        .into_iter()
+        .fold(Dependency::empty(), |flags, component| {
+            flags
+                | match component {
+                    Component::LocalName(_)
+                    | Component::ExplicitUniversalType
+                    | Component::ExplicitAnyNamespace
+                    | Component::ExplicitNoNamespace
+                    | Component::DefaultNamespace(_)
+                    | Component::Namespace(..) => Dependency::empty(),
+                    Component::ID(_)
+                    | Component::Class(_)
+                    | Component::AttributeInNoNamespaceExists { .. }
+                    | Component::AttributeInNoNamespace { .. }
+                    | Component::AttributeOther(_)
+                    | Component::NonTSPseudoClass(_) => Dependency::ATTRIBUTES,
+                    Component::Root | Component::Scope | Component::ImplicitScope => {
+                        Dependency::PARENT
+                    }
+                    Component::Empty => Dependency::CHILDREN,
+                    Component::Nth(nth) => nth_dependency(nth),
+                    Component::Negation(list) | Component::Is(list) | Component::Where(list) => {
+                        for selector in list.slice() {
+                            candidate_dependencies(selector, element, dependency);
+                        }
+                        Dependency::empty()
+                    }
+                    _ => Dependency::all(),
+                }
+        })
+}
+
+fn nth_dependency(nth: &NthSelectorData) -> Dependency {
+    match nth.ty {
+        NthType::Child => Dependency::INDEX,
+        NthType::LastChild => Dependency::INDEX_FROM_END,
+        NthType::OnlyChild => Dependency::INDEX | Dependency::INDEX_FROM_END,
+        NthType::OfType => Dependency::INDEX_OF_TYPE,
+        NthType::LastOfType => Dependency::INDEX_OF_TYPE_FROM_END,
+        NthType::OnlyOfType => Dependency::INDEX_OF_TYPE | Dependency::INDEX_OF_TYPE_FROM_END,
+    }
+}
+
+/// Returns what the element to the right of `combinator` relies on, where `is_anchored` is
+/// whether the element to its left is reported as the one it relates to.
+fn combinator_dependency(combinator: Combinator, is_anchored: bool) -> Dependency {
+    match combinator {
+        Combinator::Child => Dependency::PARENT,
+        Combinator::Descendant => Dependency::ANCESTOR,
+        Combinator::NextSibling | Combinator::LaterSibling if is_anchored => {
+            Dependency::PREVIOUS_SIBLING
+        }
+        Combinator::NextSibling | Combinator::LaterSibling => Dependency::PREVIOUS_SIBLINGS,
+        Combinator::PseudoElement | Combinator::SlotAssignment | Combinator::Part => {
+            Dependency::all()
+        }
+    }
+}
+
+/// Returns the elements that the compound to the left of `combinator` may match, nearest first.
+fn related_elements<'input, 'arena>(
+    element: &SelectElement<'input, 'arena>,
+    combinator: Combinator,
+) -> impl Iterator<Item = SelectElement<'input, 'arena>> {
+    type Step<'input, 'arena> =
+        fn(&SelectElement<'input, 'arena>) -> Option<SelectElement<'input, 'arena>>;
+    let parent: Step = <SelectElement as selectors::Element>::parent_element;
+    let previous: Step = <SelectElement as selectors::Element>::prev_sibling_element;
+    let (step, is_repeated): (Step, bool) = match combinator {
+        Combinator::Child => (parent, false),
+        Combinator::Descendant => (parent, true),
+        Combinator::NextSibling => (previous, false),
+        Combinator::LaterSibling => (previous, true),
+        Combinator::PseudoElement | Combinator::SlotAssignment | Combinator::Part => {
+            (|_| None, false)
+        }
+    };
+    std::iter::successors(step(element), move |element| {
+        if is_repeated {
+            step(element)
+        } else {
+            None
+        }
+    })
 }
 
 impl<'i> selectors::parser::Parser<'i> for Parser {

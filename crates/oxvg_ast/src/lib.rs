@@ -28,7 +28,7 @@
 //! When you enable the [`serialize`] feature flag, you can use the [`serialize::Node`] method on
 //! a [`node::Node`] or [`element::Element`] in conjunction with [`xmlwriter::XmlWriter`] to
 //! write an SVG document to a buffer or string.
-#[cfg(feature = "visitor")]
+#[cfg(any(feature = "visitor", feature = "selectors"))]
 #[macro_use]
 extern crate bitflags;
 

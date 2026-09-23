@@ -32,6 +32,7 @@ serialize = ["dep:oxvg_serialize", "oxvg_collections/serialize"]
 # Includes CSS selection for elements
 selectors = [
   "serialize",
+  "dep:bitflags",
   "dep:selectors",
   "dep:precomputed-hash",
   "dep:servo_arc",
