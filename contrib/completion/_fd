@@ -88,7 +88,7 @@ _fd() {
     '(long-listing)'{-0,--print0}'[separate search results by the null character]'
 
     + '(long-listing)' # long-listing output
-    '(abs-path null-sep max-results exec-cmds)'{-l,--list-details}'[use a long listing format with file metadata]'
+    '(abs-path null-sep max-results exec-cmds sort dirs-first files-first)'{-l,--list-details}'[use a long listing format with file metadata]'
 
     + '(max-results)' # max number of results
     '(long-listing exec-cmds)--max-results=[limit number of search results to given count and quit]:count'
@@ -144,9 +144,23 @@ _fd() {
     + '(threads)'
     {-j+,--threads=}'[set the number of threads for searching and executing]:number of threads'
 
+    + '(sort)'
+    '(long-listing exec-cmds)*--sort=[sort results by a field (repeatable)]:field:(path name extension size modified created accessed depth type name-length path-length random)'
+    '(long-listing exec-cmds)--reverse[reverse the final sorted order]'
+    '(long-listing exec-cmds)--sort-case-sensitive[compare name, path, and extension case-sensitively]'
+    '(long-listing exec-cmds)--sort-missing-last[place missing optional sort values last]'
+    '(long-listing exec-cmds)--sort-natural[compare digit runs in name, path, and extension numerically]'
+    '(long-listing exec-cmds)--sort-seed=[fixed unsigned 64-bit seed for --sort random]:seed'
+
+    + '(dirs-first)'
+    '(long-listing exec-cmds files-first)--dirs-first[list directories before other results]'
+
+    + '(files-first)'
+    '(long-listing exec-cmds dirs-first)--files-first[list regular files before other results]'
+
     + '(exec-cmds)' # execute command
-    '(long-listing max-results)'{-x+,--exec=}'[execute command for each search result]:command: _command_names -e:*\;::program arguments: _normal'
-    '(long-listing max-results)'{-X+,--exec-batch=}'[execute command for all search results at once]:command: _command_names -e:*\;::program arguments: _normal'
+    '(long-listing max-results sort dirs-first files-first)'{-x+,--exec=}'[execute command for each search result]:command: _command_names -e:*\;::program arguments: _normal'
+    '(long-listing max-results sort dirs-first files-first)'{-X+,--exec-batch=}'[execute command for all search results at once]:command: _command_names -e:*\;::program arguments: _normal'
     '(long-listing max-results)--batch-size=[max number of args for each -X call]:size'
 
     + other

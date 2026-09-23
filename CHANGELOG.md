@@ -1,3 +1,9 @@
+# Unreleased
+
+## Features
+
+- Add repeatable `--sort <field>` for deterministic multi-key sorting of search results, plus `--reverse`, `--dirs-first`, `--files-first`, `--sort-case-sensitive`, `--sort-missing-last`, `--sort-natural`, and `--sort-seed`.
+
 # 10.4.2
 
 ## Bugfixes

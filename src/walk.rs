@@ -22,6 +22,7 @@ use crate::exec;
 use crate::exit_codes::{ExitCode, merge_exitcodes};
 use crate::filesystem;
 use crate::output;
+use crate::sort;
 
 /// The receiver thread can either be buffering results or directly streaming to the console.
 #[derive(PartialEq)]
@@ -182,6 +183,10 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
 
     /// Receive the next worker result.
     fn recv(&self) -> Result<Batch, RecvTimeoutError> {
+        if self.config.has_sort() {
+            // Sorting needs every match, so do not switch to streaming on a timer.
+            return self.rx.recv().map_err(|_| RecvTimeoutError::Disconnected);
+        }
         match self.mode {
             ReceiverMode::Buffering => {
                 // Wait at most until we should switch to streaming
@@ -205,23 +210,29 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                                 return Err(ExitCode::HasResults(true));
                             }
 
-                            match self.mode {
-                                ReceiverMode::Buffering => {
-                                    self.buffer.push(dir_entry);
-                                    if self.buffer.len() > MAX_BUFFER_LENGTH {
-                                        self.stream()?;
+                            if self.config.has_sort() {
+                                // Keep the whole set. `--max-results` is applied
+                                // after the entries have been ordered.
+                                self.buffer.push(dir_entry);
+                            } else {
+                                match self.mode {
+                                    ReceiverMode::Buffering => {
+                                        self.buffer.push(dir_entry);
+                                        if self.buffer.len() > MAX_BUFFER_LENGTH {
+                                            self.stream()?;
+                                        }
+                                    }
+                                    ReceiverMode::Streaming => {
+                                        self.print(&dir_entry)?;
                                     }
                                 }
-                                ReceiverMode::Streaming => {
-                                    self.print(&dir_entry)?;
-                                }
-                            }
 
-                            self.num_results += 1;
-                            if let Some(max_results) = self.config.max_results
-                                && self.num_results >= max_results
-                            {
-                                return self.stop();
+                                self.num_results += 1;
+                                if let Some(max_results) = self.config.max_results
+                                    && self.num_results >= max_results
+                                {
+                                    return self.stop();
+                                }
                             }
                         }
                         WorkerResult::Error(err) => {
@@ -280,7 +291,20 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
 
     /// Stop looping.
     fn stop(&mut self) -> Result<(), ExitCode> {
-        if self.mode == ReceiverMode::Buffering {
+        if self.config.has_sort() {
+            if self.interrupt_flag.load(Ordering::Relaxed) {
+                return Err(ExitCode::KilledBySigint);
+            }
+            sort::sort_entries(&mut self.buffer, self.config);
+            if let Some(limit) = self.config.max_results {
+                self.buffer.truncate(limit);
+            }
+            let buffer = mem::take(&mut self.buffer);
+            for entry in &buffer {
+                self.print(entry)?;
+            }
+            self.flush()?;
+        } else if self.mode == ReceiverMode::Buffering {
             self.buffer.sort();
             self.stream()?;
         }

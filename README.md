@@ -23,6 +23,7 @@ While it does not aim to support all of `find`'s powerful functionality, it prov
   case-sensitive if the pattern contains an uppercase
   character[\*](http://vimdoc.sourceforge.net/htmldoc/options.html#'smartcase').
 * Ignores hidden directories and files, by default.
+* Deterministic multi-key sorting with repeatable `--sort`.
 * Ignores patterns from your `.gitignore`, by default.
 * The command name is *50%* shorter[\*](https://github.com/ggreer/the_silver_searcher) than
   `find` :-).

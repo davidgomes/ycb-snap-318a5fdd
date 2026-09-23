@@ -2758,3 +2758,840 @@ fn test_ignore_contain_precedence_over_root_check() {
     let expected = "";
     te.assert_output(&["--ignore-contain=CACHEDIR.TAG", "."], expected);
 }
+
+fn ordered_lines(te: &TestEnv, args: &[&str]) -> Vec<String> {
+    let output = te.assert_success_and_get_output(".", args);
+    String::from_utf8_lossy(&output.stdout)
+        .replace(std::path::MAIN_SEPARATOR, "/")
+        .lines()
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn assert_ordered(te: &TestEnv, args: &[&str], expected: &[&str]) {
+    let actual = ordered_lines(te, args);
+    assert_eq!(
+        actual,
+        expected,
+        "fd {} produced the wrong order",
+        args.join(" ")
+    );
+}
+
+#[test]
+fn test_sort_help_and_rejected_flags() {
+    let te = TestEnv::new(&[], &[]);
+    let output = te.assert_success_and_get_output(".", &["--help"]);
+    let help = String::from_utf8_lossy(&output.stdout);
+    for needle in [
+        "--sort <field>",
+        "--reverse",
+        "--dirs-first",
+        "--files-first",
+        "--sort-case-sensitive",
+        "--sort-missing-last",
+        "--sort-natural",
+        "--sort-seed <n>",
+        "name-length",
+        "path-length",
+    ] {
+        assert!(help.contains(needle), "help is missing {needle}");
+    }
+
+    for args in [
+        &["--reverse"][..],
+        &["--dirs-first"],
+        &["--files-first"],
+        &["--sort-case-sensitive"],
+        &["--sort-missing-last"],
+        &["--sort-natural"],
+        &["--sort-seed", "1"],
+        &["--sort", "name", "--dirs-first", "--files-first"],
+        &["--sort", "nope"],
+        &["--sort", "name", "--exec", "echo"],
+        &["--sort", "name", "--exec-batch", "echo"],
+        &["--sort", "name", "--list-details"],
+        &["--sort", "name", "--sort-seed", "-1"],
+    ] {
+        te.assert_failure(args);
+    }
+}
+
+#[test]
+fn test_sort_name_path_extensions_and_ties() {
+    let te = TestEnv::new(
+        &[
+            "ord",
+            "names/sub",
+            "fold/a",
+            "fold/b",
+            "ext",
+            "mk/z",
+            "mk/a",
+            "mk/m",
+            "r1",
+            "r2",
+        ],
+        &[
+            "ord/b",
+            "ord/a",
+            "names/b",
+            "names/a",
+            "names/c",
+            "names/sub/a",
+            "fold/b/File",
+            "fold/a/file",
+            "ext/a.mp10",
+            "ext/a.mp9",
+            "ext/b.txt",
+            "ext/c.TXT",
+            "ext/noext",
+            "mk/z/a",
+            "mk/a/z",
+            "mk/m/b",
+            "r1/b.txt",
+            "r1/a.txt",
+            "r2/c.txt",
+            "r2/a.txt",
+            "other.txt",
+        ],
+    );
+    create_file_with_size(te.test_root().join("mk/z/a"), 10);
+    create_file_with_size(te.test_root().join("mk/a/z"), 10);
+    create_file_with_size(te.test_root().join("mk/m/b"), 3);
+
+    assert_ordered(
+        &te,
+        &[".", "names", "--sort", "name"],
+        &["names/a", "names/sub/a", "names/b", "names/c", "names/sub/"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "names", "--sort", "name", "--threads", "1"],
+        &["names/a", "names/sub/a", "names/b", "names/c", "names/sub/"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "names", "--sort", "name", "--threads", "8"],
+        &["names/a", "names/sub/a", "names/b", "names/c", "names/sub/"],
+    );
+
+    // Case-insensitive names tie; the raw path orders `fold/a` before `fold/b`.
+    assert_ordered(
+        &te,
+        &[".", "fold", "-t", "f", "--sort", "name"],
+        &["fold/a/file", "fold/b/File"],
+    );
+    // Case-sensitive name order is `File` then `file`, so the directory no longer decides.
+    assert_ordered(
+        &te,
+        &[
+            ".",
+            "fold",
+            "-t",
+            "f",
+            "--sort",
+            "name",
+            "--sort-case-sensitive",
+        ],
+        &["fold/b/File", "fold/a/file"],
+    );
+
+    assert_ordered(
+        &te,
+        &[".", "ext", "--sort", "extension"],
+        &[
+            "ext/noext",
+            "ext/a.mp10",
+            "ext/a.mp9",
+            "ext/b.txt",
+            "ext/c.TXT",
+        ],
+    );
+    assert_ordered(
+        &te,
+        &[
+            ".",
+            "ext",
+            "--sort",
+            "extension",
+            "--sort-natural",
+            "--sort-missing-last",
+        ],
+        &[
+            "ext/a.mp9",
+            "ext/a.mp10",
+            "ext/b.txt",
+            "ext/c.TXT",
+            "ext/noext",
+        ],
+    );
+    assert_ordered(
+        &te,
+        &[".", "ext", "--sort", "extension", "--sort-case-sensitive"],
+        &[
+            "ext/noext",
+            "ext/c.TXT",
+            "ext/a.mp10",
+            "ext/a.mp9",
+            "ext/b.txt",
+        ],
+    );
+
+    assert_ordered(
+        &te,
+        &[".", "mk", "-t", "f", "--sort", "size"],
+        &["mk/m/b", "mk/a/z", "mk/z/a"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "mk", "-t", "f", "--sort", "size", "--sort", "name"],
+        &["mk/m/b", "mk/z/a", "mk/a/z"],
+    );
+
+    assert_ordered(
+        &te,
+        &[".", "r1", "r2", "--sort", "name", "-t", "f"],
+        &["r1/a.txt", "r2/a.txt", "r1/b.txt", "r2/c.txt"],
+    );
+
+    assert_ordered(
+        &te,
+        &[".", "ord", "--sort", "name", "--format", "{/}"],
+        &["a", "b"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "ord", "--sort", "name", "--path-separator", "|"],
+        &["ord|a", "ord|b"],
+    );
+    let nulled = te.assert_success_and_get_output(".", &[".", "ord", "--sort", "name", "-0"]);
+    assert_eq!(nulled.stdout, b"ord/a\0ord/b\0");
+
+    let quiet = te.assert_success_and_get_output(".", &[".", "ord", "--sort", "name", "-q"]);
+    assert!(quiet.stdout.is_empty());
+    te.assert_failure(&["no-such-sort-pattern-xyz", "--sort", "name", "-q"]);
+}
+
+#[test]
+fn test_sort_natural_case_length_and_depth() {
+    let te = TestEnv::new(
+        &[
+            "nat/a",
+            "nat/b",
+            "pnat/dir10",
+            "pnat/dir2",
+            "pnat/dir9",
+            "len",
+            "ulen",
+            "plen/x",
+            "dep/x/y",
+        ],
+        &[
+            "nat/file20",
+            "nat/file9",
+            "nat/file10",
+            "nat/file007",
+            "nat/file7",
+            "nat/File9",
+            "nat/FILE20",
+            "nat/a/file7",
+            "nat/b/file007",
+            "pnat/dir10/a",
+            "pnat/dir2/a",
+            "pnat/dir9/b",
+            "len/bb",
+            "len/a",
+            "len/dd",
+            "len/ccc",
+            "ulen/abc",
+            "ulen/z",
+            "ulen/éé",
+            "plen/a",
+            "plen/bb",
+            "plen/x/y",
+            "dep/a",
+            "dep/x/y/z",
+        ],
+    );
+
+    assert_ordered(
+        &te,
+        &[
+            "^file",
+            "nat",
+            "--case-sensitive",
+            "--sort",
+            "name",
+            "--sort-natural",
+            "-t",
+            "f",
+        ],
+        &[
+            "nat/a/file7",
+            "nat/b/file007",
+            "nat/file007",
+            "nat/file7",
+            "nat/file9",
+            "nat/file10",
+            "nat/file20",
+        ],
+    );
+    // Numerically equal names tie, then the path orders `nat/a` before `nat/b`.
+    assert_ordered(
+        &te,
+        &[".", "nat/a", "nat/b", "--sort", "name", "--sort-natural"],
+        &["nat/a/file7", "nat/b/file007"],
+    );
+    assert_ordered(
+        &te,
+        &[
+            "^(File9|file10|FILE20)$",
+            "nat",
+            "--sort",
+            "name",
+            "--sort-natural",
+        ],
+        &["nat/File9", "nat/file10", "nat/FILE20"],
+    );
+    assert_ordered(
+        &te,
+        &[
+            "^(File9|file10|FILE20)$",
+            "nat",
+            "--sort",
+            "name",
+            "--sort-natural",
+            "--sort-case-sensitive",
+        ],
+        &["nat/FILE20", "nat/File9", "nat/file10"],
+    );
+    assert_ordered(
+        &te,
+        &[
+            "^file",
+            "nat",
+            "--case-sensitive",
+            "--sort",
+            "name",
+            "--sort-case-sensitive",
+            "-t",
+            "f",
+        ],
+        &[
+            "nat/b/file007",
+            "nat/file007",
+            "nat/file10",
+            "nat/file20",
+            "nat/a/file7",
+            "nat/file7",
+            "nat/file9",
+        ],
+    );
+
+    assert_ordered(
+        &te,
+        &[".", "pnat", "-t", "f", "--sort", "path"],
+        &["pnat/dir10/a", "pnat/dir2/a", "pnat/dir9/b"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "pnat", "-t", "f", "--sort", "path", "--sort-natural"],
+        &["pnat/dir2/a", "pnat/dir9/b", "pnat/dir10/a"],
+    );
+
+    assert_ordered(
+        &te,
+        &[".", "len", "--sort", "name-length"],
+        &["len/a", "len/bb", "len/dd", "len/ccc"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "ulen", "--sort", "name-length", "-t", "f"],
+        &["ulen/z", "ulen/éé", "ulen/abc"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "plen", "--sort", "path-length"],
+        &["plen/a", "plen/x/", "plen/bb", "plen/x/y"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "dep", "--sort", "depth"],
+        &["dep/a", "dep/x/", "dep/x/y/", "dep/x/y/z"],
+    );
+}
+
+#[test]
+fn test_sort_type_grouping_size_and_time() {
+    let mut te = TestEnv::new(
+        &["kind/dir", "sz/adir", "tim/dir", "mx"],
+        &[
+            "kind/file",
+            "sz/empty",
+            "sz/zeta",
+            "sz/large",
+            "tim/old",
+            "tim/mid",
+            "tim/new",
+            "mx/mfile",
+            "mx/afile",
+        ],
+    );
+    let root = te.test_root();
+    create_file_with_size(root.join("sz/empty"), 0);
+    create_file_with_size(root.join("sz/zeta"), 1);
+    create_file_with_size(root.join("sz/large"), 50);
+
+    filetime::set_file_mtime(
+        root.join("tim/old"),
+        filetime::FileTime::from_unix_time(1_000_000, 0),
+    )
+    .unwrap();
+    filetime::set_file_mtime(
+        root.join("tim/dir"),
+        filetime::FileTime::from_unix_time(1_500_000, 0),
+    )
+    .unwrap();
+    filetime::set_file_mtime(
+        root.join("tim/mid"),
+        filetime::FileTime::from_unix_time(2_000_000, 0),
+    )
+    .unwrap();
+    filetime::set_file_mtime(
+        root.join("tim/new"),
+        filetime::FileTime::from_unix_time(3_000_000, 0),
+    )
+    .unwrap();
+    for (name, secs) in [("old", 1_100_000), ("mid", 2_100_000), ("new", 3_100_000)] {
+        filetime::set_file_atime(
+            root.join("tim").join(name),
+            filetime::FileTime::from_unix_time(secs, 0),
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("file", root.join("kind/link")).unwrap();
+        te.create_broken_symlink("kind/broken").unwrap();
+        let fifo = root.join("kind/fifo");
+        let fifo_c =
+            std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(fifo.as_os_str()))
+                .unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o644) }, 0);
+        let sock_path = root.join("kind/sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+
+        std::os::unix::fs::symlink("large", root.join("sz/link")).unwrap();
+
+        assert_ordered(
+            &te,
+            &[".", "kind", "--sort", "type"],
+            &[
+                "kind/dir/",
+                "kind/broken",
+                "kind/link",
+                "kind/file",
+                "kind/fifo",
+                "kind/sock",
+            ],
+        );
+        assert_ordered(
+            &te,
+            &[".", "kind", "--sort", "name", "--dirs-first"],
+            &[
+                "kind/dir/",
+                "kind/broken",
+                "kind/fifo",
+                "kind/file",
+                "kind/link",
+                "kind/sock",
+            ],
+        );
+        assert_ordered(
+            &te,
+            &[".", "kind", "--sort", "name", "--files-first"],
+            &[
+                "kind/file",
+                "kind/broken",
+                "kind/dir/",
+                "kind/fifo",
+                "kind/link",
+                "kind/sock",
+            ],
+        );
+
+        assert_ordered(
+            &te,
+            &[".", "sz", "--sort", "size"],
+            &["sz/adir/", "sz/link", "sz/empty", "sz/zeta", "sz/large"],
+        );
+        // Keep the socket listener alive until the kind assertions above have run.
+        drop(_listener);
+    }
+    #[cfg(not(unix))]
+    {
+        assert_ordered(
+            &te,
+            &[".", "kind", "--sort", "type"],
+            &["kind/dir/", "kind/file"],
+        );
+        assert_ordered(
+            &te,
+            &[".", "sz", "--sort", "size"],
+            &["sz/adir/", "sz/empty", "sz/zeta", "sz/large"],
+        );
+    }
+
+    assert_ordered(
+        &te,
+        &[
+            ".",
+            "sz",
+            "--sort",
+            "size",
+            "--sort-missing-last",
+            "-t",
+            "f",
+        ],
+        &["sz/empty", "sz/zeta", "sz/large"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "tim", "--sort", "modified"],
+        &["tim/old", "tim/dir/", "tim/mid", "tim/new"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "tim", "--sort", "modified", "--reverse"],
+        &["tim/new", "tim/mid", "tim/dir/", "tim/old"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "tim", "-t", "f", "--sort", "accessed"],
+        &["tim/old", "tim/mid", "tim/new"],
+    );
+
+    let created_once = ordered_lines(&te, &[".", "tim", "-t", "f", "--sort", "created"]);
+    let created_twice = ordered_lines(&te, &[".", "tim", "-t", "f", "--sort", "created"]);
+    assert_eq!(created_once, created_twice);
+
+    fs::create_dir(root.join("mx/zdir")).unwrap();
+    assert_ordered(
+        &te,
+        &[
+            ".",
+            "mx",
+            "--sort",
+            "name",
+            "--dirs-first",
+            "--max-results",
+            "1",
+        ],
+        &["mx/zdir/"],
+    );
+    assert_ordered(
+        &te,
+        &[
+            ".",
+            "mx",
+            "--sort",
+            "name",
+            "--dirs-first",
+            "--reverse",
+            "--max-results",
+            "2",
+        ],
+        &["mx/mfile", "mx/afile"],
+    );
+    assert_ordered(
+        &te,
+        &[
+            ".",
+            "mx",
+            "--sort",
+            "name",
+            "--reverse",
+            "--max-results",
+            "2",
+            "-t",
+            "f",
+        ],
+        &["mx/mfile", "mx/afile"],
+    );
+}
+
+#[test]
+fn test_sort_random_is_seeded_and_can_break_ties() {
+    let te = TestEnv::new(
+        &["rnd", "tie/p", "tie/q"],
+        &[
+            "rnd/a",
+            "rnd/b",
+            "rnd/c",
+            "rnd/d",
+            "rnd/e",
+            "rnd/f",
+            "tie/p/same",
+            "tie/q/same",
+            "tie/p/other",
+            "tie/q/other",
+        ],
+    );
+
+    let seed_one = ordered_lines(
+        &te,
+        &[
+            ".",
+            "rnd",
+            "-t",
+            "f",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "1",
+        ],
+    );
+    let seed_one_again = ordered_lines(
+        &te,
+        &[
+            ".",
+            "rnd",
+            "-t",
+            "f",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "1",
+        ],
+    );
+    assert_eq!(seed_one, seed_one_again);
+    let seed_two = ordered_lines(
+        &te,
+        &[
+            ".",
+            "rnd",
+            "-t",
+            "f",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "2",
+        ],
+    );
+    assert_ne!(seed_one, seed_two);
+
+    let mut actual_sorted = seed_one.clone();
+    actual_sorted.sort();
+    let expected = vec![
+        "rnd/a".to_string(),
+        "rnd/b".to_string(),
+        "rnd/c".to_string(),
+        "rnd/d".to_string(),
+        "rnd/e".to_string(),
+        "rnd/f".to_string(),
+    ];
+    assert_eq!(actual_sorted, expected);
+
+    let mut unseeded_differ = false;
+    let mut previous = None;
+    for _ in 0..4 {
+        let run = ordered_lines(&te, &[".", "rnd", "-t", "f", "--sort", "random"]);
+        let mut as_set = run.clone();
+        as_set.sort();
+        assert_eq!(as_set, expected);
+        if let Some(prev) = previous.as_ref()
+            && prev != &run
+        {
+            unseeded_differ = true;
+            break;
+        }
+        previous = Some(run);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        unseeded_differ,
+        "unseeded --sort random did not change between runs"
+    );
+
+    let mut saw_name_tie_swap = false;
+    for seed in 1..40 {
+        let seed = seed.to_string();
+        let lines = ordered_lines(
+            &te,
+            &[
+                ".",
+                "tie",
+                "-t",
+                "f",
+                "--sort",
+                "name",
+                "--sort",
+                "random",
+                "--sort-case-sensitive",
+                "--sort-seed",
+                &seed,
+            ],
+        );
+        let names: Vec<_> = lines
+            .iter()
+            .map(|line| line.rsplit('/').next().unwrap())
+            .collect();
+        assert_eq!(names, ["other", "other", "same", "same"]);
+        if lines[0] == "tie/q/other" {
+            saw_name_tie_swap = true;
+        }
+    }
+    assert!(
+        saw_name_tie_swap,
+        "random tie-break never reordered equal names"
+    );
+
+    let stable = ordered_lines(
+        &te,
+        &[
+            ".",
+            "tie",
+            "-t",
+            "f",
+            "--sort",
+            "name",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "7",
+            "--sort-case-sensitive",
+        ],
+    );
+    let stable_again = ordered_lines(
+        &te,
+        &[
+            ".",
+            "tie",
+            "-t",
+            "f",
+            "--sort",
+            "name",
+            "--sort",
+            "random",
+            "--sort-seed",
+            "7",
+            "--sort-case-sensitive",
+        ],
+    );
+    assert_eq!(stable, stable_again);
+
+    let mut random_primary_differs = false;
+    for seed in 1..15 {
+        let seed = seed.to_string();
+        let by_name = ordered_lines(
+            &te,
+            &[
+                ".",
+                "tie",
+                "-t",
+                "f",
+                "--sort",
+                "name",
+                "--sort",
+                "random",
+                "--sort-seed",
+                &seed,
+            ],
+        );
+        let by_random = ordered_lines(
+            &te,
+            &[
+                ".",
+                "tie",
+                "-t",
+                "f",
+                "--sort",
+                "random",
+                "--sort",
+                "name",
+                "--sort-seed",
+                &seed,
+            ],
+        );
+        if by_name != by_random {
+            random_primary_differs = true;
+            break;
+        }
+    }
+    assert!(random_primary_differs);
+}
+
+#[test]
+fn test_sort_keeps_filters_and_default_path_order() {
+    let te = TestEnv::new(
+        &["filt/sub"],
+        &[
+            "filt/keep.txt",
+            "filt/skip.rs",
+            "filt/sub/keep.txt",
+            "filt/.hidden.txt",
+            "filt/gitignored.foo",
+        ],
+    );
+
+    assert_ordered(
+        &te,
+        &["keep", "filt", "--sort", "name"],
+        &["filt/keep.txt", "filt/sub/keep.txt"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "filt", "-e", "txt", "--sort", "name", "-H"],
+        &["filt/.hidden.txt", "filt/keep.txt", "filt/sub/keep.txt"],
+    );
+    assert_ordered(
+        &te,
+        &[".", "filt", "--sort", "name", "--max-depth", "1"],
+        &["filt/keep.txt", "filt/skip.rs", "filt/sub/"],
+    );
+    let all = ordered_lines(&te, &[".", "filt", "--sort", "name"]);
+    assert!(!all.iter().any(|line| line.contains("gitignored")));
+    assert!(!all.iter().any(|line| line.contains(".hidden")));
+
+    let implicit = ordered_lines(&te, &["--max-buffer-time", "10000", ".", "filt"]);
+    let explicit = ordered_lines(
+        &te,
+        &["--sort", "path", "--sort-case-sensitive", ".", "filt"],
+    );
+    assert_eq!(implicit, explicit);
+    assert!(!implicit.is_empty());
+}
+
+#[test]
+fn test_sort_orders_more_results_than_the_output_buffer() {
+    let te = TestEnv::new(&["many"], &[]);
+    for index in 0..1001 {
+        fs::File::create(te.test_root().join(format!("many/n{index:04}"))).unwrap();
+    }
+
+    let lines = ordered_lines(&te, &[".", "many", "--sort", "name", "-t", "f"]);
+    assert_eq!(lines.len(), 1001);
+    assert_eq!(lines.first().map(String::as_str), Some("many/n0000"));
+    assert_eq!(lines.last().map(String::as_str), Some("many/n1000"));
+    let mut sorted = lines.clone();
+    sorted.sort();
+    assert_eq!(lines, sorted);
+
+    assert_ordered(
+        &te,
+        &[
+            ".",
+            "many",
+            "--sort",
+            "name",
+            "--reverse",
+            "--max-results",
+            "1",
+            "-t",
+            "f",
+        ],
+        &["many/n1000"],
+    );
+}

@@ -147,9 +147,82 @@ Separate search results by the null character (instead of newlines). Useful for 
 .TP
 .B \-\-max\-results count
 Limit the number of search results to 'count' and quit immediately.
+When
+.B \-\-sort
+is used, fd orders every match first and then keeps the first
+.I count
+entries.
 .TP
 .B \-1
 Limit the search to a single result and quit immediately. This is an alias for '--max-results=1'.
+.TP
+.BI "\-\-sort " field
+Sort results by
+.IR field .
+This option can be repeated: keys are applied from left to right, and each later key breaks ties from the keys before it. If every key ties, entries are ordered by path so the output does not depend on traversal order.
+.IP
+The field may be one of:
+.RS
+.IP path
+displayed path
+.IP name
+file or directory name
+.IP extension
+file extension; missing when the name has none
+.IP size
+size in bytes of a regular file; directories, symlinks, and other types are missing
+.IP modified
+modification time
+.IP created
+creation time
+.IP accessed
+access time
+.IP depth
+directory depth; missing when the depth is unknown
+.IP type
+directory, then symlink, then regular file, then other or unknown
+.IP name-length
+number of characters in the name
+.IP path-length
+number of characters in the displayed path
+.IP random
+pseudo-random order
+.RE
+.IP
+.BR name ,
+.BR path ,
+and
+.B extension
+are compared case-insensitively unless
+.B \-\-sort\-case\-sensitive
+is set.
+.B \-\-sort\-natural
+compares ASCII digit runs in those fields numerically
+.RI ( file9
+before
+.IR file10 ).
+Leading zeros do not change the numeric value.
+Missing optional values sort first unless
+.B \-\-sort\-missing\-last
+is set.
+.B \-\-dirs\-first
+and
+.B \-\-files\-first
+group entries before the sort keys and cannot be combined. Symlinks stay in the second group.
+.B \-\-reverse
+reverses the finished order. With
+.BR \-\-max\-results ,
+the limit is applied after sorting and reversing.
+.B \-\-sort\ random
+uses a time-derived seed unless
+.BI \-\-sort\-seed\  n
+fixes it to an unsigned 64-bit integer.
+.IP
+Sorting cannot be combined with
+.BR \-\-exec ,
+.BR \-\-exec\-batch ,
+or
+.BR \-\-list\-details .
 .TP
 .B \-q, \-\-quiet
 When the flag is present, the program does not print anything and will instead exit with a code of 0 if there is at least one search result.

@@ -11,6 +11,7 @@ mod fmt;
 mod hyperlink;
 mod output;
 mod regex_helper;
+mod sort;
 mod walk;
 
 use std::env;
@@ -25,7 +26,7 @@ use lscolors::LsColors;
 use regex::bytes::{Regex, RegexBuilder, RegexSetBuilder};
 
 use crate::cli::{ColorWhen, HyperlinkWhen, Opts};
-use crate::config::Config;
+use crate::config::{Config, SortOptions};
 use crate::exec::CommandSet;
 use crate::exit_codes::ExitCode;
 use crate::filetypes::FileTypes;
@@ -325,6 +326,19 @@ fn construct_config(mut opts: Opts, pattern_regexps: &[String]) -> Result<Config
         path_separator,
         actual_path_separator,
         max_results: opts.max_results(),
+        sort: {
+            let keys = std::mem::take(&mut opts.sort);
+            (!keys.is_empty()).then_some(SortOptions {
+                keys,
+                reverse: opts.reverse,
+                dirs_first: opts.dirs_first,
+                files_first: opts.files_first,
+                case_sensitive: opts.sort_case_sensitive,
+                missing_last: opts.sort_missing_last,
+                natural: opts.sort_natural,
+                seed: opts.sort_seed,
+            })
+        },
         strip_cwd_prefix: opts.strip_cwd_prefix(|| !(opts.null_separator || has_command)),
         ignore_contain: opts.ignore_contain,
     })

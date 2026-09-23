@@ -28,6 +28,21 @@ use crate::filter::SizeFilter;
     args_override_self = true,
     group(ArgGroup::new("execs").args(&["exec", "exec_batch", "list_details"]).conflicts_with_all(&[
             "max_results", "quiet", "max_one_result"])),
+    group(
+        ArgGroup::new("sorting")
+            .args([
+                "sort",
+                "reverse",
+                "dirs_first",
+                "files_first",
+                "sort_case_sensitive",
+                "sort_missing_last",
+                "sort_natural",
+                "sort_seed",
+            ])
+            .multiple(true)
+            .conflicts_with_all(["exec", "exec_batch", "list_details"])
+    ),
 )]
 pub struct Opts {
     /// Include hidden directories and files in the search results (default:
@@ -218,6 +233,155 @@ pub struct Opts {
         long_help
     )]
     pub list_details: bool,
+
+    /// Sort the search results.
+    ///
+    /// This option can be given more than once. Keys are applied from left to
+    /// right; each later key breaks ties left by the keys before it. If every
+    /// key ties, entries are ordered by full path so the output does not depend
+    /// on traversal order.
+    ///
+    /// {n}  path           displayed path
+    /// {n}  name           file or directory name
+    /// {n}  extension      extension, or missing when the name has none
+    /// {n}  size           byte size of regular files; every other type is missing
+    /// {n}  modified       modification time
+    /// {n}  created        creation time
+    /// {n}  accessed       access time
+    /// {n}  depth          walk depth, or missing when it is unknown
+    /// {n}  type           directory, then symlink, then regular file, then other
+    /// {n}  name-length    number of characters in the name
+    /// {n}  path-length    number of characters in the displayed path
+    /// {n}  random         pseudo-random order; see --sort-seed
+    ///
+    /// name, path, and extension are compared case-insensitively unless
+    /// --sort-case-sensitive is set. --sort-natural compares ASCII digit runs in
+    /// those three fields as numbers, so file9 sorts before file10. Leading zeros
+    /// do not change the numeric value (file007 ties file7); the path tie-break
+    /// then orders them. Missing optional values sort first unless
+    /// --sort-missing-last is set.
+    ///
+    /// --dirs-first and --files-first are applied before these keys and cannot be
+    /// combined. Symlinks and other non-matching types stay in the second group.
+    /// --reverse reverses that finished order. With --max-results, the limit is
+    /// applied after sorting and reversing.
+    ///
+    /// --sort random differs on every run unless --sort-seed is given. The seed
+    /// is an unsigned 64-bit integer; without it, fd derives one from the time.
+    ///
+    /// Cannot be combined with --exec, --exec-batch, or --list-details.
+    #[arg(
+        long,
+        value_name = "field",
+        value_enum,
+        action = ArgAction::Append,
+        hide_possible_values = true,
+        help = "Sort results by a field (repeatable)",
+        long_help
+    )]
+    pub sort: Vec<SortKey>,
+
+    /// Reverse the order produced by --sort.
+    ///
+    /// Grouping and every sort key are applied first; this flag then reverses
+    /// the finished list. Requires --sort.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Reverse the sorted order",
+        long_help
+    )]
+    pub reverse: bool,
+
+    /// List directories before every other entry.
+    ///
+    /// Applied before the --sort keys. Symlinks, including symlinks to
+    /// directories, stay in the second group and are ordered by the sort keys.
+    /// Mutually exclusive with --files-first. Requires --sort.
+    #[arg(
+        long,
+        requires = "sort",
+        conflicts_with = "files_first",
+        hide_short_help = true,
+        help = "Sort directories before other results",
+        long_help
+    )]
+    pub dirs_first: bool,
+
+    /// List regular files before every other entry.
+    ///
+    /// Applied before the --sort keys. Directories, symlinks, and other types
+    /// stay in the second group and are ordered by the sort keys. Mutually
+    /// exclusive with --dirs-first. Requires --sort.
+    #[arg(
+        long,
+        requires = "sort",
+        conflicts_with = "dirs_first",
+        hide_short_help = true,
+        help = "Sort regular files before other results",
+        long_help
+    )]
+    pub files_first: bool,
+
+    /// Compare name, path, and extension case-sensitively.
+    ///
+    /// By default those fields are compared without regard to case. Requires
+    /// --sort. With --sort-natural, digit runs are still compared numerically
+    /// and the remaining text is case-sensitive.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Use case-sensitive text sorting",
+        long_help
+    )]
+    pub sort_case_sensitive: bool,
+
+    /// Place missing optional sort values after present ones.
+    ///
+    /// Applies to extension, size, timestamps, and depth. Without this flag,
+    /// a missing value sorts before any present value. Size is missing for
+    /// every entry that is not a regular file. Requires --sort.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Sort missing optional values last",
+        long_help
+    )]
+    pub sort_missing_last: bool,
+
+    /// Compare name, path, and extension in natural order.
+    ///
+    /// ASCII digit runs are compared as numbers, so file9 sorts before file10.
+    /// A run of zeros has value zero and ties the same number written without
+    /// padding. Requires --sort.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        help = "Natural order for name, path, and extension",
+        long_help
+    )]
+    pub sort_natural: bool,
+
+    /// Fixed seed for --sort random.
+    ///
+    /// An unsigned 64-bit integer. The same seed and the same files produce the
+    /// same order on later runs, including when random is only a tie-break.
+    /// Without this flag the seed is derived from the current time, so each run
+    /// differs. Requires --sort.
+    #[arg(
+        long,
+        value_name = "n",
+        requires = "sort",
+        hide_short_help = true,
+        value_parser = value_parser!(u64),
+        help = "Fixed seed for --sort random",
+        long_help
+    )]
+    pub sort_seed: Option<u64>,
 
     /// Follow symbolic links
     #[arg(
@@ -544,7 +708,9 @@ pub struct Opts {
     #[arg(long, hide = true, value_parser = parse_millis)]
     pub max_buffer_time: Option<Duration>,
 
-    ///Limit the number of search results to 'count' and quit immediately.
+    /// Limit the number of search results to 'count' and quit immediately.
+    /// When --sort is used, all matches are collected and ordered first
+    /// (and reversed, if --reverse is set). The limit is applied afterwards.
     #[arg(
         long,
         value_name = "count",
@@ -819,6 +985,35 @@ pub enum StripCwdWhen {
     Never,
 }
 
+/// Field accepted by `--sort`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
+pub enum SortKey {
+    /// Displayed path.
+    Path,
+    /// File or directory name.
+    Name,
+    /// File extension.
+    Extension,
+    /// Byte size of a regular file.
+    Size,
+    /// Modification time.
+    Modified,
+    /// Creation time.
+    Created,
+    /// Access time.
+    Accessed,
+    /// Directory depth.
+    Depth,
+    /// Directory, symlink, regular file, then other.
+    Type,
+    /// Character length of the file name.
+    NameLength,
+    /// Character length of the displayed path.
+    PathLength,
+    /// Pseudo-random order.
+    Random,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
 pub enum HyperlinkWhen {
     /// Use hyperlinks only if color is enabled
@@ -944,5 +1139,98 @@ fn ensure_current_directory_exists(current_directory: &Path) -> anyhow::Result<(
         Err(anyhow!(
             "Could not retrieve current directory (has it been deleted?)."
         ))
+    }
+}
+
+#[cfg(test)]
+mod sort_cli_tests {
+    use super::{Opts, SortKey};
+    use clap::Parser;
+
+    fn parse(args: &[&str]) -> Result<Opts, clap::Error> {
+        Opts::try_parse_from(args)
+    }
+
+    #[test]
+    fn sort_keys_are_repeatable_in_order() {
+        let opts = parse(&[
+            "fd",
+            "--sort",
+            "path",
+            "--sort",
+            "name-length",
+            "--sort=random",
+        ])
+        .unwrap();
+        assert_eq!(
+            opts.sort,
+            vec![SortKey::Path, SortKey::NameLength, SortKey::Random]
+        );
+        assert!(!opts.reverse);
+        assert_eq!(opts.sort_seed, None);
+    }
+
+    #[test]
+    fn sort_modifiers_require_sort() {
+        for args in [
+            &["fd", "--reverse"][..],
+            &["fd", "--dirs-first"][..],
+            &["fd", "--files-first"][..],
+            &["fd", "--sort-case-sensitive"][..],
+            &["fd", "--sort-missing-last"][..],
+            &["fd", "--sort-natural"][..],
+            &["fd", "--sort-seed", "1"][..],
+        ] {
+            assert!(parse(args).is_err(), "expected failure for {args:?}");
+        }
+    }
+
+    #[test]
+    fn sort_seed_parses_u64_bounds() {
+        let opts = parse(&["fd", "--sort", "random", "--sort-seed", "0"]).unwrap();
+        assert_eq!(opts.sort_seed, Some(0));
+        let opts = parse(&[
+            "fd",
+            "--sort",
+            "name",
+            "--sort-seed",
+            "18446744073709551615",
+        ])
+        .unwrap();
+        assert_eq!(opts.sort_seed, Some(u64::MAX));
+        assert!(parse(&["fd", "--sort", "name", "--sort-seed", "-1"]).is_err());
+        assert!(
+            parse(&[
+                "fd",
+                "--sort",
+                "name",
+                "--sort-seed",
+                "18446744073709551616"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn sort_conflicts_with_exec_and_grouping() {
+        assert!(parse(&["fd", "--sort", "name", "--dirs-first", "--files-first"]).is_err());
+        assert!(parse(&["fd", "--sort", "name", "-x", "echo"]).is_err());
+        assert!(parse(&["fd", "--sort", "name", "-X", "echo"]).is_err());
+        assert!(parse(&["fd", "--sort", "name", "-l"]).is_err());
+        assert!(parse(&["fd", "--sort", "not-a-key"]).is_err());
+        assert!(parse(&["fd", "--reverse", "-x", "echo"]).is_err());
+    }
+
+    #[test]
+    fn invocation_without_sort_is_unchanged() {
+        let opts = parse(&["fd", "pattern"]).unwrap();
+        assert!(opts.sort.is_empty());
+        assert!(!opts.reverse);
+        assert!(!opts.dirs_first);
+        assert!(!opts.files_first);
+        assert!(!opts.sort_case_sensitive);
+        assert!(!opts.sort_missing_last);
+        assert!(!opts.sort_natural);
+        assert_eq!(opts.sort_seed, None);
     }
 }

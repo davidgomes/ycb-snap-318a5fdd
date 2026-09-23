@@ -3,12 +3,33 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use lscolors::LsColors;
 use regex::bytes::RegexSet;
 
+use crate::cli::SortKey;
 use crate::exec::CommandSet;
 use crate::filetypes::FileTypes;
 #[cfg(unix)]
 use crate::filter::OwnerFilter;
 use crate::filter::{SizeFilter, TimeFilter};
 use crate::fmt::FormatTemplate;
+
+/// Explicit ordering for search results. Absent when the user did not pass `--sort`.
+pub struct SortOptions {
+    /// Sort keys in priority order. The first key is the primary key.
+    pub keys: Vec<SortKey>,
+    /// Reverse the list after grouping and keys have been applied.
+    pub reverse: bool,
+    /// Directories form the first group.
+    pub dirs_first: bool,
+    /// Regular files form the first group.
+    pub files_first: bool,
+    /// Compare text keys byte-for-byte instead of case-folding.
+    pub case_sensitive: bool,
+    /// Missing optional values sort after present values.
+    pub missing_last: bool,
+    /// Compare digit runs in name, path, and extension numerically.
+    pub natural: bool,
+    /// Seed for `--sort random`. `None` means "derive one at sort time".
+    pub seed: Option<u64>,
+}
 
 /// Configuration options for *fd*.
 pub struct Config {
@@ -125,6 +146,9 @@ pub struct Config {
     /// The maximum number of search results
     pub max_results: Option<usize>,
 
+    /// Multi-key sort requested on the command line.
+    pub sort: Option<SortOptions>,
+
     /// Whether or not to strip the './' prefix for search results
     pub strip_cwd_prefix: bool,
 
@@ -139,5 +163,10 @@ impl Config {
     /// Check whether results are being printed.
     pub fn is_printing(&self) -> bool {
         self.command.is_none()
+    }
+
+    /// Whether the user asked for an explicit, deterministic result order.
+    pub fn has_sort(&self) -> bool {
+        self.sort.is_some()
     }
 }
