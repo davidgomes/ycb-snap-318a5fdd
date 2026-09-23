@@ -476,6 +476,81 @@ def test_handle_unsupported_ddl(default_analyzer: Analyzer) -> None:
     assert select_line.nodes[3].token.type is TokenType.NAME
 
 
+@pytest.mark.parametrize(
+    "source_string",
+    [
+        "create table foo (bar int)",
+        "create table foo (bar int);\nselect 1",
+        "create table foo (bar int) -- comment\npartition by bar",
+        "create table foo (bar int, baz text default ')') cluster by bar",
+        "create table foo (bar int) options (description = 'as')",
+        "create table foo (bar int generated always as (1) stored)",
+        "create table foo (bar int, check (bar like 'a%'))",
+    ],
+)
+def test_handle_create_table(default_analyzer: Analyzer, source_string: str) -> None:
+    query = default_analyzer.parse_query(source_string=source_string)
+    create_table = query.nodes[0]
+    assert create_table.token.type is TokenType.UNTERM_KEYWORD
+    assert create_table.value == "create table"
+    assert TokenType.DATA not in [node.token.type for node in query.nodes]
+
+
+@pytest.mark.parametrize(
+    "source_string",
+    [
+        "create table foo as select 1",
+        "create table foo (bar int) as select 1",
+        "create table foo (bar int) partition by bar as select 1",
+        "create table foo (like bar)",
+        "create table foo (baz int, like bar)",
+        "create table foo (bar int) with (fillfactor = 70)",
+        "create table foo (bar int) {{ config() }}",
+        "create table foo (bar int",
+    ],
+)
+def test_handle_create_table_unsupported(
+    default_analyzer: Analyzer, source_string: str
+) -> None:
+    query = default_analyzer.parse_query(source_string=source_string)
+    assert query.nodes[0].token.type is TokenType.DATA
+
+
+def test_handle_create_table_paren(default_analyzer: Analyzer) -> None:
+    source_string = "create table foo(bar decimal(1, 2)) options(baz = 1)"
+    query = default_analyzer.parse_query(source_string=source_string)
+    nodes = [node for node in query.nodes if not node.is_newline]
+    body_paren = nodes[2]
+    assert str(body_paren) == " ("
+    assert body_paren.depth == (0, 0)
+    assert nodes[3].value == "bar"
+    assert nodes[3].depth == (1, 0)
+    assert str(nodes[5]) == "("  # decimal(
+    closing_paren = nodes[10]
+    assert closing_paren.value == ")"
+    assert closing_paren.depth == (0, 0)
+    options = nodes[11]
+    assert options.token.type is TokenType.UNTERM_KEYWORD
+    assert options.depth == (0, 0)
+    assert str(nodes[12]) == " ("
+    assert nodes[12].open_brackets == [options]
+
+
+def test_handle_keyword_outside_brackets(default_analyzer: Analyzer) -> None:
+    source_string = "create table foo (options json) partition by bar options (a = 1)"
+    query = default_analyzer.parse_query(source_string=source_string)
+    types = {
+        (node.value, node.depth): node.token.type
+        for node in query.nodes
+        if node.value in ("options", "partition by")
+    }
+    assert types == {
+        ("options", (1, 0)): TokenType.NAME,
+        ("partition by", (0, 0)): TokenType.UNTERM_KEYWORD,
+        ("options", (0, 0)): TokenType.UNTERM_KEYWORD,
+    }
+
+
 def test_handle_explain(default_analyzer: Analyzer) -> None:
     source_string = """
     explain select 1;

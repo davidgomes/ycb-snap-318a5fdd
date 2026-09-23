@@ -5,9 +5,9 @@ from typing import List
 import pytest
 
 from sqlfmt.rule import Rule
-from sqlfmt.rules import CLONE, CORE, FUNCTION, GRANT, JINJA, MAIN, WAREHOUSE
+from sqlfmt.rules import CLONE, CORE, FUNCTION, GRANT, JINJA, MAIN, TABLE, WAREHOUSE
 
-ALL_RULESETS = [CLONE, CORE, FUNCTION, GRANT, JINJA, MAIN, WAREHOUSE]
+ALL_RULESETS = [CLONE, CORE, FUNCTION, GRANT, JINJA, MAIN, TABLE, WAREHOUSE]
 
 
 def get_rule(ruleset: List[Rule], rule_name: str) -> Rule:
@@ -387,6 +387,33 @@ def get_rule(ruleset: List[Rule], rule_name: str) -> Rule:
         (CLONE, "name", "foo"),
         (CLONE, "word_operator", "at"),
         (CLONE, "word_operator", "before"),
+        (TABLE, "unterm_keyword", "create table"),
+        (TABLE, "unterm_keyword", "CREATE OR REPLACE TEMPORARY TABLE"),
+        (TABLE, "unterm_keyword", "create global temp table"),
+        (TABLE, "unterm_keyword", "create transient table"),
+        (TABLE, "unterm_keyword", "create table if not exists"),
+        (TABLE, "unterm_keyword", "create\ntable\nif\nnot\nexists"),
+        (TABLE, "table_clause", "partition by"),
+        (TABLE, "table_clause", "cluster\n by"),
+        (TABLE, "table_clause", "options"),
+        (TABLE, "table_body_open", "("),
+        (TABLE, "constraint_keyword", "constraint"),
+        (TABLE, "constraint_keyword", "primary key"),
+        (TABLE, "constraint_keyword", "FOREIGN  KEY"),
+        (TABLE, "constraint_keyword", "unique"),
+        (TABLE, "constraint_keyword", "check"),
+        (TABLE, "constraint_keyword", "references"),
+        (TABLE, "constraint_keyword", "not null"),
+        (TABLE, "constraint_keyword", "null"),
+        (TABLE, "constraint_keyword", "default"),
+        (TABLE, "constraint_keyword", "on delete"),
+        (TABLE, "constraint_keyword", "on update"),
+        (TABLE, "word_operator", "as"),
+        (TABLE, "word_operator", "not in"),
+        (TABLE, "word_operator", "is not"),
+        (TABLE, "word_operator", "between"),
+        (TABLE, "word_operator", "ilike"),
+        (TABLE, "boolean_operator", "and"),
     ],
 )
 def test_regex_exact_match(
@@ -430,6 +457,19 @@ def test_regex_exact_match(
         (JINJA, "jinja_call_statement_block_start", "{% call(t) statement('main') -%}"),
         (GRANT, "unterm_keyword", "select"),
         (FUNCTION, "unterm_keyword", "secure"),
+        (MAIN, "create_table", "create table foo"),
+        (MAIN, "create_table", "create table foo as select 1"),
+        (MAIN, "create_table", "create table foo as (select 1)"),
+        (MAIN, "create_table", "create table foo like bar"),
+        (MAIN, "create_table", "create table foo (like bar)"),
+        (MAIN, "create_table", "create table foo clone bar"),
+        (MAIN, "create_table", "create table function foo(a int)"),
+        (MAIN, "create_table", "create view foo (a)"),
+        (TABLE, "constraint_keyword", "nullable"),
+        (TABLE, "constraint_keyword", "checksum"),
+        (TABLE, "constraint_keyword", "key"),
+        (TABLE, "word_operator", "int"),
+        (TABLE, "table_clause", "optionsx"),
     ],
 )
 def test_regex_anti_match(
@@ -483,6 +523,21 @@ def test_regex_anti_match(
             "ilike('foo', 'bar')",
             "ilike",
         ),
+        (MAIN, "create_table", "create table foo (a int)", "create table"),
+        (MAIN, "create_table", "create table foo(a int)", "create table"),
+        (
+            MAIN,
+            "create_table",
+            "CREATE OR REPLACE TABLE IF NOT EXISTS `p.d.t`\n(a int)",
+            "CREATE OR REPLACE TABLE IF NOT EXISTS",
+        ),
+        (
+            MAIN,
+            "create_table",
+            'create temp table "my schema" . "my table" (a int)',
+            "create temp table",
+        ),
+        (MAIN, "create_table", "create table {{ this }} (a int)", "create table"),
     ],
 )
 def test_regex_partial_match(

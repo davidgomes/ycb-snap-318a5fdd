@@ -51,6 +51,19 @@ def test_create_merged_line(merger: LineMerger) -> None:
         _ = merger.create_merged_line(raw_query.lines[-6:-3])
 
 
+def test_create_merged_line_cannot_merge(merger: LineMerger) -> None:
+    source_string = "select\n    able,\n    baker\n"
+    raw_query = merger.mode.dialect.initialize_analyzer(
+        merger.mode.line_length
+    ).parse_query(source_string)
+    raw_query.lines[1].can_merge = False
+
+    with pytest.raises(CannotMergeException):
+        _ = merger.create_merged_line(raw_query.lines)
+
+    assert merger.maybe_merge_lines(raw_query.lines) == raw_query.lines
+
+
 def test_create_merged_line_comments(merger: LineMerger) -> None:
     source_string = """
     select
