@@ -2251,9 +2251,7 @@ class ReconnectingAsyncClientSession(AsyncClientSession):
         a reconnection if we receive a TransportConnectionFailed exception.
         """
 
-        inner_generator: AsyncGenerator[
-            ExecutionResult, None
-        ] = super()._execute_incremental(
+        inner_generator = super()._execute_incremental(
             request,
             serialize_variables=serialize_variables,
             **kwargs,
