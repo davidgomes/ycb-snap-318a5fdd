@@ -853,6 +853,56 @@ class InteractiveShell(SingletonConfigurable):
         elif self.logstart:
             self.run_line_magic("logstart", "")
 
+    def _session_bundle_controller(self):
+        """Return the per-shell session-bundle recorder, creating it if needed."""
+        controller = getattr(self, "_session_bundle_recorder", None)
+        if controller is None:
+            from IPython.core.sessionbundle import SessionBundleRecorder
+
+            controller = SessionBundleRecorder(self)
+            self._session_bundle_recorder = controller
+        return controller
+
+    def start_session_bundle(self, path, *, overwrite=False, redact=None) -> str:
+        """Start recording cells to a session bundle at ``path``.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Destination ``.ipybundle`` archive.
+        overwrite : bool, keyword-only
+            Replace an existing bundle. When false, an existing path raises
+            ``FileExistsError``.
+        redact : sequence of str, optional
+            Literal strings replaced with ``<redacted>`` in recorded events.
+
+        Returns
+        -------
+        str
+            Bundle path.
+
+        Raises
+        ------
+        RuntimeError
+            If a recording is already active.
+        FileExistsError
+            If ``path`` exists and ``overwrite`` is false.
+        """
+        return self._session_bundle_controller().start(
+            path, overwrite=overwrite, redact=redact
+        )
+
+    def stop_session_bundle(self) -> str:
+        """Stop the active session-bundle recording and return its path."""
+        return self._session_bundle_controller().stop()
+
+    def session_bundle_status(self) -> dict:
+        """Return ``{"recording": bool, "path": str | None}``."""
+        controller = getattr(self, "_session_bundle_recorder", None)
+        if controller is None:
+            return {"recording": False, "path": None}
+        return controller.status()
+
     def init_builtins(self):
         # A single, static flag that we set to True.  Its presence indicates
         # that an IPython shell has been created, and we make no attempts at
@@ -2431,7 +2481,7 @@ class InteractiveShell(SingletonConfigurable):
             m.ConfigMagics, m.DisplayMagics, m.ExecutionMagics,
             m.ExtensionMagics, m.HistoryMagics, m.LoggingMagics,
             m.NamespaceMagics, m.OSMagics, m.PackagingMagics,
-            m.PylabMagics, m.ScriptMagics,
+            m.PylabMagics, m.ScriptMagics, m.SessionBundleMagics,
         )
         self.register_magics(m.AsyncMagics)
 
