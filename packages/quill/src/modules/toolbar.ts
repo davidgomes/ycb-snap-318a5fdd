@@ -4,8 +4,217 @@ import Quill from '../core/quill.js';
 import logger from '../core/logger.js';
 import Module from '../core/module.js';
 import type { Range } from '../core/selection.js';
+import { getPicker } from '../ui/picker.js';
 
 const debug = logger('quill:toolbar');
+
+interface ToolbarGroup {
+  container: HTMLElement;
+  members: Set<Toolbar>;
+  active: Toolbar | null;
+  shared: boolean;
+  bindings: Map<HTMLElement, { eventName: string; handler: EventListener }>;
+  observer: MutationObserver;
+}
+
+const groups = new Map<HTMLElement, ToolbarGroup>();
+
+const RESOLVE_KEY = '__quillToolbarResolve';
+
+function containerOf(toolbar: { container?: HTMLElement | null }) {
+  return toolbar.container instanceof HTMLElement ? toolbar.container : null;
+}
+
+function resolveActive(group: ToolbarGroup): Toolbar | null {
+  Array.from(group.members).forEach((toolbar) => {
+    if (!toolbar.quill.container.isConnected) {
+      toolbar.release();
+    }
+  });
+  if (!group.shared) {
+    return group.members.values().next().value ?? null;
+  }
+  if (group.active != null && !group.members.has(group.active)) {
+    group.active = null;
+  }
+  return group.active;
+}
+
+export function resolveToolbar(toolbar: {
+  container?: HTMLElement | null;
+}): Toolbar | null {
+  const container = containerOf(toolbar);
+  if (container == null) return null;
+  const group = groups.get(container);
+  if (group == null) return null;
+  return resolveActive(group);
+}
+
+function installResolver(group: ToolbarGroup) {
+  Object.defineProperty(group.container, RESOLVE_KEY, {
+    configurable: true,
+    value: () => resolveActive(group),
+  });
+}
+
+let removalPatched = false;
+
+function forEachToolbarInput(node: Node, visit: (input: HTMLElement) => void) {
+  if (node instanceof DocumentFragment) {
+    Array.from(node.childNodes).forEach((child) => {
+      forEachToolbarInput(child, visit);
+    });
+    return;
+  }
+  collectInputs(node).forEach(visit);
+}
+
+function unbindDetached(node: Node) {
+  forEachToolbarInput(node, (input) => {
+    groups.forEach((group) => {
+      if (group.bindings.has(input)) unbindControl(group, input);
+    });
+  });
+}
+
+function bindConnected(node: Node) {
+  forEachToolbarInput(node, (input) => {
+    if (!input.isConnected) return;
+    groups.forEach((group) => {
+      if (!group.container.contains(input)) return;
+      const member = group.active ?? group.members.values().next().value;
+      member?.attach(input);
+    });
+  });
+}
+
+function watchRemovals() {
+  if (removalPatched) return;
+  removalPatched = true;
+  const originalRemove = Node.prototype.removeChild;
+  Node.prototype.removeChild = function removeChildPatched<T extends Node>(
+    this: Node,
+    child: T,
+  ): T {
+    const removed = originalRemove.call(this, child) as T;
+    if (!pruning) {
+      pruning = true;
+      try {
+        unbindDetached(removed);
+        groups.forEach((group) => resolveActive(group));
+      } finally {
+        pruning = false;
+      }
+    }
+    return removed;
+  };
+  const originalAppend = Node.prototype.appendChild;
+  Node.prototype.appendChild = function appendChildPatched<T extends Node>(
+    this: Node,
+    child: T,
+  ): T {
+    const added = originalAppend.call(this, child) as T;
+    if (!pruning) bindConnected(added);
+    return added;
+  };
+  const originalInsert = Node.prototype.insertBefore;
+  Node.prototype.insertBefore = function insertBeforePatched<T extends Node>(
+    this: Node,
+    child: T,
+    ref: Node | null,
+  ): T {
+    const added = originalInsert.call(this, child, ref) as T;
+    if (!pruning) bindConnected(added);
+    return added;
+  };
+}
+
+let pruning = false;
+
+function bindControl(group: ToolbarGroup, input: HTMLElement, format: string) {
+  if (!group.bindings.has(input)) {
+    const eventName = input.tagName === 'SELECT' ? 'change' : 'click';
+    const handler: EventListener = (event) => {
+      const toolbar = resolveActive(group);
+      if (toolbar == null || !toolbar.quill.isEnabled()) {
+        if (input.tagName !== 'SELECT') event.preventDefault();
+        return;
+      }
+      let value: unknown;
+      if (input.tagName === 'SELECT') {
+        const select = input as HTMLSelectElement;
+        if (select.selectedIndex < 0) return;
+        const selected = select.options[select.selectedIndex];
+        if (selected.hasAttribute('selected')) {
+          value = false;
+        } else {
+          value = selected.value || false;
+        }
+      } else {
+        if (input.classList.contains('ql-active')) {
+          value = false;
+        } else {
+          const button = input as HTMLButtonElement;
+          value = button.value || !input.hasAttribute('value');
+        }
+        event.preventDefault();
+      }
+      toolbar.quill.focus();
+      const [range] = toolbar.quill.selection.getRange();
+      if (toolbar.handlers[format] != null) {
+        toolbar.handlers[format].call(toolbar, value);
+      } else if (
+        // @ts-expect-error
+        toolbar.quill.scroll.query(format).prototype instanceof EmbedBlot
+      ) {
+        value = prompt(`Enter ${format}`); // eslint-disable-line no-alert
+        if (!value) return;
+        toolbar.quill.updateContents(
+          new Delta()
+            // @ts-expect-error Fix me later
+            .retain(range.index)
+            // @ts-expect-error Fix me later
+            .delete(range.length)
+            .insert({ [format]: value }),
+          Quill.sources.USER,
+        );
+      } else {
+        toolbar.quill.format(format, value, Quill.sources.USER);
+      }
+      toolbar.update(range);
+    };
+    input.addEventListener(eventName, handler);
+    group.bindings.set(input, { eventName, handler });
+  }
+  group.members.forEach((toolbar) => {
+    if (!toolbar.controls.some((pair) => pair[1] === input)) {
+      toolbar.controls.push([format, input]);
+    }
+  });
+}
+
+function unbindControl(group: ToolbarGroup, input: HTMLElement) {
+  const binding = group.bindings.get(input);
+  if (binding) {
+    input.removeEventListener(binding.eventName, binding.handler);
+    group.bindings.delete(input);
+  }
+  group.members.forEach((toolbar) => {
+    toolbar.controls = toolbar.controls.filter((pair) => pair[1] !== input);
+  });
+}
+
+function collectInputs(node: Node): HTMLElement[] {
+  if (!(node instanceof HTMLElement)) return [];
+  const inputs: HTMLElement[] = [];
+  if (node.tagName === 'BUTTON' || node.tagName === 'SELECT') {
+    inputs.push(node);
+  }
+  node.querySelectorAll('button, select').forEach((input) => {
+    if (input instanceof HTMLElement) inputs.push(input);
+  });
+  return inputs;
+}
 
 type Handler = (this: Toolbar, value: any) => void;
 
@@ -55,16 +264,202 @@ class Toolbar extends Module<ToolbarProps> {
         }
       });
     }
+    const group = this.ensureGroup();
     Array.from(this.container.querySelectorAll('button, select')).forEach(
       (input) => {
-        // @ts-expect-error
-        this.attach(input);
+        if (input instanceof HTMLElement) this.attach(input);
       },
     );
-    this.quill.on(Quill.events.EDITOR_CHANGE, () => {
+    this.onEditorChange = () => {
+      if (!this.isToolbarActive()) return;
       const [range] = this.quill.selection.getRange(); // quill.getSelection triggers update
       this.update(range);
+    };
+    this.onSelectionChange = (range: Range | null) => {
+      if (!this.quill.container.isConnected) {
+        this.release();
+        return;
+      }
+      if (range != null) this.makeActive();
+    };
+    this.onFocus = () => {
+      if (!this.quill.container.isConnected) {
+        this.release();
+        return;
+      }
+      this.makeActive();
+    };
+    this.quill.on(Quill.events.EDITOR_CHANGE, this.onEditorChange);
+    this.quill.on(Quill.events.SELECTION_CHANGE, this.onSelectionChange);
+    this.quill.root.addEventListener('focusin', this.onFocus);
+    if (group.shared && this.quill.hasFocus()) this.makeActive();
+    this.refreshDisabled();
+  }
+
+  private onEditorChange: () => void = () => {};
+
+  private onSelectionChange: (range: Range | null) => void = () => {};
+
+  private onFocus: () => void = () => {};
+
+  private released = false;
+
+  private ensureGroup() {
+    const container = this.container as HTMLElement;
+    watchRemovals();
+    let group = groups.get(container);
+    if (group == null) {
+      group = {
+        container,
+        members: new Set(),
+        active: null,
+        shared: false,
+        bindings: new Map(),
+        observer: new MutationObserver((mutations) => {
+          mutations.forEach((mutation) => {
+            mutation.removedNodes.forEach((node) => {
+              collectInputs(node).forEach((input) => {
+                unbindControl(group as ToolbarGroup, input);
+              });
+            });
+            mutation.addedNodes.forEach((node) => {
+              collectInputs(node).forEach((input) => {
+                const member =
+                  (group as ToolbarGroup).active ??
+                  (group as ToolbarGroup).members.values().next().value;
+                member?.attach(input);
+              });
+            });
+          });
+        }),
+      };
+      group.observer.observe(container, { childList: true, subtree: true });
+      groups.set(container, group);
+      installResolver(group);
+    }
+    group.members.add(this);
+    if (group.members.size > 1) group.shared = true;
+    return group;
+  }
+
+  private isToolbarActive() {
+    const container = containerOf(this);
+    if (container == null) return false;
+    const group = groups.get(container);
+    if (group == null || !group.shared) return true;
+    return group.active === this;
+  }
+
+  private makeActive() {
+    const container = containerOf(this);
+    if (container == null || this.released) return;
+    const group = groups.get(container);
+    if (group == null) return;
+    group.active = this;
+    const [range] = this.quill.selection.getRange();
+    this.update(range);
+    this.refreshDisabled();
+    this.syncImageInput();
+  }
+
+  refreshDisabled() {
+    const container = containerOf(this);
+    if (container == null) return;
+    const group = groups.get(container);
+    if (group == null || !group.shared || group.active !== this) return;
+    const disabled = !this.quill.isEnabled();
+    this.controls.forEach(([, input]) => {
+      if (
+        input instanceof HTMLButtonElement ||
+        input instanceof HTMLSelectElement
+      ) {
+        input.disabled = disabled;
+      }
     });
+    container.querySelectorAll('.ql-picker').forEach((picker) => {
+      if (!(picker instanceof HTMLElement)) return;
+      picker.classList.toggle('ql-disabled', disabled);
+      picker.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+      const label = picker.querySelector('.ql-picker-label');
+      if (label instanceof HTMLElement) {
+        label.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+      }
+      if (disabled) picker.classList.remove('ql-expanded');
+    });
+    const fileInput = container.querySelector('input.ql-image[type=file]');
+    if (fileInput instanceof HTMLInputElement) {
+      fileInput.disabled = disabled;
+    }
+  }
+
+  private syncImageInput() {
+    const container = containerOf(this);
+    if (container == null) return;
+    const fileInput = container.querySelector('input.ql-image[type=file]');
+    if (!(fileInput instanceof HTMLInputElement)) return;
+    const uploader = this.quill.uploader as unknown as {
+      options?: { mimetypes?: string[] };
+    };
+    const mimetypes = uploader?.options?.mimetypes;
+    if (mimetypes != null) {
+      fileInput.setAttribute('accept', mimetypes.join(', '));
+    }
+    fileInput.disabled = !this.quill.isEnabled();
+  }
+
+  release() {
+    if (this.released) return;
+    this.released = true;
+    const container = containerOf(this);
+    this.quill.off(Quill.events.EDITOR_CHANGE, this.onEditorChange);
+    this.quill.off(Quill.events.SELECTION_CHANGE, this.onSelectionChange);
+    this.quill.root.removeEventListener('focusin', this.onFocus);
+    if (container == null) return;
+    const group = groups.get(container);
+    if (group == null) return;
+    group.members.delete(this);
+    if (group.active === this) {
+      group.active = null;
+      this.controls.forEach(([, input]) => {
+        input.classList.remove('ql-active');
+        if (input.tagName === 'BUTTON') {
+          input.setAttribute('aria-pressed', 'false');
+        }
+        if (
+          input instanceof HTMLButtonElement ||
+          input instanceof HTMLSelectElement
+        ) {
+          input.disabled = false;
+        }
+      });
+      container.querySelectorAll('.ql-picker').forEach((picker) => {
+        if (!(picker instanceof HTMLElement)) return;
+        picker.classList.remove('ql-disabled', 'ql-expanded');
+        picker.setAttribute('aria-disabled', 'false');
+        const label = picker.querySelector('.ql-picker-label');
+        if (label instanceof HTMLElement) {
+          label.classList.remove('ql-active');
+          label.setAttribute('aria-disabled', 'false');
+        }
+      });
+      const fileInput = container.querySelector('input.ql-image[type=file]');
+      if (fileInput instanceof HTMLInputElement) {
+        if (group.members.size === 0) {
+          fileInput.remove();
+        } else {
+          fileInput.disabled = true;
+          fileInput.value = '';
+        }
+      }
+    }
+    if (group.members.size === 0) {
+      group.bindings.forEach(({ eventName, handler }, input) => {
+        input.removeEventListener(eventName, handler);
+      });
+      group.bindings.clear();
+      group.observer.disconnect();
+      groups.delete(container);
+    }
   }
 
   addHandler(format: string, handler: Handler) {
@@ -80,60 +475,19 @@ class Toolbar extends Module<ToolbarProps> {
     if (input.tagName === 'BUTTON') {
       input.setAttribute('type', 'button');
     }
-    if (
-      this.handlers[format] == null &&
-      this.quill.scroll.query(format) == null
-    ) {
+    const container = containerOf(this);
+    const group = container != null ? groups.get(container) : undefined;
+    if (group == null) return;
+    const supported = Array.from(group.members).some(
+      (toolbar) =>
+        toolbar.handlers[format] != null ||
+        toolbar.quill.scroll.query(format) != null,
+    );
+    if (!supported) {
       debug.warn('ignoring attaching to nonexistent format', format, input);
       return;
     }
-    const eventName = input.tagName === 'SELECT' ? 'change' : 'click';
-    input.addEventListener(eventName, (e) => {
-      let value;
-      if (input.tagName === 'SELECT') {
-        // @ts-expect-error
-        if (input.selectedIndex < 0) return;
-        // @ts-expect-error
-        const selected = input.options[input.selectedIndex];
-        if (selected.hasAttribute('selected')) {
-          value = false;
-        } else {
-          value = selected.value || false;
-        }
-      } else {
-        if (input.classList.contains('ql-active')) {
-          value = false;
-        } else {
-          // @ts-expect-error
-          value = input.value || !input.hasAttribute('value');
-        }
-        e.preventDefault();
-      }
-      this.quill.focus();
-      const [range] = this.quill.selection.getRange();
-      if (this.handlers[format] != null) {
-        this.handlers[format].call(this, value);
-      } else if (
-        // @ts-expect-error
-        this.quill.scroll.query(format).prototype instanceof EmbedBlot
-      ) {
-        value = prompt(`Enter ${format}`); // eslint-disable-line no-alert
-        if (!value) return;
-        this.quill.updateContents(
-          new Delta()
-            // @ts-expect-error Fix me later
-            .retain(range.index)
-            // @ts-expect-error Fix me later
-            .delete(range.length)
-            .insert({ [format]: value }),
-          Quill.sources.USER,
-        );
-      } else {
-        this.quill.format(format, value, Quill.sources.USER);
-      }
-      this.update(range);
-    });
-    this.controls.push([format, input]);
+    bindControl(group, input, format);
   }
 
   update(range: Range | null) {
@@ -160,6 +514,9 @@ class Toolbar extends Module<ToolbarProps> {
           input.selectedIndex = -1;
         } else {
           option.selected = true;
+        }
+        if (input instanceof HTMLSelectElement) {
+          getPicker(input)?.update();
         }
       } else if (range == null) {
         input.classList.remove('ql-active');

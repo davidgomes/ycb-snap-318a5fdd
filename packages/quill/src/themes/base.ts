@@ -13,6 +13,8 @@ import type History from '../modules/history.js';
 import type Keyboard from '../modules/keyboard.js';
 import type Uploader from '../modules/uploader.js';
 import type Selection from '../core/selection.js';
+import { getPicker } from '../ui/picker.js';
+import { resolveToolbar } from '../modules/toolbar.js';
 
 const ALIGNS = [false, 'center', 'right', 'justify'];
 
@@ -142,6 +144,8 @@ class BaseTheme extends Theme {
     icons: Record<string, string | Record<string, string>>,
   ) {
     this.pickers = Array.from(selects).map((select) => {
+      const existing = getPicker(select);
+      if (existing) return existing;
       if (select.classList.contains('ql-align')) {
         if (select.querySelector('option') == null) {
           fillSelect(select, ALIGNS);
@@ -178,6 +182,13 @@ class BaseTheme extends Theme {
       return new Picker(select);
     });
     const update = () => {
+      const toolbar = this.quill.getModule('toolbar') as {
+        container?: HTMLElement | null;
+      } | null;
+      if (toolbar?.container instanceof HTMLElement) {
+        const active = resolveToolbar(toolbar);
+        if (active != null && active.quill !== this.quill) return;
+      }
       this.pickers.forEach((picker) => {
         picker.update();
       });
@@ -193,24 +204,46 @@ BaseTheme.DEFAULTS = merge({}, Theme.DEFAULTS, {
           this.quill.theme.tooltip.edit('formula');
         },
         image() {
-          let fileInput = this.container.querySelector(
+          const toolbar = resolveToolbar(this);
+          if (
+            toolbar == null ||
+            toolbar.container == null ||
+            !toolbar.quill.isEnabled()
+          ) {
+            return;
+          }
+          let fileInput = toolbar.container.querySelector(
             'input.ql-image[type=file]',
           );
           if (fileInput == null) {
             fileInput = document.createElement('input');
             fileInput.setAttribute('type', 'file');
-            fileInput.setAttribute(
-              'accept',
-              this.quill.uploader.options.mimetypes.join(', '),
-            );
             fileInput.classList.add('ql-image');
             fileInput.addEventListener('change', () => {
-              const range = this.quill.getSelection(true);
-              this.quill.uploader.upload(range, fileInput.files);
+              const active = resolveToolbar(toolbar);
+              if (
+                active == null ||
+                !active.quill.isEnabled() ||
+                !(fileInput instanceof HTMLInputElement)
+              ) {
+                if (fileInput instanceof HTMLInputElement) {
+                  fileInput.value = '';
+                }
+                return;
+              }
+              const range = active.quill.getSelection(true);
+              active.quill.uploader.upload(range, fileInput.files ?? []);
               fileInput.value = '';
             });
-            this.container.appendChild(fileInput);
+            toolbar.container.appendChild(fileInput);
           }
+          if (!(fileInput instanceof HTMLInputElement)) return;
+          fileInput.disabled = false;
+          const uploader = toolbar.quill.uploader as unknown as {
+            options?: { mimetypes?: string[] };
+          };
+          const mimetypes = uploader.options?.mimetypes ?? [];
+          fileInput.setAttribute('accept', mimetypes.join(', '));
           fileInput.click();
         },
         video() {

@@ -2,6 +2,12 @@ import DropdownIcon from '../assets/icons/dropdown.svg';
 
 let optionsCounter = 0;
 
+const pickers = new WeakMap<HTMLSelectElement, Picker>();
+
+export function getPicker(select: HTMLSelectElement): Picker | undefined {
+  return pickers.get(select);
+}
+
 function toggleAriaAttribute(element: HTMLElement, attribute: string) {
   element.setAttribute(
     attribute,
@@ -16,6 +22,7 @@ class Picker {
 
   constructor(select: HTMLSelectElement) {
     this.select = select;
+    pickers.set(select, this);
     this.container = document.createElement('span');
     this.buildPicker();
     this.select.style.display = 'none';
@@ -41,6 +48,7 @@ class Picker {
   }
 
   togglePicker() {
+    if (this.isDisabled()) return;
     this.container.classList.toggle('ql-expanded');
     // Toggle aria-expanded and aria-hidden to make the picker accessible
     toggleAriaAttribute(this.label, 'aria-expanded');
@@ -144,7 +152,16 @@ class Picker {
     this.options.setAttribute('aria-hidden', 'true');
   }
 
+  isDisabled() {
+    return (
+      this.select.disabled ||
+      this.container.classList.contains('ql-disabled') ||
+      this.container.getAttribute('aria-disabled') === 'true'
+    );
+  }
+
   selectItem(item: HTMLElement | null, trigger = false) {
+    if (trigger && this.isDisabled()) return;
     const selected = this.container.querySelector('.ql-selected');
     if (item === selected) return;
     if (selected != null) {

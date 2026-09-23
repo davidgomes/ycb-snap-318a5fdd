@@ -8,6 +8,7 @@ import Keyboard from '../../../src/modules/keyboard.js';
 import History from '../../../src/modules/history.js';
 import Uploader from '../../../src/modules/uploader.js';
 import { createRegistry } from '../__helpers__/factory.js';
+import Bold from '../../../src/formats/bold.js';
 import Input from '../../../src/modules/input.js';
 import { SizeClass } from '../../../src/formats/size.js';
 import Bold from '../../../src/formats/bold.js';
@@ -243,6 +244,162 @@ describe('Toolbar', () => {
       expect(boldButton?.classList.contains('ql-active')).toBe(false);
       quill.format('bold', true, 'user');
       expect(boldButton?.classList.contains('ql-active')).toBe(true);
+    });
+  });
+
+  describe('shared container', () => {
+    const register = () => {
+      Quill.register(
+        {
+          'themes/snow': SnowTheme,
+          'modules/toolbar': Toolbar,
+          'modules/clipboard': Clipboard,
+          'modules/keyboard': Keyboard,
+          'modules/history': History,
+          'modules/uploader': Uploader,
+          'modules/input': Input,
+          'modules/uiNode': UINode,
+        },
+        true,
+      );
+    };
+
+    test('targets the editor that most recently had a selection', () => {
+      register();
+      const toolbar = document.body.appendChild(document.createElement('div'));
+      toolbar.innerHTML =
+        '<button type="button" class="ql-bold" aria-pressed="false"></button><select class="ql-size"><option selected="selected"></option><option value="small"></option></select>';
+      const a = new Quill(document.body.appendChild(document.createElement('div')), {
+        theme: 'snow',
+        modules: { toolbar: { container: toolbar } },
+        registry: createRegistry([Bold]),
+      });
+      const b = new Quill(document.body.appendChild(document.createElement('div')), {
+        theme: 'snow',
+        modules: { toolbar: { container: toolbar } },
+        registry: createRegistry([Bold]),
+      });
+      a.setText('aaaa');
+      b.setText('bbbb');
+      expect(toolbar.querySelectorAll('.ql-picker').length).toBe(1);
+      expect(toolbar.querySelectorAll('input.ql-image')).toHaveLength(0);
+
+      a.setSelection(0, 2);
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLButtonElement;
+      bold.click();
+      expect(a.getFormat(0, 2).bold).toBe(true);
+      expect(b.getFormat(0, 2).bold).toBeUndefined();
+      expect(bold.classList.contains('ql-active')).toBe(true);
+
+      b.setSelection(0, 2);
+      expect(a.getSelection()).toBeNull();
+      expect(bold.classList.contains('ql-active')).toBe(false);
+      bold.click();
+      expect(b.getFormat(0, 2).bold).toBe(true);
+      expect(a.getFormat(0, 2).bold).toBe(true);
+      expect(a.hasFocus()).toBe(false);
+      expect(b.hasFocus()).toBe(true);
+    });
+
+    test('disables controls for a read-only active editor', () => {
+      register();
+      const toolbar = document.body.appendChild(document.createElement('div'));
+      toolbar.innerHTML =
+        '<button type="button" class="ql-bold" aria-pressed="false"></button><select class="ql-header"></select>';
+      const enabled = new Quill(
+        document.body.appendChild(document.createElement('div')),
+        {
+          theme: 'snow',
+          modules: { toolbar: { container: toolbar } },
+          registry: createRegistry([Bold]),
+        },
+      );
+      const readonly = new Quill(
+        document.body.appendChild(document.createElement('div')),
+        {
+          theme: 'snow',
+          readOnly: true,
+          modules: { toolbar: { container: toolbar } },
+          registry: createRegistry([Bold]),
+        },
+      );
+      enabled.setText('hello');
+      readonly.setText('hello');
+      readonly.setSelection(0, 2);
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLButtonElement;
+      expect(bold.disabled).toBe(true);
+      const picker = toolbar.querySelector('.ql-picker');
+      if (picker) {
+        expect(picker.getAttribute('aria-disabled')).toBe('true');
+      }
+      bold.click();
+      expect(readonly.getFormat(0, 2).bold).toBeUndefined();
+
+      enabled.setSelection(0, 2);
+      expect(bold.disabled).toBe(false);
+      bold.click();
+      expect(enabled.getFormat(0, 2).bold).toBe(true);
+    });
+
+    test('drops the active editor when it is removed', () => {
+      register();
+      const toolbar = document.body.appendChild(document.createElement('div'));
+      toolbar.innerHTML =
+        '<button type="button" class="ql-bold" aria-pressed="false"></button>';
+      const a = new Quill(document.body.appendChild(document.createElement('div')), {
+        theme: 'snow',
+        modules: { toolbar: { container: toolbar } },
+        registry: createRegistry([Bold]),
+      });
+      const b = new Quill(document.body.appendChild(document.createElement('div')), {
+        theme: 'snow',
+        modules: { toolbar: { container: toolbar } },
+        registry: createRegistry([Bold]),
+      });
+      a.setText('hello');
+      b.setText('hello');
+      a.setSelection(0, 2);
+      a.container.remove();
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLButtonElement;
+      bold.click();
+      expect(b.getFormat(0, 2).bold).toBeUndefined();
+      b.setSelection(0, 2);
+      bold.click();
+      expect(b.getFormat(0, 2).bold).toBe(true);
+    });
+
+    test('binds toolbar buttons added later exactly once', () => {
+      register();
+      const toolbar = document.body.appendChild(document.createElement('div'));
+      const editor = new Quill(
+        document.body.appendChild(document.createElement('div')),
+        {
+          theme: 'snow',
+          modules: { toolbar: { container: toolbar } },
+          registry: createRegistry([Bold]),
+        },
+      );
+      const other = new Quill(
+        document.body.appendChild(document.createElement('div')),
+        {
+          theme: 'snow',
+          modules: { toolbar: { container: toolbar } },
+          registry: createRegistry([Bold]),
+        },
+      );
+      editor.setText('hello');
+      other.setText('hello');
+      editor.setSelection(0, 2);
+      const button = document.createElement('button');
+      button.classList.add('ql-bold');
+      toolbar.appendChild(button);
+      button.click();
+      expect(editor.getFormat(0, 2).bold).toBe(true);
+      button.remove();
+      toolbar.appendChild(button);
+      button.click();
+      expect(editor.getFormat(0, 2).bold).toBeUndefined();
+      expect(other.getFormat(0, 2).bold).toBeUndefined();
     });
   });
 });
