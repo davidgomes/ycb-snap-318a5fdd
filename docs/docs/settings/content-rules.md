@@ -503,6 +503,76 @@ __Test bold__
 ``````
 </details>
 
+## Link Style
+
+Alias: `link-style`
+
+Converts links and images/embeds between Obsidian wiki syntax and markdown syntax. External links (containing <code>://</code>) and markdown links with titles are left as is.
+
+### Options
+
+| Name | Description | List Items | Default Value |
+| ---- | ----------- | ---------- | ------------- |
+| `Link Style` | The style links should be converted to | `no-change`: Leaves links as they are<br/><br/>`markdown`: Converts wiki links to markdown links<br/><br/>`wiki`: Converts markdown links to wiki links | `no-change` |
+| `Image Style` | The style images and embeds should be converted to | `no-change`: Leaves images and embeds as they are<br/><br/>`markdown`: Converts wiki embeds to markdown images<br/><br/>`wiki`: Converts markdown images to wiki embeds | `no-change` |
+
+
+
+### Examples
+
+<details><summary>Converting wiki links and embeds to markdown</summary>
+
+Before:
+
+`````` markdown
+[[Page]]
+[[Page|Display]]
+[[Page#Heading]]
+[[#Heading]]
+![[image.png]]
+![[image.png|300x200]]
+``````
+
+After:
+
+`````` markdown
+[Page](Page)
+[Display](Page)
+[Page > Heading](Page#Heading)
+[Heading](#Heading)
+![image.png](image.png)
+![image.png](image.png)
+``````
+</details>
+<details><summary>Converting markdown links and images to wiki</summary>
+
+Before:
+
+`````` markdown
+[Page](Page)
+[Display](Page)
+[Page > Heading](Page#Heading)
+[My Page](<My Page>)
+![image.png](image.png)
+![alt text](image.png)
+[External](https://example.com)
+[Titled](Page "title")
+``````
+
+After:
+
+`````` markdown
+[[Page]]
+[[Page|Display]]
+[[Page#Heading]]
+[[My Page]]
+![[image.png]]
+![[image.png|alt text]]
+[External](https://example.com)
+[Titled](Page "title")
+``````
+</details>
+
 ## No Bare URLs
 
 Alias: `no-bare-urls`
