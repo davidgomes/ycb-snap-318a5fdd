@@ -208,6 +208,36 @@ To be released.
     });
     ~~~~
 
+ -  Added conditional option dependencies. An option can depend on the
+    presence or value of other options in the same `object()`, including
+    compound `anyOf` and `allOf` conditions. Unsatisfied optional
+    dependencies are hidden from help and completion, while required
+    dependencies fail with an error that names the dependee flag.
+
+    `dependsOn.option` accepts either the object key or a CLI flag string.
+    The metadata is stored on the usage term so wrappers such as
+    `withDefault()` keep it.
+
+    New exports from `@optique/core/primitives`:
+
+     -  `requiredWhen()`
+     -  `optionalWhen()`
+     -  `conditionalOption()`
+
+    ~~~~ typescript
+    import { object } from "@optique/core/constructs";
+    import { option, requiredWhen } from "@optique/core/primitives";
+    import { string } from "@optique/core/valueparser";
+
+    const parser = object({
+      format: option("--format", string()),
+      pretty: requiredWhen(
+        { option: "--format", value: "json" },
+        "--pretty",
+      ),
+    });
+    ~~~~
+
  -  Added inter-option dependency support via `@optique/core/dependency` module.
     This allows one option's valid values to depend on another option's parsed
     value, enabling dynamic validation and context-aware shell completion.

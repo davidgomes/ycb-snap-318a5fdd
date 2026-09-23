@@ -16,6 +16,73 @@ export type OptionName =
   | `+${string}`;
 
 /**
+ * Conditional dependency for an option.
+ *
+ * The dependency is satisfied when the referenced option is truthy, or
+ * equal to `value` when that property is set. `option` may be the object
+ * key produced by `object({...})` or a CLI flag string. Compound
+ * conditions combine nodes with `anyOf` and `allOf`.
+ *
+ * Stored on the usage term so wrappers such as `withDefault()` keep it.
+ *
+ * @since 0.10.0
+ */
+export interface DependsOn {
+  /**
+   * Object key or CLI flag the option depends on.
+   */
+  readonly option?: string;
+
+  /**
+   * When set, the dependency is satisfied only when the referenced
+   * option equals this value. When omitted, the dependency is satisfied
+   * only when the referenced option is truthy.
+   */
+  readonly value?: unknown;
+
+  /**
+   * When `true`, supplying this option while the dependency is not
+   * satisfied fails parsing. The error includes the text
+   * `requires option` and the dependee's CLI flag name. Omitting this
+   * option does not fail on its own.
+   */
+  readonly required?: boolean;
+
+  /**
+   * Satisfied when any nested condition is satisfied.
+   * An empty list is unsatisfied.
+   */
+  readonly anyOf?: readonly DependsOnNode[];
+
+  /**
+   * Satisfied when every nested condition is satisfied.
+   * An empty list is satisfied.
+   */
+  readonly allOf?: readonly DependsOnNode[];
+}
+
+/**
+ * One node in a {@link DependsOn} condition.
+ *
+ * A string is shorthand for `{ option: string }`.
+ *
+ * @since 0.10.0
+ */
+export type DependsOnNode = string | DependsOn;
+
+/**
+ * Condition accepted by {@link requiredWhen}, {@link optionalWhen},
+ * and {@link conditionalOption}.
+ *
+ * A string names the dependee. An object is a single condition, a
+ * compound `anyOf`/`allOf` condition, or a full {@link DependsOn}
+ * configuration including `required`.
+ *
+ * @since 0.10.0
+ */
+export type DependencyCondition = string | DependsOn;
+
+/**
  * Represents a single term in a command-line usage description.
  */
 export type UsageTerm =
@@ -65,6 +132,14 @@ export type UsageTerm =
      * @since 0.9.0
      */
     readonly hidden?: boolean;
+
+    /**
+     * Conditional dependency metadata for this option.
+     * Visibility and validation read this from the usage term so it
+     * survives wrappers such as `withDefault()`.
+     * @since 0.10.0
+     */
+    readonly dependsOn?: DependsOn;
   }
   /**
    * A command term, which represents a subcommand in the command-line

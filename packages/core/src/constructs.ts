@@ -60,6 +60,16 @@ import {
   deduplicateSuggestions,
 } from "./suggestion.ts";
 import {
+  catalogFromParsers,
+  enforceOptionDependencies,
+  findDependsOn,
+  hasUnsatisfiedRequiredDependency,
+  hideUnsatisfiedOptions,
+  isOptionHiddenByDependency,
+  shouldIgnoreIncompleteField,
+  visibleUsage,
+} from "./option-dependency.ts";
+import {
   extractArgumentMetavars,
   extractCommandNames,
   extractOptionNames,
@@ -2096,8 +2106,21 @@ function* suggestObjectSync<
     collectDependencies(context.state, registry);
   }
 
+  const dependencyCatalog = catalogFromParsers(parserPairs);
+  const visibleContext = {
+    ...context,
+    usage: hideUnsatisfiedOptions(
+      context.usage,
+      dependencyCatalog,
+      context.state,
+    ),
+  };
+
   // Create context with dependency registry for child parsers
-  const contextWithRegistry = { ...context, dependencyRegistry: registry };
+  const contextWithRegistry = {
+    ...visibleContext,
+    dependencyRegistry: registry,
+  };
 
   // Check if the last token in the buffer is an option that requires a value.
   // If so, only suggest values for that specific option parser, not all parsers.
@@ -2108,7 +2131,17 @@ function* suggestObjectSync<
 
     // Find if any parser has this token as an option requiring a value
     for (const [field, parser] of parserPairs) {
+      if (parser == null || typeof parser.suggest !== "function") continue;
       if (isOptionRequiringValue(parser.usage, lastToken)) {
+        if (
+          isOptionHiddenByDependency(
+            parser.usage,
+            dependencyCatalog,
+            context.state,
+          )
+        ) {
+          return;
+        }
         // Only get suggestions from the parser that owns this option
         const fieldState =
           (context.state && typeof context.state === "object" &&
@@ -2128,6 +2161,12 @@ function* suggestObjectSync<
   // Default behavior: try getting suggestions from each parser
   const suggestions: Suggestion[] = [];
   for (const [field, parser] of parserPairs) {
+    if (parser == null || typeof parser.suggest !== "function") continue;
+    if (
+      isOptionHiddenByDependency(parser.usage, dependencyCatalog, context.state)
+    ) {
+      continue;
+    }
     const fieldState = (context.state && typeof context.state === "object" &&
         field in context.state)
       ? (context.state as Record<string | symbol, unknown>)[field]
@@ -2165,8 +2204,21 @@ async function* suggestObjectAsync<
     collectDependencies(context.state, registry);
   }
 
+  const dependencyCatalog = catalogFromParsers(parserPairs);
+  const visibleContext = {
+    ...context,
+    usage: hideUnsatisfiedOptions(
+      context.usage,
+      dependencyCatalog,
+      context.state,
+    ),
+  };
+
   // Create context with dependency registry for child parsers
-  const contextWithRegistry = { ...context, dependencyRegistry: registry };
+  const contextWithRegistry = {
+    ...visibleContext,
+    dependencyRegistry: registry,
+  };
 
   // Check if the last token in the buffer is an option that requires a value.
   if (context.buffer.length > 0) {
@@ -2174,7 +2226,17 @@ async function* suggestObjectAsync<
 
     // Find if any parser has this token as an option requiring a value
     for (const [field, parser] of parserPairs) {
+      if (parser == null || typeof parser.suggest !== "function") continue;
       if (isOptionRequiringValue(parser.usage, lastToken)) {
+        if (
+          isOptionHiddenByDependency(
+            parser.usage,
+            dependencyCatalog,
+            context.state,
+          )
+        ) {
+          return;
+        }
         // Only get suggestions from the parser that owns this option
         const fieldState =
           (context.state && typeof context.state === "object" &&
@@ -2197,6 +2259,12 @@ async function* suggestObjectAsync<
   // Default behavior: try getting suggestions from each parser
   const suggestions: Suggestion[] = [];
   for (const [field, parser] of parserPairs) {
+    if (parser == null || typeof parser.suggest !== "function") continue;
+    if (
+      isOptionHiddenByDependency(parser.usage, dependencyCatalog, context.state)
+    ) {
+      continue;
+    }
     const fieldState = (context.state && typeof context.state === "object" &&
         field in context.state)
       ? (context.state as Record<string | symbol, unknown>)[field]
@@ -2632,33 +2700,48 @@ export function object<
     [k, parsers[k]] as [keyof T, Parser<Mode, unknown, unknown>]
   );
   parserPairs.sort(([_, parserA], [__, parserB]) =>
-    parserB.priority - parserA.priority
+    (parserB?.priority ?? 0) - (parserA?.priority ?? 0)
   );
   const initialState: Record<string | symbol, unknown> = {};
   for (const key of parserKeys) {
-    initialState[key as string | symbol] = parsers[key].initialState;
+    const fieldParser = parsers[key];
+    initialState[key as string | symbol] = fieldParser == null
+      ? undefined
+      : fieldParser.initialState;
   }
 
   // Check for duplicate option names at construction time unless explicitly allowed
   if (!options.allowDuplicates) {
     checkDuplicateOptionNames(
-      parserPairs.map(([field, parser]) =>
-        [field as string | symbol, parser.usage] as const
+      parserPairs.flatMap(([field, parser]) =>
+        parser == null
+          ? []
+          : [[field as string | symbol, parser.usage] as const]
       ),
     );
   }
 
+  const definedParsers: Parser<Mode, unknown, unknown>[] = [];
+  for (const key of parserKeys) {
+    const parser = parsers[key];
+    if (parser != null) definedParsers.push(parser);
+  }
+
   // Analyze context once for error message generation
-  const noMatchContext = analyzeNoMatchContext(
-    parserKeys.map((k) => parsers[k]),
-  );
+  const noMatchContext = analyzeNoMatchContext(definedParsers);
 
   // Compute combined mode: if any parser is async, the result is async
-  const combinedMode: Mode = parserKeys.some(
-      (k) => parsers[k].$mode === "async",
-    )
-    ? "async"
-    : "sync";
+  const combinedMode: Mode =
+    definedParsers.some((parser) => parser.$mode === "async")
+      ? "async"
+      : "sync";
+  const combinedUsage = parserPairs.flatMap(([_, parser]) =>
+    parser?.usage ?? []
+  );
+  const dependencyCatalog = catalogFromParsers(parserPairs);
+  const tracksDependencies = dependencyCatalog.some((field) =>
+    findDependsOn(field.usage) != null
+  );
 
   // Helper function for sync parsing of a single field
   type ParseResult = ParserResult<{ readonly [K in keyof T]: unknown }>;
@@ -2698,14 +2781,21 @@ export function object<
       })(),
   });
 
+  const withVisibleUsage = (
+    ctx: ParserContext<{ readonly [K in keyof T]: unknown }>,
+  ): ParserContext<{ readonly [K in keyof T]: unknown }> => ({
+    ...ctx,
+    usage: hideUnsatisfiedOptions(ctx.usage, dependencyCatalog, ctx.state),
+  });
+
   // Sync parse implementation
   const parseSync = (
     context: ParserContext<{ readonly [K in keyof T]: unknown }>,
   ): ParseResult => {
-    let error = getInitialError(context);
+    let currentContext = withVisibleUsage(context);
+    let error = getInitialError(currentContext);
 
     // Try greedy parsing: attempt to consume as many fields as possible
-    let currentContext = context;
     let anySuccess = false;
     const allConsumed: string[] = [];
 
@@ -2715,6 +2805,7 @@ export function object<
       madeProgress = false;
 
       for (const [field, parser] of parserPairs) {
+        if (parser == null || typeof parser.parse !== "function") continue;
         const result = (parser as Parser<"sync", unknown, unknown>).parse({
           ...currentContext,
           state: (currentContext.state &&
@@ -2727,7 +2818,7 @@ export function object<
         });
 
         if (result.success && result.consumed.length > 0) {
-          currentContext = {
+          currentContext = withVisibleUsage({
             ...currentContext,
             buffer: result.next.buffer,
             optionsTerminated: result.next.optionsTerminated,
@@ -2735,7 +2826,7 @@ export function object<
               ...(currentContext.state as Record<string | symbol, unknown>),
               [field as string | symbol]: result.next.state,
             } as { readonly [K in keyof T]: unknown },
-          };
+          });
           allConsumed.push(...result.consumed);
           anySuccess = true;
           madeProgress = true;
@@ -2757,8 +2848,23 @@ export function object<
 
     // If buffer is empty and no parser consumed input, check if all parsers can complete
     if (context.buffer.length === 0) {
+      if (hasUnsatisfiedRequiredDependency(dependencyCatalog, context.state)) {
+        return {
+          success: true,
+          next: context,
+          consumed: [],
+        };
+      }
       let allCanComplete = true;
       for (const [field, parser] of parserPairs) {
+        if (parser == null || typeof parser.complete !== "function") continue;
+        if (
+          shouldIgnoreIncompleteField(
+            parser.usage,
+            dependencyCatalog,
+            context.state,
+          )
+        ) continue;
         const fieldState =
           (context.state && typeof context.state === "object" &&
               field in context.state)
@@ -2790,10 +2896,10 @@ export function object<
   const parseAsync = async (
     context: ParserContext<{ readonly [K in keyof T]: unknown }>,
   ): Promise<ParseResult> => {
-    let error = getInitialError(context);
+    let currentContext = withVisibleUsage(context);
+    let error = getInitialError(currentContext);
 
     // Try greedy parsing: attempt to consume as many fields as possible
-    let currentContext = context;
     let anySuccess = false;
     const allConsumed: string[] = [];
 
@@ -2803,6 +2909,7 @@ export function object<
       madeProgress = false;
 
       for (const [field, parser] of parserPairs) {
+        if (parser == null || typeof parser.parse !== "function") continue;
         const resultOrPromise = parser.parse({
           ...currentContext,
           state: (currentContext.state &&
@@ -2816,7 +2923,7 @@ export function object<
         const result = await resultOrPromise;
 
         if (result.success && result.consumed.length > 0) {
-          currentContext = {
+          currentContext = withVisibleUsage({
             ...currentContext,
             buffer: result.next.buffer,
             optionsTerminated: result.next.optionsTerminated,
@@ -2824,7 +2931,7 @@ export function object<
               ...(currentContext.state as Record<string | symbol, unknown>),
               [field as string | symbol]: result.next.state,
             } as { readonly [K in keyof T]: unknown },
-          };
+          });
           allConsumed.push(...result.consumed);
           anySuccess = true;
           madeProgress = true;
@@ -2846,8 +2953,23 @@ export function object<
 
     // If buffer is empty and no parser consumed input, check if all parsers can complete
     if (context.buffer.length === 0) {
+      if (hasUnsatisfiedRequiredDependency(dependencyCatalog, context.state)) {
+        return {
+          success: true,
+          next: context,
+          consumed: [],
+        };
+      }
       let allCanComplete = true;
       for (const [field, parser] of parserPairs) {
+        if (parser == null || typeof parser.complete !== "function") continue;
+        if (
+          shouldIgnoreIncompleteField(
+            parser.usage,
+            dependencyCatalog,
+            context.state,
+          )
+        ) continue;
         const fieldState =
           (context.state && typeof context.state === "object" &&
               field in context.state)
@@ -2878,8 +3000,17 @@ export function object<
     $mode: combinedMode,
     $valueType: [],
     $stateType: [],
-    priority: Math.max(...parserKeys.map((k) => parsers[k].priority)),
-    usage: parserPairs.flatMap(([_, p]) => p.usage),
+    priority: definedParsers.length === 0
+      ? 0
+      : Math.max(...definedParsers.map((parser) => parser.priority)),
+    usage: combinedUsage,
+    [visibleUsage](state: unknown): Usage {
+      return hideUnsatisfiedOptions(
+        combinedUsage,
+        dependencyCatalog,
+        state ?? initialState,
+      );
+    },
     initialState: initialState as {
       readonly [K in keyof T]: T[K]["$stateType"][number] extends (infer U3)
         ? U3
@@ -2912,6 +3043,12 @@ export function object<
               unknown,
               unknown
             >;
+            if (
+              fieldParser == null || typeof fieldParser.complete !== "function"
+            ) {
+              preCompletedState[fieldKey] = fieldState;
+              continue;
+            }
 
             // Check if this is a withDefault state containing PendingDependencySourceState
             // Case 1: state is [PendingDependencySourceState] (option was not provided)
@@ -2973,6 +3110,7 @@ export function object<
           const result: { [K in keyof T]: T[K]["$valueType"][number] } =
             // deno-lint-ignore no-explicit-any
             {} as any;
+          const dependencyErrors = new Map<string | symbol, Message>();
           for (const field of parserKeys) {
             const fieldKey = field as string | symbol;
             const fieldResolvedState =
@@ -2982,6 +3120,11 @@ export function object<
               unknown,
               unknown
             >;
+            if (
+              fieldParser == null || typeof fieldParser.complete !== "function"
+            ) {
+              continue;
+            }
 
             // If this field was pre-completed in Phase 1 and is a DependencySourceState,
             // extract the value directly since complete() was already called.
@@ -2993,9 +3136,22 @@ export function object<
               if (depResult.success) {
                 (result as Record<string | symbol, unknown>)[fieldKey] =
                   depResult.value;
+              } else if (tracksDependencies) {
+                dependencyErrors.set(fieldKey, depResult.error);
               } else {
                 return { success: false as const, error: depResult.error };
               }
+              continue;
+            }
+
+            // Primitive values are already completed results used by
+            // dependency checks. Do not pass them to complete().
+            if (
+              fieldResolvedState != null &&
+              typeof fieldResolvedState !== "object"
+            ) {
+              (result as Record<string | symbol, unknown>)[fieldKey] =
+                fieldResolvedState;
               continue;
             }
 
@@ -3003,8 +3159,19 @@ export function object<
             if (valueResult.success) {
               (result as Record<string | symbol, unknown>)[fieldKey] =
                 valueResult.value;
-            } else return { success: false as const, error: valueResult.error };
+            } else if (tracksDependencies) {
+              dependencyErrors.set(fieldKey, valueResult.error);
+            } else {
+              return { success: false as const, error: valueResult.error };
+            }
           }
+          const dependencyChecked = enforceOptionDependencies(
+            parserPairs,
+            state,
+            result as Record<string | symbol, unknown>,
+            dependencyErrors,
+          );
+          if (!dependencyChecked.success) return dependencyChecked;
           return { success: true as const, value: result };
         },
         async () => {
@@ -3016,6 +3183,12 @@ export function object<
             const fieldState =
               (state as Record<string | symbol, unknown>)[fieldKey];
             const fieldParser = parsers[field];
+            if (
+              fieldParser == null || typeof fieldParser.complete !== "function"
+            ) {
+              preCompletedState[fieldKey] = fieldState;
+              continue;
+            }
 
             // Check if this is a withDefault state containing PendingDependencySourceState
             // Case 1: state is [PendingDependencySourceState] (option was not provided)
@@ -3077,11 +3250,17 @@ export function object<
           const result: { [K in keyof T]: T[K]["$valueType"][number] } =
             // deno-lint-ignore no-explicit-any
             {} as any;
+          const dependencyErrors = new Map<string | symbol, Message>();
           for (const field of parserKeys) {
             const fieldKey = field as string | symbol;
             const fieldResolvedState =
               (resolvedState as Record<string | symbol, unknown>)[fieldKey];
             const fieldParser = parsers[field];
+            if (
+              fieldParser == null || typeof fieldParser.complete !== "function"
+            ) {
+              continue;
+            }
 
             // If this field was pre-completed in Phase 1 and is a DependencySourceState,
             // extract the value directly since complete() was already called.
@@ -3093,9 +3272,22 @@ export function object<
               if (depResult.success) {
                 (result as Record<string | symbol, unknown>)[fieldKey] =
                   depResult.value;
+              } else if (tracksDependencies) {
+                dependencyErrors.set(fieldKey, depResult.error);
               } else {
                 return { success: false as const, error: depResult.error };
               }
+              continue;
+            }
+
+            // Primitive values are already completed results used by
+            // dependency checks. Do not pass them to complete().
+            if (
+              fieldResolvedState != null &&
+              typeof fieldResolvedState !== "object"
+            ) {
+              (result as Record<string | symbol, unknown>)[fieldKey] =
+                fieldResolvedState;
               continue;
             }
 
@@ -3103,8 +3295,19 @@ export function object<
             if (valueResult.success) {
               (result as Record<string | symbol, unknown>)[fieldKey] =
                 valueResult.value;
-            } else return { success: false as const, error: valueResult.error };
+            } else if (tracksDependencies) {
+              dependencyErrors.set(fieldKey, valueResult.error);
+            } else {
+              return { success: false as const, error: valueResult.error };
+            }
           }
+          const dependencyChecked = enforceOptionDependencies(
+            parserPairs,
+            state,
+            result as Record<string | symbol, unknown>,
+            dependencyErrors,
+          );
+          if (!dependencyChecked.success) return dependencyChecked;
           return { success: true as const, value: result };
         },
       );
@@ -3134,8 +3337,22 @@ export function object<
       state: DocState<{ readonly [K in keyof T]: unknown }>,
       defaultValue?: { readonly [K in keyof T]: unknown },
     ) {
+      const visibilityState = state.kind === "available" && state.state != null
+        ? state.state
+        : initialState;
       const fragments = parserPairs.flatMap(([field, p]) => {
-        const fieldState: DocState<unknown> = state.kind === "unavailable"
+        if (p == null || typeof p.getDocFragments !== "function") return [];
+        if (
+          isOptionHiddenByDependency(
+            p.usage,
+            dependencyCatalog,
+            visibilityState,
+          )
+        ) {
+          return [];
+        }
+        const fieldState: DocState<unknown> = state.kind === "unavailable" ||
+            state.state == null
           ? { kind: "unavailable" }
           : { kind: "available", state: state.state[field] };
         return p.getDocFragments(fieldState, defaultValue?.[field]).fragments;
@@ -6018,7 +6235,15 @@ export function group<M extends Mode, TValue, TState>(
   label: string,
   parser: Parser<M, TValue, TState>,
 ): Parser<M, TValue, TState> {
+  const innerVisible = parser as Parser<M, TValue, TState> & {
+    readonly [visibleUsage]?: (state: unknown) => Usage;
+  };
+  const innerFilter = innerVisible[visibleUsage];
+  const visibility = typeof innerFilter === "function"
+    ? { [visibleUsage]: innerFilter }
+    : {};
   return {
+    ...visibility,
     $mode: parser.$mode,
     $valueType: parser.$valueType,
     $stateType: parser.$stateType,

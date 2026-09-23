@@ -1,6 +1,7 @@
 import type { DocEntry, DocFragments, DocPage, DocSection } from "./doc.ts";
 import { type Message, message } from "./message.ts";
 import type { DependencyRegistryLike } from "./registry-types.ts";
+import { visibleUsage } from "./option-dependency.ts";
 import { normalizeUsage, type Usage, type UsageTerm } from "./usage.ts";
 import type { ValueParserResult } from "./valueparser.ts";
 import { annotationKey, type ParseOptions } from "./annotations.ts";
@@ -1000,7 +1001,14 @@ function buildDocPage(
   if (entries.length > 0) {
     sections.push({ entries });
   }
-  const usage = [...normalizeUsage(parser.usage)];
+  const withVisibility = parser as Parser<Mode, unknown, unknown> & {
+    readonly [visibleUsage]?: (state: unknown) => Usage;
+  };
+  const filterUsage = withVisibility[visibleUsage];
+  const baseUsage = typeof filterUsage === "function"
+    ? filterUsage(context.state)
+    : parser.usage;
+  const usage = [...normalizeUsage(baseUsage)];
   let i = 0;
   for (const arg of args) {
     if (i >= usage.length) break;

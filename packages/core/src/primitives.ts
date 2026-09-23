@@ -76,7 +76,16 @@ import {
   DEFAULT_FIND_SIMILAR_OPTIONS,
   findSimilar,
 } from "./suggestion.ts";
-import type { OptionName, UsageTerm } from "./usage.ts";
+import { toDependsOn, visibleUsage } from "./option-dependency.ts";
+import type {
+  DependencyCondition,
+  DependsOn,
+  OptionName,
+  Usage,
+  UsageTerm,
+} from "./usage.ts";
+
+export type { DependencyCondition, DependsOn };
 import { extractCommandNames, extractOptionNames } from "./usage.ts";
 import {
   isValueParser,
@@ -128,6 +137,20 @@ export interface OptionOptions {
    * @since 0.9.0
    */
   readonly hidden?: boolean;
+
+  /**
+   * Makes this option conditional on other options in the same
+   * `object()`. The dependency is stored on the usage term so wrappers
+   * such as `withDefault()` keep it.
+   *
+   * `option` may be the object key or a CLI flag string. When `value`
+   * is set, the referenced option must equal that value. Otherwise it
+   * must be truthy. `anyOf` and `allOf` combine conditions. Set
+   * `required` to fail parsing when the dependency is not satisfied.
+   *
+   * @since 0.10.0
+   */
+  readonly dependsOn?: DependsOn;
 
   /**
    * Error message customization options.
@@ -650,6 +673,7 @@ export function option<M extends Mode, T>(
             type: "option",
             names: optionNames,
             ...(options.hidden && { hidden: true }),
+            ...(options.dependsOn != null && { dependsOn: options.dependsOn }),
           }],
         }
         : {
@@ -657,6 +681,7 @@ export function option<M extends Mode, T>(
           names: optionNames,
           metavar: valueParser.metavar,
           ...(options.hidden && { hidden: true }),
+          ...(options.dependsOn != null && { dependsOn: options.dependsOn }),
         },
     ],
     initialState: valueParser == null
@@ -940,7 +965,12 @@ export function option<M extends Mode, T>(
         | PendingDependencySourceState
         | undefined,
     ) {
-      if (state == null) {
+      // Dependency checks may pass withDefault's one-element wrapper
+      // around an option result. Unwrap it before reading the result.
+      const resolved = (
+        Array.isArray(state) && state.length === 1 ? state[0] : state
+      ) as typeof state;
+      if (resolved == null) {
         return valueParser == null ? { success: true, value: false } : {
           success: false,
           error: options.errors?.missing
@@ -952,7 +982,7 @@ export function option<M extends Mode, T>(
       }
       // Handle PendingDependencySourceState: this means the option was not provided
       // but it uses a DependencySource. Return a "missing" error.
-      if (isPendingDependencySourceState(state)) {
+      if (isPendingDependencySourceState(resolved)) {
         return {
           success: false,
           error: options.errors?.missing
@@ -964,8 +994,8 @@ export function option<M extends Mode, T>(
       }
       // Handle DeferredParseState: use preliminary result for now.
       // Actual resolution with real dependency values happens at object() level.
-      if (isDeferredParseState<T>(state)) {
-        const preliminaryResult = state.preliminaryResult;
+      if (isDeferredParseState<T>(resolved)) {
+        const preliminaryResult = resolved.preliminaryResult;
         if (preliminaryResult.success) return preliminaryResult;
         return {
           success: false,
@@ -977,8 +1007,8 @@ export function option<M extends Mode, T>(
         };
       }
       // Handle DependencySourceState: extract the underlying result.
-      if (isDependencySourceState<T | boolean>(state)) {
-        const result = state.result;
+      if (isDependencySourceState<T | boolean>(resolved)) {
+        const result = resolved.result;
         if (result.success) return result;
         return {
           success: false,
@@ -989,14 +1019,14 @@ export function option<M extends Mode, T>(
             : message`${eOptionNames(optionNames)}: ${result.error}`,
         };
       }
-      if (state.success) return state;
+      if (resolved.success) return resolved;
       return {
         success: false,
         error: options.errors?.invalidValue
           ? (typeof options.errors.invalidValue === "function"
-            ? options.errors.invalidValue(state.error)
+            ? options.errors.invalidValue(resolved.error)
             : options.errors.invalidValue)
-          : message`${eOptionNames(optionNames)}: ${state.error}`,
+          : message`${eOptionNames(optionNames)}: ${resolved.error}`,
       };
     },
     suggest(
@@ -1058,6 +1088,136 @@ export function option<M extends Mode, T>(
     T | boolean,
     ValueParserResult<T | boolean> | undefined
   >;
+}
+
+function normalizeFlagSpec(
+  flagSpec: OptionName | readonly OptionName[],
+): readonly OptionName[] {
+  const names = typeof flagSpec === "string" ? [flagSpec] : [...flagSpec];
+  if (names.length < 1) {
+    throw new TypeError("Expected at least one option name.");
+  }
+  return names;
+}
+
+function optionWithDependency(
+  condition: DependencyCondition,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParser: ValueParser<Mode, unknown> | undefined,
+  presence: "required" | "optional" | "preserve",
+): Parser<Mode, unknown, unknown> {
+  const names = normalizeFlagSpec(flagSpec);
+  const dependsOn = toDependsOn(condition, presence);
+  const flags = names as [OptionName, ...OptionName[]];
+  if (valueParser == null) {
+    return option(...flags, { dependsOn }) as Parser<Mode, unknown, unknown>;
+  }
+  return option(...flags, valueParser, { dependsOn }) as Parser<
+    Mode,
+    unknown,
+    unknown
+  >;
+}
+
+/**
+ * Creates an option that is required when a dependency is satisfied
+ * and fails when that dependency is not satisfied.
+ *
+ * Equivalent to `option(flagSpec, valueParser, { dependsOn })` with
+ * `required: true`.
+ *
+ * @param condition Object key, CLI flag, or compound condition. A full
+ *                  `dependsOn` object is accepted. `required` on that
+ *                  object is set to `true`.
+ * @param flagSpec Option name or names for the dependent option.
+ * @param valueParser Value parser for the option. When omitted, the
+ *                    option is a Boolean flag.
+ * @returns An option parser with `dependsOn.required` set.
+ * @throws {TypeError} When `flagSpec` is an empty list.
+ * @since 0.10.0
+ */
+export function requiredWhen(
+  condition: DependencyCondition,
+  flagSpec: OptionName | readonly OptionName[],
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+export function requiredWhen<M extends Mode, T>(
+  condition: DependencyCondition,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParser: ValueParser<M, T>,
+): Parser<M, T, ValueParserResult<T> | undefined>;
+export function requiredWhen(
+  condition: DependencyCondition,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParser?: ValueParser<Mode, unknown>,
+): Parser<Mode, unknown, unknown> {
+  return optionWithDependency(condition, flagSpec, valueParser, "required");
+}
+
+/**
+ * Creates an option that is available when a dependency is satisfied.
+ *
+ * When the dependency is unsatisfied and the option is not supplied,
+ * parsing still succeeds and the option is hidden from help and
+ * completion. Supplying it explicitly still parses, except when the
+ * dependee was explicitly set to a falsy value.
+ *
+ * @param condition Object key, CLI flag, or compound condition.
+ * @param flagSpec Option name or names for the dependent option.
+ * @param valueParser Value parser for the option. When omitted, the
+ *                    option is a Boolean flag.
+ * @returns An option parser whose dependency is not required.
+ * @throws {TypeError} When `flagSpec` is an empty list.
+ * @since 0.10.0
+ */
+export function optionalWhen(
+  condition: DependencyCondition,
+  flagSpec: OptionName | readonly OptionName[],
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+export function optionalWhen<M extends Mode, T>(
+  condition: DependencyCondition,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParser: ValueParser<M, T>,
+): Parser<M, T, ValueParserResult<T> | undefined>;
+export function optionalWhen(
+  condition: DependencyCondition,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParser?: ValueParser<Mode, unknown>,
+): Parser<Mode, unknown, unknown> {
+  return optionWithDependency(condition, flagSpec, valueParser, "optional");
+}
+
+/**
+ * Creates an option gated by a dependency condition.
+ *
+ * When `condition` includes `required`, that value is kept. Otherwise
+ * the dependency is optional: the option is hidden while unsatisfied,
+ * and parsing it explicitly still succeeds unless the dependee is an
+ * explicit falsy value.
+ *
+ * @param condition Object key, CLI flag, compound condition, or a full
+ *                  `dependsOn` configuration including `required`.
+ * @param flagSpec Option name or names for the dependent option.
+ * @param valueParser Value parser for the option. When omitted, the
+ *                    option is a Boolean flag.
+ * @returns An option parser with the given dependency.
+ * @throws {TypeError} When `flagSpec` is an empty list.
+ * @since 0.10.0
+ */
+export function conditionalOption(
+  condition: DependencyCondition,
+  flagSpec: OptionName | readonly OptionName[],
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+export function conditionalOption<M extends Mode, T>(
+  condition: DependencyCondition,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParser: ValueParser<M, T>,
+): Parser<M, T, ValueParserResult<T> | undefined>;
+export function conditionalOption(
+  condition: DependencyCondition,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParser?: ValueParser<Mode, unknown>,
+): Parser<Mode, unknown, unknown> {
+  return optionWithDependency(condition, flagSpec, valueParser, "preserve");
 }
 
 /**
@@ -1840,6 +2000,25 @@ export function command<M extends Mode, T, TState>(
   options: CommandOptions = {},
 ): Parser<M, T, CommandState<TState>> {
   const isAsync = parser.$mode === "async";
+  const commandTerm: UsageTerm = {
+    type: "command",
+    name,
+    ...(options.hidden && { hidden: true }),
+  };
+  const innerVisible = parser as Parser<M, T, TState> & {
+    readonly [visibleUsage]?: (state: unknown) => Usage;
+  };
+  const innerFilter = innerVisible[visibleUsage];
+  const filterCommandUsage = typeof innerFilter === "function"
+    ? (state: unknown): Usage => {
+      let innerState: unknown = parser.initialState;
+      if (Array.isArray(state)) {
+        if (state[0] === "parsing") innerState = state[1];
+        else if (state[0] === "matched") innerState = parser.initialState;
+      }
+      return [commandTerm, ...innerFilter(innerState)];
+    }
+    : undefined;
 
   // Use type assertion to allow both sync and async returns from parse method
   const result = {
@@ -1847,10 +2026,9 @@ export function command<M extends Mode, T, TState>(
     $valueType: [],
     $stateType: [],
     priority: 15, // Higher than options to match commands first
-    usage: [
-      { type: "command", name, ...(options.hidden && { hidden: true }) },
-      ...parser.usage,
-    ],
+    usage: [commandTerm, ...parser.usage],
+    ...(filterCommandUsage != null &&
+      { [visibleUsage]: filterCommandUsage }),
     initialState: undefined,
     parse(context: ParserContext<CommandState<TState>>) {
       // Handle different states
