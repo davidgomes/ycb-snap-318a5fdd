@@ -100,6 +100,15 @@ def test_layer_blending_ranges() -> None:
     )
 
 
+def test_layer_blending_ranges_rejects_bad_length() -> None:
+    with pytest.raises(ValueError):
+        LayerBlendingRanges(composite_ranges=[(0, 65535)]).write(io.BytesIO())
+    with pytest.raises(ValueError):
+        LayerBlendingRanges(
+            channel_ranges=[[(0, 65535), (0, 65535), (0, 65535)]]
+        ).write(io.BytesIO())
+
+
 def test_layer_record() -> None:
     tagged_blocks = TaggedBlocks(
         [  # type: ignore[arg-type]

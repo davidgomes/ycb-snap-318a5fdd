@@ -106,6 +106,7 @@ from PIL import Image, ImageChops
 
 import psd_tools.psd.engine_data as engine_data
 from psd_tools.api import pil_io
+from psd_tools.api.blend_range import BlendRanges
 from psd_tools.api.effects import Effects
 from psd_tools.api.mask import Mask
 from psd_tools.api.protocols import GroupMixinProtocol, LayerProtocol, PSDProtocol
@@ -309,6 +310,22 @@ class Layer(LayerProtocol):
         if self.blend_mode != blend_mode:
             self._psd._mark_updated()
         self._record.blend_mode = blend_mode
+
+    @property
+    def blend_ranges(self) -> BlendRanges:
+        """Blend If sliders for this layer. Writable.
+
+        Assign a :class:`~psd_tools.api.blend_range.BlendRanges` value. The
+        ranges are stored on the layer record and included when the document
+        is saved.
+        """
+        return BlendRanges.from_raw(self._record.blending_ranges)
+
+    @blend_ranges.setter
+    def blend_ranges(self, value: BlendRanges) -> None:
+        value.apply_to_raw(self._record.blending_ranges)
+        if self._psd is not None:
+            self._psd._mark_updated()
 
     @property
     def left(self) -> int:
