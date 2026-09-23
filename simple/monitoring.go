@@ -217,13 +217,6 @@ func evaluateAlerts(target config.Target, tracker *alerts.Tracker, result net.We
 	return decision
 }
 
-func sslDaysForAlerts(target config.Target) int {
-	if target.AlertPolicy.SSLExpiryThresholdDays <= 0 {
-		return -1
-	}
-	return net.GetSSLCertExpiry(target.URL)
-}
-
 func monitorTargetSimple(ctx context.Context, target config.Target, targetIndex int, monitors map[string]*stats.Monitor, sequences map[string]*int, trackers map[string]*alerts.Tracker, resultsChan chan<- TargetResult, options MonitoringOptions) {
 	ticker := time.NewTicker(target.GetRefreshInterval())
 	defer ticker.Stop()
@@ -232,7 +225,10 @@ func monitorTargetSimple(ctx context.Context, target config.Target, targetIndex 
 
 	makeRequest := func() {
 		attemptCount++
-		sslDaysRemaining := sslDaysForAlerts(target)
+		sslDaysRemaining := -1
+		if target.AlertPolicy.SSLExpiryThresholdDays > 0 {
+			sslDaysRemaining = net.GetSSLCertExpiry(target.URL)
+		}
 		netConfig := net.NetworkConfig{
 			Timeout:         target.GetTimeout(),
 			ShouldFail:      target.ShouldFail,
