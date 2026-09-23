@@ -600,6 +600,57 @@ describe('Config', function() {
     });
   });
 
+  describe('report_file templates', function() {
+    it('reports no templates when report_file is unset', function() {
+      let config = new Config('ci', {});
+      expect(config.hasLauncherTemplate()).to.be.false();
+      expect(config.hasDateTemplate()).to.be.false();
+      expect(config.hasTimestampTemplate()).to.be.false();
+      expect(config.hasAnyReportTemplate()).to.be.false();
+      expect(config.getExpandedReportFile('Chrome')).to.be.null();
+      expect(config.validateReportFile()).to.deep.equal({ valid: true, errors: [], warnings: [] });
+    });
+
+    it('detects each template', function() {
+      let config = new Config('ci', { report_file: 'reports/<launcher>-<timestamp>.xml' });
+      expect(config.hasLauncherTemplate()).to.be.true();
+      expect(config.hasDateTemplate()).to.be.false();
+      expect(config.hasTimestampTemplate()).to.be.true();
+      expect(config.hasAnyReportTemplate()).to.be.true();
+
+      config = new Config('ci', { report_file: 'reports/<date>.xml' });
+      expect(config.hasDateTemplate()).to.be.true();
+      expect(config.hasAnyReportTemplate()).to.be.true();
+    });
+
+    it('expands the report file for a launcher', function() {
+      let config = new Config('ci', { report_file: 'reports/<launcher>.xml' });
+      expect(config.getExpandedReportFile('Chrome 120')).to.equal('reports/Chrome_120.xml');
+      expect(config.getExpandedReportFile()).to.equal('reports/<launcher>.xml');
+    });
+
+    it('accepts known templates', function() {
+      let config = new Config('ci', { report_file: 'reports/<date>/<launcher>-<timestamp>.xml' });
+      expect(config.validateReportFile()).to.deep.equal({ valid: true, errors: [], warnings: [] });
+    });
+
+    it('errors on unknown templates', function() {
+      let config = new Config('ci', { report_file: 'reports/<browser>-<date>.xml' });
+      let result = config.validateReportFile();
+      expect(result.valid).to.be.false();
+      expect(result.errors).to.have.lengthOf(1);
+      expect(result.errors[0]).to.contain('<browser>');
+    });
+
+    it('warns when <launcher> is used without a file extension', function() {
+      let config = new Config('ci', { report_file: 'reports/<launcher>' });
+      let result = config.validateReportFile();
+      expect(result.valid).to.be.true();
+      expect(result.errors).to.be.empty();
+      expect(result.warnings).to.have.lengthOf(1);
+    });
+  });
+
   describe('debug', function() {
     describe('when unset', function() {
       it('is not defined', function() {

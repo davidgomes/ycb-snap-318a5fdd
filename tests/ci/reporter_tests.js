@@ -681,6 +681,35 @@ describe('test reporters', function() {
       });
     });
 
+    context('with launcher summary', function() {
+      it('does not show a launcher summary by default', function() {
+        var reporter = new TapReporter(false, stream, new Config('ci', {}));
+        reporter.report('Chrome', { name: 'a', passed: true, runDuration: 1 });
+        reporter.finish();
+
+        assert.notInclude(stream.read().toString(), 'Per-launcher summary');
+      });
+
+      it('shows per-launcher pass/fail/skip counts', function() {
+        var reporter = new TapReporter(false, stream, new Config('ci', { tap_show_launcher_summary: true }));
+        reporter.report('Chrome', { name: 'a', passed: true, runDuration: 1 });
+        reporter.report('Chrome', { name: 'b', passed: false, runDuration: 1 });
+        reporter.report('Chrome', { name: 'c', skipped: true, runDuration: 0 });
+        reporter.report('Firefox', { name: 'd', passed: true, runDuration: 1 });
+        reporter.finish();
+
+        var lines = stream.read().toString().split('\n');
+        var summaryIndex = lines.indexOf('# Per-launcher summary');
+        assert.notEqual(summaryIndex, -1);
+        assert.deepEqual(lines.slice(summaryIndex, summaryIndex + 3), [
+          '# Per-launcher summary',
+          '# Chrome: 3 tests, 1 pass, 1 fail, 1 skip',
+          '# Firefox: 1 tests, 1 pass, 0 fail, 0 skip'
+        ]);
+        assert.include(lines, '1..4');
+      });
+    });
+
   });
 
   describe('dot reporter', function() {
@@ -1107,6 +1136,61 @@ describe('test reporters', function() {
       var output = stream.read().toString();
 
       assertXmlIsValid(output);
+    });
+
+    describe('launcher metadata', function() {
+      function reportMixed(reporter) {
+        reporter.report('Chrome', { name: 'a', passed: true });
+        reporter.report('Chrome', { name: 'b', passed: false });
+        reporter.report('Chrome', { name: 'c', skipped: true });
+        reporter.report('Firefox', { name: 'd', passed: true });
+      }
+
+      it('computes per-launcher stats', function() {
+        var reporter = new XUnitReporter(false, stream, config);
+        reportMixed(reporter);
+
+        assert.deepEqual(reporter.getLauncherStats(), {
+          Chrome: { total: 3, pass: 1, fail: 1 },
+          Firefox: { total: 1, pass: 1, fail: 0 }
+        });
+      });
+
+      it('does not include launcher properties by default', function() {
+        var reporter = new XUnitReporter(false, stream, config);
+        reportMixed(reporter);
+        reporter.finish();
+
+        assert.notMatch(stream.read().toString(), /<properties/);
+      });
+
+      it('includes launcher properties when enabled', function() {
+        var config = new Config('ci', { xunit_include_launcher_properties: true });
+        var reporter = new XUnitReporter(false, stream, config);
+        reportMixed(reporter);
+        reporter.finish();
+        var output = stream.read().toString();
+
+        assert.include(output, '<property name="launchers" value="Chrome,Firefox"/>');
+        assert.include(output, '<property name="Chrome_pass" value="1"/>');
+        assert.include(output, '<property name="Chrome_fail" value="1"/>');
+        assert.include(output, '<property name="Firefox_pass" value="1"/>');
+        assert.include(output, '<property name="Firefox_fail" value="0"/>');
+        assert.notInclude(output, '<property name="launcher" ');
+        assertXmlIsValid(output);
+      });
+
+      it('includes the launcher set via setLauncherName', function() {
+        var config = new Config('ci', { xunit_include_launcher_properties: true });
+        var reporter = new XUnitReporter(false, stream, config);
+        reporter.setLauncherName('Chrome');
+        reporter.report('Chrome', { name: 'a', passed: true });
+        reporter.finish();
+        var output = stream.read().toString();
+
+        assert.include(output, '<property name="launcher" value="Chrome"/>');
+        assertXmlIsValid(output);
+      });
     });
   });
 

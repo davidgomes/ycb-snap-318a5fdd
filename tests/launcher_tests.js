@@ -11,6 +11,19 @@ const os = require('os');
 const isWin = require('../lib/utils/is-win')();
 
 describe('Launcher', function() {
+  describe('sanitized names', function() {
+    it('returns a filesystem-safe name', function() {
+      let launcher = new Launcher('Headless  Chrome (120)', { command: 'echo' }, new Config(null, {}));
+      expect(launcher.getSanitizedName()).to.equal('Headless_Chrome__120_');
+    });
+
+    it('returns "unknown" for missing names', function() {
+      expect(Launcher.sanitizeLauncherName(null)).to.equal('unknown');
+      expect(Launcher.sanitizeLauncherName(undefined)).to.equal('unknown');
+      expect(Launcher.sanitizeLauncherName('a:b|c')).to.equal('a_b_c');
+    });
+  });
+
   describe('via command', function() {
     let settings, config, launcher, sandbox;
 

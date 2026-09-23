@@ -5,6 +5,7 @@ const expect = require('chai').expect;
 const sinon = require('sinon');
 const tmp = require('tmp');
 const fs = require('fs');
+const pathLib = require('path');
 const PassThrough = require('stream').PassThrough;
 
 const tmpNameAsync = Bluebird.promisify(tmp.tmpName);
@@ -313,6 +314,131 @@ describe('Reporter', function() {
         }).then(function(output) {
           expect(output).to.match(/<testsuite name/);
         });
+      });
+    });
+  });
+
+  describe('per-launcher report files', function() {
+    let dir, template;
+
+    function appFor(reporterName, extra) {
+      return {
+        config: {
+          get: function(key) {
+            if (key === 'reporter') {
+              return reporterName;
+            }
+            return extra && extra[key];
+          }
+        }
+      };
+    }
+
+    function reportFileFor(launcher) {
+      return template.replace('<launcher>', launcher);
+    }
+
+    beforeEach(function() {
+      dir = tmp.dirSync({ unsafeCleanup: true });
+      template = pathLib.join(dir.name, 'reports', '<launcher>.tap');
+    });
+
+    afterEach(function() {
+      dir.removeCallback();
+    });
+
+    it('writes each launcher to its own file and everything to stdout', function() {
+      let reporter = new Reporter(appFor('tap'), stream, template);
+
+      expect(reporter.reportFile).to.be.undefined();
+
+      reporter.onStart('Chrome 120.0', { launcherId: 1 });
+      reporter.report('Chrome 120.0', { name: 'chrome test', passed: true });
+      reporter.report('Firefox', { name: 'firefox test', passed: false });
+      reporter.report('Firefox', { name: 'firefox skipped', skipped: true });
+      reporter.onEnd('Chrome 120.0', { launcherId: 1 });
+
+      return reporter.close().then(function() {
+        let stdout = stream.read().toString();
+        expect(stdout).to.match(/tests 3/);
+        expect(stdout).to.contain('chrome test');
+        expect(stdout).to.contain('firefox test');
+
+        let chrome = fs.readFileSync(reportFileFor('Chrome_120.0'), 'utf-8');
+        expect(chrome).to.match(/tests 1/);
+        expect(chrome).to.contain('chrome test');
+        expect(chrome).not.to.contain('firefox');
+
+        let firefox = fs.readFileSync(reportFileFor('Firefox'), 'utf-8');
+        expect(firefox).to.match(/tests 2/);
+        expect(firefox).to.match(/fail {2}1/);
+        expect(firefox).not.to.contain('chrome');
+
+        expect(reporter.getReportFiles()).to.have.lengthOf(2);
+      });
+    });
+
+    it('does not create a file for the internal testem launcher', function() {
+      let reporter = new Reporter(appFor('tap'), stream, template);
+
+      reporter.onStart('testem', { launcherId: 0 });
+      reporter.report('testem', { name: 'testem', passed: false, error: { message: 'boom' } });
+      reporter.onEnd('testem', { launcherId: 0 });
+
+      return reporter.close().then(function() {
+        expect(stream.read().toString()).to.contain('boom');
+        expect(fs.existsSync(reportFileFor('testem'))).to.be.false();
+        expect(reporter.getReportFiles()).to.have.lengthOf(0);
+      });
+    });
+
+    it('only writes the summary once when finish is called repeatedly', function() {
+      let reporter = new Reporter(appFor('tap'), stream, template);
+
+      reporter.report('Chrome', { name: 'a', passed: true });
+      reporter.finish();
+      reporter.finish();
+
+      return reporter.close().then(function() {
+        let stdout = stream.read().toString();
+        expect(stdout.match(/# tests 1/g)).to.have.lengthOf(1);
+
+        let chrome = fs.readFileSync(reportFileFor('Chrome'), 'utf-8');
+        expect(chrome.match(/# tests 1/g)).to.have.lengthOf(1);
+      });
+    });
+
+    it('expands date templates in per-launcher files', function() {
+      template = pathLib.join(dir.name, '<date>', '<launcher>.tap');
+      let reporter = new Reporter(appFor('tap'), stream, template);
+
+      reporter.report('Chrome', { name: 'a', passed: true });
+
+      return reporter.close().then(function() {
+        let files = reporter.getReportFiles().map(file => file.getFilePath());
+        expect(files).to.have.lengthOf(1);
+        expect(files[0]).to.match(/\d{4}-\d{2}-\d{2}[/\\]Chrome\.tap$/);
+        expect(fs.readFileSync(files[0], 'utf-8')).to.match(/tests 1/);
+      });
+    });
+
+    it('writes tap to stdout and per-launcher xunit files with intermediate output', function() {
+      template = pathLib.join(dir.name, '<launcher>.xml');
+      let reporter = new Reporter(appFor('xunit', {
+        xunit_intermediate_output: true,
+        xunit_include_launcher_properties: true
+      }), stream, template);
+
+      reporter.report('Chrome', { name: 'a', passed: true });
+      reporter.report('Firefox', { name: 'b', passed: false });
+
+      return reporter.close().then(function() {
+        expect(stream.read().toString()).to.match(/tests 2/);
+
+        let chrome = fs.readFileSync(pathLib.join(dir.name, 'Chrome.xml'), 'utf-8');
+        expect(chrome).to.match(/<testsuite name="Testem Tests" tests="1"/);
+        expect(chrome).to.contain('<property name="launcher" value="Chrome"/>');
+        expect(chrome).not.to.contain('Firefox');
       });
     });
   });
