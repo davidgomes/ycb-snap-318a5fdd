@@ -45,6 +45,13 @@ const id = entity.id()
 // Return number
 const generation = entity.generation()
 
+// Snapshots the entity's traits and relations
+// Return EntitySnapshot
+const snapshot = entity.snapshot(registry)
+
+// Makes the entity's traits and relations match the snapshot
+entity.rollback(registry, snapshot)
+
 // Destroys the entity making its number no longer valid
 entity.destroy()
 ```

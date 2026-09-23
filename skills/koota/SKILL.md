@@ -212,6 +212,34 @@ world.query(IsPlayer, Position, Velocity).updateEach(([pos, vel]) => {
 
 For tracking changes, caching queries, and advanced patterns, see [references/queries.md](references/queries.md).
 
+## Snapshots and rollback
+
+Snapshots capture state as plain data for undo, rollback netcode, save files, or tests. A trait registry gives each trait and relation a stable key. Every trait and relation on a snapshotted entity must be registered, or snapshotting throws.
+
+```typescript
+import { createTraitRegistry, diffEntitySnapshots, diffWorldSnapshots } from 'koota'
+
+const registry = createTraitRegistry(
+  ['Position', Position],
+  ['IsPlayer', IsPlayer],
+  ['ChildOf', ChildOf]
+)
+
+const checkpoint = world.snapshot(registry) // { entities: EntitySnapshot[] }, excludes the world entity
+world.rollback(registry, checkpoint) // Recreates entities with the same IDs; old handles are valid again
+
+const snapshot = entity.snapshot(registry) // { id, traits: { Position: { x, y }, IsPlayer: true }, relations? }
+entity.rollback(registry, snapshot) // Removes extra traits/relations, adds or updates the rest
+
+diffEntitySnapshots(before, after) // { addedTraits, removedTraits, changedTraits }
+diffWorldSnapshots(checkpointA, checkpointB) // { added, removed, changed } entity IDs
+```
+
+- Standalone forms: `snapshotEntity(world, entity, registry)`, `snapshotWorld`, `rollbackEntity`, `rollbackWorld`.
+- Data is deep copied into and out of snapshots, so a snapshot can be reused. Snapshots of plain data are JSON-serializable.
+- World rollback keeps world traits, queries and subscriptions. Rollbacks throw before changing anything on unknown keys or missing relation targets.
+- Diffs compare data shallowly. World diffs ignore key and relation target ordering.
+
 ## React integration
 
 **Imports:** Core types (`World`, `Entity`) from `'koota'`. React hooks from `'koota/react'`.

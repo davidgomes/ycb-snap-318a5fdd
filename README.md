@@ -629,6 +629,65 @@ world.query(Position, Velocity).useStores(([position, velocity], entities) => {
 })
 ```
 
+### Snapshots and rollback
+
+Snapshots capture entity state as plain, serializable data that can be rolled back, diffed or saved. Traits don't have names, so a trait registry gives each trait and relation a stable key. Snapshotting an entity with a trait or relation that is not in the registry throws.
+
+```js
+import { createTraitRegistry } from 'koota'
+
+const registry = createTraitRegistry(
+  ['Position', Position],
+  ['IsPlayer', IsPlayer],
+  ['ChildOf', ChildOf],
+  ['Contains', Contains]
+)
+
+// Take a checkpoint of every entity except the world entity
+const checkpoint = world.snapshot(registry)
+
+// ...simulate, spawn, destroy...
+
+// Restore the world to the checkpoint
+world.rollback(registry, checkpoint)
+```
+
+Entities can be snapshotted and rolled back individually too. Tags are stored as `true`, data traits and relation data are deep copies, and `relations` is left out when the entity has none.
+
+```js
+const snapshot = entity.snapshot(registry)
+// {
+//   id: 3,
+//   traits: { Position: { x: 1, y: 2 }, IsPlayer: true },
+//   relations: {
+//     ChildOf: [{ targetId: 1 }],
+//     Contains: [{ targetId: 2, data: { amount: 5 } }],
+//   },
+// }
+
+// Make the entity match the snapshot exactly
+entity.rollback(registry, snapshot)
+```
+
+- Entity rollback removes traits and relations that are not in the snapshot, then adds or updates the rest. Every relation target must exist in the world.
+- World rollback destroys every entity except the world entity and recreates the checkpoint's entities with the same IDs, so entity handles from the checkpoint are valid again. World traits, queries and subscriptions are kept, and add, remove and change events fire as usual.
+- Snapshot IDs are the entity ID and generation without the world, so a checkpoint can also be restored into a different world.
+- Rollbacks throw before changing anything if the snapshot has unknown keys or missing relation targets.
+
+The standalone functions `snapshotEntity(world, entity, registry)`, `snapshotWorld(world, registry)`, `rollbackEntity(world, entity, registry, snapshot)` and `rollbackWorld(world, registry, checkpoint)` do the same as the methods. Snapshots can also be diffed. Data is compared shallowly and results are sorted.
+
+```js
+import { diffEntitySnapshots, diffWorldSnapshots } from 'koota'
+
+// Compare the traits of two entity snapshots
+// Return { addedTraits: string[], removedTraits: string[], changedTraits: string[] }
+const traitDiff = diffEntitySnapshots(before, after)
+
+// Compare two world snapshots by entity ID, including relations
+// Return { added: number[], removed: number[], changed: number[] }
+const worldDiff = diffWorldSnapshots(checkpoint, world.snapshot(registry))
+```
+
 ### Query tips for the curious
 
 Performance and readability are often a tradeoff. The standard patterns are plenty fast, but if you are interested in diving deeper here are some quick tips.
@@ -743,6 +802,13 @@ const id = world.id()
 // The world ID and reference is preserved
 world.reset()
 
+// Snapshots every entity except the world entity
+// Return WorldSnapshot
+const checkpoint = world.snapshot(registry)
+
+// Replaces all entities with the ones in the checkpoint, keeping their IDs
+world.rollback(registry, checkpoint)
+
 // Nukes the world and releases its ID
 world.destroy()
 ```
@@ -789,6 +855,13 @@ const id = entity.id()
 // Get the entity generation
 // Return number
 const generation = entity.generation()
+
+// Snapshots the entity's traits and relations
+// Return EntitySnapshot
+const snapshot = entity.snapshot(registry)
+
+// Makes the entity's traits and relations match the snapshot
+entity.rollback(registry, snapshot)
 
 // Destroys the entity making its number no longer valid
 entity.destroy()

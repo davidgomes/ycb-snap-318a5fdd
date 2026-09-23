@@ -61,6 +61,13 @@ const id = world.id()
 // The world ID and reference is preserved
 world.reset()
 
+// Snapshots every entity except the world entity
+// Return WorldSnapshot
+const checkpoint = world.snapshot(registry)
+
+// Replaces all entities with the ones in the checkpoint, keeping their IDs
+world.rollback(registry, checkpoint)
+
 // Nukes the world and releases its ID
 world.destroy()
 ```
