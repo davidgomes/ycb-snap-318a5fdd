@@ -26,7 +26,12 @@ export class BaseSequencer implements TestSequencer {
   public async shard(files: TestSpecification[]): Promise<TestSpecification[]> {
     const { config } = this.ctx
     const { index, count } = config.shard!
-    const { shardStrategy, isolateSlowThreshold, rebalanceThreshold, durationFallbackStrategy } = config.sequence
+    const {
+      shardStrategy = 'hash',
+      isolateSlowThreshold = 0,
+      rebalanceThreshold = 0,
+      durationFallbackStrategy = 'hash',
+    } = config.sequence
 
     const usesDurations = shardStrategy !== 'hash' || isolateSlowThreshold > 0 || rebalanceThreshold > 0
     const durations = usesDurations ? await this.readFileDurations() : null
@@ -130,8 +135,8 @@ export class BaseSequencer implements TestSequencer {
   private async readFileDurations(): Promise<Map<string, number> | null> {
     const { root, sequence } = this.ctx.config
     return readFileDurations(
-      resolveDurationHistoryPath(root, sequence.durationHistoryPath),
-      { ttl: sequence.durationHistoryTTL, smoothing: sequence.durationSmoothing },
+      resolveDurationHistoryPath(root, sequence.durationHistoryPath ?? 'duration-history.json'),
+      { ttl: sequence.durationHistoryTTL ?? 0, smoothing: sequence.durationSmoothing ?? 'latest' },
     )
   }
 
@@ -167,7 +172,7 @@ export class BaseSequencer implements TestSequencer {
   }
 
   private partitionWithIsolation(entries: ShardEntry[], count: number): ShardEntry[][] {
-    const threshold = this.ctx.config.sequence.isolateSlowThreshold
+    const threshold = this.ctx.config.sequence.isolateSlowThreshold ?? 0
     const slow = threshold > 0
       ? sortByDuration(entries.filter(entry => entry.duration > threshold))
       : []
@@ -191,7 +196,7 @@ export class BaseSequencer implements TestSequencer {
   }
 
   private partition(entries: ShardEntry[], count: number): ShardEntry[][] {
-    switch (this.ctx.config.sequence.shardStrategy) {
+    switch (this.ctx.config.sequence.shardStrategy ?? 'hash') {
       case 'hash':
         return this.partitionByHash(entries, count)
       case 'time':
@@ -212,7 +217,7 @@ export class BaseSequencer implements TestSequencer {
   }
 
   private partitionByAffinity(entries: ShardEntry[], count: number): ShardEntry[][] {
-    const match = createShardAffinityMatcher(this.ctx.config.sequence.shardAffinityRules, count)
+    const match = createShardAffinityMatcher(this.ctx.config.sequence.shardAffinityRules ?? [], count)
     const groups = createGroups<ShardEntry>(count)
     const unmatched: ShardEntry[] = []
     for (const entry of entries) {
