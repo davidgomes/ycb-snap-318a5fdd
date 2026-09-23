@@ -2,6 +2,13 @@ import type { Readable } from "node:stream";
 import { withBase, withQuery } from "./utils.url.ts";
 import { createFetchError } from "./error.ts";
 import {
+  acquireCircuit,
+  getRequestOrigin,
+  releaseCircuit,
+  resolveCircuitBreakerOptions,
+} from "./circuit-breaker.ts";
+import type { CircuitCall, CircuitRegistry } from "./circuit-breaker.ts";
+import {
   isPayloadMethod,
   isJSONSerializable,
   detectResponseType,
@@ -34,9 +41,19 @@ const retryStatusCodes = new Set([
 const nullBodyResponses = new Set([101, 204, 205, 304]);
 
 export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
+  return _createFetch(globalOptions, new Map());
+}
+
+function _createFetch(
+  globalOptions: CreateFetchOptions,
+  circuits: CircuitRegistry
+): $Fetch {
   const { fetch = globalThis.fetch } = globalOptions;
 
-  async function onError(context: FetchContext): Promise<FetchResponse<any>> {
+  async function onError(
+    context: FetchContext,
+    circuitCall: CircuitCall
+  ): Promise<FetchResponse<any>> {
     // Is Abort
     // If it is an active abort, it will not retry automatically.
     // https://developer.mozilla.org/en-US/docs/Web/API/DOMException#error_names
@@ -69,12 +86,18 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         }
         // Timeout
-        return $fetchRaw(context.request, {
-          ...context.options,
-          retry: retries - 1,
-        });
+        return $fetchAttempt(
+          context.request,
+          {
+            ...context.options,
+            retry: retries - 1,
+          },
+          circuitCall
+        );
       }
     }
+
+    circuitCall.rejectedStatus = context.response?.status;
 
     // Throw normalized error
     const error = createFetchError(context);
@@ -86,10 +109,11 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
     throw error;
   }
 
-  const $fetchRaw: $Fetch["raw"] = async function $fetchRaw<
-    T = any,
-    R extends ResponseType = "json",
-  >(_request: FetchRequest, _options: FetchOptions<R> = {}) {
+  async function $fetchAttempt<T = any, R extends ResponseType = "json">(
+    _request: FetchRequest,
+    _options: FetchOptions<R>,
+    circuitCall: CircuitCall
+  ) {
     const context: FetchContext = {
       request: _request,
       options: resolveFetchOptions<R, T>(
@@ -177,6 +201,22 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
         : AbortSignal.timeout(context.options.timeout);
     }
 
+    // Retries of an admitted request keep its circuit ticket instead of being re-admitted.
+    if (!circuitCall.checked) {
+      circuitCall.checked = true;
+      const circuitOptions = resolveCircuitBreakerOptions(
+        context.options.circuitBreaker
+      );
+      const origin = circuitOptions && getRequestOrigin(context.request);
+      if (circuitOptions && origin) {
+        circuitCall.ticket = acquireCircuit(circuits, origin, circuitOptions);
+        if (!circuitCall.ticket) {
+          context.error = new Error(`Circuit breaker is open for ${origin}`);
+          throw createFetchError(context);
+        }
+      }
+    }
+
     try {
       context.response = await fetch(
         context.request,
@@ -190,7 +230,7 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
           context.options.onRequestError
         );
       }
-      return await onError(context);
+      return await onError(context, circuitCall);
     } finally {
       if (abortTimeout) {
         clearTimeout(abortTimeout);
@@ -250,10 +290,29 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
           context.options.onResponseError
         );
       }
-      return await onError(context);
+      return await onError(context, circuitCall);
     }
 
     return context.response;
+  }
+
+  const $fetchRaw: $Fetch["raw"] = async function $fetchRaw<
+    T = any,
+    R extends ResponseType = "json",
+  >(_request: FetchRequest, _options: FetchOptions<R> = {}) {
+    const circuitCall: CircuitCall = {};
+    try {
+      const response = await $fetchAttempt<T, R>(
+        _request,
+        _options,
+        circuitCall
+      );
+      releaseCircuit(circuitCall, response.status, false);
+      return response;
+    } catch (error) {
+      releaseCircuit(circuitCall, circuitCall.rejectedStatus, true);
+      throw error;
+    }
   };
 
   const $fetch = async function $fetch(request, options) {
@@ -266,15 +325,18 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
   $fetch.native = (...args) => fetch(...args);
 
   $fetch.create = (defaultOptions = {}, customGlobalOptions = {}) =>
-    createFetch({
-      ...globalOptions,
-      ...customGlobalOptions,
-      defaults: {
-        ...globalOptions.defaults,
-        ...customGlobalOptions.defaults,
-        ...defaultOptions,
+    _createFetch(
+      {
+        ...globalOptions,
+        ...customGlobalOptions,
+        defaults: {
+          ...globalOptions.defaults,
+          ...customGlobalOptions.defaults,
+          ...defaultOptions,
+        },
       },
-    });
+      circuits
+    );
 
   return $fetch;
 }
