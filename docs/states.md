@@ -41,6 +41,7 @@ True
 | `enter` | `None` | Callback(s) to run when entering this state. See {ref}`state-actions`. |
 | `exit` | `None` | Callback(s) to run when leaving this state. See {ref}`state-actions`. |
 | `invoke` | `None` | Background work spawned on entry, cancelled on exit. See {ref}`invoke-actions`. |
+| `data` | `None` | Variables owned by this state, initialized on entry and discarded on exit. See {ref}`state-data`. |
 
 ```py
 >>> class CampaignMachine(StateChart):
@@ -209,6 +210,217 @@ in nested compounds.
 See {ref}`querying-configuration` for how to inspect which states are currently
 active at runtime.
 ```
+
+
+(state-data)=
+
+## State data
+
+```{versionadded} 3.1.0
+```
+
+A state can own data: variables that only exist while the state is active. Declare
+them with the `data` keyword, mapping each variable name to its default value:
+
+```py
+>>> from statemachine import DataVar, State, StateChart
+
+>>> class Download(StateChart):
+...     idle = State(initial=True)
+...     downloading = State(data={"retries": 0, "chunks": list})
+...     done = State(final=True)
+...
+...     start = idle.to(downloading)
+...     retry = downloading.to.itself(internal=True, on="count_retry")
+...     cancel = downloading.to(idle)
+...     finish = downloading.to(done)
+...
+...     def count_retry(self, state_data):
+...         state_data["retries"] += 1
+
+>>> sm = Download()
+>>> sm.get_state_data("downloading") is None
+True
+
+>>> sm.send("start")
+>>> sm.get_state_data("downloading")
+{'retries': 0, 'chunks': []}
+
+>>> sm.send("retry")
+>>> sm.send("retry")
+>>> sm.get_state_data("downloading")["retries"]
+2
+
+```
+
+The data lifecycle follows the state:
+
+- **On entry**, the data is initialized with a fresh copy of the defaults, before any
+  `on_enter` callback runs. Mutable defaults are never shared between entries or
+  between machine instances.
+- **On exit**, the data is discarded, after the `on_exit` callbacks run.
+- **Re-entering** the state resets the data to the defaults.
+
+```py
+>>> sm.send("cancel")
+>>> sm.get_state_data("downloading") is None
+True
+
+>>> sm.send("start")
+>>> sm.get_state_data("downloading")
+{'retries': 0, 'chunks': []}
+
+```
+
+The declarations live on the state definition, shared by all instances, while the
+values are stored on each state machine instance.
+
+### Declaring variables
+
+Each entry of `data` can be:
+
+- A plain value, used as the default (deep-copied on every entry).
+- A plain callable, used as a factory called on every entry (e.g. `list`, `dict`).
+- A {class}`~statemachine.state_data.DataVar`, which also supports an optional `type`,
+  enforced on the initial value and on assignments, and an explicit `factory`.
+
+```py
+>>> DataVar(0, type=int)
+DataVar(0, type=int)
+
+>>> DataVar(factory=list)
+DataVar(factory=list)
+
+```
+
+Invalid declarations raise {class}`~statemachine.exceptions.InvalidDefinition`: `data`
+must be a dict with string keys, and a `DataVar` can't have both a `default` and a
+`factory`.
+
+```py
+>>> DataVar(0, factory=int)
+Traceback (most recent call last):
+...
+statemachine.exceptions.InvalidDefinition: DataVar accepts either 'default' or 'factory', not both.
+
+>>> State(data=["retries"])
+Traceback (most recent call last):
+...
+statemachine.exceptions.InvalidDefinition: State 'data' must be a dict, got ['retries'].
+
+```
+
+Compound and parallel states accept `data` as a class keyword, next to `name`.
+
+### Accessing data from callbacks
+
+Declare a `state_data` parameter to receive the data visible from the callback's
+state. Data is scoped hierarchically: a state sees its own data merged with the data
+of its active ancestors, and on a name collision the innermost state wins.
+Assigning a key updates the state that owns it.
+
+```py
+>>> class Order(StateChart):
+...     class checkout(State.Compound, data={"total": 0, "step": "checkout"}):
+...         cart = State(initial=True, data={"items": list, "step": "cart"})
+...         payment = State(data={"attempts": DataVar(0, type=int)})
+...
+...         add = cart.to.itself(internal=True, on="add_item")
+...         pay = cart.to(payment)
+...
+...     done = State(final=True)
+...     finish = checkout.to(done)
+...
+...     def add_item(self, price, state_data):
+...         state_data["items"].append(price)
+...         state_data["total"] += price
+...
+...     def on_enter_payment(self, state_data):
+...         print(dict(state_data))
+
+>>> sm = Order()
+>>> sm.send("add", price=10)
+>>> sm.send("add", price=5)
+>>> sm.send("pay")
+{'total': 15, 'step': 'checkout', 'attempts': 0}
+
+```
+
+Parallel regions are isolated: a region only sees its own data and the data of its
+ancestors, never the data of a sibling region.
+
+Transition callbacks see the scope of their `state` parameter (the source for
+`cond`, `before` and `on`, the target for `after`), while each `on_exit` callback sees
+the data of the state being exited.
+
+### Querying and updating data
+
+| Member | Description |
+|---|---|
+| `get_state_data(state)` | The live data dict of an active state, or `None`. |
+| `set_state_data(state, key, value)` | Assign a variable, validating that the state is active, declares `key` and that `value` satisfies the `DataVar` type. |
+| `state_data_values` | A snapshot of the data of all active states, by state id. |
+| `get_data_changes()` | {class}`~statemachine.state_data.DataChangeInfo` records of the assignments made during the current macrostep. |
+
+Violations raise {class}`~statemachine.exceptions.InvalidDefinition`:
+
+```py
+>>> sm = Order()
+>>> sm.set_state_data("payment", "attempts", 1)
+Traceback (most recent call last):
+...
+statemachine.exceptions.InvalidDefinition: Cannot set data variable 'attempts' of the inactive state 'payment'.
+
+>>> sm.send("add", price=3)
+>>> sm.get_data_changes()
+[DataChangeInfo(state_id='checkout', key='total', old_value=0, new_value=3)]
+
+>>> sm.state_data_values
+{'checkout': {'total': 3, 'step': 'checkout'}, 'cart': {'items': [3], 'step': 'cart'}}
+
+```
+
+Every assignment made through `state_data` or `set_state_data()` is recorded, and the
+records are cleared when the next macrostep starts.
+
+### Data and history
+
+Re-entering a compound state through a {ref}`history pseudo-state <history-states>`
+restores the data saved when it was exited, instead of the defaults: deep history
+restores the data of all the remembered descendants, shallow history only the data
+of the direct children.
+
+```py
+>>> from statemachine import HistoryState
+
+>>> class Editor(StateChart):
+...     class editing(State.Compound):
+...         draft = State(initial=True, data={"text": ""})
+...         h = HistoryState()
+...
+...         write = draft.to.itself(internal=True, on="append")
+...
+...     saving = State()
+...
+...     save = editing.to(saving)
+...     resume = saving.to(editing.h)
+...
+...     def append(self, char, state_data):
+...         state_data["text"] += char
+
+>>> sm = Editor()
+>>> sm.send("write", char="h")
+>>> sm.send("write", char="i")
+>>> sm.send("save")
+>>> sm.send("resume")
+>>> sm.get_state_data("draft")
+{'text': 'hi'}
+
+```
+
+State data survives pickling. Diagrams list the declared variables of each state,
+and SCXML `<data>` elements inside a state's own `<datamodel>` whose `expr` is a
+Python literal become that state's data.
 
 
 (states from enum types)=

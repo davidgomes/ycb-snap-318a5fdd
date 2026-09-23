@@ -204,6 +204,7 @@ These parameters are available for injection into any callback:
 | `model` | {class}`~statemachine.model.Model` | The underlying model instance (see {ref}`models`). |
 | `machine` | {class}`~statemachine.statemachine.StateChart` | The state machine instance itself. |
 | `transition` | {class}`~statemachine.transition.Transition` | The transition being executed. |
+| `state_data` | `MutableMapping[str, Any]` | The data visible from `state`, merged with its ancestors' data; in exit callbacks, the data of the state being exited. See {ref}`state-data`. |
 
 The following parameters are available **only in `on` callbacks** (transition
 content):
