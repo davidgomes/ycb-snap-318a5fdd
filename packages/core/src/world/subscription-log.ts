@@ -2,7 +2,7 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { QueryInstance } from '../query/types';
 import type { TraitInstance } from '../trait/types';
-import type { DeferredSubEvent, World } from './types';
+import type { World } from './types';
 
 /** When a deferred flush is in progress, record the subscription instead of running it. */
 export function noteTraitSub(
