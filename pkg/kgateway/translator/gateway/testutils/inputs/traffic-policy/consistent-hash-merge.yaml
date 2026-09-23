@@ -1,0 +1,120 @@
+# This test contains a route whose rules are targeted by rule-level TrafficPolicies that
+# configure consistentHash, and a route-level TrafficPolicy that also configures consistentHash.
+#
+# - rule0: the hash policies of rule0-policy and route-policy are unioned, with the entries of
+#   the higher priority rule0-policy first. sourceIp is only taken from rule0-policy, which does
+#   not set it.
+# - rule1: rule1-policy disables consistent hashing, suppressing the hash policies of route-policy.
+# - rule2: only route-policy applies.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: example-gateway
+  namespace: infra
+spec:
+  gatewayClassName: example-gateway-class
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: example-route
+  namespace: infra
+spec:
+  parentRefs:
+  - name: example-gateway
+  hostnames:
+  - "example.com"
+  rules:
+  - name: rule0
+    matches:
+    - path:
+        type: PathPrefix
+        value: /merged
+    backendRefs:
+    - name: example-svc
+      port: 80
+  - name: rule1
+    matches:
+    - path:
+        type: PathPrefix
+        value: /disabled
+    backendRefs:
+    - name: example-svc
+      port: 80
+  - name: rule2
+    matches:
+    - path:
+        type: PathPrefix
+        value: /inherited
+    backendRefs:
+    - name: example-svc
+      port: 80
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: route-policy
+  namespace: infra
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: example-route
+  consistentHash:
+    headers:
+    - headerName: x-b
+      terminal: true
+    - headerName: x-c
+    queryParameters:
+    - name: q
+    sourceIp:
+      terminal: true
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: rule0-policy
+  namespace: infra
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: example-route
+    sectionName: rule0
+  consistentHash:
+    cookies:
+    - name: c
+    headers:
+    - headerName: x-a
+    - headerName: X-B
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: rule1-policy
+  namespace: infra
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: example-route
+    sectionName: rule1
+  consistentHash:
+    disable: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-svc
+  namespace: infra
+spec:
+  selector:
+    test: test
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: test
