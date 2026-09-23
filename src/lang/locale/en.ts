@@ -298,6 +298,51 @@ export default {
       'default-install-failed': 'Failed to download {URL}. Disabling Auto-correct Common Misspellings.',
       'defaults-missing': 'Failed to find default common auto-correct file: {FILE}.',
     },
+    // auto-toc.ts
+    'auto-toc': {
+      'name': 'Auto TOC',
+      'description': 'Generates or updates a table of contents between <code>&lt;!-- toc --&gt;</code> and <code>&lt;!-- /toc --&gt;</code> based on the ATX headings in the file. Files without a <code>&lt;!-- toc --&gt;</code> marker are left unchanged.',
+      'list-style': {
+        'name': 'List Style',
+        'description': 'Whether the table of contents uses a bulleted or numbered list',
+      },
+      'bullet-marker': {
+        'name': 'Bullet Marker',
+        'description': 'The list item indicator to use when the list style is bullet',
+      },
+      'ordered-list-style': {
+        'name': 'Ordered List Style',
+        'description': 'How list items are numbered when the list style is number',
+      },
+      'indent-size': {
+        'name': 'Indent Size',
+        'description': 'The number of spaces used for each nested level in the table of contents',
+      },
+      'min-level': {
+        'name': 'Minimum Heading Level',
+        'description': 'The smallest heading level to include in the table of contents',
+      },
+      'max-level': {
+        'name': 'Maximum Heading Level',
+        'description': 'The largest heading level to include in the table of contents',
+      },
+      'title': {
+        'name': 'Title',
+        'description': 'An optional line to add at the top of the table of contents (i.e. <code>**Contents**</code>). Leave empty for no title.',
+      },
+      'use-explicit-ids': {
+        'name': 'Use Explicit IDs',
+        'description': 'Uses a trailing <code>{#id}</code> on a heading as its anchor',
+      },
+      'strip-formatting-in-toc': {
+        'name': 'Strip Formatting in TOC',
+        'description': 'Removes links, images, and formatting from the heading text shown in the table of contents',
+      },
+      'exclude-headings': {
+        'name': 'Exclude Headings',
+        'description': 'Headings to exclude from the table of contents with one per line. Plain values match case-insensitively and values wrapped in <code>/</code> are treated as case-insensitive regular expressions.',
+      },
+    },
     // add-blank-line-after-yaml.ts
     'add-blank-line-after-yaml': {
       'name': 'Add Blank Line After YAML',
@@ -942,6 +987,11 @@ export default {
     'None': 'None',
     'Ascending Alphabetical': 'Ascending Alphabetical',
     'Descending Alphabetical': 'Descending Alphabetical',
+    // auto-toc.ts
+    'bullet': 'bullet',
+    'number': 'number',
+    'always-one': 'always-one',
+    'increment': 'increment',
     // yaml.ts
     'multi-line': 'multi-line',
     'single-line': 'single-line',
