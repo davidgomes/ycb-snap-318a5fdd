@@ -85,8 +85,8 @@ func (x definedType) NumMethod() int {
 }
 
 // BoundMethod implements the interface runtime.ScriggoMethodSet.
-func (x definedType) BoundMethod(name string) (*runtime.Function, bool) {
-	return x.methods.boundMethod(name, false)
+func (x definedType) BoundMethod(name string) (*runtime.Function, []int, bool, bool) {
+	return boundMethod(x, name)
 }
 
 func (x definedType) String() string {

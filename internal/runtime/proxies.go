@@ -74,7 +74,7 @@ func (vm *VM) wrap(t ScriggoType, v reflect.Value) reflect.Value {
 // hasMethod reports whether the method set ms has a method, declared in
 // Scriggo code, with the given name and type.
 func hasMethod(ms ScriggoMethodSet, name string, typ reflect.Type) bool {
-	fn, _ := ms.BoundMethod(name)
+	fn, _, _, _ := ms.BoundMethod(name)
 	return fn != nil && fn.Type == typ
 }
 
@@ -87,15 +87,26 @@ func boundMethod(t ScriggoType, v reflect.Value, name string) (fn *Function, rcv
 	if !hasMethods {
 		return nil, reflect.Value{}, false
 	}
-	fn, deref := ms.BoundMethod(name)
+	fn, path, deref, addr := ms.BoundMethod(name)
 	if fn == nil {
 		return nil, reflect.Value{}, false
+	}
+	for _, i := range path {
+		if v.Kind() == reflect.Ptr {
+			if v.IsNil() {
+				panic(errNilPointer)
+			}
+			v = v.Elem()
+		}
+		v = v.Field(i)
 	}
 	if deref {
 		if v.IsNil() {
 			panic(errNilPointer)
 		}
 		v = v.Elem()
+	} else if addr {
+		v = v.Addr()
 	}
 	rcvr = reflect.New(v.Type()).Elem()
 	rcvr.Set(v)

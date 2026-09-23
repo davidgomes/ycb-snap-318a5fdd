@@ -63,6 +63,17 @@ func TestMethodDeclarations(t *testing.T) {
 		{`type T int; func (t T) M(a int) {}; func f() { var g func(T, int) = T.M; _ = g }`, ""},
 		{`type T int; func (t T) M(a int) {}; func f() { var g func(int) = T.M; _ = g }`, "cannot use T.M (type func(T, int) ) as type func(int) in assignment"},
 
+		// Promoted methods.
+		{`type E int; func (E) M() {}; func (*E) P() {}; type S struct{ E }; func f() { var s S; s.M(); s.P(); S{}.M(); g := s.P; g() }`, ""},
+		{`type E int; func (*E) P() {}; type S struct{ *E }; func f() { S{}.P() }`, ""},
+		{`type E int; func (*E) P() {}; type S struct{ E }; func f() { S{}.P() }`, "3:65: cannot call pointer method P on S"},
+		{`type A int; func (A) M() {}; type B int; func (B) M() {}; type S struct{ A; B }; func f() { var s S; s.M() }`, "3:103: ambiguous selector s.M"},
+		{`type A int; func (A) M() {}; type S struct{ A; M int }; func f() { var s S; s.M = 1 }`, ""},
+		{`import "fmt"; type E int; func (E) String() string { return "" }; type S struct{ E }; var _ fmt.Stringer = S{}`, ""},
+		{`import "fmt"; type E int; func (*E) String() string { return "" }; type S struct{ E }; var _ fmt.Stringer = &S{}`, ""},
+		{`import "fmt"; type E int; func (*E) String() string { return "" }; type S struct{ *E }; var _ fmt.Stringer = S{}`, ""},
+		{`import "fmt"; type E int; func (*E) String() string { return "" }; type S struct{ E }; var _ fmt.Stringer = S{}`, "cannot use S{} (type S) as type fmt.Stringer in assignment"},
+
 		// Interfaces.
 		{`import "fmt"; type T int; func (T) String() string { return "" }; var _ fmt.Stringer = T(1)`, ""},
 		{`import "fmt"; type T int; func (*T) String() string { return "" }; var _ fmt.Stringer = new(T)`, ""},

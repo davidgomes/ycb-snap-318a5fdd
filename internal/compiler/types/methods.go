@@ -7,6 +7,7 @@ package types
 import (
 	"reflect"
 	"sort"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -137,13 +138,133 @@ func MethodOf(t reflect.Type, name string) *Method {
 	return nil
 }
 
-// Methods returns the methods declared in Scriggo code on the defined type t,
-// sorted by name. It returns nil if t is not a defined type.
-func Methods(t reflect.Type) []*Method {
-	if dt, ok := t.(definedType); ok {
-		return dt.methods.methods
+// PromotedMethod returns the method with the given name declared in Scriggo
+// code, selected on the type t through its embedded fields, and the indexes
+// of the embedded fields that select the receiver. It returns nil if the
+// selector does not denote such method, or it denotes a method declared on
+// t, or on its element type if t is a pointer. ambiguous reports whether the
+// selector is ambiguous because there is a method declared in Scriggo code
+// and another method or field with the same name at the same depth.
+//
+// Note that the returned method does not necessarily belong to the method
+// set of t.
+func PromotedMethod(t reflect.Type, name string) (m *Method, path []int, ambiguous bool) {
+	s, ok, ambiguous := selectMethod(t, name)
+	if !ok || len(s.path) == 0 {
+		return nil, nil, ambiguous
 	}
-	return nil
+	return s.method, s.path, false
+}
+
+// selection is the selection of a method declared in Scriggo code.
+type selection struct {
+	method *Method
+	path   []int // indexes of the embedded fields that select the receiver.
+	ptr    bool  // reports whether the receiver is selected through a pointer.
+	isPtr  bool  // reports whether the selected receiver is a pointer.
+}
+
+// selectMethod selects, following the Go rules for selectors, the method with
+// the given name declared in Scriggo code on t or promoted through its
+// embedded fields. It returns false if there is no such method, if the
+// selector is ambiguous or if it denotes a field or a method not declared in
+// Scriggo code. ambiguous reports whether the selector is ambiguous and at
+// least one of the selected methods is declared in Scriggo code.
+func selectMethod(t reflect.Type, name string) (s selection, ok, ambiguous bool) {
+	isPtr := t.Kind() == reflect.Ptr && t.Name() == ""
+	if isPtr {
+		t = t.Elem()
+	}
+	type candidate struct {
+		typ   reflect.Type
+		path  []int
+		ptr   bool
+		isPtr bool
+	}
+	candidates := []candidate{{typ: t, ptr: isPtr, isPtr: isPtr}}
+	for depth := 0; len(candidates) > 0; depth++ {
+		var found []selection
+		var others int
+		var next []candidate
+		for _, c := range candidates {
+			if m := MethodOf(c.typ, name); m != nil {
+				found = append(found, selection{method: m, path: c.path, ptr: c.ptr, isPtr: c.isPtr})
+				continue
+			}
+			if depth > 0 && hasGoMethod(c.typ, name) {
+				others++
+				continue
+			}
+			if c.typ.Kind() != reflect.Struct {
+				continue
+			}
+			for i := 0; i < c.typ.NumField(); i++ {
+				f := c.typ.Field(i)
+				if fieldName(f) == name {
+					others++
+				}
+				if !f.Anonymous {
+					continue
+				}
+				typ, ptr, isPtr := f.Type, c.ptr, false
+				if typ.Kind() == reflect.Ptr && typ.Name() == "" {
+					typ, ptr, isPtr = typ.Elem(), true, true
+				}
+				path := make([]int, len(c.path)+1)
+				copy(path, c.path)
+				path[len(c.path)] = i
+				next = append(next, candidate{typ: typ, path: path, ptr: ptr, isPtr: isPtr})
+			}
+		}
+		if len(found) > 0 || others > 0 {
+			if len(found) == 1 && others == 0 {
+				return found[0], true, false
+			}
+			return selection{}, false, len(found) > 0
+		}
+		candidates = next
+	}
+	return selection{}, false, false
+}
+
+// methodSetLookup returns the selection of the method, declared in Scriggo
+// code, with the given name in the method set of t.
+func methodSetLookup(t reflect.Type, name string) (selection, bool) {
+	s, ok, _ := selectMethod(t, name)
+	if !ok || s.method.Pointer && !s.ptr {
+		return selection{}, false
+	}
+	return s, true
+}
+
+// hasGoMethod reports whether the method set of the Go type t, or of the
+// pointer to t, has a method with the given name.
+func hasGoMethod(t reflect.Type, name string) bool {
+	if _, ok := t.(runtime.ScriggoType); ok {
+		return false
+	}
+	if _, ok := t.MethodByName(name); ok {
+		return true
+	}
+	_, ok := reflect.PointerTo(t).MethodByName(name)
+	return ok
+}
+
+// fieldName returns the name of the struct field f as declared in the
+// source code.
+//
+// Keep in sync with compiler.decodeFieldName.
+func fieldName(f reflect.StructField) string {
+	name := f.Name
+	if !strings.HasPrefix(name, "𝗽") {
+		return name
+	}
+	for i := len("𝗽"); i < len(name); i++ {
+		if c := name[i]; c < '0' || c > '9' {
+			return name[i:]
+		}
+	}
+	return "_"
 }
 
 // implementsScriggo reports whether the Scriggo type x, that is not an
@@ -158,27 +279,22 @@ func implementsScriggo(x, y reflect.Type) bool {
 			// unexported method of an interface declared in another package.
 			return false
 		}
-		m := MethodOf(x, ym.Name)
-		if m == nil || m.Pointer && x.Kind() != reflect.Ptr {
-			return false
-		}
-		if !identical(m.Type, ym.Type, false, false) {
+		s, ok := methodSetLookup(x, ym.Name)
+		if !ok || !identical(s.method.Type, ym.Type, false, false) {
 			return false
 		}
 	}
 	return true
 }
 
-// boundMethod returns the bound function of the method with the given name
-// in the method set of ms, where ptr reports whether the receiver is a
-// pointer. deref reports whether the receiver must be dereferenced before
-// being bound.
-func (ms *methodSet) boundMethod(name string, ptr bool) (fn *runtime.Function, deref bool) {
-	m := ms.lookup(name)
-	if m == nil || m.Pointer && !ptr {
-		return nil, false
+// boundMethod implements the BoundMethod method of the Scriggo types that
+// implement the runtime.ScriggoMethodSet interface.
+func boundMethod(t reflect.Type, name string) (fn *runtime.Function, path []int, deref, addr bool) {
+	s, ok := methodSetLookup(t, name)
+	if !ok {
+		return nil, nil, false, false
 	}
-	return m.Bound, ptr && !m.Pointer
+	return s.method.Bound, s.path, s.isPtr && !s.method.Pointer, !s.isPtr && s.method.Pointer
 }
 
 // isExported reports whether name is exported.

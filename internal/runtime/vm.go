@@ -63,9 +63,12 @@ type ScriggoMethodSet interface {
 
 	// BoundMethod returns the function that implements the method with the
 	// given name, with the receiver bound as its only non-local variable. If
-	// deref is true, the receiver is a pointer that must be dereferenced
-	// before being bound. If there is no such method, fn is nil.
-	BoundMethod(name string) (fn *Function, deref bool)
+	// there is no such method, fn is nil.
+	//
+	// The receiver is obtained from a value of the type selecting, in turn,
+	// the embedded fields with the indexes in path, then dereferencing it if
+	// deref is true or taking its address if addr is true.
+	BoundMethod(name string) (fn *Function, path []int, deref, addr bool)
 }
 
 type StackShift [4]int8

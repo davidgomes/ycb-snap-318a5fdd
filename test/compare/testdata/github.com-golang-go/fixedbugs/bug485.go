@@ -1,5 +1,3 @@
-// skip : method declaration
-
 // run
 
 // Copyright 2014 The Go Authors. All rights reserved.

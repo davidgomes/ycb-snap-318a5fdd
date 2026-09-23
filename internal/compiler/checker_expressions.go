@@ -2573,6 +2573,35 @@ func (tc *typechecker) checkMethodValue(t *typeInfo, expr *ast.Selector) (*typeI
 		return &typeInfo{Type: m.Type, MethodType: methodValueConcrete, method: m}, true
 	}
 
+	// Method declared in Scriggo code promoted through embedded fields.
+	// Transform x.M into x.E.M, where E is the embedded field.
+	m, path, ambiguous := types.PromotedMethod(typ, name)
+	if ambiguous {
+		panic(tc.errorf(expr, "ambiguous selector %s", expr))
+	}
+	if m != nil {
+		recv, recvTi := expr.Expr, t
+		for _, i := range path {
+			st := recvTi.Type
+			if st.Kind() == reflect.Ptr {
+				st = st.Elem()
+			}
+			field := st.Field(i)
+			ti := &typeInfo{Type: field.Type}
+			if recvTi.Type.Kind() == reflect.Ptr || recvTi.Addressable() {
+				ti.Properties = propertyAddressable
+			}
+			recv = ast.NewSelector(expr.Expr.Pos(), recv, field.Name)
+			tc.compilation.typeInfos[recv] = ti
+			recvTi = ti
+		}
+		if m.Pointer && recvTi.Type.Kind() != reflect.Ptr && !recvTi.Addressable() {
+			panic(tc.errorf(expr, "cannot call pointer method %s on %s", name, typ))
+		}
+		expr.Expr = recv
+		return tc.checkMethodValue(recvTi, expr)
+	}
+
 	method, ok := t.Type.MethodByName(name)
 	if !ok {
 		if kind == reflect.Interface || kind == reflect.Ptr || !t.Addressable() {

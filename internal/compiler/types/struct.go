@@ -119,6 +119,11 @@ func (x structType) Implements(y reflect.Type) bool {
 	return Implements(x, y)
 }
 
+// BoundMethod implements the interface runtime.ScriggoMethodSet.
+func (x structType) BoundMethod(name string) (*runtime.Function, []int, bool, bool) {
+	return boundMethod(x, name)
+}
+
 func (x structType) Name() string {
 	return "" // composite types do not have a name.
 }
