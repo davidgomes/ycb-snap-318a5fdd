@@ -63,6 +63,38 @@ task --list-all
 task -a
 ```
 
+### `task --graph`
+
+Print the dependency graph of one or more tasks instead of running them. When
+no task names are given, the `default` task is used. Aliases and wildcards are
+resolved the same way they are when running tasks. Namespaced tasks from
+included Taskfiles are shown with their fully qualified names. `for` loops are
+expanded so each iteration is its own edge.
+
+```bash
+task --graph build
+task --graph --format=dot build | dot -Tsvg -o build.svg
+task --graph --format=text build
+task --graph --reverse build
+```
+
+`--format` selects the output and only applies together with `--graph`:
+
+- `json` (the default) — a single object with `roots`, `nodes`, `edges`,
+  `depth_groups`, and `longest_path`.
+- `dot` — a Graphviz digraph named `tasks`, with edges pointing from a task to
+  its dependencies. Tasks that are already up to date are drawn with
+  `style=dashed`.
+- `text` — an indented tree. A dependency that has already been printed is
+  marked `(repeated)` and is not expanded again.
+
+`--reverse` inverts the graph: it shows every task in the Taskfile that depends
+on the given task, directly or through another task. Depth groups and the
+longest path are computed on that inverted graph.
+
+`--no-status` skips up-to-date checks. JSON nodes then omit `up_to_date`, and
+DOT output does not use dashed styling.
+
 ### `task --init`
 
 Create a new Taskfile.yml in the current directory.

@@ -55,6 +55,12 @@ type (
 		Concurrency         int
 		Interval            time.Duration
 		Failfast            bool
+		// GraphFormat is the --graph output format: "json" (default), "dot", or "text".
+		GraphFormat string
+		// GraphReverse inverts the dependency graph so it shows dependents.
+		GraphReverse bool
+		// GraphNoStatus skips up-to-date checks while building a graph.
+		GraphNoStatus bool
 
 		// I/O
 		Stdin  io.Reader

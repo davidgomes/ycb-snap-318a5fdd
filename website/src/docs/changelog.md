@@ -8,6 +8,12 @@ editLink: false
 
 ::: v-pre
 
+## Unreleased
+
+- Added the `--graph` flag to print a task dependency graph as JSON, DOT, or
+  text. `--format` selects the output, `--reverse` shows dependents, and
+  `--no-status` skips up-to-date checks.
+
 ## v3.49.1 - 2026-03-08
 
 * Reverted #2632 for now, which caused some regressions. That change will be

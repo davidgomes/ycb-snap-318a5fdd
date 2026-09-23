@@ -2060,6 +2060,38 @@ would print the following output:
 
 If you want to see all tasks, there's a `--list-all` (alias `-a`) flag as well.
 
+## Display the dependency graph
+
+Running `task --graph task-name` prints how tasks depend on each other instead
+of executing them. The default format is JSON. `--format=dot` writes a Graphviz
+digraph, and `--format=text` writes an indented tree. `--reverse` shows which
+tasks depend on the given task. `--no-status` skips up-to-date checks.
+
+```yaml
+version: '3'
+
+tasks:
+  build:
+    deps: [assets]
+    cmds:
+      - task: test
+
+  assets:
+    cmds:
+      - echo 'building assets'
+
+  test:
+    cmds:
+      - echo 'running tests'
+```
+
+```shell
+$ task --graph --format=text build
+build
+  assets
+  test
+```
+
 ## Display summary of task
 
 Running `task --summary task-name` will show a summary of a task. The following

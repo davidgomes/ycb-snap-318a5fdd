@@ -75,6 +75,8 @@ complete -c $GO_TASK_PROGNAME      -l disable-fuzzy             -d 'disable fuzz
 complete -c $GO_TASK_PROGNAME -s n -l dry                       -d 'compile and print tasks without executing'
 complete -c $GO_TASK_PROGNAME -s x -l exit-code                 -d 'pass-through exit code of task command'
 complete -c $GO_TASK_PROGNAME      -l experiments               -d 'list available experiments'
+complete -c $GO_TASK_PROGNAME      -l format                    -d 'graph output format when using --graph' -xa "json dot text"
+complete -c $GO_TASK_PROGNAME      -l graph                     -d 'print the task dependency graph'
 complete -c $GO_TASK_PROGNAME -s F -l failfast                  -d 'when running tasks in parallel, stop all tasks if one fails'
 complete -c $GO_TASK_PROGNAME -s f -l force                     -d 'force execution even when up-to-date'
 complete -c $GO_TASK_PROGNAME -s g -l global                    -d 'run global Taskfile from home directory'
@@ -85,12 +87,13 @@ complete -c $GO_TASK_PROGNAME -s I -l interval                  -d 'interval to 
 complete -c $GO_TASK_PROGNAME -s j -l json                      -d 'format task list as JSON'
 complete -c $GO_TASK_PROGNAME -s l -l list                      -d 'list tasks with descriptions'
 complete -c $GO_TASK_PROGNAME      -l nested                    -d 'nest namespaces when listing as JSON'
-complete -c $GO_TASK_PROGNAME      -l no-status                 -d 'ignore status when listing as JSON'
+complete -c $GO_TASK_PROGNAME      -l no-status                 -d 'ignore status when listing as JSON or printing a graph'
 complete -c $GO_TASK_PROGNAME      -l interactive               -d 'prompt for missing required variables'
 complete -c $GO_TASK_PROGNAME -s o -l output                    -d 'set output style' -xa "interleaved group prefixed"
 complete -c $GO_TASK_PROGNAME      -l output-group-begin        -d 'message template before grouped output'
 complete -c $GO_TASK_PROGNAME      -l output-group-end          -d 'message template after grouped output'
 complete -c $GO_TASK_PROGNAME      -l output-group-error-only   -d 'hide output from successful tasks'
+complete -c $GO_TASK_PROGNAME      -l reverse                   -d 'with --graph, show tasks that depend on the given task'
 complete -c $GO_TASK_PROGNAME -s p -l parallel                  -d 'execute tasks in parallel'
 complete -c $GO_TASK_PROGNAME -s s -l silent                    -d 'disable echoing'
 complete -c $GO_TASK_PROGNAME      -l sort                      -d 'set task sorting order' -xa "default alphanumeric none"
