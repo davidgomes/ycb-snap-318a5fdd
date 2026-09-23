@@ -20,12 +20,18 @@ export interface ToolbarProps {
   theme?: boolean;
 }
 
+const groups = new WeakMap<HTMLElement, ToolbarGroup>();
+
 class Toolbar extends Module<ToolbarProps> {
   static DEFAULTS: ToolbarProps;
+  static events = {
+    UPDATE: 'toolbar-update',
+  } as const;
 
   container?: HTMLElement | null;
   controls: [string, HTMLElement][];
   handlers: Record<string, Handler>;
+  group?: ToolbarGroup;
 
   constructor(quill: Quill, options: Partial<ToolbarProps>) {
     super(quill, options);
@@ -47,6 +53,8 @@ class Toolbar extends Module<ToolbarProps> {
     this.container.classList.add('ql-toolbar');
     this.controls = [];
     this.handlers = {};
+    const group = ToolbarGroup.get(this.container);
+    this.group = group;
     if (this.options.handlers) {
       Object.keys(this.options.handlers).forEach((format) => {
         const handler = this.options.handlers?.[format];
@@ -61,9 +69,20 @@ class Toolbar extends Module<ToolbarProps> {
         this.attach(input);
       },
     );
-    this.quill.on(Quill.events.EDITOR_CHANGE, () => {
+    group.add(this);
+    this.quill.on(Quill.events.EDITOR_CHANGE, (type, eventRange) => {
+      if (type === Quill.events.SELECTION_CHANGE && eventRange != null) {
+        group.activate(this);
+      }
+      if (!this.isActive()) return;
       const [range] = this.quill.selection.getRange(); // quill.getSelection triggers update
       this.update(range);
+    });
+    this.quill.on(Quill.events.ENABLE_CHANGE, () => {
+      if (this.isActive()) group.refresh();
+    });
+    this.quill.root.addEventListener('focusin', () => {
+      group.activate(this);
     });
   }
 
@@ -72,11 +91,8 @@ class Toolbar extends Module<ToolbarProps> {
   }
 
   attach(input: HTMLElement) {
-    let format = Array.from(input.classList).find((className) => {
-      return className.indexOf('ql-') === 0;
-    });
+    const format = getControlFormat(input);
     if (!format) return;
-    format = format.slice('ql-'.length);
     if (input.tagName === 'BUTTON') {
       input.setAttribute('type', 'button');
     }
@@ -87,56 +103,73 @@ class Toolbar extends Module<ToolbarProps> {
       debug.warn('ignoring attaching to nonexistent format', format, input);
       return;
     }
-    const eventName = input.tagName === 'SELECT' ? 'change' : 'click';
-    input.addEventListener(eventName, (e) => {
-      let value;
-      if (input.tagName === 'SELECT') {
-        // @ts-expect-error
-        if (input.selectedIndex < 0) return;
-        // @ts-expect-error
-        const selected = input.options[input.selectedIndex];
-        if (selected.hasAttribute('selected')) {
-          value = false;
-        } else {
-          value = selected.value || false;
-        }
-      } else {
-        if (input.classList.contains('ql-active')) {
-          value = false;
-        } else {
-          // @ts-expect-error
-          value = input.value || !input.hasAttribute('value');
-        }
-        e.preventDefault();
-      }
-      this.quill.focus();
-      const [range] = this.quill.selection.getRange();
-      if (this.handlers[format] != null) {
-        this.handlers[format].call(this, value);
-      } else if (
-        // @ts-expect-error
-        this.quill.scroll.query(format).prototype instanceof EmbedBlot
-      ) {
-        value = prompt(`Enter ${format}`); // eslint-disable-line no-alert
-        if (!value) return;
-        this.quill.updateContents(
-          new Delta()
-            // @ts-expect-error Fix me later
-            .retain(range.index)
-            // @ts-expect-error Fix me later
-            .delete(range.length)
-            .insert({ [format]: value }),
-          Quill.sources.USER,
-        );
-      } else {
-        this.quill.format(format, value, Quill.sources.USER);
-      }
-      this.update(range);
-    });
+    if (this.controls.some(([, control]) => control === input)) return;
     this.controls.push([format, input]);
+    this.group?.bind(input);
+  }
+
+  handle(input: HTMLElement, format: string, e: Event) {
+    if (
+      this.handlers[format] == null &&
+      this.quill.scroll.query(format) == null
+    ) {
+      return;
+    }
+    let value;
+    if (input.tagName === 'SELECT') {
+      // @ts-expect-error
+      if (input.selectedIndex < 0) return;
+      // @ts-expect-error
+      const selected = input.options[input.selectedIndex];
+      if (selected.hasAttribute('selected')) {
+        value = false;
+      } else {
+        value = selected.value || false;
+      }
+    } else {
+      if (input.classList.contains('ql-active')) {
+        value = false;
+      } else {
+        // @ts-expect-error
+        value = input.value || !input.hasAttribute('value');
+      }
+      e.preventDefault();
+    }
+    this.quill.focus();
+    const [range] = this.quill.selection.getRange();
+    if (this.handlers[format] != null) {
+      this.handlers[format].call(this, value);
+    } else if (
+      // @ts-expect-error
+      this.quill.scroll.query(format).prototype instanceof EmbedBlot
+    ) {
+      value = prompt(`Enter ${format}`); // eslint-disable-line no-alert
+      if (!value) return;
+      this.quill.updateContents(
+        new Delta()
+          // @ts-expect-error Fix me later
+          .retain(range.index)
+          // @ts-expect-error Fix me later
+          .delete(range.length)
+          .insert({ [format]: value }),
+        Quill.sources.USER,
+      );
+    } else {
+      this.quill.format(format, value, Quill.sources.USER);
+    }
+    this.update(range);
+  }
+
+  isActive() {
+    return this.group != null && this.group.active === this;
   }
 
   update(range: Range | null) {
+    if (range != null && this.group != null) {
+      // Shared controls only reflect the active editor, and stay neutral while it is disabled
+      if (this.group.active !== this) return;
+      if (this.group.isDisabled()) range = null;
+    }
     const formats = range == null ? {} : this.quill.getFormat(range);
     this.controls.forEach((pair) => {
       const [format, input] = pair;
@@ -183,6 +216,225 @@ class Toolbar extends Module<ToolbarProps> {
   }
 }
 Toolbar.DEFAULTS = {};
+
+// Owns the DOM wiring of a toolbar container, which may be shared by several
+// editors. Actions are routed to whichever editor was most recently active.
+class ToolbarGroup {
+  static get(container: HTMLElement) {
+    let group = groups.get(container);
+    if (group == null) {
+      group = new ToolbarGroup(container);
+      groups.set(container, group);
+    }
+    return group;
+  }
+
+  container: HTMLElement;
+  toolbars: Toolbar[] = [];
+  active: Toolbar | null = null;
+  protected attached = new WeakSet<Element>();
+  protected external = new WeakSet<Element>();
+  protected disabledControls = new WeakSet<Element>();
+  protected handledEvents = new WeakSet<Event>();
+  protected removalObserver: MutationObserver | null = null;
+
+  constructor(container: HTMLElement) {
+    this.container = container;
+    // Capture so non-bubbling change events dispatched by pickers are seen too
+    const listener = (event: Event) => {
+      const input = this.findControl(event);
+      if (input != null) this.dispatch(input, event);
+    };
+    container.addEventListener('click', listener, true);
+    container.addEventListener('change', listener, true);
+    new MutationObserver((records) => {
+      const inputs: HTMLElement[] = [];
+      records.forEach((record) => {
+        record.addedNodes.forEach((node) => {
+          if (!(node instanceof Element)) return;
+          if (node.matches('button, select')) inputs.push(node as HTMLElement);
+          inputs.push(...node.querySelectorAll<HTMLElement>('button, select'));
+        });
+      });
+      const changed = this.toolbars.reduce(
+        (result, toolbar) => this.syncControls(toolbar, inputs) || result,
+        false,
+      );
+      if (changed) this.refresh();
+    }).observe(container, { childList: true, subtree: true });
+  }
+
+  add(toolbar: Toolbar) {
+    if (this.toolbars.includes(toolbar)) return;
+    this.toolbars.push(toolbar);
+    if (this.toolbars.length === 1) {
+      this.active = toolbar;
+      return;
+    }
+    this.observeRemovals();
+    this.refresh();
+  }
+
+  activate(toolbar: Toolbar) {
+    if (!this.toolbars.includes(toolbar)) {
+      // Rejoining after having been detached from the document
+      this.syncControls(
+        toolbar,
+        Array.from(this.container.querySelectorAll('button, select')),
+      );
+      this.toolbars.push(toolbar);
+      if (this.toolbars.length > 1) this.observeRemovals();
+    } else if (this.active === toolbar) {
+      return;
+    }
+    this.active = toolbar;
+    this.refresh();
+  }
+
+  bind(input: HTMLElement) {
+    this.attached.add(input);
+    if (this.container.contains(input) || this.external.has(input)) return;
+    this.external.add(input);
+    const eventName = input.tagName === 'SELECT' ? 'change' : 'click';
+    input.addEventListener(eventName, (event) => {
+      this.dispatch(input, event);
+    });
+  }
+
+  isDisabled() {
+    return (
+      this.toolbars.length > 1 &&
+      this.active != null &&
+      !this.active.quill.isEnabled()
+    );
+  }
+
+  prune() {
+    const removed = this.toolbars.filter(
+      ({ quill }) => !quill.container.isConnected,
+    );
+    if (removed.length === 0) return;
+    this.toolbars = this.toolbars.filter(
+      (toolbar) => !removed.includes(toolbar),
+    );
+    if (this.active != null && removed.includes(this.active)) {
+      this.active = null;
+    }
+    if (this.toolbars.length === 0 && this.removalObserver != null) {
+      this.removalObserver.disconnect();
+      this.removalObserver = null;
+    }
+    this.refresh(removed);
+  }
+
+  refresh(removed: Toolbar[] = []) {
+    const { active } = this;
+    const disabled = this.isDisabled();
+    const toolbars = this.toolbars.concat(removed);
+    toolbars.forEach((toolbar) => {
+      toolbar.controls.forEach(([, input]) => {
+        this.setDisabled(input, disabled);
+      });
+      if (toolbar !== active || disabled) toolbar.update(null);
+    });
+    if (active != null && !disabled) {
+      active.update(active.quill.selection.getRange()[0]);
+    }
+    toolbars.forEach(({ quill }) => {
+      quill.emitter.emit(Toolbar.events.UPDATE);
+    });
+  }
+
+  protected dispatch(input: HTMLElement, event: Event) {
+    if (this.handledEvents.has(event)) return;
+    this.handledEvents.add(event);
+    const format = getControlFormat(input);
+    const toolbar = this.resolveActive();
+    if (!format || toolbar == null || this.isDisabled()) return;
+    toolbar.handle(input, format, event);
+  }
+
+  protected findControl(event: Event) {
+    let node = event.target instanceof Element ? event.target : null;
+    while (node != null && node !== this.container) {
+      if (node.tagName === 'SELECT') {
+        return event.type === 'change' ? (node as HTMLElement) : null;
+      }
+      if (
+        event.type === 'click' &&
+        (node.tagName === 'BUTTON' || this.attached.has(node))
+      ) {
+        return node as HTMLElement;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  protected observeRemovals() {
+    if (this.removalObserver != null) return;
+    this.removalObserver = new MutationObserver((records) => {
+      if (records.some((record) => record.removedNodes.length > 0)) {
+        this.prune();
+      }
+    });
+    this.removalObserver.observe(document, { childList: true, subtree: true });
+  }
+
+  // The event based activation can miss an editor whose selection was restored
+  // to an unchanged range, so trust where the document selection and focus are.
+  protected resolveActive() {
+    this.prune();
+    const selection = document.getSelection();
+    const anchor =
+      selection != null && selection.rangeCount > 0
+        ? selection.anchorNode
+        : null;
+    const current =
+      this.toolbars.find(
+        ({ quill }) => anchor != null && quill.root.contains(anchor),
+      ) || this.toolbars.find(({ quill }) => quill.hasFocus());
+    if (current != null) this.activate(current);
+    return this.active;
+  }
+
+  protected setDisabled(input: HTMLElement, disabled: boolean) {
+    if (!('disabled' in input)) return;
+    const control = input as HTMLButtonElement | HTMLSelectElement;
+    if (disabled && !control.disabled) {
+      control.disabled = true;
+      this.disabledControls.add(control);
+    } else if (!disabled && this.disabledControls.has(control)) {
+      control.disabled = false;
+      this.disabledControls.delete(control);
+    }
+  }
+
+  protected syncControls(toolbar: Toolbar, inputs: HTMLElement[]) {
+    const { length } = toolbar.controls;
+    for (let i = toolbar.controls.length - 1; i >= 0; i -= 1) {
+      const [, input] = toolbar.controls[i];
+      if (!this.external.has(input) && !this.container.contains(input)) {
+        toolbar.controls.splice(i, 1);
+      }
+    }
+    let changed = toolbar.controls.length !== length;
+    inputs.forEach((input) => {
+      if (!this.container.contains(input)) return;
+      const count = toolbar.controls.length;
+      toolbar.attach(input);
+      changed = changed || toolbar.controls.length !== count;
+    });
+    return changed;
+  }
+}
+
+function getControlFormat(input: Element) {
+  const format = Array.from(input.classList).find((className) => {
+    return className.indexOf('ql-') === 0;
+  });
+  return format == null ? null : format.slice('ql-'.length);
+}
 
 function addButton(container: HTMLElement, format: string, value?: string) {
   const input = document.createElement('button');
@@ -309,4 +561,4 @@ Toolbar.DEFAULTS = {
   },
 };
 
-export { Toolbar as default, addControls };
+export { Toolbar as default, ToolbarGroup, addControls };

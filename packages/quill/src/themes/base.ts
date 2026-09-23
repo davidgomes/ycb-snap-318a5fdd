@@ -11,6 +11,7 @@ import type { Range } from '../core/selection.js';
 import type Clipboard from '../modules/clipboard.js';
 import type History from '../modules/history.js';
 import type Keyboard from '../modules/keyboard.js';
+import Toolbar from '../modules/toolbar.js';
 import type Uploader from '../modules/uploader.js';
 import type Selection from '../core/selection.js';
 
@@ -60,6 +61,10 @@ const HEADERS = ['1', '2', '3', false];
 
 const SIZES = ['small', false, 'large', 'huge'];
 
+const PICKERS = new WeakMap<HTMLSelectElement, Picker>();
+
+const IMAGE_INPUTS = new WeakSet<HTMLInputElement>();
+
 class BaseTheme extends Theme {
   pickers: Picker[];
   tooltip?: Tooltip;
@@ -104,8 +109,33 @@ class BaseTheme extends Theme {
     if (name === 'toolbar') {
       // @ts-expect-error
       this.extendToolbar(module);
+      this.quill.on(Toolbar.events.UPDATE, () => {
+        this.updateSharedToolbar(module as Toolbar);
+      });
     }
     return module;
+  }
+
+  updateSharedToolbar(toolbar: Toolbar) {
+    const active = toolbar.group?.active;
+    if (active == null && this.pickers != null) {
+      this.pickers.forEach((picker) => {
+        picker.close();
+      });
+    }
+    const fileInput = toolbar.container?.querySelector<HTMLInputElement>(
+      'input.ql-image[type=file]',
+    );
+    if (fileInput == null || !IMAGE_INPUTS.has(fileInput)) return;
+    if (active == null) {
+      fileInput.remove();
+    } else {
+      fileInput.setAttribute(
+        'accept',
+        // @ts-expect-error
+        active.quill.uploader.options.mimetypes.join(', '),
+      );
+    }
   }
 
   buildButtons(
@@ -141,7 +171,7 @@ class BaseTheme extends Theme {
     selects: NodeListOf<HTMLSelectElement>,
     icons: Record<string, string | Record<string, string>>,
   ) {
-    this.pickers = Array.from(selects).map((select) => {
+    const createPicker = (select: HTMLSelectElement) => {
       if (select.classList.contains('ql-align')) {
         if (select.querySelector('option') == null) {
           fillSelect(select, ALIGNS);
@@ -176,6 +206,14 @@ class BaseTheme extends Theme {
         }
       }
       return new Picker(select);
+    };
+    this.pickers = Array.from(selects).map((select) => {
+      let picker = PICKERS.get(select);
+      if (picker == null) {
+        picker = createPicker(select);
+        PICKERS.set(select, picker);
+      }
+      return picker;
     });
     const update = () => {
       this.pickers.forEach((picker) => {
@@ -183,6 +221,7 @@ class BaseTheme extends Theme {
       });
     };
     this.quill.on(Emitter.events.EDITOR_CHANGE, update);
+    this.quill.on(Toolbar.events.UPDATE, update);
   }
 }
 BaseTheme.DEFAULTS = merge({}, Theme.DEFAULTS, {
@@ -205,10 +244,15 @@ BaseTheme.DEFAULTS = merge({}, Theme.DEFAULTS, {
             );
             fileInput.classList.add('ql-image');
             fileInput.addEventListener('change', () => {
-              const range = this.quill.getSelection(true);
-              this.quill.uploader.upload(range, fileInput.files);
+              const { group } = this;
+              const toolbar = group == null ? this : group.active;
+              if (toolbar != null && !group?.isDisabled()) {
+                const range = toolbar.quill.getSelection(true);
+                toolbar.quill.uploader.upload(range, fileInput.files);
+              }
               fileInput.value = '';
             });
+            IMAGE_INPUTS.add(fileInput);
             this.container.appendChild(fileInput);
           }
           fileInput.click();

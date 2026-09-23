@@ -6,7 +6,7 @@ import type { Bounds } from '../core/selection.js';
 import icons from '../ui/icons.js';
 import Quill from '../core/quill.js';
 import type { ThemeOptions } from '../core/theme.js';
-import type Toolbar from '../modules/toolbar.js';
+import Toolbar from '../modules/toolbar.js';
 import type { ToolbarConfig } from '../modules/toolbar.js';
 
 const TOOLBAR_CONFIG: ToolbarConfig = [
@@ -123,7 +123,14 @@ class BubbleTheme extends BaseTheme {
     // @ts-expect-error
     this.tooltip = new BubbleTooltip(this.quill, this.options.bounds);
     if (toolbar.container != null) {
-      this.tooltip.root.appendChild<HTMLElement>(toolbar.container);
+      const { container } = toolbar;
+      const mountToolbar = () => {
+        if (toolbar.isActive() && container.parentNode !== this.tooltip.root) {
+          this.tooltip.root.appendChild<HTMLElement>(container);
+        }
+      };
+      mountToolbar();
+      this.quill.on(Toolbar.events.UPDATE, mountToolbar);
       this.buildButtons(toolbar.container.querySelectorAll('button'), icons);
       this.buildPickers(toolbar.container.querySelectorAll('select'), icons);
     }

@@ -41,6 +41,7 @@ class Picker {
   }
 
   togglePicker() {
+    if (this.select.disabled) return;
     this.container.classList.toggle('ql-expanded');
     // Toggle aria-expanded and aria-hidden to make the picker accessible
     toggleAriaAttribute(this.label, 'aria-expanded');
@@ -62,12 +63,13 @@ class Picker {
       item.setAttribute('data-label', option.textContent);
     }
     item.addEventListener('click', () => {
+      if (this.select.disabled) return;
       this.selectItem(item, true);
     });
     item.addEventListener('keydown', (event) => {
       switch (event.key) {
         case 'Enter':
-          this.selectItem(item, true);
+          if (!this.select.disabled) this.selectItem(item, true);
           event.preventDefault();
           break;
         case 'Escape':
@@ -192,6 +194,13 @@ class Picker {
       option != null &&
       option !== this.select.querySelector('option[selected]');
     this.label.classList.toggle('ql-active', isActive);
+    const { disabled } = this.select;
+    this.container.classList.toggle('ql-disabled', disabled);
+    if (disabled || this.label.hasAttribute('aria-disabled')) {
+      this.label.setAttribute('aria-disabled', `${disabled}`);
+      this.label.tabIndex = disabled ? -1 : 0;
+    }
+    if (disabled) this.close();
   }
 }
 
