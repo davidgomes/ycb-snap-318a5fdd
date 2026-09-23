@@ -13,18 +13,26 @@ type Stmt interface {
 }
 
 // AssignStmt represents an assignment statement.
+// Pattern is set when the left-hand side is a destructuring pattern.
 type AssignStmt struct {
 	LHS      []Expr
 	RHS      []Expr
 	Token    token.Token
 	TokenPos Pos
+	Pattern  BindingPattern
 }
 
 func (s *AssignStmt) stmtNode() {}
 
 // Pos returns the position of first character belonging to the node.
 func (s *AssignStmt) Pos() Pos {
-	return s.LHS[0].Pos()
+	if len(s.LHS) > 0 {
+		return s.LHS[0].Pos()
+	}
+	if s.Pattern != nil {
+		return s.Pattern.Pos()
+	}
+	return s.TokenPos
 }
 
 // End returns the position of first character immediately after the node.
@@ -34,8 +42,12 @@ func (s *AssignStmt) End() Pos {
 
 func (s *AssignStmt) String() string {
 	var lhs, rhs []string
-	for _, e := range s.LHS {
-		lhs = append(lhs, e.String())
+	if s.Pattern != nil {
+		lhs = append(lhs, s.Pattern.String())
+	} else {
+		for _, e := range s.LHS {
+			lhs = append(lhs, e.String())
+		}
 	}
 	for _, e := range s.RHS {
 		rhs = append(rhs, e.String())

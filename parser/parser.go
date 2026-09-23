@@ -646,32 +646,49 @@ func (p *Parser) parseIdentList() *IdentList {
 	}
 
 	var params []*Ident
+	var patterns []BindingPattern
 	lparen := p.expect(token.LParen)
 	isVarArgs := false
+	hasPattern := false
 	if p.token != token.RParen {
-		if p.token == token.Ellipsis {
-			isVarArgs = true
-			p.next()
-		}
-
-		params = append(params, p.parseIdent())
-		for !isVarArgs && p.token == token.Comma {
-			p.next()
+		for {
 			if p.token == token.Ellipsis {
 				isVarArgs = true
 				p.next()
+				params = append(params, p.parseIdent())
+				patterns = append(patterns, nil)
+				break
 			}
-			params = append(params, p.parseIdent())
+			if p.token == token.LBrack || p.token == token.LBrace {
+				pat := p.parseBindingPattern()
+				params = append(params, &Ident{
+					NamePos: pat.Pos(),
+					Name:    "_",
+				})
+				patterns = append(patterns, pat)
+				hasPattern = true
+			} else {
+				params = append(params, p.parseIdent())
+				patterns = append(patterns, nil)
+			}
+			if p.token != token.Comma {
+				break
+			}
+			p.next()
 		}
 	}
 
 	rparen := p.expect(token.RParen)
-	return &IdentList{
+	list := &IdentList{
 		LParen:  lparen,
 		RParen:  rparen,
 		VarArgs: isVarArgs,
 		List:    params,
 	}
+	if hasPattern {
+		list.Patterns = patterns
+	}
+	return list
 }
 
 func (p *Parser) parseStmt() (stmt Stmt) {
@@ -722,13 +739,16 @@ func (p *Parser) parseForStmt() Stmt {
 	pos := p.expect(token.For)
 
 	// for {}
+	// A brace group followed by := or = is a destructuring init, not the body.
 	if p.token == token.LBrace {
-		body := p.parseBlockStmt()
-		p.expectSemi()
+		if _, isBind := p.followsDefineOrAssign(); !isBind {
+			body := p.parseBlockStmt()
+			p.expectSemi()
 
-		return &ForStmt{
-			ForPos: pos,
-			Body:   body,
+			return &ForStmt{
+				ForPos: pos,
+				Body:   body,
+			}
 		}
 	}
 
@@ -852,10 +872,13 @@ func (p *Parser) parseBlockStmt() *BlockStmt {
 }
 
 func (p *Parser) parseIfHeader() (init Stmt, cond Expr) {
+	// { starts the body, unless it is a destructuring init: {x} := m; cond
 	if p.token == token.LBrace {
-		p.error(p.pos, "missing condition in if statement")
-		cond = &BadExpr{From: p.pos, To: p.pos}
-		return
+		if _, isBind := p.followsDefineOrAssign(); !isBind {
+			p.error(p.pos, "missing condition in if statement")
+			cond = &BadExpr{From: p.pos, To: p.pos}
+			return
+		}
 	}
 
 	outer := p.exprLevel
@@ -944,6 +967,23 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 		defer untracep(tracep(p, "SimpleStmt"))
 	}
 
+	// [a, b] := rhs and {x} := rhs are destructuring bindings.
+	// The same bracket forms followed by = are rejected by the compiler.
+	// Anything else keeps the existing literal syntax.
+	if p.token == token.LBrack || p.token == token.LBrace {
+		if tok, ok := p.followsDefineOrAssign(); ok {
+			pat := p.parseBindingPattern()
+			pos := p.expect(tok)
+			rhs := p.parseExprList()
+			return &AssignStmt{
+				Pattern:  pat,
+				RHS:      rhs,
+				Token:    tok,
+				TokenPos: pos,
+			}
+		}
+	}
+
 	x := p.parseExprList()
 
 	switch p.token {
@@ -1019,6 +1059,150 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 		return s
 	}
 	return &ExprStmt{Expr: x[0]}
+}
+
+// followsDefineOrAssign reports whether the bracket group starting at the
+// current token is immediately followed by = or :=.
+func (p *Parser) followsDefineOrAssign() (token.Token, bool) {
+	if p.token != token.LBrack && p.token != token.LBrace {
+		return token.Illegal, false
+	}
+
+	sc := *p.scanner
+	sc.errorHandler = nil
+	depth := 1
+	for {
+		tok, _, _ := sc.Scan()
+		switch tok {
+		case token.EOF:
+			return token.EOF, false
+		case token.LParen, token.LBrack, token.LBrace:
+			depth++
+		case token.RParen, token.RBrack, token.RBrace:
+			depth--
+			if depth == 0 {
+				next, _, _ := sc.Scan()
+				if next == token.Define || next == token.Assign {
+					return next, true
+				}
+				return next, false
+			}
+		}
+	}
+}
+
+func (p *Parser) parseBindingPattern() BindingPattern {
+	switch p.token {
+	case token.LBrack:
+		return p.parseArrayBinding()
+	case token.LBrace:
+		return p.parseMapBinding()
+	case token.Ident:
+		return p.parseIdent()
+	default:
+		pos := p.pos
+		p.errorExpected(pos, "binding pattern")
+		if p.token != token.EOF {
+			p.next()
+		}
+		return &Ident{NamePos: pos, Name: "_"}
+	}
+}
+
+func (p *Parser) parseArrayBinding() *ArrayBinding {
+	lbrack := p.expect(token.LBrack)
+	var elements []*BindingElem
+	for p.token != token.RBrack && p.token != token.EOF {
+		elem := &BindingElem{}
+		if p.token == token.Ellipsis {
+			p.next()
+			elem.Rest = true
+			elem.Pattern = p.parseIdent()
+		} else {
+			elem.Pattern = p.parseBindingPattern()
+		}
+		if p.token == token.Assign {
+			p.next()
+			elem.Default = p.parseExpr()
+		}
+		elements = append(elements, elem)
+		if !p.expectComma(token.RBrack, "binding element") {
+			break
+		}
+	}
+	rbrack := p.expect(token.RBrack)
+	return &ArrayBinding{
+		Elements: elements,
+		LBrack:   lbrack,
+		RBrack:   rbrack,
+	}
+}
+
+func (p *Parser) parseMapBinding() *MapBinding {
+	lbrace := p.expect(token.LBrace)
+	var elements []*MapBindingElem
+	for p.token != token.RBrace && p.token != token.EOF {
+		elem := &MapBindingElem{KeyPos: p.pos}
+		if p.token == token.Ellipsis {
+			p.next()
+			elem.Rest = true
+			elem.Pattern = p.parseIdent()
+			elements = append(elements, elem)
+			if !p.expectComma(token.RBrace, "binding element") {
+				break
+			}
+			continue
+		}
+
+		identKey := p.token == token.Ident
+		switch p.token {
+		case token.Ident:
+			elem.Key = p.tokenLit
+			p.next()
+		case token.String:
+			v, _ := strconv.Unquote(p.tokenLit)
+			elem.Key = v
+			p.next()
+		default:
+			p.errorExpected(p.pos, "map key")
+			p.next()
+		}
+
+		switch p.token {
+		case token.Colon:
+			elem.Colon = p.pos
+			p.next()
+			elem.Pattern = p.parseBindingPattern()
+			if p.token == token.Assign {
+				p.next()
+				elem.Default = p.parseExpr()
+			}
+		case token.Assign:
+			if !identKey {
+				p.errorExpected(p.pos, "':'")
+			}
+			elem.Pattern = &Ident{Name: elem.Key, NamePos: elem.KeyPos}
+			p.next()
+			elem.Default = p.parseExpr()
+		default:
+			if identKey {
+				elem.Pattern = &Ident{Name: elem.Key, NamePos: elem.KeyPos}
+			} else {
+				p.errorExpected(p.pos, "':'")
+				elem.Pattern = &Ident{Name: "_", NamePos: elem.KeyPos}
+			}
+		}
+		elements = append(elements, elem)
+		if !p.expectComma(token.RBrace, "binding element") {
+			break
+		}
+	}
+	rbrace := p.expect(token.RBrace)
+	return &MapBinding{
+		Elements: elements,
+		LBrace:   lbrace,
+		RBrace:   rbrace,
+	}
 }
 
 func (p *Parser) parseExprList() (list []Expr) {

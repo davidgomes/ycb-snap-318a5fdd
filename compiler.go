@@ -308,6 +308,9 @@ func (c *Compiler) Compile(node parser.Node) error {
 			}
 		}
 	case *parser.AssignStmt:
+		if node.Pattern != nil {
+			return c.compileDestructureAssign(node)
+		}
 		err := c.compileAssign(node, node.LHS, node.RHS, node.Token)
 		if err != nil {
 			return err
@@ -389,11 +392,38 @@ func (c *Compiler) Compile(node parser.Node) error {
 	case *parser.FuncLit:
 		c.enterScope()
 
-		for _, p := range node.Type.Params.List {
-			s := c.symbolTable.Define(p.Name)
-
-			// function arguments is not assigned directly.
+		type paramSlot struct {
+			sym *Symbol
+			pat parser.BindingPattern
+		}
+		slots := make([]paramSlot, len(node.Type.Params.List))
+		for i, p := range node.Type.Params.List {
+			var pat parser.BindingPattern
+			if ps := node.Type.Params.Patterns; i < len(ps) {
+				pat = ps[i]
+			}
+			var s *Symbol
+			if pat != nil {
+				s = c.symbolTable.Define(fmt.Sprintf(":p%d", i))
+			} else {
+				s = c.symbolTable.Define(p.Name)
+			}
+			// function arguments are assigned by the VM before entry.
 			s.LocalAssigned = true
+			slots[i] = paramSlot{sym: s, pat: pat}
+		}
+
+		for _, slot := range slots {
+			if slot.pat == nil {
+				continue
+			}
+			if err := c.validatePattern(node, slot.pat); err != nil {
+				return err
+			}
+			c.emit(node, parser.OpGetLocal, slot.sym.Index)
+			if err := c.compileDestructure(node, slot.pat); err != nil {
+				return err
+			}
 		}
 
 		if err := c.Compile(node.Body); err != nil {
@@ -631,8 +661,8 @@ func (c *Compiler) SetImportDir(dir string) {
 //
 // Use this method if you want other source file extension than ".tengo".
 //
-//     // this will search for *.tengo, *.foo, *.bar
-//     err := c.SetImportFileExt(".tengo", ".foo", ".bar")
+//	// this will search for *.tengo, *.foo, *.bar
+//	err := c.SetImportFileExt(".tengo", ".foo", ".bar")
 //
 // This function requires at least one argument, since it will replace the
 // current list of extension name.

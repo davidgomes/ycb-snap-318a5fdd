@@ -296,6 +296,9 @@ func addPrints(file *parser.File) *parser.File {
 			})
 		case *parser.AssignStmt:
 			stmts = append(stmts, s)
+			if s.Pattern != nil || len(s.LHS) == 0 {
+				break
+			}
 
 			stmts = append(stmts, &parser.ExprStmt{
 				Expr: &parser.CallExpr{

@@ -18,12 +18,15 @@ type Node interface {
 	String() string
 }
 
-// IdentList represents a list of identifiers.
+// IdentList represents a list of function parameters.
+// Patterns, when non-nil, is parallel to List. A non-nil entry means that
+// parameter is a destructuring pattern rather than the identifier in List.
 type IdentList struct {
-	LParen  Pos
-	VarArgs bool
-	List    []*Ident
-	RParen  Pos
+	LParen   Pos
+	VarArgs  bool
+	List     []*Ident
+	Patterns []BindingPattern
+	RParen   Pos
 }
 
 // Pos returns the position of first character belonging to the node.
@@ -59,6 +62,10 @@ func (n *IdentList) NumFields() int {
 func (n *IdentList) String() string {
 	var list []string
 	for i, e := range n.List {
+		if n.Patterns != nil && i < len(n.Patterns) && n.Patterns[i] != nil {
+			list = append(list, n.Patterns[i].String())
+			continue
+		}
 		if n.VarArgs && i == len(n.List)-1 {
 			list = append(list, "..."+e.String())
 		} else {

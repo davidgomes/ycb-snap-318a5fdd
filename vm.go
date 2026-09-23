@@ -867,6 +867,40 @@ func (v *VM) run() {
 			val := iterator.(Iterator).Value()
 			v.stack[v.sp] = val
 			v.sp++
+		case parser.OpDup:
+			v.stack[v.sp] = v.stack[v.sp-1]
+			v.sp++
+		case parser.OpHasIndex:
+			index := v.stack[v.sp-1]
+			left := v.stack[v.sp-2]
+			v.sp -= 2
+			exists, err := indexExists(left, index)
+			if err != nil {
+				v.err = err
+				return
+			}
+			if exists {
+				v.stack[v.sp] = TrueValue
+			} else {
+				v.stack[v.sp] = FalseValue
+			}
+			v.sp++
+		case parser.OpArrayTail:
+			index := v.stack[v.sp-1]
+			left := v.stack[v.sp-2]
+			v.sp -= 2
+			tail, err := arrayTail(left, index)
+			if err != nil {
+				v.err = err
+				return
+			}
+			v.allocs--
+			if v.allocs == 0 {
+				v.err = ErrObjectAllocLimit
+				return
+			}
+			v.stack[v.sp] = tail
+			v.sp++
 		case parser.OpSuspend:
 			return
 		default:
@@ -879,6 +913,89 @@ func (v *VM) run() {
 // IsStackEmpty tests if the stack is empty or not.
 func (v *VM) IsStackEmpty() bool {
 	return v.sp == 0
+}
+
+// indexExists reports whether an array position or map key is present.
+// Undefined has no positions or keys. Other types are not destructurable.
+func indexExists(left, index Object) (bool, error) {
+	switch left := left.(type) {
+	case *Undefined:
+		return false, nil
+	case *Array:
+		idx, err := arrayIndex(index)
+		if err != nil {
+			return false, fmt.Errorf("not indexable: %s", left.TypeName())
+		}
+		return idx >= 0 && idx < len(left.Value), nil
+	case *ImmutableArray:
+		idx, err := arrayIndex(index)
+		if err != nil {
+			return false, fmt.Errorf("not indexable: %s", left.TypeName())
+		}
+		return idx >= 0 && idx < len(left.Value), nil
+	case *Map:
+		key, err := mapKey(index)
+		if err != nil {
+			return false, fmt.Errorf("not indexable: %s", left.TypeName())
+		}
+		_, ok := left.Value[key]
+		return ok, nil
+	case *ImmutableMap:
+		key, err := mapKey(index)
+		if err != nil {
+			return false, fmt.Errorf("not indexable: %s", left.TypeName())
+		}
+		_, ok := left.Value[key]
+		return ok, nil
+	default:
+		return false, fmt.Errorf("not indexable: %s", left.TypeName())
+	}
+}
+
+func arrayIndex(index Object) (int, error) {
+	intIdx, ok := index.(*Int)
+	if !ok {
+		return 0, fmt.Errorf("invalid index type: %s", index.TypeName())
+	}
+	return int(intIdx.Value), nil
+}
+
+func mapKey(index Object) (string, error) {
+	str, ok := index.(*String)
+	if !ok {
+		return "", fmt.Errorf("invalid index type: %s", index.TypeName())
+	}
+	return str.Value, nil
+}
+
+// arrayTail returns a new array of the elements at and after index.
+// A missing tail, including destructuring undefined, is an empty array.
+func arrayTail(left, index Object) (Object, error) {
+	idx, err := arrayIndex(index)
+	if err != nil {
+		return nil, err
+	}
+	var src []Object
+	switch left := left.(type) {
+	case *Undefined:
+		src = nil
+	case *Array:
+		src = left.Value
+	case *ImmutableArray:
+		src = left.Value
+	default:
+		return nil, fmt.Errorf("not indexable: %s", left.TypeName())
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(src) {
+		// Match the empty array literal, whose backing slice is nil.
+		return &Array{}, nil
+	}
+	tail := make([]Object, len(src)-idx)
+	copy(tail, src[idx:])
+	return &Array{Value: tail}, nil
 }
 
 func indexAssign(dst, src Object, selectors []Object) error {
