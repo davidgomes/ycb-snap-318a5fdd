@@ -1,6 +1,9 @@
 import {
+  createPersisterRestoreResult,
   hashKey,
   matchQuery,
+  mergeRestoredQueryState,
+  normalizeRestoredQueryState,
   notifyManager,
   partialMatchKey,
 } from '@tanstack/query-core'
@@ -122,48 +125,79 @@ export function experimental_createQueryPersister<TStorageValue = string>({
     return true
   }
 
+  async function readPersistedQuery(
+    queryHash: string,
+  ): Promise<PersistedQuery | undefined> {
+    if (storage == null) {
+      return
+    }
+
+    const storageKey = `${prefix}-${queryHash}`
+    try {
+      const storedData = await storage.getItem(storageKey)
+      if (storedData) {
+        let persistedQuery: PersistedQuery
+        try {
+          persistedQuery = await deserialize(storedData)
+        } catch {
+          await storage.removeItem(storageKey)
+          return
+        }
+
+        if (isExpiredOrBusted(persistedQuery)) {
+          await storage.removeItem(storageKey)
+          return
+        }
+
+        return persistedQuery
+      }
+    } catch (err) {
+      if (process.env.NODE_ENV === 'development') {
+        console.error(err)
+        console.warn(
+          'Encountered an error attempting to restore query cache from persisted location.',
+        )
+      }
+      await storage.removeItem(storageKey)
+    }
+
+    return
+  }
+
+  function scheduleRestoredQuery(query: Query, persistedQuery: PersistedQuery) {
+    notifyManager.schedule(() => {
+      const { dataUpdatedAt, errorUpdatedAt } = persistedQuery.state
+      // Keep persisted timestamps if a fetch pass rewrote them, then refetch.
+      query.setState({
+        ...(typeof dataUpdatedAt === 'number' ? { dataUpdatedAt } : null),
+        ...(typeof errorUpdatedAt === 'number' ? { errorUpdatedAt } : null),
+      })
+
+      if (
+        refetchOnRestore === 'always' ||
+        (refetchOnRestore === true && query.isStale())
+      ) {
+        query.fetch()
+      }
+    })
+  }
+
   async function retrieveQuery<T>(
     queryHash: string,
     afterRestoreMacroTask?: (persistedQuery: PersistedQuery) => void,
   ) {
-    if (storage != null) {
-      const storageKey = `${prefix}-${queryHash}`
-      try {
-        const storedData = await storage.getItem(storageKey)
-        if (storedData) {
-          let persistedQuery: PersistedQuery
-          try {
-            persistedQuery = await deserialize(storedData)
-          } catch {
-            await storage.removeItem(storageKey)
-            return
-          }
-
-          if (isExpiredOrBusted(persistedQuery)) {
-            await storage.removeItem(storageKey)
-          } else {
-            if (afterRestoreMacroTask) {
-              // Just after restoring we want to get fresh data from the server if it's stale
-              notifyManager.schedule(() =>
-                afterRestoreMacroTask(persistedQuery),
-              )
-            }
-            // We must resolve the promise here, as otherwise we will have `loading` state in the app until `queryFn` resolves
-            return persistedQuery.state.data as T
-          }
-        }
-      } catch (err) {
-        if (process.env.NODE_ENV === 'development') {
-          console.error(err)
-          console.warn(
-            'Encountered an error attempting to restore query cache from persisted location.',
-          )
-        }
-        await storage.removeItem(storageKey)
-      }
+    const persistedQuery = await readPersistedQuery(queryHash)
+    if (!persistedQuery) {
+      return
     }
 
-    return
+    if (afterRestoreMacroTask) {
+      // Just after restoring we want to get fresh data from the server if it's stale
+      notifyManager.schedule(() => afterRestoreMacroTask(persistedQuery))
+    }
+
+    // We must resolve the promise here, as otherwise we will have `loading` state in the app until `queryFn` resolves
+    return persistedQuery.state.data as T
   }
 
   async function persistQueryByKey(
@@ -209,26 +243,17 @@ export function experimental_createQueryPersister<TStorageValue = string>({
 
     // Try to restore only if we do not have any data in the cache and we have persister defined
     if (matchesFilter && query.state.data === undefined && storage != null) {
-      const restoredData = await retrieveQuery(
-        query.queryHash,
-        (persistedQuery: PersistedQuery) => {
-          // Set proper updatedAt, since resolving in the first pass overrides those values
-          query.setState({
-            dataUpdatedAt: persistedQuery.state.dataUpdatedAt,
-            errorUpdatedAt: persistedQuery.state.errorUpdatedAt,
+      const persistedQuery = await readPersistedQuery(query.queryHash)
+
+      if (persistedQuery) {
+        scheduleRestoredQuery(query, persistedQuery)
+
+        if (persistedQuery.state.data !== undefined) {
+          return createPersisterRestoreResult({
+            data: persistedQuery.state.data as T,
+            state: persistedQuery.state as QueryState<T>,
           })
-
-          if (
-            refetchOnRestore === 'always' ||
-            (refetchOnRestore === true && query.isStale())
-          ) {
-            query.fetch()
-          }
-        },
-      )
-
-      if (restoredData !== undefined) {
-        return Promise.resolve(restoredData as T)
+        }
       }
     }
 
@@ -303,13 +328,34 @@ export function experimental_createQueryPersister<TStorageValue = string>({
             }
           }
 
-          queryClient.setQueryData(
-            persistedQuery.queryKey,
+          if (persistedQuery.state.data === undefined) {
+            continue
+          }
+
+          const restoredState = normalizeRestoredQueryState(
             persistedQuery.state.data,
-            {
-              updatedAt: persistedQuery.state.dataUpdatedAt,
-            },
+            persistedQuery.state,
           )
+          const defaultedOptions = queryClient.defaultQueryOptions({
+            queryKey: persistedQuery.queryKey,
+          })
+          const existing = queryClient
+            .getQueryCache()
+            .get(defaultedOptions.queryHash)
+
+          if (existing) {
+            const merged = mergeRestoredQueryState(
+              existing.state,
+              restoredState,
+            )
+            if (merged !== existing.state) {
+              existing.setState(merged)
+            }
+          } else {
+            queryClient
+              .getQueryCache()
+              .build(queryClient, defaultedOptions, restoredState)
+          }
         }
       }
     } else if (process.env.NODE_ENV === 'development') {

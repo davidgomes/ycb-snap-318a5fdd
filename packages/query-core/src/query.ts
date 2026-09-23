@@ -9,6 +9,10 @@ import {
 } from './utils'
 import { notifyManager } from './notifyManager'
 import { CancelledError, canFetch, createRetryer } from './retryer'
+import {
+  isPersisterRestoreResult,
+  normalizeRestoredQueryState,
+} from './persisterRestore'
 import { Removable } from './removable'
 import type { QueryCache } from './queryCache'
 import type { QueryClient } from './queryClient'
@@ -555,6 +559,16 @@ export class Query<
 
     try {
       const data = await this.#retryer.start()
+
+      if (isPersisterRestoreResult<TData, TError>(data)) {
+        const restoredState = normalizeRestoredQueryState<TData, TError>(
+          data.data,
+          data.state,
+        )
+        this.setState(restoredState)
+        return restoredState.data as TData
+      }
+
       // this is more of a runtime guard
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (data === undefined) {

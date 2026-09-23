@@ -176,4 +176,88 @@ describe('fine grained persister', () => {
       },
     })
   })
+
+  it('should expose a restored refetch error through useQuery', async () => {
+    const key = queryKey()
+    const hash = hashKey(key)
+    const error = { message: 'refetch failed' }
+    const client = new QueryClient()
+    const mapStorage = new Map()
+    const storage = {
+      getItem: (itemKey: string) => Promise.resolve(mapStorage.get(itemKey)),
+      setItem: (itemKey: string, value: unknown) => {
+        mapStorage.set(itemKey, value)
+        return Promise.resolve()
+      },
+      removeItem: (itemKey: string) => {
+        mapStorage.delete(itemKey)
+        return Promise.resolve()
+      },
+      entries: () => Promise.resolve(Array.from(mapStorage.entries())),
+    }
+    const persister = experimental_createQueryPersister({
+      storage,
+      maxAge: Infinity,
+      refetchOnRestore: false,
+    })
+
+    await storage.setItem(
+      `${PERSISTER_KEY_PREFIX}-${hash}`,
+      JSON.stringify({
+        buster: '',
+        queryHash: hash,
+        queryKey: key,
+        state: {
+          data: { pages: ['a', 'b'], pageParams: [0, 1] },
+          dataUpdatedAt: 100,
+          dataUpdateCount: 4,
+          error,
+          errorUpdatedAt: 180,
+          errorUpdateCount: 2,
+          fetchFailureCount: 3,
+          fetchFailureReason: error,
+          fetchMeta: null,
+          isInvalidated: true,
+          status: 'error',
+          fetchStatus: 'fetching',
+        },
+      }),
+    )
+
+    await persister.restoreQueries(client)
+
+    function Test() {
+      const result = useQuery({
+        queryKey: key,
+        queryFn: () => 'fresh',
+        staleTime: 'static',
+      })
+
+      return (
+        <div>
+          <span>{JSON.stringify(result.data)}</span>
+          <span>failure:{result.failureCount}</span>
+          <span>updated:{result.dataUpdatedAt}</span>
+          <span>errorUpdated:{result.errorUpdatedAt}</span>
+          <span>refetchError:{String(result.isRefetchError)}</span>
+          <span>status:{result.status}</span>
+          <span>fetch:{result.fetchStatus}</span>
+        </div>
+      )
+    }
+
+    const rendered = renderWithClient(client, <Test />)
+
+    expect(
+      rendered.getByText(
+        JSON.stringify({ pages: ['a', 'b'], pageParams: [0, 1] }),
+      ),
+    ).toBeInTheDocument()
+    expect(rendered.getByText('failure:3')).toBeInTheDocument()
+    expect(rendered.getByText('updated:100')).toBeInTheDocument()
+    expect(rendered.getByText('errorUpdated:180')).toBeInTheDocument()
+    expect(rendered.getByText('refetchError:true')).toBeInTheDocument()
+    expect(rendered.getByText('status:error')).toBeInTheDocument()
+    expect(rendered.getByText('fetch:idle')).toBeInTheDocument()
+  })
 })

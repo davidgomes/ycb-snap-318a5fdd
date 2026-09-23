@@ -53,4 +53,11 @@ export type { MutationState } from './mutation'
 export type { QueriesObserverOptions } from './queriesObserver'
 export { Query } from './query'
 export type { QueryState } from './query'
+export {
+  createPersisterRestoreResult,
+  isPersisterRestoreResult,
+  mergeRestoredQueryState,
+  normalizeRestoredQueryState,
+} from './persisterRestore'
+export type { PersisterRestoreResult } from './persisterRestore'
 export * from './types'

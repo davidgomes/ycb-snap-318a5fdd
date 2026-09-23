@@ -470,6 +470,15 @@ export class QueryObserver<
         newState = {
           ...newState,
           ...fetchState(state.data, query.options),
+          // Cached data already has a failure count. Keep it on the
+          // optimistic mount result instead of showing a fresh zero
+          // before the fetch actually starts.
+          ...(state.data !== undefined
+            ? {
+                fetchFailureCount: state.fetchFailureCount,
+                fetchFailureReason: state.fetchFailureReason,
+              }
+            : null),
         }
       }
       if (options._optimisticResults === 'isRestoring') {
