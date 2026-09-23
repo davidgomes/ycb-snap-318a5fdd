@@ -520,3 +520,250 @@ fn collapse_groups() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn collapse_groups_structural_selectors() -> anyhow::Result<()> {
+    use crate::test_config;
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve the parent of a child selector's target, but collapse unrelated groups -->
+    <style>
+        g > path { fill: red }
+    </style>
+    <g>
+        <path d="..."/>
+    </g>
+    <g>
+        <circle r="1"/>
+    </g>
+    <g fill="blue">
+        <rect width="1"/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should collapse groups where only part of a selector matches -->
+    <style>
+        .a > .b { fill: red }
+        rect + circle { fill: red }
+    </style>
+    <g>
+        <path class="b" d="..."/>
+    </g>
+    <g class="a">
+        <rect width="1"/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve the ancestor anchoring a descendant selector, and its attributes -->
+    <style>
+        .a path { fill: red }
+    </style>
+    <g class="a">
+        <path d="..."/>
+    </g>
+    <g class="b">
+        <path d="..."/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should only preserve the nearest anchor of a descendant selector -->
+    <style>
+        g path { fill: red }
+    </style>
+    <g>
+        <g>
+            <path d="..."/>
+        </g>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve the parent of an anchor that's matched by its position -->
+    <style>
+        g:first-child > path { fill: red }
+    </style>
+    <g>
+        <g>
+            <path d="..."/>
+        </g>
+    </g>
+    <g>
+        <g>
+            <circle r="1"/>
+        </g>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve sibling anchors -->
+    <style>
+        g + path { fill: red }
+        rect ~ circle { fill: red }
+    </style>
+    <g>
+        <circle r="1"/>
+    </g>
+    <path d="..."/>
+    <g>
+        <rect width="1"/>
+    </g>
+    <g>
+        <rect width="1"/>
+        <g>
+            <path d="..."/>
+        </g>
+        <circle r="1"/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should only preserve groups that would change the index of a sibling -->
+    <style>
+        path:nth-child(3) { fill: red }
+        rect:last-child { fill: red }
+    </style>
+    <g>
+        <circle r="1"/>
+    </g>
+    <path d="..."/>
+    <g>
+        <circle r="1"/>
+        <circle r="1"/>
+    </g>
+    <g>
+        <rect width="1"/>
+        <rect width="1"/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve groups that would change the index of a sibling -->
+    <style>
+        path:nth-child(4) { fill: red }
+        circle:nth-of-type(2) { fill: red }
+    </style>
+    <g>
+        <rect width="1"/>
+        <rect width="1"/>
+    </g>
+    <circle r="1"/>
+    <path d="..."/>
+    <g>
+        <circle r="1"/>
+    </g>
+    <circle r="1"/>
+    <g>
+        <rect width="1"/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve attributes and position relied on by negations -->
+    <style>
+        path:not(:nth-child(2)) { fill: red }
+        svg circle:not([fill]) { stroke: red }
+    </style>
+    <g>
+        <path d="..."/>
+    </g>
+    <g fill="blue">
+        <circle r="1"/>
+    </g>
+    <g fill="blue">
+        <rect width="1"/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve structure for dynamic and conditional rules -->
+    <style>
+        g:hover > path { fill: red }
+        @media screen {
+            g > circle { fill: red }
+        }
+    </style>
+    <g>
+        <path d="..."/>
+    </g>
+    <g>
+        <circle r="1"/>
+    </g>
+    <g>
+        <rect width="1"/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve everything when a selector can't be matched against -->
+    <style>
+        :is(g) > path { fill: red }
+    </style>
+    <g>
+        <path d="..."/>
+    </g>
+    <g>
+        <rect width="1"/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    Ok(())
+}

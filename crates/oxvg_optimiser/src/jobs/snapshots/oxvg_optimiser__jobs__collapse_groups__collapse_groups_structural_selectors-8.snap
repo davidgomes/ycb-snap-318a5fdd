@@ -1,0 +1,21 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should preserve groups that would change the index of a sibling -->\n    <style>\n        path:nth-child(4) { fill: red }\n        circle:nth-of-type(2) { fill: red }\n    </style>\n    <g>\n        <rect width=\"1\"/>\n        <rect width=\"1\"/>\n    </g>\n    <circle r=\"1\"/>\n    <path d=\"...\"/>\n    <g>\n        <circle r=\"1\"/>\n    </g>\n    <circle r=\"1\"/>\n    <g>\n        <rect width=\"1\"/>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve groups that would change the index of a sibling -->
+    <style>
+        path:nth-child(4){fill:red}circle:nth-of-type(2){fill:red}
+    </style>
+    <g>
+        <rect width="1"/>
+        <rect width="1"/>
+    </g>
+    <circle r="1"/>
+    <path d=""/>
+    <g>
+        <circle r="1"/>
+    </g>
+    <circle r="1"/>
+    <rect width="1"/>
+</svg>

@@ -1,0 +1,14 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should preserve the ancestor anchoring a descendant selector, and its attributes -->\n    <style>\n        .a path { fill: red }\n    </style>\n    <g class=\"a\">\n        <path d=\"...\"/>\n    </g>\n    <g class=\"b\">\n        <path d=\"...\"/>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve the ancestor anchoring a descendant selector, and its attributes -->
+    <style>
+        .a path{fill:red}
+    </style>
+    <g class="a">
+        <path d=""/>
+    </g>
+    <path d="" class="b"/>
+</svg>

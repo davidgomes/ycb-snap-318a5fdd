@@ -1,0 +1,16 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should preserve everything when a selector can't be matched against -->\n    <style>\n        :is(g) > path { fill: red }\n    </style>\n    <g>\n        <path d=\"...\"/>\n    </g>\n    <g>\n        <rect width=\"1\"/>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve everything when a selector can't be matched against -->
+    <style>
+        :is(g)>path{fill:red}
+    </style>
+    <g>
+        <path d=""/>
+    </g>
+    <g>
+        <rect width="1"/>
+    </g>
+</svg>

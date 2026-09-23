@@ -1,0 +1,18 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should preserve sibling anchors -->\n    <style>\n        g + path { fill: red }\n        rect ~ circle { fill: red }\n    </style>\n    <g>\n        <circle r=\"1\"/>\n    </g>\n    <path d=\"...\"/>\n    <g>\n        <rect width=\"1\"/>\n    </g>\n    <g>\n        <rect width=\"1\"/>\n        <g>\n            <path d=\"...\"/>\n        </g>\n        <circle r=\"1\"/>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve sibling anchors -->
+    <style>
+        g+path{fill:red}rect~circle{fill:red}
+    </style>
+    <g>
+        <circle r="1"/>
+    </g>
+    <path d=""/>
+    <rect width="1"/>
+    <rect width="1"/>
+    <path d=""/>
+    <circle r="1"/>
+</svg>

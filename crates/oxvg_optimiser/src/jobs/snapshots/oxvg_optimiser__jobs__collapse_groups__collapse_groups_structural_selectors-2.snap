@@ -1,0 +1,12 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should collapse groups where only part of a selector matches -->\n    <style>\n        .a > .b { fill: red }\n        rect + circle { fill: red }\n    </style>\n    <g>\n        <path class=\"b\" d=\"...\"/>\n    </g>\n    <g class=\"a\">\n        <rect width=\"1\"/>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should collapse groups where only part of a selector matches -->
+    <style>
+        .a>.b{fill:red}rect+circle{fill:red}
+    </style>
+    <path class="b" d=""/>
+    <rect width="1" class="a"/>
+</svg>

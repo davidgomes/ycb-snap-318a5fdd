@@ -1,0 +1,15 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should preserve the parent of a child selector's target, but collapse unrelated groups -->\n    <style>\n        g > path { fill: red }\n    </style>\n    <g>\n        <path d=\"...\"/>\n    </g>\n    <g>\n        <circle r=\"1\"/>\n    </g>\n    <g fill=\"blue\">\n        <rect width=\"1\"/>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve the parent of a child selector's target, but collapse unrelated groups -->
+    <style>
+        g>path{fill:red}
+    </style>
+    <g>
+        <path d=""/>
+    </g>
+    <circle r="1"/>
+    <rect width="1" fill="#00f"/>
+</svg>
