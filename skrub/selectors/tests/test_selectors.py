@@ -1,3 +1,4 @@
+import datetime
 import inspect
 import pickle
 import types
@@ -22,6 +23,8 @@ def test_repr():
     cardinality_below(30)
     >>> s.string() | s.any_date() | s.categorical()
     ((string() | any_date()) | categorical())
+    >>> s.duration()
+    duration()
     >>> s.float() & s.integer()
     (float() & integer())
     >>> s.has_nulls()
@@ -77,6 +80,24 @@ def test_dtype_selectors(df_module):
         # pandas doesn't have a 'date' dtype, only datetime
         assert df_module.name == "pandas"
         assert s.any_date().expand(df) == ["datetime-col"]
+
+
+def test_duration(df_module):
+    df = df_module.example_dataframe
+    assert s.duration().expand(df) == []
+    td_col = df_module.make_column(
+        "td-col", [datetime.timedelta(days=1), None, datetime.timedelta(hours=-2)]
+    )
+    df = df_module.make_dataframe(
+        {
+            "td-col": td_col,
+            "datetime-col": [datetime.datetime(2020, 1, 1), None, None],
+            "float-col": [1.5, 2.0, None],
+            "str-col": ["1 day", None, "-2 hours"],
+        }
+    )
+    assert s.duration().expand(df) == ["td-col"]
+    assert (s.numeric() | s.duration()).expand(df) == ["td-col", "float-col"]
 
 
 def test_dtype_pandas_object():

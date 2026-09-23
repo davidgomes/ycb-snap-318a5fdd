@@ -157,6 +157,20 @@ def test_fit_transform_datetimes(df_module):
     joiner.fit_transform(df)
 
 
+def test_fit_transform_durations(df_module):
+    main = df_module.make_dataframe(
+        {"A": [datetime.timedelta(days=d) for d in [1, 10, 30]]}
+    )
+    aux = df_module.make_dataframe(
+        {
+            "A": [datetime.timedelta(days=d, hours=2) for d in [30, 1, 10]],
+            "v": ["thirty", "one", "ten"],
+        }
+    )
+    out = Joiner(aux, key="A", suffix="_", add_match_info=False).fit_transform(main)
+    assert ns.to_list(ns.col(out, "v_")) == ["one", "ten", "thirty"]
+
+
 def test_preprocessing(df_module):
     df1 = df_module.make_dataframe(dict(date=["2021-10-01"], v=["A"]))
     df2 = df_module.make_dataframe(
