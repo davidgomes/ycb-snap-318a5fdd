@@ -12,6 +12,12 @@ import {
   walker,
 } from './plainer.js';
 import { copy } from 'copy-anything';
+import {
+  ErrorStackOptions,
+  NormalizedErrorStackOptions,
+  normalizeErrorStackOptions,
+} from './error-options.js';
+import { ErrorClassRegistry, Processor } from './error-class-registry.js';
 
 export default class SuperJSON {
   /**
@@ -20,14 +26,23 @@ export default class SuperJSON {
   private readonly dedupe: boolean;
 
   /**
+   * Normalized `errorStack` options, or `undefined` when the option was omitted (legacy Error behavior).
+   */
+  readonly errorStackOptions: NormalizedErrorStackOptions | undefined;
+
+  /**
    * @param dedupeReferentialEqualities  If true, SuperJSON will make sure only one instance of referentially equal objects are serialized and the rest are replaced with `null`.
+   * @param errorStack  Controls how Error stacks, messages and causes are serialized.
    */
   constructor({
     dedupe = false,
+    errorStack,
   }: {
     dedupe?: boolean;
+    errorStack?: ErrorStackOptions;
   } = {}) {
     this.dedupe = dedupe;
+    this.errorStackOptions = normalizeErrorStackOptions(errorStack);
   }
 
   serialize(object: SuperJSONValue): SuperJSONResult {
@@ -112,6 +127,11 @@ export default class SuperJSON {
   readonly allowedErrorProps: string[] = [];
   allowErrorProps(...props: string[]) {
     this.allowedErrorProps.push(...props);
+  }
+
+  readonly errorClassRegistry = new ErrorClassRegistry();
+  registerErrorStackProcessor(className: string, fn: Processor) {
+    this.errorClassRegistry.register(className, fn);
   }
 
   private static defaultInstance = new SuperJSON();
