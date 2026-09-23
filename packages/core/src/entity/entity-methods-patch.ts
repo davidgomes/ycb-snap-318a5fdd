@@ -4,6 +4,7 @@
 // that the methods are only called on entities.
 
 import { $internal } from '../common';
+import { peekDeferredGet, peekDeferredHas, peekDeferredTargets } from '../deferred/hooks';
 import { setChanged } from '../query/modifiers/changed';
 import { getFirstRelationTarget, getRelationTargets, hasRelationPair } from '../relation/relation';
 import type { Relation, RelationPair } from '../relation/types';
@@ -28,6 +29,8 @@ Number.prototype.remove = function (this: Entity, ...traits: (Trait | RelationPa
 // @ts-expect-error
 Number.prototype.has = function (this: Entity, trait: Trait | RelationPair) {
     const world = getEntityWorld(this);
+    const peeked = peekDeferredHas(world, this, trait);
+    if (peeked !== undefined) return peeked;
     if (isRelationPair(trait)) return hasRelationPair(world, this, trait);
     return /* @inline @pure */ hasTrait(world, this, trait);
 };
@@ -44,7 +47,10 @@ Number.prototype.changed = function (this: Entity, trait: Trait) {
 
 // @ts-expect-error
 Number.prototype.get = function (this: Entity, trait: Trait | RelationPair) {
-    return getTrait(getEntityWorld(this), this, trait);
+    const world = getEntityWorld(this);
+    const peeked = peekDeferredGet(world, this, trait);
+    if (peeked) return peeked.value;
+    return getTrait(world, this, trait);
 };
 
 // @ts-expect-error
@@ -59,12 +65,18 @@ Number.prototype.set = function (
 
 //@ts-expect-error
 Number.prototype.targetsFor = function (this: Entity, relation: Relation<any>) {
-    return getRelationTargets(getEntityWorld(this), relation, this);
+    const world = getEntityWorld(this);
+    const peeked = peekDeferredTargets(world, this, relation);
+    if (peeked) return peeked;
+    return getRelationTargets(world, relation, this);
 };
 
 //@ts-expect-error
 Number.prototype.targetFor = function (this: Entity, relation: Relation<any>) {
-    return getFirstRelationTarget(getEntityWorld(this), relation, this);
+    const world = getEntityWorld(this);
+    const peeked = peekDeferredTargets(world, this, relation);
+    if (peeked) return peeked[0];
+    return getFirstRelationTarget(world, relation, this);
 };
 
 //@ts-expect-error
@@ -80,6 +92,7 @@ Number.prototype.generation = function (this: Entity) {
 //@ts-expect-error
 Number.prototype.isAlive = function (this: Entity) {
     const world = getEntityWorld(this);
+    if (world[$internal].deferredGhosts.has(this)) return false;
     const entityIndex = world[$internal].entityIndex;
     return isEntityAlive(entityIndex, this);
 };

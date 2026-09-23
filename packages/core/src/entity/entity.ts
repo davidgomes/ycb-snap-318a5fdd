@@ -1,4 +1,5 @@
 import { $internal } from '../common';
+import { beforeStructuralMutation } from '../deferred/hooks';
 import { getEntitiesWithRelationTo, getRelationTargets } from '../relation/relation';
 import { addTrait, cleanupRelationTarget, removeTrait } from '../trait/trait';
 import type { ConfigurableTrait } from '../trait/types';
@@ -12,8 +13,13 @@ import { getEntityId, getEntityWorldId } from './utils/pack-entity';
 import './entity-methods-patch';
 
 export function createEntity(world: World, ...traits: ConfigurableTrait[]): Entity {
+    const entity = allocateEntity(world[$internal].entityIndex);
+    initEntity(world, entity, traits);
+    return entity;
+}
+
+export function initEntity(world: World, entity: Entity, traits: ConfigurableTrait[]): void {
     const ctx = world[$internal];
-    const entity = allocateEntity(ctx.entityIndex);
 
     for (const query of ctx.notQueries) {
         const match = query.check(world, entity);
@@ -24,8 +30,6 @@ export function createEntity(world: World, ...traits: ConfigurableTrait[]): Enti
 
     ctx.entityTraits.set(entity, new Set());
     addTrait(world, entity, ...traits);
-
-    return entity;
 }
 
 const cachedSet = new Set<Entity>();
@@ -33,6 +37,8 @@ const cachedQueue = [] as Entity[];
 
 export function destroyEntity(world: World, entity: Entity) {
     const ctx = world[$internal];
+
+    beforeStructuralMutation(world, entity);
 
     // Check if entity exists.
     if (!world.has(entity)) throw new Error('Koota: The entity being destroyed does not exist.');

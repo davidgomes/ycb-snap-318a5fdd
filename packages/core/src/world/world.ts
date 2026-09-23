@@ -1,4 +1,5 @@
 import { $internal } from '../common';
+import { createDeferred, discardDeferred } from '../deferred/deferred';
 import { createEntity, destroyEntity } from '../entity/entity';
 import type { Entity } from '../entity/types';
 import { createEntityIndex, getAliveEntities, isEntityAlive } from '../entity/utils/entity-index';
@@ -54,6 +55,11 @@ export function createWorld(
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
+            deferredStack: [[]],
+            deferredGhosts: new Set(),
+            deferredPending: 0,
+            deferredApplying: false,
+            deferredVersion: 0,
         } as WorldInternal,
 
         traits: new Set<Trait>(),
@@ -89,9 +95,11 @@ export function createWorld(
         },
 
         has(target: Entity | Trait): boolean {
-            return typeof target === 'number'
-                ? isEntityAlive(world[$internal].entityIndex, target)
-                : hasTrait(world, world[$internal].worldEntity, target);
+            if (typeof target === 'number') {
+                if (world[$internal].deferredGhosts.has(target)) return false;
+                return isEntityAlive(world[$internal].entityIndex, target);
+            }
+            return hasTrait(world, world[$internal].worldEntity, target);
         },
 
         add(...addTraits: ConfigurableTrait[]) {
@@ -111,6 +119,7 @@ export function createWorld(
         },
 
         destroy() {
+            discardDeferred(world);
             // Destroy world entity.
             destroyEntity(world, world[$internal].worldEntity);
             world[$internal].worldEntity = null!;
@@ -123,6 +132,7 @@ export function createWorld(
         },
 
         reset() {
+            discardDeferred(world);
             lazyTraits = undefined;
             const ctx = world[$internal];
 
@@ -201,7 +211,7 @@ export function createWorld(
                             relation as Relation<Trait>,
                             target as Entity
                         );
-                        return createRelationOnlyQueryResult(entities.slice() as Entity[]);
+                        return createRelationOnlyQueryResult(world, entities.slice() as Entity[]);
                     }
                 }
 
@@ -363,9 +373,16 @@ export function createWorld(
         enumerable: true,
     });
     Object.defineProperty(world, 'entities', {
-        get: () => getAliveEntities(world[$internal].entityIndex),
+        get: () => {
+            const alive = getAliveEntities(world[$internal].entityIndex);
+            const ghosts = world[$internal].deferredGhosts;
+            if (ghosts.size === 0) return alive;
+            return alive.filter((entity) => !ghosts.has(entity));
+        },
         enumerable: true,
     });
+
+    world.deferred = createDeferred(world);
 
     // Handle initialization based on arguments
     if (

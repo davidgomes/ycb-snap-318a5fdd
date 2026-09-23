@@ -1,4 +1,5 @@
 import { $internal } from '../common';
+import { areSubscriptionsSilenced } from '../deferred/hooks';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import type { Relation } from '../relation/types';
@@ -58,8 +59,10 @@ export function addEntityToQuery(query: QueryInstance, entity: Entity) {
     query.entities.add(entity);
 
     // Notify subscriptions.
-    for (const sub of query.addSubscriptions) {
-        sub(entity);
+    if (!areSubscriptionsSilenced()) {
+        for (const sub of query.addSubscriptions) {
+            sub(entity);
+        }
     }
 
     query.version++;
@@ -74,8 +77,10 @@ export function removeEntityFromQuery(world: World, query: QueryInstance, entity
     ctx.dirtyQueries.add(query);
 
     // Notify subscriptions.
-    for (const sub of query.removeSubscriptions) {
-        sub(entity);
+    if (!areSubscriptionsSilenced()) {
+        for (const sub of query.removeSubscriptions) {
+            sub(entity);
+        }
     }
 
     query.version++;
@@ -255,7 +260,14 @@ export function createQueryInstance<T extends QueryParameter[]>(
                 if (isOrWithModifiers(parameter)) {
                     for (const nestedModifier of parameter.modifiers) {
                         if (isTrackingModifier(nestedModifier)) {
-                            processTrackingModifier(world, query, nestedModifier, 'or', ctx, trackingGroupsMap);
+                            processTrackingModifier(
+                                world,
+                                query,
+                                nestedModifier,
+                                'or',
+                                ctx,
+                                trackingGroupsMap
+                            );
                         }
                     }
                 }
@@ -352,6 +364,7 @@ export function createQueryInstance<T extends QueryParameter[]>(
             const changedMask = ctx.changedMasks.get(id)!;
 
             for (const entity of ctx.entityIndex.dense) {
+                if (ctx.deferredGhosts.has(entity)) continue;
                 // For AND groups, skip if already in query (will be checked by other groups)
                 // For OR groups, skip if already in query
                 if (query.entities.has(entity)) continue;
@@ -418,6 +431,7 @@ export function createQueryInstance<T extends QueryParameter[]>(
         const entities = ctx.entityIndex.dense;
         for (let i = 0; i < entities.length; i++) {
             const entity = entities[i];
+            if (ctx.deferredGhosts.has(entity)) continue;
             const match = hasRelationFilters
                 ? checkQueryWithRelations(world, query, entity)
                 : query.check(world, entity);

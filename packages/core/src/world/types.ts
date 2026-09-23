@@ -9,7 +9,7 @@ import type {
     QueryResult,
     QueryUnsubscriber,
 } from '../query/types';
-import type { Relation } from '../relation/types';
+import type { Relation, RelationPair } from '../relation/types';
 import type {
     ConfigurableTrait,
     ExtractSchema,
@@ -43,6 +43,32 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    /** Nested deferred command buffers. Index 0 is the root scope. */
+    deferredStack: DeferredCommand[][];
+    /** Entities allocated by deferred spawn and not yet committed. */
+    deferredGhosts: Set<Entity>;
+    /** Queued deferred commands across every scope. */
+    deferredPending: number;
+    /** True while a buffer is being applied. */
+    deferredApplying: boolean;
+    /** Bumped whenever deferred commands or their results change. */
+    deferredVersion: number;
+};
+
+export type DeferredCommand =
+    | { type: 'spawn'; entity: Entity; traits: ConfigurableTrait[] }
+    | { type: 'destroy'; entity: Entity }
+    | { type: 'add'; entity: Entity; traits: ConfigurableTrait[] }
+    | { type: 'remove'; entity: Entity; traits: (Trait | RelationPair)[] }
+    | { type: 'addExclusive'; entity: Entity; pair: RelationPair };
+
+export type Deferred = {
+    spawn(...traits: ConfigurableTrait[]): Entity;
+    destroy(entity: Entity): void;
+    add(entity: Entity, ...traits: ConfigurableTrait[]): void;
+    remove(entity: Entity, ...traits: (Trait | RelationPair)[]): void;
+    addExclusive(entity: Entity, pair: RelationPair): void;
+    flush(): void;
 };
 
 export type World = {
@@ -97,4 +123,5 @@ export type World = {
         relation: Relation<T>,
         callback: (entity: Entity, target: Entity) => void
     ): QueryUnsubscriber;
+    deferred: Deferred;
 };

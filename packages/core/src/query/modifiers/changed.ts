@@ -1,4 +1,5 @@
 import { $internal } from '../../common';
+import { areSubscriptionsSilenced } from '../../deferred/hooks';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { isRelation } from '../../relation/utils/is-relation';
@@ -76,12 +77,12 @@ function markChanged(world: World, entity: Entity, trait: Trait) {
 
 export function setChanged(world: World, entity: Entity, trait: Trait) {
     const data = markChanged(world, entity, trait);
-    if (!data) return;
+    if (!data || areSubscriptionsSilenced()) return;
     for (const sub of data.changeSubscriptions) sub(entity);
 }
 
 export function setPairChanged(world: World, entity: Entity, trait: Trait, target: Entity) {
     const data = markChanged(world, entity, trait);
-    if (!data) return;
+    if (!data || areSubscriptionsSilenced()) return;
     for (const sub of data.changeSubscriptions) sub(entity, target);
 }
