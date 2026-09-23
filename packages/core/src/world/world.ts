@@ -100,11 +100,11 @@ export function createWorld(
         },
 
         has(target: Entity | Trait): boolean {
-            if (typeof target === 'number') return isEntityAlive(world[$internal].entityIndex, target);
+            const ctx = world[$internal];
+            if (typeof target === 'number') return isEntityAlive(ctx.entityIndex, target);
 
-            const worldEntity = world[$internal].worldEntity;
-            const view = getDeferredView(world, worldEntity);
-            return view ? deferredHas(world, view, target) : hasTrait(world, worldEntity, target);
+            const view = getDeferredView(world, ctx.worldEntity);
+            return view ? deferredHas(world, view, target) : hasTrait(world, ctx.worldEntity, target);
         },
 
         add(...addTraits: ConfigurableTrait[]) {

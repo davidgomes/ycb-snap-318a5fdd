@@ -509,7 +509,9 @@ function applyRelationSlot(world: World, slot: DeferredRelationSlot) {
             const value = pair.value as Record<string, unknown> | undefined;
             addTrait(world, entity, relation(target, value));
             // Adding copies AoS values over the defaults. Store the recorded value itself.
-            if (type === 'aos' && pair.buffered) setRelationData(world, entity, relation, target, value!);
+            if (type === 'aos' && pair.buffered) {
+                setRelationData(world, entity, relation, target, value!);
+            }
         }
     }
 
