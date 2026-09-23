@@ -185,6 +185,36 @@ type RuntimeInfo struct {
 	StorageRetention    string    `json:"storageRetention"`
 }
 
+// Reload error categories reported in ReloadStatus.ErrorCategory.
+const (
+	ReloadErrorCategoryNone     = "none"
+	ReloadErrorCategoryLoad     = "load_error"
+	ReloadErrorCategoryApply    = "apply_error"
+	ReloadErrorCategoryRollback = "rollback_error"
+)
+
+// ReloadStatus describes the outcome of the most recent configuration reload attempt.
+type ReloadStatus struct {
+	LastReloadID         string             `json:"last_reload_id"`
+	LastReloadSuccessful bool               `json:"last_reload_successful"`
+	ErrorCategory        string             `json:"error_category"`
+	ErrorMessage         string             `json:"error_message"`
+	AppliedReloaders     []string           `json:"applied_reloaders"`
+	RollbackAttempted    bool               `json:"rollback_attempted"`
+	RollbackSuccessful   bool               `json:"rollback_successful"`
+	FailedReloader       string             `json:"failed_reloader"`
+	ReloaderTimingsMs    map[string]float64 `json:"reloader_timings_ms"`
+}
+
+// DefaultReloadStatus returns the status reported before any reload attempt was recorded.
+func DefaultReloadStatus() ReloadStatus {
+	return ReloadStatus{
+		ErrorCategory:     ReloadErrorCategoryNone,
+		AppliedReloaders:  []string{},
+		ReloaderTimingsMs: map[string]float64{},
+	}
+}
+
 // Response contains a response to a HTTP API request.
 type Response struct {
 	Status    status   `json:"status"`
@@ -243,6 +273,7 @@ type API struct {
 	CORSOrigin          *regexp.Regexp
 	buildInfo           *PrometheusVersion
 	runtimeInfo         func() (RuntimeInfo, error)
+	reloadStatus        func() ReloadStatus
 	gatherer            prometheus.Gatherer
 	isAgent             bool
 	statsRenderer       StatsRenderer
@@ -369,6 +400,11 @@ func NewAPI(
 	return a
 }
 
+// SetReloadStatusFunc sets the function used to serve /status/reload.
+func (api *API) SetReloadStatusFunc(f func() ReloadStatus) {
+	api.reloadStatus = f
+}
+
 // InstallCodec adds codec to this API's available codecs.
 // Codecs installed first take precedence over codecs installed later when evaluating wildcards in Accept headers.
 // The first installed codec is used as a fallback when the Accept header cannot be satisfied or if there is no Accept header.
@@ -455,6 +491,7 @@ func (api *API) Register(r *route.Router) {
 
 	r.Get("/status/config", wrap(api.serveConfig))
 	r.Get("/status/runtimeinfo", wrap(api.serveRuntimeInfo))
+	r.Get("/status/reload", wrap(api.serveReloadStatus))
 	r.Get("/status/buildinfo", wrap(api.serveBuildInfo))
 	r.Get("/status/flags", wrap(api.serveFlags))
 	r.Get("/status/tsdb", wrapAgent(api.serveTSDBStatus))
@@ -1794,6 +1831,20 @@ func (api *API) serveRuntimeInfo(*http.Request) apiFuncResult {
 	status, err := api.runtimeInfo()
 	if err != nil {
 		return apiFuncResult{status, &apiError{errorInternal, err}, nil, nil}
+	}
+	return apiFuncResult{status, nil, nil, nil}
+}
+
+func (api *API) serveReloadStatus(*http.Request) apiFuncResult {
+	status := DefaultReloadStatus()
+	if api.reloadStatus != nil {
+		status = api.reloadStatus()
+	}
+	if status.AppliedReloaders == nil {
+		status.AppliedReloaders = []string{}
+	}
+	if status.ReloaderTimingsMs == nil {
+		status.ReloaderTimingsMs = map[string]float64{}
 	}
 	return apiFuncResult{status, nil, nil, nil}
 }

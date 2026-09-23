@@ -205,6 +205,8 @@ type flagConfig struct {
 	enableAutoReload   bool
 	autoReloadInterval model.Duration
 
+	enableTransactionalReload bool
+
 	maxprocsEnable bool
 	memlimitEnable bool
 	memlimitRatio  float64
@@ -255,6 +257,9 @@ func (c *flagConfig) setFeatureListOptions(logger *slog.Logger) error {
 					c.autoReloadInterval, _ = model.ParseDuration("1s")
 				}
 				logger.Info("Enabled automatic configuration file reloading. Checking for configuration changes every", "interval", c.autoReloadInterval)
+			case "transactional-reload-config":
+				c.enableTransactionalReload = true
+				logger.Info("Experimental transactional configuration reload enabled.")
 			case "concurrent-rule-eval":
 				c.enableConcurrentRuleEval = true
 				logger.Info("Experimental concurrent rule evaluation enabled.")
@@ -863,6 +868,7 @@ func main() {
 	features.Set(features.Prometheus, "agent_mode", agentMode)
 	features.Set(features.Prometheus, "server_mode", !agentMode)
 	features.Set(features.Prometheus, "auto_reload_config", cfg.enableAutoReload)
+	features.Set(features.Prometheus, "transactional_reload_config", cfg.enableTransactionalReload)
 	features.Enable(features.Prometheus, labels.ImplementationName)
 	template.RegisterFeatures(features.DefaultRegistry)
 
@@ -1018,6 +1024,13 @@ func main() {
 		cfg.web.Flags[f.Name] = f.Value.String()
 	}
 
+	var txnReload *transactionalReload
+	if cfg.enableTransactionalReload {
+		tracker := newReloadStatusTracker(localStoragePath, logger.With("component", "reload_status"))
+		txnReload = newTransactionalReload(tracker)
+		cfg.web.ReloadStatus = tracker.Get
+	}
+
 	// Depends on cfg.web.ScrapeManager so needs to be after cfg.web.ScrapeManager = scrapeManager.
 	webHandler := web.New(logger.With("component", "web"), &cfg.web)
 
@@ -1119,6 +1132,13 @@ func main() {
 			name:     "tracing",
 			reloader: tracingManager.ApplyConfig,
 		},
+	}
+
+	doReload := func(callback func(bool), initial bool) error {
+		if txnReload != nil {
+			return txnReload.reload(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, !initial, reloaders...)
+		}
+		return reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...)
 	}
 
 	prometheus.MustRegister(configSuccess)
@@ -1297,7 +1317,7 @@ func main() {
 				for {
 					select {
 					case <-hup:
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := doReload(callback, false); err != nil {
 							logger.Error("Error reloading config", "err", err)
 						} else if cfg.enableAutoReload {
 							checksum, err = config.GenerateChecksum(cfg.configFile)
@@ -1306,7 +1326,7 @@ func main() {
 							}
 						}
 					case rc := <-webHandler.Reload():
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := doReload(callback, false); err != nil {
 							logger.Error("Error reloading config", "err", err)
 							rc <- err
 						} else {
@@ -1331,7 +1351,7 @@ func main() {
 						}
 						logger.Info("Configuration file change detected, reloading the configuration.")
 
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := doReload(callback, false); err != nil {
 							logger.Error("Error reloading config", "err", err)
 						} else {
 							checksum = currentChecksum
@@ -1363,7 +1383,7 @@ func main() {
 					return nil
 				}
 
-				if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, func(bool) {}, reloaders...); err != nil {
+				if err := doReload(func(bool) {}, true); err != nil {
 					return fmt.Errorf("error loading config from %q: %w", cfg.configFile, err)
 				}
 

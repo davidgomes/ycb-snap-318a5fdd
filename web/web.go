@@ -276,6 +276,7 @@ type Options struct {
 	NotificationsGetter   func() []notifications.Notification
 	NotificationsSub      func() (<-chan notifications.Notification, func(), bool)
 	Flags                 map[string]string
+	ReloadStatus          func() api_v1.ReloadStatus
 
 	ListenAddresses            []string
 	CORSOrigin                 *regexp.Regexp
@@ -427,6 +428,7 @@ func New(logger *slog.Logger, o *Options) *Handler {
 		},
 		o.Parser,
 	)
+	h.apiV1.SetReloadStatusFunc(o.ReloadStatus)
 
 	if r := o.FeatureRegistry; r != nil {
 		// Set dynamic API features (based on configuration).
