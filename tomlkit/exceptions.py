@@ -232,3 +232,14 @@ class ConvertError(TypeError, ValueError, TOMLKitError):
     It should be a TypeError, but due to historical reasons
     it needs to subclass ValueError as well.
     """
+
+
+class ConversionError(TOMLKitError):
+    """Raised when a table-form conversion cannot be performed.
+
+    ``key_path`` is the dotted key path (or dotted prefix) that was requested.
+    """
+
+    def __init__(self, key_path: str, message: str | None = None) -> None:
+        self.key_path = key_path
+        super().__init__(message or f"Cannot convert {key_path!r}")

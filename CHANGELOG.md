@@ -2,6 +2,10 @@
 
 ## [unreleased]
 
+### Added
+
+- Add ``tomlkit.convert`` helpers (``to_inline_table``, ``to_standard_table``, ``to_dotted_keys``, and ``to_super_table``) to convert between header tables, inline tables, and dotted keys while preserving values and migrating comments.
+
 ### Changed
 
 - Update parser to support TOML spec v1.1.0. ([#456](https://github.com/python-poetry/tomlkit/pull/456)
