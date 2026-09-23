@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+* Add `Response.iter_json()` and `Response.aiter_json()` for incremental JSON, NDJSON, and JSON text sequence responses.
 * Expose `FunctionAuth` from the public API. (#3699)
 
 ## 0.28.1 (6th December, 2024)

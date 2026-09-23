@@ -30,6 +30,7 @@ from ._exceptions import (
     StreamConsumed,
     request_context,
 )
+from ._json_stream import aiter_json_bytes, iter_json_bytes, resolve_json_content_type
 from ._multipart import get_multipart_boundary_from_content_type
 from ._status_codes import codes
 from ._types import (
@@ -932,6 +933,23 @@ class Response:
             for line in decoder.flush():
                 yield line
 
+    def iter_json(self) -> typing.Iterator[typing.Any]:
+        """
+        Yield JSON values from the response body.
+
+        ``Content-Type`` must be ``application/json`` (or any
+        ``application/*+json``), ``application/ndjson``,
+        ``application/x-ndjson``, or ``application/json-seq``.
+        A top-level JSON array yields one value per element. NDJSON yields
+        one value per non-blank line. JSON text sequences yield one value
+        per record.
+        """
+        with request_context(request=self._request):
+            kind, encoding = resolve_json_content_type(
+                self.headers.get("Content-Type")
+            )
+            yield from iter_json_bytes(self.iter_bytes(), kind, encoding)
+
     def iter_raw(self, chunk_size: int | None = None) -> typing.Iterator[bytes]:
         """
         A byte-iterator over the raw response content.
@@ -1033,6 +1051,19 @@ class Response:
                     yield line
             for line in decoder.flush():
                 yield line
+
+    async def aiter_json(self) -> typing.AsyncIterator[typing.Any]:
+        """
+        Yield JSON values from the response body.
+
+        Async equivalent of :meth:`iter_json`.
+        """
+        with request_context(request=self._request):
+            kind, encoding = resolve_json_content_type(
+                self.headers.get("Content-Type")
+            )
+            async for value in aiter_json_bytes(self.aiter_bytes(), kind, encoding):
+                yield value
 
     async def aiter_raw(
         self, chunk_size: int | None = None
