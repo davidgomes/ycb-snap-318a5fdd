@@ -7,6 +7,7 @@ import re
 import typing
 from pathlib import Path
 
+from ._exceptions import DecodingError
 from ._types import (
     AsyncByteStream,
     FileContent,
@@ -298,3 +299,281 @@ class MultipartStream(SyncByteStream, AsyncByteStream):
     async def __aiter__(self) -> typing.AsyncIterator[bytes]:
         for chunk in self.iter_chunks():
             yield chunk
+
+
+class MultipartPart:
+    """
+    A single part from a ``multipart/*`` response body.
+    """
+
+    def __init__(self, headers: typing.Any, content: bytes) -> None:
+        self.headers = headers
+        self.content = content
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, MultipartPart):
+            return NotImplemented
+        return self.headers == other.headers and self.content == other.content
+
+    def __repr__(self) -> str:
+        return f"MultipartPart(headers={self.headers!r}, content={self.content!r})"
+
+
+def parse_multipart_boundary(content_type: str | None) -> bytes:
+    """
+    Return the multipart boundary from a Content-Type header.
+
+    Raises ``DecodingError`` when the response is not ``multipart/*`` or the
+    boundary parameter is missing or invalid.
+    """
+    if content_type is None or "\r" in content_type or "\n" in content_type:
+        raise DecodingError("Invalid multipart Content-Type")
+
+    media_type, params = _split_content_type(content_type)
+    if "/" not in media_type:
+        raise DecodingError("Invalid multipart Content-Type")
+    type_name, _, subtype = media_type.partition("/")
+    if type_name.lower() != "multipart" or subtype == "":
+        raise DecodingError("Invalid multipart Content-Type")
+
+    boundary: str | None = None
+    for name, value in params:
+        if name.lower() == "boundary":
+            boundary = value
+
+    if (
+        boundary is None
+        or boundary == ""
+        or boundary.startswith("=")
+        or "\x00" in boundary
+    ):
+        raise DecodingError("Invalid multipart boundary")
+    try:
+        encoded = boundary.encode("ascii")
+    except UnicodeEncodeError:
+        raise DecodingError("Invalid multipart boundary") from None
+    if any(byte > 127 for byte in encoded):
+        raise DecodingError("Invalid multipart boundary")
+    return encoded
+
+
+def _split_content_type(content_type: str) -> tuple[str, list[tuple[str, str]]]:
+    length = len(content_type)
+    index = 0
+
+    def skip_ws(pos: int) -> int:
+        while pos < length and content_type[pos] in " \t":
+            pos += 1
+        return pos
+
+    index = skip_ws(index)
+    start = index
+    while index < length and content_type[index] not in " \t;":
+        index += 1
+    media_type = content_type[start:index]
+    index = skip_ws(index)
+
+    params: list[tuple[str, str]] = []
+    while index < length:
+        if content_type[index] != ";":
+            raise DecodingError("Invalid multipart Content-Type")
+        index = skip_ws(index + 1)
+        if index >= length:
+            break
+
+        start = index
+        while index < length and content_type[index] not in " \t=;":
+            index += 1
+        name = content_type[start:index]
+        if name == "":
+            raise DecodingError("Invalid multipart Content-Type")
+        index = skip_ws(index)
+        if index >= length or content_type[index] != "=":
+            raise DecodingError("Invalid multipart Content-Type")
+        index = skip_ws(index + 1)
+        if index >= length:
+            raise DecodingError("Invalid multipart Content-Type")
+
+        if content_type[index] == '"':
+            index += 1
+            start = index
+            while index < length and content_type[index] != '"':
+                index += 1
+            if index >= length:
+                raise DecodingError("Invalid multipart boundary")
+            value = content_type[start:index]
+            index = skip_ws(index + 1)
+            if index < length and content_type[index] != ";":
+                raise DecodingError("Invalid multipart boundary")
+        else:
+            start = index
+            while index < length and content_type[index] != ";":
+                index += 1
+            value = content_type[start:index].rstrip(" \t")
+
+        params.append((name, value))
+
+    return media_type, params
+
+
+class _MultipartLineReader:
+    """
+    Split a byte stream into lines terminated by LF, CRLF, or a bare CR.
+
+    A CR at the end of a chunk is held until the next chunk so a CRLF pair
+    split across chunks stays one terminator.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = bytearray()
+
+    def feed(self, data: bytes) -> list[tuple[bytes, bytes]]:
+        self._buffer.extend(data)
+        lines: list[tuple[bytes, bytes]] = []
+        while True:
+            buffer = self._buffer
+            cr = buffer.find(0x0D)
+            lf = buffer.find(0x0A)
+            if cr == -1 and lf == -1:
+                return lines
+            if lf != -1 and (cr == -1 or lf < cr):
+                lines.append((bytes(buffer[:lf]), b"\n"))
+                del buffer[: lf + 1]
+                continue
+            assert cr != -1
+            if cr + 1 == len(buffer):
+                return lines
+            if buffer[cr + 1] == 0x0A:
+                lines.append((bytes(buffer[:cr]), b"\r\n"))
+                del buffer[: cr + 2]
+            else:
+                lines.append((bytes(buffer[:cr]), b"\r"))
+                del buffer[: cr + 1]
+
+    def flush(self) -> tuple[bytes, bytes] | None:
+        if not self._buffer:
+            return None
+        if self._buffer[-1] == 0x0D:
+            line = bytes(self._buffer[:-1])
+            self._buffer.clear()
+            return line, b"\r"
+        line = bytes(self._buffer)
+        self._buffer.clear()
+        return line, b""
+
+
+class MultipartDecoder:
+    """
+    Incremental parser for a ``multipart/*`` body.
+    """
+
+    def __init__(self, boundary: bytes) -> None:
+        self._dash_boundary = b"--" + boundary
+        self._close_boundary = b"--" + boundary + b"--"
+        self._lines = _MultipartLineReader()
+        self._state = "preamble"
+        self._saw_line = False
+        self._header_fields: list[tuple[bytes, bytes]] = []
+        self._body = bytearray()
+        self._pending_terminator: bytes | None = None
+
+    @classmethod
+    def from_content_type(cls, content_type: str | None) -> MultipartDecoder:
+        return cls(parse_multipart_boundary(content_type))
+
+    def feed(self, data: bytes) -> list[MultipartPart]:
+        parts: list[MultipartPart] = []
+        for line, terminator in self._lines.feed(data):
+            parts.extend(self._on_line(line, terminator))
+        return parts
+
+    def finish(self) -> list[MultipartPart]:
+        parts: list[MultipartPart] = []
+        last = self._lines.flush()
+        if last is not None:
+            parts.extend(self._on_line(*last))
+        if self._state != "epilogue":
+            raise DecodingError("Malformed multipart body")
+        return parts
+
+    def _delimiter_kind(self, line: bytes) -> str | None:
+        if line.startswith(self._close_boundary):
+            rest = line[len(self._close_boundary) :]
+            if all(byte in b" \t" for byte in rest):
+                return "close"
+        if line.startswith(self._dash_boundary):
+            rest = line[len(self._dash_boundary) :]
+            if all(byte in b" \t" for byte in rest):
+                return "open"
+        return None
+
+    def _on_line(self, line: bytes, terminator: bytes) -> list[MultipartPart]:
+        if self._state == "epilogue":
+            return []
+
+        if not self._saw_line:
+            self._saw_line = True
+            if (
+                line.startswith(self._dash_boundary)
+                and self._delimiter_kind(line) is None
+            ):
+                raise DecodingError("Malformed multipart body")
+
+        kind = self._delimiter_kind(line)
+
+        if self._state == "preamble":
+            if kind == "open":
+                self._state = "headers"
+                self._header_fields = []
+            elif kind == "close":
+                self._state = "epilogue"
+            return []
+
+        if self._state == "headers":
+            self._consume_header_line(line)
+            return []
+
+        if kind is not None:
+            part = self._build_part()
+            if kind == "close":
+                self._state = "epilogue"
+            else:
+                self._state = "headers"
+                self._header_fields = []
+            return [part]
+
+        if self._pending_terminator is not None:
+            self._body.extend(self._pending_terminator)
+        self._body.extend(line)
+        self._pending_terminator = terminator if terminator else None
+        return []
+
+    def _consume_header_line(self, line: bytes) -> None:
+        if line == b"":
+            self._state = "body"
+            self._body = bytearray()
+            self._pending_terminator = None
+            return
+
+        if line[:1] in (b" ", b"\t"):
+            if not self._header_fields or line.strip(b" \t") == b"":
+                raise DecodingError("Malformed multipart headers")
+            name, value = self._header_fields[-1]
+            self._header_fields[-1] = (name, value + line)
+            return
+
+        if b":" not in line:
+            raise DecodingError("Malformed multipart headers")
+        name, value = line.split(b":", 1)
+        name = name.strip(b" \t")
+        if name == b"":
+            raise DecodingError("Malformed multipart headers")
+        self._header_fields.append((name, value.lstrip(b" \t")))
+
+    def _build_part(self) -> MultipartPart:
+        from ._models import Headers
+
+        return MultipartPart(
+            headers=Headers(self._header_fields),
+            content=bytes(self._body),
+        )

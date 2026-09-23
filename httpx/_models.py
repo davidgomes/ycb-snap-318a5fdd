@@ -30,7 +30,11 @@ from ._exceptions import (
     StreamConsumed,
     request_context,
 )
-from ._multipart import get_multipart_boundary_from_content_type
+from ._multipart import (
+    MultipartDecoder,
+    MultipartPart,
+    get_multipart_boundary_from_content_type,
+)
 from ._status_codes import codes
 from ._types import (
     AsyncByteStream,
@@ -932,6 +936,26 @@ class Response:
             for line in decoder.flush():
                 yield line
 
+    def iter_multipart(self) -> typing.Iterator[MultipartPart]:
+        """
+        Yield each part of a ``multipart/*`` response body.
+
+        When the body is already in memory, iteration is repeatable. When the
+        body is still streaming, iteration consumes the stream and closes the
+        response.
+        """
+        decoder = MultipartDecoder.from_content_type(self.headers.get("content-type"))
+        with request_context(request=self._request):
+            try:
+                for chunk in self.iter_bytes():
+                    yield from decoder.feed(chunk)
+                yield from decoder.finish()
+            finally:
+                if not hasattr(self, "_content") and isinstance(
+                    self.stream, SyncByteStream
+                ):
+                    self.close()
+
     def iter_raw(self, chunk_size: int | None = None) -> typing.Iterator[bytes]:
         """
         A byte-iterator over the raw response content.
@@ -1033,6 +1057,28 @@ class Response:
                     yield line
             for line in decoder.flush():
                 yield line
+
+    async def aiter_multipart(self) -> typing.AsyncIterator[MultipartPart]:
+        """
+        Yield each part of a ``multipart/*`` response body.
+
+        When the body is already in memory, iteration is repeatable. When the
+        body is still streaming, iteration consumes the stream and closes the
+        response.
+        """
+        decoder = MultipartDecoder.from_content_type(self.headers.get("content-type"))
+        with request_context(request=self._request):
+            try:
+                async for chunk in self.aiter_bytes():
+                    for part in decoder.feed(chunk):
+                        yield part
+                for part in decoder.finish():
+                    yield part
+            finally:
+                if not hasattr(self, "_content") and isinstance(
+                    self.stream, AsyncByteStream
+                ):
+                    await self.aclose()
 
     async def aiter_raw(
         self, chunk_size: int | None = None
