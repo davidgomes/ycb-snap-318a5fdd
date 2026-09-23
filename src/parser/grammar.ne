@@ -88,9 +88,10 @@ statement -> expressions_or_clauses (%DELIMITER | %EOF) {%
   })
 %}
 
-# To avoid ambiguity, plain expressions can only come before clauses
-expressions_or_clauses -> free_form_sql:* clause:* {%
-  ([expressions, clauses]) => [...expressions, ...clauses]
+# To avoid ambiguity, plain expressions can only come before clauses,
+# and plain clauses can only come before pipe clauses.
+expressions_or_clauses -> free_form_sql:* clause:* pipe_clause:* {%
+  ([expressions, clauses, pipeClauses]) => [...expressions, ...clauses, ...pipeClauses]
 %}
 
 clause ->
@@ -153,6 +154,29 @@ set_operation -> %RESERVED_SET_OPERATION free_form_sql:* {%
     children,
   })
 %}
+
+# All clauses following a pipe operator up to the next |> belong to that pipe step,
+# like the GROUP BY in: |> AGGREGATE COUNT(*) GROUP BY item
+pipe_clause -> %PIPE_OPERATOR _ pipe_operator_name free_form_sql:* clause:* {%
+  ([pipeToken, _, nameToken, expressions, clauses]) => ({
+    type: NodeType.pipe_clause,
+    nameKw: addComments(toKeywordNode(nameToken), { leading: _ }),
+    children: [...expressions, ...clauses],
+  })
+%}
+pipe_clause -> %PIPE_OPERATOR _ %RESERVED_SELECT (all_columns_asterisk free_form_sql:* | asteriskless_free_form_sql free_form_sql:*):? clause:* {%
+  ([pipeToken, _, nameToken, columns, clauses]) => ({
+    type: NodeType.pipe_clause,
+    nameKw: addComments(toKeywordNode(nameToken), { leading: _ }),
+    children: [...(columns ? [columns[0], ...columns[1]] : []), ...clauses],
+  })
+%}
+
+pipe_operator_name ->
+  ( %RESERVED_CLAUSE
+  | %LIMIT
+  | %RESERVED_SET_OPERATION
+  | %RESERVED_JOIN ) {% unwrap %}
 
 expression_chain_ -> expression_with_comments_:+ {% id %}
 

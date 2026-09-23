@@ -12,6 +12,9 @@ import { isReserved, Token, TokenType } from './token.js';
  * When IDENTIFIER or RESERVED_DATA_TYPE token is followed by "["
  * converts it to ARRAY_IDENTIFIER or ARRAY_KEYWORD accordingly.
  *
+ * Converts the pipe operator name following "|>" (like AGGREGATE or EXTEND)
+ * to RESERVED_CLAUSE.
+ *
  * This is needed to avoid ambiguity in parser which expects function names
  * to always be followed by open-paren, and to distinguish between
  * array accessor `foo[1]` and array literal `[1, 2, 3]`.
@@ -22,7 +25,8 @@ export function disambiguateTokens(tokens: Token[]): Token[] {
     .map(funcNameToIdent)
     .map(dataTypeToParameterizedDataType)
     .map(identToArrayIdent)
-    .map(dataTypeToArrayKeyword);
+    .map(dataTypeToArrayKeyword)
+    .map(pipeOperatorNameToClause);
 }
 
 const propertyNameKeywordToIdent = (token: Token, i: number, tokens: Token[]): Token => {
@@ -74,6 +78,23 @@ const dataTypeToArrayKeyword = (token: Token, i: number, tokens: Token[]): Token
     const nextToken = nextNonCommentToken(tokens, i);
     if (nextToken && isOpenBracket(nextToken)) {
       return { ...token, type: TokenType.ARRAY_KEYWORD };
+    }
+  }
+  return token;
+};
+
+// Other clause-starting tokens (SELECT, LIMIT, JOIN, UNION, ...) after |> are kept as they are.
+const isPromotablePipeOperatorName = (type: TokenType): boolean =>
+  type === TokenType.IDENTIFIER ||
+  type === TokenType.RESERVED_KEYWORD ||
+  type === TokenType.RESERVED_KEYWORD_PHRASE ||
+  type === TokenType.RESERVED_FUNCTION_NAME;
+
+const pipeOperatorNameToClause = (token: Token, i: number, tokens: Token[]): Token => {
+  if (isPromotablePipeOperatorName(token.type)) {
+    const prevToken = prevNonCommentToken(tokens, i);
+    if (prevToken && prevToken.type === TokenType.PIPE_OPERATOR) {
+      return { ...token, type: TokenType.RESERVED_CLAUSE, text: token.text.toUpperCase() };
     }
   }
   return token;

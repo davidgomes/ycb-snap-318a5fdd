@@ -20,6 +20,9 @@ const reservedClauses = expandPhrases([
   'LIMIT',
   'OFFSET',
   'OMIT RECORD IF', // legacy
+  // Pipe syntax: https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax
+  // - part of |> AGGREGATE
+  'GROUP AND ORDER BY',
   // Data modification: https://cloud.google.com/bigquery/docs/reference/standard-sql/dml-syntax
   // - insert:
   'INSERT [INTO]',
@@ -145,6 +148,20 @@ const reservedJoins = expandPhrases([
   '{INNER | CROSS} JOIN',
 ]);
 
+// Pipe operators (following |>) which are formatted on a single line,
+// all other pipe operators get their body indented on the next line.
+const pipeOnelineClauses = [
+  'LIMIT',
+  ...reservedJoins,
+  'AS',
+  'CALL',
+  'DISTINCT',
+  'TABLESAMPLE SYSTEM',
+  'PIVOT',
+  'UNPIVOT',
+  'MATCH_RECOGNIZE',
+];
+
 const reservedKeywordPhrases = expandPhrases([
   // https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#tablesample_operator
   'TABLESAMPLE SYSTEM',
@@ -190,11 +207,13 @@ export const bigquery: DialectOptions = {
     variableTypes: [{ regex: String.raw`@@\w+` }],
     lineCommentTypes: ['--', '#'],
     operators: ['&', '|', '^', '~', '>>', '<<', '||', '=>'],
+    supportsPipeSyntax: true,
     postProcess,
   },
   formatOptions: {
     onelineClauses: [...standardOnelineClauses, ...tabularOnelineClauses],
     tabularOnelineClauses,
+    pipeOnelineClauses,
   },
 };
 

@@ -31,6 +31,7 @@ import {
   DataTypeNode,
   ParameterizedDataTypeNode,
   DisableCommentNode,
+  PipeClauseNode,
 } from '../parser/ast.js';
 
 import Layout, { WS } from './Layout.js';
@@ -52,6 +53,8 @@ export interface DialectFormatOptions {
   onelineClauses: string[];
   // List of clauses that should be formatted on a single line in tabular style
   tabularOnelineClauses?: string[];
+  // List of pipe syntax operators (following |>) that should be formatted on a single line
+  pipeOnelineClauses?: string[];
 }
 
 // Contains the same data as DialectFormatOptions,
@@ -60,6 +63,7 @@ export interface ProcessedDialectFormatOptions {
   alwaysDenseOperators: string[];
   onelineClauses: Record<string, boolean>;
   tabularOnelineClauses: Record<string, boolean>;
+  pipeOnelineClauses: Record<string, boolean>;
 }
 
 /** Formats a generic SQL expression */
@@ -118,6 +122,8 @@ export default class ExpressionFormatter {
         return this.formatCaseElse(node);
       case NodeType.clause:
         return this.formatClause(node);
+      case NodeType.pipe_clause:
+        return this.formatPipeClause(node);
       case NodeType.set_operation:
         return this.formatSetOperation(node);
       case NodeType.limit_clause:
@@ -282,6 +288,45 @@ export default class ExpressionFormatter {
     this.layout.add(WS.NEWLINE, WS.INDENT, this.showKw(node.nameKw), WS.SPACE);
     this.layout.indentation.increaseTopLevel();
     this.layout = this.formatSubExpression(node.children);
+    this.layout.indentation.decreaseTopLevel();
+  }
+
+  private formatPipeClause(node: PipeClauseNode) {
+    this.layout.add(WS.NEWLINE, WS.INDENT, '|>', WS.SPACE);
+    this.withComments(node.nameKw, () => {
+      this.layout.add(this.showKw(node.nameKw));
+    });
+
+    if (this.dialectCfg.pipeOnelineClauses[node.nameKw.text]) {
+      this.formatPipeClauseInOnelineStyle(node);
+    } else if (isTabularStyle(this.cfg)) {
+      this.layout.add(WS.SPACE);
+      this.layout.indentation.increaseTopLevel();
+      this.layout = this.formatSubExpression(node.children);
+      this.layout.indentation.decreaseTopLevel();
+    } else {
+      this.layout.add(WS.NEWLINE);
+      this.layout.indentation.increaseTopLevel();
+      this.layout.add(WS.INDENT);
+      this.layout = this.formatSubExpression(node.children);
+      this.layout.indentation.decreaseTopLevel();
+    }
+  }
+
+  // Sub-clauses stay on the same line as well, like OFFSET in: |> LIMIT 10 OFFSET 20
+  private formatPipeClauseInOnelineStyle(node: PipeClauseNode) {
+    this.layout.add(WS.SPACE);
+    this.layout.indentation.increaseTopLevel();
+    for (const child of node.children) {
+      if (child.type === NodeType.clause) {
+        this.withComments(child, () => {
+          this.layout.add(this.showNonTabularKw(child.nameKw), WS.SPACE);
+          this.layout = this.formatSubExpression(child.children);
+        });
+      } else {
+        this.formatNode(child);
+      }
+    }
     this.layout.indentation.decreaseTopLevel();
   }
 

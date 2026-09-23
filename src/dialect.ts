@@ -45,4 +45,7 @@ const processDialectFormatOptions = (
   tabularOnelineClauses: Object.fromEntries(
     (options.tabularOnelineClauses ?? options.onelineClauses).map(name => [name, true])
   ),
+  pipeOnelineClauses: Object.fromEntries(
+    (options.pipeOnelineClauses ?? []).map(name => [name, true])
+  ),
 });
