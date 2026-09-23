@@ -12,20 +12,41 @@ import (
 )
 
 func TestEnsureFileName(t *testing.T) {
-	p := EnsureFileName("/Users/jack/Desktop/hello.sql", true, false)
+	p := EnsureFileName("/Users/jack/Desktop/hello.sql", true, false, false)
 	assert.Equal(t, "/Users/jack/Desktop/hello.sql.gz", p)
+
+	encrypted := EnsureFileName("/Users/jack/Desktop/hello.sql", true, true, false)
+	assert.Equal(t, "/Users/jack/Desktop/hello.sql.gz.enc", encrypted)
 }
 
 func TestEnsureFileSuffix(t *testing.T) {
 	assert := assert.New(t)
-	f := EnsureFileSuffix("test.sql", true)
+	f := EnsureFileSuffix("test.sql", true, false)
 	assert.Equal("test.sql.gz", f)
 
-	f = EnsureFileSuffix("test.sql.gz", true)
+	f = EnsureFileSuffix("test.sql.gz", true, false)
 	assert.Equal("test.sql.gz", f)
 
-	f = EnsureFileSuffix("test.sql", false)
+	f = EnsureFileSuffix("test.sql", false, false)
 	assert.Equal("test.sql", f)
+
+	f = EnsureFileSuffix("test.sql", true, true)
+	assert.Equal("test.sql.gz.enc", f)
+
+	f = EnsureFileSuffix("test.sql.gz", true, true)
+	assert.Equal("test.sql.gz.enc", f)
+
+	f = EnsureFileSuffix("test.sql.gz.enc", true, true)
+	assert.Equal("test.sql.gz.enc", f)
+
+	f = EnsureFileSuffix("test.sql", false, true)
+	assert.Equal("test.sql.enc", f)
+
+	f = EnsureFileSuffix("test.sql.enc", false, true)
+	assert.Equal("test.sql.enc", f)
+
+	f = EnsureFileSuffix(EnsureFileSuffix("test.sql", true, true), true, true)
+	assert.Equal("test.sql.gz.enc", f)
 }
 
 func TestEnsureUniqueness(t *testing.T) {

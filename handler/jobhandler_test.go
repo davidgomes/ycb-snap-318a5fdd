@@ -1,15 +1,22 @@
 package handler
 
 import (
+	"bytes"
+	"compress/gzip"
 	"errors"
+	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
 
 	"github.com/liweiyi88/onedump/config"
 	"github.com/liweiyi88/onedump/dumper"
+	"github.com/liweiyi88/onedump/encryption"
 	"github.com/liweiyi88/onedump/fileutil"
 	"github.com/liweiyi88/onedump/storage/dropbox"
 	"github.com/liweiyi88/onedump/storage/gdrive"
@@ -17,6 +24,7 @@ import (
 	"github.com/liweiyi88/onedump/storage/s3"
 	"github.com/liweiyi88/onedump/testutils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var testDBDsn = "root@tcp(127.0.0.1:3306)/dump_test"
@@ -153,11 +161,93 @@ func TestGetStorages(t *testing.T) {
 }
 
 func TestEnsureFileSuffix(t *testing.T) {
-	gzip := fileutil.EnsureFileSuffix("test.sql", true)
+	gzip := fileutil.EnsureFileSuffix("test.sql", true, false)
 	assert.Equal(t, "test.sql.gz", gzip)
 
-	sql := fileutil.EnsureFileSuffix("test.sql.gz", true)
+	sql := fileutil.EnsureFileSuffix("test.sql.gz", true, false)
 	assert.Equal(t, "test.sql.gz", sql)
+
+	enc := fileutil.EnsureFileSuffix("test.sql.gz", true, true)
+	assert.Equal(t, "test.sql.gz.enc", enc)
+}
+
+func TestEncryptedGzipPipelineRoundTrip(t *testing.T) {
+	key := bytes.Repeat([]byte{0x11}, 32)
+	enc, err := encryption.NewEncryptor(key)
+	require.NoError(t, err)
+
+	readers, writer, closer := storageReadWriteCloser(2, true, enc)
+	payload := bytes.Repeat([]byte("onedump-pipeline-"), 5000)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, werr := writer.Write(payload)
+		cerr := closer.Close()
+		if werr != nil {
+			errCh <- werr
+			return
+		}
+		errCh <- cerr
+	}()
+
+	var wg sync.WaitGroup
+	for i, reader := range readers {
+		wg.Add(1)
+		go func(i int, reader io.Reader) {
+			defer wg.Done()
+			encrypted, rerr := io.ReadAll(reader)
+			assert.NoError(t, rerr, "reader %d", i)
+
+			dec, derr := encryption.DecryptReader(bytes.NewReader(encrypted), key)
+			assert.NoError(t, derr)
+			gz, gerr := gzip.NewReader(dec)
+			if !assert.NoError(t, gerr) {
+				return
+			}
+			defer gz.Close()
+			got, aerr := io.ReadAll(gz)
+			assert.NoError(t, aerr)
+			assert.Equal(t, payload, got)
+		}(i, reader)
+	}
+
+	wg.Wait()
+	require.NoError(t, <-errCh)
+}
+
+func TestSaveFailsFastWhenEncryptionKeyMissing(t *testing.T) {
+	const envName = "ONEDUMP_ENCRYPTION_KEY_UNSET_FOR_TEST"
+	os.Unsetenv(envName)
+
+	job := config.NewJob("job", "mysql", testDBDsn)
+	job.Gzip = true
+	job.Encryption = encryption.Config{
+		Enabled:   true,
+		KeySource: "env",
+		KeyEnvVar: envName,
+	}
+
+	assertKeyError := func(t *testing.T, err error) {
+		t.Helper()
+		require.Error(t, err)
+		msg := strings.ToLower(err.Error())
+		if !strings.Contains(msg, "encryption") && !strings.Contains(msg, "key") {
+			t.Fatalf("error %q does not mention encryption or key", err)
+		}
+	}
+
+	assertKeyError(t, NewJobHandler(job).save())
+
+	dir := t.TempDir()
+	dumpFile := filepath.Join(dir, "dump.sql")
+	job.Storage.Local = []*local.Local{{Path: dumpFile}}
+	assertKeyError(t, NewJobHandler(job).save())
+	_, statErr := os.Stat(dumpFile)
+	assert.True(t, errors.Is(statErr, os.ErrNotExist))
+
+	result := NewJobHandler(job).Do()
+	require.Error(t, result.Error)
+	assertKeyError(t, result.Error)
 }
 
 func TestGetDumper(t *testing.T) {
