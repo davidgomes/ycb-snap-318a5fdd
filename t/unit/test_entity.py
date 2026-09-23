@@ -435,6 +435,103 @@ class test_Queue:
         assert 'foo' in repr(b)
         assert 'Queue' in repr(b)
 
+    def test_dead_letter_attributes(self) -> None:
+        q = Queue('foo', dead_letter_exchange='dlx',
+                  dead_letter_routing_key='dead')
+        assert q.dead_letter_exchange == 'dlx'
+        assert q.dead_letter_routing_key == 'dead'
+        assert q.as_dict()['dead_letter_exchange'] == 'dlx'
+
+        q = Queue('foo')
+        assert q.dead_letter_exchange is None
+        assert q.dead_letter_routing_key is None
+
+    def test_dead_letter_exchange_instance(self) -> None:
+        q = Queue('foo', dead_letter_exchange=Exchange('dlx'))
+        assert q.dead_letter_exchange == 'dlx'
+
+    def test_from_dict__dead_letter(self) -> None:
+        q = Queue.from_dict('foo', exchange='ex', routing_key='rk',
+                            dead_letter_exchange='dlx',
+                            dead_letter_routing_key='dead')
+        assert q.dead_letter_exchange == 'dlx'
+        assert q.dead_letter_routing_key == 'dead'
+
+    def test_with_dead_letter(self) -> None:
+        q = Queue.with_dead_letter('foo', 'dlx', exchange=self.exchange,
+                                   routing_key='rk', message_ttl=3)
+        assert isinstance(q, Queue)
+        assert q.name == 'foo'
+        assert q.routing_key == 'rk'
+        assert q.message_ttl == 3
+        assert q.dead_letter_exchange == 'dlx'
+        assert q.dead_letter_routing_key is None
+
+        q = Queue.with_dead_letter('foo', 'dlx', 'dead')
+        assert q.dead_letter_routing_key == 'dead'
+
+    def test_has_dead_letter_exchange(self) -> None:
+        assert not Queue('foo').has_dead_letter_exchange
+        assert Queue('foo', dead_letter_exchange='dlx').has_dead_letter_exchange
+        assert Queue('foo', queue_arguments={
+            'x-dead-letter-exchange': 'dlx',
+        }).has_dead_letter_exchange
+
+    def test_effective_dead_letter_exchange(self) -> None:
+        assert Queue('foo').effective_dead_letter_exchange is None
+        assert Queue(
+            'foo', dead_letter_exchange='dlx',
+        ).effective_dead_letter_exchange == 'dlx'
+        assert Queue('foo', queue_arguments={
+            'x-dead-letter-exchange': 'dlx2',
+        }).effective_dead_letter_exchange == 'dlx2'
+
+    def test_effective_dead_letter_routing_key(self) -> None:
+        assert Queue(
+            'foo', routing_key='rk', dead_letter_routing_key='dead',
+        ).effective_dead_letter_routing_key == 'dead'
+        assert Queue('foo', routing_key='rk', queue_arguments={
+            'x-dead-letter-routing-key': 'dead2',
+        }).effective_dead_letter_routing_key == 'dead2'
+        assert Queue(
+            'foo', routing_key='rk',
+        ).effective_dead_letter_routing_key == 'rk'
+
+    def test_effective_message_ttl(self) -> None:
+        assert Queue('foo').effective_message_ttl is None
+        assert Queue('foo', message_ttl=2.5).effective_message_ttl == 2.5
+        assert Queue('foo', queue_arguments={
+            'x-message-ttl': 1500,
+        }).effective_message_ttl == 1.5
+
+    def test_queue_declare__dead_letter_arguments(self) -> None:
+        chan = Mock()
+        q = Queue('foo', dead_letter_exchange='dlx',
+                  dead_letter_routing_key='dead', channel=chan)
+        q.queue_declare()
+        chan.prepare_queue_arguments.assert_called_with(
+            {},
+            expires=None,
+            message_ttl=None,
+            max_length=None,
+            max_length_bytes=None,
+            max_priority=None,
+            dead_letter_exchange='dlx',
+            dead_letter_routing_key='dead',
+        )
+
+    def test_queue_declare__dead_letter_on_memory_transport(self) -> None:
+        chan = Connection('memory://').channel()
+        q = Queue.with_dead_letter('test_entity_dlx', 'dlx', 'dead',
+                                   message_ttl=2, max_length=10)
+        q(chan).declare()
+        assert chan.get_queue_properties('test_entity_dlx') == {
+            'dead_letter_exchange': 'dlx',
+            'dead_letter_routing_key': 'dead',
+            'message_ttl': 2000,
+            'max_length': 10,
+        }
+
 
 class test_MaybeChannelBound:
 

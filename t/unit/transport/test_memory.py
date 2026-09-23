@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+from unittest.mock import patch
 
 import pytest
 
@@ -182,3 +183,80 @@ class test_MemoryTransport:
 
         assert self.q3(self.c).get().payload == {'hello': 'on return'}
         assert self.q3(self.c).get() is None
+
+
+class test_MemoryTransport_dead_letter:
+
+    def setup_method(self):
+        self.c = Connection(transport='memory')
+        self.channel = self.c.channel()
+        self.channel.queues.clear()
+        self.channel.state.clear()
+        self.e = Exchange('test_memory_dlx_work')
+        self.dlx = Exchange('test_memory_dlx')
+        self.dlq = Queue('test_memory_dlq', self.dlx,
+                         routing_key='test_memory_dlx_work')
+        self.dlq(self.channel).declare()
+
+    def teardown_method(self):
+        self.channel.queues.clear()
+        self.channel.state.clear()
+
+    def work_queue(self, **kwargs):
+        queue = Queue.with_dead_letter(
+            'test_memory_dlx_work', self.dlx,
+            exchange=self.e, routing_key='test_memory_dlx_work', **kwargs)
+        queue(self.channel).declare()
+        return queue(self.channel)
+
+    def publish(self, body, **kwargs):
+        Producer(self.channel, self.e).publish(
+            body, routing_key='test_memory_dlx_work', **kwargs)
+
+    def test_reject(self):
+        work = self.work_queue()
+        self.publish({'hello': 'world'})
+        message = work.get()
+        assert message.delivery_info['queue'] == work.name
+        message.reject()
+
+        assert work.get() is None
+        dead = self.dlq(self.channel).get()
+        assert dead.payload == {'hello': 'world'}
+        assert dead.delivery_info['exchange'] == self.dlx.name
+        assert dead.delivery_info['routing_key'] == 'test_memory_dlx_work'
+        assert dead.headers['x-first-death-reason'] == 'rejected'
+        assert dead.headers['x-first-death-queue'] == work.name
+
+    def test_message_ttl(self):
+        work = self.work_queue(message_ttl=1)
+        with patch('kombu.transport.virtual.base.time') as time_:
+            time_.return_value = 1000.0
+            self.publish({'n': 1})
+            self.publish({'n': 2}, expiration=10)
+            time_.return_value = 1005.0
+            assert self.channel.expire_messages(work.name) == 1
+            assert work.get().payload == {'n': 2}
+
+        dead = self.dlq(self.channel).get()
+        assert dead.payload == {'n': 1}
+        assert dead.headers['x-death'][0]['reason'] == 'expired'
+
+    def test_max_length(self):
+        work = self.work_queue(max_length=2)
+        for i in range(3):
+            self.publish({'n': i})
+        assert [work.get().payload['n'] for _ in range(2)] == [1, 2]
+        dead = self.dlq(self.channel).get()
+        assert dead.payload == {'n': 0}
+        assert dead.headers['x-death'][0]['reason'] == 'maxlen'
+
+    def test_fanout_max_length(self):
+        fanout = Exchange('test_memory_dlx_fanout', type='fanout')
+        queue = Queue('test_memory_dlx_fanout_q', fanout, max_length=1)
+        queue(self.channel).declare()
+        producer = Producer(self.channel, fanout)
+        producer.publish({'n': 1})
+        producer.publish({'n': 2})
+        assert queue(self.channel).get().payload == {'n': 2}
+        assert queue(self.channel).get() is None
