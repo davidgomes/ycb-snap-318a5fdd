@@ -31,6 +31,12 @@ type parserOptions struct {
 	unionDefs             []unionDef
 	customDefs            []customDef
 	elide                 []string
+	strictMode            bool
+}
+
+// strictModeChecker is implemented by Parser only when built with the "analyze" build tag.
+type strictModeChecker interface {
+	checkStrictMode() error
 }
 
 // A Parser for a particular grammar and lexer.
@@ -134,6 +140,11 @@ func Build[G any](options ...Option) (parser *Parser[G], err error) {
 	p.typeNodes = context.typeNodes
 	p.typeNodes[p.rootType] = rootNode
 	p.setCaseInsensitiveTokens()
+	if checker, ok := any(p).(strictModeChecker); ok && p.strictMode {
+		if err := checker.checkStrictMode(); err != nil {
+			return nil, err
+		}
+	}
 	return p, nil
 }
 

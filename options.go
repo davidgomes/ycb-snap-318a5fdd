@@ -58,6 +58,19 @@ func CaseInsensitive(tokens ...string) Option {
 	}
 }
 
+// StrictMode causes Build to fail if static grammar analysis detects any conflict,
+// including warnings.
+//
+// Grammar analysis is only compiled in when building with the "analyze" build tag
+// (eg. "go test -tags analyze ./..."). Without the tag this option has no effect,
+// so it can be left enabled without any cost to production builds.
+func StrictMode() Option {
+	return func(p *parserOptions) error {
+		p.strictMode = true
+		return nil
+	}
+}
+
 // ParseTypeWith associates a custom parsing function with some interface type T.
 // When the parser encounters a value of type T, it will use the given parse function to
 // parse a value from the input.
