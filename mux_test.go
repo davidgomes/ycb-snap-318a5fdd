@@ -147,6 +147,37 @@ func TestMuxStreamIDs(t *testing.T) {
 	}
 }
 
+func TestMuxAcceptBacklogRefusesStreams(t *testing.T) {
+	client, server := newMuxPair(t, nil, nil)
+
+	streams := make([]*MuxStream, muxAcceptBacklog+1)
+	for i := range streams {
+		st, err := client.OpenStream(MuxPriorityNormal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		streams[i] = st
+	}
+	refused := streams[muxAcceptBacklog]
+	waitFor(t, "refused stream to be closed by the peer", refused.isRemoteClosed)
+	if _, err := refused.Write([]byte("x")); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("write on refused stream = %v, want io.ErrClosedPipe", err)
+	}
+	if n := server.NumStreams(); n != muxAcceptBacklog {
+		t.Fatalf("server NumStreams = %d, want %d", n, muxAcceptBacklog)
+	}
+
+	acc, err := server.AcceptStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	streams[0].Write([]byte("ok"))
+	buf := make([]byte, 2)
+	if _, err := io.ReadFull(acc, buf); err != nil || string(buf) != "ok" {
+		t.Fatalf("read %q, %v", buf, err)
+	}
+}
+
 func TestMuxConfigValidation(t *testing.T) {
 	c1, c2 := net.Pipe()
 	defer c1.Close()
