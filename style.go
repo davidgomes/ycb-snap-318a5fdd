@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/muesli/termenv/ansi"
 	"github.com/rivo/uniseg"
 )
 
@@ -24,7 +25,8 @@ const (
 type Style struct {
 	profile Profile
 	string
-	styles []string
+	styles         []string
+	preserveResets bool
 }
 
 // String returns a new Style.
@@ -53,7 +55,37 @@ func (t Style) Styled(s string) string {
 		return s
 	}
 
-	return fmt.Sprintf("%s%sm%s%sm", CSI, seq, s, CSI+ResetSeq)
+	open := CSI + seq + "m"
+	if t.preserveResets {
+		s = reopenAfterResets(s, open)
+	}
+
+	return fmt.Sprintf("%s%s%sm", open, s, CSI+ResetSeq)
+}
+
+// reopenAfterResets inserts open after each run of SGR resets in s that is
+// followed by more content, so embedded resets don't end the enclosing style.
+func reopenAfterResets(s, open string) string {
+	if !ansi.HasANSI(s) {
+		return s
+	}
+	tokens := ansi.Tokenize(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for i, tok := range tokens {
+		b.WriteString(tok.Raw)
+		if tok.Type == ansi.TokenReset && i+1 < len(tokens) && tokens[i+1].Type != ansi.TokenReset {
+			b.WriteString(open)
+		}
+	}
+	return b.String()
+}
+
+// PreserveResets makes the Style re-open itself after any SGR reset embedded
+// in the styled text, e.g. when nesting styled strings.
+func (t Style) PreserveResets() Style {
+	t.preserveResets = true
+	return t
 }
 
 // Foreground sets a foreground color.
