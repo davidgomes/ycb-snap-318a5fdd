@@ -2,8 +2,11 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Owloops/updo/alerts"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -107,6 +110,92 @@ url = "https://example.com"
 	}
 	if target.Method != _defaultMethod {
 		t.Errorf("Expected default Method=%s, got %s", _defaultMethod, target.Method)
+	}
+}
+
+func TestLoadConfigAlertPolicy(t *testing.T) {
+	configContent := `
+[global.alert_policy]
+consecutive_failures = 3
+consecutive_recoveries = 2
+cooldown_seconds = 300
+latency_threshold_ms = 800
+
+[[targets]]
+url = "https://inherits.example.com"
+name = "Inherits"
+
+[[targets]]
+url = "https://overrides.example.com"
+name = "Overrides"
+
+[targets.alert_policy]
+consecutive_failures = 5
+latency_breach_count = 4
+ssl_expiry_threshold_days = 14
+`
+
+	path := filepath.Join(t.TempDir(), "alerts.toml")
+	if err := os.WriteFile(path, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	config, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	wantGlobal := AlertPolicy{
+		ConsecutiveFailures:   3,
+		ConsecutiveRecoveries: 2,
+		CooldownSeconds:       300,
+		LatencyThresholdMs:    800,
+	}
+	if config.Global.AlertPolicy != wantGlobal {
+		t.Errorf("global alert policy = %+v, want %+v", config.Global.AlertPolicy, wantGlobal)
+	}
+
+	if len(config.Targets) != 2 {
+		t.Fatalf("Expected 2 targets, got %d", len(config.Targets))
+	}
+
+	if got := config.Targets[0].AlertPolicy; got != wantGlobal {
+		t.Errorf("inherited alert policy = %+v, want %+v", got, wantGlobal)
+	}
+
+	wantOverride := AlertPolicy{
+		ConsecutiveFailures:    5,
+		ConsecutiveRecoveries:  2,
+		CooldownSeconds:        300,
+		LatencyThresholdMs:     800,
+		LatencyBreachCount:     4,
+		SSLExpiryThresholdDays: 14,
+	}
+	if got := config.Targets[1].AlertPolicy; got != wantOverride {
+		t.Errorf("overridden alert policy = %+v, want %+v", got, wantOverride)
+	}
+}
+
+func TestAlertPolicyToPolicy(t *testing.T) {
+	policy := AlertPolicy{
+		ConsecutiveFailures:    2,
+		ConsecutiveRecoveries:  3,
+		CooldownSeconds:        60,
+		LatencyThresholdMs:     1500,
+		LatencyBreachCount:     4,
+		SSLExpiryThresholdDays: 21,
+	}.ToPolicy()
+
+	want := alerts.Policy{
+		ConsecutiveFailures:    2,
+		ConsecutiveRecoveries:  3,
+		Cooldown:               time.Minute,
+		LatencyThreshold:       1500 * time.Millisecond,
+		LatencyBreachCount:     4,
+		SSLExpiryThresholdDays: 21,
+	}
+	if policy != want {
+		t.Errorf("ToPolicy() = %+v, want %+v", policy, want)
 	}
 }
 

@@ -3,6 +3,7 @@ package config
 import (
 	"time"
 
+	"github.com/Owloops/updo/alerts"
 	"github.com/spf13/viper"
 )
 
@@ -12,41 +13,52 @@ const (
 	_defaultMethod          = "GET"
 )
 
+type AlertPolicy struct {
+	ConsecutiveFailures    int `mapstructure:"consecutive_failures"`
+	ConsecutiveRecoveries  int `mapstructure:"consecutive_recoveries"`
+	CooldownSeconds        int `mapstructure:"cooldown_seconds"`
+	LatencyThresholdMs     int `mapstructure:"latency_threshold_ms"`
+	LatencyBreachCount     int `mapstructure:"latency_breach_count"`
+	SSLExpiryThresholdDays int `mapstructure:"ssl_expiry_threshold_days"`
+}
+
 type Target struct {
-	URL             string   `mapstructure:"url"`
-	Name            string   `mapstructure:"name"`
-	RefreshInterval int      `mapstructure:"refresh_interval"`
-	Timeout         int      `mapstructure:"timeout"`
-	ShouldFail      bool     `mapstructure:"should_fail"`
-	FollowRedirects bool     `mapstructure:"follow_redirects"`
-	AcceptRedirects bool     `mapstructure:"accept_redirects"`
-	SkipSSL         bool     `mapstructure:"skip_ssl"`
-	AssertText      string   `mapstructure:"assert_text"`
-	ReceiveAlert    bool     `mapstructure:"receive_alert"`
-	Headers         []string `mapstructure:"headers"`
-	Method          string   `mapstructure:"method"`
-	Body            string   `mapstructure:"body"`
-	WebhookURL      string   `mapstructure:"webhook_url"`
-	WebhookHeaders  []string `mapstructure:"webhook_headers"`
-	Regions         []string `mapstructure:"regions"`
+	URL             string      `mapstructure:"url"`
+	Name            string      `mapstructure:"name"`
+	RefreshInterval int         `mapstructure:"refresh_interval"`
+	Timeout         int         `mapstructure:"timeout"`
+	ShouldFail      bool        `mapstructure:"should_fail"`
+	FollowRedirects bool        `mapstructure:"follow_redirects"`
+	AcceptRedirects bool        `mapstructure:"accept_redirects"`
+	SkipSSL         bool        `mapstructure:"skip_ssl"`
+	AssertText      string      `mapstructure:"assert_text"`
+	ReceiveAlert    bool        `mapstructure:"receive_alert"`
+	Headers         []string    `mapstructure:"headers"`
+	Method          string      `mapstructure:"method"`
+	Body            string      `mapstructure:"body"`
+	WebhookURL      string      `mapstructure:"webhook_url"`
+	WebhookHeaders  []string    `mapstructure:"webhook_headers"`
+	Regions         []string    `mapstructure:"regions"`
+	AlertPolicy     AlertPolicy `mapstructure:"alert_policy"`
 }
 
 type Global struct {
-	RefreshInterval int      `mapstructure:"refresh_interval"`
-	Timeout         int      `mapstructure:"timeout"`
-	ShouldFail      bool     `mapstructure:"should_fail"`
-	FollowRedirects bool     `mapstructure:"follow_redirects"`
-	AcceptRedirects bool     `mapstructure:"accept_redirects"`
-	SkipSSL         bool     `mapstructure:"skip_ssl"`
-	ReceiveAlert    bool     `mapstructure:"receive_alert"`
-	Count           int      `mapstructure:"count"`
-	Simple          bool     `mapstructure:"simple"`
-	Log             bool     `mapstructure:"log"`
-	Only            []string `mapstructure:"only"`
-	Skip            []string `mapstructure:"skip"`
-	WebhookURL      string   `mapstructure:"webhook_url"`
-	WebhookHeaders  []string `mapstructure:"webhook_headers"`
-	Regions         []string `mapstructure:"regions"`
+	RefreshInterval int         `mapstructure:"refresh_interval"`
+	Timeout         int         `mapstructure:"timeout"`
+	ShouldFail      bool        `mapstructure:"should_fail"`
+	FollowRedirects bool        `mapstructure:"follow_redirects"`
+	AcceptRedirects bool        `mapstructure:"accept_redirects"`
+	SkipSSL         bool        `mapstructure:"skip_ssl"`
+	ReceiveAlert    bool        `mapstructure:"receive_alert"`
+	Count           int         `mapstructure:"count"`
+	Simple          bool        `mapstructure:"simple"`
+	Log             bool        `mapstructure:"log"`
+	Only            []string    `mapstructure:"only"`
+	Skip            []string    `mapstructure:"skip"`
+	WebhookURL      string      `mapstructure:"webhook_url"`
+	WebhookHeaders  []string    `mapstructure:"webhook_headers"`
+	Regions         []string    `mapstructure:"regions"`
+	AlertPolicy     AlertPolicy `mapstructure:"alert_policy"`
 }
 
 type Config struct {
@@ -103,9 +115,43 @@ func LoadConfig(configFile string) (*Config, error) {
 		if len(target.Regions) == 0 && len(config.Global.Regions) > 0 {
 			target.Regions = config.Global.Regions
 		}
+		target.AlertPolicy = target.AlertPolicy.inherit(config.Global.AlertPolicy)
 	}
 
 	return &config, nil
+}
+
+func (p AlertPolicy) inherit(global AlertPolicy) AlertPolicy {
+	if p.ConsecutiveFailures == 0 {
+		p.ConsecutiveFailures = global.ConsecutiveFailures
+	}
+	if p.ConsecutiveRecoveries == 0 {
+		p.ConsecutiveRecoveries = global.ConsecutiveRecoveries
+	}
+	if p.CooldownSeconds == 0 {
+		p.CooldownSeconds = global.CooldownSeconds
+	}
+	if p.LatencyThresholdMs == 0 {
+		p.LatencyThresholdMs = global.LatencyThresholdMs
+	}
+	if p.LatencyBreachCount == 0 {
+		p.LatencyBreachCount = global.LatencyBreachCount
+	}
+	if p.SSLExpiryThresholdDays == 0 {
+		p.SSLExpiryThresholdDays = global.SSLExpiryThresholdDays
+	}
+	return p
+}
+
+func (p AlertPolicy) ToPolicy() alerts.Policy {
+	return alerts.Policy{
+		ConsecutiveFailures:    p.ConsecutiveFailures,
+		ConsecutiveRecoveries:  p.ConsecutiveRecoveries,
+		Cooldown:               time.Duration(p.CooldownSeconds) * time.Second,
+		LatencyThreshold:       time.Duration(p.LatencyThresholdMs) * time.Millisecond,
+		LatencyBreachCount:     p.LatencyBreachCount,
+		SSLExpiryThresholdDays: p.SSLExpiryThresholdDays,
+	}
 }
 
 func (t *Target) GetRefreshInterval() time.Duration {
