@@ -6,6 +6,7 @@ import sys
 import types
 import typing
 import uuid
+from collections.abc import Mapping
 from contextlib import contextmanager
 
 # noinspection PyProtectedMember
@@ -38,6 +39,7 @@ from mashumaro.core.meta.helpers import (
     get_literal_values,
     get_name_error_name,
     get_type_annotations,
+    get_type_origin,
     hash_type_args,
     is_annotated,
     is_class_var,
@@ -51,6 +53,7 @@ from mashumaro.core.meta.helpers import (
     is_named_tuple,
     is_optional,
     is_type_var_any,
+    not_none_type_arg,
     resolve_type_params,
     substitute_type_params,
     type_name,
@@ -111,6 +114,23 @@ class InternalMethodName(str):
         return self[len(self._PREFIX) : -len(self._SUFFIX)]
 
 
+class KeySlot(typing.NamedTuple):
+    # all dict keys under which a single field value can appear
+    owner: str
+    keys: typing.Tuple[str, ...]
+    accepted: typing.Tuple[str, ...]
+    flattened: bool = False
+
+
+class FlattenedField(typing.NamedTuple):
+    type: typing.Type
+    optional: bool
+    prefix: typing.Optional[str]
+    rename: typing.Optional[dict[str, str]]
+    unpack_keys: dict[str, str]
+    slots: list[KeySlot]
+
+
 class CodeBuilder:
     def __init__(
         self,
@@ -134,6 +154,9 @@ class CodeBuilder:
             typing.Type, dict[typing.Type, typing.Type]
         ] = {}
         self.field_classes: dict = {}
+        self.flattened_fields: typing.Optional[dict[str, FlattenedField]] = (
+            None
+        )
         self.initial_type_args = type_args
         if dialect is not None and not is_dialect_subclass(dialect):
             raise BadDialect(
@@ -164,6 +187,7 @@ class CodeBuilder:
             self.cls, self.initial_type_args
         )
         self.field_classes = {}
+        self.flattened_fields = None
 
     @property
     def namespace(self) -> typing.Mapping[typing.Any, typing.Any]:
@@ -369,6 +393,7 @@ class CodeBuilder:
             return
         try:
             field_types = self.get_field_types(include_extras=True)
+            flattened_fields = self.get_flattened_fields()
         except UnresolvedTypeReferenceError:
             if (
                 not self.allow_postponed_evaluation
@@ -450,7 +475,15 @@ class CodeBuilder:
                 filtered_fields.append((fname, alias, ftype))
             if filtered_fields:
                 if config.forbid_extra_keys:
-                    allowed_keys = {f[1] or f[0] for f in filtered_fields}
+                    own_fields = [
+                        f for f in filtered_fields if f[0] not in flattened_fields
+                    ]
+                    allowed_keys = {f[1] or f[0] for f in own_fields}
+                    for f in filtered_fields:
+                        if f[0] in flattened_fields:
+                            allowed_keys.update(
+                                flattened_fields[f[0]].unpack_keys
+                            )
 
                     # If a discriminator with a field is set via config,
                     # we should allow this field to be present in the input
@@ -460,7 +493,7 @@ class CodeBuilder:
                         allowed_keys.add(discr.field)
 
                     if config.allow_deserialization_not_by_alias:
-                        allowed_keys |= {f[0] for f in filtered_fields}
+                        allowed_keys |= {f[0] for f in own_fields}
 
                     allowed_keys_str = "'" + "', '".join(allowed_keys) + "'"
 
@@ -478,14 +511,23 @@ class CodeBuilder:
                     for fname, alias, ftype in filtered_fields:
                         self.add_type_modules(ftype)
                         metadata = self.metadatas.get(fname, {})
-                        field_block = FieldUnpackerCodeBlockBuilder(
+                        block_builder = FieldUnpackerCodeBlockBuilder(
                             self, CodeLines()
-                        ).build(
-                            fname=fname,
-                            ftype=ftype,
-                            metadata=metadata,
-                            alias=alias,
                         )
+                        if fname in flattened_fields:
+                            field_block = block_builder.build_flattened(
+                                fname=fname,
+                                ftype=ftype,
+                                metadata=metadata,
+                                flattened=flattened_fields[fname],
+                            )
+                        else:
+                            field_block = block_builder.build(
+                                fname=fname,
+                                ftype=ftype,
+                                metadata=metadata,
+                                alias=alias,
+                            )
                         if field_block.in_kwargs:
                             add_kwargs = True
                         field_blocks.append(field_block)
@@ -826,6 +868,7 @@ class CodeBuilder:
             return
         try:
             field_types = self.get_field_types(include_extras=True)
+            flattened_fields = self.get_flattened_fields()
         except UnresolvedTypeReferenceError:
             if (
                 not self.allow_postponed_evaluation
@@ -869,8 +912,15 @@ class CodeBuilder:
             if self.get_config().sort_keys:
                 fnames_and_types = sorted(fnames_and_types, key=lambda x: x[0])
 
+            has_flattened = False
             for fname, ftype in fnames_and_types:
                 if self.metadatas.get(fname, {}).get("serialize") == "omit":
+                    continue
+                if fname in flattened_fields:
+                    packers[fname] = self._get_flattened_field_packer(
+                        fname, flattened_fields[fname]
+                    )
+                    has_flattened = True
                     continue
                 packer, alias, could_be_none = self._get_field_packer(
                     fname, ftype, config, force_value
@@ -889,12 +939,22 @@ class CodeBuilder:
                 or by_alias_feature
                 and aliases
                 or omit_default
+                or has_flattened
             ):
                 kwargs = "kwargs"
                 self.add_line("kwargs = {}")
                 for fname, packer in packers.items():
                     if force_value:
                         self.add_line(f"value = self.{fname}")
+                    if fname in flattened_fields:
+                        self._pack_method_merge_flattened(
+                            fname=fname,
+                            packer=packer,
+                            flattened=flattened_fields[fname],
+                            force_value=force_value,
+                            omit_default=omit_default,
+                        )
+                        continue
                     alias = aliases.get(fname)
                     if omit_default:
                         # do not call default_factory if we don't need to
@@ -1031,6 +1091,44 @@ class CodeBuilder:
         return self.__pack_method_set_value(
             fname, alias, by_alias_feature, packed_value
         )
+
+    def _pack_method_merge_flattened(
+        self,
+        fname: str,
+        packer: str,
+        flattened: FlattenedField,
+        force_value: bool,
+        omit_default: bool,
+    ) -> None:
+        if not force_value:
+            self.add_line(f"value = self.{fname}")
+        conditions = []
+        if flattened.optional:
+            conditions.append("value is not None")
+        if omit_default:
+            default = self.get_field_default(fname, call_factory=True)
+            if default is not MISSING and default is not None:
+                default_literal = self.get_field_default_literal(default)
+                conditions.append(f"value != {default_literal}")
+        if flattened.prefix is not None:
+            merged = (
+                f"{{{flattened.prefix!r} + k: v "
+                f"for k, v in ({packer}).items()}}"
+            )
+        elif flattened.rename is not None:
+            rename_name = f"flatten_pack_rename_{fname}"
+            self.ensure_object_imported(flattened.rename, rename_name)
+            merged = (
+                f"{{{rename_name}.get(k, k): v "
+                f"for k, v in ({packer}).items()}}"
+            )
+        else:
+            merged = packer
+        if conditions:
+            with self.indent(f"if {' and '.join(conditions)}:"):
+                self.add_line(f"kwargs.update({merged})")
+        else:
+            self.add_line(f"kwargs.update({merged})")
 
     def __pack_method_set_value(
         self,
@@ -1183,6 +1281,25 @@ class CodeBuilder:
         )
         return packer, alias, could_be_none
 
+    def _get_flattened_field_packer(
+        self, fname: str, flattened: FlattenedField
+    ) -> str:
+        return PackerRegistry.get(
+            ValueSpec(
+                type=flattened.type,
+                expression="value",
+                builder=self,
+                field_ctx=FieldContext(
+                    name=fname,
+                    metadata=self.metadatas.get(fname, {}),
+                ),
+                could_be_none=False,
+                no_copy_collections=self.get_dialect_or_config_option(
+                    "no_copy_collections", ()
+                ),
+            )
+        )
+
     @staticmethod
     def __get_field_alias(
         fname: str,
@@ -1199,6 +1316,213 @@ class CodeBuilder:
         if alias is None:
             alias = config.aliases.get(fname)
         return alias
+
+    def get_flattened_fields(
+        self, _stack: typing.Tuple[typing.Type, ...] = ()
+    ) -> dict[str, FlattenedField]:
+        if self.flattened_fields is None:
+            flattened_fields = self.__collect_flattened_fields(_stack)
+            self.__check_key_collisions(
+                self.__build_key_slots(flattened_fields)
+            )
+            self.flattened_fields = flattened_fields
+        return self.flattened_fields
+
+    def get_key_slots(
+        self, _stack: typing.Tuple[typing.Type, ...] = ()
+    ) -> list[KeySlot]:
+        return self.__build_key_slots(self.get_flattened_fields(_stack))
+
+    def __flatten_error(self, fname: str, msg: str) -> UnserializableField:
+        ftype = self.get_field_types(include_extras=True)[fname]
+        return UnserializableField(fname, ftype, self.cls, msg)
+
+    def __collect_flattened_fields(
+        self, stack: typing.Tuple[typing.Type, ...]
+    ) -> dict[str, FlattenedField]:
+        stack = (*stack, self.cls)
+        result = {}
+        for fname, ftype in self.get_field_types(include_extras=True).items():
+            metadata = self.metadatas.get(fname, {})
+            prefix = metadata.get("flatten_prefix")
+            rename = metadata.get("flatten_rename")
+            if prefix is False:
+                prefix = None
+            if not metadata.get("flatten"):
+                if prefix is not None or rename is not None:
+                    raise self.__flatten_error(
+                        fname,
+                        '"flatten_prefix" and "flatten_rename" options '
+                        'require "flatten" option to be enabled',
+                    )
+                continue
+            if prefix is not None and rename is not None:
+                raise self.__flatten_error(
+                    fname,
+                    '"flatten_prefix" and "flatten_rename" options '
+                    "are mutually exclusive",
+                )
+            if prefix is True:
+                prefix = f"{fname}_"
+            elif prefix is not None and not isinstance(prefix, str):
+                raise self.__flatten_error(
+                    fname, '"flatten_prefix" must be a string or True'
+                )
+            if rename is not None and not isinstance(rename, Mapping):
+                raise self.__flatten_error(
+                    fname, '"flatten_rename" must be a mapping'
+                )
+            inner_type, real_type, optional = self.__get_flattened_type(
+                fname, ftype
+            )
+            child_cls = get_type_origin(real_type)
+            if child_cls in stack:
+                raise self.__flatten_error(
+                    fname, "recursive flattening is not supported"
+                )
+            child_builder = self.__class__(
+                child_cls,
+                get_args(real_type),
+                dialect=self.dialect,
+                default_dialect=self.default_dialect,
+            )
+            child_builder.reset()
+            child_slots = child_builder.get_key_slots(stack)
+            renamed = self.__resolve_flatten_rename(
+                fname, child_cls, child_slots, rename or {}
+            )
+            pack_rename = {}
+            unpack_keys = {}
+            slots = []
+            for i, slot in enumerate(child_slots):
+                if i in renamed:
+                    new_key = renamed[i]
+                    keys: typing.Tuple[str, ...] = (new_key,)
+                    accepted = (new_key,) if slot.accepted else ()
+                    for key in slot.keys:
+                        pack_rename[key] = new_key
+                    if slot.accepted:
+                        unpack_keys[new_key] = slot.accepted[0]
+                else:
+                    p = prefix or ""
+                    keys = tuple(f"{p}{k}" for k in slot.keys)
+                    accepted = tuple(f"{p}{k}" for k in slot.accepted)
+                    for key in slot.accepted:
+                        unpack_keys[f"{p}{key}"] = key
+                slots.append(KeySlot(fname, keys, accepted, flattened=True))
+            result[fname] = FlattenedField(
+                type=inner_type,
+                optional=optional,
+                prefix=prefix or None,
+                rename=pack_rename if pack_rename else None,
+                unpack_keys=unpack_keys,
+                slots=slots,
+            )
+        return result
+
+    def __get_flattened_type(
+        self, fname: str, ftype: typing.Type
+    ) -> typing.Tuple[typing.Type, typing.Type, bool]:
+        resolved_type_params = self.get_field_resolved_type_params(fname)
+        typ = get_type_origin(ftype) if is_annotated(ftype) else ftype
+        optional = self.get_field_default(fname) is None
+        if is_optional(typ, resolved_type_params):
+            optional = True
+            typ = not_none_type_arg(get_args(typ), resolved_type_params)
+        real_type = self.get_real_type(
+            fname, get_type_origin(typ) if is_annotated(typ) else typ
+        )
+        if not is_dataclass(get_type_origin(real_type)):
+            raise self.__flatten_error(
+                fname, "only dataclass fields can be flattened"
+            )
+        return typ, real_type, optional
+
+    def __resolve_flatten_rename(
+        self,
+        fname: str,
+        child_cls: typing.Type,
+        child_slots: list[KeySlot],
+        rename: typing.Mapping[typing.Any, typing.Any],
+    ) -> dict[int, str]:
+        renamed: dict[int, str] = {}
+        rename_keys: dict[int, str] = {}
+        for key, new_key in rename.items():
+            if not isinstance(key, str) or not isinstance(new_key, str):
+                raise self.__flatten_error(
+                    fname, '"flatten_rename" keys and values must be strings'
+                )
+            matches = [i for i, s in enumerate(child_slots) if key in s.keys]
+            if not matches:
+                raise self.__flatten_error(
+                    fname,
+                    f'"flatten_rename" key "{key}" does not match any field '
+                    f"of {type_name(child_cls, short=True)}",
+                )
+            if len(matches) > 1:
+                raise self.__flatten_error(
+                    fname,
+                    f'"flatten_rename" key "{key}" is ambiguous in '
+                    f"{type_name(child_cls, short=True)}",
+                )
+            i = matches[0]
+            if i in renamed:
+                raise self.__flatten_error(
+                    fname,
+                    f'"flatten_rename" keys "{rename_keys[i]}" and "{key}" '
+                    f'refer to the same field "{child_slots[i].owner}"',
+                )
+            renamed[i] = new_key
+            rename_keys[i] = key
+        return renamed
+
+    def __build_key_slots(
+        self, flattened_fields: dict[str, FlattenedField]
+    ) -> list[KeySlot]:
+        config = self.get_config()
+        slots = []
+        for fname, ftype in self.get_field_types(include_extras=True).items():
+            flattened = flattened_fields.get(fname)
+            if flattened is not None:
+                slots.extend(flattened.slots)
+                continue
+            field = self.dataclass_fields.get(fname)
+            metadata = self.metadatas.get(fname, {})
+            alias = self.__get_field_alias(fname, ftype, metadata, config)
+            if alias is None or alias == fname:
+                keys: typing.Tuple[str, ...] = (fname,)
+            else:
+                keys = (alias, fname)
+            if field is not None and not field.init:
+                accepted: typing.Tuple[str, ...] = ()
+            elif config.allow_deserialization_not_by_alias:
+                accepted = keys
+            else:
+                accepted = keys[:1]
+            slots.append(KeySlot(fname, keys, accepted))
+        return slots
+
+    def __check_key_collisions(self, slots: list[KeySlot]) -> None:
+        seen: dict[str, KeySlot] = {}
+        for slot in slots:
+            for key in slot.keys:
+                other = seen.setdefault(key, slot)
+                if other is slot or not (slot.flattened or other.flattened):
+                    continue
+                if slot.flattened:
+                    culprit, victim = slot, other
+                else:
+                    culprit, victim = other, slot
+                if victim.owner == culprit.owner:
+                    where = "more than one field of the flattened dataclass"
+                elif victim.flattened:
+                    where = f'flattened field "{victim.owner}"'
+                else:
+                    where = f'field "{victim.owner}"'
+                raise self.__flatten_error(
+                    culprit.owner,
+                    f'flattened key "{key}" collides with a key of {where}',
+                )
 
     @typing.no_type_check
     def iter_serialization_strategies(
@@ -1400,6 +1724,47 @@ class FieldUnpackerCodeBlockBuilder:
                         )
                     else:
                         self._set_value(fname, unpacked_value, has_default)
+        return FieldUnpackerCodeBlock(self.lines, fname, has_default)
+
+    def build_flattened(
+        self,
+        fname: str,
+        ftype: typing.Type,
+        metadata: typing.Mapping,
+        flattened: FlattenedField,
+    ) -> FieldUnpackerCodeBlock:
+        has_default = self.parent.get_field_default(fname) is not MISSING
+        field_type = self.parent.get_type_name_identifier(
+            ftype,
+            resolved_type_params=self.parent.get_field_resolved_type_params(
+                fname
+            ),
+        )
+        unpacked_value = UnpackerRegistry.get(
+            ValueSpec(
+                type=flattened.type,
+                expression="value",
+                builder=self.parent,
+                field_ctx=FieldContext(name=fname, metadata=metadata),
+                could_be_none=False,
+            )
+        )
+        keys_name = f"flatten_unpack_keys_{fname}"
+        self.parent.ensure_object_imported(flattened.unpack_keys, keys_name)
+        self.add_line(
+            f"value = {{ck: v for pk, ck in {keys_name}.items() "
+            "if (v := d.get(pk, MISSING)) is not MISSING}"
+        )
+        if has_default:
+            with self.indent("if value:"):
+                self._try_set_value(fname, field_type, unpacked_value, True)
+        elif flattened.optional:
+            with self.indent("if value:"):
+                self._try_set_value(fname, field_type, unpacked_value, False)
+            with self.indent("else:"):
+                self._set_value(fname, "None")
+        else:
+            self._try_set_value(fname, field_type, unpacked_value, False)
         return FieldUnpackerCodeBlock(self.lines, fname, has_default)
 
     def add_line(self, line: str) -> None:
