@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Owloops/updo/alerts"
 	"github.com/Owloops/updo/aws"
 	"github.com/Owloops/updo/config"
 	"github.com/Owloops/updo/metrics"
@@ -45,11 +46,12 @@ func getErrorMessage(result net.WebsiteCheckResult) string {
 }
 
 type TargetResult struct {
-	Target   config.Target
-	Result   net.WebsiteCheckResult
-	Stats    stats.Stats
-	Sequence int
-	Region   string
+	Target        config.Target
+	Result        net.WebsiteCheckResult
+	Stats         stats.Stats
+	Sequence      int
+	Region        string
+	AlertDecision alerts.Decision
 }
 
 type MonitoringOptions struct {
@@ -70,8 +72,7 @@ func StartMultiTargetMonitoring(targets []config.Target, options MonitoringOptio
 
 	monitors := make(map[string]*stats.Monitor, len(allKeys))
 	sequences := make(map[string]*int, len(allKeys))
-	alertStates := make(map[string]*bool, len(allKeys))
-	webhookAlertStates := make(map[string]*bool, len(allKeys))
+	trackers := make(map[string]*alerts.Tracker, len(allKeys))
 
 	for _, key := range allKeys {
 		monitor, err := stats.NewMonitor()
@@ -81,11 +82,8 @@ func StartMultiTargetMonitoring(targets []config.Target, options MonitoringOptio
 		keyStr := key.String()
 		monitors[keyStr] = monitor
 		var seq int
-		var alert bool
-		var webhookAlert bool
 		sequences[keyStr] = &seq
-		alertStates[keyStr] = &alert
-		webhookAlertStates[keyStr] = &webhookAlert
+		trackers[keyStr] = alerts.NewTracker(targets[key.TargetIndex].AlertPolicy.ToPolicy())
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -141,7 +139,7 @@ func StartMultiTargetMonitoring(targets []config.Target, options MonitoringOptio
 		wg.Add(1)
 		go func(t config.Target, index int) {
 			defer wg.Done()
-			monitorTargetSimple(ctx, t, index, monitors, sequences, alertStates, webhookAlertStates, resultsChan, options)
+			monitorTargetSimple(ctx, t, index, monitors, sequences, trackers, resultsChan, options)
 		}(target, i)
 	}
 
@@ -196,7 +194,37 @@ func StartMultiTargetMonitoring(targets []config.Target, options MonitoringOptio
 	}
 }
 
-func monitorTargetSimple(ctx context.Context, target config.Target, targetIndex int, monitors map[string]*stats.Monitor, sequences map[string]*int, alertStates map[string]*bool, webhookAlertStates map[string]*bool, resultsChan chan<- TargetResult, options MonitoringOptions) {
+func evaluateAlerts(target config.Target, tracker *alerts.Tracker, result net.WebsiteCheckResult, sslDaysRemaining int, region string) alerts.Decision {
+	decision := tracker.Evaluate(alerts.Check{
+		IsUp:             result.IsUp,
+		ResponseTime:     result.ResponseTime,
+		SSLDaysRemaining: sslDaysRemaining,
+	}, time.Now())
+
+	if target.ReceiveAlert {
+		if err := notifications.HandleAlertDecision(decision, target.Name, result.URL); err != nil {
+			log.Printf("Alert notification failed: %v", err)
+		}
+	}
+
+	if target.WebhookURL != "" {
+		errorMsg := getErrorMessage(result)
+		if err := notifications.HandleWebhookDecisionWithHeaders(target.WebhookURL, target.WebhookHeaders, decision, target.Name, result.URL, result.ResponseTime, result.StatusCode, errorMsg, region); err != nil {
+			log.Printf("[ERROR] %v", err)
+		}
+	}
+
+	return decision
+}
+
+func sslDaysForAlerts(target config.Target) int {
+	if target.AlertPolicy.SSLExpiryThresholdDays <= 0 {
+		return -1
+	}
+	return net.GetSSLCertExpiry(target.URL)
+}
+
+func monitorTargetSimple(ctx context.Context, target config.Target, targetIndex int, monitors map[string]*stats.Monitor, sequences map[string]*int, trackers map[string]*alerts.Tracker, resultsChan chan<- TargetResult, options MonitoringOptions) {
 	ticker := time.NewTicker(target.GetRefreshInterval())
 	defer ticker.Stop()
 
@@ -204,6 +232,7 @@ func monitorTargetSimple(ctx context.Context, target config.Target, targetIndex 
 
 	makeRequest := func() {
 		attemptCount++
+		sslDaysRemaining := sslDaysForAlerts(target)
 		netConfig := net.NetworkConfig{
 			Timeout:         target.GetTimeout(),
 			ShouldFail:      target.ShouldFail,
@@ -239,22 +268,7 @@ func monitorTargetSimple(ctx context.Context, target config.Target, targetIndex 
 						*sequence++
 					}
 
-					if target.ReceiveAlert {
-						if alertSent, exists := alertStates[keyStr]; exists {
-							if err := notifications.HandleAlerts(lambdaResult.Result.IsUp, alertSent, target.Name, lambdaResult.Result.URL); err != nil {
-								log.Printf("Alert notification failed: %v", err)
-							}
-						}
-					}
-
-					if target.WebhookURL != "" {
-						errorMsg := getErrorMessage(lambdaResult.Result)
-						if webhookAlertSent, exists := webhookAlertStates[keyStr]; exists {
-							if err := notifications.HandleWebhookAlert(target.WebhookURL, target.WebhookHeaders, lambdaResult.Result.IsUp, webhookAlertSent, target.Name, lambdaResult.Result.URL, lambdaResult.Result.ResponseTime, lambdaResult.Result.StatusCode, errorMsg); err != nil {
-								log.Printf("[ERROR] %v", err)
-							}
-						}
-					}
+					decision := evaluateAlerts(target, trackers[keyStr], lambdaResult.Result, sslDaysRemaining, lambdaResult.Region)
 
 					seq := 0
 					if sequence, exists := sequences[keyStr]; exists {
@@ -262,11 +276,12 @@ func monitorTargetSimple(ctx context.Context, target config.Target, targetIndex 
 					}
 
 					resultsChan <- TargetResult{
-						Target:   target,
-						Result:   lambdaResult.Result,
-						Stats:    monitor.GetStats(),
-						Sequence: seq,
-						Region:   lambdaResult.Region,
+						Target:        target,
+						Result:        lambdaResult.Result,
+						Stats:         monitor.GetStats(),
+						Sequence:      seq,
+						Region:        lambdaResult.Region,
+						AlertDecision: decision,
 					}
 				}
 			}
@@ -282,22 +297,7 @@ func monitorTargetSimple(ctx context.Context, target config.Target, targetIndex 
 					*sequence++
 				}
 
-				if target.ReceiveAlert {
-					if alertSent, exists := alertStates[keyStr]; exists {
-						if err := notifications.HandleAlerts(result.IsUp, alertSent, target.Name, target.URL); err != nil {
-							log.Printf("Alert notification failed: %v", err)
-						}
-					}
-				}
-
-				if target.WebhookURL != "" {
-					errorMsg := getErrorMessage(result)
-					if webhookAlertSent, exists := webhookAlertStates[keyStr]; exists {
-						if err := notifications.HandleWebhookAlert(target.WebhookURL, target.WebhookHeaders, result.IsUp, webhookAlertSent, target.Name, target.URL, result.ResponseTime, result.StatusCode, errorMsg); err != nil {
-							log.Printf("[ERROR] %v", err)
-						}
-					}
-				}
+				decision := evaluateAlerts(target, trackers[keyStr], result, sslDaysRemaining, "")
 
 				seq := 0
 				if sequence, exists := sequences[keyStr]; exists {
@@ -305,11 +305,12 @@ func monitorTargetSimple(ctx context.Context, target config.Target, targetIndex 
 				}
 
 				resultsChan <- TargetResult{
-					Target:   target,
-					Result:   result,
-					Stats:    monitor.GetStats(),
-					Sequence: seq,
-					Region:   "",
+					Target:        target,
+					Result:        result,
+					Stats:         monitor.GetStats(),
+					Sequence:      seq,
+					Region:        "",
+					AlertDecision: decision,
 				}
 			}
 		}
