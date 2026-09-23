@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Owloops/updo/alerts"
 	"github.com/Owloops/updo/config"
 	"github.com/Owloops/updo/net"
 	"github.com/Owloops/updo/stats"
@@ -74,6 +75,8 @@ func (m *OutputManager) PrintResult(result TargetResult) {
 		statusInfo += " (assertion failed)"
 	}
 
+	statusInfo += " " + formatAlert(result.AlertDecision)
+
 	ipInfo := ""
 	if result.Result.ResolvedIP != "" {
 		ipInfo = fmt.Sprintf(" from %s", result.Result.ResolvedIP)
@@ -102,6 +105,17 @@ func (m *OutputManager) PrintResult(result TargetResult) {
 			statusInfo,
 			result.Stats.UptimePercent)
 	}
+}
+
+func formatAlert(decision alerts.Decision) string {
+	state := decision.State
+	if state == "" {
+		state = alerts.StateHealthy
+	}
+	if decision.Event == alerts.EventNone || decision.Event == "" {
+		return fmt.Sprintf("alert=%s", state)
+	}
+	return fmt.Sprintf("alert=%s event=%s", state, decision.Event)
 }
 
 func (m *OutputManager) PrintFinalStatistics(monitors map[string]*stats.Monitor, targets []config.Target, logMode bool) {

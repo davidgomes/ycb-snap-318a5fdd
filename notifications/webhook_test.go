@@ -2,10 +2,13 @@ package notifications
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/Owloops/updo/alerts"
 )
 
 func TestSendWebhook(t *testing.T) {
@@ -245,4 +248,104 @@ func TestHandleWebhookAlertEmptyURL(t *testing.T) {
 	if !alertSent {
 		t.Error("Alert state should still be updated even without webhook URL")
 	}
+}
+
+func TestHandleWebhookDecision(t *testing.T) {
+	decision := alerts.Decision{
+		Event:                 alerts.EventTargetDegraded,
+		State:                 alerts.StateDegraded,
+		PreviousState:         alerts.StateHealthy,
+		Reason:                "slow",
+		ConsecutiveFailures:   0,
+		ConsecutiveRecoveries: 4,
+		LatencyBreaches:       2,
+		SSLDaysRemaining:      0,
+		Suppressed:            false,
+	}
+
+	var (
+		calls     int
+		body      []byte
+		gotAuth   string
+		gotRegion string
+		usedTrip  bool
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var err error
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		gotAuth = r.Header.Get("Authorization")
+		gotRegion = r.Header.Get("X-Region")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		usedTrip = true
+		return http.DefaultTransport.RoundTrip(req)
+	})}
+
+	if err := HandleWebhookDecision(server.URL, client, decision, "", "https://example.com", 1500*time.Millisecond, 200, "", "us-east-1"); err != nil {
+		t.Fatalf("HandleWebhookDecision: %v", err)
+	}
+	if !usedTrip || calls != 1 {
+		t.Fatalf("used client=%v calls=%d", usedTrip, calls)
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	required := []string{
+		"event", "state", "previous_state", "reason", "consecutive_failures",
+		"consecutive_recoveries", "latency_breaches", "ssl_expiry_days", "region",
+	}
+	for _, key := range required {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("missing json field %s in %s", key, body)
+		}
+	}
+	if string(payload["event"]) != `"target_degraded"` || string(payload["state"]) != `"degraded"` {
+		t.Fatalf("payload = %s", body)
+	}
+	if string(payload["consecutive_failures"]) != "0" || string(payload["ssl_expiry_days"]) != "0" || string(payload["region"]) != `"us-east-1"` {
+		t.Fatalf("zero-valued fields = %s", body)
+	}
+	if string(payload["target"]) != `"https://example.com"` {
+		t.Fatalf("empty name should use url: %s", body)
+	}
+
+	calls = 0
+	none := decision
+	none.Event = alerts.EventNone
+	if err := HandleWebhookDecision(server.URL, client, none, "Name", "https://example.com", 0, 0, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	suppressed := decision
+	suppressed.Suppressed = true
+	if err := HandleWebhookDecision(server.URL, client, suppressed, "Name", "https://example.com", 0, 0, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("suppressed or empty events were sent: %d", calls)
+	}
+
+	if err := HandleWebhookDecisionWithHeaders(server.URL, []string{"Authorization: Bearer secret", "X-Region: eu"}, decision, "API", "https://example.com", time.Second, 503, "down", "eu-west-1"); err != nil {
+		t.Fatalf("with headers: %v", err)
+	}
+	if gotAuth != "Bearer secret" || gotRegion != "eu" {
+		t.Fatalf("authorization = %q region = %q", gotAuth, gotRegion)
+	}
+	if calls != 1 {
+		t.Fatalf("header call count = %d", calls)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Owloops/updo/alerts"
 	"github.com/Owloops/updo/aws"
 	"github.com/Owloops/updo/config"
 	"github.com/Owloops/updo/metrics"
@@ -87,7 +88,6 @@ func StartMonitoring(targets []config.Target, options Options) {
 	monitors := make(map[string]*stats.Monitor, len(allKeys))
 	sequences := make(map[string]*int, len(allKeys))
 	alertStates := make(map[string]*bool, len(allKeys))
-	webhookAlertStates := make(map[string]*bool, len(allKeys))
 
 	for _, key := range allKeys {
 		monitor, err := stats.NewMonitor()
@@ -97,10 +97,8 @@ func StartMonitoring(targets []config.Target, options Options) {
 		monitors[key.String()] = monitor
 		seq := 0
 		alert := false
-		webhookAlert := false
 		sequences[key.String()] = &seq
 		alertStates[key.String()] = &alert
-		webhookAlertStates[key.String()] = &webhookAlert
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -113,7 +111,7 @@ func StartMonitoring(targets []config.Target, options Options) {
 		wg.Add(1)
 		go func(t config.Target, index int) {
 			defer wg.Done()
-			monitorTargetTUI(ctx, t, index, monitors, sequences, alertStates, webhookAlertStates, dataChannel, options)
+			monitorTargetTUI(ctx, t, index, monitors, sequences, alertStates, dataChannel, options)
 		}(target, i)
 	}
 
@@ -261,11 +259,13 @@ func StartMonitoring(targets []config.Target, options Options) {
 	}
 }
 
-func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int, monitors map[string]*stats.Monitor, sequences map[string]*int, alertStates map[string]*bool, webhookAlertStates map[string]*bool, dataChannel chan<- TargetData, options Options) {
+func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int, monitors map[string]*stats.Monitor, sequences map[string]*int, alertStates map[string]*bool, dataChannel chan<- TargetData, options Options) {
 	ticker := time.NewTicker(target.GetRefreshInterval())
 	defer ticker.Stop()
 
 	attemptCount := 0
+	trackers := make(map[string]*alerts.Tracker)
+	policy := target.AlertPolicy.ToAlertsPolicy()
 
 	makeRequest := func() {
 		attemptCount++
@@ -284,6 +284,11 @@ func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int
 		regions := target.Regions
 		if len(regions) == 0 {
 			regions = options.Regions
+		}
+
+		sslDays := -1
+		if target.AlertPolicy.SSLExpiryThresholdDays > 0 {
+			sslDays = net.GetSSLCertExpiry(target.URL)
 		}
 
 		if len(regions) > 0 {
@@ -319,9 +324,10 @@ func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int
 						*sequence++
 					}
 
+					decision := evaluateAlert(trackers, targetKeyStr, policy, lambdaResult.Result, sslDays)
 					if target.ReceiveAlert {
 						if alertSent, exists := alertStates[targetKeyStr]; exists {
-							if err := notifications.HandleAlerts(lambdaResult.Result.IsUp, alertSent, target.Name, lambdaResult.Result.URL); err != nil {
+							if err := notifyDesktop(decision, alertSent, target.Name, lambdaResult.Result.URL); err != nil {
 								dataChannel <- TargetData{
 									Target:     target,
 									Result:     lambdaResult.Result,
@@ -334,26 +340,24 @@ func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int
 					}
 
 					if target.WebhookURL != "" {
-						errorMsg := ""
-						if !lambdaResult.Result.IsUp {
-							switch {
-							case lambdaResult.Result.StatusCode > 0:
-								errorMsg = fmt.Sprintf("Non-success status code: %d", lambdaResult.Result.StatusCode)
-							case lambdaResult.Result.AssertText != "" && !lambdaResult.Result.AssertionPassed:
-								errorMsg = "Assertion failed"
-							default:
-								errorMsg = "Request failed"
-							}
-						}
-						if webhookAlertSent, exists := webhookAlertStates[targetKeyStr]; exists {
-							if err := notifications.HandleWebhookAlert(target.WebhookURL, target.WebhookHeaders, lambdaResult.Result.IsUp, webhookAlertSent, target.Name, lambdaResult.Result.URL, lambdaResult.Result.ResponseTime, lambdaResult.Result.StatusCode, errorMsg); err != nil {
-								dataChannel <- TargetData{
-									Target:       target,
-									Result:       lambdaResult.Result,
-									Stats:        stats.Stats{},
-									TargetKey:    targetKey,
-									WebhookError: err,
-								}
+						errorMsg := tuiErrorMessage(lambdaResult.Result)
+						if err := notifications.HandleWebhookDecisionWithHeaders(
+							target.WebhookURL,
+							target.WebhookHeaders,
+							decision,
+							target.Name,
+							lambdaResult.Result.URL,
+							lambdaResult.Result.ResponseTime,
+							lambdaResult.Result.StatusCode,
+							errorMsg,
+							lambdaResult.Region,
+						); err != nil {
+							dataChannel <- TargetData{
+								Target:       target,
+								Result:       lambdaResult.Result,
+								Stats:        stats.Stats{},
+								TargetKey:    targetKey,
+								WebhookError: err,
 							}
 						}
 					}
@@ -379,9 +383,10 @@ func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int
 					*sequence++
 				}
 
+				decision := evaluateAlert(trackers, targetKeyStr, policy, result, sslDays)
 				if target.ReceiveAlert {
 					if alertSent, exists := alertStates[targetKeyStr]; exists {
-						if err := notifications.HandleAlerts(result.IsUp, alertSent, target.Name, target.URL); err != nil {
+						if err := notifyDesktop(decision, alertSent, target.Name, target.URL); err != nil {
 							stats := monitor.GetStats()
 							dataChannel <- TargetData{
 								Target:     target,
@@ -399,25 +404,23 @@ func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int
 					if !result.IsUp {
 						errorMsg = fmt.Sprintf("Status code: %d", result.StatusCode)
 					}
-					if webhookAlertSent, exists := webhookAlertStates[targetKeyStr]; exists {
-						if err := notifications.HandleWebhookAlert(
-							target.WebhookURL,
-							target.WebhookHeaders,
-							result.IsUp,
-							webhookAlertSent,
-							target.Name,
-							target.URL,
-							result.ResponseTime,
-							result.StatusCode,
-							errorMsg,
-						); err != nil {
-							dataChannel <- TargetData{
-								Target:       target,
-								Result:       result,
-								Stats:        stats.Stats{},
-								TargetKey:    targetKey,
-								WebhookError: err,
-							}
+					if err := notifications.HandleWebhookDecisionWithHeaders(
+						target.WebhookURL,
+						target.WebhookHeaders,
+						decision,
+						target.Name,
+						target.URL,
+						result.ResponseTime,
+						result.StatusCode,
+						errorMsg,
+						"",
+					); err != nil {
+						dataChannel <- TargetData{
+							Target:       target,
+							Result:       result,
+							Stats:        stats.Stats{},
+							TargetKey:    targetKey,
+							WebhookError: err,
 						}
 					}
 				}
@@ -448,5 +451,46 @@ func monitorTargetTUI(ctx context.Context, target config.Target, targetIndex int
 				return
 			}
 		}
+	}
+}
+
+func evaluateAlert(trackers map[string]*alerts.Tracker, key string, policy alerts.Policy, result net.WebsiteCheckResult, sslDays int) alerts.Decision {
+	tracker, ok := trackers[key]
+	if !ok {
+		tracker = alerts.NewTracker(policy)
+		trackers[key] = tracker
+	}
+	return tracker.Evaluate(alerts.Check{
+		IsUp:             result.IsUp,
+		ResponseTime:     result.ResponseTime,
+		SSLDaysRemaining: sslDays,
+	}, time.Now())
+}
+
+func notifyDesktop(decision alerts.Decision, alertSent *bool, targetName, targetURL string) error {
+	if decision.Suppressed || decision.Event == alerts.EventNone {
+		return nil
+	}
+	switch decision.Event {
+	case alerts.EventTargetDown:
+		return notifications.HandleAlerts(false, alertSent, targetName, targetURL)
+	case alerts.EventTargetRecovered:
+		return notifications.HandleAlerts(true, alertSent, targetName, targetURL)
+	default:
+		return nil
+	}
+}
+
+func tuiErrorMessage(result net.WebsiteCheckResult) string {
+	if result.IsUp {
+		return ""
+	}
+	switch {
+	case result.StatusCode > 0:
+		return fmt.Sprintf("Non-success status code: %d", result.StatusCode)
+	case result.AssertText != "" && !result.AssertionPassed:
+		return "Assertion failed"
+	default:
+		return "Request failed"
 	}
 }
