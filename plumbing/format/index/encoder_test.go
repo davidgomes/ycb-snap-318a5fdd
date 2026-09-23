@@ -115,6 +115,34 @@ func TestEncodeV4(t *testing.T) {
 	assert.Equal(t, "foo", output.Entries[4].Name)
 }
 
+func TestEncodeSortsStagesOfSamePath(t *testing.T) {
+	t.Parallel()
+	idx := &Index{
+		Version: 2,
+		Entries: []*Entry{
+			{Name: "foo", Stage: TheirMode},
+			{Name: "bar"},
+			{Name: "foo", Stage: AncestorMode},
+			{Name: "foo", Stage: OurMode},
+		},
+	}
+
+	buf := bytes.NewBuffer(nil)
+	e := NewEncoder(buf, crypto.SHA1.New())
+	require.NoError(t, e.Encode(idx))
+
+	output := &Index{}
+	d := NewDecoder(buf, crypto.SHA1.New())
+	require.NoError(t, d.Decode(output))
+
+	require.Len(t, output.Entries, 4)
+	assert.Equal(t, "bar", output.Entries[0].Name)
+	for i, stage := range []Stage{AncestorMode, OurMode, TheirMode} {
+		assert.Equal(t, "foo", output.Entries[i+1].Name)
+		assert.Equal(t, stage, output.Entries[i+1].Stage)
+	}
+}
+
 func TestEncodeUnsupportedVersion(t *testing.T) {
 	t.Parallel()
 	idx := &Index{Version: 5}
