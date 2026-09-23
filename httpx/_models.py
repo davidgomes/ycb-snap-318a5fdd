@@ -30,6 +30,7 @@ from ._exceptions import (
     StreamConsumed,
     request_context,
 )
+from ._json import _JSONParser, _resolve_json_content_type
 from ._multipart import get_multipart_boundary_from_content_type
 from ._status_codes import codes
 from ._types import (
@@ -932,6 +933,44 @@ class Response:
             for line in decoder.flush():
                 yield line
 
+    def iter_json(self, **kwargs: typing.Any) -> typing.Iterator[typing.Any]:
+        """
+        Yield parsed JSON values from the response body.
+
+        ``Content-Type`` must be ``application/json``, ``application/*+json``,
+        ``application/ndjson``, ``application/x-ndjson``, or
+        ``application/json-seq``. A top-level JSON array is yielded one element
+        at a time; other JSON documents yield their single value. Newline-delimited
+        JSON yields one value per non-blank line, and JSON text sequences yield
+        one value per record.
+
+        Streaming responses are consumed and closed. Iterating again raises
+        :exc:`StreamConsumed`. In-memory responses can be iterated repeatedly.
+        ``kwargs`` are forwarded to :class:`json.JSONDecoder`, as with
+        :meth:`json`.
+        """
+        with request_context(request=self._request):
+            mode, encoding = _resolve_json_content_type(
+                self.headers.get("Content-Type")
+            )
+            parser = _JSONParser(mode, encoding, **kwargs)
+            byte_iter = self.iter_bytes()
+            try:
+                for chunk in byte_iter:
+                    yield from parser.feed(chunk)
+                yield from parser.finish()
+            finally:
+                # ``iter_bytes`` closes a streaming response once the body has
+                # been read. Also close when iteration stops early. In-memory
+                # responses already have ``_content`` and stay open so that
+                # iteration can be repeated.
+                if (
+                    not hasattr(self, "_content")
+                    and isinstance(self.stream, SyncByteStream)
+                    and not self.is_closed
+                ):
+                    self.close()
+
     def iter_raw(self, chunk_size: int | None = None) -> typing.Iterator[bytes]:
         """
         A byte-iterator over the raw response content.
@@ -1033,6 +1072,39 @@ class Response:
                     yield line
             for line in decoder.flush():
                 yield line
+
+    async def aiter_json(
+        self, **kwargs: typing.Any
+    ) -> typing.AsyncIterator[typing.Any]:
+        """
+        Yield parsed JSON values from the response body.
+
+        Async equivalent of :meth:`iter_json`.
+        """
+        with request_context(request=self._request):
+            mode, encoding = _resolve_json_content_type(
+                self.headers.get("Content-Type")
+            )
+            parser = _JSONParser(mode, encoding, **kwargs)
+            byte_iter = self.aiter_bytes()
+            try:
+                async for chunk in byte_iter:
+                    for value in parser.feed(chunk):
+                        yield value
+                for value in parser.finish():
+                    yield value
+            finally:
+                # ``aiter_bytes`` closes a streaming response once the body has
+                # been read. Also close when iteration stops early. Do not
+                # aclose ``byte_iter`` here; the ``async for`` already does,
+                # and closing it again leaks the underlying stream generators.
+                # In-memory responses stay open so iteration can be repeated.
+                if (
+                    not hasattr(self, "_content")
+                    and isinstance(self.stream, AsyncByteStream)
+                    and not self.is_closed
+                ):
+                    await self.aclose()
 
     async def aiter_raw(
         self, chunk_size: int | None = None
