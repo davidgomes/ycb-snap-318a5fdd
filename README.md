@@ -126,6 +126,29 @@ await ofetch("http://google.com/404", {
 });
 ```
 
+## ✔️ Circuit Breaker
+
+Opt in per request with `circuitBreaker` to stop calling an origin that is failing. State is shared by clients created with `.create()` and is keyed by the request origin (not the path).
+
+```ts
+await ofetch("https://api.example.com/users", {
+  circuitBreaker: true,
+});
+
+await ofetch("https://api.example.com/users", {
+  circuitBreaker: {
+    threshold: 5, // consecutive failures before opening
+    cooldown: 30_000, // ms to wait before a half-open probe
+    halfOpenMaxRequests: 1, // concurrent probes while half-open
+    failureStatusCodes: [408, 409, 425, 429, 500, 502, 503, 504],
+  },
+});
+```
+
+`circuitBreaker: true` uses those defaults. When the circuit is open, or the half-open probe limit is already in use, the call rejects immediately with an error containing `Circuit breaker is open` and does not call the underlying `fetch`. After `cooldown`, one probe (by default) is allowed through. A successful probe closes the circuit; a failed probe opens it again and restarts the cooldown.
+
+Only one logical request is counted when ofetch retries internally. Statuses outside `failureStatusCodes` do not trip the breaker.
+
 ## ✔️ Timeout
 
 You can specify `timeout` in milliseconds to automatically abort a request after a timeout (default is disabled).

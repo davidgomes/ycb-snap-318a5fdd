@@ -2,6 +2,15 @@ import type { Readable } from "node:stream";
 import { withBase, withQuery } from "./utils.url.ts";
 import { createFetchError } from "./error.ts";
 import {
+  admitCircuit,
+  classifyCircuitError,
+  classifyCircuitResponse,
+  createCircuitStore,
+  isCircuitContinuation,
+  markCircuitContinuation,
+  type CircuitStore,
+} from "./circuit-breaker.ts";
+import {
   isPayloadMethod,
   isJSONSerializable,
   detectResponseType,
@@ -17,6 +26,12 @@ import type {
   FetchRequest,
   FetchOptions,
 } from "./types.ts";
+
+const CIRCUIT_STORE: unique symbol = Symbol("ofetch.circuitStore");
+
+type CreateFetchOptionsInternal = CreateFetchOptions & {
+  [CIRCUIT_STORE]?: CircuitStore;
+};
 
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
 const retryStatusCodes = new Set([
@@ -35,6 +50,9 @@ const nullBodyResponses = new Set([101, 204, 205, 304]);
 
 export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
   const { fetch = globalThis.fetch } = globalOptions;
+  const circuitStore =
+    (globalOptions as CreateFetchOptionsInternal)[CIRCUIT_STORE] ??
+    createCircuitStore();
 
   async function onError(context: FetchContext): Promise<FetchResponse<any>> {
     // Is Abort
@@ -69,10 +87,14 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         }
         // Timeout
-        return $fetchRaw(context.request, {
+        const retryOptions: FetchOptions = {
           ...context.options,
           retry: retries - 1,
-        });
+        };
+        // Retries belong to the same logical request, so they must not
+        // re-enter admission or record another circuit outcome.
+        markCircuitContinuation(retryOptions);
+        return $fetchRaw(context.request, retryOptions);
       }
     }
 
@@ -166,6 +188,43 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
       }
     }
 
+    const circuitContinuation = isCircuitContinuation(_options);
+    const circuit = circuitContinuation
+      ? undefined
+      : admitCircuit(
+          circuitStore,
+          context.request,
+          context.options.circuitBreaker
+        );
+
+    if (circuit?.blocked) {
+      context.error = new Error("Circuit breaker is open");
+      const error = createFetchError(context);
+      if (Error.captureStackTrace) {
+        Error.captureStackTrace(error, $fetchRaw);
+      }
+      throw error;
+    }
+
+    try {
+      const response = await dispatch(context);
+      if (circuit) {
+        circuit.complete(
+          classifyCircuitResponse(response.status, circuit.failureStatusCodes)
+        );
+      }
+      return response;
+    } catch (error) {
+      if (circuit) {
+        circuit.complete(
+          classifyCircuitError(error, circuit.failureStatusCodes)
+        );
+      }
+      throw error;
+    }
+  };
+
+  async function dispatch(context: FetchContext): Promise<FetchResponse<any>> {
     let abortTimeout: NodeJS.Timeout | undefined;
 
     if (context.options.timeout) {
@@ -254,7 +313,7 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
     }
 
     return context.response;
-  };
+  }
 
   const $fetch = async function $fetch(request, options) {
     const r = await $fetchRaw(request, options);
@@ -265,8 +324,8 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
 
   $fetch.native = (...args) => fetch(...args);
 
-  $fetch.create = (defaultOptions = {}, customGlobalOptions = {}) =>
-    createFetch({
+  $fetch.create = (defaultOptions = {}, customGlobalOptions = {}) => {
+    const options: CreateFetchOptionsInternal = {
       ...globalOptions,
       ...customGlobalOptions,
       defaults: {
@@ -274,7 +333,11 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
         ...customGlobalOptions.defaults,
         ...defaultOptions,
       },
-    });
+    };
+    // Symbol properties are not copied by object spread.
+    options[CIRCUIT_STORE] = circuitStore;
+    return createFetch(options);
+  };
 
   return $fetch;
 }
