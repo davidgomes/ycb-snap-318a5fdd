@@ -975,6 +975,57 @@ async function getDocPageAsyncImpl(
 }
 
 /**
+ * Removes the options with a non-required dependency that are not documented,
+ * i.e., hidden by `object()` because their dependency does not hold.
+ */
+function removeHiddenDependentOptions(
+  usage: Usage,
+  documentedOptionNames: ReadonlySet<string>,
+): Usage {
+  const result: UsageTerm[] = [];
+  for (const term of usage) {
+    if (term.type === "option") {
+      if (
+        term.dependsOn != null && term.dependsOn.required !== true &&
+        !term.names.some((name) => documentedOptionNames.has(name))
+      ) {
+        continue;
+      }
+      result.push(term);
+    } else if (term.type === "optional" || term.type === "multiple") {
+      const terms = removeHiddenDependentOptions(
+        term.terms,
+        documentedOptionNames,
+      );
+      if (terms.length < 1) continue;
+      result.push(
+        terms.length === term.terms.length &&
+          terms.every((t, i) => t === term.terms[i])
+          ? term
+          : { ...term, terms },
+      );
+    } else if (term.type === "exclusive") {
+      const branches = term.terms.map((branch) =>
+        removeHiddenDependentOptions(branch, documentedOptionNames)
+      );
+      const unchanged = branches.every((branch, i) =>
+        branch.length === term.terms[i].length &&
+        branch.every((t, j) => t === term.terms[i][j])
+      );
+      if (unchanged) {
+        result.push(term);
+        continue;
+      }
+      const remaining = branches.filter((branch) => branch.length > 0);
+      if (remaining.length > 0) result.push({ ...term, terms: remaining });
+    } else {
+      result.push(term);
+    }
+  }
+  return result;
+}
+
+/**
  * Builds a DocPage from the parser and context.
  * Shared by both sync and async implementations.
  */
@@ -1000,7 +1051,18 @@ function buildDocPage(
   if (entries.length > 0) {
     sections.push({ entries });
   }
-  const usage = [...normalizeUsage(parser.usage)];
+  const documentedOptionNames = new Set<string>();
+  for (const section of sections) {
+    for (const entry of section.entries) {
+      if (entry.term.type !== "option") continue;
+      for (const name of entry.term.names) documentedOptionNames.add(name);
+    }
+  }
+  const usage = [
+    ...normalizeUsage(
+      removeHiddenDependentOptions(parser.usage, documentedOptionNames),
+    ),
+  ];
   let i = 0;
   for (const arg of args) {
     if (i >= usage.length) break;

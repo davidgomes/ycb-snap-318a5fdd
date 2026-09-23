@@ -13,7 +13,14 @@ import {
 } from "@optique/core/message";
 import { multiple, optional, withDefault } from "@optique/core/modifiers";
 import { getDocPage, parse } from "@optique/core/parser";
-import { argument, command, constant, option } from "@optique/core/primitives";
+import {
+  argument,
+  command,
+  constant,
+  option,
+  optionalWhen,
+  requiredWhen,
+} from "@optique/core/primitives";
 import { integer, string } from "@optique/core/valueparser";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -1230,6 +1237,53 @@ describe("nested command help", () => {
 });
 
 describe("getDocPage", () => {
+  it("should omit hidden dependent options from the usage", () => {
+    const parser = object({
+      verbose: option("--verbose"),
+      level: optional(optionalWhen("verbose", "--level", integer())),
+      trace: optional(requiredWhen("verbose", "--trace", string())),
+    });
+
+    const hidden = getDocPage(parser);
+    assert.ok(hidden);
+    assert.deepEqual(hidden.usage, [
+      { type: "optional", terms: [{ type: "option", names: ["--verbose"] }] },
+      {
+        type: "optional",
+        terms: [{
+          type: "option",
+          names: ["--trace"],
+          metavar: "STRING",
+          dependsOn: { option: "verbose", required: true },
+        }],
+      },
+    ]);
+
+    const shown = getDocPage(parser, ["--verbose"]);
+    assert.ok(shown);
+    assert.deepEqual(shown.usage, [
+      { type: "optional", terms: [{ type: "option", names: ["--verbose"] }] },
+      {
+        type: "optional",
+        terms: [{
+          type: "option",
+          names: ["--level"],
+          metavar: "INTEGER",
+          dependsOn: { option: "verbose", required: false },
+        }],
+      },
+      {
+        type: "optional",
+        terms: [{
+          type: "option",
+          names: ["--trace"],
+          metavar: "STRING",
+          dependsOn: { option: "verbose", required: true },
+        }],
+      },
+    ]);
+  });
+
   it("should return documentation page for simple parser", () => {
     const parser = option("-v", "--verbose");
 
