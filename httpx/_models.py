@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from http.cookiejar import Cookie, CookieJar
 
 from ._content import ByteStream, UnattachedStream, encode_request, encode_response
+from ._cookies import CookieStore
 from ._decoders import (
     SUPPORTED_DECODERS,
     ByteChunker,
@@ -400,7 +401,9 @@ class Request:
         self.headers = Headers(headers)
         self.extensions = {} if extensions is None else dict(extensions)
 
-        if cookies:
+        if isinstance(cookies, CookieStore):
+            cookies.set_cookie_header(self)
+        elif cookies:
             Cookies(cookies).set_cookie_header(self)
 
         if stream is None:
@@ -1095,6 +1098,10 @@ class Cookies(typing.MutableMapping[str, str]):
             self.jar = CookieJar()
             for cookie in cookies.jar:
                 self.jar.set_cookie(cookie)
+        elif isinstance(cookies, CookieStore):
+            self.jar = CookieJar()
+            for stored_cookie in cookies._live_cookies():
+                self.jar.set_cookie(stored_cookie.to_cookiejar())
         else:
             self.jar = cookies
 

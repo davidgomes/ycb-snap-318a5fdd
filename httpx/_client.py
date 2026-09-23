@@ -19,6 +19,7 @@ from ._config import (
     Proxy,
     Timeout,
 )
+from ._cookies import CookieStore
 from ._decoders import SUPPORTED_DECODERS
 from ._exceptions import (
     InvalidURL,
@@ -208,7 +209,7 @@ class BaseClient:
         self._auth = self._build_auth(auth)
         self._params = QueryParams(params)
         self.headers = Headers(headers)
-        self._cookies = Cookies(cookies)
+        self._cookies = self._build_cookies(cookies)
         self._timeout = Timeout(timeout)
         self.follow_redirects = follow_redirects
         self.max_redirects = max_redirects
@@ -316,7 +317,7 @@ class BaseClient:
         self._headers = client_headers
 
     @property
-    def cookies(self) -> Cookies:
+    def cookies(self) -> Cookies | CookieStore:
         """
         Cookie values to include when sending requests.
         """
@@ -324,7 +325,12 @@ class BaseClient:
 
     @cookies.setter
     def cookies(self, cookies: CookieTypes) -> None:
-        self._cookies = Cookies(cookies)
+        self._cookies = self._build_cookies(cookies)
+
+    def _build_cookies(self, cookies: CookieTypes | None) -> Cookies | CookieStore:
+        if isinstance(cookies, CookieStore):
+            return cookies
+        return Cookies(cookies)
 
     @property
     def params(self) -> QueryParams:
@@ -416,6 +422,13 @@ class BaseClient:
         to create the cookies used for the outgoing request.
         """
         if cookies or self.cookies:
+            if isinstance(cookies, CookieStore) or isinstance(
+                self.cookies, CookieStore
+            ):
+                merged_store = CookieStore()
+                merged_store.update(self.cookies)
+                merged_store.update(cookies)
+                return merged_store
             merged_cookies = Cookies(self.cookies)
             merged_cookies.update(cookies)
             return merged_cookies
@@ -481,12 +494,11 @@ class BaseClient:
         url = self._redirect_url(request, response)
         headers = self._redirect_headers(request, url, method)
         stream = self._redirect_stream(request, method)
-        cookies = Cookies(self.cookies)
         return Request(
             method=method,
             url=url,
             headers=headers,
-            cookies=cookies,
+            cookies=self.cookies,
             stream=stream,
             extensions=request.extensions,
         )
