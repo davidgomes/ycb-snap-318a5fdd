@@ -11,6 +11,7 @@ import {LegacyRoot, ConcurrentRoot} from 'react-reconciler/constants.js';
 import {type FiberRoot} from 'react-reconciler';
 import Yoga from 'yoga-layout';
 import wrapAnsi from 'wrap-ansi';
+import calculateGridLayout from './grid.js';
 import {getWindowSize} from './utils.js';
 import reconciler from './reconciler.js';
 import render from './renderer.js';
@@ -42,8 +43,7 @@ const zeroByte = 0x30;
 const nineByte = 0x39;
 
 type KittyQueryResponseMatch =
-	| {state: 'complete'; endIndex: number}
-	| {state: 'partial'};
+	{state: 'complete'; endIndex: number} | {state: 'partial'};
 
 const isDigitByte = (byte: number): boolean =>
 	byte >= zeroByte && byte <= nineByte;
@@ -285,8 +285,7 @@ export default class Ink {
 	private readonly log: LogUpdate;
 	private cursorPosition: CursorPosition | undefined;
 	private readonly throttledLog:
-		| LogUpdate
-		| DebouncedFunc<(output: string) => void>;
+		LogUpdate | DebouncedFunc<(output: string) => void>;
 
 	private readonly isScreenReaderEnabled: boolean;
 	private readonly interactive: boolean;
@@ -505,11 +504,13 @@ export default class Ink {
 
 		this.rootNode.yogaNode!.setWidth(terminalWidth);
 
-		this.rootNode.yogaNode!.calculateLayout(
-			undefined,
-			undefined,
-			Yoga.DIRECTION_LTR,
-		);
+		calculateGridLayout(this.rootNode, () => {
+			this.rootNode.yogaNode!.calculateLayout(
+				undefined,
+				undefined,
+				Yoga.DIRECTION_LTR,
+			);
+		});
 	};
 
 	onRender: () => void = () => {

@@ -161,23 +161,14 @@ export type Styles = {
 	See [align-items](https://css-tricks.com/almanac/properties/a/align-items/).
 	*/
 	readonly alignItems?:
-		| 'flex-start'
-		| 'center'
-		| 'flex-end'
-		| 'stretch'
-		| 'baseline';
+		'flex-start' | 'center' | 'flex-end' | 'stretch' | 'baseline';
 
 	/**
 	It makes possible to override the align-items value for specific flex items.
 	See [align-self](https://css-tricks.com/almanac/properties/a/align-self/).
 	*/
 	readonly alignSelf?:
-		| 'flex-start'
-		| 'center'
-		| 'flex-end'
-		| 'auto'
-		| 'stretch'
-		| 'baseline';
+		'flex-start' | 'center' | 'flex-end' | 'auto' | 'stretch' | 'baseline';
 
 	/**
 	It defines the alignment along the cross axis when there are multiple lines of flex items (when using flex-wrap).
@@ -246,7 +237,27 @@ export type Styles = {
 	/**
 	Set this property to `none` to hide the element.
 	*/
-	readonly display?: 'flex' | 'none';
+	readonly display?: 'flex' | 'grid' | 'none';
+
+	/**
+	Space-separated list of column track sizes for a grid container. Supports fixed numbers, fractional units (`1fr`), `auto` and `minmax(min, max)`.
+	*/
+	readonly gridTemplateColumns?: string;
+
+	/**
+	Space-separated list of row track sizes for a grid container. Rows are created automatically when omitted.
+	*/
+	readonly gridTemplateRows?: string;
+
+	/**
+	Column placement of a grid item: a 1-based line index or a `"start / end"` string.
+	*/
+	readonly gridColumn?: number | string;
+
+	/**
+	Row placement of a grid item: a 1-based line index or a `"start / end"` string.
+	*/
+	readonly gridRow?: number | string;
 
 	/**
 	Add a border with a specified style. If `borderStyle` is `undefined` (the default), no border will be added.
@@ -687,7 +698,7 @@ const applyDimensionStyles = (node: YogaNode, style: Styles): void => {
 const applyDisplayStyles = (node: YogaNode, style: Styles): void => {
 	if ('display' in style) {
 		node.setDisplay(
-			style.display === 'flex' ? Yoga.DISPLAY_FLEX : Yoga.DISPLAY_NONE,
+			style.display === 'none' ? Yoga.DISPLAY_NONE : Yoga.DISPLAY_FLEX,
 		);
 	}
 };
