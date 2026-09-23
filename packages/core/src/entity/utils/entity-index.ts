@@ -59,6 +59,42 @@ export const allocateEntity = (index: EntityIndex): Entity => {
 };
 
 /**
+ * Allocates an entity with a specific ID. The ID must not currently be alive.
+ * @param index - The EntityIndex to add to.
+ * @param id - The entity ID to allocate.
+ * @returns The new or recycled packed entity.
+ */
+export const allocateEntityWithId = (index: EntityIndex, id: number): Entity => {
+    let isFresh = false;
+
+    if (id >= index.maxId) {
+        for (let i = index.maxId; i <= id; i++) {
+            index.sparse[i] = index.dense.length;
+            index.dense.push(packEntity(index.worldId, 0, i));
+        }
+        index.maxId = id + 1;
+        isFresh = true;
+    }
+
+    const denseIndex = index.sparse[id];
+    if (denseIndex < index.aliveCount) {
+        throw new Error(`Koota: Cannot allocate entity ${id} because it is already alive.`);
+    }
+
+    const entity = isFresh ? index.dense[denseIndex] : incrementGeneration(index.dense[denseIndex]);
+    const swapIndex = index.aliveCount;
+    const swapEntity = index.dense[swapIndex];
+
+    index.dense[denseIndex] = swapEntity;
+    index.sparse[getEntityId(swapEntity)] = denseIndex;
+    index.dense[swapIndex] = entity;
+    index.sparse[id] = swapIndex;
+    index.aliveCount++;
+
+    return entity;
+};
+
+/**
  * Removes an entity ID from the index.
  * @param index - The EntityIndex to remove from.
  * @param entity - The packed entity to remove.
@@ -95,6 +131,18 @@ export const isEntityAlive = /* @inline @pure */ (index: EntityIndex, entity: En
         getEntityGeneration(entity) === getEntityGeneration(storedEntity) &&
         getEntityWorldId(entity) === index.worldId
     );
+};
+
+/**
+ * Gets the alive entity with the given ID.
+ * @param index - The EntityIndex to search.
+ * @param id - The entity ID to look up.
+ * @returns The packed entity if alive, otherwise undefined.
+ */
+export const getAliveEntityById = (index: EntityIndex, id: number): Entity | undefined => {
+    const denseIndex = index.sparse[id];
+    if (denseIndex === undefined || denseIndex >= index.aliveCount) return undefined;
+    return index.dense[denseIndex];
 };
 
 /**
