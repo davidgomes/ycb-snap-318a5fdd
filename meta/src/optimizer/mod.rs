@@ -739,6 +739,138 @@ mod tests {
         assert_eq!(optimize(rules), optimized);
     }
 
+    #[test]
+    fn char_class() {
+        let rules = {
+            use crate::ast::Expr::*;
+            vec![Rule {
+                name: "rule".to_owned(),
+                ty: RuleType::Atomic,
+                expr: box_tree!(Rep(Choice(
+                    Choice(
+                        Range(String::from("a"), String::from("z")),
+                        Range(String::from("A"), String::from("Z"))
+                    ),
+                    Choice(
+                        Choice(
+                            Range(String::from("0"), String::from("9")),
+                            Str(String::from("_"))
+                        ),
+                        Choice(Str(String::from("-")), Str(String::from(".")))
+                    )
+                ))),
+            }]
+        };
+        let optimized = {
+            use crate::optimizer::OptimizedExpr::*;
+            vec![OptimizedRule {
+                name: "rule".to_owned(),
+                ty: RuleType::Atomic,
+                expr: box_tree!(Rep(CharClass(
+                    [("-", "."), ("0", "9"), ("A", "Z"), ("_", "_"), ("a", "z")]
+                        .into_iter()
+                        .map(|(start, end)| (start.to_owned(), end.to_owned()))
+                        .collect()
+                ))),
+            }]
+        };
+
+        assert_eq!(optimize(rules), optimized);
+    }
+
+    #[test]
+    fn neg_char_class() {
+        let rules = {
+            use crate::ast::Expr::*;
+            vec![
+                Rule {
+                    name: "string".to_owned(),
+                    ty: RuleType::Normal,
+                    expr: box_tree!(Seq(
+                        NegPred(Choice(Str(String::from("\"")), Str(String::from("\\")))),
+                        Ident(String::from("ANY"))
+                    )),
+                },
+                Rule {
+                    name: "digits".to_owned(),
+                    ty: RuleType::Atomic,
+                    expr: box_tree!(Rep(Seq(
+                        NegPred(Choice(
+                            Range(String::from("0"), String::from("9")),
+                            Str(String::from("a"))
+                        )),
+                        Ident(String::from("ANY"))
+                    ))),
+                },
+            ]
+        };
+        let optimized = {
+            use crate::optimizer::OptimizedExpr::*;
+            vec![
+                OptimizedRule {
+                    name: "string".to_owned(),
+                    ty: RuleType::Normal,
+                    expr: NegCharClass(vec![
+                        (String::from("\""), String::from("\"")),
+                        (String::from("\\"), String::from("\\")),
+                    ]),
+                },
+                OptimizedRule {
+                    name: "digits".to_owned(),
+                    ty: RuleType::Atomic,
+                    expr: box_tree!(Rep(NegCharClass(vec![
+                        (String::from("0"), String::from("9")),
+                        (String::from("a"), String::from("a")),
+                    ]))),
+                },
+            ]
+        };
+
+        assert_eq!(optimize(rules), optimized);
+    }
+
+    #[test]
+    fn neg_char_class_with_implicit_whitespace() {
+        let rules = {
+            use crate::ast::Expr::*;
+            vec![
+                Rule {
+                    name: "WHITESPACE".to_owned(),
+                    ty: RuleType::Silent,
+                    expr: Str(String::from(" ")),
+                },
+                Rule {
+                    name: "rule".to_owned(),
+                    ty: RuleType::Normal,
+                    expr: box_tree!(Seq(
+                        NegPred(Choice(Str(String::from("a")), Str(String::from("b")))),
+                        Ident(String::from("ANY"))
+                    )),
+                },
+            ]
+        };
+        let optimized = {
+            use crate::optimizer::OptimizedExpr::*;
+            vec![
+                OptimizedRule {
+                    name: "WHITESPACE".to_owned(),
+                    ty: RuleType::Silent,
+                    expr: Str(String::from(" ")),
+                },
+                OptimizedRule {
+                    name: "rule".to_owned(),
+                    ty: RuleType::Normal,
+                    expr: box_tree!(Seq(
+                        NegPred(Range(String::from("a"), String::from("b"))),
+                        Ident(String::from("ANY"))
+                    )),
+                },
+            ]
+        };
+
+        assert_eq!(optimize(rules), optimized);
+    }
+
     mod display {
         use super::super::*;
         /// In previous implementation of Display for OptimizedExpr
@@ -796,6 +928,30 @@ mod tests {
             assert_eq!(
                 OptimizedExpr::Range("a".to_owned(), "z".to_owned()).to_string(),
                 r#"('a'..'z')"#,
+            );
+        }
+
+        #[test]
+        fn char_class() {
+            assert_eq!(
+                OptimizedExpr::CharClass(vec![
+                    ("a".to_owned(), "z".to_owned()),
+                    ("_".to_owned(), "_".to_owned()),
+                ])
+                .to_string(),
+                r#"(('a'..'z') | "_")"#,
+            );
+        }
+
+        #[test]
+        fn neg_char_class() {
+            assert_eq!(
+                OptimizedExpr::NegCharClass(vec![
+                    ("\n".to_owned(), "\r".to_owned()),
+                    ("\"".to_owned(), "\"".to_owned()),
+                ])
+                .to_string(),
+                r#"(!(('\n'..'\r') | "\"") ~ ANY)"#,
             );
         }
 

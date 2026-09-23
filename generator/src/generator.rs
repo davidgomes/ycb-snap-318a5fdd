@@ -1097,6 +1097,36 @@ mod tests {
     }
 
     #[test]
+    fn char_class() {
+        let expr = OptimizedExpr::CharClass(vec![
+            ("a".to_owned(), "z".to_owned()),
+            ("_".to_owned(), "_".to_owned()),
+        ]);
+        let expected = quote! {
+            state.match_char_class(&[('a', 'z'), ('_', '_')])
+        }
+        .to_string();
+
+        assert_eq!(generate_expr(expr.clone()).to_string(), expected);
+        assert_eq!(generate_expr_atomic(expr).to_string(), expected);
+    }
+
+    #[test]
+    fn neg_char_class() {
+        let expr = OptimizedExpr::NegCharClass(vec![
+            ("\"".to_owned(), "\"".to_owned()),
+            ("\\".to_owned(), "\\".to_owned()),
+        ]);
+        let expected = quote! {
+            state.match_negated_char_class(&[('"', '"'), ('\\', '\\')])
+        }
+        .to_string();
+
+        assert_eq!(generate_expr(expr.clone()).to_string(), expected);
+        assert_eq!(generate_expr_atomic(expr).to_string(), expected);
+    }
+
+    #[test]
     #[cfg(feature = "grammar-extras")]
     fn push_literal() {
         let expr = OptimizedExpr::PushLiteral("a".to_owned());
