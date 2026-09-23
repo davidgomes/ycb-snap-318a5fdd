@@ -58,6 +58,18 @@ func CaseInsensitive(tokens ...string) Option {
 	}
 }
 
+// StrictMode runs grammar analysis at the end of Build() and fails the build
+// if any conflict (including warnings) is detected.
+//
+// Analysis is only available when compiled with the "analyze" build tag;
+// without it this option has no effect.
+func StrictMode() Option {
+	return func(p *parserOptions) error {
+		p.strict = true
+		return nil
+	}
+}
+
 // ParseTypeWith associates a custom parsing function with some interface type T.
 // When the parser encounters a value of type T, it will use the given parse function to
 // parse a value from the input.
