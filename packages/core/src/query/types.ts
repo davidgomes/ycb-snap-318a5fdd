@@ -144,6 +144,8 @@ export type TrackingGroup = {
      * Each entry maps a target to its net event since the entity was last observed.
      */
     pairTrackers: Map<number, (Map<Entity, number> | undefined)[]>;
+    /** Data of pairs tracked as removed, laid out like `pairTrackers` */
+    removedPairData: Map<number, (Map<Entity, unknown> | undefined)[]>;
 };
 
 /** Relation pair state captured for a tracking modifier when it starts observing a world. */

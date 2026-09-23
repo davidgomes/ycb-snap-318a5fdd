@@ -11,11 +11,12 @@ import type { World } from '../../world';
 import { createTrackingModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
-import { trackPairEvent } from '../utils/pair-tracking';
+import { enablePairChangeTicks, trackPairEvent } from '../utils/pair-tracking';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
 
 export function createChanged() {
     const id = createTrackingId();
+    enablePairChangeTicks();
 
     for (const world of universe.worlds) {
         if (!world) continue;
@@ -82,10 +83,7 @@ export function setPairChanged(world: World, entity: Entity, trait: Trait, targe
     const data = markChanged(world, entity, trait);
     if (!data) return;
 
-    const relation = trait[$internal].relation!;
-    if (hasRelationToTarget(world, relation, entity, target)) {
-        trackPairEvent(world, relation, entity, target, 'change');
-    }
+    trackPairEvent(world, trait[$internal].relation!, entity, target, 'change');
 
     for (const sub of data.changeSubscriptions) sub(entity, target);
 }

@@ -1,8 +1,8 @@
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
-import { getRelationTargets } from '../../relation/relation';
-import type { Relation } from '../../relation/types';
+import { getRelationTargets, hasRelationToTarget } from '../../relation/relation';
+import type { Relation, RelationTarget } from '../../relation/types';
 import { getTraitInstance } from '../../trait/trait-instance';
 import type { Trait } from '../../trait/types';
 import type { World } from '../../world';
@@ -15,6 +15,27 @@ const PAIR_REMOVED = -1;
 const PAIR_CHANGED = 2;
 
 const EMPTY_TARGETS: readonly Entity[] = [];
+
+// Change ticks are only read by Changed modifiers, which ignore changes made before they exist.
+let recordPairChangeTicks = false;
+
+export function enablePairChangeTicks() {
+    recordPairChangeTicks = true;
+}
+
+/** A pair matched by a tracking modifier when its query ran */
+export type PairMatch = {
+    target: Entity;
+    /** The pair's data when it was removed, for pairs tracked by `Removed` */
+    data: unknown;
+};
+
+/** Matched pairs per entity, keyed by `getPairKey` */
+export type PairMatches = Map<string, Map<Entity, PairMatch>>;
+
+export function getPairKey(modifierId: number, relationTraitId: number, target: RelationTarget) {
+    return `${modifierId}:${relationTraitId}:${target}`;
+}
 
 /** Capture every relation pair in the world so later pair additions and removals can be diffed against it. */
 export function createPairSnapshot(world: World): PairSnapshot {
@@ -49,47 +70,46 @@ function getPairState(type: EventType): number {
     return type === 'add' ? PAIR_ADDED : type === 'remove' ? PAIR_REMOVED : PAIR_CHANGED;
 }
 
-function applyPairEvent(
-    states: Map<Entity, number>,
-    target: Entity,
+function getNextPairState(
+    prev: number | undefined,
     groupType: EventType,
     eventType: EventType
-) {
-    const prev = states.get(target);
-    let next: number | undefined;
-
-    if (groupType === 'change') {
-        // A removed pair can no longer count as changed.
-        next = eventType === 'change' ? PAIR_CHANGED : eventType === 'remove' ? undefined : prev;
-    } else if (eventType === 'add') {
-        next = prev === PAIR_REMOVED ? undefined : PAIR_ADDED;
-    } else {
-        next = prev === PAIR_ADDED ? undefined : PAIR_REMOVED;
-    }
-
-    if (next === undefined) states.delete(target);
-    else states.set(target, next);
+): number | undefined {
+    // A removed pair can no longer count as changed.
+    if (groupType === 'change') return eventType === 'change' ? PAIR_CHANGED : undefined;
+    if (eventType === 'add') return prev === PAIR_REMOVED ? undefined : PAIR_ADDED;
+    return prev === PAIR_ADDED ? undefined : PAIR_REMOVED;
 }
 
-function getEntityPairStates(group: TrackingGroup, eid: number) {
+function getPairStates(group: TrackingGroup, eid: number, index: number) {
     let entityStates = group.pairTrackers.get(eid);
     if (!entityStates) {
         entityStates = [];
         group.pairTrackers.set(eid, entityStates);
     }
-    return entityStates;
+    return (entityStates[index] ??= new Map());
+}
+
+function getRemovedPairData(group: TrackingGroup, eid: number, index: number) {
+    let entityData = group.removedPairData.get(eid);
+    if (!entityData) {
+        entityData = [];
+        group.removedPairData.set(eid, entityData);
+    }
+    return (entityData[index] ??= new Map());
 }
 
 /**
- * Record a pair event for tracking queries that track pairs of the relation
- * and update their membership for the entity.
+ * Record a pair event for tracking queries that track the pair and update their membership
+ * for the entity. For removals, `removedData` is the pair's data before it was removed.
  */
 export function trackPairEvent(
     world: World,
     relation: Relation<Trait>,
     entity: Entity,
     target: Entity,
-    eventType: EventType
+    eventType: EventType,
+    removedData?: unknown
 ) {
     const ctx = world[$internal];
     const instance = getTraitInstance(ctx.traitInstances, relation[$internal].trait);
@@ -99,38 +119,88 @@ export function trackPairEvent(
 
     // Kept for tracking queries created later, which diff against their modifier's snapshot tick.
     if (eventType === 'change') {
-        const ticks = (instance.pairChangeTicks ??= []);
-        (ticks[eid] ??= new Map()).set(target, ++ctx.pairTick);
-    } else if (eventType === 'remove') {
+        if (recordPairChangeTicks) {
+            const ticks = (instance.pairChangeTicks ??= []);
+            (ticks[eid] ??= new Map()).set(target, ++ctx.pairTick);
+        }
+    } else {
+        // An added or removed pair starts over without changes.
         instance.pairChangeTicks?.[eid]?.delete(target);
     }
 
-    for (const query of instance.pairTrackingQueries) {
-        const groups = query.trackingGroups;
-        let tracked = false;
+    const index = instance.pairTrackingQueries;
+    if (index.size === 0) return;
 
-        for (let i = 0; i < groups.length; i++) {
-            const group = groups[i];
-            const pairs = group.pairs;
-            if (pairs.length === 0) continue;
-            if (eventType === 'change' && group.type !== 'change') continue;
+    const specificQueries = index.get(target);
+    const wildcardQueries = index.get('*');
+    if (!specificQueries && !wildcardQueries) return;
 
-            for (let j = 0; j < pairs.length; j++) {
-                const pairCtx = pairs[j][$internal];
-                if (pairCtx.relation !== relation) continue;
-                if (pairCtx.target !== '*' && pairCtx.target !== target) continue;
+    if (eventType === 'change' && !hasRelationToTarget(world, relation, entity, target)) return;
 
-                const entityStates = getEntityPairStates(group, eid);
-                applyPairEvent((entityStates[j] ??= new Map()), target, group.type, eventType);
-                tracked = true;
-            }
+    if (specificQueries) {
+        for (const query of specificQueries) {
+            trackQueryPairEvent(world, query, relation, entity, target, eventType, removedData);
         }
-
-        if (!tracked) continue;
-
-        if (checkQueryTrackingState(world, query, entity)) query.add(entity);
-        else query.remove(world, entity);
     }
+
+    if (wildcardQueries) {
+        for (const query of wildcardQueries) {
+            trackQueryPairEvent(world, query, relation, entity, target, eventType, removedData);
+        }
+    }
+}
+
+function trackQueryPairEvent(
+    world: World,
+    query: QueryInstance,
+    relation: Relation<Trait>,
+    entity: Entity,
+    target: Entity,
+    eventType: EventType,
+    removedData: unknown
+) {
+    const groups = query.trackingGroups;
+    const eid = getEntityId(entity);
+    let tracked = false;
+
+    for (let i = 0; i < groups.length; i++) {
+        const group = groups[i];
+        const groupType = group.type;
+        const pairs = group.pairs;
+        if (pairs.length === 0) continue;
+
+        // Changes only matter to Changed groups, and additions never affect them.
+        if (groupType === 'change' ? eventType === 'add' : eventType === 'change') continue;
+
+        for (let j = 0; j < pairs.length; j++) {
+            const pairCtx = pairs[j][$internal];
+            if (pairCtx.relation !== relation) continue;
+            if (pairCtx.target !== '*' && pairCtx.target !== target) continue;
+
+            const states = group.pairTrackers.get(eid)?.[j];
+            const prev = states?.get(target);
+            const next = getNextPairState(prev, groupType, eventType);
+            if (next === prev) continue;
+
+            if (next === undefined) states!.delete(target);
+            else getPairStates(group, eid, j).set(target, next);
+
+            if (groupType === 'remove') {
+                if (next === PAIR_REMOVED && removedData !== undefined) {
+                    getRemovedPairData(group, eid, j).set(target, removedData);
+                } else {
+                    group.removedPairData.get(eid)?.[j]?.delete(target);
+                }
+            }
+
+            tracked = true;
+        }
+    }
+
+    if (!tracked) return;
+
+    if (checkQueryTrackingState(world, query, entity)) query.add(entity);
+    else query.remove(world, entity);
 }
 
 /**
@@ -153,8 +223,9 @@ export function seedPairTrackers(world: World, group: TrackingGroup, entity: Ent
             const ticks = getTraitInstance(ctx.traitInstances, trait)?.pairChangeTicks?.[eid];
             if (!ticks) continue;
             for (const [t, tick] of ticks) {
-                if (tick > snapshot.tick && (target === '*' || target === t)) {
-                    seedPairState(group, eid, i, t, PAIR_CHANGED);
+                if (tick <= snapshot.tick || (target !== '*' && target !== t)) continue;
+                if (hasRelationToTarget(world, relation, entity, t)) {
+                    getPairStates(group, eid, i).set(t, PAIR_CHANGED);
                 }
             }
         } else {
@@ -162,43 +233,28 @@ export function seedPairTrackers(world: World, group: TrackingGroup, entity: Ent
             const previous = snapshot.targets[trait.id]?.get(entity) ?? EMPTY_TARGETS;
             for (const t of current) {
                 if ((target === '*' || target === t) && !previous.includes(t)) {
-                    seedPairState(group, eid, i, t, PAIR_ADDED);
+                    getPairStates(group, eid, i).set(t, PAIR_ADDED);
                 }
             }
             for (const t of previous) {
                 if ((target === '*' || target === t) && !current.includes(t)) {
-                    seedPairState(group, eid, i, t, PAIR_REMOVED);
+                    getPairStates(group, eid, i).set(t, PAIR_REMOVED);
                 }
             }
         }
     }
 }
 
-function seedPairState(
-    group: TrackingGroup,
-    eid: number,
-    index: number,
-    target: Entity,
-    state: number
-) {
-    const entityStates = getEntityPairStates(group, eid);
-    (entityStates[index] ??= new Map()).set(target, state);
-}
-
-/** Key for the targets resolved for `'*'` pairs of a modifier, see `resolveWildcardPairTargets` */
-export function getWildcardPairKey(modifierId: number, relationTraitId: number) {
-    return `${modifierId}:${relationTraitId}`;
-}
-
 /**
- * For each `'*'` pair tracked by a query, find the target that satisfied it for each entity.
- * Must run before the trackers of the entities are reset.
+ * Find the pairs matched by the entities a query returns, for iterating their data. Specific
+ * targets are only needed for removed pairs, whose data is no longer stored. Must run before
+ * the trackers of the entities are reset.
  */
-export function resolveWildcardPairTargets(
+export function resolvePairMatches(
     query: QueryInstance,
     entities: readonly Entity[]
-): Map<string, Map<Entity, Entity>> | undefined {
-    let resolved: Map<string, Map<Entity, Entity>> | undefined;
+): PairMatches | undefined {
+    let matches: PairMatches | undefined;
     const groups = query.trackingGroups;
 
     for (let i = 0; i < groups.length; i++) {
@@ -211,28 +267,38 @@ export function resolveWildcardPairTargets(
 
         for (let j = 0; j < pairs.length; j++) {
             const { relation, target } = pairs[j][$internal];
-            if (target !== '*') continue;
+            if (target !== '*' && group.type !== 'remove') continue;
 
-            const key = getWildcardPairKey(group.id, relation[$internal].trait.id);
-            if (resolved?.has(key)) continue;
+            const key = getPairKey(group.id, relation[$internal].trait.id, target);
+            if (matches?.has(key)) continue;
 
-            const byEntity = new Map<Entity, Entity>();
+            const byEntity = new Map<Entity, PairMatch>();
             for (let k = 0; k < entities.length; k++) {
                 const entity = entities[k];
-                const states = group.pairTrackers.get(getEntityId(entity))?.[j];
+                const eid = getEntityId(entity);
+                const states = group.pairTrackers.get(eid)?.[j];
                 if (!states) continue;
                 for (const [t, value] of states) {
                     if (value !== state) continue;
-                    byEntity.set(entity, t);
+                    byEntity.set(entity, {
+                        target: t,
+                        data: group.removedPairData.get(eid)?.[j]?.get(t),
+                    });
                     break;
                 }
             }
 
-            (resolved ??= new Map()).set(key, byEntity);
+            (matches ??= new Map()).set(key, byEntity);
         }
     }
 
-    return resolved;
+    return matches;
+}
+
+/** Clear the pair trackers of an entity in a tracking group */
+export function resetPairTrackers(group: TrackingGroup, eid: number) {
+    group.pairTrackers.delete(eid);
+    group.removedPairData.delete(eid);
 }
 
 /**
@@ -263,7 +329,7 @@ export function prunePairTrackers(query: QueryInstance) {
                 else entityStates[j] = undefined;
             }
 
-            if (!hasStates) group.pairTrackers.delete(eid);
+            if (!hasStates) resetPairTrackers(group, eid);
         }
     }
 }

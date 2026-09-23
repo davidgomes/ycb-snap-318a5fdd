@@ -1,7 +1,7 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { QueryInstance } from '../query/types';
-import type { Relation, RelationPair } from '../relation/types';
+import type { Relation, RelationPair, RelationTarget } from '../relation/types';
 import type { AoSFactory, Schema, Store, StoreType } from '../storage';
 
 // Backwards-compatible alias (the trait "type" is the storage layout).
@@ -103,8 +103,11 @@ export interface TraitInstance<T extends Trait = Trait, S extends Schema = Extra
      * For non-exclusive: relationTargets[eid] = [targetId1, targetId2, ...] (number[])
      */
     relationTargets?: number[] | number[][];
-    /** Tracking queries with tracking modifiers on pairs of this relation (only for relation traits) */
-    pairTrackingQueries: Set<QueryInstance>;
+    /**
+     * Tracking queries with tracking modifiers on pairs of this relation, keyed by the tracked
+     * target (only for relation traits). A query tracking `'*'` is only listed under `'*'`.
+     */
+    pairTrackingQueries: Map<RelationTarget, Set<QueryInstance>>;
     /**
      * Only for relation traits.
      * pairChangeTicks[eid] = Map<target, world pair tick of the last change to that pair>

@@ -269,6 +269,15 @@ export function removeRelationTarget(
 
     const eid = getEntityId(entity);
 
+    // Queries tracking the pair as removed still iterate the data it had.
+    const pairQueries = data.pairTrackingQueries;
+    const removedData =
+        pairQueries.size > 0 &&
+        relationTrait[$internal].type !== 'tag' &&
+        (pairQueries.has(target) || pairQueries.has('*'))
+            ? getRelationData(world, entity, relation, target)
+            : undefined;
+
     let removedIndex = -1;
     let hasRemainingTargets = false;
 
@@ -300,7 +309,7 @@ export function removeRelationTarget(
 
     if (removedIndex !== -1) {
         updateQueriesForRelationChange(world, relation, entity);
-        trackPairEvent(world, relation, entity, target, 'remove');
+        trackPairEvent(world, relation, entity, target, 'remove', removedData);
     }
 
     const wasLastTarget = removedIndex !== -1 && !hasRemainingTargets;

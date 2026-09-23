@@ -1,7 +1,7 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
-import type { Relation } from '../relation/types';
+import type { Relation, RelationTarget } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
 import { registerTrait, trait } from '../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../trait/trait-instance';
@@ -28,8 +28,10 @@ import { checkQueryTrackingState } from './utils/check-query-tracking-with-relat
 import { checkQueryWithRelations } from './utils/check-query-with-relations';
 import { createQueryHash } from './utils/create-query-hash';
 import {
+    type PairMatches,
     prunePairTrackers,
-    resolveWildcardPairTargets,
+    resetPairTrackers,
+    resolvePairMatches,
     seedPairTrackers,
 } from './utils/pair-tracking';
 
@@ -45,12 +47,12 @@ export function runQuery<T extends QueryParameter[]>(
     // With hybrid bitmask strategy, query.entities is already incrementally maintained
     // with both trait and relation filters applied. Just return the pre-filtered entities.
     const entities = query.entities.dense.slice() as Entity[];
-    let wildcardPairTargets: Map<string, Map<Entity, Entity>> | undefined;
+    let pairMatches: PairMatches | undefined;
 
     // Clear so it can accumulate again.
     if (query.isTracking) {
         query.entities.clear();
-        wildcardPairTargets = resolveWildcardPairTargets(query, entities);
+        pairMatches = resolvePairMatches(query, entities);
         // PERF: Use indexed loop instead of for...of
         const len = entities.length;
         for (let i = 0; i < len; i++) {
@@ -59,7 +61,7 @@ export function runQuery<T extends QueryParameter[]>(
         prunePairTrackers(query);
     }
 
-    return createQueryResult(world, entities, query, params, wildcardPairTargets);
+    return createQueryResult(world, entities, query, params, pairMatches);
 }
 
 export function addEntityToQuery(query: QueryInstance, entity: Entity) {
@@ -117,7 +119,7 @@ export function resetQueryTrackingBitmasks(query: QueryInstance, eid: number) {
             const tracker = trackers[j];
             if (tracker) tracker[eid] = 0;
         }
-        if (group.pairs.length > 0) group.pairTrackers.delete(eid);
+        if (group.pairs.length > 0) resetPairTrackers(group, eid);
     }
 }
 
@@ -187,6 +189,7 @@ function processTrackingModifier(
             trackers: [],
             pairs: [],
             pairTrackers: new Map(),
+            removedPairData: new Map(),
         };
         groupsMap.set(key, group);
         query.trackingGroups.push(group);
@@ -400,11 +403,25 @@ export function createQueryInstance<T extends QueryParameter[]>(
         }
     }
 
-    // Index queries with pair tracking by the tracked relations
+    // Index queries with pair tracking by the tracked relations and targets
+    const trackedPairTargets = new Map<Trait, Set<RelationTarget>>();
     for (const group of query.trackingGroups) {
         for (const pair of group.pairs) {
-            const relationTrait = pair[$internal].relation[$internal].trait;
-            getTraitInstance(ctx.traitInstances, relationTrait)!.pairTrackingQueries.add(query);
+            const { relation, target } = pair[$internal];
+            const relationTrait = relation[$internal].trait;
+            let targets = trackedPairTargets.get(relationTrait);
+            if (!targets) trackedPairTargets.set(relationTrait, (targets = new Set()));
+            targets.add(target);
+        }
+    }
+
+    for (const [relationTrait, targets] of trackedPairTargets) {
+        const index = getTraitInstance(ctx.traitInstances, relationTrait)!.pairTrackingQueries;
+        // A '*' target already sees every target, so the query is only listed once per event.
+        for (const target of targets.has('*') ? ['*' as const] : targets) {
+            let queries = index.get(target);
+            if (!queries) index.set(target, (queries = new Set()));
+            queries.add(query);
         }
     }
 

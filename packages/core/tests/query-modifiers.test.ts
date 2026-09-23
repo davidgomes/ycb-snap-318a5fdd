@@ -1152,6 +1152,77 @@ describe('Relation pair tracking modifiers', () => {
         });
     });
 
+    it('should expose the data of removed pairs when iterating', () => {
+        const gold = world.spawn();
+        const silver = world.spawn();
+        const inventory = world.spawn(
+            Contains(gold, { amount: 42 }),
+            Contains(silver, { amount: 7 })
+        );
+
+        world.query(Removed(Contains(gold)));
+        world.query(Removed(Contains('*')));
+        inventory.remove(Contains(gold));
+
+        const amounts: number[] = [];
+        world.query(Removed(Contains(gold))).readEach(([contains]) => amounts.push(contains.amount));
+        world.query(Removed(Contains('*'))).updateEach(([contains]) => {
+            amounts.push(contains.amount);
+            contains.amount = 0;
+        });
+
+        expect(amounts).toEqual([42, 42]);
+        expect(inventory.get(Contains(silver))!.amount).toBe(7);
+    });
+
+    it('should not flag a pair that was removed while updating it', () => {
+        const gold = world.spawn();
+        const silver = world.spawn();
+        const inventory = world.spawn(Contains(gold), Contains(silver));
+
+        const onChange = vi.fn();
+        world.onChange(Contains, onChange);
+        world.query(Changed(Contains));
+        inventory.set(Contains(gold), { amount: 1 });
+        onChange.mockClear();
+        world.query(Changed(Contains));
+
+        world.query(Changed(Contains(gold))).updateEach(([contains], entity) => {
+            contains.amount = 99;
+            entity.remove(Contains(gold));
+        });
+
+        expect(onChange).not.toHaveBeenCalled();
+        expect(world.query(Changed(Contains))).toHaveLength(0);
+    });
+
+    it('should not depend on the order of tracking modifiers in a query', () => {
+        const parent = world.spawn();
+        const AddedPair = createAdded();
+        const ChangedTrait = createChanged();
+
+        world.query(AddedPair(ChildOf(parent)), ChangedTrait(Position));
+
+        const entity = world.spawn(Position);
+        entity.set(Position, { x: 1 });
+        entity.add(ChildOf(parent));
+
+        expect(world.query(ChangedTrait(Position), AddedPair(ChildOf(parent))).slice()).toEqual([
+            entity,
+        ]);
+    });
+
+    it('should keep an Or match when an unrelated alternative is invalidated', () => {
+        const parent = world.spawn();
+        const entity = world.spawn(Position);
+
+        world.query(Or(Added(Position), Added(ChildOf(parent))));
+        entity.add(ChildOf(parent));
+        entity.remove(Position);
+
+        expect(world.query(Or(Added(Position), Added(ChildOf(parent)))).slice()).toEqual([entity]);
+    });
+
     it('should resolve the matched target data when iterating wildcard pair tracked traits', () => {
         const gold = world.spawn();
         const silver = world.spawn();

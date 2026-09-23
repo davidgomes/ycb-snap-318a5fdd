@@ -1,9 +1,9 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
-import { getRelationData, setRelationData } from '../relation/relation';
+import { getRelationData, hasRelationToTarget, setRelationData } from '../relation/relation';
 import { isRelationPair } from '../relation/utils/is-relation';
-import type { Relation } from '../relation/types';
+import type { Relation, RelationTarget } from '../relation/types';
 import { Store } from '../storage';
 import { getStore } from '../trait/trait';
 import type { Trait } from '../trait/types';
@@ -11,7 +11,7 @@ import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
 import { isModifier } from './modifier';
 import { setChanged, setPairChanged } from './modifiers/changed';
-import { getWildcardPairKey } from './utils/pair-tracking';
+import { getPairKey, type PairMatch, type PairMatches } from './utils/pair-tracking';
 import type {
     InstancesFromParameters,
     QueryInstance,
@@ -21,23 +21,24 @@ import type {
     StoresFromParameters,
 } from './types';
 
-/** The target of a pair tracked trait, or the target resolved per entity for a `'*'` pair */
-type PairTarget = Entity | Map<Entity, Entity>;
-
-const NO_PAIR_TARGETS: Map<Entity, Entity> = new Map();
+/** A relation pair tracked by a modifier, with the pairs its query matched */
+type PairTarget = {
+    target: RelationTarget;
+    matches: Map<Entity, PairMatch> | undefined;
+};
 
 export function createQueryResult<T extends QueryParameter[]>(
     world: World,
     entities: Entity[],
     query: QueryInstance,
     params: QueryParameter[],
-    wildcardPairTargets?: Map<string, Map<Entity, Entity>>
+    pairMatches?: PairMatches
 ): QueryResult<T> {
     const traits: Trait[] = [];
     const stores: Store<any>[] = [];
     const pairTargets: (PairTarget | undefined)[] = [];
 
-    getQueryStores(params, traits, stores, world, pairTargets, wildcardPairTargets);
+    getQueryStores(params, traits, stores, world, pairTargets, pairMatches);
 
     const results = Object.assign(entities, {
         readEach(
@@ -245,7 +246,7 @@ export function createQueryResult<T extends QueryParameter[]>(
             traits.length = 0;
             stores.length = 0;
             pairTargets.length = 0;
-            getQueryStores(params, traits, stores, world, pairTargets, wildcardPairTargets);
+            getQueryStores(params, traits, stores, world, pairTargets, pairMatches);
             return results as unknown as QueryResult<U>;
         },
 
@@ -327,7 +328,8 @@ export function createQueryResult<T extends QueryParameter[]>(
 }
 
 /* @inline */ function resolvePairTarget(pairTarget: PairTarget, entity: Entity) {
-    return typeof pairTarget === 'number' ? pairTarget : pairTarget.get(entity);
+    const target = pairTarget.target;
+    return target === '*' ? pairTarget.matches?.get(entity)?.target : target;
 }
 
 /* @inline */ function readPairState(
@@ -338,7 +340,13 @@ export function createQueryResult<T extends QueryParameter[]>(
 ): any {
     const target = resolvePairTarget(pairTarget, entity);
     if (target === undefined) return undefined;
-    return getRelationData(world, entity, trait[$internal].relation!, target);
+
+    const data = getRelationData(world, entity, trait[$internal].relation!, target);
+    if (data !== undefined) return data;
+
+    // The pair is gone, so use its data from when it was removed if it was tracked as removed.
+    const match = pairTarget.matches?.get(entity);
+    return match?.target === target ? match.data : undefined;
 }
 
 /** Write pair data back to its target and return the target, unless the pair is gone. */
@@ -350,9 +358,12 @@ export function createQueryResult<T extends QueryParameter[]>(
     value: any
 ): Entity | undefined {
     const target = resolvePairTarget(pairTarget, entity);
-    // A removed pair has no data to write back.
     if (target === undefined || value === undefined) return undefined;
-    setRelationData(world, entity, trait[$internal].relation!, target, value);
+
+    const relation = trait[$internal].relation!;
+    if (!hasRelationToTarget(world, relation, entity, target)) return undefined;
+
+    setRelationData(world, entity, relation, target, value);
     return target;
 }
 
@@ -380,7 +391,7 @@ export function createQueryResult<T extends QueryParameter[]>(
 /**
  * Collect the traits and stores to iterate for the parameters. Relation pairs tracked
  * by a modifier are resolved to the data of their target, which is recorded at the same
- * index in `pairTargets`. For `'*'` pairs it is the target that satisfied the modifier.
+ * index in `pairTargets`. For `'*'` pairs it is the first target that satisfied the modifier.
  */
 /* @inline */ export function getQueryStores<T extends QueryParameter[]>(
     params: T,
@@ -388,7 +399,7 @@ export function createQueryResult<T extends QueryParameter[]>(
     stores: Store<any>[],
     world: World,
     pairTargets: (PairTarget | undefined)[],
-    wildcardPairTargets?: Map<string, Map<Entity, Entity>>
+    pairMatches?: PairMatches
 ) {
     for (let i = 0; i < params.length; i++) {
         const param = params[i];
@@ -414,13 +425,13 @@ export function createQueryResult<T extends QueryParameter[]>(
             for (let j = 0; j < modifierTraits.length; j++) {
                 const trait = modifierTraits[j];
                 if (trait[$internal].type === 'tag') continue; // Skip tags
-                const target = pairs?.[j]?.[$internal].target;
-                if (target !== undefined) {
-                    pairTargets[traits.length] =
-                        target === '*'
-                            ? (wildcardPairTargets?.get(getWildcardPairKey(param.id, trait.id)) ??
-                              NO_PAIR_TARGETS)
-                            : target;
+                const pair = pairs?.[j];
+                if (pair) {
+                    const target = pair[$internal].target;
+                    pairTargets[traits.length] = {
+                        target,
+                        matches: pairMatches?.get(getPairKey(param.id, trait.id, target)),
+                    };
                 }
                 traits.push(trait);
                 stores.push(getStore(world, trait));
