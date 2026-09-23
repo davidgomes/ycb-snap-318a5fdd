@@ -55,3 +55,19 @@ CREATE_CLONABLE = (
 )
 
 PRAGMA_SET_CALL = group(r"pragma", r"set", r"call")
+
+CREATE_TABLE = (
+    r"create(\s+or\s+replace)?(\s+(global|local))?"
+    r"(\s+(temp|temporary|transient|unlogged|external))?"
+    r"\s+table(\s+if\s+not\s+exists)?"
+)
+_TABLE_NAME_PART = group(r"\w+", r'"[^"]*"', r"`[^`]*`", r"\{\{.*?\}\}")
+# matches the table name and opening paren of a create table statement,
+# unless the parens contain LIKE
+CREATE_TABLE_BODY_LOOKAHEAD = (
+    r"(?=\s+"
+    + _TABLE_NAME_PART
+    + r"(\s*\.\s*"
+    + _TABLE_NAME_PART
+    + r")*\s*(?P<table_body>\()(?!\s*like\W))"
+)

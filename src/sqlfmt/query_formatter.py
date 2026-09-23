@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Optional
 
+from sqlfmt.ddl import DdlFormatter
 from sqlfmt.jinjafmt import JinjaFormatter
 from sqlfmt.line import Line
 from sqlfmt.merger import LineMerger
@@ -38,6 +39,14 @@ class QueryFormatter:
         for line in lines:
             new_lines.extend(formatter.format_line(line))
         return new_lines
+
+    def _format_ddl(self, lines: List[Line]) -> List[Line]:
+        """
+        Lays out CREATE TABLE statements, which should not
+        be merged
+        """
+        formatter = DdlFormatter(mode=self.mode)
+        return formatter.format(lines)
 
     def _merge_lines(self, lines: List[Line]) -> List[Line]:
         """
@@ -98,12 +107,13 @@ class QueryFormatter:
 
     def format(self, raw_query: Query) -> Query:
         """
-        Applies 4 transformations to a Query:
+        Applies 6 transformations to a Query:
         1. Splits lines
         2. Formats jinja tags
         3. Dedents jinja block tags to match their least-indented contents
-        4. Merges lines
-        5. Removes extra blank lines
+        4. Lays out CREATE TABLE statements
+        5. Merges lines
+        6. Removes extra blank lines
         """
         lines = raw_query.lines
 
@@ -111,6 +121,7 @@ class QueryFormatter:
             self._split_lines,
             self._format_jinja,
             self._dedent_jinja_blocks,
+            self._format_ddl,
             self._merge_lines,
             self._remove_extra_blank_lines,
         ]

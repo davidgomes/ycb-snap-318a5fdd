@@ -369,6 +369,143 @@ def handle_nonreserved_top_level_keyword(
         )
 
 
+def handle_keyword_outside_brackets(
+    analyzer: "Analyzer",
+    source_string: str,
+    match: re.Match,
+    action: Callable[["Analyzer", str, re.Match], None],
+) -> None:
+    """
+    Checks to see if we're inside an explicit bracket (like a paren); if so, lex
+    the match as a name, otherwise take the passed action.
+
+    For example, this allows us to lex these differently:
+    create table foo (options json) options (description = 'bar');
+    """
+    token = Token.from_match(source_string, match, token_type=TokenType.NAME)
+    node = analyzer.node_manager.create_node(
+        token=token, previous_node=analyzer.previous_node
+    )
+    if any(bracket.is_opening_bracket for bracket in node.open_brackets):
+        analyzer.node_buffer.append(node)
+        analyzer.pos = token.epos
+    else:
+        handle_reserved_keyword(
+            analyzer=analyzer, source_string=source_string, match=match, action=action
+        )
+
+
+def handle_create_table(
+    analyzer: "Analyzer",
+    source_string: str,
+    match: re.Match,
+    table_ruleset: List["Rule"],
+    unsupported_ruleset: List["Rule"],
+) -> None:
+    """
+    Lexes a create table statement using the table_ruleset if it defines columns;
+    otherwise (e.g., CREATE TABLE ... AS SELECT) uses the unsupported_ruleset,
+    so the statement passes through unchanged. The match must include a
+    "table_body" group that matches the opening paren after the table name.
+    """
+    if _create_table_defines_columns(
+        analyzer, source_string, match.start("table_body")
+    ):
+        new_ruleset = table_ruleset
+    else:
+        new_ruleset = unsupported_ruleset
+    lex_ruleset(analyzer, source_string, match, new_ruleset=new_ruleset)
+
+
+def _create_table_defines_columns(
+    analyzer: "Analyzer", source_string: str, body_pos: int
+) -> bool:
+    """
+    Scans a create table statement from the opening paren at body_pos to the end
+    of the statement. Returns True if the parens are closed and do not contain
+    LIKE, and if they are followed only by supported clauses (PARTITION BY,
+    CLUSTER BY, OPTIONS), and not by AS (i.e., this is not CREATE TABLE AS SELECT).
+    """
+    quoted_name_pattern = analyzer.get_rule("quoted_name").pattern
+    comment_pattern = analyzer.get_rule("comment").pattern
+    program = re.compile(
+        rf"(?P<skip>\s+|{comment_pattern})"
+        rf"|(?P<literal>{quoted_name_pattern}|\{{\{{.*?\}}\}}|\{{%.*?%\}}|\{{#.*?#\}})"
+        r"|(?P<word>\w+)"
+        r"|(?P<open>[(\[{])"
+        r"|(?P<close>[)\]}])"
+        r"|(?P<semicolon>;)"
+        r"|(?P<other>.)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    depth = 0
+    body_is_closed = False
+    body_words: List[str] = []
+    trailing_tokens: List[str] = []
+    for token_match in program.finditer(source_string, body_pos):
+        if token_match.group("skip") is not None:
+            continue
+        elif token_match.group("semicolon") is not None:
+            break
+
+        word = (token_match.group("word") or "").lower()
+        if token_match.group("close") is not None:
+            depth -= 1
+            if depth < 0:
+                return False
+            elif depth == 0 and not body_is_closed:
+                body_is_closed = True
+                continue
+
+        if body_is_closed and depth == 0:
+            trailing_tokens.append(word)
+        elif not body_is_closed and depth == 1 and word:
+            body_words.append(word)
+
+        if token_match.group("open") is not None:
+            depth += 1
+
+    if not body_is_closed or "like" in body_words:
+        return False
+    elif not trailing_tokens:
+        return True
+    elif "as" in trailing_tokens:
+        return False
+    else:
+        return trailing_tokens[0] == "options" or (
+            trailing_tokens[0] in ("partition", "cluster")
+            and trailing_tokens[1:2] == ["by"]
+        )
+
+
+def handle_create_table_paren(
+    analyzer: "Analyzer",
+    source_string: str,
+    match: re.Match,
+) -> None:
+    """
+    The paren that follows the table name in a create table statement is
+    preceded by a space, and it closes the create table keyword, so that the
+    column definitions are indented one level and the closing paren is
+    not indented. Other parens are lexed as normal open brackets.
+    """
+    add_node_to_buffer(
+        analyzer=analyzer,
+        source_string=source_string,
+        match=match,
+        token_type=TokenType.BRACKET_OPEN,
+    )
+    node = analyzer.node_buffer[-1]
+    if (
+        node.open_brackets
+        and node.open_brackets[-1].is_unterm_keyword
+        and node.open_brackets[-1].value.startswith("create")
+    ):
+        node.open_brackets = node.open_brackets[:-1]
+        if not node.formatting_disabled:
+            node.prefix = " "
+
+
 def lex_ruleset(
     analyzer: "Analyzer",
     source_string: str,

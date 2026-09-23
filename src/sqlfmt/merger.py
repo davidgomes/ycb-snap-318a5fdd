@@ -69,6 +69,10 @@ class LineMerger:
         has_multiline_jinja = False
         has_inline_comment_above = False
         for line in lines:
+            if not line.can_merge:
+                raise CannotMergeException(
+                    "Can't merge lines that have already been laid out"
+                )
             # only merge lines with comments if it's a standalone comment
             # above the first line or an inline comment after the last
             # line

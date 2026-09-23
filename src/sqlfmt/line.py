@@ -10,13 +10,15 @@ from sqlfmt.tokens import Token, TokenType
 class Line:
     """
     A Line is a collection of Nodes and Comments that should be printed together, on a
-    single line.
+    single line. Lines that cannot be merged (can_merge is False) are never combined
+    with other lines by the LineMerger.
     """
 
     previous_node: Optional[Node]  # last node of prior line, if any
     nodes: List[Node] = field(default_factory=list)
     comments: List[Comment] = field(default_factory=list)
     formatting_disabled: List[Token] = field(default_factory=list)
+    can_merge: bool = True
 
     def __str__(self) -> str:
         """

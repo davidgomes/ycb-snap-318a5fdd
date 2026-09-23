@@ -8,6 +8,8 @@ from sqlfmt.rules.common import (
     ALTER_WAREHOUSE,
     CREATE_CLONABLE,
     CREATE_FUNCTION,
+    CREATE_TABLE,
+    CREATE_TABLE_BODY_LOOKAHEAD,
     CREATE_WAREHOUSE,
     PRAGMA_SET_CALL,
     group,
@@ -17,6 +19,7 @@ from sqlfmt.rules.function import FUNCTION as FUNCTION
 from sqlfmt.rules.grant import GRANT as GRANT
 from sqlfmt.rules.jinja import JINJA as JINJA  # noqa
 from sqlfmt.rules.pragma import PRAGMA as PRAGMA
+from sqlfmt.rules.table import TABLE as TABLE
 from sqlfmt.rules.unsupported import UNSUPPORTED as UNSUPPORTED
 from sqlfmt.rules.warehouse import WAREHOUSE as WAREHOUSE
 from sqlfmt.tokens import TokenType
@@ -283,6 +286,21 @@ MAIN = [
         action=partial(
             actions.handle_nonreserved_top_level_keyword,
             action=partial(actions.lex_ruleset, new_ruleset=GRANT),
+        ),
+    ),
+    Rule(
+        # only matches if the table name is followed by parens;
+        # handle_create_table decides whether the statement is supported
+        name="create_table",
+        priority=2012,
+        pattern=group(CREATE_TABLE) + CREATE_TABLE_BODY_LOOKAHEAD,
+        action=partial(
+            actions.handle_nonreserved_top_level_keyword,
+            action=partial(
+                actions.handle_create_table,
+                table_ruleset=TABLE,
+                unsupported_ruleset=UNSUPPORTED,
+            ),
         ),
     ),
     Rule(
