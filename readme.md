@@ -946,6 +946,82 @@ See [justify-content](https://css-tricks.com/almanac/properties/j/justify-conten
 // [   X   Y   ]
 ```
 
+#### Grid
+
+Set `display="grid"` to lay out children in a grid.
+[`gap`](#gap), [`columnGap`](#columngap), and [`rowGap`](#rowgap) set the space between grid tracks.
+
+```jsx
+<Box display="grid" width={20} columnGap={1} gridTemplateColumns="auto 1fr">
+	<Text>Name</Text>
+	<Text>Ink</Text>
+	<Text>License</Text>
+	<Text>MIT</Text>
+</Box>
+// Name    Ink
+// License MIT
+```
+
+`repeat()`, named grid lines, and `grid-auto-flow` aren't supported.
+Items are placed row by row.
+
+##### gridTemplateColumns
+
+Type: `string`
+
+Space-separated list of column sizes.
+Each size can be:
+
+- A fixed number of columns, like `10`.
+- A fraction of the remaining space, like `1fr`.
+- `auto` to size the column to its content.
+- `minmax(min, max)`, where `min` is a fixed number and `max` is a fixed number or a fraction. When `max` is a fraction, the space left after all minimums are met is shared between fractional maximums.
+
+```jsx
+<Box display="grid" width={20} gridTemplateColumns="4 minmax(6, 1fr) 1fr">
+	<Text>A</Text>
+	<Text>B</Text>
+	<Text>C</Text>
+</Box>
+// A   B          C
+```
+
+##### gridTemplateRows
+
+Type: `string`
+
+Space-separated list of row sizes.
+Accepts the same values as [`gridTemplateColumns`](#gridtemplatecolumns).
+When omitted, rows are created as needed and sized to their content.
+
+##### gridColumn
+
+Type: `number` `string`
+
+Place the element in a column of its grid.
+Pass a 1-based column line, like `2`, or a `'start / end'` string, like `'1 / 3'`, to span multiple columns.
+
+##### gridRow
+
+Type: `number` `string`
+
+Place the element in a row of its grid.
+Pass a 1-based row line, like `2`, or a `'start / end'` string, like `'1 / 3'`, to span multiple rows.
+
+```jsx
+<Box display="grid" gridTemplateColumns="4 4">
+	<Box gridColumn="1 / 3">
+		<Text>Header</Text>
+	</Box>
+	<Box gridRow={2} gridColumn={2}>
+		<Text>B</Text>
+	</Box>
+	<Text>A</Text>
+</Box>
+// Header
+// A   B
+```
+
 #### Position
 
 ##### position
@@ -991,10 +1067,11 @@ You can also set it as a percentage of the parent size.
 ##### display
 
 Type: `string`\
-Allowed values: `flex` `none`\
+Allowed values: `flex` `grid` `none`\
 Default: `flex`
 
 Set this property to `none` to hide the element.
+Set it to `grid` to lay out children in a [grid](#grid).
 
 ##### overflowX
 
