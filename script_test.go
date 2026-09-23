@@ -937,6 +937,40 @@ f()`, nil)
 	compiledCall(t, counter.Get("f").Object(), nil, 2)
 }
 
+func TestCompiled_SetFunctionsSharing(t *testing.T) {
+	src := `
+pair := func() {
+	n := 0
+	return {inc: func() { n++; return n }, get: func() { return n }}
+}()
+pair.inc()
+fact := func() {
+	f := func(n) { if n == 0 { return 1 }; return n * f(n-1) }
+	return f
+}()
+m := {f: func() { return 1 }}
+m.self = m
+`
+	c1 := compile(t, src, nil)
+	compiledRun(t, c1)
+	c2 := compile(t, src, nil)
+	require.NoError(t, c2.Set("pair", c1.Get("pair").Object()))
+	require.NoError(t, c2.Set("fact", c1.Get("fact").Object()))
+	require.NoError(t, c2.Set("m", c1.Get("m").Object()))
+
+	// closures sharing a variable still share it, and only with each other
+	pair := c2.Get("pair").Object().(*tengo.Map)
+	compiledCall(t, pair.Value["inc"], nil, 2)
+	compiledCall(t, pair.Value["get"], nil, 2)
+	compiledCall(t, c1.Get("pair").Object().(*tengo.Map).Value["get"], nil, 1)
+
+	compiledCall(t, c2.Get("fact").Object(), ARR{5}, 120)
+
+	m := c2.Get("m").Object().(*tengo.Map)
+	require.True(t, m.Value["self"] == m)
+	compiledCall(t, m.Value["f"], nil, 1)
+}
+
 func compiledCall(
 	t *testing.T,
 	fn tengo.Object,

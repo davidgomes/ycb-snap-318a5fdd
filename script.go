@@ -113,6 +113,7 @@ func (s *Script) Compile() (*Compiled, error) {
 	// reduce globals size
 	globals = globals[:symbolTable.MaxSymbols()+1]
 
+	// give this instance its own copies of functions from other instances
 	env := newGlobalEnv(globals, s.maxAllocs)
 	b := newBinder(env)
 	for idx, g := range globals {
