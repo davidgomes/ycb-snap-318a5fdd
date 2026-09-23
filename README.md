@@ -571,6 +571,47 @@ world.query(Inventory).updateEach(([inventory], entity) => {
 })
 ```
 
+### Deferred commands
+
+Spawning, destroying or changing the traits of entities while iterating a query changes the data being iterated. `world.deferred` records these commands instead and executes them later as one batch.
+
+```js
+world.query(Health).updateEach(([health], entity) => {
+  if (health.amount <= 0) {
+    world.deferred.destroy(entity)
+    world.deferred.spawn(Explosion)
+  }
+})
+// The commands execute when updateEach exits
+```
+
+The commands mirror their immediate counterparts.
+
+```js
+const entity = world.deferred.spawn(Position) // Returns the entity right away, it becomes alive later
+world.deferred.destroy(entity)
+world.deferred.add(entity, Velocity({ x: 1 }), ChildOf(parent))
+world.deferred.remove(entity, Velocity, ChildOf(parent))
+
+// Replace all pairs of a relation with one pair, or remove them all with a wildcard
+world.deferred.addExclusive(entity, Targeting(goblin))
+world.deferred.addExclusive(entity, Targeting('*'))
+
+// Execute the commands of the current scope now
+world.deferred.flush()
+```
+
+Commands execute when `updateEach` exits, when `flush` is called, or right before a non-deferred mutation (`add`, `remove`, `set`, `destroy`, `changed`) of an entity with pending commands, so that the mutation happens after them. Each `updateEach` is a scope. Nested loops execute their own commands on exit and leave the commands of outer scopes pending. Outside of `updateEach`, commands wait for `flush`.
+
+Commands execute in the order they were deferred, and only the end result reaches the world.
+
+- Adding a trait again with a value replaces the earlier value.
+- `entity.has` and `entity.get` already return what they will after the commands execute. Queries only update once they execute.
+- Commands on destroyed entities are skipped.
+- An entity that is spawned and destroyed by the same batch is never created. The same goes for spawned entities destroyed by an `autoDestroy` cascade.
+- Subscriptions fire once for each trait or relation pair that differs before and after the batch. For example, removing and adding back the same pair fires nothing.
+- Destroying the world entity throws when the command executes.
+
 ### World traits
 
 For global data like time, these can be traits added to the world. **World traits do not appear in queries.**
@@ -713,6 +754,16 @@ const unsub = world.onChange(Position, (entity) => {})
 // Return unsub function
 const unsub = world.onQueryAdd([Position, Velocity], (entity) => {})
 const unsub = world.onQueryRemove([Position, Velocity], (entity) => {})
+
+// Defer commands until updateEach exits or they are flushed
+// The spawned entity is returned right away but becomes alive when the commands execute
+const entity = world.deferred.spawn(Position)
+world.deferred.destroy(entity)
+world.deferred.add(entity, Velocity)
+world.deferred.remove(entity, Velocity)
+// Replaces all pairs of the relation, a wildcard target removes them all
+world.deferred.addExclusive(entity, ChildOf(parent))
+world.deferred.flush()
 
 // An array of all entities alive in the world, including non-queryable entities
 // This is a copy so editing it won't do anything!
