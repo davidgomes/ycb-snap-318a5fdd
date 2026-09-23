@@ -1,5 +1,5 @@
 import type { Entity } from '../entity/types';
-import type { RelationPair } from '../relation/types';
+import type { RelationPair, RelationTarget } from '../relation/types';
 import { AoSFactory } from '../storage';
 import type {
     ExtractSchema,
@@ -93,6 +93,8 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /** Relation pairs aligned by index with `traits`, set only for pair-level tracking inputs */
+    pairs?: (RelationPair | undefined)[];
 };
 
 /** Parameter types that can be passed to Or modifier */
@@ -134,6 +136,21 @@ export type TrackingGroup = {
     trackers: (number[] | undefined)[];
 };
 
+/** Net pair event flags per entity, keyed by [entityId][relationTraitId][target] */
+export type PairEventLog = Map<number, Map<number, Map<number, number>>>;
+
+/** Tracking group for pair-level modifiers such as Added(ChildOf(parent)) */
+export type PairTrackingGroup = {
+    logic: 'and' | 'or';
+    type: EventType;
+    /** Tracking modifier ID for world-level pair event log lookups */
+    id: number;
+    pairs: { traitId: number; target: RelationTarget }[];
+    traitIds: Set<number>;
+    /** Pair events observed since the query last ran */
+    events: PairEventLog;
+};
+
 export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     version: number;
     world: World;
@@ -155,6 +172,7 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     }[];
     /** Unified tracking groups with explicit AND/OR logic */
     trackingGroups: TrackingGroup[];
+    pairTrackingGroups: PairTrackingGroup[];
     generations: number[];
     entities: SparseSet;
     isTracking: boolean;

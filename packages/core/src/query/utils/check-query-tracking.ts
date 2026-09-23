@@ -3,6 +3,7 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import { checkPairTrackingGroup } from './pair-tracking';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -134,6 +135,18 @@ export function checkQueryTracking(
                     return false;
                 }
             }
+        }
+    }
+
+    // 4. Pair-level tracking groups follow the same AND/OR rules as trait groups
+    const pairTrackingGroups = query.pairTrackingGroups;
+    for (let i = 0; i < pairTrackingGroups.length; i++) {
+        const group = pairTrackingGroups[i];
+        if (group.logic === 'or') {
+            hasOrGroup = true;
+            if (!anyOrMatched && checkPairTrackingGroup(group, eid)) anyOrMatched = true;
+        } else if (!checkPairTrackingGroup(group, eid)) {
+            return false;
         }
     }
 

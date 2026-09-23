@@ -1,5 +1,7 @@
-import { Brand } from '../common';
-import { Trait } from '../trait/types';
+import { $internal, Brand } from '../common';
+import type { RelationPair } from '../relation/types';
+import { isRelation, isRelationPair } from '../relation/utils/is-relation';
+import type { ExtractTraits, Trait, TrackingInput } from '../trait/types';
 import { EventType, Modifier, OrModifier, QueryParameter } from './types';
 
 export const $modifier = Symbol('modifier');
@@ -7,15 +9,43 @@ export const $modifier = Symbol('modifier');
 export function createModifier<TTrait extends Trait[] = Trait[], TType extends string = string>(
     type: TType,
     id: number,
-    traits: TTrait
+    traits: TTrait,
+    pairs?: (RelationPair | undefined)[]
 ): Modifier<TTrait, TType> {
-    return {
+    const modifier: Modifier<TTrait, TType> = {
         [$modifier]: true,
         type,
         id,
         traits,
         traitIds: traits.map((trait) => trait.id),
-    } as const;
+    };
+    if (pairs) modifier.pairs = pairs;
+    return modifier;
+}
+
+/** Create a tracking modifier from traits, relations or relation pairs */
+export function createTrackingModifier<T extends TrackingInput[], TType extends string>(
+    type: TType,
+    id: number,
+    inputs: T
+): Modifier<ExtractTraits<T>, TType> {
+    const traits: Trait[] = [];
+    let pairs: (RelationPair | undefined)[] | undefined;
+
+    for (let i = 0; i < inputs.length; i++) {
+        const input = inputs[i];
+        if (isRelationPair(input)) {
+            pairs ??= Array.from({ length: inputs.length });
+            pairs[i] = input;
+            traits.push(input[$internal].relation[$internal].trait);
+        } else if (isRelation(input)) {
+            traits.push(input[$internal].trait);
+        } else {
+            traits.push(input as Trait);
+        }
+    }
+
+    return createModifier(type, id, traits as ExtractTraits<T>, pairs);
 }
 
 export /* @inline @pure */ function isModifier(param: QueryParameter): param is Modifier {

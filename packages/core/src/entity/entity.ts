@@ -16,7 +16,8 @@ export function createEntity(world: World, ...traits: ConfigurableTrait[]): Enti
     const entity = allocateEntity(ctx.entityIndex);
 
     for (const query of ctx.notQueries) {
-        const match = query.check(world, entity);
+        // A freshly spawned entity has no tracked events yet.
+        const match = !query.isTracking && query.check(world, entity);
         if (match) query.add(entity);
         // Reset all tracking bitmasks for the query.
         query.resetTrackingBitmasks(getEntityId(entity));

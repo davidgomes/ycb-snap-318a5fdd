@@ -1,7 +1,9 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
+import { checkQueryTrackingWithRelations } from '../query/utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
+import { emitPairEvent } from '../query/utils/pair-tracking';
 import { Schema } from '../storage';
 import { hasTrait, trait } from '../trait/trait';
 import { getTraitInstance } from '../trait/trait-instance';
@@ -242,6 +244,7 @@ export function addRelationTarget(
         targetsArray[eid].push(target);
     }
 
+    emitPairEvent(world, traitData, entity, target, 'add');
     updateQueriesForRelationChange(world, relation, entity);
 
     return targetIndex;
@@ -296,6 +299,7 @@ export function removeRelationTarget(
     }
 
     if (removedIndex !== -1) {
+        emitPairEvent(world, data, entity, target, 'remove');
         updateQueriesForRelationChange(world, relation, entity);
     }
 
@@ -320,8 +324,11 @@ function updateQueriesForRelationChange(
     // Update queries indexed by this relation (much faster than iterating all queries)
     // All queries in relationQueries already filter by this relation
     for (const query of traitData.relationQueries) {
-        // Re-check entity against query
-        const match = checkQueryWithRelations(world, query, entity);
+        // Re-check entity against query. Tracking queries are re-evaluated with a zero
+        // bitflag so relation changes alone never count as a tracked event.
+        const match = query.isTracking
+            ? checkQueryTrackingWithRelations(world, query, entity, 'add', 0, 0)
+            : checkQueryWithRelations(world, query, entity);
         if (match) {
             query.add(entity);
         } else {

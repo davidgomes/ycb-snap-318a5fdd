@@ -30,4 +30,6 @@ export function setTrackingMasks(world: World, id: number) {
         id,
         snapshot.map((mask) => mask.map(() => 0))
     );
+
+    ctx.pairEventLogs.set(id, new Map());
 }
