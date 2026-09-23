@@ -129,11 +129,11 @@ export function scanIdentifierSlowCase(
           : token | Token.IsEscaped;
     }
 
-    // async is not reserved; it can be used as a variable name
-    // or statement label without restriction
-    if (token === Token.AsyncKeyword) {
-      // Escaped "async" such as \u0061sync can only be identifier
-      // not as "async" keyword
+    // async and using are not reserved; they can be used as variable names
+    // or statement labels without restriction
+    if (token === Token.AsyncKeyword || token === Token.UsingKeyword) {
+      // Escaped "async" or "using" such as \u0061sync can only be identifier
+      // not as "async" or "using" keyword
       return Token.AnyIdentifier | Token.IsEscaped;
     }
     if ((token & Token.FutureReserved) === Token.FutureReserved) {

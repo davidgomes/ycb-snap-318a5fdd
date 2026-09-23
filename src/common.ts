@@ -69,6 +69,9 @@ export const enum BindingKind {
   CatchIdentifier = 1 << 9,
   Async = 1 << 10,
   Generator = 1 << 10,
+  // `using` bindings are immutable lexical bindings, so they carry the `Const` bit
+  Using = 1 << 11 | Const,
+  AwaitUsing = 1 << 12 | Using,
   AsyncFunctionLexical = Async | FunctionLexical,
   GeneratorFunctionLexical = Generator | FunctionLexical,
   AsyncGeneratorFunctionLexical = Async | Generator | FunctionLexical,

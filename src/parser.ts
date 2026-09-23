@@ -275,6 +275,13 @@ function parseStatementListItem(
     //   async [no LineTerminator here] ArrowFormalParameters ...
     case Token.AsyncKeyword:
       return parseAsyncArrowOrAsyncFunctionDeclaration(parser, context, scope, privateScope, origin, labels, 1);
+    // UsingDeclaration[?In, ?Yield, ?Await]
+    // [+Await] AwaitUsingDeclaration[?In, ?Yield]
+    case Token.UsingKeyword:
+    case Token.AwaitKeyword:
+      if (isUsingDeclarationStart(parser, context, 0)) {
+        return parseUsingDeclaration(parser, context, scope, privateScope, origin);
+      }
     default:
       return parseStatement(parser, context, scope, privateScope, origin, labels, 1);
   }
@@ -1080,11 +1087,28 @@ function parseSwitchStatement(
       parser.getToken() !== Token.RightBrace &&
       parser.getToken() !== Token.DefaultKeyword
     ) {
-      consequent.push(
-        parseStatementListItem(parser, context | Context.InSwitch, scope, privateScope, Origin.BlockStatement, {
+      const statementStart = parser.tokenStart;
+      const statement = parseStatementListItem(
+        parser,
+        context | Context.InSwitch,
+        scope,
+        privateScope,
+        Origin.BlockStatement,
+        {
           $: labels,
-        }) as ESTree.Statement,
-      );
+        },
+      ) as ESTree.Statement;
+
+      if (statement.type === 'VariableDeclaration' && (statement.kind === 'using' || statement.kind === 'await using')) {
+        throw new ParseError(
+          statementStart,
+          { index: parser.startIndex, line: parser.startLine, column: parser.startColumn },
+          Errors.UsingDeclarationInSwitchCase,
+          statement.kind,
+        );
+      }
+
+      consequent.push(statement);
     }
 
     cases.push(
@@ -1697,6 +1721,130 @@ function parseLexicalDeclaration(
 }
 
 /**
+ * Checks whether the current `using` or `await` token starts a `using` or `await using` declaration
+ *
+ * @param parser  Parser object
+ * @param context Context masks
+ * @param inForHead Whether the declaration would be the head of a `for` statement
+ */
+function isUsingDeclarationStart(parser: Parser, context: Context, inForHead: 0 | 1): boolean {
+  const token = parser.getToken();
+
+  if (!parser.options.next || (token !== Token.UsingKeyword && token !== Token.AwaitKeyword)) return false;
+
+  return parser.lookAhead(() => {
+    if (token === Token.AwaitKeyword) {
+      nextToken(parser, context | Context.AllowRegExp);
+      if (parser.getToken() !== Token.UsingKeyword || parser.flags & Flags.NewLine) return false;
+    }
+
+    nextToken(parser, context | Context.TaggedTemplate);
+
+    const next = parser.getToken();
+
+    // An object pattern is never valid here, but is accepted so that it gets reported as a
+    // destructuring error. `using [` stays an element access.
+    if (
+      parser.flags & Flags.NewLine ||
+      ((next & Token.Contextual) !== Token.Contextual &&
+        (next & Token.FutureReserved) !== Token.FutureReserved &&
+        next !== Token.LeftBrace)
+    ) {
+      return false;
+    }
+
+    // `for (using of` starts a for-of loop over the identifier `using`, unless `of` is being
+    // declared in a `for (using of = ...;;)` loop
+    if (inForHead && token === Token.UsingKeyword && next === Token.OfKeyword) {
+      nextToken(parser, context | Context.AllowRegExp);
+      return parser.getToken() === Token.Assign;
+    }
+
+    return true;
+  });
+}
+
+/**
+ * Consumes the `using` or `await using` keywords of a declaration and returns its binding kind
+ *
+ * @param parser  Parser object
+ * @param context Context masks
+ */
+function parseUsingDeclarationHead(parser: Parser, context: Context): BindingKind {
+  if (parser.getToken() === Token.AwaitKeyword) {
+    const start = parser.tokenStart;
+
+    nextToken(parser, context); // skip: 'await'
+
+    // Static blocks set `InAwaitContext` only to reserve `await`
+    if (
+      context & Context.InStaticBlock ||
+      !(context & Context.InAwaitContext || (context & Context.Module && context & Context.InGlobal))
+    ) {
+      throw new ParseError(start, parser.currentLocation, Errors.AwaitUsingOutsideAsync);
+    }
+
+    nextToken(parser, context); // skip: 'using'
+    return BindingKind.AwaitUsing;
+  }
+
+  nextToken(parser, context); // skip: 'using'
+  return BindingKind.Using;
+}
+
+function usingDeclarationKind(kind: BindingKind): 'using' | 'await using' {
+  return (kind & BindingKind.AwaitUsing) === BindingKind.AwaitUsing ? 'await using' : 'using';
+}
+
+/**
+ * Parses a `using` or `await using` declaration statement
+ *
+ * @param parser  Parser object
+ * @param context Context masks
+ * @param scope Scope object
+ * @param origin Binding origin
+ */
+function parseUsingDeclaration(
+  parser: Parser,
+  context: Context,
+  scope: Scope | undefined,
+  privateScope: PrivateScope | undefined,
+  origin: Origin,
+): ESTree.VariableDeclaration {
+  // UsingDeclaration :
+  //   using [no LineTerminator here] BindingList[~Pattern] ;
+  //
+  // AwaitUsingDeclaration :
+  //   await [no LineTerminator here] using [no LineTerminator here] BindingList[~Pattern] ;
+
+  const start = parser.tokenStart;
+
+  if (
+    parser.getToken() === Token.UsingKeyword &&
+    origin & Origin.TopLevel &&
+    context & Context.InGlobal &&
+    (context & Context.Module) === 0
+  ) {
+    parser.report(Errors.UsingDeclarationInGlobalScope);
+  }
+
+  const kind = parseUsingDeclarationHead(parser, context);
+
+  const declarations = parseVariableDeclarationList(parser, context, scope, privateScope, kind, Origin.None);
+
+  matchOrInsertSemicolon(parser, context | Context.AllowRegExp);
+
+  return parser.finishNode<ESTree.VariableDeclaration>(
+    {
+      type: 'VariableDeclaration',
+      kind: usingDeclarationKind(kind),
+      declarations,
+    },
+    start,
+  );
+}
+
+/**
  * Parses a variable declaration statement
  *
  * @see [Link](https://tc39.github.io/ecma262/#prod-VariableStatement)
@@ -1795,6 +1943,10 @@ function parseVariableDeclaration(
 
   let init: ESTree.Expression | ESTree.BindingPattern | ESTree.Identifier | null = null;
 
+  if ((kind & BindingKind.Using) === BindingKind.Using && token & Token.IsPatternStart) {
+    parser.report(Errors.UsingDeclarationPattern, usingDeclarationKind(kind));
+  }
+
   const id = parseBindingPattern(parser, context, scope, privateScope, kind, origin);
 
   if (parser.getToken() === Token.Assign) {
@@ -1821,6 +1973,9 @@ function parseVariableDeclaration(
     (kind & BindingKind.Const || (token & Token.IsPatternStart) > 0) &&
     (parser.getToken() & Token.IsInOrOf) !== Token.IsInOrOf
   ) {
+    if ((kind & BindingKind.Using) === BindingKind.Using) {
+      parser.report(Errors.UsingDeclarationMissingInitializer, usingDeclarationKind(kind));
+    }
     parser.report(Errors.DeclarationMissingInitializer, kind & BindingKind.Const ? 'const' : 'destructuring');
   }
 
@@ -1870,7 +2025,8 @@ function parseForStatement(
   let isVarDecl =
     parser.getToken() === Token.VarKeyword ||
     parser.getToken() === Token.LetKeyword ||
-    parser.getToken() === Token.ConstKeyword;
+    parser.getToken() === Token.ConstKeyword ||
+    isUsingDeclarationStart(parser, context, 1);
   let right;
 
   const { tokenStart } = parser;
@@ -1911,6 +2067,28 @@ function parseForStatement(
         // `for of` only allows LeftHandSideExpressions which do not start with `let`, and no other production matches
         if (parser.getToken() === Token.OfKeyword) parser.report(Errors.ForOfLet);
       }
+    } else if (token === Token.UsingKeyword || token === Token.AwaitKeyword) {
+      const kind = parseUsingDeclarationHead(parser, context);
+
+      init = parser.finishNode<ESTree.VariableDeclaration>(
+        {
+          type: 'VariableDeclaration',
+          kind: usingDeclarationKind(kind),
+          declarations: parseVariableDeclarationList(
+            parser,
+            context | Context.DisallowIn,
+            scope,
+            privateScope,
+            kind,
+            Origin.ForStatement,
+          ),
+        },
+        tokenStart,
+      );
+
+      if (parser.getToken() === Token.InKeyword) parser.report(Errors.UsingDeclarationInForIn, init.kind);
+
+      parser.assignable = AssignmentKind.Assignable;
     } else {
       nextToken(parser, context);
 
