@@ -124,6 +124,7 @@ var Testem = {
   emitMessageQueue: [],
   afterTestsQueue: [],
   console: {},
+  aborted: false,
 
   // The maximum depth beyond which decycle will truncate an emitted event
   // object. When undefined, decycle uses its default.
@@ -142,12 +143,18 @@ var Testem = {
     return match ? match[1] : null;
   },
   emitMessage: function() {
-    if (this._noConnectionRequired) {
+    if (this.aborted) {
       return;
     }
     var args = new Array(arguments.length);
     for (var i = 0; i < args.length; ++i) {
       args[i] = arguments[i];
+    }
+    this.sendMessage(args);
+  },
+  sendMessage: function(args) {
+    if (this._noConnectionRequired) {
+      return;
     }
 
     var message = new Message(this, args);
@@ -165,15 +172,29 @@ var Testem = {
       argsWithoutFirst[i - 1] = arguments[i];
     }
 
+    this.callEventHandlers(evt, argsWithoutFirst);
+
+    this.emitMessage.apply(this, arguments);
+  },
+  callEventHandlers: function(evt, args) {
     if (this.evtHandlers && this.evtHandlers[evt]) {
       var handlers = this.evtHandlers[evt];
       for (var j = 0; j < handlers.length; j++) {
         var handler = handlers[j];
-        handler.apply(this, argsWithoutFirst);
+        handler.apply(this, args);
       }
     }
+  },
+  // Once aborted, emitMessage drops everything, so the final events bypass it.
+  handleAbortTests: function() {
+    Testem.aborted = true;
+    this.aborted = true;
 
-    this.emitMessage.apply(this, arguments);
+    var finalEvents = ['abort-tests', 'after-tests-complete'];
+    for (var i = 0; i < finalEvents.length; i++) {
+      this.callEventHandlers(finalEvents[i], []);
+      this.sendMessage([finalEvents[i]]);
+    }
   },
   on: function(evt, callback) {
     if (!this.evtHandlers) {
@@ -263,6 +284,9 @@ var Testem = {
           break;
         case 'stop-run':
           self.emit('after-tests-complete');
+          break;
+        case 'abort-tests':
+          self.handleAbortTests();
           break;
         default:
           if (type && type.indexOf('testem:') === 0) {

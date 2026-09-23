@@ -197,6 +197,9 @@ function initSocket(id) {
   socket.on('stop-run', function() {
     sendMessageToParent('stop-run');
   });
+  socket.on('abort-tests', function() {
+    sendMessageToParent('abort-tests');
+  });
   socket.on('*', function(event) {
     if (event.data && event.data[0].indexOf('testem:') === 0) {
       var eventName = event.data[0];
