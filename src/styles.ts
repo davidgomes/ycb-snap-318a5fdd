@@ -245,8 +245,39 @@ export type Styles = {
 
 	/**
 	Set this property to `none` to hide the element.
+	Set it to `grid` to lay children out on explicit columns and rows.
 	*/
-	readonly display?: 'flex' | 'none';
+	readonly display?: 'flex' | 'none' | 'grid';
+
+	/**
+	Space-separated column tracks for `display: "grid"`.
+
+	Each track is a fixed number, a fractional unit (`1fr`), `auto`, or `minmax(min, max)`.
+	`min` is a fixed number. `max` is a fixed number or an `fr` unit.
+	*/
+	readonly gridTemplateColumns?: string;
+
+	/**
+	Space-separated row tracks for `display: "grid"`.
+
+	Uses the same track syntax as `gridTemplateColumns`.
+	When omitted, rows are created automatically as needed.
+	*/
+	readonly gridTemplateRows?: string;
+
+	/**
+	Column placement for a child of a grid container.
+
+	A single 1-based index selects that column. A `"start / end"` string selects a line range (end is exclusive).
+	*/
+	readonly gridColumn?: number | string;
+
+	/**
+	Row placement for a child of a grid container.
+
+	A single 1-based index selects that row. A `"start / end"` string selects a line range (end is exclusive).
+	*/
+	readonly gridRow?: number | string;
 
 	/**
 	Add a border with a specified style. If `borderStyle` is `undefined` (the default), no border will be added.
@@ -686,8 +717,10 @@ const applyDimensionStyles = (node: YogaNode, style: Styles): void => {
 
 const applyDisplayStyles = (node: YogaNode, style: Styles): void => {
 	if ('display' in style) {
+		// Grid containers participate in flex layout; track placement is applied
+		// after Yoga calculates the container size.
 		node.setDisplay(
-			style.display === 'flex' ? Yoga.DISPLAY_FLEX : Yoga.DISPLAY_NONE,
+			style.display === 'none' ? Yoga.DISPLAY_NONE : Yoga.DISPLAY_FLEX,
 		);
 	}
 };
