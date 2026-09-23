@@ -18,8 +18,10 @@ from ._decoders import (
     IdentityDecoder,
     LineDecoder,
     MultiDecoder,
+    MultipartDecoder,
     TextChunker,
     TextDecoder,
+    get_multipart_response_boundary,
 )
 from ._exceptions import (
     CookieConflict,
@@ -48,7 +50,7 @@ from ._types import (
 from ._urls import URL
 from ._utils import to_bytes_or_str, to_str
 
-__all__ = ["Cookies", "Headers", "Request", "Response"]
+__all__ = ["Cookies", "Headers", "MultipartPart", "Request", "Response"]
 
 SENSITIVE_HEADERS = {"authorization", "proxy-authorization"}
 
@@ -377,6 +379,15 @@ class Headers(typing.MutableMapping[str, str]):
         if no_duplicate_keys:
             return f"{class_name}({as_dict!r}{encoding_str})"
         return f"{class_name}({as_list!r}{encoding_str})"
+
+
+class MultipartPart:
+    def __init__(self, headers: Headers, content: bytes) -> None:
+        self.headers = headers
+        self.content = content
+
+    def __repr__(self) -> str:
+        return f"<MultipartPart(headers={self.headers!r}, content={self.content!r})>"
 
 
 class Request:
@@ -932,6 +943,20 @@ class Response:
             for line in decoder.flush():
                 yield line
 
+    def iter_multipart(self) -> typing.Iterator[MultipartPart]:
+        """
+        Parse a `multipart/*` response body, yielding each part.
+        """
+        with request_context(request=self._request):
+            decoder = MultipartDecoder(
+                get_multipart_response_boundary(self.headers.get("Content-Type"))
+            )
+            for chunk in self.iter_bytes():
+                for headers, content in decoder.decode(chunk):
+                    yield MultipartPart(Headers(headers), content)
+            for headers, content in decoder.flush():
+                yield MultipartPart(Headers(headers), content)
+
     def iter_raw(self, chunk_size: int | None = None) -> typing.Iterator[bytes]:
         """
         A byte-iterator over the raw response content.
@@ -1033,6 +1058,20 @@ class Response:
                     yield line
             for line in decoder.flush():
                 yield line
+
+    async def aiter_multipart(self) -> typing.AsyncIterator[MultipartPart]:
+        """
+        Parse a `multipart/*` response body, yielding each part.
+        """
+        with request_context(request=self._request):
+            decoder = MultipartDecoder(
+                get_multipart_response_boundary(self.headers.get("Content-Type"))
+            )
+            async for chunk in self.aiter_bytes():
+                for headers, content in decoder.decode(chunk):
+                    yield MultipartPart(Headers(headers), content)
+            for headers, content in decoder.flush():
+                yield MultipartPart(Headers(headers), content)
 
     async def aiter_raw(
         self, chunk_size: int | None = None

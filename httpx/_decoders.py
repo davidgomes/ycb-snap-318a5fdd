@@ -391,3 +391,165 @@ if brotli is None:
     SUPPORTED_DECODERS.pop("br")  # pragma: no cover
 if zstandard is None:
     SUPPORTED_DECODERS.pop("zstd")  # pragma: no cover
+
+
+def _split_header_params(value: str) -> list[str]:
+    params: list[str] = []
+    current: list[str] = []
+    in_quotes = False
+    escaped = False
+    for char in value:
+        if escaped:
+            escaped = False
+        elif in_quotes and char == "\\":
+            escaped = True
+        elif char == '"':
+            in_quotes = not in_quotes
+        elif char == ";" and not in_quotes:
+            params.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    params.append("".join(current))
+    return params
+
+
+def get_multipart_response_boundary(content_type: str | None) -> bytes:
+    """
+    Return the boundary for a `multipart/*` Content-Type, or raise DecodingError.
+    """
+    if content_type is None:
+        raise DecodingError("Response has no Content-Type header.")
+    if "\r" in content_type or "\n" in content_type:
+        raise DecodingError("Invalid multipart boundary.")
+    media_type, *params = _split_header_params(content_type)
+    media_type = media_type.strip(" \t").lower()
+    if not media_type.startswith("multipart/") or media_type == "multipart/":
+        raise DecodingError("Response is not multipart.")
+
+    boundary: str | None = None
+    for param in params:
+        name, sep, value = param.partition("=")
+        if sep and name.strip(" \t").lower() == "boundary":
+            boundary = value
+    if boundary is None:
+        raise DecodingError("Missing multipart boundary.")
+
+    boundary = boundary.strip(" \t")
+    if len(boundary) >= 2 and boundary[0] == boundary[-1] == '"':
+        boundary = boundary[1:-1]
+    if (
+        not boundary
+        or not boundary.isascii()
+        or boundary.startswith("=")
+        or "\x00" in boundary
+    ):
+        raise DecodingError("Invalid multipart boundary.")
+    return boundary.encode("ascii")
+
+
+class MultipartDecoder:
+    """
+    Incrementally parse a multipart body into (headers, content) pairs.
+    """
+
+    def __init__(self, boundary: bytes) -> None:
+        self._dash_boundary = b"--" + boundary
+        self._buffer = b""
+        self._state = "preamble"
+        self._first_line = True
+        self._headers: list[tuple[bytes, bytes]] = []
+        self._body = bytearray()
+        self._pending_terminator: bytes | None = None
+
+    def decode(self, data: bytes) -> list[tuple[list[tuple[bytes, bytes]], bytes]]:
+        self._buffer += data
+        parts = []
+        while True:
+            idx_cr = self._buffer.find(b"\r")
+            idx_lf = self._buffer.find(b"\n")
+            candidates = [i for i in (idx_cr, idx_lf) if i != -1]
+            if not candidates:
+                break
+            idx = min(candidates)
+            if self._buffer[idx : idx + 1] == b"\r":
+                if idx + 1 == len(self._buffer):
+                    break  # May be a CRLF split across chunks.
+                end = idx + 2 if self._buffer[idx + 1 : idx + 2] == b"\n" else idx + 1
+            else:
+                end = idx + 1
+            line, terminator = self._buffer[:idx], self._buffer[idx:end]
+            self._buffer = self._buffer[end:]
+            self._process_line(line, terminator, parts)
+        return parts
+
+    def flush(self) -> list[tuple[list[tuple[bytes, bytes]], bytes]]:
+        parts: list[tuple[list[tuple[bytes, bytes]], bytes]] = []
+        if self._buffer:
+            buffer = self._buffer
+            self._buffer = b""
+            if buffer.endswith(b"\r"):
+                self._process_line(buffer[:-1], b"\r", parts)
+            else:
+                self._process_line(buffer, b"", parts)
+        if self._state != "epilogue":
+            raise DecodingError("Malformed multipart body: missing closing boundary.")
+        return parts
+
+    def _delimiter(self, line: bytes) -> str | None:
+        stripped = line.rstrip(b" \t")
+        if stripped == self._dash_boundary:
+            return "delimiter"
+        if stripped == self._dash_boundary + b"--":
+            return "close"
+        return None
+
+    def _process_line(
+        self,
+        line: bytes,
+        terminator: bytes,
+        parts: list[tuple[list[tuple[bytes, bytes]], bytes]],
+    ) -> None:
+        state = self._state
+        if state == "epilogue":
+            return
+
+        delimiter = self._delimiter(line)
+        if state == "preamble":
+            first_line, self._first_line = self._first_line, False
+            if delimiter is None:
+                if first_line and line.startswith(self._dash_boundary):
+                    raise DecodingError("Malformed multipart boundary line.")
+                return
+            self._state = "epilogue" if delimiter == "close" else "headers"
+        elif state == "headers":
+            if line == b"":
+                self._state = "body"
+                self._body = bytearray()
+                self._pending_terminator = None
+            else:
+                self._parse_header_line(line)
+        else:
+            if delimiter is None:
+                if self._pending_terminator is not None:
+                    self._body += self._pending_terminator
+                self._body += line
+                self._pending_terminator = terminator
+                return
+            parts.append((self._headers, bytes(self._body)))
+            self._headers = []
+            self._body = bytearray()
+            self._state = "epilogue" if delimiter == "close" else "headers"
+
+    def _parse_header_line(self, line: bytes) -> None:
+        if line[:1] in (b" ", b"\t"):
+            value = line.strip(b" \t")
+            if not self._headers or not value:
+                raise DecodingError("Malformed multipart part header.")
+            name, previous = self._headers[-1]
+            self._headers[-1] = (name, previous + b" " + value)
+            return
+        name, sep, value = line.partition(b":")
+        if not sep or not name:
+            raise DecodingError("Malformed multipart part header.")
+        self._headers.append((name, value.strip(b" \t")))
