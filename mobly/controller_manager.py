@@ -153,6 +153,17 @@ class ControllerManager:
     self._controller_modules[module_ref_name] = module
     return objects
 
+  def get_registered_objects(self):
+    """Returns registered controller objects in registration order.
+
+    Returns:
+      A list of controller objects across all registered modules.
+    """
+    objects = []
+    for controller_objects in self._controller_objects.values():
+      objects.extend(controller_objects)
+    return objects
+
   def unregister_controllers(self):
     """Destroy controller objects and clear internal registry.
 

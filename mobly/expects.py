@@ -14,6 +14,7 @@
 
 import contextlib
 import logging
+import threading
 import time
 
 from mobly import asserts
@@ -37,27 +38,39 @@ class _ExpectErrorRecorder:
   """
 
   def __init__(self, record=None):
+    # Per-thread state so concurrent participants record expects on their
+    # own TestResultRecord.
+    self._local = threading.local()
+    self._default_record = record
     self.reset_internal_states(record=record)
+
+  def _state(self):
+    if not hasattr(self._local, 'count'):
+      self._local.record = self._default_record
+      self._local.count = 0
+    return self._local
 
   def reset_internal_states(self, record=None):
     """Resets the internal state of the recorder.
 
+    The reset applies to the calling thread only.
+
     Args:
       record: records.TestResultRecord, the test record for a test.
     """
-    self._record = None
-    self._count = 0
-    self._record = record
+    state = self._state()
+    state.record = record
+    state.count = 0
 
   @property
   def has_error(self):
     """If any error has been recorded since the last reset."""
-    return self._count > 0
+    return self._state().count > 0
 
   @property
   def error_count(self):
     """The number of errors that have been recorded since last reset."""
-    return self._count
+    return self._state().count
 
   def add_error(self, error):
     """Record an error from expect APIs.
@@ -68,8 +81,11 @@ class _ExpectErrorRecorder:
     Args:
       error: Exception or signals.ExceptionRecord, the error to add.
     """
-    self._count += 1
-    self._record.add_error('expect@%s+%s' % (time.time(), self._count), error)
+    state = self._state()
+    state.count += 1
+    state.record.add_error(
+        'expect@%s+%s' % (time.time(), state.count), error
+    )
 
 
 def expect_true(condition, msg, extras=None):
