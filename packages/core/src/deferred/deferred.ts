@@ -9,12 +9,13 @@ import {
     getRelationData,
     getRelationTargets,
     hasRelationToTarget,
+    removeRelationTarget,
 } from '../relation/relation';
 import type { Relation, RelationPair } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
 import { getSchemaDefaults } from '../storage';
 import { addTrait, getTrait, hasTrait, registerTrait, removeTrait, setTrait } from '../trait/trait';
-import { hasTraitInstance } from '../trait/trait-instance';
+import { getTraitInstance, hasTraitInstance } from '../trait/trait-instance';
 import type { ConfigurableTrait, Trait } from '../trait/types';
 import type { World } from '../world';
 import type {
@@ -638,7 +639,17 @@ function executeBuffer(world: World, buffer: CommandBuffer) {
 
                 case 'addPair': {
                     const { relation, target } = command;
-                    if (!isEntityAlive(ctx.entityIndex, target)) break;
+                    if (!isEntityAlive(ctx.entityIndex, target)) {
+                        // A preceding clear may have kept the base trait for this pair.
+                        const relationTrait = relation[$internal].trait;
+                        if (
+                            hasTrait(world, entity, relationTrait) &&
+                            getRelationTargets(world, relation, entity).length === 0
+                        ) {
+                            removeTrait(world, entity, relationTrait);
+                        }
+                        break;
+                    }
                     if (!ctx.entityTraits.has(entity)) initEntity(world, entity);
 
                     if (!hasRelationToTarget(world, relation, entity, target)) {
@@ -661,11 +672,27 @@ function executeBuffer(world: World, buffer: CommandBuffer) {
                     const { relation, except } = command;
                     const rel = buffer.records.get(entity)?.relations.get(relation);
 
+                    let readding = false;
+                    if (rel) {
+                        for (const pair of rel.pairs.values()) {
+                            if (pair.type === 'addPair') readding = true;
+                        }
+                    }
+
+                    const instance = getTraitInstance(ctx.traitInstances, relation[$internal].trait);
+
                     for (const target of getRelationTargets(world, relation, entity)) {
                         if (target === except) continue;
                         // Pairs re-added later in the buffer stay so no remove/add events fire.
                         if (rel?.pairs.get(target)?.type === 'addPair') continue;
-                        removeTrait(world, entity, relation(target));
+
+                        if (readding && instance) {
+                            // Keep the base trait since pairs are added back, like an exclusive add.
+                            for (const sub of instance.removeSubscriptions) sub(entity, target);
+                            removeRelationTarget(world, relation, entity, target);
+                        } else {
+                            removeTrait(world, entity, relation(target));
+                        }
                     }
                     break;
                 }
