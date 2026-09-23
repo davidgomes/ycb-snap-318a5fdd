@@ -2,6 +2,7 @@
 
 from mnamer import tty
 from mnamer.const import IS_DEBUG
+from mnamer.daemon import daemon_requested, dispatch_daemon
 from mnamer.exceptions import MnamerException
 from mnamer.frontends import Cli
 from mnamer.setting_store import SettingStore
@@ -18,6 +19,12 @@ def main():  # pragma: no cover
     except MnamerException as e:
         tty.error(e)
         raise SystemExit(2) from None
+    if daemon_requested(settings):
+        try:
+            dispatch_daemon(settings)
+        except SystemExit:
+            raise
+        return
     try:
         frontend = Cli(settings)
         frontend.launch()
