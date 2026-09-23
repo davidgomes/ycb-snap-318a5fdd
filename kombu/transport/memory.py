@@ -63,6 +63,15 @@ class Channel(virtual.Channel):
     def _put(self, queue, message, **kwargs):
         self._queue_for(queue).put(message)
 
+    def expire_messages(self, queue):
+        """Dead-letter expired messages currently stored in ``queue``.
+
+        Returns
+        -------
+            int: Number of expired messages removed.
+        """
+        return self.drain_expired(queue)
+
     def _size(self, queue):
         return self._queue_for(queue).qsize()
 

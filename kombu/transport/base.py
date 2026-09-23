@@ -21,12 +21,18 @@ if TYPE_CHECKING:
 
 __all__ = ('Message', 'StdChannel', 'Management', 'Transport')
 
+def _identity(value):
+    return value
+
+
 RABBITMQ_QUEUE_ARGUMENTS = {
     'expires': ('x-expires', maybe_s_to_ms),
     'message_ttl': ('x-message-ttl', maybe_s_to_ms),
     'max_length': ('x-max-length', int),
     'max_length_bytes': ('x-max-length-bytes', int),
     'max_priority': ('x-max-priority', int),
+    'dead_letter_exchange': ('x-dead-letter-exchange', _identity),
+    'dead_letter_routing_key': ('x-dead-letter-routing-key', _identity),
 }  # type: Mapping[str, Tuple[str, Callable]]
 
 
@@ -53,6 +59,10 @@ def to_rabbitmq_queue_arguments(arguments, **options):
             This will be converted to ``x-max-length-bytes`` int.
         max_priority (int): Max priority steps for queue.
             This will be converted to ``x-max-priority`` int.
+        dead_letter_exchange (str): Dead letter exchange name.
+            This will be converted to ``x-dead-letter-exchange``.
+        dead_letter_routing_key (str): Dead letter routing key.
+            This will be converted to ``x-dead-letter-routing-key``.
 
     Returns
     -------
