@@ -217,7 +217,10 @@ export type MatchEach<
    * Throws a `NonExhaustiveError` if no pattern matched, unless a fallback
    * handler is provided.
    */
-  exhaustive: DeepExcludeAll<remaining, handledCases> extends infer remainingCases
+  exhaustive: DeepExcludeAll<
+    remaining,
+    handledCases
+  > extends infer remainingCases
     ? [remainingCases] extends [never]
       ? ExhaustiveEach<o, inferredOutput>
       : NonExhaustiveError<remainingCases>
