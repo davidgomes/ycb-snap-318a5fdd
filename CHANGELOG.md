@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+* Add `httpx.CookieStore`, a cookie container with deterministic eviction and standard domain, path, secure, prefix, and expiry rules.
 * Expose `FunctionAuth` from the public API. (#3699)
 
 ## 0.28.1 (6th December, 2024)

@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from http.cookiejar import Cookie, CookieJar
 
 from ._content import ByteStream, UnattachedStream, encode_request, encode_response
+from ._cookie_store import CookieStore
 from ._decoders import (
     SUPPORTED_DECODERS,
     ByteChunker,
@@ -48,7 +49,7 @@ from ._types import (
 from ._urls import URL
 from ._utils import to_bytes_or_str, to_str
 
-__all__ = ["Cookies", "Headers", "Request", "Response"]
+__all__ = ["CookieStore", "Cookies", "Headers", "Request", "Response"]
 
 SENSITIVE_HEADERS = {"authorization", "proxy-authorization"}
 
@@ -401,7 +402,10 @@ class Request:
         self.extensions = {} if extensions is None else dict(extensions)
 
         if cookies:
-            Cookies(cookies).set_cookie_header(self)
+            if isinstance(cookies, CookieStore):
+                cookies.set_cookie_header(self)
+            else:
+                Cookies(cookies).set_cookie_header(self)
 
         if stream is None:
             content_type: str | None = self.headers.get("content-type")
@@ -1095,6 +1099,10 @@ class Cookies(typing.MutableMapping[str, str]):
             self.jar = CookieJar()
             for cookie in cookies.jar:
                 self.jar.set_cookie(cookie)
+        elif isinstance(cookies, CookieStore):
+            self.jar = CookieJar()
+            for name, value, domain, path in cookies._for_stdlib():
+                self.set(name, value, domain=domain, path=path)
         else:
             self.jar = cookies
 

@@ -19,6 +19,7 @@ from ._config import (
     Proxy,
     Timeout,
 )
+from ._cookie_store import CookieStore
 from ._decoders import SUPPORTED_DECODERS
 from ._exceptions import (
     InvalidURL,
@@ -208,7 +209,11 @@ class BaseClient:
         self._auth = self._build_auth(auth)
         self._params = QueryParams(params)
         self.headers = Headers(headers)
-        self._cookies = Cookies(cookies)
+        self._cookies: Cookies | CookieStore
+        if isinstance(cookies, CookieStore):
+            self._cookies = cookies
+        else:
+            self._cookies = Cookies(cookies)
         self._timeout = Timeout(timeout)
         self.follow_redirects = follow_redirects
         self.max_redirects = max_redirects
@@ -316,7 +321,7 @@ class BaseClient:
         self._headers = client_headers
 
     @property
-    def cookies(self) -> Cookies:
+    def cookies(self) -> Cookies | CookieStore:
         """
         Cookie values to include when sending requests.
         """
@@ -324,7 +329,10 @@ class BaseClient:
 
     @cookies.setter
     def cookies(self, cookies: CookieTypes) -> None:
-        self._cookies = Cookies(cookies)
+        if isinstance(cookies, CookieStore):
+            self._cookies = cookies
+        else:
+            self._cookies = Cookies(cookies)
 
     @property
     def params(self) -> QueryParams:
@@ -415,11 +423,18 @@ class BaseClient:
         Merge a cookies argument together with any cookies on the client,
         to create the cookies used for the outgoing request.
         """
-        if cookies or self.cookies:
-            merged_cookies = Cookies(self.cookies)
-            merged_cookies.update(cookies)
-            return merged_cookies
-        return cookies
+        if not cookies and not self.cookies:
+            return cookies
+        if isinstance(self._cookies, CookieStore) or isinstance(cookies, CookieStore):
+            merged_store = CookieStore()
+            if self._cookies:
+                merged_store.update(self._cookies)
+            if cookies:
+                merged_store.update(cookies)
+            return merged_store
+        merged_cookies = Cookies(self._cookies)
+        merged_cookies.update(cookies)
+        return merged_cookies
 
     def _merge_headers(self, headers: HeaderTypes | None = None) -> HeaderTypes | None:
         """
@@ -481,12 +496,15 @@ class BaseClient:
         url = self._redirect_url(request, response)
         headers = self._redirect_headers(request, url, method)
         stream = self._redirect_stream(request, method)
-        cookies = Cookies(self.cookies)
+        if isinstance(self._cookies, CookieStore):
+            redirect_cookies: CookieTypes = self._cookies
+        else:
+            redirect_cookies = Cookies(self._cookies)
         return Request(
             method=method,
             url=url,
             headers=headers,
-            cookies=cookies,
+            cookies=redirect_cookies,
             stream=stream,
             extensions=request.extensions,
         )
