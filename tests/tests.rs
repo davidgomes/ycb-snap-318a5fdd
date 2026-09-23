@@ -2758,3 +2758,225 @@ fn test_ignore_contain_precedence_over_root_check() {
     let expected = "";
     te.assert_output(&["--ignore-contain=CACHEDIR.TAG", "."], expected);
 }
+
+/// Assert that fd prints exactly the expected lines, in the given order.
+/// The `symlink` entry created by every `TestEnv` is excluded.
+fn assert_sorted_output(te: &TestEnv, args: &[&str], expected: &[&str]) {
+    let args = [&["--exclude", "symlink"], args].concat();
+    let output = te.assert_success_and_get_output(".", &args);
+    let stdout = String::from_utf8_lossy(&output.stdout).replace('\\', "/");
+    let actual: Vec<&str> = stdout.lines().collect();
+    assert_eq!(actual, expected, "fd {}", args.join(" "));
+}
+
+#[test]
+fn test_sort_name_and_path() {
+    let te = TestEnv::new(
+        &["one/two"],
+        &["b.txt", "A.txt", "one/a.txt", "one/two/B.txt"],
+    );
+
+    assert_sorted_output(
+        &te,
+        &["--sort", "path"],
+        &[
+            "A.txt",
+            "b.txt",
+            "one/",
+            "one/a.txt",
+            "one/two/",
+            "one/two/B.txt",
+        ],
+    );
+    // Folded-equal names are ordered by path.
+    assert_sorted_output(
+        &te,
+        &["--sort", "name", "-tf"],
+        &["A.txt", "one/a.txt", "b.txt", "one/two/B.txt"],
+    );
+    assert_sorted_output(
+        &te,
+        &["--sort", "name", "--sort-case-sensitive", "-tf"],
+        &["A.txt", "one/two/B.txt", "one/a.txt", "b.txt"],
+    );
+    assert_sorted_output(
+        &te,
+        &["--sort", "name", "--reverse", "-tf"],
+        &["one/two/B.txt", "b.txt", "one/a.txt", "A.txt"],
+    );
+}
+
+#[test]
+fn test_sort_multiple_keys_and_max_results() {
+    let te = TestEnv::new(&["d"], &["x.rs", "y.md", "d/a.md", "d/z.rs", "noext"]);
+
+    assert_sorted_output(
+        &te,
+        &["--sort", "extension", "--sort", "name"],
+        &["d/", "noext", "d/a.md", "y.md", "x.rs", "d/z.rs"],
+    );
+    assert_sorted_output(
+        &te,
+        &[
+            "--sort",
+            "extension",
+            "--sort",
+            "name",
+            "--sort-missing-last",
+        ],
+        &["d/a.md", "y.md", "x.rs", "d/z.rs", "d/", "noext"],
+    );
+    assert_sorted_output(
+        &te,
+        &["--sort", "depth", "--sort", "name", "--max-results", "3"],
+        &["d/", "noext", "x.rs"],
+    );
+    assert_sorted_output(&te, &["--sort", "name", "--reverse", "-1"], &["d/z.rs"]);
+}
+
+#[test]
+fn test_sort_size_and_grouping() {
+    let te = TestEnv::new(&["dir"], &[]);
+    create_file_with_size(te.test_root().join("big"), 30);
+    create_file_with_size(te.test_root().join("small"), 1);
+    create_file_with_size(te.test_root().join("dir/medium"), 10);
+
+    assert_sorted_output(
+        &te,
+        &["--sort", "size"],
+        &["dir/", "small", "dir/medium", "big"],
+    );
+    assert_sorted_output(
+        &te,
+        &["--sort", "size", "--sort-missing-last"],
+        &["small", "dir/medium", "big", "dir/"],
+    );
+    assert_sorted_output(
+        &te,
+        &["--sort", "name", "--dirs-first"],
+        &["dir/", "big", "dir/medium", "small"],
+    );
+    assert_sorted_output(
+        &te,
+        &["--sort", "name", "--files-first"],
+        &["big", "dir/medium", "small", "dir/"],
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_sort_type() {
+    let mut te = TestEnv::new(&["dir"], &["file"]);
+    te.create_broken_symlink("link").unwrap();
+
+    assert_sorted_output(&te, &["--sort", "type"], &["dir/", "link", "file"]);
+    assert_sorted_output(
+        &te,
+        &["--sort", "name", "--files-first"],
+        &["file", "dir/", "link"],
+    );
+}
+
+#[test]
+fn test_sort_modified() {
+    let te = TestEnv::new(&[], &["old", "new", "mid"]);
+    let now = SystemTime::now();
+    for (name, age) in [("old", 300), ("mid", 200), ("new", 100)] {
+        let ft = filetime::FileTime::from_system_time(now - Duration::from_secs(age));
+        filetime::set_file_mtime(te.test_root().join(name), ft).unwrap();
+    }
+
+    assert_sorted_output(&te, &["--sort", "modified"], &["old", "mid", "new"]);
+    assert_sorted_output(
+        &te,
+        &["--sort", "modified", "--reverse"],
+        &["new", "mid", "old"],
+    );
+}
+
+#[test]
+fn test_sort_natural() {
+    let te = TestEnv::new(&[], &["file10", "file9", "File20", "file007", "file7"]);
+
+    assert_sorted_output(
+        &te,
+        &["--sort", "name"],
+        &["file007", "file10", "File20", "file7", "file9"],
+    );
+    assert_sorted_output(
+        &te,
+        &["--sort", "name", "--sort-natural"],
+        &["file007", "file7", "file9", "file10", "File20"],
+    );
+    assert_sorted_output(
+        &te,
+        &["--sort", "name", "--sort-natural", "--sort-case-sensitive"],
+        &["File20", "file007", "file7", "file9", "file10"],
+    );
+}
+
+#[test]
+fn test_sort_lengths_and_multiple_roots() {
+    let te = TestEnv::new(&["r1", "r2"], &["r1/bb", "r1/a", "r2/ccc", "r2/d"]);
+
+    assert_sorted_output(
+        &te,
+        &["--sort", "name-length", ".", "r2", "r1"],
+        &["r1/a", "r2/d", "r1/bb", "r2/ccc"],
+    );
+    assert_sorted_output(
+        &te,
+        &["--sort", "path-length", "--sort", "name", "-tf"],
+        &["r1/a", "r2/d", "r1/bb", "r2/ccc"],
+    );
+}
+
+#[test]
+fn test_sort_random_seed() {
+    let files: Vec<String> = (0..20).map(|i| format!("f{i}")).collect();
+    let files: Vec<&'static str> = files
+        .into_iter()
+        .map(|s| &*Box::leak(s.into_boxed_str()))
+        .collect();
+    let te = TestEnv::new(&[], &files);
+
+    let run = |seed: &str| {
+        let output = te.assert_success_and_get_output(
+            ".",
+            &["-E", "symlink", "--sort", "random", "--sort-seed", seed],
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let first = run("42");
+    assert_eq!(first, run("42"));
+    assert_ne!(first, run("43"));
+
+    let mut lines: Vec<&str> = first.lines().collect();
+    assert_eq!(lines.len(), 20);
+    lines.sort();
+    let mut expected = files.clone();
+    expected.sort();
+    assert_eq!(lines, expected);
+}
+
+#[test]
+fn test_sort_invalid_combinations() {
+    let te = TestEnv::new(&[], &["a"]);
+
+    for flag in [
+        "--reverse",
+        "--dirs-first",
+        "--files-first",
+        "--sort-case-sensitive",
+        "--sort-missing-last",
+        "--sort-natural",
+    ] {
+        te.assert_failure(&[flag]);
+    }
+    te.assert_failure(&["--sort-seed", "1"]);
+    te.assert_failure(&["--sort", "name", "--dirs-first", "--files-first"]);
+    te.assert_failure(&["--sort", "bogus"]);
+    te.assert_failure(&["--sort", "name", "--exec", "echo"]);
+    te.assert_failure(&["--sort", "name", "--exec-batch", "echo"]);
+    te.assert_failure(&["--sort", "name", "--list-details"]);
+}
