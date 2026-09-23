@@ -1302,6 +1302,10 @@ func (l *Loop) decode(d *decoder) {
 		}
 		return
 	}
+	if rem, ok := decoderRemaining(d); ok && int64(nvertices) > int64(rem)/24 {
+		d.err = fmt.Errorf("loop vertex count %d exceeds remaining input (%d bytes)", nvertices, rem)
+		return
+	}
 	l.vertices = make([]Point, nvertices)
 	for i := range l.vertices {
 		l.vertices[i].X = d.readFloat64()
@@ -1381,6 +1385,12 @@ func (l *Loop) decodeCompressed(d *decoder, snapLevel int) {
 	}
 	if nvertices > maxEncodedVertices {
 		d.err = fmt.Errorf("too many vertices (%d; max is %d)", nvertices, maxEncodedVertices)
+		return
+	}
+	// Compressed vertices are at least one byte each. A larger count cannot
+	// be represented in the bytes still buffered.
+	if rem, ok := decoderRemaining(d); ok && nvertices > uint64(rem) {
+		d.err = fmt.Errorf("compressed loop vertex count %d exceeds remaining input (%d bytes)", nvertices, rem)
 		return
 	}
 	l.vertices = make([]Point, nvertices)

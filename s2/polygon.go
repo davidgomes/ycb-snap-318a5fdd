@@ -1165,6 +1165,10 @@ func (p *Polygon) decode(d *decoder) {
 		d.err = fmt.Errorf("too many loops (%d; max is %d)", nloops, maxEncodedLoops)
 		return
 	}
+	if rem, ok := decoderRemaining(d); ok && uint64(nloops) > uint64(rem) {
+		d.err = fmt.Errorf("loop count %d exceeds remaining input (%d bytes)", nloops, rem)
+		return
+	}
 	p.loops = make([]*Loop, nloops)
 	for i := range p.loops {
 		p.loops[i] = new(Loop)
@@ -1189,14 +1193,26 @@ func (p *Polygon) decodeCompressed(d *decoder) {
 	}
 	// Polygons with no loops are explicitly allowed here: a newly created
 	// polygon has zero loops and such polygons encode and decode properly.
-	nloops := int(d.readUvarint())
-	if nloops > maxEncodedLoops {
-		d.err = fmt.Errorf("too many loops (%d; max is %d)", nloops, maxEncodedLoops)
+	nloops64 := d.readUvarint()
+	if d.err != nil {
+		return
 	}
+	if nloops64 > maxEncodedLoops {
+		d.err = fmt.Errorf("too many loops (%d; max is %d)", nloops64, maxEncodedLoops)
+		return
+	}
+	if rem, ok := decoderRemaining(d); ok && nloops64 > uint64(rem) {
+		d.err = fmt.Errorf("loop count %d exceeds remaining input (%d bytes)", nloops64, rem)
+		return
+	}
+	nloops := int(nloops64)
 	p.loops = make([]*Loop, nloops)
 	for i := range p.loops {
 		p.loops[i] = new(Loop)
 		p.loops[i].decodeCompressed(d, snapLevel)
+		if d.err != nil {
+			return
+		}
 	}
 	p.initLoopProperties()
 }

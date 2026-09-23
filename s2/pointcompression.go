@@ -171,6 +171,11 @@ func decodeFaces(numVertices int, d *decoder) []faceRun {
 		if d.err != nil {
 			return nil
 		}
+		// A hostile count must not wrap nparsed or loop forever.
+		if fr.count > numVertices-nparsed {
+			d.err = fmt.Errorf("face run count %d exceeds remaining vertices %d", fr.count, numVertices-nparsed)
+			return nil
+		}
 		frs = append(frs, fr)
 		nparsed += fr.count
 	}
@@ -235,23 +240,24 @@ func decodePointsCompressed(d *decoder, level int, target []Point) {
 		target[i] = Point{facePiQitoXYZ(iter.curFace, pi, qi, level)}
 	}
 
-	numOffCenter := int(d.readUvarint())
+	numOffCenter := d.readUvarint()
 	if d.err != nil {
 		return
 	}
-	if numOffCenter > len(target) {
+	if numOffCenter > uint64(len(target)) {
 		d.err = fmt.Errorf("numOffCenter = %d, should be at most len(target) = %d", numOffCenter, len(target))
 		return
 	}
 	for range numOffCenter {
-		idx := int(d.readUvarint())
+		idx64 := d.readUvarint()
 		if d.err != nil {
 			return
 		}
-		if idx >= len(target) {
-			d.err = fmt.Errorf("off center index = %d, should be < len(target) = %d", idx, len(target))
+		if idx64 >= uint64(len(target)) {
+			d.err = fmt.Errorf("off center index = %d, should be < len(target) = %d", idx64, len(target))
 			return
 		}
+		idx := int(idx64)
 		target[idx].X = d.readFloat64()
 		target[idx].Y = d.readFloat64()
 		target[idx].Z = d.readFloat64()

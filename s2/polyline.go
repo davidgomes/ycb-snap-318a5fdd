@@ -371,12 +371,12 @@ func (p Polyline) encode(e *encoder) {
 
 // Decode decodes the polyline.
 func (p *Polyline) Decode(r io.Reader) error {
-	d := decoder{r: asByteReader(r)}
+	d := &decoder{r: asByteReader(r)}
 	p.decode(d)
 	return d.err
 }
 
-func (p *Polyline) decode(d decoder) {
+func (p *Polyline) decode(d *decoder) {
 	version := d.readInt8()
 	if d.err != nil {
 		return
@@ -391,6 +391,12 @@ func (p *Polyline) decode(d decoder) {
 	}
 	if nvertices > maxEncodedVertices {
 		d.err = fmt.Errorf("too many vertices (%d; max is %d)", nvertices, maxEncodedVertices)
+		return
+	}
+	// Each vertex is three float64s. Reject a count the remaining bytes cannot
+	// hold before allocating.
+	if rem, ok := decoderRemaining(d); ok && int64(nvertices) > int64(rem)/24 {
+		d.err = fmt.Errorf("polyline vertex count %d exceeds remaining input (%d bytes)", nvertices, rem)
 		return
 	}
 	*p = make([]Point, nvertices)
