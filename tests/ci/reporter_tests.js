@@ -681,6 +681,31 @@ describe('test reporters', function() {
       });
     });
 
+    it('optionally prints a per-launcher summary', function() {
+      config = new Config('ci', { tap_show_launcher_summary: true });
+      var reporter = new TapReporter(false, stream, config);
+      reporter.report('Chrome', {
+        name: 'passes',
+        passed: true
+      });
+      reporter.report('Chrome', {
+        name: 'fails',
+        passed: false
+      });
+      reporter.report('Firefox', {
+        name: 'skipped',
+        skipped: true
+      });
+      reporter.finish();
+      reporter.finish();
+
+      var output = stream.read().toString();
+      assert.include(output, 'Per-launcher summary');
+      assert.include(output, 'Chrome: 2 tests, 1 pass, 1 fail, 0 skip');
+      assert.include(output, 'Firefox: 1 tests, 0 pass, 0 fail, 1 skip');
+      assert.equal(output.match(/Per-launcher summary/g).length, 1);
+    });
+
   });
 
   describe('dot reporter', function() {
@@ -1106,6 +1131,43 @@ describe('test reporters', function() {
       reporter.finish();
       var output = stream.read().toString();
 
+      assertXmlIsValid(output);
+    });
+
+    it('optionally includes launcher properties and stats', function() {
+      var config = new Config('ci', {
+        xunit_intermediate_output: false,
+        xunit_include_launcher_properties: true
+      });
+      var reporter = new XUnitReporter(false, stream, config);
+      reporter.setLauncherName('Chrome');
+      reporter.report('Chrome', {
+        name: 'passes',
+        passed: true
+      });
+      reporter.report('Chrome', {
+        name: 'fails',
+        passed: false
+      });
+      reporter.report('Firefox', {
+        name: 'passes too',
+        passed: true
+      });
+      reporter.finish();
+      reporter.finish();
+
+      assert.deepEqual(reporter.getLauncherStats(), {
+        Chrome: { total: 2, pass: 1, fail: 1 },
+        Firefox: { total: 1, pass: 1, fail: 0 }
+      });
+
+      var output = stream.read().toString();
+      assert.match(output, /<property name="Chrome_pass" value="1"\/>|<property name="Chrome_pass" value="1"><\/property>/);
+      assert.match(output, /<property name="Chrome_fail" value="1"\/>|<property name="Chrome_fail" value="1"><\/property>/);
+      assert.match(output, /<property name="Firefox_pass" value="1"\/>|<property name="Firefox_pass" value="1"><\/property>/);
+      assert.match(output, /<property name="Firefox_fail" value="0"\/>|<property name="Firefox_fail" value="0"><\/property>/);
+      assert.match(output, /<property name="launcher" value="Chrome"\/>|<property name="launcher" value="Chrome"><\/property>/);
+      assert.match(output, /<property name="launchers" value="Chrome,Firefox"\/>|<property name="launchers" value="Chrome,Firefox"><\/property>/);
       assertXmlIsValid(output);
     });
   });

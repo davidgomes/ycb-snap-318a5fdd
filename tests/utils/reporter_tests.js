@@ -379,4 +379,53 @@ describe('Reporter', function() {
       expect(reporter.hasTests()).to.be.true();
     });
   });
+
+  describe('per-launcher report files', function() {
+    function tapApp() {
+      return {
+        config: {
+          get: function(key) {
+            if (key === 'reporter') {
+              return 'tap';
+            }
+          }
+        }
+      };
+    }
+
+    it('writes each browser to its own file and keeps combined stdout', function() {
+      return tmpNameAsync().then(function(dir) {
+        fs.mkdirSync(dir);
+        let template = require('path').join(dir, '<launcher>.tap');
+        let stream = new PassThrough();
+        let reporter = new Reporter(tapApp(), stream, template);
+
+        reporter.report('Chrome (Beta)', { name: 'passes', passed: true });
+        reporter.report('Firefox', { name: 'fails', passed: false });
+        reporter.report('testem', { name: 'internal', passed: false });
+        reporter.finish();
+        reporter.finish();
+
+        return reporter.close().then(function() {
+          let output = stream.read().toString();
+          expect(output.match(/1\.\.3/g)).to.have.length(1);
+          expect(output).to.contain('Chrome (Beta)');
+          expect(output).to.contain('Firefox');
+          expect(output).to.contain('testem');
+
+          let chromePath = require('path').join(dir, 'Chrome__Beta_.tap');
+          let firefoxPath = require('path').join(dir, 'Firefox.tap');
+          let chrome = fs.readFileSync(chromePath, 'utf8');
+          let firefox = fs.readFileSync(firefoxPath, 'utf8');
+
+          expect(chrome).to.contain('passes');
+          expect(chrome).to.not.contain('fails');
+          expect(firefox).to.contain('fails');
+          expect(firefox).to.not.contain('passes');
+          expect(fs.existsSync(require('path').join(dir, 'testem.tap'))).to.equal(false);
+          expect(fs.existsSync(require('path').join(dir, 'unknown.tap'))).to.equal(false);
+        });
+      });
+    });
+  });
 });

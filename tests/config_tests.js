@@ -655,6 +655,56 @@ function mockTopLevelProgOptions() {
   return progOptions;
 }
 
+describe('report_file templates', function() {
+  it('detects template variables', function() {
+    let config = new Config('ci', { report_file: 'out/<launcher>-<date>-<timestamp>.xml' });
+    expect(config.hasLauncherTemplate()).to.equal(true);
+    expect(config.hasDateTemplate()).to.equal(true);
+    expect(config.hasTimestampTemplate()).to.equal(true);
+    expect(config.hasAnyReportTemplate()).to.equal(true);
+  });
+
+  it('reports no templates when report_file is unset', function() {
+    let config = new Config('ci', {});
+    expect(config.hasLauncherTemplate()).to.equal(false);
+    expect(config.hasDateTemplate()).to.equal(false);
+    expect(config.hasTimestampTemplate()).to.equal(false);
+    expect(config.hasAnyReportTemplate()).to.equal(false);
+    expect(config.getExpandedReportFile('Chrome')).to.equal(null);
+    expect(config.validateReportFile()).to.deep.equal({
+      valid: true,
+      errors: [],
+      warnings: []
+    });
+  });
+
+  it('errors on unknown templates and warns when launcher has no extension', function() {
+    let unknown = new Config('ci', { report_file: 'out/<browser>.xml' });
+    let unknownResult = unknown.validateReportFile();
+    expect(unknownResult.valid).to.equal(false);
+    expect(unknownResult.errors.join(' ')).to.contain('<browser>');
+    expect(unknownResult.warnings).to.deep.equal([]);
+
+    let noExt = new Config('ci', { report_file: 'out/<launcher>' });
+    let noExtResult = noExt.validateReportFile();
+    expect(noExtResult.valid).to.equal(true);
+    expect(noExtResult.errors).to.deep.equal([]);
+    expect(noExtResult.warnings).to.have.length(1);
+
+    let ok = new Config('ci', { report_file: 'out/<launcher>.xml' });
+    expect(ok.validateReportFile()).to.deep.equal({
+      valid: true,
+      errors: [],
+      warnings: []
+    });
+  });
+
+  it('expands report_file for a launcher', function() {
+    let config = new Config('ci', { report_file: 'out/<launcher>.xml' });
+    expect(config.getExpandedReportFile('Chrome Headless')).to.equal('out/Chrome_Headless.xml');
+  });
+});
+
 describe('getTemplateData', function() {
   it('should give templateData', function(done) {
     let fileConfig = {
