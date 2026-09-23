@@ -257,6 +257,16 @@ function parseStatementListItem(
       return parseLexicalDeclaration(parser, context, scope, privateScope, BindingKind.Const, Origin.None);
     case Token.LetKeyword:
       return parseLetIdentOrVarDeclarationStatement(parser, context, scope, privateScope, origin);
+    case Token.UsingKeyword:
+      if (parser.options.next && canParseUsingDeclaration(parser, context, 0, 0)) {
+        return parseUsingDeclaration(parser, context, scope, privateScope, origin, 0, 0);
+      }
+      return parseStatement(parser, context, scope, privateScope, origin, labels, 1);
+    case Token.AwaitKeyword:
+      if (parser.options.next && canParseUsingDeclaration(parser, context, 1, 0)) {
+        return parseUsingDeclaration(parser, context, scope, privateScope, origin, 1, 0);
+      }
+      return parseStatement(parser, context, scope, privateScope, origin, labels, 1);
     // ExportDeclaration
     case Token.ExportKeyword:
       parser.report(Errors.InvalidImportExportSloppy, 'export');
@@ -1512,6 +1522,191 @@ function parseDoWhileStatement(
   );
 }
 
+interface LexerCheckpoint {
+  token: Token;
+  flags: Flags;
+  index: number;
+  line: number;
+  column: number;
+  startIndex: number;
+  tokenIndex: number;
+  startColumn: number;
+  tokenColumn: number;
+  tokenLine: number;
+  startLine: number;
+  tokenValue: any;
+  tokenRaw: string;
+  tokenRegExp: Parser['tokenRegExp'];
+  currentChar: number;
+}
+
+function checkpointLexer(parser: Parser): LexerCheckpoint {
+  return {
+    token: parser.getToken(),
+    flags: parser.flags,
+    index: parser.index,
+    line: parser.line,
+    column: parser.column,
+    startIndex: parser.startIndex,
+    tokenIndex: parser.tokenIndex,
+    startColumn: parser.startColumn,
+    tokenColumn: parser.tokenColumn,
+    tokenLine: parser.tokenLine,
+    startLine: parser.startLine,
+    tokenValue: parser.tokenValue,
+    tokenRaw: parser.tokenRaw,
+    tokenRegExp: parser.tokenRegExp,
+    currentChar: parser.currentChar,
+  };
+}
+
+function restoreLexer(parser: Parser, checkpoint: LexerCheckpoint): void {
+  parser.token = checkpoint.token;
+  parser.flags = checkpoint.flags;
+  parser.index = checkpoint.index;
+  parser.line = checkpoint.line;
+  parser.column = checkpoint.column;
+  parser.startIndex = checkpoint.startIndex;
+  parser.tokenIndex = checkpoint.tokenIndex;
+  parser.startColumn = checkpoint.startColumn;
+  parser.tokenColumn = checkpoint.tokenColumn;
+  parser.tokenLine = checkpoint.tokenLine;
+  parser.startLine = checkpoint.startLine;
+  parser.tokenValue = checkpoint.tokenValue;
+  parser.tokenRaw = checkpoint.tokenRaw;
+  parser.tokenRegExp = checkpoint.tokenRegExp;
+  parser.currentChar = checkpoint.currentChar;
+}
+
+/**
+ * Look ahead without consuming tokens or emitting token/comment callbacks.
+ */
+function withLexerCheckpoint<T>(parser: Parser, fn: () => T): T {
+  const checkpoint = checkpointLexer(parser);
+  const { onToken, onComment } = parser.options;
+  parser.options.onToken = undefined;
+  parser.options.onComment = undefined;
+  try {
+    return fn();
+  } finally {
+    restoreLexer(parser, checkpoint);
+    parser.options.onToken = onToken;
+    parser.options.onComment = onComment;
+  }
+}
+
+/**
+ * `await using` is allowed in async functions, async generators, static blocks
+ * (`InAwaitContext`), and at module top level.
+ */
+function isAwaitUsingContext(context: Context): boolean {
+  return (
+    (context & Context.InAwaitContext) !== 0 || ((context & Context.Module) !== 0 && (context & Context.InGlobal) !== 0)
+  );
+}
+
+/**
+ * UsingDeclaration is forbidden when it is a direct child of a script body.
+ * Blocks, functions, and `for` heads are allowed, including at script top level.
+ */
+function isDirectScriptGlobal(context: Context, origin: Origin): boolean {
+  return (origin & Origin.TopLevel) !== 0 && (context & Context.InGlobal) !== 0 && (context & Context.Module) === 0;
+}
+
+/**
+ * Recognise `using` / `await using` when `next` is enabled.
+ *
+ * There must be no line terminator between `using` and the binding. A line
+ * break makes `using` an identifier. In `for` heads, `for (using of expr)` is
+ * a for-of loop whose left-hand side is the identifier `using`, not a binding
+ * named `of`.
+ */
+function canParseUsingDeclaration(parser: Parser, context: Context, awaitUsing: 0 | 1, inFor: 0 | 1): boolean {
+  if (!parser.options.next) return false;
+  if (awaitUsing) {
+    if (parser.getToken() !== Token.AwaitKeyword) return false;
+  } else if (parser.getToken() !== Token.UsingKeyword) {
+    return false;
+  }
+
+  return withLexerCheckpoint(parser, () => {
+    if (awaitUsing) {
+      nextToken(parser, context);
+      if (parser.flags & Flags.NewLine || parser.getToken() !== Token.UsingKeyword) return false;
+    }
+
+    nextToken(parser, context);
+    if (parser.flags & Flags.NewLine) return false;
+
+    const token = parser.getToken();
+    // `{` is not a valid continuation of an identifier, so this is an attempted
+    // using binding pattern rather than an expression.
+    if (token === Token.LeftBrace) return true;
+    if (
+      (token & Token.IsIdentifier) === 0 &&
+      !((context & Context.Strict) === 0 && token === Token.EscapedFutureReserved)
+    ) {
+      return false;
+    }
+
+    if (inFor && !awaitUsing && token === Token.OfKeyword) {
+      nextToken(parser, context);
+      return parser.getToken() === Token.OfKeyword || parser.getToken() === Token.Assign;
+    }
+
+    return true;
+  });
+}
+
+/**
+ * Parse a `using` or `await using` lexical declaration.
+ *
+ * @param inFor `1` when the declaration is a `for` head (`for` / `for-of` / `for-await-of`)
+ */
+function parseUsingDeclaration(
+  parser: Parser,
+  context: Context,
+  scope: Scope | undefined,
+  privateScope: PrivateScope | undefined,
+  origin: Origin,
+  awaitUsing: 0 | 1,
+  inFor: 0 | 1,
+): ESTree.VariableDeclaration {
+  // `await using` at script top level reports the async-context error,
+  // not the script-global restriction.
+  if (awaitUsing) {
+    if (!isAwaitUsingContext(context)) parser.report(Errors.AwaitUsingOutsideAsync);
+  } else if (!inFor && isDirectScriptGlobal(context, origin)) {
+    parser.report(Errors.UsingGlobalNotAllowed);
+  }
+
+  const start = parser.tokenStart;
+  const kind = awaitUsing ? BindingKind.AwaitUsing : BindingKind.Using;
+
+  if (awaitUsing) nextToken(parser, context);
+  nextToken(parser, context);
+
+  const declarations = parseVariableDeclarationList(
+    parser,
+    inFor ? context | Context.DisallowIn : context,
+    scope,
+    privateScope,
+    kind,
+    inFor ? Origin.ForStatement : origin,
+  );
+
+  if (!inFor) matchOrInsertSemicolon(parser, context | Context.AllowRegExp);
+
+  return parser.finishNode<ESTree.VariableDeclaration>(
+    {
+      type: 'VariableDeclaration',
+      kind: awaitUsing ? 'await using' : 'using',
+      declarations,
+    },
+    start,
+  );
+}
+
 /**
  * Because we are not doing any backtracking - this parses `let` as an identifier
  * or a variable declaration statement.
@@ -1795,11 +1990,18 @@ function parseVariableDeclaration(
 
   let init: ESTree.Expression | ESTree.BindingPattern | ESTree.Identifier | null = null;
 
+  if (kind & BindingKind.UsingBinding && (token & Token.IsPatternStart) === Token.IsPatternStart) {
+    parser.report(Errors.UsingDestructuring);
+  }
+
   const id = parseBindingPattern(parser, context, scope, privateScope, kind, origin);
 
   if (parser.getToken() === Token.Assign) {
     nextToken(parser, context | Context.AllowRegExp);
     init = parseExpression(parser, context, privateScope, 1, 0, parser.tokenStart);
+    if (kind & BindingKind.UsingBinding && origin & Origin.ForStatement && parser.getToken() === Token.InKeyword) {
+      parser.report(Errors.UsingInForIn);
+    }
     if (origin & Origin.ForStatement || (token & Token.IsPatternStart) === 0) {
       // Lexical declarations in for-in / for-of loops can't be initialized
 
@@ -1817,6 +2019,12 @@ function parseVariableDeclaration(
       }
     }
     // Normal const declarations, and const declarations in for(;;) heads, must be initialized.
+  } else if (kind & BindingKind.UsingBinding) {
+    if (origin & Origin.ForStatement && parser.getToken() === Token.InKeyword) {
+      parser.report(Errors.UsingInForIn);
+    } else if ((parser.getToken() & Token.IsInOrOf) !== Token.IsInOrOf) {
+      parser.report(Errors.UsingMissingInitializer);
+    }
   } else if (
     (kind & BindingKind.Const || (token & Token.IsPatternStart) > 0) &&
     (parser.getToken() & Token.IsInOrOf) !== Token.IsInOrOf
@@ -1871,13 +2079,24 @@ function parseForStatement(
     parser.getToken() === Token.VarKeyword ||
     parser.getToken() === Token.LetKeyword ||
     parser.getToken() === Token.ConstKeyword;
+  const awaitUsing: 0 | 1 = parser.options.next && parser.getToken() === Token.AwaitKeyword ? 1 : 0;
+  const isUsingDecl: 0 | 1 =
+    parser.options.next &&
+    (parser.getToken() === Token.UsingKeyword || awaitUsing === 1) &&
+    canParseUsingDeclaration(parser, context, awaitUsing, 1)
+      ? 1
+      : 0;
+  if (isUsingDecl) isVarDecl = true;
   let right;
 
   const { tokenStart } = parser;
   const token = parser.getToken();
 
   if (isVarDecl) {
-    if (token === Token.LetKeyword) {
+    if (isUsingDecl) {
+      init = parseUsingDeclaration(parser, context, scope, privateScope, Origin.ForStatement, awaitUsing, 1);
+      parser.assignable = AssignmentKind.Assignable;
+    } else if (token === Token.LetKeyword) {
       init = parseIdentifier(parser, context);
       if (parser.getToken() & (Token.IsIdentifier | Token.IsPatternStart)) {
         if (parser.getToken() === Token.InKeyword) {
@@ -2734,6 +2953,18 @@ function parseExportDeclaration(
     case Token.LetKeyword:
       declaration = parseLexicalDeclaration(parser, context, scope, undefined, BindingKind.Let, Origin.Export);
       break;
+    case Token.UsingKeyword:
+      if (parser.options.next && canParseUsingDeclaration(parser, context, 0, 0)) {
+        declaration = parseUsingDeclaration(parser, context, scope, undefined, Origin.Export, 0, 0);
+        break;
+      }
+      parser.report(Errors.UnexpectedToken, KeywordDescTable[parser.getToken() & Token.Type]);
+    case Token.AwaitKeyword:
+      if (parser.options.next && canParseUsingDeclaration(parser, context, 1, 0)) {
+        declaration = parseUsingDeclaration(parser, context, scope, undefined, Origin.Export, 1, 0);
+        break;
+      }
+      parser.report(Errors.UnexpectedToken, KeywordDescTable[parser.getToken() & Token.Type]);
     case Token.ConstKeyword:
       declaration = parseLexicalDeclaration(parser, context, scope, undefined, BindingKind.Const, Origin.Export);
       break;
@@ -8285,11 +8516,13 @@ function parseAndClassifyIdentifier(
   }
 
   if ((token & Token.Type) === (Token.LetKeyword & Token.Type)) {
-    if (kind & (BindingKind.Let | BindingKind.Const)) parser.report(Errors.InvalidLetConstBinding);
+    if (kind & (BindingKind.Let | BindingKind.Const | BindingKind.UsingBinding))
+      parser.report(Errors.InvalidLetConstBinding);
   }
   if (token === Token.AwaitKeyword) {
     if (context & Context.InAwaitContext) parser.report(Errors.InvalidAwaitAsIdentifier);
     if (context & Context.Module) parser.report(Errors.AwaitIdentInModuleOrAsyncFunc);
+    if (kind & BindingKind.UsingBinding) parser.report(Errors.DisallowedInContext, 'await');
   }
 
   const { tokenValue, tokenStart: start } = parser;
