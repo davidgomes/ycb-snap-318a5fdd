@@ -150,6 +150,24 @@ type TrafficPolicySpec struct {
 	// malicious social engineering.
 	// +optional
 	OAuth2 *OAuth2Policy `json:"oauth2,omitempty"`
+
+	// ConsistentHash configures the request properties that are hashed to select an upstream host
+	// when the backend uses a hashing load balancer, such as RingHash or Maglev.
+	// Hash policies configured on the backend's load balancer (e.g. via BackendConfigPolicy)
+	// take precedence over the hash policies configured here.
+	//
+	// Hash policies are evaluated in the following order: headers, cookies, queryParameters,
+	// filterState, sourceIp. Entries within each list are evaluated in the order they are specified.
+	// If none of headers, cookies, queryParameters, filterState and sourceIp are set, the source IP
+	// address of the request is hashed.
+	//
+	// When multiple policies configure consistentHash for the same route, the entries of their lists
+	// are combined, with the entries of the higher priority policy taking precedence. sourceIp and
+	// disable are only taken from the higher priority policy.
+	//
+	// It is applicable to HTTPRoutes and GRPCRoutes, and ignored for other targeted kinds.
+	// +optional
+	ConsistentHash *ConsistentHash `json:"consistentHash,omitempty"`
 }
 
 // URLRewrite specifies URL rewrite rules using regular expressions.
