@@ -9,6 +9,7 @@ import {
   Query,
   QueryClient,
   QueryObserver,
+  createPersisterRestoreResult,
   dehydrate,
   hydrate,
 } from '..'
@@ -19,6 +20,7 @@ import type {
   QueryFunctionContext,
   QueryKey,
   QueryObserverResult,
+  QueryState,
 } from '..'
 
 describe('query', () => {
@@ -1162,6 +1164,60 @@ describe('query', () => {
 
     const query = queryCache.find({ queryKey: key })!
     expect(query.state.data).toBe('persisted data')
+  })
+
+  test('should adopt the state returned via createPersisterRestoreResult', async () => {
+    const key = queryKey()
+    const onSuccess = vi.fn()
+    const onSettled = vi.fn()
+    queryCache.config.onSuccess = onSuccess
+    queryCache.config.onSettled = onSettled
+    const error = new Error('persisted error')
+    const state: QueryState<string, Error> = {
+      data: 'persisted data',
+      dataUpdateCount: 3,
+      dataUpdatedAt: 1000,
+      error,
+      errorUpdateCount: 2,
+      errorUpdatedAt: 2000,
+      fetchFailureCount: 5,
+      fetchFailureReason: error,
+      fetchMeta: null,
+      isInvalidated: true,
+      status: 'error',
+      fetchStatus: 'fetching',
+    }
+
+    const persister = () =>
+      sleep(10).then(() =>
+        createPersisterRestoreResult({ data: 'persisted data', state }),
+      )
+
+    const first = queryClient.fetchQuery({
+      queryKey: key,
+      queryFn: () => 'data',
+      persister,
+    })
+    const query = queryCache.find<string, Error>({ queryKey: key })!
+    const deduped = query.fetch()
+
+    await vi.advanceTimersByTimeAsync(10)
+
+    await expect(first).resolves.toBe('persisted data')
+    await expect(deduped).resolves.toBe('persisted data')
+    expect(query.state).toEqual({ ...state, fetchStatus: 'idle' })
+    expect(onSuccess).not.toHaveBeenCalled()
+    expect(onSettled).not.toHaveBeenCalled()
+
+    const observer = new QueryObserver(queryClient, {
+      queryKey: key,
+      enabled: false,
+    })
+    const result = observer.getCurrentResult()
+    expect(result.isRefetchError).toBe(true)
+    expect(result.failureCount).toBe(5)
+    expect(result.dataUpdatedAt).toBe(1000)
+    expect(result.errorUpdatedAt).toBe(2000)
   })
 
   test('should use queryFn from observer if not provided in options', async () => {
