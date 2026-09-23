@@ -17,6 +17,7 @@ use crate::filesystem;
 #[cfg(unix)]
 use crate::filter::OwnerFilter;
 use crate::filter::SizeFilter;
+use crate::sort::SortKey;
 
 #[derive(Parser)]
 #[command(
@@ -537,6 +538,139 @@ pub struct Opts {
     #[arg(long, short = 'j', value_name = "num", hide_short_help = true, value_parser = str::parse::<NonZeroUsize>)]
     pub threads: Option<NonZeroUsize>,
 
+    /// Sort results by the given field. May be repeated. Keys are applied left
+    /// to right; later keys break ties from earlier keys. If every key ties,
+    /// entries are ordered by path so the result does not depend on traversal
+    /// order.
+    ///
+    /// {n}  path          full path
+    /// {n}  name          file or directory name
+    /// {n}  extension     file extension
+    /// {n}  size          size in bytes (regular files only)
+    /// {n}  modified      modification time
+    /// {n}  created       creation time
+    /// {n}  accessed      access time
+    /// {n}  depth         directory depth
+    /// {n}  type          directory, then symlink, file, and other
+    /// {n}  name-length   length of the file name
+    /// {n}  path-length   length of the path
+    /// {n}  random        pseudo-random order
+    ///
+    /// Text fields (path, name, extension) are compared case-insensitively
+    /// unless '--sort-case-sensitive' is set. '--sort-natural' compares digit
+    /// runs numerically. Missing optional values sort first unless
+    /// '--sort-missing-last' is set.
+    ///
+    /// '--dirs-first' and '--files-first' group entries before these keys.
+    /// '--reverse' reverses the finished order. With '--max-results', the
+    /// limit is applied after sorting and reversing.
+    ///
+    /// Cannot be combined with '--exec', '--exec-batch', or '--list-details'.
+    #[arg(
+        long,
+        value_name = "field",
+        value_enum,
+        hide_possible_values = true,
+        action = ArgAction::Append,
+        conflicts_with_all = ["exec", "exec_batch", "list_details"],
+        help = "Sort results by field (repeatable)",
+        long_help
+    )]
+    pub sort: Vec<SortKey>,
+
+    /// Reverse the final sorted order. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        conflicts_with_all = ["exec", "exec_batch", "list_details"],
+        help = "Reverse the sorted order",
+        long_help
+    )]
+    pub reverse: bool,
+
+    /// List directories before other results. The grouping is applied before
+    /// the '--sort' keys. Symlinks and other non-directories stay in the second
+    /// group and are ordered by the sort keys. Mutually exclusive with
+    /// '--files-first'. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        conflicts_with_all = ["files_first", "exec", "exec_batch", "list_details"],
+        help = "List directories before other results",
+        long_help
+    )]
+    pub dirs_first: bool,
+
+    /// List regular files before other results. The grouping is applied before
+    /// the '--sort' keys. Directories, symlinks, and other non-files stay in
+    /// the second group and are ordered by the sort keys. Mutually exclusive
+    /// with '--dirs-first'. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        conflicts_with_all = ["dirs_first", "exec", "exec_batch", "list_details"],
+        help = "List regular files before other results",
+        long_help
+    )]
+    pub files_first: bool,
+
+    /// Compare text sort keys case-sensitively. By default, path, name, and
+    /// extension comparisons ignore case. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        conflicts_with_all = ["exec", "exec_batch", "list_details"],
+        help = "Use case-sensitive comparisons when sorting",
+        long_help
+    )]
+    pub sort_case_sensitive: bool,
+
+    /// Place entries with a missing optional sort value after entries that
+    /// have one. By default, missing values sort first. Size is missing for
+    /// every entry that is not a regular file. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        conflicts_with_all = ["exec", "exec_batch", "list_details"],
+        help = "Place missing sort values last",
+        long_help
+    )]
+    pub sort_missing_last: bool,
+
+    /// Compare the text fields path, name, and extension in natural order.
+    /// Runs of ASCII digits compare as integers, so file9 sorts before file10.
+    /// Combined with '--sort-case-sensitive', non-digit text is compared
+    /// case-sensitively. Requires '--sort'.
+    #[arg(
+        long,
+        requires = "sort",
+        hide_short_help = true,
+        conflicts_with_all = ["exec", "exec_batch", "list_details"],
+        help = "Use natural order for text sort fields",
+        long_help
+    )]
+    pub sort_natural: bool,
+
+    /// Seed for '--sort random', as an unsigned 64-bit integer. The same seed
+    /// reproduces the same order. Without this option the seed comes from the
+    /// current time, so the order changes between runs. Requires '--sort'.
+    #[arg(
+        long,
+        value_name = "n",
+        requires = "sort",
+        hide_short_help = true,
+        value_parser = value_parser!(u64),
+        conflicts_with_all = ["exec", "exec_batch", "list_details"],
+        help = "Seed for --sort random",
+        long_help
+    )]
+    pub sort_seed: Option<u64>,
+
     /// Milliseconds to buffer before streaming search results to console
     ///
     /// Amount of time in milliseconds to buffer, before streaming the search
@@ -544,7 +678,9 @@ pub struct Opts {
     #[arg(long, hide = true, value_parser = parse_millis)]
     pub max_buffer_time: Option<Duration>,
 
-    ///Limit the number of search results to 'count' and quit immediately.
+    /// Limit the number of search results to 'count' and quit immediately.
+    /// When '--sort' is used, matches are sorted (and reversed, if requested)
+    /// before this limit is applied.
     #[arg(
         long,
         value_name = "count",

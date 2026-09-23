@@ -133,6 +133,18 @@ fn normalize_output(s: &str, trim_start: bool, normalize_line: bool) -> String {
     lines.join("\n")
 }
 
+/// Normalize output for an order-sensitive comparison.
+fn normalize_ordered_output(s: &str) -> String {
+    s.replace('\0', "NULL\n")
+        .lines()
+        .map(|line| {
+            line.trim_start()
+                .replace('/', std::path::MAIN_SEPARATOR_STR)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Trim whitespace from the beginning of each line.
 fn trim_lines(s: &str) -> String {
     s.lines()
@@ -247,6 +259,23 @@ impl TestEnv {
     /// Assert that calling *fd* with the specified arguments produces the expected output.
     pub fn assert_output(&self, args: &[&str], expected: &str) {
         self.assert_output_subdirectory(".", args, expected)
+    }
+
+    /// Assert stdout matches `expected`, including line order.
+    ///
+    /// Path separators in `expected` may be written as `/`.
+    pub fn assert_output_ordered(&self, args: &[&str], expected: &str) {
+        let actual = self.ordered_output(args);
+        let expected = normalize_ordered_output(expected);
+        if expected != actual {
+            panic!("{}", format_output_error(args, &expected, &actual));
+        }
+    }
+
+    /// Return normalized stdout without sorting lines.
+    pub fn ordered_output(&self, args: &[&str]) -> String {
+        let output = self.assert_success_and_get_output(".", args);
+        normalize_ordered_output(&String::from_utf8_lossy(&output.stdout))
     }
 
     /// Similar to assert_output, but able to handle non-utf8 output

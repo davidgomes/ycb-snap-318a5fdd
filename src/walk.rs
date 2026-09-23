@@ -182,6 +182,13 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
 
     /// Receive the next worker result.
     fn recv(&self) -> Result<Batch, RecvTimeoutError> {
+        if self.config.sort.is_some() {
+            // Sorting needs the full set. Do not switch to streaming on a timeout.
+            return match self.rx.recv() {
+                Ok(batch) => Ok(batch),
+                Err(_) => Err(RecvTimeoutError::Disconnected),
+            };
+        }
         match self.mode {
             ReceiverMode::Buffering => {
                 // Wait at most until we should switch to streaming
@@ -205,23 +212,28 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                                 return Err(ExitCode::HasResults(true));
                             }
 
-                            match self.mode {
-                                ReceiverMode::Buffering => {
-                                    self.buffer.push(dir_entry);
-                                    if self.buffer.len() > MAX_BUFFER_LENGTH {
-                                        self.stream()?;
+                            if self.config.sort.is_some() {
+                                // Keep every match. --max-results is applied after sorting.
+                                self.buffer.push(dir_entry);
+                            } else {
+                                match self.mode {
+                                    ReceiverMode::Buffering => {
+                                        self.buffer.push(dir_entry);
+                                        if self.buffer.len() > MAX_BUFFER_LENGTH {
+                                            self.stream()?;
+                                        }
+                                    }
+                                    ReceiverMode::Streaming => {
+                                        self.print(&dir_entry)?;
                                     }
                                 }
-                                ReceiverMode::Streaming => {
-                                    self.print(&dir_entry)?;
-                                }
-                            }
 
-                            self.num_results += 1;
-                            if let Some(max_results) = self.config.max_results
-                                && self.num_results >= max_results
-                            {
-                                return self.stop();
+                                self.num_results += 1;
+                                if let Some(max_results) = self.config.max_results
+                                    && self.num_results >= max_results
+                                {
+                                    return self.stop();
+                                }
                             }
                         }
                         WorkerResult::Error(err) => {
@@ -280,7 +292,10 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
 
     /// Stop looping.
     fn stop(&mut self) -> Result<(), ExitCode> {
-        if self.mode == ReceiverMode::Buffering {
+        if self.config.sort.is_some() {
+            self.sort_buffer();
+            self.stream()?;
+        } else if self.mode == ReceiverMode::Buffering {
             self.buffer.sort();
             self.stream()?;
         }
@@ -289,6 +304,17 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
             Err(ExitCode::HasResults(self.num_results > 0))
         } else {
             Err(ExitCode::Success)
+        }
+    }
+
+    /// Apply configured sort keys, then keep only `--max-results` entries.
+    fn sort_buffer(&mut self) {
+        let Some(opts) = self.config.sort.clone() else {
+            return;
+        };
+        crate::sort::sort_entries(&mut self.buffer, &opts);
+        if let Some(limit) = self.config.max_results {
+            self.buffer.truncate(limit);
         }
     }
 

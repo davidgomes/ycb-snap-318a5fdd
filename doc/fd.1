@@ -147,9 +147,71 @@ Separate search results by the null character (instead of newlines). Useful for 
 .TP
 .B \-\-max\-results count
 Limit the number of search results to 'count' and quit immediately.
+When --sort is used, results are sorted (and reversed, if requested) before this limit is applied.
 .TP
 .B \-1
 Limit the search to a single result and quit immediately. This is an alias for '--max-results=1'.
+.TP
+.BI "\-\-sort " field
+Sort search results by
+.IR field .
+This option may be given more than once. Keys are applied left to right; later keys break ties from earlier keys. If every key ties, results are ordered by path, so the output is deterministic and does not depend on traversal order.
+.IP
+.I field
+may be:
+.RS
+.IP path
+the full path
+.IP name
+the file or directory name
+.IP extension
+the file extension, without the leading dot. Entries with no extension are missing values
+.IP size
+size in bytes. Only regular files have a size; directories, symlinks, and other types are missing
+.IP modified
+modification time
+.IP created
+creation time
+.IP accessed
+access time
+.IP depth
+directory depth
+.IP type
+file kind: directory, then symlink, then regular file, then other or unknown
+.IP name-length
+length of the file name
+.IP path-length
+length of the path
+.IP random
+pseudo-random order. Use --sort-seed to make it reproducible
+.RE
+.IP
+Text fields are compared case-insensitively unless --sort-case-sensitive is set. --sort-natural compares embedded runs of digits numerically (file9 before file10). Missing optional values sort first unless --sort-missing-last is set.
+.IP
+--dirs-first and --files-first group entries before the sort keys. --reverse reverses the finished order. With --max-results, sorting and reversing happen before the limit is applied.
+.IP
+--sort cannot be combined with --exec, --exec-batch, or --list-details.
+.TP
+.B \-\-reverse
+Reverse the final sorted order. Requires --sort.
+.TP
+.B \-\-dirs\-first
+List directories before other results. Symlinks and other non-directories stay in the second group, ordered by the sort keys. Mutually exclusive with --files-first. Requires --sort.
+.TP
+.B \-\-files\-first
+List regular files before other results. Directories, symlinks, and other non-files stay in the second group, ordered by the sort keys. Mutually exclusive with --dirs-first. Requires --sort.
+.TP
+.B \-\-sort\-case\-sensitive
+Compare text sort fields case-sensitively. Requires --sort.
+.TP
+.B \-\-sort\-missing\-last
+Place entries with a missing optional sort value last. Requires --sort.
+.TP
+.B \-\-sort\-natural
+Compare path, name, and extension in natural order. Requires --sort.
+.TP
+.BI "\-\-sort\-seed " n
+Unsigned 64-bit seed for --sort random. The same seed reproduces the same order. Without this option the seed is taken from the current time. Requires --sort.
 .TP
 .B \-q, \-\-quiet
 When the flag is present, the program does not print anything and will instead exit with a code of 0 if there is at least one search result.

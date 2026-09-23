@@ -354,6 +354,7 @@ Options:
       --hyperlink[=<when>]         Add hyperlinks to output paths [default: never] [possible
                                    values: auto, always, never]
       --ignore-contain <name>      Ignore directories containing the named entry
+      --sort <field>               Sort results by field (repeatable)
   -h, --help                       Print help (see more with '--help')
   -V, --version                    Print version
 ```

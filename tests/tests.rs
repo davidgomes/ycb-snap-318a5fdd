@@ -2758,3 +2758,455 @@ fn test_ignore_contain_precedence_over_root_check() {
     let expected = "";
     te.assert_output(&["--ignore-contain=CACHEDIR.TAG", "."], expected);
 }
+
+fn sort_env(dirs: &[&'static str], files: &[&'static str]) -> TestEnv {
+    let te = TestEnv::new(dirs, files);
+    remove_symlink(te.test_root().join("symlink"));
+    te
+}
+
+#[test]
+fn test_sort_name_and_path() {
+    let te = sort_env(&["m"], &["m/a", "b", "m/c"]);
+
+    te.assert_output_ordered(
+        &["--sort", "name"],
+        "m/a
+        b
+        m/c
+        m/",
+    );
+    te.assert_output_ordered(
+        &["--sort", "path"],
+        "b
+        m/
+        m/a
+        m/c",
+    );
+    // Repeated runs stay in the same order.
+    assert_eq!(
+        te.ordered_output(&["--sort", "name"]),
+        te.ordered_output(&["--sort", "name"])
+    );
+}
+
+#[test]
+fn test_sort_case_and_path_tie_break() {
+    let te = sort_env(
+        &["dir1", "dir2", "a", "B"],
+        &["dir1/foo", "dir2/Foo", "a/x", "B/x"],
+    );
+
+    te.assert_output_ordered(
+        &["--sort", "name", "--type", "file"],
+        "dir1/foo
+        dir2/Foo
+        a/x
+        B/x",
+    );
+    te.assert_output_ordered(
+        &["--sort", "name", "--sort-case-sensitive", "--type", "file"],
+        "dir2/Foo
+        dir1/foo
+        B/x
+        a/x",
+    );
+}
+
+#[test]
+fn test_sort_extension_then_name() {
+    let te = sort_env(&[], &["b.txt", "a.txt", "a.md", "README", "c.TXT"]);
+
+    te.assert_output_ordered(
+        &["--sort", "extension", "--sort", "name"],
+        "README
+        a.md
+        a.txt
+        b.txt
+        c.TXT",
+    );
+    te.assert_output_ordered(
+        &[
+            "--sort",
+            "extension",
+            "--sort-case-sensitive",
+            "--sort",
+            "name",
+        ],
+        "README
+        c.TXT
+        a.md
+        a.txt
+        b.txt",
+    );
+    te.assert_output_ordered(
+        &[
+            "--sort",
+            "extension",
+            "--sort",
+            "name",
+            "--sort-missing-last",
+        ],
+        "a.md
+        a.txt
+        b.txt
+        c.TXT
+        README",
+    );
+}
+
+#[test]
+fn test_sort_natural_and_leading_zeros() {
+    let te = sort_env(&[], &["file9", "file10", "file20", "file007", "file7"]);
+
+    te.assert_output_ordered(
+        &["--sort", "name", "--sort-natural"],
+        "file007
+        file7
+        file9
+        file10
+        file20",
+    );
+    te.assert_output_ordered(
+        &["--sort", "name"],
+        "file007
+        file10
+        file20
+        file7
+        file9",
+    );
+
+    // Numerically equal names tie, so the earlier path component decides.
+    let te = sort_env(&["a", "b"], &["a/file7", "b/file007"]);
+    te.assert_output_ordered(
+        &["--sort", "name", "--sort-natural", "--type", "file"],
+        "a/file7
+        b/file007",
+    );
+}
+
+#[test]
+fn test_sort_natural_extension_and_case() {
+    let te = sort_env(&[], &["file.mp9", "file.mp10", "File10", "file9"]);
+
+    te.assert_output_ordered(
+        &["--sort", "extension", "--sort-natural"],
+        "file9
+        File10
+        file.mp9
+        file.mp10",
+    );
+    te.assert_output_ordered(
+        &["--sort", "name", "--sort-natural"],
+        "file9
+        File10
+        file.mp9
+        file.mp10",
+    );
+    te.assert_output_ordered(
+        &["--sort", "name", "--sort-natural", "--sort-case-sensitive"],
+        "File10
+        file9
+        file.mp9
+        file.mp10",
+    );
+}
+
+#[test]
+fn test_sort_size_missing_for_non_files() {
+    let te = sort_env(&["adir"], &["empty_file", "small", "large"]);
+    create_file_with_size(te.test_root().join("empty_file"), 0);
+    create_file_with_size(te.test_root().join("small"), 10);
+    create_file_with_size(te.test_root().join("large"), 100);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("small", te.test_root().join("alink")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file("small", te.test_root().join("alink")).unwrap();
+
+    te.assert_output_ordered(
+        &["--sort", "size", "--sort", "name"],
+        "adir/
+        alink
+        empty_file
+        small
+        large",
+    );
+    te.assert_output_ordered(
+        &["--sort", "size", "--sort", "name", "--sort-missing-last"],
+        "empty_file
+        small
+        large
+        adir/
+        alink",
+    );
+}
+
+#[test]
+fn test_sort_type_and_grouping() {
+    let te = sort_env(&["dir"], &["file"]);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("file", te.test_root().join("link")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file("file", te.test_root().join("link")).unwrap();
+    // A socket is an "other" file type: after directories, symlinks, and regular files.
+    #[cfg(unix)]
+    let _socket = std::os::unix::net::UnixListener::bind(te.test_root().join("sock")).unwrap();
+
+    let mut type_expected = "dir/\nlink\nfile".to_string();
+    #[cfg(unix)]
+    type_expected.push_str("\nsock");
+    te.assert_output_ordered(&["--sort", "type", "--sort", "name"], &type_expected);
+
+    let mut dirs_first = "dir/\nfile\nlink".to_string();
+    #[cfg(unix)]
+    dirs_first.push_str("\nsock");
+    te.assert_output_ordered(&["--sort", "name", "--dirs-first"], &dirs_first);
+
+    let mut files_first = "file\ndir/\nlink".to_string();
+    #[cfg(unix)]
+    files_first.push_str("\nsock");
+    te.assert_output_ordered(&["--sort", "name", "--files-first"], &files_first);
+}
+
+#[test]
+fn test_sort_reverse_and_max_results() {
+    let te = sort_env(&["dir_a", "dir_b"], &["file_a", "file_b"]);
+
+    te.assert_output_ordered(
+        &["--sort", "name", "--dirs-first"],
+        "dir_a/
+        dir_b/
+        file_a
+        file_b",
+    );
+    te.assert_output_ordered(
+        &["--sort", "name", "--dirs-first", "--reverse"],
+        "file_b
+        file_a
+        dir_b/
+        dir_a/",
+    );
+    te.assert_output_ordered(
+        &[
+            "--sort",
+            "name",
+            "--dirs-first",
+            "--reverse",
+            "--max-results",
+            "2",
+        ],
+        "file_b
+        file_a",
+    );
+    te.assert_output_ordered(
+        &["--sort", "name", "--max-results", "2"],
+        "dir_a/
+        dir_b/",
+    );
+    te.assert_output_ordered(&["--sort", "name", "-1"], "dir_a/");
+    te.assert_output_ordered(
+        &["--sort", "name", "--reverse", "--max-results", "1"],
+        "file_b",
+    );
+}
+
+#[test]
+fn test_sort_depth_and_lengths() {
+    let te = sort_env(&["b/d"], &["a", "b/c", "b/d/e"]);
+    te.assert_output_ordered(
+        &["--sort", "depth", "--sort", "name"],
+        "a
+        b/
+        b/c
+        b/d/
+        b/d/e",
+    );
+
+    let te = sort_env(&["dir"], &["z", "dir/a", "bb"]);
+    te.assert_output_ordered(
+        &["--sort", "name-length", "--sort", "name", "^(a|bb|z)$"],
+        "dir/a
+        z
+        bb",
+    );
+    te.assert_output_ordered(
+        &["--sort", "path-length", "--sort", "name", "^(a|bb|z)$"],
+        "z
+        bb
+        dir/a",
+    );
+}
+
+#[test]
+fn test_sort_modified_and_accessed() {
+    let te = sort_env(&[], &["old_access", "new_access"]);
+    let root = te.test_root();
+
+    let older = "2018-01-01T00:00:00Z"
+        .parse::<Timestamp>()
+        .map(SystemTime::from)
+        .unwrap();
+    let newer = "2020-06-01T00:00:00Z"
+        .parse::<Timestamp>()
+        .map(SystemTime::from)
+        .unwrap();
+    filetime::set_file_atime(
+        root.join("old_access"),
+        filetime::FileTime::from_system_time(older),
+    )
+    .unwrap();
+    filetime::set_file_mtime(
+        root.join("old_access"),
+        filetime::FileTime::from_system_time(newer),
+    )
+    .unwrap();
+    filetime::set_file_atime(
+        root.join("new_access"),
+        filetime::FileTime::from_system_time(newer),
+    )
+    .unwrap();
+    filetime::set_file_mtime(
+        root.join("new_access"),
+        filetime::FileTime::from_system_time(older),
+    )
+    .unwrap();
+
+    te.assert_output_ordered(
+        &["--sort", "accessed"],
+        "old_access
+        new_access",
+    );
+    te.assert_output_ordered(
+        &["--sort", "modified"],
+        "new_access
+        old_access",
+    );
+    let created = te.ordered_output(&["--sort", "created"]);
+    assert_eq!(created, te.ordered_output(&["--sort", "created"]));
+    assert!(created.contains("old_access"));
+    assert!(created.contains("new_access"));
+}
+
+#[test]
+fn test_sort_multiple_roots_and_null() {
+    let te = sort_env(
+        &["root_a/sub", "root_b"],
+        &["root_a/b.txt", "root_a/sub/a.txt", "root_b/a.txt", "m", "a"],
+    );
+
+    te.assert_output_ordered(
+        &[
+            "--sort",
+            "name",
+            "--search-path",
+            "root_a",
+            "--search-path",
+            "root_b",
+        ],
+        "root_a/sub/a.txt
+        root_b/a.txt
+        root_a/b.txt
+        root_a/sub/",
+    );
+    te.assert_output_ordered(
+        &["--sort", "name", "--print0", "--glob", "[am]"],
+        "./a\0./m\0",
+    );
+}
+
+#[test]
+fn test_sort_keeps_filters() {
+    let te = sort_env(
+        &["one/two", "foo_dir"],
+        &[
+            "a.foo",
+            "one/b.foo",
+            "one/two/c.foo",
+            "skip.txt",
+            "fdignored.foo",
+            "foo_dir/nested.foo",
+        ],
+    );
+
+    te.assert_output_ordered(
+        &[
+            "--sort",
+            "name",
+            "--type",
+            "file",
+            "--extension",
+            "foo",
+            "foo",
+        ],
+        "a.foo
+        one/b.foo
+        one/two/c.foo
+        foo_dir/nested.foo",
+    );
+    te.assert_output_ordered(
+        &["--sort", "name", "--max-depth", "1", "foo"],
+        "a.foo
+        foo_dir/",
+    );
+}
+
+#[test]
+fn test_sort_random_is_seeded_and_can_tie_break() {
+    let te = sort_env(
+        &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"],
+        &[
+            "d0/same", "d1/same", "d2/same", "d3/same", "d4/same", "d5/same", "d6/same", "d7/same",
+            "aaa",
+        ],
+    );
+
+    let seeded = te.ordered_output(&["--sort", "random", "--sort-seed", "42"]);
+    assert_eq!(
+        seeded,
+        te.ordered_output(&["--sort", "random", "--sort-seed", "42"])
+    );
+    let other_seed = te.ordered_output(&["--sort", "random", "--sort-seed", "99"]);
+    assert_ne!(seeded, other_seed);
+
+    let unseeded_a = te.ordered_output(&["--sort", "random"]);
+    let unseeded_b = te.ordered_output(&["--sort", "random"]);
+    assert_ne!(unseeded_a, unseeded_b);
+
+    let tie_a = te.ordered_output(&["--sort", "name", "--sort", "random", "--sort-seed", "1"]);
+    let tie_b = te.ordered_output(&["--sort", "name", "--sort", "random", "--sort-seed", "1"]);
+    assert_eq!(tie_a, tie_b);
+    assert_eq!(tie_a.lines().next(), Some("aaa"));
+
+    let tie_other = te.ordered_output(&["--sort", "name", "--sort", "random", "--sort-seed", "2"]);
+    assert_eq!(tie_other.lines().next(), Some("aaa"));
+    assert_ne!(tie_a, tie_other);
+
+    // Random as the primary key still keeps the other key available for hash ties,
+    // and a fixed seed does not follow name order.
+    let by_name = te.ordered_output(&["--sort", "name"]);
+    assert_ne!(seeded, by_name);
+}
+
+#[test]
+fn test_sort_flags_require_sort_and_reject_exec() {
+    let te = sort_env(&[], &["a"]);
+
+    te.assert_failure(&["--reverse"]);
+    te.assert_failure(&["--dirs-first"]);
+    te.assert_failure(&["--files-first"]);
+    te.assert_failure(&["--sort-case-sensitive"]);
+    te.assert_failure(&["--sort-missing-last"]);
+    te.assert_failure(&["--sort-natural"]);
+    te.assert_failure(&["--sort-seed", "1"]);
+    te.assert_failure(&["--dirs-first", "--files-first", "--sort", "name"]);
+    te.assert_failure(&["--sort", "nope"]);
+    te.assert_failure(&["--sort", "name", "--exec", "echo"]);
+    te.assert_failure(&["--sort", "name", "--exec-batch", "echo"]);
+    te.assert_failure(&["--sort", "name", "--list-details"]);
+    te.assert_failure(&["--sort", "random", "--sort-seed", "-1"]);
+
+    te.assert_output_ordered(
+        &["--sort", "random", "--sort-seed", "18446744073709551615"],
+        "a",
+    );
+}

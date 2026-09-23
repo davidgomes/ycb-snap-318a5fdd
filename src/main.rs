@@ -11,6 +11,7 @@ mod fmt;
 mod hyperlink;
 mod output;
 mod regex_helper;
+mod sort;
 mod walk;
 
 use std::env;
@@ -325,8 +326,25 @@ fn construct_config(mut opts: Opts, pattern_regexps: &[String]) -> Result<Config
         path_separator,
         actual_path_separator,
         max_results: opts.max_results(),
+        sort: sort_options(&opts),
         strip_cwd_prefix: opts.strip_cwd_prefix(|| !(opts.null_separator || has_command)),
         ignore_contain: opts.ignore_contain,
+    })
+}
+
+fn sort_options(opts: &Opts) -> Option<crate::sort::SortOptions> {
+    if opts.sort.is_empty() {
+        return None;
+    }
+    Some(crate::sort::SortOptions {
+        keys: opts.sort.clone(),
+        reverse: opts.reverse,
+        dirs_first: opts.dirs_first,
+        files_first: opts.files_first,
+        case_sensitive: opts.sort_case_sensitive,
+        missing_last: opts.sort_missing_last,
+        natural: opts.sort_natural,
+        seed: opts.sort_seed.unwrap_or_else(crate::sort::time_seed),
     })
 }
 
