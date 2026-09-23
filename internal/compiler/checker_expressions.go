@@ -1605,6 +1605,8 @@ func (tc *typechecker) checkCallExpression(expr *ast.Call) []*typeInfo {
 		t.MethodType = methodCallConcrete
 	case methodValueInterface:
 		t.MethodType = methodCallInterface
+	case methodValueDeclared:
+		t.MethodType = methodCallDeclared
 	}
 
 	if t.Nil() {
@@ -2460,6 +2462,16 @@ func (tc *typechecker) checkMethodExpression(t *typeInfo, expr *ast.Selector) *t
 
 	name := expr.Ident
 
+	base, isPtr := methodBaseType(t.Type)
+	if m, ok := types.DeclaredMethod(base, name); ok {
+		tc.checkDeclaredMethodAccess(m, expr)
+		if m.Pointer && !isPtr {
+			panic(tc.errorf(expr, "invalid method expression %s (needs pointer receiver: (*%s).%s)",
+				expr, expr.Expr, expr.Ident))
+		}
+		return tc.declaredMethodExpression(t.Type, m, expr)
+	}
+
 	method, ok := t.Type.MethodByName(name)
 	if !ok {
 		// Return a different error message if T is a defined non-pointer type
@@ -2506,6 +2518,10 @@ func (tc *typechecker) checkMethodExpression(t *typeInfo, expr *ast.Selector) *t
 // checkMethodValue checks a method value. If the type has the method, it
 // returns the type info and true, otherwise returns nil and false.
 func (tc *typechecker) checkMethodValue(t *typeInfo, expr *ast.Selector) (*typeInfo, bool) {
+
+	if ti, ok := tc.checkDeclaredMethodValue(t, expr); ok {
+		return ti, true
+	}
 
 	name := expr.Ident
 	typ := t.Type

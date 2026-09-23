@@ -586,10 +586,17 @@ func checkPackage(compilation *compilation, pkg *ast.Package, path string, impor
 		}
 	}
 
+	// Add the declared methods to the method sets of their receiver types.
+	for _, d := range pkg.Declarations {
+		if f, ok := d.(*ast.Func); ok && f.Recv != nil {
+			tc.checkMethodDeclaration(f)
+		}
+	}
+
 	// Defines functions in file/package block before checking all
 	// declarations.
 	for _, d := range pkg.Declarations {
-		if f, ok := d.(*ast.Func); ok {
+		if f, ok := d.(*ast.Func); ok && f.Recv == nil {
 			if f.Body == nil {
 				return tc.errorf(f.Ident.Pos(), "missing function body")
 			}

@@ -165,6 +165,17 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 		// their bodies: order of declaration doesn't matter at package level.
 		for _, dec := range pkg.Declarations {
 			if fun, ok := dec.(*ast.Func); ok {
+				if fun.Recv != nil {
+					if !isBlankIdentifier(fun.Ident) {
+						m := em.declaredMethod(fun)
+						if emFn, ok := em.alreadyEmittedFuncs[fun]; ok {
+							m.Fn = emFn
+						} else {
+							m.Fn = newFunction("main", methodFuncName(fun), fun.Type.Reflect, path, fun.Pos())
+						}
+					}
+					continue
+				}
 				var fn *runtime.Function
 				if emFn, ok := em.alreadyEmittedFuncs[fun]; ok {
 					fn = emFn
@@ -256,7 +267,9 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 				// Function has already been emitted, nothing to do.
 				continue
 			}
-			if n.Ident.Name == "init" {
+			if n.Recv != nil {
+				fn = em.declaredMethod(n).Fn
+			} else if n.Ident.Name == "init" {
 				fn = inits[initToBuild]
 				initToBuild++
 			} else {
@@ -267,7 +280,7 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 			// If this is the main function, functions that initialize variables
 			// must be called before executing every other statement of the main
 			// function.
-			if n.Ident.Name == "main" {
+			if n.Recv == nil && n.Ident.Name == "main" {
 				// First: initialize the package variables.
 				if initVarsFn != nil {
 					iv, _ := em.fnStore.availableScriggoFn(em.pkg, "$initvars")
@@ -595,6 +608,28 @@ func (em *emitter) emitCallNode(call *ast.Call, goStmt bool, deferStmt bool, toF
 		}
 		em.fb.emitCallIndirect(method, 0, stackShift, call.Pos(), funTi.Type, toFormat)
 		return regs, types
+	}
+
+	// Call of a method declared in Scriggo.
+	if funTi.MethodType == methodCallDeclared {
+		fn := funTi.value.(*types.Method).Fn
+		args := append([]ast.Expression{call.Func.(*ast.Selector).Expr}, call.Args...)
+		stackShift := em.fb.currentStackShift()
+		opts := callOptions{receiverAsArg: true, callHasDots: call.IsVariadic}
+		regs, regTypes := em.prepareCallParameters(funTi.Type, args, opts)
+		index := em.fnStore.scriggoFnIndex(fn)
+		if goStmt {
+			em.fb.emitGo()
+		}
+		if deferStmt {
+			args := stackDifference(em.fb.currentStackShift(), stackShift)
+			reg := em.fb.newRegister(reflect.Func)
+			em.fb.emitLoadFunc(false, index, reg)
+			em.fb.emitDefer(reg, runtime.NoVariadicArgs, stackShift, args, fn.Type)
+			return regs, regTypes
+		}
+		em.fb.emitCallFunc(index, stackShift, call.Pos())
+		return regs, regTypes
 	}
 
 	// Predefined function (identifiers, selectors etc...).
@@ -1181,4 +1216,23 @@ func (em *emitter) emitComplexOperation(exprType reflect.Type, expr1 ast.Express
 	em.fb.emitCallNative(index, 0, stackShift, expr1.Pos())
 	em.changeRegister(false, ret, reg, exprType, dstType)
 	em.fb.exitScope()
+}
+
+// declaredMethod returns the method declared by the method declaration fn.
+func (em *emitter) declaredMethod(fn *ast.Func) *types.Method {
+	base, _ := methodBaseType(em.typ(fn.Recv.Type))
+	m, ok := types.DeclaredMethod(base, fn.Ident.Name)
+	if !ok {
+		panic(internalError("method %s.%s not declared", base, fn.Ident.Name))
+	}
+	return m
+}
+
+// methodFuncName returns the name of the function that implements the method
+// declared by fn, as "T.M" or "(*T).M".
+func methodFuncName(fn *ast.Func) string {
+	if op, ok := fn.Recv.Type.(*ast.UnaryOperator); ok && op.Op == ast.OperatorPointer {
+		return "(*" + op.Expr.String() + ")." + fn.Ident.Name
+	}
+	return fn.Recv.Type.String() + "." + fn.Ident.Name
 }

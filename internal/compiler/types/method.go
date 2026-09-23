@@ -91,6 +91,12 @@ func DeclaredMethod(t reflect.Type, name string) (*Method, bool) {
 	return dt.methods.lookup(name)
 }
 
+// IsDefined reports whether t is a type returned by DefinedOf.
+func IsDefined(t reflect.Type) bool {
+	_, ok := t.(definedType)
+	return ok
+}
+
 // HasDeclaredMethods reports whether t is a type returned by DefinedOf, or a
 // pointer to such type, with at least one declared method.
 func HasDeclaredMethods(t reflect.Type) bool {

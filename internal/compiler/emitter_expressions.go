@@ -732,6 +732,26 @@ func (em *emitter) emitSelector(v *ast.Selector, reg int8, dstType reflect.Type)
 		return
 	}
 
+	// Method expression of a method declared in Scriggo.
+	if lit, ok := ti.replacement.(*ast.Func); ok {
+		em.emitExprR(lit, dstType, reg)
+		return
+	}
+
+	// Method value of a method declared in Scriggo.
+	if ti.MethodType == methodValueDeclared {
+		typ := em.typ(v.Expr)
+		rcvr := em.emitExpr(v.Expr, typ)
+		proxy := em.fb.newRegister(reflect.Interface)
+		em.fb.emitTypify(false, typ, rcvr, proxy)
+		if kindToType(dstType.Kind()) != generalRegister {
+			panic(internalError("not implemented"))
+		}
+		s := em.fb.makeStringValue(v.Ident)
+		em.fb.emitMethodValue(s, proxy, reg, v.Pos())
+		return
+	}
+
 	// Method value on concrete and interface values.
 	if ti.MethodType == methodValueConcrete || ti.MethodType == methodValueInterface {
 		expr := v.Expr
