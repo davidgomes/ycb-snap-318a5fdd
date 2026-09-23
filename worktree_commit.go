@@ -6,6 +6,7 @@ import (
 	"io"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -59,9 +60,27 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		opts.Parents = headCommit.ParentHashes
 	}
 
+	var mergeHead plumbing.Hash
+	if !opts.Amend {
+		var err error
+		if mergeHead, err = w.readMergeHead(); err != nil {
+			return plumbing.ZeroHash, err
+		}
+	}
+
+	if !mergeHead.IsZero() && !slices.Contains(opts.Parents, mergeHead) {
+		opts.Parents = append(opts.Parents, mergeHead)
+	}
+
 	idx, err := w.r.Storer.Index()
 	if err != nil {
 		return plumbing.ZeroHash, err
+	}
+
+	for _, e := range idx.Entries {
+		if e.Stage != 0 {
+			return plumbing.ZeroHash, ErrUnmergedPaths
+		}
 	}
 
 	// First handle the case of the first commit in the repository being empty.
@@ -88,7 +107,7 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		previousTree = parentCommit.TreeHash
 	}
 
-	if treeHash == previousTree && !opts.AllowEmptyCommits {
+	if treeHash == previousTree && mergeHead.IsZero() && !opts.AllowEmptyCommits {
 		return plumbing.ZeroHash, ErrEmptyCommit
 	}
 
@@ -97,7 +116,15 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		return plumbing.ZeroHash, err
 	}
 
-	return commit, w.updateHEAD(commit)
+	if err := w.updateHEAD(commit); err != nil {
+		return plumbing.ZeroHash, err
+	}
+
+	if !mergeHead.IsZero() {
+		return commit, w.removeMergeHead()
+	}
+
+	return commit, nil
 }
 
 // CherryPick cherry picks commits and merge them into the worktree based on the selected

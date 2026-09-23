@@ -317,11 +317,32 @@ func (w *Worktree) doAddDirectory(idx *index.Index, s Status, directory string, 
 
 	directory = filepath.ToSlash(filepath.Clean(directory))
 
+	names := make(map[string]bool, len(s))
 	for name := range s {
-		if !isPathInDirectory(name, directory) {
+		if isPathInDirectory(name, directory) {
+			names[name] = true
+		}
+	}
+
+	var unmerged []string
+	for _, e := range idx.Entries {
+		if e.Stage == 0 {
 			continue
 		}
 
+		if e.Name == directory {
+			unmerged = append(unmerged, e.Name)
+		} else if isPathInDirectory(e.Name, directory) {
+			names[e.Name] = true
+		}
+	}
+
+	for _, name := range unmerged {
+		removeUnmergedEntries(idx, name)
+		added = true
+	}
+
+	for name := range names {
 		var a bool
 		a, _, err = w.doAddFile(idx, s, name, ignorePattern)
 		if err != nil {
@@ -462,7 +483,8 @@ func (w *Worktree) AddGlob(pattern string) error {
 // the file added is different from the index.
 // if s status is nil will skip the status check and update the index anyway
 func (w *Worktree) doAddFile(idx *index.Index, s Status, path string, ignorePattern []gitignore.Pattern) (added bool, h plumbing.Hash, err error) {
-	if s != nil && s.File(path).Worktree == Unmodified {
+	unmerged := hasUnmergedEntries(idx, filepath.ToSlash(path))
+	if s != nil && s.File(path).Worktree == Unmodified && !unmerged {
 		return false, h, nil
 	}
 	if len(ignorePattern) > 0 {
@@ -482,6 +504,10 @@ func (w *Worktree) doAddFile(idx *index.Index, s Status, path string, ignorePatt
 		}
 
 		return added, h, err
+	}
+
+	if unmerged {
+		removeUnmergedEntries(idx, filepath.ToSlash(path))
 	}
 
 	if err := w.addOrUpdateFileToIndex(idx, path, h); err != nil {
@@ -689,6 +715,7 @@ func (w *Worktree) deleteFromIndex(idx *index.Index, path string) (plumbing.Hash
 		return plumbing.ZeroHash, err
 	}
 
+	removeUnmergedEntries(idx, filepath.ToSlash(path))
 	return e.Hash, nil
 }
 
