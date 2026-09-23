@@ -1904,6 +1904,25 @@ time.clock(input.y, time.clock(input.x))
 	}
 }
 
+func TestEvalPartialSourceOutputTemplateStrings(t *testing.T) {
+	buf := new(bytes.Buffer)
+	params := newEvalCommandParams()
+	params.partial = true
+	_ = params.outputFormat.Set(formats.Source)
+	_, err := eval([]string{`x = $"a {input.x} b {$"c {[input.y, 1]}"}"`}, params, buf, nil)
+	if err != nil {
+		t.Fatal("unexpected error:", err)
+	}
+
+	expected := `# Query 1
+x = $"a {input.x} b {$"c {[input.y, 1]}"}"
+
+`
+	if diff := cmp.Diff(expected, buf.String()); diff != "" {
+		t.Error("output mismatch (-want +got):\n", diff)
+	}
+}
+
 func TestEvalPartialOutput_RegoVersion(t *testing.T) {
 	tests := []struct {
 		note                string
