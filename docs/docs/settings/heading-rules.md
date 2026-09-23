@@ -6,6 +6,116 @@
 A heading for the purpose of the Linter is an ATX header. It does _not_ currently support Setext headers (see [this issue](https://github.com/platers/obsidian-linter/issues/423)).
 
 
+## Auto TOC
+
+Alias: `auto-toc`
+
+Generates or updates a table of contents for ATX headings when a toc start comment is present. Notes without that marker are left unchanged.
+
+### Options
+
+| Name | Description | List Items | Default Value |
+| ---- | ----------- | ---------- | ------------- |
+| `List Style` | Use a bullet list or a numbered list for the table of contents | `bullet`: Unordered list items<br/><br/>`number`: Ordered list items | `bullet` |
+| `Bullet Marker` | Marker used when List Style is bullet | N/A | `-` |
+| `Ordered List Style` | How numbers are assigned when List Style is number | `always-one`: Every item uses 1.<br/><br/>`increment`: Number every item in document order, including nested items | `always-one` |
+| `Indent Size` | Number of spaces to indent each heading level below the minimum level | N/A | `2` |
+| `Minimum Level` | Lowest ATX heading level to include | N/A | `2` |
+| `Maximum Level` | Highest ATX heading level to include | N/A | `6` |
+| `Title` | Optional line inserted at the start of the table of contents | N/A |  |
+| `Use Explicit IDs` | When a heading ends with {#id}, use that id as the anchor | N/A | false |
+| `Strip Formatting in TOC` | Remove Markdown formatting from the table of contents text | N/A | false |
+| `Exclude Headings` | Headings to leave out of the table of contents, one per line. Plain text matches the full heading case-insensitively. A value wrapped in slashes is a case-insensitive regular expression. | N/A |  |
+
+
+
+### Examples
+
+<details><summary>Leaves the note unchanged when no toc marker is present</summary>
+
+Before:
+
+`````` markdown
+# Title
+## Section
+``````
+
+After:
+
+`````` markdown
+# Title
+## Section
+``````
+</details>
+<details><summary>Creates a nested bullet list between the toc markers for ATX headings from level 2 through 6</summary>
+
+Before:
+
+`````` markdown
+# Title
+
+<!-- toc -->
+
+## Section
+### Subsection
+``````
+
+After:
+
+`````` markdown
+# Title
+
+<!-- toc -->
+
+- [Section](#section)
+  - [Subsection](#subsection)
+
+<!-- /toc -->
+
+## Section
+### Subsection
+``````
+</details>
+<details><summary>Numbered TOC with `title = Contents`, `listStyle = number`, and `orderedListStyle = increment` skips H1s and headings in code</summary>
+
+Before:
+
+`````` markdown
+<!-- toc -->
+
+# Ignored H1
+
+```
+## Ignored in code
+```
+
+## Included
+### Nested
+``````
+
+After:
+
+`````` markdown
+<!-- toc -->
+
+Contents
+
+1. [Included](#included)
+  2. [Nested](#nested)
+
+<!-- /toc -->
+
+# Ignored H1
+
+```
+## Ignored in code
+```
+
+## Included
+### Nested
+``````
+</details>
+
 ## Capitalize Headings
 
 Alias: `capitalize-headings`

@@ -298,6 +298,51 @@ export default {
       'default-install-failed': 'Failed to download {URL}. Disabling Auto-correct Common Misspellings.',
       'defaults-missing': 'Failed to find default common auto-correct file: {FILE}.',
     },
+    // auto-toc.ts
+    'auto-toc': {
+      'name': 'Auto TOC',
+      'description': 'Generates or updates a table of contents for ATX headings when a toc start comment is present. Notes without that marker are left unchanged.',
+      'list-style': {
+        'name': 'List Style',
+        'description': 'Use a bullet list or a numbered list for the table of contents',
+      },
+      'bullet-marker': {
+        'name': 'Bullet Marker',
+        'description': 'Marker used when List Style is bullet',
+      },
+      'ordered-list-style': {
+        'name': 'Ordered List Style',
+        'description': 'How numbers are assigned when List Style is number',
+      },
+      'indent-size': {
+        'name': 'Indent Size',
+        'description': 'Number of spaces to indent each heading level below the minimum level',
+      },
+      'min-level': {
+        'name': 'Minimum Level',
+        'description': 'Lowest ATX heading level to include',
+      },
+      'max-level': {
+        'name': 'Maximum Level',
+        'description': 'Highest ATX heading level to include',
+      },
+      'title': {
+        'name': 'Title',
+        'description': 'Optional line inserted at the start of the table of contents',
+      },
+      'use-explicit-ids': {
+        'name': 'Use Explicit IDs',
+        'description': 'When a heading ends with {#id}, use that id as the anchor',
+      },
+      'strip-formatting-in-toc': {
+        'name': 'Strip Formatting in TOC',
+        'description': 'Remove Markdown formatting from the table of contents text',
+      },
+      'exclude-headings': {
+        'name': 'Exclude Headings',
+        'description': 'Headings to leave out of the table of contents, one per line. Plain text matches the full heading case-insensitively. A value wrapped in slashes is a case-insensitive regular expression.',
+      },
+    },
     // add-blank-line-after-yaml.ts
     'add-blank-line-after-yaml': {
       'name': 'Add Blank Line After YAML',
@@ -975,5 +1020,10 @@ export default {
     '<br>': '<br>', // leave as is
     '  ': '  ', // leave as is
     '<br/>': '<br/>', // leave as is
+    // auto-toc.ts
+    'bullet': 'Bullet',
+    'number': 'Number',
+    'always-one': 'Always 1.',
+    'increment': 'Increment',
   },
 };

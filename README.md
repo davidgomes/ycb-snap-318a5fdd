@@ -36,6 +36,7 @@ Each rule is its own set of logic and is designed to be run independently. This 
 
 ### Heading rules
 
+- [auto-toc](https://platers.github.io/obsidian-linter/settings/heading-rules/#auto-toc)
 - [capitalize-headings](https://platers.github.io/obsidian-linter/settings/heading-rules/#capitalize-headings)
 - [file-name-heading](https://platers.github.io/obsidian-linter/settings/heading-rules/#file-name-heading)
 - [header-increment](https://platers.github.io/obsidian-linter/settings/heading-rules/#header-increment)
