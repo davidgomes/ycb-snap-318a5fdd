@@ -116,6 +116,46 @@ export function getPositions(type: MDAstTypes, text: string): Position[] {
   return positions;
 }
 
+const inlineHtmlParents = new Set([
+  'paragraph',
+  'heading',
+  'emphasis',
+  'strong',
+  'link',
+  'tableCell',
+]);
+
+/**
+ * Gets ranges for HTML blocks, leaving inline HTML in paragraphs and headings alone.
+ * @param {string} text The markdown text to search
+ * @return {{startIndex: number, endIndex: number}[]} Block HTML ranges from earliest to latest
+ */
+export function getBlockHtmlRanges(text: string): {startIndex: number, endIndex: number}[] {
+  const ast = parseTextToAST(text);
+  const ranges: {startIndex: number, endIndex: number}[] = [];
+
+  visit(ast, MDAstTypes.Html as string, (node, _index, parent) => {
+    const parentType = parent && typeof parent.type === 'string' ? parent.type : '';
+    if (inlineHtmlParents.has(parentType)) {
+      return;
+    }
+
+    const start = node.position?.start?.offset;
+    const end = node.position?.end?.offset;
+    if (start == null || end == null) {
+      return;
+    }
+
+    ranges.push({
+      startIndex: start,
+      endIndex: end,
+    });
+  });
+
+  ranges.sort((a, b) => a.startIndex - b.startIndex);
+  return ranges;
+}
+
 /**
  * Gets the positions of the list item text in the given text.
  * @param {string} text - The markdown text
