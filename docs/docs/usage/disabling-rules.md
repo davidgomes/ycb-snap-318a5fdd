@@ -50,12 +50,18 @@ disabled rules: [all]
 
 ### Range Ignore
 
-When there is a need to disable the Linter for part of a file, ranged ignores can be used. The syntax for a ranged ignore
-is `<!-- linter-disable -->` or `%%linter-disable%%` with an optional `<!-- linter-enable -->` or `%%linter-disable%%` where you want the Linter to start back up with its linting.
-Leaving off the ending of a range ignore will assume you want to ignore the file contents from the start of the range ignore to the end of the file. So be careful when not ending a range ignore.
+When there is a need to disable the Linter for part of a file, ranged ignores can be used. Markers are recognized only when they are the entire line, aside from leading or trailing spaces and tabs. The same line can use either an HTML comment or an Obsidian comment:
+
+- `<!-- linter-disable -->` / `%% linter-disable %%` disables every rule until the matching enable marker, or through the end of the file if it is never closed
+- `<!-- linter-enable -->` / `%% linter-enable %%` closes the most recent open disable scope
+- `<!-- linter-disable rule-one, rule-two -->` disables only those rule aliases
+- `<!-- linter-enable rule-one -->` stops disabling `rule-one` in the nearest open scope that currently disables it
+- `<!-- linter-disable-next-line -->` and `<!-- linter-disable-next-n-lines: N -->` disable rules for the next line, or the next `N` lines
+
+`N` must be a positive base-10 integer. Rule lists are case-insensitive, and blank or unknown aliases are ignored. Disable scopes can be nested, including re-enabling specific rules inside a scope that disabled every rule. Marker lines themselves are never modified.
 
 !!! warning
-    Ranged ignores only prevent the values in the ranged ignore from being linted. It *does not* prevent whitespace or other additions around the ranged ignore.
+    Ranged ignores only prevent the values in the ranged ignore from being linted. It *does not* prevent whitespace or other additions around the ranged ignore. Markers inside YAML frontmatter, fenced or indented code, inline code, or math are not treated as markers.
 
 The following example shows how you would ignore just a part of a file:
 ``` markdown
@@ -64,9 +70,14 @@ Here is some text
                           This area will not be formatted
 <!-- linter-enable -->
 More content goes here...
-%%linter-disable %%
+%% linter-disable %%
                           This area will not be formatted
-%%linter-enable%%
+%% linter-enable %%
+<!-- linter-disable trailing-spaces -->
+This line keeps its trailing spaces.   
+<!-- linter-enable -->
+<!-- linter-disable-next-line heading-blank-lines -->
+# This heading is not spaced by that rule
 ```
 
 Here is another example that shows a ranged ignore without an ending indicator:
