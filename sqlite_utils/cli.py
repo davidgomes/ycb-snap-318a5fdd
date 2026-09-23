@@ -1092,7 +1092,7 @@ def _detect_import_format(file):
             return file, _IMPORT_FORMAT_EXTENSIONS[suffix]
     buffered = io.BufferedReader(file, buffer_size=4096)
     sample = buffered.peek(4096).removeprefix(codecs.BOM_UTF8).lstrip()
-    if sample.startswith(b"["):
+    if not sample or sample.startswith(b"["):
         return buffered, "json"
     if sample.startswith(b"{"):
         # A complete object on the first line followed by more content is newline-delimited

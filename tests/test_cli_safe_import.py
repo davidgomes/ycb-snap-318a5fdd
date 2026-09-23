@@ -213,6 +213,12 @@ def test_safe_mode_detects_format(db_path, tmpdir, filename, content):
     assert len(product_rows(db_path)) > 2
 
 
+def test_safe_mode_empty_input(db_path):
+    result = invoke("insert", db_path, "products", "-", "--safe-mode", input="")
+    assert result.exit_code == 1
+    assert "Invalid JSON" in result.output
+
+
 def test_safe_mode_explicit_format(db_path):
     result = invoke(
         "insert",
