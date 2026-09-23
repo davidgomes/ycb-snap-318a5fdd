@@ -23,6 +23,7 @@ from ._decoders import (
 )
 from ._exceptions import (
     CookieConflict,
+    DecodingError,
     HTTPStatusError,
     RequestNotRead,
     ResponseNotRead,
@@ -30,6 +31,7 @@ from ._exceptions import (
     StreamConsumed,
     request_context,
 )
+from ._json_stream import JSONStreamParser
 from ._multipart import get_multipart_boundary_from_content_type
 from ._status_codes import codes
 from ._types import (
@@ -932,6 +934,34 @@ class Response:
             for line in decoder.flush():
                 yield line
 
+    def iter_json(self) -> typing.Iterator[typing.Any]:
+        """
+        Yield parsed JSON values from the response body.
+
+        ``application/json`` and ``application/*+json`` yield each element of a
+        top-level array, or otherwise the single top-level value. NDJSON and
+        JSON text sequences yield one value per record. Other content types
+        raise :class:`DecodingError`.
+        """
+        with request_context(request=self._request):
+            parser = JSONStreamParser(self.headers.get("Content-Type"))
+            # Finish reading the body even when a value is invalid so the
+            # stream is consumed and closed before the error propagates.
+            error: DecodingError | None = None
+            for chunk in self.iter_bytes():
+                if error is None:
+                    try:
+                        yield from parser.feed(chunk)
+                    except DecodingError as exc:
+                        error = exc
+            if error is None:
+                try:
+                    yield from parser.finish()
+                except DecodingError as exc:
+                    error = exc
+            if error is not None:
+                raise error
+
     def iter_raw(self, chunk_size: int | None = None) -> typing.Iterator[bytes]:
         """
         A byte-iterator over the raw response content.
@@ -1033,6 +1063,33 @@ class Response:
                     yield line
             for line in decoder.flush():
                 yield line
+
+    async def aiter_json(self) -> typing.AsyncIterator[typing.Any]:
+        """
+        Yield parsed JSON values from the response body.
+
+        Async equivalent of :meth:`iter_json`.
+        """
+        with request_context(request=self._request):
+            parser = JSONStreamParser(self.headers.get("Content-Type"))
+            # Finish reading the body even when a value is invalid so the
+            # stream is consumed and closed before the error propagates.
+            error: DecodingError | None = None
+            async for chunk in self.aiter_bytes():
+                if error is None:
+                    try:
+                        for value in parser.feed(chunk):
+                            yield value
+                    except DecodingError as exc:
+                        error = exc
+            if error is None:
+                try:
+                    for value in parser.finish():
+                        yield value
+                except DecodingError as exc:
+                    error = exc
+            if error is not None:
+                raise error
 
     async def aiter_raw(
         self, chunk_size: int | None = None
