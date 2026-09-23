@@ -104,6 +104,7 @@ if TYPE_CHECKING:
         CallbackManagerForChainRun,
     )
     from langchain_core.prompts.base import BasePromptTemplate
+    from langchain_core.runnables.coalesce import CoalesceBackend, RunnableCoalesce
     from langchain_core.runnables.fallbacks import (
         RunnableWithFallbacks as RunnableWithFallbacksT,
     )
@@ -2020,6 +2021,72 @@ class Runnable(ABC, Generic[Input, Output]):
             fallbacks=fallbacks,
             exceptions_to_handle=exceptions_to_handle,
             exception_key=exception_key,
+        )
+
+    def with_coalesce(
+        self,
+        *,
+        backend: CoalesceBackend | None = None,
+    ) -> RunnableCoalesce[Input, Output]:
+        """Coalesce concurrent calls that share the same input.
+
+        While one execution for an input is in flight, other `invoke`, `stream`,
+        `batch`, and `batch_as_completed` calls (including async variants) that
+        pass an equal input wait for that execution instead of starting another.
+        Callers that join still run their own chain-start and chain-end callbacks.
+        The next call after the shared execution finishes starts a fresh run.
+
+        The coalescing key is the input value alone. Config, kwargs, and
+        dictionary key order do not change it. `transform`, `atransform`, and
+        event streaming delegate to the wrapped `Runnable` unchanged.
+
+        Each wrapper has its own in-memory backend unless one is supplied. Wrappers
+        that share a backend see each other's in-flight calls.
+
+        Args:
+            backend: Store for in-flight executions.
+
+                When omitted, the wrapper gets a new `InMemoryCoalesceBackend`.
+
+        Returns:
+            A `Runnable` that coalesces concurrent identical calls.
+
+        Example:
+            ```python
+            import threading
+
+            from langchain_core.runnables import RunnableLambda
+
+
+            def add_one(value: int) -> int:
+                return value + 1
+
+
+            coalesced = RunnableLambda(add_one).with_coalesce()
+            results: list[int] = []
+
+
+            def run() -> None:
+                results.append(coalesced.invoke(1))
+
+
+            threads = [threading.Thread(target=run) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            assert results == [2, 2]
+            ```
+        """
+        # Import locally to prevent circular import
+        from langchain_core.runnables.coalesce import (  # noqa: PLC0415
+            InMemoryCoalesceBackend,
+            RunnableCoalesce,
+        )
+
+        return RunnableCoalesce(
+            bound=self,
+            backend=backend if backend is not None else InMemoryCoalesceBackend(),
         )
 
     """ --- Helper methods for Subclasses --- """
@@ -5951,6 +6018,7 @@ class RunnableBinding(RunnableBindingBase[Input, Output]):  # type: ignore[no-re
         `Runnable`.
     - `with_retry`: Bind a retry policy to the underlying `Runnable`.
     - `with_fallbacks`: Bind a fallback policy to the underlying `Runnable`.
+    - `with_coalesce`: Coalesce concurrent calls that share the same input.
 
     Example:
     `bind`: Bind kwargs to pass to the underlying `Runnable` when running it.
