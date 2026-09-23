@@ -89,7 +89,7 @@ the marker has no effect.
 
 ``` markdown
 <!-- linter-disable capitalize-headings, trailing-spaces -->
-# this heading will not be capitalized   
+# this heading will not be capitalized
 <!-- linter-enable -->
 ```
 
