@@ -245,8 +245,31 @@ export type Styles = {
 
 	/**
 	Set this property to `none` to hide the element.
+	`grid` lays children out on explicit tracks.
 	*/
-	readonly display?: 'flex' | 'none';
+	readonly display?: 'flex' | 'grid' | 'none';
+
+	/**
+	Space-separated column track sizes: fixed numbers, `fr`, `auto`, or `minmax(min, max)`.
+	`min` is a fixed number. `max` is a fixed number or an `fr` value.
+	*/
+	readonly gridTemplateColumns?: string;
+
+	/**
+	Space-separated row track sizes. Same syntax as `gridTemplateColumns`.
+	When omitted, rows are created automatically to fit the children.
+	*/
+	readonly gridTemplateRows?: string;
+
+	/**
+	Column placement for a grid item. A 1-based index, or `"start / end"` grid lines (`end` is exclusive).
+	*/
+	readonly gridColumn?: number | string;
+
+	/**
+	Row placement for a grid item. A 1-based index, or `"start / end"` grid lines (`end` is exclusive).
+	*/
+	readonly gridRow?: number | string;
 
 	/**
 	Add a border with a specified style. If `borderStyle` is `undefined` (the default), no border will be added.
@@ -687,7 +710,7 @@ const applyDimensionStyles = (node: YogaNode, style: Styles): void => {
 const applyDisplayStyles = (node: YogaNode, style: Styles): void => {
 	if ('display' in style) {
 		node.setDisplay(
-			style.display === 'flex' ? Yoga.DISPLAY_FLEX : Yoga.DISPLAY_NONE,
+			style.display === 'none' ? Yoga.DISPLAY_NONE : Yoga.DISPLAY_FLEX,
 		);
 	}
 };
