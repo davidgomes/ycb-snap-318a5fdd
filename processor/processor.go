@@ -587,6 +587,11 @@ func Process() {
 		DirFilePaths = append(DirFilePaths, ".")
 	}
 
+	if err := validateBoundedMemory(); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+
 	filePaths := []string{}
 	dirPaths := []string{}
 
@@ -606,6 +611,8 @@ func Process() {
 			filePaths = append(filePaths, fpath)
 		}
 	}
+
+	addBoundedMemoryExclusions(dirPaths)
 
 	SortBy = strings.ToLower(SortBy)
 
@@ -654,6 +661,9 @@ func Process() {
 
 	go func() {
 		for _, f := range filePaths {
+			if excludedByBoundedMemory(f) {
+				continue
+			}
 			fileInfo, err := os.Lstat(f)
 			if err != nil {
 				continue
@@ -666,6 +676,9 @@ func Process() {
 		}
 
 		for fi := range potentialFilesQueue {
+			if excludedByBoundedMemory(fi.Location) {
+				continue
+			}
 			shouldExclude := false
 			for _, re := range excludePathRegexes {
 				if re.MatchString(fi.Location) {
