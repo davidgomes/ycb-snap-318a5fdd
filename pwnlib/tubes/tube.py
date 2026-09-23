@@ -1399,6 +1399,16 @@ class tube(Timeout, Logger):
         """
         self << other << self
 
+    def mux(self, **kwargs):
+        """mux(**kwargs) -> TubeMultiplexer
+
+        Wraps this tube in a :class:`pwnlib.tubes.mux.TubeMultiplexer`,
+        which carries multiple independent channels over it.  All keyword
+        arguments are forwarded to the :class:`.TubeMultiplexer` constructor.
+        """
+        from pwnlib.tubes.mux import TubeMultiplexer
+        return TubeMultiplexer(self, **kwargs)
+
     def wait_for_close(self, timeout=default):
         """Waits until the tube is closed."""
 
