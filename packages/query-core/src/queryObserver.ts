@@ -470,6 +470,12 @@ export class QueryObserver<
         newState = {
           ...newState,
           ...fetchState(state.data, query.options),
+          // Match the fetch reducer: do not recompute failure metadata for a
+          // refetch of data that is already in the cache.
+          ...(state.data !== undefined && {
+            fetchFailureCount: state.fetchFailureCount,
+            fetchFailureReason: state.fetchFailureReason,
+          }),
         }
       }
       if (options._optimisticResults === 'isRestoring') {

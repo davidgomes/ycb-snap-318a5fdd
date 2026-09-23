@@ -177,4 +177,92 @@ describe('fine grained persister', () => {
       },
     })
   })
+
+  it('should expose persisted failure metadata from a restored query', async () => {
+    const key = queryKey()
+    const hash = hashKey(key)
+    const error = { message: 'persisted failure' }
+    const dataUpdatedAt = Date.now() - 1_000
+    const errorUpdatedAt = Date.now() - 100
+    const queryFn = vi.fn(() => Promise.resolve('fresh'))
+
+    const mapStorage = new Map()
+    const storage = {
+      getItem: (itemKey: string) => Promise.resolve(mapStorage.get(itemKey)),
+      setItem: (itemKey: string, value: unknown) => {
+        mapStorage.set(itemKey, value)
+        return Promise.resolve()
+      },
+      removeItem: (itemKey: string) => {
+        mapStorage.delete(itemKey)
+        return Promise.resolve()
+      },
+      entries: () => Promise.resolve(Array.from(mapStorage.entries())),
+    }
+
+    await storage.setItem(
+      `${PERSISTER_KEY_PREFIX}-${hash}`,
+      JSON.stringify({
+        buster: '',
+        queryHash: hash,
+        queryKey: key,
+        state: {
+          data: 'persisted',
+          dataUpdateCount: 2,
+          dataUpdatedAt,
+          error,
+          errorUpdateCount: 3,
+          errorUpdatedAt,
+          fetchFailureCount: 7,
+          fetchFailureReason: error,
+          fetchMeta: null,
+          isInvalidated: true,
+          status: 'error',
+          fetchStatus: 'idle',
+        },
+      }),
+    )
+
+    const persister = experimental_createQueryPersister({
+      storage,
+      refetchOnRestore: false,
+    })
+    await persister.restoreQueries(queryClient)
+
+    function Test() {
+      const result = useQuery({
+        queryKey: key,
+        queryFn,
+        staleTime: Infinity,
+        refetchOnMount: false,
+      })
+
+      return (
+        <div>
+          <span>data:{result.data}</span>
+          <span>failure:{result.failureCount}</span>
+          <span>dataUpdatedAt:{result.dataUpdatedAt}</span>
+          <span>errorUpdatedAt:{result.errorUpdatedAt}</span>
+          <span>refetchError:{String(result.isRefetchError)}</span>
+          <span>status:{result.status}</span>
+          <span>fetchStatus:{result.fetchStatus}</span>
+        </div>
+      )
+    }
+
+    const rendered = renderWithClient(queryClient, <Test />)
+
+    expect(rendered.getByText('data:persisted')).toBeInTheDocument()
+    expect(rendered.getByText('failure:7')).toBeInTheDocument()
+    expect(
+      rendered.getByText(`dataUpdatedAt:${dataUpdatedAt}`),
+    ).toBeInTheDocument()
+    expect(
+      rendered.getByText(`errorUpdatedAt:${errorUpdatedAt}`),
+    ).toBeInTheDocument()
+    expect(rendered.getByText('refetchError:true')).toBeInTheDocument()
+    expect(rendered.getByText('status:error')).toBeInTheDocument()
+    expect(rendered.getByText('fetchStatus:idle')).toBeInTheDocument()
+    expect(queryFn).not.toHaveBeenCalled()
+  })
 })

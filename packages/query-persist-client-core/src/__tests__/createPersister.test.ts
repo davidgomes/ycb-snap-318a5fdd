@@ -195,6 +195,63 @@ describe('createPersister', () => {
     expect(queryFn).toHaveBeenCalledExactlyOnceWith(context)
   })
 
+  test('should restore a full snapshot through query execution', async () => {
+    const storage = getFreshStorage()
+    const { client, persister, queryHash, queryKey, storageKey } =
+      setupPersister(['pages'], {
+        storage,
+        refetchOnRestore: false,
+      })
+    const error = { message: 'page failed' }
+    const dataUpdatedAt = Date.now() - 50
+    const errorUpdatedAt = Date.now() - 10
+    const data = { pages: ['one'], pageParams: [0] }
+
+    await storage.setItem(
+      storageKey,
+      JSON.stringify({
+        buster: '',
+        queryHash,
+        queryKey,
+        state: {
+          data,
+          dataUpdateCount: 2,
+          dataUpdatedAt,
+          error,
+          errorUpdateCount: 1,
+          errorUpdatedAt,
+          fetchFailureCount: 4,
+          fetchFailureReason: error,
+          fetchMeta: null,
+          isInvalidated: true,
+          status: 'error',
+          fetchStatus: 'fetching',
+        },
+      }),
+    )
+
+    const queryFn = vi.fn()
+    const result = await client.fetchQuery({
+      queryKey,
+      queryFn,
+      persister: persister.persisterFn,
+    })
+
+    expect(result).toEqual(data)
+    expect(queryFn).not.toHaveBeenCalled()
+    expect(client.getQueryState(queryKey)).toMatchObject({
+      data,
+      dataUpdateCount: 2,
+      dataUpdatedAt,
+      error,
+      errorUpdatedAt,
+      fetchFailureCount: 4,
+      isInvalidated: true,
+      status: 'error',
+      fetchStatus: 'idle',
+    })
+  })
+
   test('should restore item from the storage and set proper `updatedAt` values', async () => {
     const storage = getFreshStorage()
     const { context, persister, query, queryFn, storageKey } = setupPersister(
@@ -673,6 +730,177 @@ describe('createPersister', () => {
         exact: true,
       })
       expect(client.getQueryCache().getAll()).toHaveLength(1)
+    })
+
+    test('should restore full query snapshots instead of a fresh success', async () => {
+      const storage = getFreshStorage()
+      const { persister, client, queryHash, queryKey, storageKey } =
+        setupPersister(['foo'], { storage })
+      const error = { message: 'refetch failed' }
+      const dataUpdatedAt = Date.now() - 1_000
+      const errorUpdatedAt = Date.now() - 100
+
+      await storage.setItem(
+        storageKey,
+        JSON.stringify({
+          buster: '',
+          queryHash,
+          queryKey,
+          state: {
+            data: { pages: ['one', 'two'], pageParams: [0, 1] },
+            dataUpdateCount: 4,
+            dataUpdatedAt,
+            error,
+            errorUpdateCount: 2,
+            errorUpdatedAt,
+            fetchFailureCount: 3,
+            fetchFailureReason: error,
+            fetchMeta: null,
+            isInvalidated: true,
+            status: 'error',
+            fetchStatus: 'fetching',
+          },
+        }),
+      )
+
+      await persister.restoreQueries(client)
+
+      expect(client.getQueryState(queryKey)).toMatchObject({
+        data: { pages: ['one', 'two'], pageParams: [0, 1] },
+        dataUpdateCount: 4,
+        dataUpdatedAt,
+        error,
+        errorUpdateCount: 2,
+        errorUpdatedAt,
+        fetchFailureCount: 3,
+        fetchFailureReason: error,
+        isInvalidated: true,
+        status: 'error',
+        fetchStatus: 'idle',
+      })
+    })
+
+    test('should merge newer data and newer errors independently', async () => {
+      const storage = getFreshStorage()
+      const { persister, client, queryHash, queryKey, storageKey } =
+        setupPersister(['foo'], { storage })
+      const liveError = new Error('live')
+      const persistedError = { message: 'persisted' }
+
+      const liveDataUpdatedAt = Date.now() - 100
+      const persistedDataUpdatedAt = Date.now() - 1_000
+      const persistedErrorUpdatedAt = Date.now() - 50
+
+      client.setQueryData(queryKey, 'live-data', {
+        updatedAt: liveDataUpdatedAt,
+      })
+      const live = client.getQueryCache().find({ queryKey })!
+      live.setState({
+        error: liveError,
+        errorUpdatedAt: Date.now() - 5_000,
+        errorUpdateCount: 1,
+        fetchFailureCount: 1,
+        fetchFailureReason: liveError,
+        status: 'error',
+        isInvalidated: true,
+      })
+
+      await storage.setItem(
+        storageKey,
+        JSON.stringify({
+          buster: '',
+          queryHash,
+          queryKey,
+          state: {
+            data: 'persisted-data',
+            dataUpdateCount: 2,
+            dataUpdatedAt: persistedDataUpdatedAt,
+            error: persistedError,
+            errorUpdateCount: 4,
+            errorUpdatedAt: persistedErrorUpdatedAt,
+            fetchFailureCount: 6,
+            fetchFailureReason: persistedError,
+            fetchMeta: null,
+            isInvalidated: true,
+            status: 'error',
+            fetchStatus: 'idle',
+          },
+        }),
+      )
+
+      await persister.restoreQueries(client)
+
+      expect(client.getQueryState(queryKey)).toMatchObject({
+        data: 'live-data',
+        dataUpdatedAt: liveDataUpdatedAt,
+        error: persistedError,
+        errorUpdatedAt: persistedErrorUpdatedAt,
+        errorUpdateCount: 4,
+        fetchFailureCount: 6,
+        status: 'error',
+        fetchStatus: 'idle',
+      })
+    })
+
+    test('should keep newer persisted data when the live query has the newer error', async () => {
+      const storage = getFreshStorage()
+      const { persister, client, queryHash, queryKey, storageKey } =
+        setupPersister(['foo'], { storage })
+      const liveError = new Error('live')
+
+      const liveDataUpdatedAt = Date.now() - 2_000
+      const persistedDataUpdatedAt = Date.now() - 100
+      const liveErrorUpdatedAt = Date.now() - 50
+
+      client.setQueryData(queryKey, 'live-data', {
+        updatedAt: liveDataUpdatedAt,
+      })
+      const live = client.getQueryCache().find({ queryKey })!
+      live.setState({
+        error: liveError,
+        errorUpdatedAt: liveErrorUpdatedAt,
+        errorUpdateCount: 3,
+        fetchFailureCount: 3,
+        fetchFailureReason: liveError,
+        status: 'error',
+        isInvalidated: true,
+      })
+
+      await storage.setItem(
+        storageKey,
+        JSON.stringify({
+          buster: '',
+          queryHash,
+          queryKey,
+          state: {
+            data: 'persisted-data',
+            dataUpdateCount: 5,
+            dataUpdatedAt: persistedDataUpdatedAt,
+            error: null,
+            errorUpdateCount: 0,
+            errorUpdatedAt: Date.now() - 5_000,
+            fetchFailureCount: 0,
+            fetchFailureReason: null,
+            fetchMeta: null,
+            isInvalidated: false,
+            status: 'success',
+            fetchStatus: 'idle',
+          },
+        }),
+      )
+
+      await persister.restoreQueries(client)
+
+      expect(client.getQueryState(queryKey)).toMatchObject({
+        data: 'persisted-data',
+        dataUpdatedAt: persistedDataUpdatedAt,
+        dataUpdateCount: 5,
+        error: liveError,
+        errorUpdatedAt: liveErrorUpdatedAt,
+        fetchFailureCount: 3,
+        status: 'error',
+        fetchStatus: 'idle',
+      })
     })
   })
 

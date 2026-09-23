@@ -1,8 +1,10 @@
 import {
+  createPersisterRestoreResult,
   hashKey,
   matchQuery,
   notifyManager,
   partialMatchKey,
+  reconcileRestoredQueryState,
 } from '@tanstack/query-core'
 import type {
   Query,
@@ -107,63 +109,98 @@ export function experimental_createQueryPersister<TStorageValue = string>({
   filters,
 }: StoragePersisterOptions<TStorageValue>) {
   function isExpiredOrBusted(persistedQuery: PersistedQuery) {
-    if (persistedQuery.state.dataUpdatedAt) {
-      const queryAge = Date.now() - persistedQuery.state.dataUpdatedAt
+    const updatedAt = Math.max(
+      persistedQuery.state.dataUpdatedAt || 0,
+      persistedQuery.state.errorUpdatedAt || 0,
+    )
+
+    if (updatedAt) {
+      const queryAge = Date.now() - updatedAt
       const expired = queryAge > maxAge
       const busted = persistedQuery.buster !== buster
 
-      if (expired || busted) {
-        return true
-      }
-
-      return false
+      return expired || busted
     }
 
     return true
+  }
+
+  async function readStoredQuery(
+    queryHash: string,
+  ): Promise<PersistedQuery | undefined> {
+    if (storage == null) {
+      return
+    }
+
+    const storageKey = `${prefix}-${queryHash}`
+    try {
+      const storedData = await storage.getItem(storageKey)
+      if (!storedData) {
+        return
+      }
+
+      let persistedQuery: PersistedQuery
+      try {
+        persistedQuery = await deserialize(storedData)
+      } catch {
+        await storage.removeItem(storageKey)
+        return
+      }
+
+      if (isExpiredOrBusted(persistedQuery)) {
+        await storage.removeItem(storageKey)
+        return
+      }
+
+      return persistedQuery
+    } catch (err) {
+      if (process.env.NODE_ENV === 'development') {
+        console.error(err)
+        console.warn(
+          'Encountered an error attempting to restore query cache from persisted location.',
+        )
+      }
+      await storage.removeItem(storageKey)
+    }
+
+    return
   }
 
   async function retrieveQuery<T>(
     queryHash: string,
     afterRestoreMacroTask?: (persistedQuery: PersistedQuery) => void,
   ) {
-    if (storage != null) {
-      const storageKey = `${prefix}-${queryHash}`
-      try {
-        const storedData = await storage.getItem(storageKey)
-        if (storedData) {
-          let persistedQuery: PersistedQuery
-          try {
-            persistedQuery = await deserialize(storedData)
-          } catch {
-            await storage.removeItem(storageKey)
-            return
-          }
-
-          if (isExpiredOrBusted(persistedQuery)) {
-            await storage.removeItem(storageKey)
-          } else {
-            if (afterRestoreMacroTask) {
-              // Just after restoring we want to get fresh data from the server if it's stale
-              notifyManager.schedule(() =>
-                afterRestoreMacroTask(persistedQuery),
-              )
-            }
-            // We must resolve the promise here, as otherwise we will have `loading` state in the app until `queryFn` resolves
-            return persistedQuery.state.data as T
-          }
-        }
-      } catch (err) {
-        if (process.env.NODE_ENV === 'development') {
-          console.error(err)
-          console.warn(
-            'Encountered an error attempting to restore query cache from persisted location.',
-          )
-        }
-        await storage.removeItem(storageKey)
-      }
+    const persistedQuery = await readStoredQuery(queryHash)
+    if (!persistedQuery) {
+      return
     }
 
-    return
+    if (afterRestoreMacroTask) {
+      // Just after restoring we want to get fresh data from the server if it's stale
+      notifyManager.schedule(() => afterRestoreMacroTask(persistedQuery))
+    }
+    // We must resolve the promise here, as otherwise we will have `loading` state in the app until `queryFn` resolves
+    return persistedQuery.state.data as T
+  }
+
+  function scheduleRestoreFollowUp(
+    query: Query,
+    persistedQuery: PersistedQuery,
+  ) {
+    notifyManager.schedule(() => {
+      // Set proper updatedAt, since resolving in the first pass overrides those values
+      query.setState({
+        dataUpdatedAt: persistedQuery.state.dataUpdatedAt,
+        errorUpdatedAt: persistedQuery.state.errorUpdatedAt,
+      })
+
+      if (
+        refetchOnRestore === 'always' ||
+        (refetchOnRestore === true && query.isStale())
+      ) {
+        void query.fetch()
+      }
+    })
   }
 
   async function persistQueryByKey(
@@ -209,26 +246,29 @@ export function experimental_createQueryPersister<TStorageValue = string>({
 
     // Try to restore only if we do not have any data in the cache and we have persister defined
     if (matchesFilter && query.state.data === undefined && storage != null) {
-      const restoredData = await retrieveQuery(
-        query.queryHash,
-        (persistedQuery: PersistedQuery) => {
-          // Set proper updatedAt, since resolving in the first pass overrides those values
-          query.setState({
-            dataUpdatedAt: persistedQuery.state.dataUpdatedAt,
-            errorUpdatedAt: persistedQuery.state.errorUpdatedAt,
+      const persistedQuery = await readStoredQuery(query.queryHash)
+
+      if (persistedQuery) {
+        const hasData = persistedQuery.state.data !== undefined
+        const hasError =
+          persistedQuery.state.error != null ||
+          persistedQuery.state.status === 'error'
+        // Skip when this fetch is already replaying the same error snapshot.
+        // Otherwise a follow-up refetch of an error-only query would restore
+        // forever instead of calling queryFn.
+        const alreadyRestored =
+          !hasData &&
+          hasError &&
+          query.state.error != null &&
+          query.state.errorUpdatedAt === persistedQuery.state.errorUpdatedAt
+
+        if ((hasData || hasError) && !alreadyRestored) {
+          scheduleRestoreFollowUp(query, persistedQuery)
+          return createPersisterRestoreResult({
+            data: persistedQuery.state.data as T,
+            state: persistedQuery.state,
           })
-
-          if (
-            refetchOnRestore === 'always' ||
-            (refetchOnRestore === true && query.isStale())
-          ) {
-            query.fetch()
-          }
-        },
-      )
-
-      if (restoredData !== undefined) {
-        return Promise.resolve(restoredData as T)
+        }
       }
     }
 
@@ -303,13 +343,25 @@ export function experimental_createQueryPersister<TStorageValue = string>({
             }
           }
 
-          queryClient.setQueryData(
-            persistedQuery.queryKey,
-            persistedQuery.state.data,
-            {
-              updatedAt: persistedQuery.state.dataUpdatedAt,
-            },
-          )
+          const cache = queryClient.getQueryCache()
+          const existing = cache.get(persistedQuery.queryHash)
+          const restoredState = reconcileRestoredQueryState(existing?.state, {
+            data: persistedQuery.state.data,
+            state: persistedQuery.state,
+          })
+
+          if (existing) {
+            existing.setState(restoredState)
+          } else {
+            cache.build(
+              queryClient,
+              {
+                queryKey: persistedQuery.queryKey,
+                queryHash: persistedQuery.queryHash,
+              },
+              restoredState,
+            )
+          }
         }
       }
     } else if (process.env.NODE_ENV === 'development') {

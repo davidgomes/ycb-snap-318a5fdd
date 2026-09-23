@@ -9,6 +9,10 @@ import {
 } from './utils'
 import { notifyManager } from './notifyManager'
 import { CancelledError, canFetch, createRetryer } from './retryer'
+import {
+  isPersisterRestoreResult,
+  reconcileRestoredQueryState,
+} from './persistedRestore'
 import { Removable } from './removable'
 import type { QueryCache } from './queryCache'
 import type { QueryClient } from './queryClient'
@@ -555,6 +559,20 @@ export class Query<
 
     try {
       const data = await this.#retryer.start()
+
+      // A persister can resolve with a cached snapshot. Adopt that state
+      // directly so restoration does not look like a fresh success fetch.
+      if (isPersisterRestoreResult<TData, TError>(data)) {
+        this.setState(
+          reconcileRestoredQueryState(undefined, {
+            data: data.data,
+            state: data.state,
+          }),
+        )
+        this.#revertState = undefined
+        return data.data
+      }
+
       // this is more of a runtime guard
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (data === undefined) {
@@ -640,6 +658,13 @@ export class Query<
           return {
             ...state,
             ...fetchState(state.data, this.options),
+            // A refetch already has data. Keep the previous failure metadata
+            // so a restored snapshot is not replaced with a fresh zero count
+            // when an observer mounts and starts that refetch.
+            ...(state.data !== undefined && {
+              fetchFailureCount: state.fetchFailureCount,
+              fetchFailureReason: state.fetchFailureReason,
+            }),
             fetchMeta: action.meta ?? null,
           }
         case 'success':
