@@ -29,10 +29,19 @@ export type Trait<TSchema extends Schema = any> = {
         /** Reference to parent relation if this trait is owned by a relation */
         relation: Relation<any> | null;
         type: StoreType;
+        /** Predicates that depend on this trait */
+        predicates: Trait[];
+        /** Set when this trait is the backing tag of a predicate */
+        predicate: PredicateConfig | null;
     };
 } & ((params?: TraitValue<TSchema>) => [Trait<TSchema>, TraitValue<TSchema>]);
 
 export type TagTrait = Trait<Record<string, never>> & { [$internal]: { type: 'tag' } };
+
+export type PredicateConfig = {
+    dependencies: Trait[];
+    fn: (values: any[]) => unknown;
+};
 
 export type TraitTuple<T extends Trait = Trait> = [
     T,

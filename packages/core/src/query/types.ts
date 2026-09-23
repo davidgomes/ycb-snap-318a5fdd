@@ -130,6 +130,11 @@ export type TrackingGroup = {
     id: number;
     /** Bitmasks indexed by generationId */
     bitmasks: (number | undefined)[];
+    /**
+     * Predicate bits in a 'change' group, indexed by generationId.
+     * Add and remove events on these bits count as changes instead of invalidating.
+     */
+    transitionBitmasks: (number | undefined)[];
     /** Per-entity tracker state indexed by [generationId][entityId] */
     trackers: (number[] | undefined)[];
 };

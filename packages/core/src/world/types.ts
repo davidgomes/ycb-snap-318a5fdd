@@ -42,6 +42,9 @@ export type WorldInternal = {
     changedMasks: Map<number, number[][]>;
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
+    /** While > 0, predicate re-evaluation is queued instead of run immediately */
+    predicateDeferDepth: number;
+    pendingPredicates: Map<Entity, Set<Trait>>;
     resetSubscriptions: Set<(world: World) => void>;
 };
 

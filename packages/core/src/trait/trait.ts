@@ -2,6 +2,7 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { setChanged, setPairChanged } from '../query/modifiers/changed';
+import { initPredicate, onPredicateDependencyChange } from '../query/predicate';
 import { checkQueryTrackingWithRelations } from '../query/utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
 import { getOrderedTraitRelation, isOrderedTrait, setupOrderedTraitSync } from '../relation/ordered';
@@ -38,6 +39,7 @@ import { getTraitInstance, hasTraitInstance, setTraitInstance } from './trait-in
 import type {
     ConfigurableTrait,
     ExtractStore,
+    PredicateConfig,
     TagTrait,
     Trait,
     TraitInstance,
@@ -68,6 +70,8 @@ function createTrait<S extends Schema>(schema: S = tagSchema as S): Trait<Norm<S
             createStore: () => createStore<S>(schema),
             relation: null,
             type: traitType,
+            predicates: [] as Trait[],
+            predicate: null as PredicateConfig | null,
         },
     }) as Trait<Norm<S>>;
 
@@ -122,6 +126,8 @@ export function registerTrait(world: World, trait: Trait) {
 
     // Setup ordered trait sync if this is an ordered trait
     if (isOrderedTrait(trait)) setupOrderedTraitSync(world, trait);
+
+    if (traitCtx.predicate) initPredicate(world, trait);
 }
 
 function getOrderedTrait(world: World, entity: Entity, trait: OrderedRelation): OrderedList {
@@ -419,6 +425,7 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
 
     ctx.set(index, store, value);
     triggerChanged && setChanged(world, entity, trait);
+    ctx.predicates.length > 0 && onPredicateDependencyChange(world, entity, trait);
 }
 
 /**
@@ -531,4 +538,6 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
 
     // Remove trait from entity internally
     ctx.entityTraits.get(entity)!.delete(trait);
+
+    if (trait[$internal].predicates.length > 0) onPredicateDependencyChange(world, entity, trait);
 }

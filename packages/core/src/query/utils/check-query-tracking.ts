@@ -74,17 +74,25 @@ export function checkQueryTracking(
 
         // Check if this event affects this group's traits
         if (groupBitmask && (groupBitmask & eventBitflag)) {
+            // A predicate toggling (add/remove of its tag) counts as a change for Changed(predicate)
+            const isPredicateTransition =
+                groupType === 'change' &&
+                eventType !== 'change' &&
+                ((group.transitionBitmasks[eventGenerationId] ?? 0) & eventBitflag) !== 0;
+
             // Cross-event invalidation:
             // - Remove event invalidates Added/Changed tracking
             // - Add event invalidates Removed/Changed tracking
-            if (eventType === 'remove') {
-                if (groupType === 'add' || groupType === 'change') return false;
-            } else if (eventType === 'add') {
-                if (groupType === 'remove' || groupType === 'change') return false;
+            if (!isPredicateTransition) {
+                if (eventType === 'remove') {
+                    if (groupType === 'add' || groupType === 'change') return false;
+                } else if (eventType === 'add') {
+                    if (groupType === 'remove' || groupType === 'change') return false;
+                }
             }
 
             // Update tracker if event type matches group type
-            if (groupType === eventType) {
+            if (groupType === eventType || isPredicateTransition) {
                 // For change events, verify entity still has the trait
                 if (eventType === 'change') {
                     const genMasks = entityMasks[eventGenerationId];

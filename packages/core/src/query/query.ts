@@ -138,6 +138,7 @@ function processTrackingModifier(
             type: trackingType,
             id,
             bitmasks: [],
+            transitionBitmasks: [],
             trackers: [],
         };
         groupsMap.set(key, group);
@@ -161,6 +162,10 @@ function processTrackingModifier(
         if (trackingType === 'change') {
             query.changedTraits.add(trait);
             query.hasChangedModifiers = true;
+
+            if (trait[$internal].predicate) {
+                group.transitionBitmasks[genId] = (group.transitionBitmasks[genId] ?? 0) | instance.bitflag;
+            }
         }
     }
 
