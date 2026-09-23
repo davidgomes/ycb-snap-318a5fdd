@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"helm.sh/helm/v4/internal/copystructure"
+	"helm.sh/helm/v4/pkg/chart"
 	"helm.sh/helm/v4/pkg/chart/common"
 )
 
@@ -187,19 +188,38 @@ func CoalesceTablesWithStrategies(dst, src map[string]any, strategies map[string
 	return coalesceTablesFullKey(log.Printf, dst, src, "", false)
 }
 
-// globalMergeStrategies returns the strategies declared for paths under the
-// global key, with the global prefix stripped.
-func globalMergeStrategies(strategies map[string]MergeStrategy) map[string]MergeStrategy {
-	var globals map[string]MergeStrategy
-	for path, s := range strategies {
+// coalesceGlobalsMergeStrategies applies the strategies a subchart declares
+// for global paths to the globals just merged into its values (dest), using
+// the subchart's default globals as base. The global prefix is stripped from
+// the strategy paths since they are applied to the globals map.
+func coalesceGlobalsMergeStrategies(printf printFn, dest map[string]any, sub chart.Accessor, prefix string) {
+	strategies := make(map[string]MergeStrategy)
+	for path, s := range ExtractMergeStrategies(sub.Annotations()) {
 		if rest, ok := strings.CutPrefix(path, common.GlobalKey+"."); ok {
-			if globals == nil {
-				globals = make(map[string]MergeStrategy)
-			}
-			globals[rest] = s
+			strategies[rest] = s
 		}
 	}
-	return globals
+	if len(strategies) == 0 {
+		return
+	}
+	chartGlobals, ok := sub.Values()[common.GlobalKey].(map[string]any)
+	if !ok {
+		return
+	}
+	dg, ok := dest[common.GlobalKey].(map[string]any)
+	if !ok {
+		return
+	}
+	// The merged globals share arrays and tables with the parent's globals,
+	// which must not be modified.
+	dgCopy, err := copystructure.Copy(dg)
+	if err != nil {
+		printf("warning: unable to copy globals, skipping merge strategies: %s", err)
+		return
+	}
+	dg = dgCopy.(map[string]any)
+	applyMergeStrategies(printf, dg, chartGlobals, strategies, concatPrefix(prefix, common.GlobalKey), true)
+	dest[common.GlobalKey] = dg
 }
 
 // applyMergeStrategies combines, in place, each array in override that has a

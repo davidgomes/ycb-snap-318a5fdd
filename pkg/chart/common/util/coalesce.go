@@ -124,7 +124,8 @@ func coalesceDeps(printf printFn, chrt chart.Charter, dest map[string]any, prefi
 			dvmap := dv.(map[string]any)
 			subPrefix := concatPrefix(prefix, ch.Name())
 			// Get globals out of dest and merge them into dvmap.
-			coalesceGlobalsWithStrategies(printf, dvmap, dest, subPrefix, globalMergeStrategies(ExtractMergeStrategies(sub.Annotations())), sub.Values())
+			coalesceGlobals(printf, dvmap, dest, subPrefix, merge)
+			coalesceGlobalsMergeStrategies(printf, dvmap, sub, subPrefix)
 			// Now coalesce the rest of the values.
 			var err error
 			dest[sub.Name()], err = coalesce(printf, subchart, dvmap, subPrefix, merge)
@@ -140,14 +141,6 @@ func coalesceDeps(printf printFn, chrt chart.Charter, dest map[string]any, prefi
 //
 // For convenience, returns dest.
 func coalesceGlobals(printf printFn, dest, src map[string]any, prefix string, _ bool) {
-	coalesceGlobalsWithStrategies(printf, dest, src, prefix, nil, nil)
-}
-
-// coalesceGlobalsWithStrategies is coalesceGlobals for a subchart that
-// declares merge strategies for global paths. strategies are keyed by path
-// relative to the globals map and combine the globals of src with the globals
-// in the subchart's default values (chartValues).
-func coalesceGlobalsWithStrategies(printf printFn, dest, src map[string]any, prefix string, strategies map[string]MergeStrategy, chartValues map[string]any) {
 	var dg, sg map[string]any
 
 	if destglob, ok := dest[common.GlobalKey]; !ok {
@@ -162,16 +155,6 @@ func coalesceGlobalsWithStrategies(printf printFn, dest, src map[string]any, pre
 	} else if sg, ok = srcglob.(map[string]any); !ok {
 		printf("warning: skipping globals because source %s is not a table.", common.GlobalKey)
 		return
-	}
-
-	if chartGlobals, ok := chartValues[common.GlobalKey].(map[string]any); ok && len(strategies) > 0 && len(sg) > 0 {
-		// Work on a copy so the strategies do not alter the parent's globals.
-		if sgCopy, err := copystructure.Copy(sg); err != nil {
-			printf("warning: unable to copy globals, skipping merge strategies: %s", err)
-		} else {
-			sg = sgCopy.(map[string]any)
-			applyMergeStrategies(printf, sg, chartGlobals, strategies, concatPrefix(prefix, common.GlobalKey), true)
-		}
 	}
 
 	// EXPERIMENTAL: In the past, we have disallowed globals to test tables. This
