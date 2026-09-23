@@ -665,3 +665,162 @@ data["b"] = 2
 	require.Equal(t, 1001, clone.Get("count").Int())
 	require.Equal(t, 2, len(clone.Get("data").Map()))
 }
+
+func TestCompiledFunctionCall(t *testing.T) {
+	mods := tengo.NewModuleMap()
+	mods.AddBuiltinModule("math", stdlib.BuiltinModules["math"])
+	mods.AddSourceModule("adder", []byte(`
+base := 3
+export func(x) { return x + base }
+`))
+	s := tengo.NewScript([]byte(`
+math := import("math")
+add := import("adder")
+g := 10
+abs1 := math.abs(-1)
+f := func(x) { g++; return x + g }
+variadic := func(a, ...b) { return a + len(b) }
+fact := func(n) {
+	if n <= 1 { return 1 }
+	return n * fact(n-1)
+}
+nested := [{m: func(x) { return x + g }}]
+mk := func(x) {
+	return func(y) { return x + y + g }
+}
+boom := func() { return g[0] }
+makePair := func() {
+	n := 1
+	bump := func() { n++; return n }
+	also := func() { n += 10; return n }
+	return {bump: bump, also: also, box: {fn: bump}}
+}
+made := makePair()
+`))
+	s.SetImports(mods)
+	require.NoError(t, s.Add("invoke", &tengo.UserFunction{
+		Name: "invoke",
+		Value: func(args ...tengo.Object) (tengo.Object, error) {
+			return args[0].Call(args[1:]...)
+		},
+	}))
+	compiled, err := s.Run()
+	require.NoError(t, err)
+
+	f := compiled.Get("f").Object().(*tengo.CompiledFunction)
+	ret, err := f.Call(&tengo.Int{Value: 1})
+	require.NoError(t, err)
+	require.Equal(t, int64(12), ret.(*tengo.Int).Value)
+	require.Equal(t, int64(11), compiled.Get("g").Int64())
+
+	add := compiled.Get("add").Object().(*tengo.CompiledFunction)
+	ret, err = add.Call(&tengo.Int{Value: 4})
+	require.NoError(t, err)
+	require.Equal(t, int64(7), ret.(*tengo.Int).Value)
+
+	variadic := compiled.Get("variadic").Object().(*tengo.CompiledFunction)
+	ret, err = variadic.Call(&tengo.Int{Value: 2}, &tengo.Int{Value: 1}, &tengo.Int{Value: 1})
+	require.NoError(t, err)
+	require.Equal(t, int64(4), ret.(*tengo.Int).Value)
+	_, err = variadic.Call()
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "wrong number of arguments: want>=1, got=0"))
+	require.True(t, strings.HasPrefix(err.Error(), "Runtime Error:"))
+
+	fact := compiled.Get("fact").Object().(*tengo.CompiledFunction)
+	ret, err = fact.Call(&tengo.Int{Value: 5})
+	require.NoError(t, err)
+	require.Equal(t, int64(120), ret.(*tengo.Int).Value)
+
+	nested := compiled.Get("nested").Object().(*tengo.Array)
+	inner := nested.Value[0].(*tengo.Map).Value["m"].(*tengo.CompiledFunction)
+	ret, err = inner.Call(&tengo.Int{Value: 1})
+	require.NoError(t, err)
+	require.Equal(t, int64(12), ret.(*tengo.Int).Value)
+
+	mk := compiled.Get("mk").Object().(*tengo.CompiledFunction)
+	ret, err = mk.Call(&tengo.Int{Value: 5})
+	require.NoError(t, err)
+	closure := ret.(*tengo.CompiledFunction)
+	ret, err = closure.Call(&tengo.Int{Value: 2})
+	require.NoError(t, err)
+	require.Equal(t, int64(18), ret.(*tengo.Int).Value)
+
+	// In-script call of a Go callback that invokes the closure.
+	s2 := tengo.NewScript([]byte(`
+g := 4
+out := invoke(func(x) { return x + g }, 3)
+`))
+	require.NoError(t, s2.Add("invoke", &tengo.UserFunction{
+		Value: func(args ...tengo.Object) (tengo.Object, error) {
+			return args[0].Call(args[1:]...)
+		},
+	}))
+	c2, err := s2.Run()
+	require.NoError(t, err)
+	require.Equal(t, int64(7), c2.Get("out").Int64())
+
+	boom := compiled.Get("boom").Object().(*tengo.CompiledFunction)
+	_, err = boom.Call()
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "Runtime Error:"))
+	require.True(t, strings.Contains(err.Error(), "not indexable: int"))
+
+	// Clone isolates later calls and mutations.
+	clone := compiled.Clone()
+	cf := clone.Get("f").Object().(*tengo.CompiledFunction)
+	ret, err = cf.Call(&tengo.Int{Value: 1})
+	require.NoError(t, err)
+	require.Equal(t, int64(13), ret.(*tengo.Int).Value)
+	require.Equal(t, int64(12), clone.Get("g").Int64())
+	require.Equal(t, int64(11), compiled.Get("g").Int64())
+
+	// Captures already mutated are snapshotted; globals follow the destination.
+	made := compiled.Get("made").Object().(*tengo.Map)
+	bump := made.Value["bump"].(*tengo.CompiledFunction)
+	ret, err = bump.Call()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), ret.(*tengo.Int).Value)
+
+	dest := tengo.NewScript([]byte(`
+other := 1
+g := 100
+holder := undefined
+bundle := undefined
+`))
+	destCompiled, err := dest.Run()
+	require.NoError(t, err)
+	require.NoError(t, destCompiled.Set("holder", compiled.Get("mk").Object()))
+	holder := destCompiled.Get("holder").Object().(*tengo.CompiledFunction)
+	ret, err = holder.Call(&tengo.Int{Value: 1})
+	require.NoError(t, err)
+	moved := ret.(*tengo.CompiledFunction)
+	ret, err = moved.Call(&tengo.Int{Value: 2})
+	require.NoError(t, err)
+	// x was 1 at the call on dest, y is 2, g is dest's 100.
+	require.Equal(t, int64(103), ret.(*tengo.Int).Value)
+	ret, err = closure.Call(&tengo.Int{Value: 2})
+	require.NoError(t, err)
+	require.Equal(t, int64(18), ret.(*tengo.Int).Value)
+
+	require.NoError(t, destCompiled.Set("bundle", made))
+	bundle := destCompiled.Get("bundle").Object().(*tengo.Map)
+	pb := bundle.Value["bump"].(*tengo.CompiledFunction)
+	bb := bundle.Value["box"].(*tengo.Map).Value["fn"].(*tengo.CompiledFunction)
+	ret, err = pb.Call()
+	require.NoError(t, err)
+	require.Equal(t, int64(3), ret.(*tengo.Int).Value)
+	ret, err = bb.Call()
+	require.NoError(t, err)
+	// pair[0] and box.fn share the captured local within the destination.
+	require.Equal(t, int64(4), ret.(*tengo.Int).Value)
+	ret, err = bump.Call()
+	require.NoError(t, err)
+	require.Equal(t, int64(3), ret.(*tengo.Int).Value)
+	ret, err = made.Value["also"].(*tengo.CompiledFunction).Call()
+	require.NoError(t, err)
+	require.Equal(t, int64(13), ret.(*tengo.Int).Value)
+	ret, err = bundle.Value["also"].(*tengo.CompiledFunction).Call()
+	require.NoError(t, err)
+	require.Equal(t, int64(14), ret.(*tengo.Int).Value)
+}

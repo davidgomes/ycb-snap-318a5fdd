@@ -32,6 +32,10 @@ type VM struct {
 	maxAllocs   int64
 	allocs      int64
 	err         error
+	env         *funcEnv
+	// bound maps unbound function constants to the wrapper used in this run so
+	// repeated loads of the same function keep a stable identity.
+	bound map[*CompiledFunction]*CompiledFunction
 }
 
 // NewVM creates a VM.
@@ -51,6 +55,12 @@ func NewVM(
 		framesIndex: 1,
 		ip:          -1,
 		maxAllocs:   maxAllocs,
+		env: &funcEnv{
+			globals:   globals,
+			constants: bytecode.Constants,
+			fileSet:   bytecode.FileSet,
+			maxAllocs: maxAllocs,
+		},
 	}
 	v.frames[0].fn = bytecode.MainFunction
 	v.frames[0].ip = -1
@@ -103,7 +113,11 @@ func (v *VM) run() {
 			v.ip += 2
 			cidx := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
 
-			v.stack[v.sp] = v.constants[cidx]
+			obj := v.constants[cidx]
+			if fn, ok := obj.(*CompiledFunction); ok {
+				obj = v.bindCompiled(fn)
+			}
+			v.stack[v.sp] = obj
 			v.sp++
 		case parser.OpNull:
 			v.stack[v.sp] = UndefinedValue
@@ -246,11 +260,19 @@ func (v *VM) run() {
 		case parser.OpSetGlobal:
 			v.ip += 2
 			v.sp--
-			globalIndex := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
+			globalIndex, e := v.lookupGlobal(int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8)
+			if e != nil {
+				v.err = e
+				return
+			}
 			v.globals[globalIndex] = v.stack[v.sp]
 		case parser.OpSetSelGlobal:
 			v.ip += 3
-			globalIndex := int(v.curInsts[v.ip-1]) | int(v.curInsts[v.ip-2])<<8
+			globalIndex, e := v.lookupGlobal(int(v.curInsts[v.ip-1]) | int(v.curInsts[v.ip-2])<<8)
+			if e != nil {
+				v.err = e
+				return
+			}
 			numSelectors := int(v.curInsts[v.ip])
 
 			// selectors and RHS value
@@ -260,14 +282,18 @@ func (v *VM) run() {
 			}
 			val := v.stack[v.sp-numSelectors-1]
 			v.sp -= numSelectors + 1
-			e := indexAssign(v.globals[globalIndex], val, selectors)
+			e = indexAssign(v.globals[globalIndex], val, selectors)
 			if e != nil {
 				v.err = e
 				return
 			}
 		case parser.OpGetGlobal:
 			v.ip += 2
-			globalIndex := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
+			globalIndex, e := v.lookupGlobal(int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8)
+			if e != nil {
+				v.err = e
+				return
+			}
 			val := v.globals[globalIndex]
 			v.stack[v.sp] = val
 			v.sp++
@@ -765,6 +791,12 @@ func (v *VM) run() {
 				}
 			}
 			v.sp -= numFree
+			origin := v.env.globalNames
+			var globalMap []int
+			if v.curFrame != nil && v.curFrame.fn != nil && v.curFrame.fn.originNames != nil {
+				origin = v.curFrame.fn.originNames
+				globalMap = v.curFrame.fn.globalMap
+			}
 			cl := &CompiledFunction{
 				Instructions:  fn.Instructions,
 				NumLocals:     fn.NumLocals,
@@ -772,6 +804,11 @@ func (v *VM) run() {
 				VarArgs:       fn.VarArgs,
 				SourceMap:     fn.SourceMap,
 				Free:          free,
+				env:           v.env,
+				constants:     v.constants,
+				fileSet:       v.fileSet,
+				originNames:   origin,
+				globalMap:     globalMap,
 			}
 			v.allocs--
 			if v.allocs == 0 {
@@ -879,6 +916,160 @@ func (v *VM) run() {
 // IsStackEmpty tests if the stack is empty or not.
 func (v *VM) IsStackEmpty() bool {
 	return v.sp == 0
+}
+
+// bindCompiled attaches the active runtime to a function constant. Closures
+// that already carry a runtime are returned unchanged.
+func (v *VM) bindCompiled(fn *CompiledFunction) *CompiledFunction {
+	if fn.env != nil {
+		return fn
+	}
+	if v.bound != nil {
+		if bound, ok := v.bound[fn]; ok {
+			return bound
+		}
+	} else {
+		v.bound = make(map[*CompiledFunction]*CompiledFunction)
+	}
+	origin := v.env.globalNames
+	var globalMap []int
+	if v.curFrame != nil && v.curFrame.fn != nil && v.curFrame.fn.originNames != nil {
+		origin = v.curFrame.fn.originNames
+		globalMap = v.curFrame.fn.globalMap
+	}
+	bound := &CompiledFunction{
+		Instructions:  fn.Instructions,
+		NumLocals:     fn.NumLocals,
+		NumParameters: fn.NumParameters,
+		VarArgs:       fn.VarArgs,
+		SourceMap:     fn.SourceMap,
+		Free:          fn.Free,
+		env:           v.env,
+		constants:     v.constants,
+		fileSet:       v.fileSet,
+		originNames:   origin,
+		globalMap:     globalMap,
+	}
+	v.bound[fn] = bound
+	return bound
+}
+
+// goCallParent is the suspended caller frame used when a compiled function is
+// invoked from Go. It exists so OpReturn has a parent frame, and it is omitted
+// from runtime error traces.
+var goCallParent = &CompiledFunction{Instructions: []byte{parser.OpSuspend}}
+
+func (env *funcEnv) call(fn *CompiledFunction, args []Object) (Object, error) {
+	prepared, err := prepareCallArgs(fn, args)
+	if err != nil {
+		if env.fileSet != nil {
+			pos := env.fileSet.Position(fn.SourcePos(0))
+			err = fmt.Errorf("Runtime Error: %w\n\tat %s", err, pos)
+		}
+		return nil, err
+	}
+	constants, fileSet, _ := fn.runtime()
+	v := &VM{
+		constants: constants,
+		globals:   env.globals,
+		fileSet:   fileSet,
+		maxAllocs: env.maxAllocs,
+		env:       env,
+		allocs:    env.maxAllocs + 1,
+		ip:        -1,
+	}
+	v.frames[0].fn = goCallParent
+	v.frames[0].ip = -1
+	v.frames[1].fn = fn
+	v.frames[1].freeVars = fn.Free
+	v.frames[1].basePointer = 1
+	v.frames[1].ip = -1
+	v.framesIndex = 2
+	v.curFrame = &v.frames[1]
+	v.curInsts = fn.Instructions
+	v.stack[0] = fn
+	for i, arg := range prepared {
+		v.stack[1+i] = arg
+	}
+	for i := len(prepared); i < fn.NumLocals; i++ {
+		v.stack[1+i] = UndefinedValue
+	}
+	v.sp = 1 + fn.NumLocals
+	if len(fn.Instructions) == 0 {
+		return UndefinedValue, nil
+	}
+	v.run()
+	if v.err != nil {
+		return nil, v.formatCallError()
+	}
+	if v.sp > 0 && v.stack[0] != nil {
+		return v.stack[0], nil
+	}
+	return UndefinedValue, nil
+}
+
+func prepareCallArgs(fn *CompiledFunction, args []Object) ([]Object, error) {
+	if fn.VarArgs {
+		fixed := fn.NumParameters - 1
+		if len(args) < fixed {
+			return nil, fmt.Errorf(
+				"wrong number of arguments: want>=%d, got=%d",
+				fixed, len(args))
+		}
+		rest := make([]Object, len(args)-fixed)
+		copy(rest, args[fixed:])
+		prepared := make([]Object, fixed+1)
+		copy(prepared, args[:fixed])
+		prepared[fixed] = &Array{Value: rest}
+		return prepared, nil
+	}
+	if len(args) != fn.NumParameters {
+		return nil, fmt.Errorf(
+			"wrong number of arguments: want=%d, got=%d",
+			fn.NumParameters, len(args))
+	}
+	return args, nil
+}
+
+func (v *VM) lookupGlobal(idx int) (int, error) {
+	orig := idx
+	if fn := v.curFrame.fn; fn != nil && fn.globalMap != nil {
+		if idx < 0 || idx >= len(fn.globalMap) {
+			return 0, fmt.Errorf("unknown global index: %d", idx)
+		}
+		idx = fn.globalMap[idx]
+		if idx < 0 {
+			name := ""
+			if orig >= 0 && orig < len(fn.originNames) {
+				name = fn.originNames[orig]
+			}
+			return 0, fmt.Errorf("'%s' is not defined", name)
+		}
+	}
+	if idx < 0 || idx >= len(v.globals) {
+		return 0, fmt.Errorf("unknown global index: %d", idx)
+	}
+	return idx, nil
+}
+
+func (v *VM) formatCallError() error {
+	err := v.err
+	if v.fileSet == nil || v.curFrame == nil || v.curFrame.fn == nil {
+		return fmt.Errorf("Runtime Error: %w", err)
+	}
+	filePos := v.fileSet.Position(v.curFrame.fn.SourcePos(v.ip - 1))
+	err = fmt.Errorf("Runtime Error: %w\n\tat %s", err, filePos)
+	for v.framesIndex > 1 {
+		v.framesIndex--
+		v.curFrame = &v.frames[v.framesIndex-1]
+		if v.curFrame.fn == goCallParent {
+			break
+		}
+		filePos = v.fileSet.Position(
+			v.curFrame.fn.SourcePos(v.curFrame.ip - 1))
+		err = fmt.Errorf("%w\n\tat %s", err, filePos)
+	}
+	return err
 }
 
 func indexAssign(dst, src Object, selectors []Object) error {

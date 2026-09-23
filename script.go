@@ -133,12 +133,27 @@ func (s *Script) Compile() (*Compiled, error) {
 			return nil, fmt.Errorf("exceeding constant objects limit: %d", cnt)
 		}
 	}
-	return &Compiled{
+	compiled := &Compiled{
 		globalIndexes: globalIndexes,
 		bytecode:      bytecode,
 		globals:       globals,
 		maxAllocs:     s.maxAllocs,
-	}, nil
+	}
+	globalNames := make([]string, len(globals))
+	for name, idx := range globalIndexes {
+		if idx >= 0 && idx < len(globalNames) {
+			globalNames[idx] = name
+		}
+	}
+	compiled.env = &funcEnv{
+		globals:       globals,
+		constants:     bytecode.Constants,
+		fileSet:       bytecode.FileSet,
+		maxAllocs:     s.maxAllocs,
+		globalNames:   globalNames,
+		globalIndexes: globalIndexes,
+	}
+	return compiled, nil
 }
 
 // Run compiles and runs the scripts. Use returned compiled object to access
@@ -199,6 +214,7 @@ type Compiled struct {
 	bytecode      *Bytecode
 	globals       []Object
 	maxAllocs     int64
+	env           *funcEnv
 	lock          sync.RWMutex
 }
 
@@ -207,7 +223,7 @@ func (c *Compiled) Run() error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	v := c.vm()
 	return v.Run()
 }
 
@@ -216,7 +232,7 @@ func (c *Compiled) RunContext(ctx context.Context) (err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	v := c.vm()
 	ch := make(chan error, 1)
 	go func() {
 		defer func() {
@@ -265,10 +281,39 @@ func (c *Compiled) Clone() *Compiled {
 		globals:       make([]Object, len(c.globals)),
 		maxAllocs:     c.maxAllocs,
 	}
-	// copy global objects
+	var names []string
+	var indexes map[string]int
+	constants := []Object(nil)
+	var fileSet *parser.SourceFileSet
+	if c.env != nil {
+		names = c.env.globalNames
+		indexes = c.env.globalIndexes
+		constants = c.env.constants
+		fileSet = c.env.fileSet
+	}
+	if c.bytecode != nil {
+		if constants == nil {
+			constants = c.bytecode.Constants
+		}
+		if fileSet == nil {
+			fileSet = c.bytecode.FileSet
+		}
+	}
+	clone.env = &funcEnv{
+		globals:       clone.globals,
+		constants:     constants,
+		fileSet:       fileSet,
+		maxAllocs:     c.maxAllocs,
+		globalNames:   names,
+		globalIndexes: indexes,
+	}
+	// Copy global objects onto the clone. Callables keep the captures they
+	// had at this moment and resolve globals against the clone.
+	seen := make(map[Object]Object)
+	ptrs := make(map[*ObjectPtr]*ObjectPtr)
 	for idx, g := range c.globals {
 		if g != nil {
-			clone.globals[idx] = g.Copy()
+			clone.globals[idx] = transferObject(g, clone.env, seen, ptrs)
 		}
 	}
 	return clone
@@ -342,6 +387,29 @@ func (c *Compiled) Set(name string, value interface{}) error {
 	if !ok {
 		return fmt.Errorf("'%s' is not defined", name)
 	}
+	if c.env == nil {
+		c.env = &funcEnv{
+			globals:       c.globals,
+			maxAllocs:     c.maxAllocs,
+			globalIndexes: c.globalIndexes,
+		}
+		if c.bytecode != nil {
+			c.env.constants = c.bytecode.Constants
+			c.env.fileSet = c.bytecode.FileSet
+		}
+	}
+	if referencesForeignFunc(obj, c.env, make(map[Object]bool)) {
+		obj = transferObject(obj, c.env, make(map[Object]Object),
+			make(map[*ObjectPtr]*ObjectPtr))
+	}
 	c.globals[idx] = obj
 	return nil
+}
+
+func (c *Compiled) vm() *VM {
+	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	if c.env != nil {
+		v.env = c.env
+	}
+	return v
 }

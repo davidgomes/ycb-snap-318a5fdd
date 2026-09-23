@@ -567,6 +567,18 @@ func (o *Char) Equals(x Object) bool {
 	return o.Value == t.Value
 }
 
+// funcEnv is the runtime a compiled function needs in order to be called from
+// Go. globals belong to one compiled instance. constants and the file set
+// belong to the bytecode the function was compiled from.
+type funcEnv struct {
+	globals       []Object
+	constants     []Object
+	fileSet       *parser.SourceFileSet
+	maxAllocs     int64
+	globalNames   []string
+	globalIndexes map[string]int
+}
+
 // CompiledFunction represents a compiled function.
 type CompiledFunction struct {
 	ObjectImpl
@@ -576,6 +588,13 @@ type CompiledFunction struct {
 	VarArgs       bool
 	SourceMap     map[int]parser.Pos
 	Free          []*ObjectPtr
+	env           *funcEnv
+	// constants and fileSet are the bytecode this function executes. They stay
+	// with the function when it is moved to another compiled instance.
+	constants   []Object
+	fileSet     *parser.SourceFileSet
+	originNames []string // bytecode global index -> name
+	globalMap   []int    // bytecode global index -> env.globals index
 }
 
 // TypeName returns the name of the type.
@@ -600,7 +619,13 @@ func (o *CompiledFunction) Copy() Object {
 		NumLocals:     o.NumLocals,
 		NumParameters: o.NumParameters,
 		VarArgs:       o.VarArgs,
+		SourceMap:     o.SourceMap,
 		Free:          append([]*ObjectPtr{}, o.Free...), // DO NOT Copy() of elements; these are variable pointers
+		env:           o.env,
+		constants:     o.constants,
+		fileSet:       o.fileSet,
+		originNames:   o.originNames,
+		globalMap:     o.globalMap,
 	}
 }
 
@@ -624,6 +649,15 @@ func (o *CompiledFunction) SourcePos(ip int) parser.Pos {
 // CanCall returns whether the Object can be Called.
 func (o *CompiledFunction) CanCall() bool {
 	return true
+}
+
+// Call executes the compiled function from Go with the globals, constants,
+// imports, and closure captures of the compiled instance that produced it.
+func (o *CompiledFunction) Call(args ...Object) (Object, error) {
+	if o.env == nil {
+		return nil, fmt.Errorf("compiled function is not bound to a runtime")
+	}
+	return o.env.call(o, args)
 }
 
 // Error represents an error value.
@@ -1615,4 +1649,262 @@ func (o *UserFunction) Call(args ...Object) (Object, error) {
 // CanCall returns whether the Object can be Called.
 func (o *UserFunction) CanCall() bool {
 	return true
+}
+
+func (o *CompiledFunction) runtime() (constants []Object, fileSet *parser.SourceFileSet, origin []string) {
+	constants = o.constants
+	fileSet = o.fileSet
+	origin = o.originNames
+	if o.env != nil {
+		if constants == nil {
+			constants = o.env.constants
+		}
+		if fileSet == nil {
+			fileSet = o.env.fileSet
+		}
+		if origin == nil {
+			origin = o.env.globalNames
+		}
+	}
+	return constants, fileSet, origin
+}
+
+// globalMapFor translates bytecode global indexes (origin names) into indexes
+// of env. A nil map means the indexes already match.
+func globalMapFor(origin []string, env *funcEnv) []int {
+	if len(origin) == 0 || env == nil {
+		return nil
+	}
+	same := true
+	mapped := make([]int, len(origin))
+	for i, name := range origin {
+		if name == "" {
+			mapped[i] = i
+			continue
+		}
+		idx, ok := env.globalIndexes[name]
+		if !ok {
+			mapped[i] = -1
+			same = false
+			continue
+		}
+		mapped[i] = idx
+		if idx != i {
+			same = false
+		}
+	}
+	if same {
+		return nil
+	}
+	return mapped
+}
+
+func sameGlobals(a, b []Object) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	return &a[0] == &b[0]
+}
+
+func (env *funcEnv) owns(fn *CompiledFunction) bool {
+	return fn != nil && fn.env != nil && sameGlobals(fn.env.globals, env.globals)
+}
+
+// referencesForeignFunc reports whether o contains a compiled function whose
+// globals are not env's globals.
+func referencesForeignFunc(o Object, env *funcEnv, seen map[Object]bool) bool {
+	if o == nil {
+		return false
+	}
+	switch o := o.(type) {
+	case *CompiledFunction:
+		if seen[o] {
+			return false
+		}
+		seen[o] = true
+		if !env.owns(o) {
+			return true
+		}
+		for _, free := range o.Free {
+			if free != nil && free.Value != nil &&
+				referencesForeignFunc(*free.Value, env, seen) {
+				return true
+			}
+		}
+	case *Array:
+		if seen[o] {
+			return false
+		}
+		seen[o] = true
+		for _, elem := range o.Value {
+			if referencesForeignFunc(elem, env, seen) {
+				return true
+			}
+		}
+	case *ImmutableArray:
+		if seen[o] {
+			return false
+		}
+		seen[o] = true
+		for _, elem := range o.Value {
+			if referencesForeignFunc(elem, env, seen) {
+				return true
+			}
+		}
+	case *Map:
+		if seen[o] {
+			return false
+		}
+		seen[o] = true
+		for _, elem := range o.Value {
+			if referencesForeignFunc(elem, env, seen) {
+				return true
+			}
+		}
+	case *ImmutableMap:
+		if seen[o] {
+			return false
+		}
+		seen[o] = true
+		for _, elem := range o.Value {
+			if referencesForeignFunc(elem, env, seen) {
+				return true
+			}
+		}
+	case *Error:
+		if seen[o] {
+			return false
+		}
+		seen[o] = true
+		return referencesForeignFunc(o.Value, env, seen)
+	case *ObjectPtr:
+		if seen[o] {
+			return false
+		}
+		seen[o] = true
+		if o.Value != nil {
+			return referencesForeignFunc(*o.Value, env, seen)
+		}
+	}
+	return false
+}
+
+// transferObject copies o so every compiled function reachable from it uses
+// env. Captured locals are snapshotted, and captures shared by several
+// closures stay shared inside the copy.
+func transferObject(
+	o Object,
+	env *funcEnv,
+	seen map[Object]Object,
+	ptrs map[*ObjectPtr]*ObjectPtr,
+) Object {
+	if o == nil {
+		return nil
+	}
+	switch o := o.(type) {
+	case *CompiledFunction:
+		if prev, ok := seen[o]; ok {
+			return prev
+		}
+		constants, fileSet, origin := o.runtime()
+		fn := &CompiledFunction{
+			Instructions:  o.Instructions,
+			NumLocals:     o.NumLocals,
+			NumParameters: o.NumParameters,
+			VarArgs:       o.VarArgs,
+			SourceMap:     o.SourceMap,
+			env:           env,
+			constants:     constants,
+			fileSet:       fileSet,
+			originNames:   origin,
+			globalMap:     globalMapFor(origin, env),
+		}
+		seen[o] = fn
+		if len(o.Free) > 0 {
+			fn.Free = make([]*ObjectPtr, len(o.Free))
+			for i, free := range o.Free {
+				fn.Free[i] = transferPtr(free, env, seen, ptrs)
+			}
+		}
+		return fn
+	case *Array:
+		if prev, ok := seen[o]; ok {
+			return prev
+		}
+		arr := &Array{Value: make([]Object, len(o.Value))}
+		seen[o] = arr
+		for i, elem := range o.Value {
+			arr.Value[i] = transferObject(elem, env, seen, ptrs)
+		}
+		return arr
+	case *ImmutableArray:
+		if prev, ok := seen[o]; ok {
+			return prev
+		}
+		// Match ImmutableArray.Copy, which produces a mutable array.
+		arr := &Array{Value: make([]Object, len(o.Value))}
+		seen[o] = arr
+		for i, elem := range o.Value {
+			arr.Value[i] = transferObject(elem, env, seen, ptrs)
+		}
+		return arr
+	case *Map:
+		if prev, ok := seen[o]; ok {
+			return prev
+		}
+		m := &Map{Value: make(map[string]Object, len(o.Value))}
+		seen[o] = m
+		for k, elem := range o.Value {
+			m.Value[k] = transferObject(elem, env, seen, ptrs)
+		}
+		return m
+	case *ImmutableMap:
+		if prev, ok := seen[o]; ok {
+			return prev
+		}
+		// Match ImmutableMap.Copy, which produces a mutable map.
+		m := &Map{Value: make(map[string]Object, len(o.Value))}
+		seen[o] = m
+		for k, elem := range o.Value {
+			m.Value[k] = transferObject(elem, env, seen, ptrs)
+		}
+		return m
+	case *Error:
+		if prev, ok := seen[o]; ok {
+			return prev
+		}
+		cp := &Error{}
+		seen[o] = cp
+		cp.Value = transferObject(o.Value, env, seen, ptrs)
+		return cp
+	case *ObjectPtr:
+		return transferPtr(o, env, seen, ptrs)
+	default:
+		return o.Copy()
+	}
+}
+
+func transferPtr(
+	p *ObjectPtr,
+	env *funcEnv,
+	seen map[Object]Object,
+	ptrs map[*ObjectPtr]*ObjectPtr,
+) *ObjectPtr {
+	if p == nil {
+		return nil
+	}
+	if cp, ok := ptrs[p]; ok {
+		return cp
+	}
+	var current Object
+	if p.Value != nil {
+		current = *p.Value
+	}
+	slot := current
+	cp := &ObjectPtr{Value: &slot}
+	ptrs[p] = cp
+	if current != nil {
+		*cp.Value = transferObject(current, env, seen, ptrs)
+	}
+	return cp
 }
