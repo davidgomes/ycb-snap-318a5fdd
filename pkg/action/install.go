@@ -130,6 +130,12 @@ type Install struct {
 	// TakeOwnership will ignore the check for helm annotations and take ownership of the resources.
 	TakeOwnership bool
 	PostRenderer  postrenderer.PostRenderer
+	// MergeStrategies sets array merge strategies in path=strategy format,
+	// taking precedence over the chart's merge strategy annotations.
+	MergeStrategies []string
+	// MergeKeys sets merge keys for the "merge" strategy in path=key format,
+	// taking precedence over the chart's merge key annotations.
+	MergeKeys []string
 	// Lock to control raceconditions when the process receives a SIGTERM
 	Lock           sync.Mutex
 	goroutineCount atomic.Int32
@@ -303,6 +309,10 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 	if err := i.availableName(); err != nil {
 		i.cfg.Logger().Error("release name check failed", slog.Any("error", err))
 		return nil, fmt.Errorf("release name check failed: %w", err)
+	}
+
+	if err := applyMergeStrategyOverrides(chrt, i.MergeStrategies, i.MergeKeys); err != nil {
+		return nil, err
 	}
 
 	if err := chartutil.ProcessDependencies(chrt, vals); err != nil {

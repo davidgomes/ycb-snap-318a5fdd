@@ -131,6 +131,12 @@ type Upgrade struct {
 	EnableDNS bool
 	// TakeOwnership will skip the check for helm annotations and adopt all existing resources.
 	TakeOwnership bool
+	// MergeStrategies sets array merge strategies in path=strategy format,
+	// taking precedence over the chart's merge strategy annotations.
+	MergeStrategies []string
+	// MergeKeys sets merge keys for the "merge" strategy in path=key format,
+	// taking precedence over the chart's merge key annotations.
+	MergeKeys []string
 }
 
 type resultMessage struct {
@@ -185,6 +191,10 @@ func (u *Upgrade) RunWithContext(ctx context.Context, name string, ch chart.Char
 
 	if err := chartutil.ValidateReleaseName(name); err != nil {
 		return nil, fmt.Errorf("release name is invalid: %s", name)
+	}
+
+	if err := applyMergeStrategyOverrides(chrt, u.MergeStrategies, u.MergeKeys); err != nil {
+		return nil, err
 	}
 
 	u.cfg.Logger().Debug("preparing upgrade", "name", name)
@@ -618,8 +628,12 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 			return nil, fmt.Errorf("failed to rebuild old values: %w", err)
 		}
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		strategies := chartMergeStrategies(chart)
+		newVals = util.CoalesceTablesWithStrategies(newVals, current.Config, strategies)
 
+		// newVals already carries the old config for strategy paths, so the
+		// old chart defaults are used there to avoid combining it twice.
+		resetStrategyPaths(oldVals, current.Chart.Values, strategies)
 		chart.Values = oldVals
 
 		return newVals, nil
@@ -629,7 +643,7 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 	if u.ResetThenReuseValues {
 		u.cfg.Logger().Debug("merging values from old release to new values")
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		newVals = util.CoalesceTablesWithStrategies(newVals, current.Config, chartMergeStrategies(chart))
 
 		return newVals, nil
 	}

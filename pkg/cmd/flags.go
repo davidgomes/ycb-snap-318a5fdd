@@ -56,6 +56,11 @@ func addValueOptionsFlags(f *pflag.FlagSet, v *values.Options) {
 	f.StringArrayVar(&v.LiteralValues, "set-literal", []string{}, "set a literal STRING value on the command line")
 }
 
+func addMergeStrategyFlags(f *pflag.FlagSet, strategies, keys *[]string) {
+	f.StringArrayVar(strategies, "merge-strategy", []string{}, "set how an array in the chart values is combined with user values, overriding the chart's merge strategy annotation (can specify multiple: path=append or path=merge)")
+	f.StringArrayVar(keys, "merge-key", []string{}, "set the field used to match array elements for the \"merge\" strategy, overriding the chart's merge key annotation (can specify multiple: path=key)")
+}
+
 func AddWaitFlag(cmd *cobra.Command, wait *kube.WaitStrategy) {
 	cmd.Flags().Var(
 		newWaitValue(kube.HookOnlyStrategy, wait),
