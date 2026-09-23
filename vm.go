@@ -368,6 +368,16 @@ func (v *VM) run() {
 			}
 			v.stack[v.sp] = val
 			v.sp++
+		case parser.OpHasIndex:
+			index := v.stack[v.sp-1]
+			left := v.stack[v.sp-2]
+			v.sp -= 2
+			if hasIndex(left, index) {
+				v.stack[v.sp] = TrueValue
+			} else {
+				v.stack[v.sp] = FalseValue
+			}
+			v.sp++
 		case parser.OpSliceIndex:
 			high := v.stack[v.sp-1]
 			low := v.stack[v.sp-2]
@@ -908,4 +918,31 @@ func indexAssign(dst, src Object, selectors []Object) error {
 		return err
 	}
 	return nil
+}
+
+func hasIndex(left, index Object) bool {
+	switch left := left.(type) {
+	case *Array:
+		i, ok := index.(*Int)
+		return ok && i.Value >= 0 && i.Value < int64(len(left.Value))
+	case *ImmutableArray:
+		i, ok := index.(*Int)
+		return ok && i.Value >= 0 && i.Value < int64(len(left.Value))
+	case *Map:
+		k, ok := ToString(index)
+		if !ok {
+			return false
+		}
+		_, ok = left.Value[k]
+		return ok
+	case *ImmutableMap:
+		k, ok := ToString(index)
+		if !ok {
+			return false
+		}
+		_, ok = left.Value[k]
+		return ok
+	}
+	val, err := left.IndexGet(index)
+	return err == nil && val != nil && val != UndefinedValue
 }

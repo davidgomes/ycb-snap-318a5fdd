@@ -3996,3 +3996,20 @@ func objectZeroCopy(o tengo.Object) tengo.Object {
 		panic(fmt.Errorf("unknown object type: %s", o.TypeName()))
 	}
 }
+
+func TestDestructuring(t *testing.T) {
+	expectRun(t, `[a, b] := [1, 2]; out = a + b`, nil, 3)
+	expectRun(t, `[a, b, c] := [1, 2]; out = c`, nil, tengo.UndefinedValue)
+	expectRun(t, `[a, [b, ...r]] := [1, [2, 3, 4]]; out = r`, nil, ARR{3, 4})
+	expectRun(t, `[a, ...r] := [1]; out = r`, nil, ARR{})
+	expectRun(t, `[a, b = a + 1] := [1]; out = b`, nil, 2)
+	expectRun(t, `[a, b = 5] := [1, undefined]; out = b`, nil, tengo.UndefinedValue)
+	expectRun(t, `{x, y: b = 50} := {x: 1}; out = x + b`, nil, 51)
+	expectRun(t, `{x: {y: [z]}} := {x: {y: [9]}}; out = z`, nil, 9)
+	expectRun(t, `[] := [1]; {} := {}; out = 1`, nil, 1)
+	expectRun(t, `f := func([a, b], {c}) { return a + b + c }; out = f([1, 2], {c: 3})`, nil, 6)
+	expectRun(t, `out = func() { {k = 4} := {}; return k }()`, nil, 4)
+	expectCompileError(t, `[a, ...r, b] := [1]`, "rest element must be last")
+	expectCompileError(t, `[a, b] = [1, 2]`, "cannot use destructuring with =")
+	expectCompileError(t, `a := 1; [a] := [1]`, "redeclared")
+}

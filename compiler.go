@@ -396,6 +396,19 @@ func (c *Compiler) Compile(node parser.Node) error {
 			s.LocalAssigned = true
 		}
 
+		for i, pattern := range node.Type.Params.Patterns {
+			if pattern == nil {
+				continue
+			}
+			param := node.Type.Params.List[i]
+			err := c.compileDestructure(pattern, pattern, func() error {
+				return c.Compile(param)
+			})
+			if err != nil {
+				return err
+			}
+		}
+
 		if err := c.Compile(node.Body); err != nil {
 			return err
 		}
@@ -575,6 +588,8 @@ func (c *Compiler) Compile(node parser.Node) error {
 			return err
 		}
 		c.emit(node, parser.OpImmutable)
+	case *parser.ArrayPattern, *parser.MapPattern:
+		return c.errorf(node, "destructuring pattern not allowed here")
 	case *parser.CondExpr:
 		if err := c.Compile(node.Cond); err != nil {
 			return err
@@ -667,6 +682,20 @@ func (c *Compiler) compileAssign(
 	numLHS, numRHS := len(lhs), len(rhs)
 	if numLHS > 1 || numRHS > 1 {
 		return c.errorf(node, "tuple assignment not allowed")
+	}
+
+	switch lhs[0].(type) {
+	case *parser.ArrayPattern, *parser.MapPattern:
+		if op != token.Define {
+			return c.errorf(node, "cannot use destructuring with %s", op)
+		}
+		return c.compileDestructure(node, lhs[0], func() error {
+			return c.Compile(rhs[0])
+		})
+	case *parser.ArrayLit, *parser.MapLit:
+		if op == token.Assign {
+			return c.errorf(node, "cannot use destructuring with =")
+		}
 	}
 
 	// resolve and compile left-hand side
@@ -769,6 +798,171 @@ func (c *Compiler) compileAssign(
 		} else {
 			c.emit(node, parser.OpSetFree, symbol.Index)
 		}
+	default:
+		panic(fmt.Errorf("invalid assignment variable scope: %s",
+			symbol.Scope))
+	}
+	return nil
+}
+
+// compileDestructure binds the value produced by emitValue to target, which
+// is an identifier or a (nested) destructuring pattern.
+func (c *Compiler) compileDestructure(
+	node parser.Node,
+	target parser.Expr,
+	emitValue func() error,
+) error {
+	var elements []func() error
+	switch t := target.(type) {
+	case *parser.Ident:
+		return c.defineVar(node, t.Name, emitValue)
+	case *parser.ArrayPattern:
+		src := fmt.Sprintf("$destruct%d", t.Pos())
+		for i, el := range t.Elements {
+			el, key := el, &Int{Value: int64(i)}
+			elements = append(elements, func() error {
+				return c.compileDestructure(node, el.Target, func() error {
+					return c.emitDestructGet(node, src, key, el.Default)
+				})
+			})
+		}
+		if t.Rest != nil {
+			low := &Int{Value: int64(len(t.Elements))}
+			rest := t.Rest
+			elements = append(elements, func() error {
+				return c.defineVar(node, rest.Name, func() error {
+					return c.emitDestructRest(node, src, low)
+				})
+			})
+		}
+		if err := c.defineVar(node, src, emitValue); err != nil {
+			return err
+		}
+	case *parser.MapPattern:
+		src := fmt.Sprintf("$destruct%d", t.Pos())
+		for _, e := range t.Entries {
+			e, key := e, &String{Value: e.Key}
+			elements = append(elements, func() error {
+				return c.compileDestructure(node, e.Target, func() error {
+					return c.emitDestructGet(node, src, key, e.Default)
+				})
+			})
+		}
+		if err := c.defineVar(node, src, emitValue); err != nil {
+			return err
+		}
+	default:
+		return c.errorf(node, "invalid destructuring target")
+	}
+	for _, compile := range elements {
+		if err := compile(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// emitDestructGet pushes src[key], or the default value (undefined if none)
+// when key does not exist in src.
+func (c *Compiler) emitDestructGet(
+	node parser.Node,
+	src string,
+	key Object,
+	def parser.Expr,
+) error {
+	emitIndex := func(op parser.Opcode) error {
+		if err := c.Compile(&parser.Ident{Name: src}); err != nil {
+			return err
+		}
+		c.emit(node, parser.OpConstant, c.addConstant(key))
+		c.emit(node, op)
+		return nil
+	}
+	if def == nil {
+		return emitIndex(parser.OpIndex)
+	}
+	return c.emitIfHasIndex(node, emitIndex, func() error {
+		return emitIndex(parser.OpIndex)
+	}, func() error {
+		return c.Compile(def)
+	})
+}
+
+// emitDestructRest pushes src[low:], or an empty array when low is beyond
+// the end of src.
+func (c *Compiler) emitDestructRest(
+	node parser.Node,
+	src string,
+	low Object,
+) error {
+	emitCheck := func(op parser.Opcode) error {
+		if err := c.Compile(&parser.Ident{Name: src}); err != nil {
+			return err
+		}
+		c.emit(node, parser.OpConstant, c.addConstant(low))
+		c.emit(node, op)
+		return nil
+	}
+	return c.emitIfHasIndex(node, emitCheck, func() error {
+		if err := c.Compile(&parser.Ident{Name: src}); err != nil {
+			return err
+		}
+		c.emit(node, parser.OpConstant, c.addConstant(low))
+		c.emit(node, parser.OpNull)
+		c.emit(node, parser.OpSliceIndex)
+		return nil
+	}, func() error {
+		c.emit(node, parser.OpArray, 0)
+		return nil
+	})
+}
+
+func (c *Compiler) emitIfHasIndex(
+	node parser.Node,
+	emitCheck func(op parser.Opcode) error,
+	then, otherwise func() error,
+) error {
+	if err := emitCheck(parser.OpHasIndex); err != nil {
+		return err
+	}
+	jumpPos1 := c.emit(node, parser.OpJumpFalsy, 0)
+	if err := then(); err != nil {
+		return err
+	}
+	jumpPos2 := c.emit(node, parser.OpJump, 0)
+	c.changeOperand(jumpPos1, len(c.currentInstructions()))
+	if err := otherwise(); err != nil {
+		return err
+	}
+	c.changeOperand(jumpPos2, len(c.currentInstructions()))
+	return nil
+}
+
+// defineVar defines a new variable in the current block and assigns it the
+// value produced by emitValue.
+func (c *Compiler) defineVar(
+	node parser.Node,
+	name string,
+	emitValue func() error,
+) error {
+	if _, depth, exists := c.symbolTable.Resolve(name, false); exists &&
+		depth == 0 {
+		return c.errorf(node, "'%s' redeclared in this block", name)
+	}
+	if err := emitValue(); err != nil {
+		return err
+	}
+	symbol := c.symbolTable.Define(name)
+	switch symbol.Scope {
+	case ScopeGlobal:
+		c.emit(node, parser.OpSetGlobal, symbol.Index)
+	case ScopeLocal:
+		if symbol.LocalAssigned {
+			c.emit(node, parser.OpSetLocal, symbol.Index)
+		} else {
+			c.emit(node, parser.OpDefineLocal, symbol.Index)
+		}
+		symbol.LocalAssigned = true
 	default:
 		panic(fmt.Errorf("invalid assignment variable scope: %s",
 			symbol.Scope))

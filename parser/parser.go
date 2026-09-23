@@ -646,31 +646,50 @@ func (p *Parser) parseIdentList() *IdentList {
 	}
 
 	var params []*Ident
+	var patterns []Expr
+	var restErrs []Pos
 	lparen := p.expect(token.LParen)
 	isVarArgs := false
-	if p.token != token.RParen {
+	for p.token != token.RParen && p.token != token.EOF {
+		if len(params) > 0 {
+			if isVarArgs || p.token != token.Comma {
+				break
+			}
+			p.next()
+		}
+		if p.token == token.LBrack || p.token == token.LBrace {
+			pos := p.pos
+			pattern := p.parsePattern(&restErrs)
+			params = append(params, &Ident{
+				Name:    "$param" + strconv.Itoa(len(params)),
+				NamePos: pos,
+			})
+			for len(patterns) < len(params)-1 {
+				patterns = append(patterns, nil)
+			}
+			patterns = append(patterns, pattern)
+			continue
+		}
 		if p.token == token.Ellipsis {
 			isVarArgs = true
 			p.next()
 		}
-
 		params = append(params, p.parseIdent())
-		for !isVarArgs && p.token == token.Comma {
-			p.next()
-			if p.token == token.Ellipsis {
-				isVarArgs = true
-				p.next()
-			}
-			params = append(params, p.parseIdent())
-		}
+	}
+	for _, pos := range restErrs {
+		p.error(pos, "rest element must be last")
+	}
+	for len(patterns) > 0 && len(patterns) < len(params) {
+		patterns = append(patterns, nil)
 	}
 
 	rparen := p.expect(token.RParen)
 	return &IdentList{
-		LParen:  lparen,
-		RParen:  rparen,
-		VarArgs: isVarArgs,
-		List:    params,
+		LParen:   lparen,
+		RParen:   rparen,
+		VarArgs:  isVarArgs,
+		List:     params,
+		Patterns: patterns,
 	}
 }
 
@@ -942,6 +961,12 @@ func (p *Parser) parseExportStmt() Stmt {
 func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 	if p.trace {
 		defer untracep(tracep(p, "SimpleStmt"))
+	}
+
+	if !forIn && (p.token == token.LBrack || p.token == token.LBrace) {
+		if s := p.tryParseDestructuring(); s != nil {
+			return s
+		}
 	}
 
 	x := p.parseExprList()
