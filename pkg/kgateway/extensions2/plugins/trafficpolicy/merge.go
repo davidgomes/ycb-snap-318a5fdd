@@ -61,6 +61,7 @@ func MergeTrafficPolicies(
 		mergeURLRewrite,
 		mergeAPIKeyAuth,
 		mergeOAuth,
+		mergeConsistentHash,
 	}
 
 	for _, mergeFunc := range mergeFuncs {

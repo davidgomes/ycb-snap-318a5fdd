@@ -355,6 +355,163 @@ spec:
                     must be set
                   rule: '[has(self.responseCompression),has(self.requestDecompression)].filter(x,x==true).size()
                     >= 1'
+              consistentHash:
+                description: |-
+                  ConsistentHash configures route-level consistent hashing via Envoy hash policies.
+                  When set, including as an empty object, the route action includes hash policies.
+                  If no sub-fields are set, a single source IP hash policy is used.
+                properties:
+                  cookies:
+                    description: |-
+                      Cookies specifies cookies used as hash policy components.
+                      Duplicate cookie names are ignored after the first entry.
+                    items:
+                      description: ConsistentHashCookie hashes a cookie value.
+                      properties:
+                        attributes:
+                          description: Attributes are cookie attributes passed through
+                            to Envoy, such as SameSite or Secure.
+                          items:
+                            description: ConsistentHashCookieAttribute is a name/value
+                              cookie attribute passed through to Envoy.
+                            properties:
+                              name:
+                                description: Name is the attribute name.
+                                minLength: 1
+                                type: string
+                              value:
+                                description: Value is the attribute value.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                        name:
+                          description: Name is the cookie name.
+                          minLength: 1
+                          type: string
+                        path:
+                          description: Path is the cookie path.
+                          type: string
+                        terminal:
+                          description: Terminal stops Envoy from evaluating later
+                            hash policies once this policy produces a hash key.
+                          type: boolean
+                        ttl:
+                          description: |-
+                            TTL is the lifetime of a generated cookie when the cookie is absent.
+                            Accepts a Go duration (for example "1h30m") or an integer number of seconds (for example "3600").
+                            A zero value produces a session cookie.
+                          type: string
+                          x-kubernetes-validations:
+                          - message: ttl must be a Go duration (for example 1h30m)
+                              or an integer number of seconds
+                            rule: matches(self, '^([0-9]+|(([0-9]+(\\.[0-9]+)?)(ns|us|µs|μs|ms|s|m|h))+)$')
+                      required:
+                      - name
+                      type: object
+                    type: array
+                  disable:
+                    description: |-
+                      Disable suppresses consistent hashing on the route.
+                      When true, no hash policies are produced and hash policies inherited from broader-scoped policies are suppressed.
+                      No other fields may be set when disable is true.
+                    type: boolean
+                  filterState:
+                    description: |-
+                      FilterState specifies filter state keys used as hash policy components.
+                      Duplicate keys are ignored after the first entry.
+                    items:
+                      description: ConsistentHashFilterState hashes an Envoy filter-state
+                        object.
+                      properties:
+                        key:
+                          description: Key is the filter state key.
+                          minLength: 1
+                          type: string
+                        terminal:
+                          description: Terminal stops Envoy from evaluating later
+                            hash policies once this policy produces a hash key.
+                          type: boolean
+                      required:
+                      - key
+                      type: object
+                    type: array
+                  headers:
+                    description: |-
+                      Headers specifies HTTP headers used as hash policy components.
+                      Duplicate header names are ignored after the first entry. Header names are compared case-insensitively.
+                    items:
+                      description: ConsistentHashHeader hashes an HTTP header value.
+                      properties:
+                        headerName:
+                          description: HeaderName is the name of the header whose
+                            value is hashed.
+                          minLength: 1
+                          type: string
+                        regexRewrite:
+                          description: RegexRewrite rewrites the header value before
+                            it is hashed.
+                          properties:
+                            pattern:
+                              description: Pattern is the RE2 regular expression applied
+                                to the header value.
+                              maxLength: 1024
+                              minLength: 1
+                              type: string
+                            substitution:
+                              description: Substitution replaces the matched pattern.
+                                It may reference capture groups.
+                              maxLength: 1024
+                              minLength: 1
+                              type: string
+                          required:
+                          - pattern
+                          - substitution
+                          type: object
+                        terminal:
+                          description: Terminal stops Envoy from evaluating later
+                            hash policies once this policy produces a hash key.
+                          type: boolean
+                      required:
+                      - headerName
+                      type: object
+                    type: array
+                  queryParameters:
+                    description: |-
+                      QueryParameters specifies URL query parameters used as hash policy components.
+                      Duplicate names are ignored after the first entry.
+                    items:
+                      description: ConsistentHashQueryParameter hashes a URL query
+                        parameter.
+                      properties:
+                        name:
+                          description: Name is the query parameter name.
+                          minLength: 1
+                          type: string
+                        terminal:
+                          description: Terminal stops Envoy from evaluating later
+                            hash policies once this policy produces a hash key.
+                          type: boolean
+                      required:
+                      - name
+                      type: object
+                    type: array
+                  sourceIp:
+                    description: SourceIp uses the downstream source IP address as
+                      a hash policy component.
+                    properties:
+                      terminal:
+                        description: Terminal stops Envoy from evaluating later hash
+                          policies once this policy produces a hash key.
+                        type: boolean
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: no other fields may be set when disable is true
+                  rule: '!has(self.disable) || !self.disable || (!has(self.headers)
+                    && !has(self.cookies) && !has(self.queryParameters) && !has(self.filterState)
+                    && !has(self.sourceIp))'
               cors:
                 description: Cors specifies the CORS configuration for the policy.
                 properties:
