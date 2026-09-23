@@ -59,9 +59,21 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		opts.Parents = headCommit.ParentHashes
 	}
 
+	// A merge in progress stores the other parent as a plain file on the
+	// worktree filesystem. Append it after the options' parents are resolved
+	// so the merge commit records HEAD then MERGE_HEAD.
+	hasMergeHead, err := w.appendMergeHead(opts)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+
 	idx, err := w.r.Storer.Index()
 	if err != nil {
 		return plumbing.ZeroHash, err
+	}
+
+	if indexHasUnmerged(idx) {
+		return plumbing.ZeroHash, ErrMergeConflicts
 	}
 
 	// First handle the case of the first commit in the repository being empty.
@@ -88,7 +100,9 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		previousTree = parentCommit.TreeHash
 	}
 
-	if treeHash == previousTree && !opts.AllowEmptyCommits {
+	// A merge commit is not empty just because its tree matches HEAD: the
+	// second parent is the point of the commit. Git records it anyway.
+	if treeHash == previousTree && !opts.AllowEmptyCommits && !hasMergeHead {
 		return plumbing.ZeroHash, ErrEmptyCommit
 	}
 
@@ -97,7 +111,17 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		return plumbing.ZeroHash, err
 	}
 
-	return commit, w.updateHEAD(commit)
+	if err := w.updateHEAD(commit); err != nil {
+		return commit, err
+	}
+
+	if hasMergeHead {
+		if err := w.removeMergeHead(); err != nil {
+			return commit, err
+		}
+	}
+
+	return commit, nil
 }
 
 // CherryPick cherry picks commits and merge them into the worktree based on the selected

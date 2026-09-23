@@ -462,7 +462,9 @@ func (w *Worktree) AddGlob(pattern string) error {
 // the file added is different from the index.
 // if s status is nil will skip the status check and update the index anyway
 func (w *Worktree) doAddFile(idx *index.Index, s Status, path string, ignorePattern []gitignore.Pattern) (added bool, h plumbing.Hash, err error) {
-	if s != nil && s.File(path).Worktree == Unmodified {
+	// Re-staging a conflicted path must replace stages 1/2/3 with one stage-0
+	// entry even when the worktree content already matches one of those stages.
+	if s != nil && s.File(path).Worktree == Unmodified && !indexPathHasUnmerged(idx, path) {
 		return false, h, nil
 	}
 	if len(ignorePattern) > 0 {
@@ -567,16 +569,10 @@ func (w *Worktree) fillEncodedObjectFromSymlink(dst io.Writer, path string, _ os
 }
 
 func (w *Worktree) addOrUpdateFileToIndex(idx *index.Index, filename string, h plumbing.Hash) error {
-	e, err := idx.Entry(filename)
-	if err != nil && !errors.Is(err, index.ErrEntryNotFound) {
-		return err
-	}
-
-	if errors.Is(err, index.ErrEntryNotFound) {
-		return w.doAddFileToIndex(idx, filename, h)
-	}
-
-	return w.doUpdateFileToIndex(e, filename, h)
+	// Drop every stage for this path, including conflict stages, then record
+	// a single stage-0 entry for the content being added.
+	removeIndexEntries(idx, filename)
+	return w.doAddFileToIndex(idx, filename, h)
 }
 
 func (w *Worktree) doAddFileToIndex(idx *index.Index, filename string, h plumbing.Hash) error {
@@ -684,12 +680,27 @@ func (w *Worktree) doRemoveFile(idx *index.Index, path string) (plumbing.Hash, e
 }
 
 func (w *Worktree) deleteFromIndex(idx *index.Index, path string) (plumbing.Hash, error) {
-	e, err := idx.Remove(path)
-	if err != nil {
-		return plumbing.ZeroHash, err
+	path = filepath.ToSlash(path)
+	var (
+		hash  plumbing.Hash
+		found bool
+	)
+	kept := make([]*index.Entry, 0, len(idx.Entries))
+	for _, e := range idx.Entries {
+		if e.Name != path {
+			kept = append(kept, e)
+			continue
+		}
+		found = true
+		if e.Stage == 0 || hash.IsZero() {
+			hash = e.Hash
+		}
 	}
-
-	return e.Hash, nil
+	if !found {
+		return plumbing.ZeroHash, index.ErrEntryNotFound
+	}
+	idx.Entries = kept
+	return hash, nil
 }
 
 func (w *Worktree) deleteFromFilesystem(path string) error {
