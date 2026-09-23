@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"helm.sh/helm/v4/pkg/kube"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 
 	"go.yaml.in/yaml/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -70,7 +71,9 @@ func (cfg *Configuration) execHookWithDelayedShutdown(rl *release.Release, hook 
 		}
 	}
 
-	// hooke are pre-ordered by kind, so keep order stable
+	// Stored hooks follow template order. Kind order is the tie-break for equal
+	// hook weights, then weight (and name) decides execution order.
+	executingHooks = releaseutil.SortHooksByKind(executingHooks, releaseutil.InstallOrder)
 	sort.Stable(hookByWeight(executingHooks))
 
 	for i, h := range executingHooks {

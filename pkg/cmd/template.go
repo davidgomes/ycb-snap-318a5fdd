@@ -118,31 +118,42 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			// we always want to print the YAML, even if it is not valid. The error is still returned afterwards.
 			if rel != nil {
 				var manifests bytes.Buffer
-				fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
-				if !client.DisableHooks {
-					fileWritten := make(map[string]bool)
-					for _, m := range rel.Hooks {
-						if skipTests && isTestHook(m) {
+				useStream := client.OutputDir == "" && len(rel.ManifestDocuments) > 0
+				if useStream {
+					docs := make([]release.ManifestDocument, 0, len(rel.ManifestDocuments))
+					for _, doc := range rel.ManifestDocuments {
+						if doc.Hook && (client.DisableHooks || (skipTests && doc.Test)) {
 							continue
 						}
-						if client.OutputDir == "" {
-							fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", m.Path, m.Manifest)
-						} else {
-							newDir := client.OutputDir
-							if client.UseReleaseName {
-								newDir = filepath.Join(client.OutputDir, client.ReleaseName)
+						docs = append(docs, doc)
+					}
+					manifests.WriteString(releaseutil.FormatManifestDocuments(docs))
+				} else {
+					fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
+					if !client.DisableHooks {
+						fileWritten := make(map[string]bool)
+						for _, m := range rel.Hooks {
+							if skipTests && isTestHook(m) {
+								continue
 							}
-							_, err := os.Stat(filepath.Join(newDir, m.Path))
-							if err == nil {
-								fileWritten[m.Path] = true
-							}
+							if client.OutputDir == "" {
+								fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", m.Path, m.Manifest)
+							} else {
+								newDir := client.OutputDir
+								if client.UseReleaseName {
+									newDir = filepath.Join(client.OutputDir, client.ReleaseName)
+								}
+								_, err := os.Stat(filepath.Join(newDir, m.Path))
+								if err == nil {
+									fileWritten[m.Path] = true
+								}
 
-							err = writeToFile(newDir, m.Path, m.Manifest, fileWritten[m.Path])
-							if err != nil {
-								return err
+								err = writeToFile(newDir, m.Path, m.Manifest, fileWritten[m.Path])
+								if err != nil {
+									return err
+								}
 							}
 						}
-
 					}
 				}
 
@@ -193,6 +204,12 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 					for _, m := range manifestsToRender {
 						fmt.Fprintf(out, "---\n%s\n", m)
 					}
+				} else if useStream {
+					stream := manifests.String()
+					if !strings.HasSuffix(stream, "\n") {
+						stream += "\n"
+					}
+					fmt.Fprint(out, stream)
 				} else {
 					fmt.Fprintf(out, "%s", manifests.String())
 				}

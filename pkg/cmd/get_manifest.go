@@ -23,9 +23,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"strings"
+
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/cmd/require"
-	"helm.sh/helm/v4/pkg/release"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 )
 
 var getManifestHelp = `
@@ -55,11 +57,15 @@ func newGetManifestCmd(cfg *action.Configuration, out io.Writer) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			rac, err := release.NewAccessor(res)
+			rel, err := releaserToV1Release(res)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(out, rac.Manifest())
+			stream := releaseutil.ReleaseManifestStream(rel.Manifest, rel.Hooks)
+			if !strings.HasSuffix(stream, "\n") {
+				stream += "\n"
+			}
+			fmt.Fprint(out, stream)
 			return nil
 		},
 	}

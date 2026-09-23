@@ -167,6 +167,7 @@ func newInstallCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 				showMetadata: false,
 				hideNotes:    client.HideNotes,
 				noColor:      settings.ShouldDisableColor(),
+				dryRun:       isDryRunStrategy(client.DryRunStrategy),
 			})
 		},
 	}

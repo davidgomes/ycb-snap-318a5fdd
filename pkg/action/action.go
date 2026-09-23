@@ -27,6 +27,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"text/template"
@@ -259,18 +260,18 @@ func splitAndDeannotate(postrendered string) (map[string]string, error) {
 // TODO: As part of the refactor the duplicate code in cmd/helm/template.go should be removed
 //
 //	This code has to do with writing files to disk.
-func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values, releaseName, outputDir string, subNotes, useReleaseName, includeCrds bool, pr postrenderer.PostRenderer, interactWithRemote, enableDNS, hideSecret bool) ([]*release.Hook, *bytes.Buffer, string, error) {
+func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values, releaseName, outputDir string, subNotes, useReleaseName, includeCrds bool, pr postrenderer.PostRenderer, interactWithRemote, enableDNS, hideSecret bool) ([]*release.Hook, *bytes.Buffer, string, []release.ManifestDocument, error) {
 	var hs []*release.Hook
 	b := bytes.NewBuffer(nil)
 
 	caps, err := cfg.getCapabilities()
 	if err != nil {
-		return hs, b, "", err
+		return hs, b, "", nil, err
 	}
 
 	if ch.Metadata.KubeVersion != "" {
 		if !chartutil.IsCompatibleRange(ch.Metadata.KubeVersion, caps.KubeVersion.String()) {
-			return hs, b, "", fmt.Errorf("chart requires kubeVersion: %s which is incompatible with Kubernetes %s", ch.Metadata.KubeVersion, caps.KubeVersion.Version)
+			return hs, b, "", nil, fmt.Errorf("chart requires kubeVersion: %s which is incompatible with Kubernetes %s", ch.Metadata.KubeVersion, caps.KubeVersion.Version)
 		}
 	}
 
@@ -283,7 +284,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 	if interactWithRemote && cfg.RESTClientGetter != nil {
 		restConfig, err := cfg.RESTClientGetter.ToRESTConfig()
 		if err != nil {
-			return hs, b, "", err
+			return hs, b, "", nil, err
 		}
 		e := engine.New(restConfig)
 		e.EnableDNS = enableDNS
@@ -299,7 +300,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 	}
 
 	if err2 != nil {
-		return hs, b, "", err2
+		return hs, b, "", nil, err2
 	}
 
 	// NOTES.txt gets rendered like all the other files, but because it's not a hook nor a resource,
@@ -333,26 +334,27 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 		// Merge files as stream of documents for sending to post renderer
 		merged, err := annotateAndMerge(files)
 		if err != nil {
-			return hs, b, notes, fmt.Errorf("error merging manifests: %w", err)
+			return hs, b, notes, nil, fmt.Errorf("error merging manifests: %w", err)
 		}
 
 		// Run the post renderer
 		postRendered, err := pr.Run(bytes.NewBufferString(merged))
 		if err != nil {
-			return hs, b, notes, fmt.Errorf("error while running post render on files: %w", err)
+			return hs, b, notes, nil, fmt.Errorf("error while running post render on files: %w", err)
 		}
 
 		// Use the file list and contents received from the post renderer
 		files, err = splitAndDeannotate(postRendered.String())
 		if err != nil {
-			return hs, b, notes, fmt.Errorf("error while parsing post rendered output: %w", err)
+			return hs, b, notes, nil, fmt.Errorf("error while parsing post rendered output: %w", err)
 		}
 	}
 
 	// Sort hooks, manifests, and partials. Only hooks and manifests are returned,
 	// as partials are not used after renderer.Render. Empty manifests are also
-	// removed here.
-	hs, manifests, err := releaseutil.SortManifests(files, nil, releaseutil.InstallOrder)
+	// removed here. Hooks stay in file order; execution sorts a copy by kind.
+	var docs []release.ManifestDocument
+	hs, docs, err = releaseutil.OrderManifests(files, nil)
 	if err != nil {
 		// By catching parse errors here, we can prevent bogus releases from going
 		// to Kubernetes.
@@ -365,51 +367,88 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 			}
 			fmt.Fprintf(b, "---\n# Source: %s\n%s\n", name, content)
 		}
-		return hs, b, "", err
+		return hs, b, "", nil, err
 	}
-
-	// Aggregate all valid manifests into one big doc.
-	fileWritten := make(map[string]bool)
 
 	if includeCrds {
-		for _, crd := range ch.CRDObjects() {
-			if outputDir == "" {
-				fmt.Fprintf(b, "---\n# Source: %s\n%s\n", crd.Filename, string(crd.File.Data[:]))
-			} else {
-				err = writeToFile(outputDir, crd.Filename, string(crd.File.Data[:]), fileWritten[crd.Filename])
-				if err != nil {
-					return hs, b, "", err
-				}
-				fileWritten[crd.Filename] = true
+		docs = appendCRDDocuments(docs, ch.CRDObjects())
+	}
+	if hideSecret {
+		for i := range docs {
+			if docs[i].Hook {
+				continue
+			}
+			if docs[i].Kind == "Secret" && docs[i].APIVersion == "v1" {
+				docs[i].Hidden = true
 			}
 		}
 	}
 
-	for _, m := range manifests {
+	// Aggregate non-hook manifests in source order. Apply re-sorts a copy by kind.
+	fileWritten := make(map[string]bool)
+	for _, doc := range docs {
+		if doc.Hook {
+			continue
+		}
 		if outputDir == "" {
-			if hideSecret && m.Head.Kind == "Secret" && m.Head.Version == "v1" {
-				fmt.Fprintf(b, "---\n# Source: %s\n# HIDDEN: The Secret output has been suppressed\n", m.Name)
+			if doc.Hidden {
+				fmt.Fprintf(b, "---\n# Source: %s\n# HIDDEN: The Secret output has been suppressed\n", doc.Source)
 			} else {
-				fmt.Fprintf(b, "---\n# Source: %s\n%s\n", m.Name, m.Content)
+				fmt.Fprintf(b, "---\n# Source: %s\n%s\n", doc.Source, strings.TrimSpace(doc.Content))
 			}
-		} else {
-			newDir := outputDir
-			if useReleaseName {
-				newDir = filepath.Join(outputDir, releaseName)
-			}
-			// NOTE: We do not have to worry about the post-renderer because
-			// output dir is only used by `helm template`. In the next major
-			// release, we should move this logic to template only as it is not
-			// used by install or upgrade
-			err = writeToFile(newDir, m.Name, m.Content, fileWritten[m.Name])
-			if err != nil {
-				return hs, b, "", err
-			}
-			fileWritten[m.Name] = true
+			continue
 		}
+
+		newDir := outputDir
+		if useReleaseName && !doc.OutsideReleaseDir {
+			newDir = filepath.Join(outputDir, releaseName)
+		}
+		// NOTE: We do not have to worry about the post-renderer because
+		// output dir is only used by `helm template`. In the next major
+		// release, we should move this logic to template only as it is not
+		// used by install or upgrade
+		err = writeToFile(newDir, doc.Source, strings.TrimSpace(doc.Content), fileWritten[doc.Source])
+		if err != nil {
+			return hs, b, "", nil, err
+		}
+		fileWritten[doc.Source] = true
 	}
 
-	return hs, b, notes, nil
+	return hs, b, notes, docs, nil
+}
+
+// appendCRDDocuments inserts chart CRDs into source-path order.
+func appendCRDDocuments(docs []release.ManifestDocument, crds []chart.CRD) []release.ManifestDocument {
+	for _, crd := range crds {
+		if crd.File == nil || len(crd.File.Data) == 0 {
+			continue
+		}
+		parts := releaseutil.SplitManifests(string(crd.File.Data))
+		keys := make([]string, 0, len(parts))
+		for key := range parts {
+			keys = append(keys, key)
+		}
+		sort.Sort(releaseutil.BySplitManifestsOrder(keys))
+		for _, key := range keys {
+			docs = append(docs, release.ManifestDocument{
+				Source:            crd.Filename,
+				Content:           parts[key],
+				OutsideReleaseDir: true,
+			})
+		}
+	}
+	sort.SliceStable(docs, func(i, j int) bool {
+		return docs[i].Source < docs[j].Source
+	})
+	return docs
+}
+
+// applyManifest returns manifest reordered by install kind order for kube apply.
+func applyManifest(manifest string) (string, error) {
+	if strings.TrimSpace(manifest) == "" {
+		return manifest, nil
+	}
+	return releaseutil.KindSortedManifest(manifest, releaseutil.InstallOrder)
 }
 
 // RESTClientGetter gets the rest client

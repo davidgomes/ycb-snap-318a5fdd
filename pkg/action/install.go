@@ -370,7 +370,9 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 	rel := i.createRelease(chrt, vals, i.Labels)
 
 	var manifestDoc *bytes.Buffer
-	rel.Hooks, manifestDoc, rel.Info.Notes, err = i.cfg.renderResources(chrt, valuesToRender, i.ReleaseName, i.OutputDir, i.SubNotes, i.UseReleaseName, i.IncludeCRDs, i.PostRenderer, interactWithServer(i.DryRunStrategy), i.EnableDNS, i.HideSecret)
+	var docs []release.ManifestDocument
+	rel.Hooks, manifestDoc, rel.Info.Notes, docs, err = i.cfg.renderResources(chrt, valuesToRender, i.ReleaseName, i.OutputDir, i.SubNotes, i.UseReleaseName, i.IncludeCRDs, i.PostRenderer, interactWithServer(i.DryRunStrategy), i.EnableDNS, i.HideSecret)
+	rel.ManifestDocuments = docs
 	// Even for errors, attach this if available
 	if manifestDoc != nil {
 		rel.Manifest = manifestDoc.String()
@@ -386,7 +388,14 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 	rel.SetStatus(rcommon.StatusPendingInstall, "Initial install underway")
 
 	var toBeAdopted kube.ResourceList
-	resources, err := i.cfg.KubeClient.Build(bytes.NewBufferString(rel.Manifest), !i.DisableOpenAPIValidation)
+	manifest := rel.Manifest
+	if !isDryRun(i.DryRunStrategy) {
+		manifest, err = applyManifest(rel.Manifest)
+		if err != nil {
+			return nil, fmt.Errorf("unable to sort release manifest: %w", err)
+		}
+	}
+	resources, err := i.cfg.KubeClient.Build(bytes.NewBufferString(manifest), !i.DisableOpenAPIValidation)
 	if err != nil {
 		return nil, fmt.Errorf("unable to build kubernetes objects from release manifest: %w", err)
 	}

@@ -35,6 +35,7 @@ import (
 	"helm.sh/helm/v4/pkg/cmd/require"
 	"helm.sh/helm/v4/pkg/release"
 	releasev1 "helm.sh/helm/v4/pkg/release/v1"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 )
 
 // NOTE: Keep the list of statuses up-to-date with pkg/release/status.go.
@@ -120,6 +121,11 @@ type statusPrinter struct {
 	showMetadata bool
 	hideNotes    bool
 	noColor      bool
+	dryRun       bool
+}
+
+func isDryRunStrategy(strategy action.DryRunStrategy) bool {
+	return strategy == action.DryRunClient || strategy == action.DryRunServer
 }
 
 func (s statusPrinter) getV1Release() *releasev1.Release {
@@ -227,7 +233,13 @@ func (s statusPrinter) WriteTable(out io.Writer) error {
 		_, _ = fmt.Fprintln(out)
 	}
 
-	if strings.EqualFold(rel.Info.Description, "Dry run complete") || s.debug {
+	if s.dryRun || strings.EqualFold(rel.Info.Description, "Dry run complete") {
+		stream := releaseutil.FormatManifestDocuments(rel.ManifestDocuments)
+		if len(rel.ManifestDocuments) == 0 {
+			stream = releaseutil.ReleaseManifestStream(rel.Manifest, rel.Hooks)
+		}
+		writeManifestSection(out, stream)
+	} else if s.debug {
 		_, _ = fmt.Fprintln(out, "HOOKS:")
 		for _, h := range rel.Hooks {
 			_, _ = fmt.Fprintf(out, "---\n# Source: %s\n%s\n", h.Path, h.Manifest)
@@ -240,6 +252,16 @@ func (s statusPrinter) WriteTable(out io.Writer) error {
 		_, _ = fmt.Fprintf(out, "NOTES:\n%s\n", strings.TrimSpace(rel.Info.Notes))
 	}
 	return nil
+}
+
+// writeManifestSection prints one MANIFEST block without an extra trailing blank line.
+func writeManifestSection(out io.Writer, stream string) {
+	stream = strings.TrimRight(stream, "\n")
+	if stream == "" {
+		_, _ = fmt.Fprintln(out, "MANIFEST:")
+		return
+	}
+	_, _ = fmt.Fprintf(out, "MANIFEST:\n%s\n", stream)
 }
 
 func executionsByHookEvent(rel *releasev1.Release) map[releasev1.HookEvent][]*releasev1.Hook {

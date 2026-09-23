@@ -171,6 +171,7 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 						showMetadata: false,
 						hideNotes:    instClient.HideNotes,
 						noColor:      settings.ShouldDisableColor(),
+						dryRun:       isDryRunStrategy(instClient.DryRunStrategy),
 					})
 				} else if err != nil {
 					return err
@@ -255,7 +256,8 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 				return fmt.Errorf("UPGRADE FAILED: %w", err)
 			}
 
-			if outfmt == output.Table {
+			dryRun := isDryRunStrategy(client.DryRunStrategy)
+			if outfmt == output.Table && !dryRun {
 				fmt.Fprintf(out, "Release %q has been upgraded. Happy Helming!\n", args[0])
 			}
 
@@ -265,6 +267,7 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 				showMetadata: false,
 				hideNotes:    client.HideNotes,
 				noColor:      settings.ShouldDisableColor(),
+				dryRun:       dryRun,
 			})
 		},
 	}

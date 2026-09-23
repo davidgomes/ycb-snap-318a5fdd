@@ -296,7 +296,8 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 		return nil, nil, false, err
 	}
 
-	hooks, manifestDoc, notesTxt, err := u.cfg.renderResources(chart, valuesToRender, "", "", u.SubNotes, false, false, u.PostRenderer, interactWithServer(u.DryRunStrategy), u.EnableDNS, u.HideSecret)
+	var docs []release.ManifestDocument
+	hooks, manifestDoc, notesTxt, docs, err := u.cfg.renderResources(chart, valuesToRender, "", "", u.SubNotes, false, false, u.PostRenderer, interactWithServer(u.DryRunStrategy), u.EnableDNS, u.HideSecret)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -324,11 +325,12 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 			Status:        rcommon.StatusPendingUpgrade,
 			Description:   "Preparing upgrade", // This should be overwritten later.
 		},
-		Version:     revision,
-		Manifest:    manifestDoc.String(),
-		Hooks:       hooks,
-		Labels:      mergeCustomLabels(lastRelease.Labels, u.Labels),
-		ApplyMethod: string(determineReleaseSSApplyMethod(serverSideApply)),
+		Version:           revision,
+		Manifest:          manifestDoc.String(),
+		ManifestDocuments: docs,
+		Hooks:             hooks,
+		Labels:            mergeCustomLabels(lastRelease.Labels, u.Labels),
+		ApplyMethod:       string(determineReleaseSSApplyMethod(serverSideApply)),
 	}
 
 	if len(notesTxt) > 0 {
@@ -339,7 +341,20 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 }
 
 func (u *Upgrade) performUpgrade(ctx context.Context, originalRelease, upgradedRelease *release.Release, serverSideApply bool) (*release.Release, error) {
-	current, err := u.cfg.KubeClient.Build(bytes.NewBufferString(originalRelease.Manifest), false)
+	currentManifest := originalRelease.Manifest
+	targetManifest := upgradedRelease.Manifest
+	if !isDryRun(u.DryRunStrategy) {
+		var sortErr error
+		currentManifest, sortErr = applyManifest(originalRelease.Manifest)
+		if sortErr != nil {
+			return upgradedRelease, fmt.Errorf("unable to sort current release manifest: %w", sortErr)
+		}
+		targetManifest, sortErr = applyManifest(upgradedRelease.Manifest)
+		if sortErr != nil {
+			return upgradedRelease, fmt.Errorf("unable to sort upgraded release manifest: %w", sortErr)
+		}
+	}
+	current, err := u.cfg.KubeClient.Build(bytes.NewBufferString(currentManifest), false)
 	if err != nil {
 		// Checking for removed Kubernetes API error so can provide a more informative error message to the user
 		// Ref: https://github.com/helm/helm/issues/7219
@@ -350,7 +365,7 @@ func (u *Upgrade) performUpgrade(ctx context.Context, originalRelease, upgradedR
 		}
 		return upgradedRelease, fmt.Errorf("unable to build kubernetes objects from current release manifest: %w", err)
 	}
-	target, err := u.cfg.KubeClient.Build(bytes.NewBufferString(upgradedRelease.Manifest), !u.DisableOpenAPIValidation)
+	target, err := u.cfg.KubeClient.Build(bytes.NewBufferString(targetManifest), !u.DisableOpenAPIValidation)
 	if err != nil {
 		return upgradedRelease, fmt.Errorf("unable to build kubernetes objects from new release manifest: %w", err)
 	}

@@ -125,9 +125,15 @@ func sortManifestsByKind(manifests []Manifest, ordering KindSortOrder) []Manifes
 	return manifests
 }
 
-// sort hooks by kind, using an out-of-place sort to preserve the input parameters.
+// SortHooksByKind returns hooks sorted by kind. Equal kinds keep their original order.
+func SortHooksByKind(hooks []*release.Hook, ordering KindSortOrder) []*release.Hook {
+	return sortHooksByKind(append([]*release.Hook(nil), hooks...), ordering)
+}
+
+// sort hooks by kind.
 //
-// Results are sorted by 'ordering', keeping order of items with equal kind/priority
+// Results are sorted by 'ordering', keeping order of items with equal kind/priority.
+// The input slice is sorted in place.
 func sortHooksByKind(hooks []*release.Hook, ordering KindSortOrder) []*release.Hook {
 	h := hooks
 	sort.SliceStable(h, func(i, j int) bool {

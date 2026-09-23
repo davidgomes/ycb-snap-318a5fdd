@@ -47,6 +47,8 @@ type manifestFile struct {
 type result struct {
 	hooks   []*release.Hook
 	generic []Manifest
+	// docs preserves source-path order and top-to-bottom order within a file.
+	docs []release.ManifestDocument
 }
 
 // TODO: Refactor this out. It's here because naming conventions were not followed through.
@@ -74,7 +76,24 @@ var events = map[string]release.HookEvent{
 //
 // Files that do not parse into the expected format are simply placed into a map and
 // returned.
-func SortManifests(files map[string]string, _ common.VersionSet, ordering KindSortOrder) ([]*release.Hook, []Manifest, error) {
+func SortManifests(files map[string]string, caps common.VersionSet, ordering KindSortOrder) ([]*release.Hook, []Manifest, error) {
+	hooks, generic, _, err := collectManifests(files, caps)
+	if err != nil {
+		return hooks, generic, err
+	}
+	return sortHooksByKind(hooks, ordering), sortManifestsByKind(generic, ordering), nil
+}
+
+// OrderManifests splits rendered files into hooks and generic manifests and
+// returns every document in unified-stream order: full Source path ascending,
+// and top-to-bottom within a single file. Hooks are returned in that same
+// file order; callers that execute hooks sort a copy by kind and weight.
+func OrderManifests(files map[string]string, caps common.VersionSet) ([]*release.Hook, []release.ManifestDocument, error) {
+	hooks, _, docs, err := collectManifests(files, caps)
+	return hooks, docs, err
+}
+
+func collectManifests(files map[string]string, _ common.VersionSet) ([]*release.Hook, []Manifest, []release.ManifestDocument, error) {
 	result := &result{}
 
 	var sortedFilePaths []string
@@ -102,11 +121,11 @@ func SortManifests(files map[string]string, _ common.VersionSet, ordering KindSo
 		}
 
 		if err := manifestFile.sort(result); err != nil {
-			return result.hooks, result.generic, err
+			return result.hooks, result.generic, result.docs, err
 		}
 	}
 
-	return sortHooksByKind(result.hooks, ordering), sortManifestsByKind(result.generic, ordering), nil
+	return result.hooks, result.generic, result.docs, nil
 }
 
 // sort takes a manifestFile object which may contain multiple resource definition
@@ -153,21 +172,13 @@ func (file *manifestFile) sort(result *result) error {
 		}
 
 		if !hasAnyAnnotation(entry) {
-			result.generic = append(result.generic, Manifest{
-				Name:    file.path,
-				Content: m,
-				Head:    &entry,
-			})
+			result.addGeneric(file.path, m, &entry)
 			continue
 		}
 
 		hookTypes, ok := entry.Metadata.Annotations[release.HookAnnotation]
 		if !ok {
-			result.generic = append(result.generic, Manifest{
-				Name:    file.path,
-				Content: m,
-				Head:    &entry,
-			})
+			result.addGeneric(file.path, m, &entry)
 			continue
 		}
 
@@ -209,9 +220,41 @@ func (file *manifestFile) sort(result *result) error {
 		operateAnnotationValues(entry, release.HookOutputLogAnnotation, func(value string) {
 			h.OutputLogPolicies = append(h.OutputLogPolicies, release.HookOutputLogPolicy(value))
 		})
+
+		result.docs = append(result.docs, release.ManifestDocument{
+			Source:     file.path,
+			Content:    m,
+			Hook:       true,
+			Kind:       entry.Kind,
+			APIVersion: entry.Version,
+			Test:       hookHasEvent(h, release.HookTest),
+		})
 	}
 
 	return nil
+}
+
+func (result *result) addGeneric(path, content string, entry *SimpleHead) {
+	result.generic = append(result.generic, Manifest{
+		Name:    path,
+		Content: content,
+		Head:    entry,
+	})
+	result.docs = append(result.docs, release.ManifestDocument{
+		Source:     path,
+		Content:    content,
+		Kind:       entry.Kind,
+		APIVersion: entry.Version,
+	})
+}
+
+func hookHasEvent(h *release.Hook, event release.HookEvent) bool {
+	for _, got := range h.Events {
+		if got == event {
+			return true
+		}
+	}
+	return false
 }
 
 // hasAnyAnnotation returns true if the given entry has any annotations at all.
