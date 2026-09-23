@@ -40,6 +40,8 @@ func concatPrefix(a, b string) string {
 //   - Values in a higher level chart always override values in a lower-level
 //     dependency chart
 //   - Scalar values and arrays are replaced, maps are merged
+//   - Arrays at paths annotated with a merge strategy by a chart are combined
+//     with that chart's default arrays (see MergeStrategy)
 //   - A chart has access to all of the variables for it, as well as all of
 //     the values destined for its dependencies.
 func CoalesceValues(chrt chart.Charter, vals map[string]any) (common.Values, error) {
@@ -58,6 +60,8 @@ func CoalesceValues(chrt chart.Charter, vals map[string]any) (common.Values, err
 //   - Values in a higher level chart always override values in a lower-level
 //     dependency chart
 //   - Scalar values and arrays are replaced, maps are merged
+//   - Arrays at paths annotated with a merge strategy by a chart are combined
+//     with that chart's default arrays (see MergeStrategy)
 //   - A chart has access to all of the variables for it, as well as all of
 //     the values destined for its dependencies.
 //
@@ -122,7 +126,8 @@ func coalesceDeps(printf printFn, chrt chart.Charter, dest map[string]any, prefi
 			dvmap := dv.(map[string]any)
 			subPrefix := concatPrefix(prefix, ch.Name())
 			// Get globals out of dest and merge them into dvmap.
-			coalesceGlobals(printf, dvmap, dest, subPrefix, merge)
+			globalStrategies := globalMergeStrategies(MergeStrategiesFromAnnotations(sub.Annotations()))
+			coalesceGlobals(printf, dvmap, dest, subPrefix, merge, globalStrategies)
 			// Now coalesce the rest of the values.
 			var err error
 			dest[sub.Name()], err = coalesce(printf, subchart, dvmap, subPrefix, merge)
@@ -136,8 +141,9 @@ func coalesceDeps(printf printFn, chrt chart.Charter, dest map[string]any, prefi
 
 // coalesceGlobals copies the globals out of src and merges them into dest.
 //
-// For convenience, returns dest.
-func coalesceGlobals(printf printFn, dest, src map[string]any, prefix string, _ bool) {
+// The strategies are the merge strategies of the chart owning dest, relative to
+// the globals map.
+func coalesceGlobals(printf printFn, dest, src map[string]any, prefix string, merge bool, strategies map[string]MergeStrategy) {
 	var dg, sg map[string]any
 
 	if destglob, ok := dest[common.GlobalKey]; !ok {
@@ -152,6 +158,17 @@ func coalesceGlobals(printf printFn, dest, src map[string]any, prefix string, _ 
 	} else if sg, ok = srcglob.(map[string]any); !ok {
 		printf("warning: skipping globals because source %s is not a table.", common.GlobalKey)
 		return
+	}
+
+	if len(strategies) > 0 {
+		// sg belongs to the parent scope, so the arrays combined for dest must
+		// be written to a copy.
+		if sgCopy, err := copystructure.Copy(sg); err != nil {
+			printf("warning: skipping global merge strategies, unable to copy values, err: %s", err)
+		} else {
+			sg = sgCopy.(map[string]any)
+			applyMergeStrategies(printf, sg, dg, strategies, concatPrefix(prefix, common.GlobalKey), merge)
+		}
 	}
 
 	// EXPERIMENTAL: In the past, we have disallowed globals to test tables. This
@@ -228,6 +245,12 @@ func coalesceValues(printf printFn, c chart.Charter, v map[string]any, prefix st
 			printf("warning: unable to convert values copy to values type")
 			vc = ch.Values()
 		}
+	}
+
+	// Pre-merge the annotated arrays so the loop below keeps the combined array
+	// like any other user supplied array.
+	if strategies := MergeStrategiesFromAnnotations(ch.Annotations()); len(strategies) > 0 {
+		applyMergeStrategies(printf, v, vc, strategies, subPrefix, merge)
 	}
 
 	for key, val := range vc {
