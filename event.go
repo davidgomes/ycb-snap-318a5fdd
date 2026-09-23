@@ -6,6 +6,7 @@ package pebble
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -975,6 +976,11 @@ type EventListener struct {
 	// DownloadEnd is invoked when a db.Download operation completes.
 	DownloadEnd func(DownloadInfo)
 
+	// BatchDurable is invoked exactly once per Sync commit after the WAL sync
+	// completes, successfully or not. It is never invoked for non-sync commits
+	// or when the WAL is disabled.
+	BatchDurable func(BatchDurableInfo)
+
 	// FormatUpgrade is invoked after the database's FormatMajorVersion
 	// is upgraded.
 	FormatUpgrade func(FormatMajorVersion)
@@ -1075,6 +1081,9 @@ func (l *EventListener) EnsureDefaults(logger Logger) {
 	if l.DownloadBegin == nil {
 		l.DownloadBegin = func(info DownloadInfo) {}
 	}
+	if l.BatchDurable == nil {
+		l.BatchDurable = noopBatchDurable
+	}
 	if l.DownloadEnd == nil {
 		l.DownloadEnd = func(info DownloadInfo) {}
 	}
@@ -1130,6 +1139,8 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 	}
 
 	return EventListener{
+		// Per-commit logging would be too verbose.
+		BatchDurable: noopBatchDurable,
 		BackgroundError: func(err error) {
 			logger.Errorf("background error: %s", err)
 		},
@@ -1218,7 +1229,20 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 func TeeEventListener(a, b EventListener) EventListener {
 	a.EnsureDefaults(nil)
 	b.EnsureDefaults(nil)
+	var batchDurable func(BatchDurableInfo)
+	switch {
+	case batchDurableConfigured(a.BatchDurable) && batchDurableConfigured(b.BatchDurable):
+		batchDurable = func(info BatchDurableInfo) {
+			a.BatchDurable(info)
+			b.BatchDurable(info)
+		}
+	case batchDurableConfigured(a.BatchDurable):
+		batchDurable = a.BatchDurable
+	default:
+		batchDurable = b.BatchDurable
+	}
 	return EventListener{
+		BatchDurable: batchDurable,
 		BackgroundError: func(err error) {
 			a.BackgroundError(err)
 			b.BackgroundError(err)
@@ -1449,4 +1473,48 @@ func ExtractDataCorruptionInfo(err error) *DataCorruptionInfo {
 		return &e.info
 	}
 	return nil
+}
+
+// BatchDurableInfo contains the info for a BatchDurable event.
+type BatchDurableInfo struct {
+	// JobID is a unique identifier usable with DB.WaitForJobDurability.
+	JobID int
+	// SeqNum is the base sequence number of the batch.
+	SeqNum base.SeqNum
+	// Err is the WAL sync error, if any.
+	Err error
+	// ApplyDuration is the time spent committing the batch before waiting for
+	// the WAL sync.
+	ApplyDuration time.Duration
+	// SyncDuration is the time spent waiting for the WAL sync.
+	SyncDuration time.Duration
+	// CorrelationID is WriteOptions.CommitCorrelationID.
+	CorrelationID uint64
+	// BatchSize is the encoded batch size in bytes.
+	BatchSize int
+	// KeyCount is the number of entries in the batch.
+	KeyCount uint32
+}
+
+func (i BatchDurableInfo) String() string {
+	return redact.StringWithoutMarkers(i)
+}
+
+// SafeFormat implements redact.SafeFormatter.
+func (i BatchDurableInfo) SafeFormat(w redact.SafePrinter, _ rune) {
+	if i.Err != nil {
+		w.Printf("[JOB %d] batch seq %d sync error: %s", redact.Safe(i.JobID), i.SeqNum, i.Err)
+		return
+	}
+	w.Printf("[JOB %d] batch seq %d durable; %d keys, %d bytes, apply %.3fs, sync %.3fs",
+		redact.Safe(i.JobID), i.SeqNum, redact.Safe(i.KeyCount), redact.Safe(i.BatchSize),
+		redact.Safe(i.ApplyDuration.Seconds()), redact.Safe(i.SyncDuration.Seconds()))
+}
+
+func noopBatchDurable(BatchDurableInfo) {}
+
+// batchDurableConfigured reports whether f is a user-supplied BatchDurable
+// callback rather than nil or the default no-op.
+func batchDurableConfigured(f func(BatchDurableInfo)) bool {
+	return f != nil && reflect.ValueOf(f).Pointer() != reflect.ValueOf(noopBatchDurable).Pointer()
 }

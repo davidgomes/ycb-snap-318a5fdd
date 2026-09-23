@@ -369,6 +369,10 @@ type batchInternal struct {
 
 	commitStats BatchCommitStats
 
+	// pendingDurable is set by DB.ApplyNoSyncWait and consumed by SyncWait to
+	// report durability of the batch.
+	pendingDurable *pendingDurable
+
 	commitErr error
 
 	// Position bools together to reduce the sizeof the struct.
@@ -1704,6 +1708,10 @@ func (b *Batch) Reader() batchrepr.Reader {
 func (b *Batch) SyncWait() error {
 	now := crtime.NowMono()
 	b.fsyncWait.Wait()
+	if p := b.pendingDurable; p != nil {
+		b.pendingDurable = nil
+		p.db.batchDurable(b, p.info(b.commitErr, p.start.Elapsed()))
+	}
 	if b.commitErr != nil {
 		b.db = nil // prevent batch reuse on error
 	}

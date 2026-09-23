@@ -203,6 +203,13 @@ var categoryGet = block.RegisterCategory("pebble-get", block.LatencySensitiveQoS
 // be testing that performs various operations on a DB and verifies that the
 // metrics reflect those operations.
 type Metrics struct {
+	// DurableCommitCount is the number of Sync commits reported via
+	// EventListener.BatchDurable. Only accumulated when BatchDurable is set.
+	DurableCommitCount uint64
+	// DurableCommitDuration is the cumulative WAL sync phase time of those
+	// commits.
+	DurableCommitDuration time.Duration
+
 	BlockCache CacheMetrics
 	Compact    CompactMetrics
 	Ingest     IngestMetrics
