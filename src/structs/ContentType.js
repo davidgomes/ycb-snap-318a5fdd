@@ -76,6 +76,11 @@ export class ContentType {
    * @param {Item} item
    */
   integrate (transaction, item) {
+    const rebind = transaction.doc._typeRebind
+    if (rebind) {
+      const existing = rebind.get(item.id.client + ':' + item.id.clock)
+      if (existing != null) this.type = existing
+    }
     this.type._integrate(transaction.doc, item)
   }
 

@@ -31,6 +31,8 @@ export const generateNewClientId = random.uint32
  * @property {boolean} [DocOpts.isSuggestionDoc] Set to true if this document merely suggests
  * changes. If this flag is not set in a suggestion document, automatic formatting changes will be
  * displayed as suggestions, which might not be intended.
+ * @property {'allow'|'collect'|'error'} [DocOpts.mapConflictPolicy='allow'] How overlapping Y.Map key writes are handled.
+ * `allow` applies updates normally, `collect` records conflicts, and `error` throws before a conflicting update becomes visible.
  */
 
 /**
@@ -57,8 +59,45 @@ export class Doc extends ObservableV2 {
   /**
    * @param {DocOpts} opts configuration
    */
-  constructor ({ guid = random.uuidv4(), collectionid = null, gc = true, gcFilter = () => true, meta = null, autoLoad = false, shouldLoad = true, isSuggestionDoc = false } = {}) {
+  constructor ({ guid = random.uuidv4(), collectionid = null, gc = true, gcFilter = () => true, meta = null, autoLoad = false, shouldLoad = true, isSuggestionDoc = false, mapConflictPolicy = 'allow' } = {}) {
     super()
+    if (mapConflictPolicy !== 'allow' && mapConflictPolicy !== 'collect' && mapConflictPolicy !== 'error') {
+      throw new Error('Unknown mapConflictPolicy "' + mapConflictPolicy + '"')
+    }
+    /**
+     * `allow` does not record or reject overlapping map writes.
+     * `collect` records them via {@link getMapConflicts}.
+     * `error` throws MapConflictError and leaves the document unchanged.
+     * @type {'allow'|'collect'|'error'}
+     */
+    this.mapConflictPolicy = mapConflictPolicy
+    /**
+     * @type {Array<import('./MapConflict.js').MapConflict>}
+     */
+    this._mapConflicts = []
+    /**
+     * When set, map conflict detection is skipped (used while restoring a rejected transaction).
+     * @type {boolean}
+     */
+    this._suspendMapConflicts = false
+    /**
+     * Reapply a snapshot without treating it as a remote client.
+     * @type {boolean}
+     */
+    this._forceLocalUpdate = false
+    /**
+     * Skip observer and update events while restoring document state.
+     * @type {boolean}
+     */
+    this._suppressTransactionEvents = false
+    /**
+     * @type {Map<string, YType> | null}
+     */
+    this._typeRebind = null
+    /**
+     * @type {Map<string, Doc> | null}
+     */
+    this._subdocRebind = null
     this.gc = gc
     this.gcFilter = gcFilter
     this.clientID = generateNewClientId()
@@ -160,6 +199,56 @@ export class Doc extends ObservableV2 {
       }, null, true)
     }
     this.shouldLoad = true
+  }
+
+  /**
+   * Map-key conflicts recorded while `mapConflictPolicy` is `collect`.
+   *
+   * @return {Array<import('./MapConflict.js').MapConflict>}
+   */
+  getMapConflicts () {
+    return this._mapConflicts.slice()
+  }
+
+  /**
+   * Counts of collected map conflicts. Each bucket is a plain object keyed by
+   * conflict type, map key, parent id, or source (`local`, `remote`, `mixed`).
+   *
+   * @return {{ byType: Object<string, number>, byKey: Object<string, number>, byParent: Object<string, number>, bySource: Object<string, number>, count: number, total: number }}
+   */
+  getMapConflictSummary () {
+    /**
+     * @type {Object<string, number>}
+     */
+    const byType = {}
+    /**
+     * @type {Object<string, number>}
+     */
+    const byKey = {}
+    /**
+     * @type {Object<string, number>}
+     */
+    const byParent = {}
+    /**
+     * @type {Object<string, number>}
+     */
+    const bySource = {}
+    const conflicts = this._mapConflicts
+    for (let i = 0; i < conflicts.length; i++) {
+      const conflict = conflicts[i]
+      byType[conflict.type] = (byType[conflict.type] || 0) + 1
+      byKey[conflict.key] = (byKey[conflict.key] || 0) + 1
+      byParent[conflict.parentId] = (byParent[conflict.parentId] || 0) + 1
+      bySource[conflict.source] = (bySource[conflict.source] || 0) + 1
+    }
+    return {
+      byType,
+      byKey,
+      byParent,
+      bySource,
+      count: conflicts.length,
+      total: conflicts.length
+    }
   }
 
   getSubdocs () {

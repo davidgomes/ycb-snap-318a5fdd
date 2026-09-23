@@ -19,6 +19,8 @@ import {
   getState,
   getStateVector,
   readAndApplyDeleteSet,
+  applyDeleteSet,
+  readIdSet,
   writeIdSet,
   transact,
   UpdateDecoderV1,
@@ -39,6 +41,12 @@ import {
   createID,
   IdRange
 } from '../internals.js'
+
+import {
+  detectIncomingMapConflicts,
+  MapConflictError,
+  recordMapConflicts
+} from './MapConflict.js'
 
 import * as encoding from 'lib0/encoding'
 import * as decoding from 'lib0/decoding'
@@ -345,13 +353,21 @@ export const writeStructsFromTransaction = (encoder, transaction) => writeStruct
  */
 export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = new UpdateDecoderV2(decoder)) =>
   transact(ydoc, transaction => {
-    // force that transaction.local is set to non-local
-    transaction.local = false
+    // Restoring a rejected transaction reapplies a snapshot as a local update.
+    if (transaction.doc._forceLocalUpdate) {
+      transaction.local = true
+    } else {
+      // force that transaction.local is set to non-local
+      transaction.local = false
+    }
     let retry = false
     const doc = transaction.doc
     const store = doc.store
     // let start = performance.now()
     const ss = readBlockSet(structDecoder)
+    // Delete set follows structs. Read it before integration so conflicts can
+    // reject the whole update before any struct is applied.
+    const ds = readIdSet(structDecoder)
     const knownState = createIdSet()
     ss.clients.forEach((_, client) => {
       const storeStructs = store.clients.get(client)
@@ -366,6 +382,17 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
     })
     // remove known items from ss
     ss.exclude(knownState)
+    const conflictPolicy = doc.mapConflictPolicy || 'allow'
+    if (!doc._suspendMapConflicts && (conflictPolicy === 'collect' || conflictPolicy === 'error')) {
+      const conflicts = detectIncomingMapConflicts(doc, ss, ds)
+      if (conflicts.length > 0) {
+        if (conflictPolicy === 'error') {
+          transaction._mapConflictAbort = true
+          throw new MapConflictError(conflicts)
+        }
+        recordMapConflicts(doc, conflicts)
+      }
+    }
     // console.log('time to read structs: ', performance.now() - start) // @todo remove
     // start = performance.now()
     // console.log('time to merge: ', performance.now() - start) // @todo remove
@@ -395,7 +422,7 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
     }
     // console.log('time to integrate: ', performance.now() - start) // @todo remove
     // start = performance.now()
-    const dsRest = readAndApplyDeleteSet(structDecoder, transaction, store)
+    const dsRest = applyDeleteSet(ds, transaction, store)
     if (store.pendingDs) {
       // @todo we could make a lower-bound state-vector check as we do above
       const pendingDSUpdate = new UpdateDecoderV2(decoding.createDecoder(store.pendingDs))

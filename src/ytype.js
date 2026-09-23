@@ -22,6 +22,8 @@ import {
   ContentDoc, UpdateEncoderV1, UpdateEncoderV2, Doc, Snapshot, Transaction, EventHandler, YEvent, Item, createAttributionFromAttributionItems, AbstractAttributionManager // eslint-disable-line
 } from './internals.js'
 
+import { noteMapWrite } from './utils/MapConflict.js'
+
 import * as contentType from './structs/ContentType.js'
 
 import * as traits from 'lib0/traits'
@@ -1739,7 +1741,8 @@ export const typeListDelete = (transaction, parent, index, length) => {
  */
 export const typeMapDelete = (transaction, parent, key) => {
   const c = parent._map.get(key)
-  if (c !== undefined) {
+  if (c !== undefined && !c.deleted) {
+    noteMapWrite(transaction, parent, key, 'delete', c.content.getContent()[c.length - 1], c.id.client, c.id.clock)
     c.delete(transaction)
   }
 }
@@ -1757,6 +1760,8 @@ export const typeMapSet = (transaction, parent, key, value) => {
   const left = parent._map.get(key) || null
   const doc = transaction.doc
   const ownClientId = doc.clientID
+  const clock = getState(doc.store, ownClientId)
+  noteMapWrite(transaction, parent, key, 'set', value, ownClientId, clock)
   let content
   if (value == null) {
     content = new ContentAny([value])
@@ -1785,7 +1790,7 @@ export const typeMapSet = (transaction, parent, key, value) => {
         }
     }
   }
-  new Item(createID(ownClientId, getState(doc.store, ownClientId)), left, left && left.lastId, null, null, parent, key, content).integrate(transaction, 0)
+  new Item(createID(ownClientId, clock), left, left && left.lastId, null, null, parent, key, content).integrate(transaction, 0)
 }
 
 /**

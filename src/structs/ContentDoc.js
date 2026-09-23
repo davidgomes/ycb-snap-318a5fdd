@@ -90,6 +90,11 @@ export class ContentDoc {
    * @param {Item} item
    */
   integrate (transaction, item) {
+    const rebind = transaction.doc._subdocRebind
+    if (rebind) {
+      const existing = rebind.get(this.doc.guid)
+      if (existing != null) this.doc = existing
+    }
     // this needs to be reflected in doc.destroy as well
     this.doc._item = item
     transaction.subdocsAdded.add(this.doc)

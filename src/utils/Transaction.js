@@ -21,6 +21,13 @@ import * as math from 'lib0/math'
 import * as set from 'lib0/set'
 import * as logging from 'lib0/logging'
 import { callAll } from 'lib0/function'
+import {
+  captureDocSnapshot,
+  collectLocalMapConflicts,
+  MapConflictError,
+  recordMapConflicts,
+  restoreDocSnapshot
+} from './MapConflict.js'
 
 /**
  * A transaction is created for every change on the Yjs model. It is possible
@@ -130,6 +137,16 @@ export class Transaction {
      */
     this._needFormattingCleanup = false
     this._done = false
+    /**
+     * User-level Y.Map writes performed inside this transaction, grouped by parent then key.
+     * @type {Map<any, Map<string, Array<any>>> | null}
+     */
+    this._mapWrites = null
+    /**
+     * Set when an incoming update was rejected before integration.
+     * @type {boolean}
+     */
+    this._mapConflictAbort = false
   }
 
   /**
@@ -507,41 +524,43 @@ const cleanupTransactions = (transactionCleanups, i) => {
     const mergeStructs = transaction._mergeStructs
     // insertIntoIdSet(store.ds, ds)
     try {
-      doc.emit('beforeObserverCalls', [transaction, doc])
-      /**
-       * An array of event callbacks.
-       *
-       * Each callback is called even if the other ones throw errors.
-       *
-       * @type {Array<function():void>}
-       */
-      const fs = []
-      // observe events on changed types
-      transaction.changed.forEach((subs, itemtype) =>
+      if (!doc._suppressTransactionEvents) {
+        doc.emit('beforeObserverCalls', [transaction, doc])
+        /**
+         * An array of event callbacks.
+         *
+         * Each callback is called even if the other ones throw errors.
+         *
+         * @type {Array<function():void>}
+         */
+        const fs = []
+        // observe events on changed types
+        transaction.changed.forEach((subs, itemtype) =>
+          fs.push(() => {
+            if (itemtype._item === null || !itemtype._item.deleted) {
+              itemtype._callObserver(transaction, subs)
+            }
+          })
+        )
         fs.push(() => {
-          if (itemtype._item === null || !itemtype._item.deleted) {
-            itemtype._callObserver(transaction, subs)
-          }
+          // deep observe events
+          transaction.changedParentTypes.forEach((events, type) => {
+            // We need to think about the possibility that the user transforms the
+            // Y.Doc in the event.
+            if (type._dEH.l.length > 0 && (type._item === null || !type._item.deleted)) {
+              /**
+               * @type {YEvent<any>}
+               */
+              const deepEventHandler = events.find(event => event.target === type) || new YEvent(type, transaction, new Set(null))
+              callEventHandlerListeners(type._dEH, deepEventHandler, transaction)
+            }
+          })
         })
-      )
-      fs.push(() => {
-        // deep observe events
-        transaction.changedParentTypes.forEach((events, type) => {
-          // We need to think about the possibility that the user transforms the
-          // Y.Doc in the event.
-          if (type._dEH.l.length > 0 && (type._item === null || !type._item.deleted)) {
-            /**
-             * @type {YEvent<any>}
-             */
-            const deepEventHandler = events.find(event => event.target === type) || new YEvent(type, transaction, new Set(null))
-            callEventHandlerListeners(type._dEH, deepEventHandler, transaction)
-          }
-        })
-      })
-      fs.push(() => doc.emit('afterTransaction', [transaction, doc]))
-      callAll(fs, [])
-      if (transaction._needFormattingCleanup && doc.cleanupFormatting) {
-        cleanupYTextAfterTransaction(transaction)
+        fs.push(() => doc.emit('afterTransaction', [transaction, doc]))
+        callAll(fs, [])
+        if (transaction._needFormattingCleanup && doc.cleanupFormatting) {
+          cleanupYTextAfterTransaction(transaction)
+        }
       }
     } finally {
       // Replace deleted items with ItemDeleted / GC.
@@ -577,24 +596,26 @@ const cleanupTransactions = (transactionCleanups, i) => {
           tryToMergeWithLefts(structs, replacedStructPos)
         }
       }
-      if (!transaction.local && transaction.insertSet.clients.has(doc.clientID)) {
+      if (!transaction.local && transaction.insertSet.clients.has(doc.clientID) && !doc._forceLocalUpdate) {
         logging.print(logging.ORANGE, logging.BOLD, '[yjs] ', logging.UNBOLD, logging.RED, 'Changed the client-id because another client seems to be using it.')
         doc.clientID = generateNewClientId()
       }
       // @todo Merge all the transactions into one and provide send the data as a single update message
-      doc.emit('afterTransactionCleanup', [transaction, doc])
-      if (doc._observers.has('update')) {
-        const encoder = new UpdateEncoderV1()
-        const hasContent = writeUpdateMessageFromTransaction(encoder, transaction)
-        if (hasContent) {
-          doc.emit('update', [encoder.toUint8Array(), transaction.origin, doc, transaction])
+      if (!doc._suppressTransactionEvents) {
+        doc.emit('afterTransactionCleanup', [transaction, doc])
+        if (doc._observers.has('update')) {
+          const encoder = new UpdateEncoderV1()
+          const hasContent = writeUpdateMessageFromTransaction(encoder, transaction)
+          if (hasContent) {
+            doc.emit('update', [encoder.toUint8Array(), transaction.origin, doc, transaction])
+          }
         }
-      }
-      if (doc._observers.has('updateV2')) {
-        const encoder = new UpdateEncoderV2()
-        const hasContent = writeUpdateMessageFromTransaction(encoder, transaction)
-        if (hasContent) {
-          doc.emit('updateV2', [encoder.toUint8Array(), transaction.origin, doc, transaction])
+        if (doc._observers.has('updateV2')) {
+          const encoder = new UpdateEncoderV2()
+          const hasContent = writeUpdateMessageFromTransaction(encoder, transaction)
+          if (hasContent) {
+            doc.emit('updateV2', [encoder.toUint8Array(), transaction.origin, doc, transaction])
+          }
         }
       }
       const { subdocsAdded, subdocsLoaded, subdocsRemoved } = transaction
@@ -607,13 +628,19 @@ const cleanupTransactions = (transactionCleanups, i) => {
           doc.subdocs.add(subdoc)
         })
         subdocsRemoved.forEach(subdoc => doc.subdocs.delete(subdoc))
-        doc.emit('subdocs', [{ loaded: subdocsLoaded, added: subdocsAdded, removed: subdocsRemoved }, doc, transaction])
-        subdocsRemoved.forEach(subdoc => subdoc.destroy())
+        if (!doc._suppressTransactionEvents) {
+          doc.emit('subdocs', [{ loaded: subdocsLoaded, added: subdocsAdded, removed: subdocsRemoved }, doc, transaction])
+        }
+        if (!doc._suppressTransactionEvents) {
+          subdocsRemoved.forEach(subdoc => subdoc.destroy())
+        }
       }
 
       if (transactionCleanups.length <= i + 1) {
         doc._transactionCleanups = []
-        doc.emit('afterAllTransactions', [doc, transactionCleanups])
+        if (!doc._suppressTransactionEvents) {
+          doc.emit('afterAllTransactions', [doc, transactionCleanups])
+        }
       } else {
         cleanupTransactions(transactionCleanups, i + 1)
       }
@@ -639,19 +666,62 @@ export const transact = (doc, f, origin = null, local = true) => {
    * @type {any}
    */
   let result = null
+  /**
+   * @type {ReturnType<typeof captureDocSnapshot> | null}
+   */
+  let snapshot = null
+  const policy = doc.mapConflictPolicy || 'allow'
   if (doc._transaction === null) {
     initialCall = true
+    if (policy === 'error' && !doc._suspendMapConflicts) {
+      snapshot = captureDocSnapshot(doc)
+    }
     doc._transaction = new Transaction(doc, origin, local)
     transactionCleanups.push(doc._transaction)
-    if (transactionCleanups.length === 1) {
-      doc.emit('beforeAllTransactions', [doc])
+    if (!doc._suppressTransactionEvents) {
+      if (transactionCleanups.length === 1) {
+        doc.emit('beforeAllTransactions', [doc])
+      }
+      doc.emit('beforeTransaction', [doc._transaction, doc])
     }
-    doc.emit('beforeTransaction', [doc._transaction, doc])
   }
+  /**
+   * @type {Error | null}
+   */
+  let thrown = null
+  let rollback = false
   try {
     result = f(doc._transaction)
-  } finally {
-    if (initialCall) {
+    if (initialCall && doc._transaction && !doc._suspendMapConflicts && policy !== 'allow') {
+      const conflicts = collectLocalMapConflicts(doc._transaction)
+      if (conflicts.length > 0) {
+        if (policy === 'collect') {
+          recordMapConflicts(doc, conflicts)
+        } else if (policy === 'error') {
+          thrown = new MapConflictError(conflicts)
+          rollback = snapshot != null
+        }
+      }
+    }
+  } catch (e) {
+    thrown = /** @type {Error} */ (e)
+  }
+  if (initialCall) {
+    const transaction = doc._transaction
+    const abort = transaction != null && transaction._mapConflictAbort === true
+    if ((rollback || abort) && snapshot != null) {
+      doc._transaction = null
+      doc._transactionCleanups = []
+      try {
+        restoreDocSnapshot(doc, snapshot)
+      } catch (restoreErr) {
+        thrown = /** @type {Error} */ (restoreErr)
+      }
+    } else if (abort && transaction != null) {
+      doc._transaction = null
+      const idx = transactionCleanups.indexOf(transaction)
+      if (idx >= 0) transactionCleanups.splice(idx, 1)
+    } else {
       const finishCleanup = doc._transaction === transactionCleanups[0]
       doc._transaction = null
       if (finishCleanup) {
@@ -666,6 +736,9 @@ export const transact = (doc, f, origin = null, local = true) => {
         cleanupTransactions(transactionCleanups, 0)
       }
     }
+  }
+  if (thrown) {
+    throw thrown
   }
   return result
 }

@@ -735,26 +735,22 @@ export const readIdSet = decoder => {
  */
 
 /**
- * @param {IdSetDecoderV1 | IdSetDecoderV2} decoder
+ * Apply an already-decoded delete set.
+ *
+ * @param {IdSet} ds
  * @param {Transaction} transaction
  * @param {StructStore} store
- * @return {Uint8Array<ArrayBuffer>|null} Returns a v2 update containing all deletes that couldn't be applied yet; or null if all deletes were applied successfully.
- *
- * @private
- * @function
+ * @return {Uint8Array<ArrayBuffer>|null}
  */
-export const readAndApplyDeleteSet = (decoder, transaction, store) => {
+export const applyDeleteSet = (ds, transaction, store) => {
   const unappliedDS = new IdSet()
-  const numClients = decoding.readVarUint(decoder.restDecoder)
-  for (let i = 0; i < numClients; i++) {
-    decoder.resetDsCurVal()
-    const client = decoding.readVarUint(decoder.restDecoder)
-    const numberOfDeletes = decoding.readVarUint(decoder.restDecoder)
+  ds.clients.forEach((idRanges, client) => {
     const structs = store.clients.get(client) || []
     const state = getState(store, client)
-    for (let i = 0; i < numberOfDeletes; i++) {
-      const clock = decoder.readDsClock()
-      const clockEnd = clock + decoder.readDsLen()
+    const ranges = idRanges.getIds()
+    for (let i = 0; i < ranges.length; i++) {
+      const clock = ranges[i].clock
+      const clockEnd = clock + ranges[i].len
       if (clock < state) {
         if (state < clockEnd) {
           addToIdSet(unappliedDS, client, state, clockEnd - state)
@@ -793,15 +789,26 @@ export const readAndApplyDeleteSet = (decoder, transaction, store) => {
         addToIdSet(unappliedDS, client, clock, clockEnd - clock)
       }
     }
-  }
+  })
   if (unappliedDS.clients.size > 0) {
-    const ds = new UpdateEncoderV2()
-    encoding.writeVarUint(ds.restEncoder, 0) // encode 0 structs
-    writeIdSet(ds, unappliedDS)
-    return ds.toUint8Array()
+    const encoder = new UpdateEncoderV2()
+    encoding.writeVarUint(encoder.restEncoder, 0) // encode 0 structs
+    writeIdSet(encoder, unappliedDS)
+    return encoder.toUint8Array()
   }
   return null
 }
+
+/**
+ * @param {IdSetDecoderV1 | IdSetDecoderV2} decoder
+ * @param {Transaction} transaction
+ * @param {StructStore} store
+ * @return {Uint8Array<ArrayBuffer>|null} Returns a v2 update containing all deletes that couldn't be applied yet; or null if all deletes were applied successfully.
+ *
+ * @private
+ * @function
+ */
+export const readAndApplyDeleteSet = (decoder, transaction, store) => applyDeleteSet(readIdSet(decoder), transaction, store)
 
 /**
  * @param {IdSet} ds1
