@@ -317,7 +317,17 @@ func (w *Worktree) doAddDirectory(idx *index.Index, s Status, directory string, 
 
 	directory = filepath.ToSlash(filepath.Clean(directory))
 
+	names := make(map[string]struct{}, len(s))
 	for name := range s {
+		names[name] = struct{}{}
+	}
+	for _, e := range idx.Entries {
+		if e.Stage != 0 {
+			names[e.Name] = struct{}{}
+		}
+	}
+
+	for name := range names {
 		if !isPathInDirectory(name, directory) {
 			continue
 		}
@@ -462,7 +472,8 @@ func (w *Worktree) AddGlob(pattern string) error {
 // the file added is different from the index.
 // if s status is nil will skip the status check and update the index anyway
 func (w *Worktree) doAddFile(idx *index.Index, s Status, path string, ignorePattern []gitignore.Pattern) (added bool, h plumbing.Hash, err error) {
-	if s != nil && s.File(path).Worktree == Unmodified {
+	resolved := removeConflictStages(idx, path)
+	if !resolved && s != nil && s.File(path).Worktree == Unmodified {
 		return false, h, nil
 	}
 	if len(ignorePattern) > 0 {
@@ -479,6 +490,9 @@ func (w *Worktree) doAddFile(idx *index.Index, s Status, path string, ignorePatt
 		if os.IsNotExist(err) {
 			added = true
 			h, err = w.deleteFromIndex(idx, path)
+			if resolved && errors.Is(err, index.ErrEntryNotFound) {
+				err = nil
+			}
 		}
 
 		return added, h, err
@@ -489,6 +503,23 @@ func (w *Worktree) doAddFile(idx *index.Index, s Status, path string, ignorePatt
 	}
 
 	return true, h, err
+}
+
+// removeConflictStages removes the merge conflict entries (stages 1, 2 and 3)
+// of path from the index, reporting whether any was found.
+func removeConflictStages(idx *index.Index, path string) bool {
+	name := filepath.ToSlash(path)
+	entries := idx.Entries[:0]
+	removed := false
+	for _, e := range idx.Entries {
+		if e.Name == name && e.Stage != 0 {
+			removed = true
+			continue
+		}
+		entries = append(entries, e)
+	}
+	idx.Entries = entries
+	return removed
 }
 
 func (w *Worktree) copyFileToStorage(path string) (hash plumbing.Hash, err error) {

@@ -104,6 +104,15 @@ type CloneOptions struct {
 type MergeOptions struct {
 	// Strategy defines the merge strategy to be used.
 	Strategy MergeStrategy
+
+	// Author, Committer and Message are used by Worktree.Merge when a merge
+	// commit is created. If Author is nil it is read from the config,
+	// falling back to a default signature when no identity is configured.
+	// If Committer is nil, Author is used. If Message is empty, a default
+	// message is used.
+	Author    *object.Signature
+	Committer *object.Signature
+	Message   string
 }
 
 // MergeStrategy represents the different types of merge strategies.
@@ -115,7 +124,8 @@ const (
 	// merged. This is only possible if the history of the branch being merged
 	// is a linear descendant of the current branch, with no conflicting commits.
 	//
-	// This is the default option.
+	// This is the default option. When used with Worktree.Merge, a three-way
+	// merge is performed if fast-forwarding is not possible.
 	FastForwardMerge MergeStrategy = iota
 )
 

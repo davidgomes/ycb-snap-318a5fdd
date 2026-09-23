@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -59,6 +61,15 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		opts.Parents = headCommit.ParentHashes
 	}
 
+	mergeHead, merging, err := w.readMergeHead()
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+
+	if merging && !opts.Amend && !slices.Contains(opts.Parents, mergeHead) {
+		opts.Parents = append(opts.Parents, mergeHead)
+	}
+
 	idx, err := w.r.Storer.Index()
 	if err != nil {
 		return plumbing.ZeroHash, err
@@ -88,7 +99,7 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		previousTree = parentCommit.TreeHash
 	}
 
-	if treeHash == previousTree && !opts.AllowEmptyCommits {
+	if treeHash == previousTree && !opts.AllowEmptyCommits && len(opts.Parents) < 2 {
 		return plumbing.ZeroHash, ErrEmptyCommit
 	}
 
@@ -97,7 +108,17 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		return plumbing.ZeroHash, err
 	}
 
-	return commit, w.updateHEAD(commit)
+	if err := w.updateHEAD(commit); err != nil {
+		return plumbing.ZeroHash, err
+	}
+
+	if merging {
+		if err := w.Filesystem.Remove(mergeHeadPath); err != nil && !os.IsNotExist(err) {
+			return plumbing.ZeroHash, err
+		}
+	}
+
+	return commit, nil
 }
 
 // CherryPick cherry picks commits and merge them into the worktree based on the selected
