@@ -414,6 +414,24 @@ fn generate_skip(rules: &[OptimizedRule]) -> TokenStream {
     }
 }
 
+fn char_class_tokens(ranges: Vec<(String, String)>) -> TokenStream {
+    let mut matches = ranges.into_iter().map(|(start, end)| {
+        let start = start.chars().next().unwrap();
+        let end = end.chars().next().unwrap();
+        quote! { state.match_range(#start..#end) }
+    });
+    let head = matches.next().expect("character class has a range");
+    let tail: Vec<_> = matches.collect();
+    quote! {
+        #head
+        #(
+            .or_else(|state| {
+                #tail
+            })
+        )*
+    }
+}
+
 fn generate_expr(expr: OptimizedExpr) -> TokenStream {
     match expr {
         OptimizedExpr::Str(string) => {
@@ -432,6 +450,15 @@ fn generate_expr(expr: OptimizedExpr) -> TokenStream {
 
             quote! {
                 state.match_range(#start..#end)
+            }
+        }
+        OptimizedExpr::CharClass(ranges) => char_class_tokens(ranges),
+        OptimizedExpr::NegCharClass(ranges) => {
+            let class = char_class_tokens(ranges);
+            quote! {
+                state.lookahead(false, |state| {
+                    #class
+                }).and_then(|state| state.skip(1))
             }
         }
         OptimizedExpr::Ident(ident) => {
@@ -641,6 +668,15 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
 
             quote! {
                 state.match_range(#start..#end)
+            }
+        }
+        OptimizedExpr::CharClass(ranges) => char_class_tokens(ranges),
+        OptimizedExpr::NegCharClass(ranges) => {
+            let class = char_class_tokens(ranges);
+            quote! {
+                state.lookahead(false, |state| {
+                    #class
+                }).and_then(|state| state.skip(1))
             }
         }
         OptimizedExpr::Ident(ident) => {

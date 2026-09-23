@@ -193,6 +193,10 @@ impl Vm {
 
                 state.match_range(start..end)
             }
+            OptimizedExpr::CharClass(ref ranges) => match_char_class(state, ranges),
+            OptimizedExpr::NegCharClass(ref ranges) => state
+                .lookahead(false, |state| match_char_class(state, ranges))
+                .and_then(|state| state.skip(1)),
             OptimizedExpr::Ident(ref name) => self.parse_rule(name, state),
             OptimizedExpr::PeekSlice(start, end) => {
                 state.stack_match_peek_slice(start, end, MatchDir::BottomToTop)
@@ -300,4 +304,19 @@ impl Vm {
             }
         }
     }
+}
+
+fn match_char_class<'a>(
+    mut state: Box<ParserState<'a, &'a str>>,
+    ranges: &[(String, String)],
+) -> ParseResult<Box<ParserState<'a, &'a str>>> {
+    for (start, end) in ranges {
+        let start = start.chars().next().expect("empty char literal");
+        let end = end.chars().next().expect("empty char literal");
+        match state.match_range(start..end) {
+            Ok(state) => return Ok(state),
+            Err(failed) => state = failed,
+        }
+    }
+    Err(state)
 }
