@@ -83,6 +83,9 @@ impl<'input, 'arena> Visitor<'input, 'arena> for ConvertEllipseToCircle {
         .cloned();
         log::debug!("derived {radius:?} from {rx:?}, {ry:?}");
 
+        if element.structural_rename_blocked() {
+            return Ok(());
+        }
         drop(rx);
         drop(ry);
         remove_attribute!(element, RX);

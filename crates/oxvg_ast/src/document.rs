@@ -62,6 +62,8 @@ impl<'input, 'arena> Document<'input, 'arena> {
             attrs: RefCell::new(vec![]),
             #[cfg(feature = "selectors")]
             selector_flags: std::cell::Cell::new(None),
+            #[cfg(feature = "selectors")]
+            structural_guard: std::cell::Cell::new(0),
             #[cfg(feature = "range")]
             range: None,
             #[cfg(feature = "range")]

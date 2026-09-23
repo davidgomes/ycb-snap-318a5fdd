@@ -89,6 +89,12 @@ pub enum NodeData<'input> {
         #[debug(skip)]
         /// Flags used for caching whether an element matches a selector
         selector_flags: Cell<Option<selectors::matching::ElementSelectorFlags>>,
+        #[cfg(feature = "selectors")]
+        #[debug(skip)]
+        /// Bits set when a structure-sensitive selector implicates this element.
+        ///
+        /// See [`crate::element::Element::structural_flatten_blocked`].
+        structural_guard: Cell<u8>,
         #[cfg(feature = "range")]
         /// The source-code range for the element
         range: Option<std::ops::Range<usize>>,
@@ -274,6 +280,9 @@ impl<'input, 'arena> Node<'input, 'arena> {
 
     /// Removes all child nodes
     pub fn empty(&self) {
+        if self.child_nodes_iter().any(node_structural_removal_blocked) {
+            return;
+        }
         self.first_child.set(None);
         self.last_child.set(None);
     }
@@ -299,7 +308,10 @@ impl<'input, 'arena> Node<'input, 'arena> {
         new_node: Ref<'input, 'arena>,
         reference_node: Ref<'input, 'arena>,
     ) {
-        new_node.remove();
+        if structurally_insert_before_blocked(reference_node) || structurally_immovable(new_node) {
+            return;
+        }
+        new_node.detach();
         new_node.parent.set(Some(self));
         let Some(prev_child) = reference_node.previous_sibling.replace(Some(new_node)) else {
             self.first_child.set(Some(new_node));
@@ -322,7 +334,17 @@ impl<'input, 'arena> Node<'input, 'arena> {
         new_node: Ref<'input, 'arena>,
         reference_node: &Ref<'input, 'arena>,
     ) {
-        new_node.remove();
+        if structurally_immovable(new_node) {
+            return;
+        }
+        if let Some(next) = reference_node.next_sibling.get() {
+            if structurally_insert_before_blocked(next) {
+                return;
+            }
+        } else if structurally_append_blocked(self) {
+            return;
+        }
+        new_node.detach();
         new_node.parent.set(Some(self));
         let Some(next_child) = reference_node.next_sibling.replace(Some(new_node)) else {
             self.last_child.set(Some(new_node));
@@ -348,7 +370,7 @@ impl<'input, 'arena> Node<'input, 'arena> {
         let mut previously_retained = None;
         while let Some(child) = current {
             current = child.next_sibling.get();
-            let retain = f(child);
+            let retain = f(child) || node_structural_removal_blocked(child);
             if retain {
                 child.previous_sibling.set(previously_retained);
                 if previously_retained.is_none() {
@@ -426,6 +448,9 @@ impl<'input, 'arena> Node<'input, 'arena> {
     ///
     /// [MDN | appendChild](https://developer.mozilla.org/en-US/docs/Web/API/Node/appendChild)
     pub fn append_child(&'arena self, a_child: Ref<'input, 'arena>) {
+        if structurally_append_blocked(self) || structurally_immovable(a_child) {
+            return;
+        }
         a_child.parent.set(Some(self));
         if let Some(child) = self.last_child.replace(Some(a_child)) {
             child.next_sibling.set(Some(a_child));
@@ -591,6 +616,14 @@ impl<'input, 'arena> Node<'input, 'arena> {
     ///
     /// [MDN | remove](https://developer.mozilla.org/en-US/docs/Web/API/Element/remove)
     pub fn remove(&self) {
+        if node_structural_removal_blocked(self) {
+            return;
+        }
+        self.detach();
+    }
+
+    /// Unlinks this node from its parent without consulting structural selector guards.
+    pub(crate) fn detach(&self) {
         let parent = self.parent.take();
         let previous_sibling = self.previous_sibling.take();
         let next_sibling = self.next_sibling.take();
@@ -701,6 +734,9 @@ impl<'input, 'arena> Node<'input, 'arena> {
     ) -> Option<Ref<'input, 'arena>> {
         debug_assert_eq!(old_child.parent.get(), Some(self));
         debug_assert!(self.child_nodes_iter().contains(old_child));
+        if node_structural_identity_blocked(old_child) || structurally_immovable(new_child) {
+            return None;
+        }
 
         let previous_sibling = old_child.previous_sibling.take();
         let next_sibling = old_child.next_sibling.take();
@@ -802,4 +838,43 @@ impl<'input> NodeData<'input> {
             _ => None,
         }
     }
+}
+
+fn structurally_immovable(node: &Node<'_, '_>) -> bool {
+    node.parent.get().is_some() && node_structural_removal_blocked(node)
+}
+
+fn structurally_insert_before_blocked(reference: &Node<'_, '_>) -> bool {
+    structural_guard_bits(reference) & crate::element::STRUCTURAL_NO_INSERT_BEFORE != 0
+}
+
+fn structurally_append_blocked(parent: &Node<'_, '_>) -> bool {
+    structural_guard_bits(parent) & crate::element::STRUCTURAL_NO_APPEND != 0
+}
+
+fn node_structural_removal_blocked(node: &Node<'_, '_>) -> bool {
+    structural_guard_bits(node)
+        & (crate::element::STRUCTURAL_KEEP
+            | crate::element::STRUCTURAL_KEEP_SLOT
+            | crate::element::STRUCTURAL_SIBLING_SLOT)
+        != 0
+}
+
+fn node_structural_identity_blocked(node: &Node<'_, '_>) -> bool {
+    structural_guard_bits(node)
+        & (crate::element::STRUCTURAL_KEEP | crate::element::STRUCTURAL_KEEP_SLOT)
+        != 0
+}
+
+fn structural_guard_bits(node: &Node<'_, '_>) -> u8 {
+    #[cfg(feature = "selectors")]
+    if let NodeData::Element {
+        structural_guard, ..
+    } = &node.node_data
+    {
+        return structural_guard.get();
+    }
+    #[cfg(not(feature = "selectors"))]
+    let _ = node;
+    0
 }

@@ -241,6 +241,8 @@ fn parse_element<'a, 'input: 'a, 'arena>(
         attrs: RefCell::new(attrs),
         #[cfg(feature = "selectors")]
         selector_flags: std::cell::Cell::new(None),
+        #[cfg(feature = "selectors")]
+        structural_guard: std::cell::Cell::new(0),
         #[cfg(feature = "range")]
         range: Some(range),
         #[cfg(feature = "range")]

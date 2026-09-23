@@ -1,6 +1,6 @@
 use std::cell;
 
-use lightningcss::{selector::Component, visit_types, visitor::Visit};
+use lightningcss::{selector::Component, traits::ToCss as _, visit_types, visitor::Visit};
 use oxvg_ast::{
     element::Element,
     get_attribute, has_attribute, remove_attribute, set_attribute,
@@ -113,6 +113,14 @@ impl<'input> lightningcss::visitor::Visitor<'input> for State<'_> {
         &mut self,
         selector: &mut lightningcss::selector::Selector<'input>,
     ) -> Result<(), Self::Error> {
+        // Structure-sensitive selectors name a tag only for the elements that
+        // actually complete the relationship. Those elements carry their own
+        // rename guard. A bare `rect` still blocks every rect.
+        if let Ok(css) = selector.to_css_string(lightningcss::printer::PrinterOptions::default()) {
+            if oxvg_ast::selectors::is_structural_selector(&css) {
+                return Ok(());
+            }
+        }
         let mut iter = selector.iter();
         loop {
             for token in &mut iter {
@@ -156,26 +164,42 @@ impl<'input, 'arena> Visitor<'input, 'arena> for State<'_> {
         let convert_arcs = options.convert_arcs;
 
         match name {
-            ElementId::Rect if !self.referenced_shapes.contains(ReferencedShapes::Rect) => {
+            ElementId::Rect
+                if !self.referenced_shapes.contains(ReferencedShapes::Rect)
+                    && !element.structural_rename_blocked() =>
+            {
                 ConvertShapeToPath::rect_to_path(element, path_options, context.info);
             }
-            ElementId::Line if !self.referenced_shapes.contains(ReferencedShapes::Line) => {
+            ElementId::Line
+                if !self.referenced_shapes.contains(ReferencedShapes::Line)
+                    && !element.structural_rename_blocked() =>
+            {
                 ConvertShapeToPath::line_to_path(element, path_options, context.info);
             }
-            ElementId::Polyline if !self.referenced_shapes.contains(ReferencedShapes::Polyline) => {
+            ElementId::Polyline
+                if !self.referenced_shapes.contains(ReferencedShapes::Polyline)
+                    && !element.structural_rename_blocked() =>
+            {
                 ConvertShapeToPath::poly_to_path(element, path_options, false, context.info);
             }
-            ElementId::Polygon if !self.referenced_shapes.contains(ReferencedShapes::Polygon) => {
+            ElementId::Polygon
+                if !self.referenced_shapes.contains(ReferencedShapes::Polygon)
+                    && !element.structural_rename_blocked() =>
+            {
                 ConvertShapeToPath::poly_to_path(element, path_options, true, context.info);
             }
             ElementId::Circle
-                if convert_arcs && !self.referenced_shapes.contains(ReferencedShapes::Circle) =>
+                if convert_arcs
+                    && !self.referenced_shapes.contains(ReferencedShapes::Circle)
+                    && !element.structural_rename_blocked() =>
             {
                 ConvertShapeToPath::circle_to_path(element, path_options, context.info);
             }
 
             ElementId::Ellipse
-                if convert_arcs && !self.referenced_shapes.contains(ReferencedShapes::Circle) =>
+                if convert_arcs
+                    && !self.referenced_shapes.contains(ReferencedShapes::Circle)
+                    && !element.structural_rename_blocked() =>
             {
                 ConvertShapeToPath::ellipse_to_path(element, path_options, context.info);
             }
@@ -409,6 +433,38 @@ impl ConvertShapeToPath {
 
 const fn default_convert_arcs() -> bool {
     false
+}
+
+#[test]
+fn structural_selector_renames_only_implicated_shape() -> anyhow::Result<()> {
+    use crate::test_config;
+
+    let output = test_config(
+        r#"{ "convertShapeToPath": {} }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>g &gt; rect { fill: red }</style>
+    <g><rect id="kept" x="0" y="0" width="1" height="1"/></g>
+    <rect id="free" x="0" y="0" width="1" height="1"/>
+</svg>"#,
+        ),
+    )?;
+    assert!(output.contains("<rect"), "{output}");
+    assert!(output.contains("id=\"kept\""), "{output}");
+    assert!(output.contains("<path"), "{output}");
+    assert!(
+        !output.contains("id=\"free\"" ) || output.contains("<path"),
+        "{output}"
+    );
+    let kept_is_rect = output
+        .split("<rect")
+        .any(|chunk| chunk.contains("id=\"kept\""));
+    let free_is_path = output
+        .split("<path")
+        .any(|chunk| chunk.contains("id=\"free\""));
+    assert!(kept_is_rect, "{output}");
+    assert!(free_is_path, "{output}");
+    Ok(())
 }
 
 #[test]

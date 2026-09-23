@@ -18,7 +18,10 @@ use precomputed_hash::PrecomputedHash;
 use selectors::{
     context::SelectorCaches,
     matching,
-    parser::{ParseRelative, SelectorParseErrorKind},
+    parser::{
+        Combinator, Component, NthSelectorData, ParseRelative, RelativeSelector,
+        RelativeSelectorMatchHint, SelectorParseErrorKind,
+    },
     SelectorList,
 };
 
@@ -346,7 +349,8 @@ impl selectors::Element for SelectElement<'_, '_> {
     type Impl = SelectorImpl;
 
     fn opaque(&self) -> selectors::OpaqueElement {
-        selectors::OpaqueElement::new(self)
+        // Identity is the arena node, so anchors stay valid for the whole match.
+        selectors::OpaqueElement::new(self.element.0)
     }
 
     fn parent_element(&self) -> Option<Self> {
@@ -579,4 +583,712 @@ impl selectors::Element for SelectElement<'_, '_> {
         }
         true
     }
+}
+
+type ComplexSelector = selectors::parser::Selector<SelectorImpl>;
+
+#[derive(Clone, Copy)]
+struct NthLock {
+    from_start: bool,
+    from_end: bool,
+    of_type: bool,
+}
+
+/// Marks elements whose structure a stylesheet selector depends on.
+///
+/// Flags are derived from selectors that fully match the current tree. A later
+/// rewrite can then refuse to flatten, move, or rename only those elements.
+pub fn protect_structural_selectors<'input, 'arena>(root: &Element<'input, 'arena>) {
+    for element in std::iter::once(root.clone()).chain(root.breadth_first()) {
+        element.clear_structural_guard();
+    }
+    let sheets: Vec<_> = crate::style::root(root).collect();
+    if sheets.is_empty() {
+        return;
+    }
+    let mut selectors = Vec::new();
+    for sheet in &sheets {
+        collect_selectors(&sheet.borrow(), &mut selectors);
+    }
+    let elements: Vec<_> = std::iter::once(root.clone())
+        .chain(root.breadth_first())
+        .filter(|element| element.node_type() == node::Type::Element)
+        .collect();
+    for css in selectors {
+        let Ok(parsed) = Selector::new(&css) else {
+            continue;
+        };
+        for complex in parsed.0.slice() {
+            if !selector_is_structural(complex) {
+                continue;
+            }
+            for element in &elements {
+                if element_matches(complex, element) {
+                    mark_chain(complex, element, None, 0);
+                }
+            }
+        }
+    }
+}
+
+fn collect_selectors(rules: &lightningcss::rules::CssRuleList<'_>, out: &mut Vec<String>) {
+    use lightningcss::rules::CssRule;
+    for rule in &rules.0 {
+        match rule {
+            CssRule::Style(style) => {
+                push_selector_list(&style.selectors, out);
+                collect_selectors(&style.rules, out);
+            }
+            CssRule::Nesting(nesting) => {
+                push_selector_list(&nesting.style.selectors, out);
+                collect_selectors(&nesting.style.rules, out);
+            }
+            CssRule::Media(media) => collect_selectors(&media.rules, out),
+            CssRule::Supports(supports) => collect_selectors(&supports.rules, out),
+            CssRule::Container(container) => collect_selectors(&container.rules, out),
+            CssRule::LayerBlock(layer) => collect_selectors(&layer.rules, out),
+            CssRule::StartingStyle(starting) => collect_selectors(&starting.rules, out),
+            CssRule::MozDocument(document) => collect_selectors(&document.rules, out),
+            CssRule::Scope(scope) => collect_selectors(&scope.rules, out),
+            _ => {}
+        }
+    }
+}
+
+fn push_selector_list(list: &lightningcss::selector::SelectorList<'_>, out: &mut Vec<String>) {
+    use lightningcss::traits::ToCss;
+    for selector in &list.0 {
+        if let Ok(css) = selector.to_css_string(PrinterOptions::default()) {
+            if !css.is_empty() {
+                out.push(css);
+            }
+        }
+    }
+}
+
+fn element_matches(selector: &ComplexSelector, element: &Element) -> bool {
+    matches_from(selector, 0, element)
+}
+
+fn matches_from(selector: &ComplexSelector, offset: usize, element: &Element) -> bool {
+    let mut caches = SelectorCaches::default();
+    let mut context = matching::MatchingContext::new(
+        matching::MatchingMode::Normal,
+        None,
+        &mut caches,
+        matching::QuirksMode::NoQuirks,
+        matching::NeedsSelectorFlags::No,
+        matching::MatchingForInvalidation::No,
+    );
+    matching::matches_selector(
+        selector,
+        offset,
+        None,
+        &SelectElement::new(element.clone()),
+        &mut context,
+    )
+}
+
+fn selector_is_structural(selector: &ComplexSelector) -> bool {
+    selector.iter_raw_match_order().any(component_is_structural)
+}
+
+/// Whether `css` is a selector whose match depends on document structure.
+///
+/// A plain `rect` is not structural. `g > rect`, `:nth-child`, and `:has` are.
+pub fn is_structural_selector(css: &str) -> bool {
+    let Ok(parsed) = Selector::new(css) else {
+        return false;
+    };
+    parsed.0.slice().iter().any(selector_is_structural)
+}
+
+/// Elements that currently match each structure-sensitive selector, in tree order.
+///
+/// An empty result means the document has no structure-sensitive selector.
+pub fn structural_match_fingerprint<'input, 'arena>(
+    root: &Element<'input, 'arena>,
+) -> Vec<Vec<usize>> {
+    let selectors = structural_selectors(root);
+    if selectors.is_empty() {
+        return Vec::new();
+    }
+    let elements = document_elements(root);
+    selectors
+        .iter()
+        .map(|selector| {
+            elements
+                .iter()
+                .filter(|element| element_matches(selector, element))
+                .map(|element| element.0.id())
+                .collect()
+        })
+        .collect()
+}
+
+fn structural_selectors<'input, 'arena>(root: &Element<'input, 'arena>) -> Vec<ComplexSelector> {
+    let sheets: Vec<_> = crate::style::root(root).collect();
+    let mut css_selectors = Vec::new();
+    for sheet in &sheets {
+        collect_selectors(&sheet.borrow(), &mut css_selectors);
+    }
+    let mut structural = Vec::new();
+    for css in css_selectors {
+        let Ok(parsed) = Selector::new(&css) else {
+            continue;
+        };
+        for complex in parsed.0.slice() {
+            if selector_is_structural(complex) {
+                structural.push(complex.clone());
+            }
+        }
+    }
+    structural
+}
+
+fn document_elements<'input, 'arena>(
+    root: &Element<'input, 'arena>,
+) -> Vec<Element<'input, 'arena>> {
+    std::iter::once(root.clone())
+        .chain(root.breadth_first())
+        .filter(|element| element.node_type() == node::Type::Element)
+        .collect()
+}
+
+struct DomNodeSnap<'input, 'arena> {
+    node: node::Ref<'input, 'arena>,
+    parent: Option<node::Ref<'input, 'arena>>,
+    next_sibling: Option<node::Ref<'input, 'arena>>,
+    previous_sibling: Option<node::Ref<'input, 'arena>>,
+    first_child: Option<node::Ref<'input, 'arena>>,
+    last_child: Option<node::Ref<'input, 'arena>>,
+    attrs: Option<Vec<Attr<'input>>>,
+}
+
+/// Links and attributes for every node under `root`, so a simulated rewrite can be undone.
+pub struct DomSnapshot<'input, 'arena> {
+    nodes: Vec<DomNodeSnap<'input, 'arena>>,
+}
+
+/// Captures the tree under `root`.
+pub fn snapshot_dom<'input, 'arena>(root: &Element<'input, 'arena>) -> DomSnapshot<'input, 'arena> {
+    let mut nodes = Vec::new();
+    collect_nodes(root.0, &mut nodes);
+    DomSnapshot {
+        nodes: nodes
+            .into_iter()
+            .map(|node| DomNodeSnap {
+                parent: node.parent.get(),
+                next_sibling: node.next_sibling.get(),
+                previous_sibling: node.previous_sibling.get(),
+                first_child: node.first_child.get(),
+                last_child: node.last_child.get(),
+                attrs: (node.node_type() == node::Type::Element).then(|| {
+                    element::Element::new(node)
+                        .unwrap()
+                        .attributes()
+                        .as_slice()
+                        .to_vec()
+                }),
+                node,
+            })
+            .collect(),
+    }
+}
+
+/// Restores a tree captured by [`snapshot_dom`].
+pub fn restore_dom<'input, 'arena>(snapshot: &DomSnapshot<'input, 'arena>) {
+    for snap in &snapshot.nodes {
+        snap.node.parent.set(snap.parent);
+        snap.node.next_sibling.set(snap.next_sibling);
+        snap.node.previous_sibling.set(snap.previous_sibling);
+        snap.node.first_child.set(snap.first_child);
+        snap.node.last_child.set(snap.last_child);
+        if let Some(attrs) = &snap.attrs {
+            if snap.node.node_type() == node::Type::Element {
+                if let Some(element) = Element::new(snap.node) {
+                    element.attributes().0.replace(attrs.clone());
+                }
+            }
+        }
+    }
+}
+
+fn collect_nodes<'input, 'arena>(
+    node: node::Ref<'input, 'arena>,
+    out: &mut Vec<node::Ref<'input, 'arena>>,
+) {
+    out.push(node);
+    for child in node.child_nodes_iter() {
+        collect_nodes(child, out);
+    }
+}
+
+fn component_is_structural(component: &Component<SelectorImpl>) -> bool {
+    match component {
+        Component::Nth(_) | Component::NthOf(_) | Component::Empty | Component::Has(_) => true,
+        Component::Combinator(
+            Combinator::Child
+            | Combinator::Descendant
+            | Combinator::NextSibling
+            | Combinator::LaterSibling,
+        ) => true,
+        Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+            list.slice().iter().any(selector_is_structural)
+        }
+        _ => false,
+    }
+}
+
+fn mark_chain<'input, 'arena>(
+    selector: &ComplexSelector,
+    element: &Element<'input, 'arena>,
+    known_anchor: Option<&Element<'input, 'arena>>,
+    depth: u8,
+) {
+    if depth > 24 {
+        return;
+    }
+    let mut iter = selector.iter();
+    let mut current = element.clone();
+    let mut consumed = 0usize;
+    loop {
+        current.add_structural_guard(element::STRUCTURAL_KEEP);
+        let mut rename = false;
+        let mut nth: Option<NthLock> = None;
+        let mut empty = false;
+        let mut negated_nonempty = false;
+        let mut pending_has = Vec::new();
+        let mut pending_is = Vec::new();
+        while let Some(component) = iter.next() {
+            consumed += 1;
+            classify_component(
+                component,
+                &current,
+                &mut rename,
+                &mut nth,
+                &mut empty,
+                &mut negated_nonempty,
+                &mut pending_has,
+                &mut pending_is,
+            );
+        }
+        if rename {
+            current.add_structural_guard(element::STRUCTURAL_NO_RENAME);
+        }
+        if let Some(lock) = nth {
+            lock_positional(&current, lock);
+        }
+        if empty {
+            current.add_structural_guard(element::STRUCTURAL_NO_APPEND);
+        }
+        if negated_nonempty {
+            if let Some(child) = current.first_element_child() {
+                child.add_structural_guard(element::STRUCTURAL_KEEP_SLOT);
+            }
+        }
+        for relative in &pending_has {
+            mark_has(&current, relative, depth);
+        }
+        for nested in &pending_is {
+            mark_chain(nested, &current, None, depth + 1);
+        }
+        let Some(combinator) = iter.next_sequence() else {
+            break;
+        };
+        consumed += 1;
+        let Some(next) = resolve_anchor(&current, combinator, selector, consumed, known_anchor)
+        else {
+            break;
+        };
+        current = next;
+    }
+}
+
+fn classify_component(
+    component: &Component<SelectorImpl>,
+    element: &Element,
+    rename: &mut bool,
+    nth: &mut Option<NthLock>,
+    empty: &mut bool,
+    negated_nonempty: &mut bool,
+    pending_has: &mut Vec<RelativeSelector<SelectorImpl>>,
+    pending_is: &mut Vec<ComplexSelector>,
+) {
+    match component {
+        Component::LocalName(_) => *rename = true,
+        Component::Nth(data) => merge_nth(nth, lock_from_nth(data)),
+        Component::NthOf(data) => {
+            let mut lock = lock_from_nth(data.nth_data());
+            if !data.selectors().is_empty() {
+                // `:nth-child(n of S)` counts every sibling matching S, not a tag name.
+                lock.of_type = false;
+            }
+            merge_nth(nth, lock);
+        }
+        Component::Empty => *empty = true,
+        Component::Has(relatives) => pending_has.extend(relatives.iter().cloned()),
+        Component::Is(list) | Component::Where(list) => {
+            let mut structural = Vec::new();
+            let mut plain = false;
+            for selector in list.slice() {
+                if !element_matches(selector, element) {
+                    continue;
+                }
+                if selector_is_structural(selector) {
+                    structural.push(selector.clone());
+                } else {
+                    plain = true;
+                }
+            }
+            // A non-structural branch already matches, so the structural one is not load-bearing.
+            if !plain {
+                pending_is.append(&mut structural);
+            }
+        }
+        Component::Negation(list) => {
+            for selector in list.slice() {
+                if selector_is_structural(selector) {
+                    lock_negated(selector, element, negated_nonempty);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn merge_nth(slot: &mut Option<NthLock>, extra: NthLock) {
+    match slot {
+        Some(current) => {
+            current.from_start |= extra.from_start;
+            current.from_end |= extra.from_end;
+            current.of_type |= extra.of_type;
+        }
+        None => *slot = Some(extra),
+    }
+}
+
+fn lock_from_nth(data: &NthSelectorData) -> NthLock {
+    let only = data.ty.is_only();
+    NthLock {
+        from_start: only || !data.ty.is_from_end(),
+        from_end: only || data.ty.is_from_end(),
+        of_type: data.ty.is_of_type(),
+    }
+}
+
+fn lock_negated(selector: &ComplexSelector, element: &Element, negated_nonempty: &mut bool) {
+    let mut iter = selector.iter();
+    let mut nth = None;
+    let mut saw_empty = false;
+    let mut consumed = 0usize;
+    for component in iter.by_ref() {
+        consumed += 1;
+        match component {
+            Component::Nth(data) => merge_nth(&mut nth, lock_from_nth(data)),
+            Component::NthOf(data) => {
+                let mut lock = lock_from_nth(data.nth_data());
+                if !data.selectors().is_empty() {
+                    lock.of_type = false;
+                }
+                merge_nth(&mut nth, lock);
+            }
+            Component::Empty => saw_empty = true,
+            _ => {}
+        }
+    }
+    if let Some(combinator) = iter.next_sequence() {
+        consumed += 1;
+        if !left_side_matches(element, combinator, selector, consumed) {
+            return;
+        }
+    }
+    if let Some(lock) = nth {
+        lock_positional(element, lock);
+    }
+    if saw_empty {
+        *negated_nonempty = true;
+    }
+}
+
+fn left_side_matches(
+    element: &Element,
+    combinator: Combinator,
+    selector: &ComplexSelector,
+    offset: usize,
+) -> bool {
+    match combinator {
+        Combinator::Child | Combinator::Descendant => {
+            let mut parent = element.parent_element();
+            while let Some(candidate) = parent {
+                if matches_from(selector, offset, &candidate) {
+                    return true;
+                }
+                if combinator == Combinator::Child {
+                    return false;
+                }
+                parent = candidate.parent_element();
+            }
+            false
+        }
+        Combinator::NextSibling => element
+            .previous_element_sibling()
+            .is_some_and(|sibling| matches_from(selector, offset, &sibling)),
+        Combinator::LaterSibling => {
+            let mut sibling = element.previous_element_sibling();
+            while let Some(candidate) = sibling {
+                if matches_from(selector, offset, &candidate) {
+                    return true;
+                }
+                sibling = candidate.previous_element_sibling();
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+fn lock_positional(element: &Element, lock: NthLock) {
+    let Some(parent) = element.parent_element() else {
+        return;
+    };
+    parent.add_structural_guard(element::STRUCTURAL_NO_FLATTEN);
+    let siblings: Vec<_> = parent.children_iter().collect();
+    let Some(pos) = siblings.iter().position(|sibling| sibling.id_eq(element)) else {
+        return;
+    };
+    for (index, sibling) in siblings.iter().enumerate() {
+        if index == pos {
+            continue;
+        }
+        let before = index < pos;
+        let after = index > pos;
+        if before && !lock.from_start {
+            continue;
+        }
+        if after && !lock.from_end {
+            continue;
+        }
+        if lock.of_type {
+            if same_local(sibling, element) {
+                sibling.add_structural_guard(
+                    element::STRUCTURAL_KEEP
+                        | element::STRUCTURAL_NO_FLATTEN
+                        | element::STRUCTURAL_NO_RENAME,
+                );
+            } else if contains_local(sibling, element.local_name()) {
+                sibling.add_structural_guard(element::STRUCTURAL_NO_FLATTEN);
+            }
+            sibling.add_structural_guard(element::STRUCTURAL_NO_INSERT_BEFORE);
+        } else {
+            sibling.add_structural_guard(
+                element::STRUCTURAL_SIBLING_SLOT | element::STRUCTURAL_NO_INSERT_BEFORE,
+            );
+        }
+    }
+    if lock.of_type {
+        element.add_structural_guard(element::STRUCTURAL_NO_RENAME);
+    }
+    if lock.from_start || lock.from_end {
+        element.add_structural_guard(element::STRUCTURAL_NO_INSERT_BEFORE);
+    }
+    if lock.from_end {
+        parent.add_structural_guard(element::STRUCTURAL_NO_APPEND);
+    }
+}
+
+fn same_local(left: &Element, right: &Element) -> bool {
+    left.local_name() == right.local_name()
+}
+
+fn contains_local(element: &Element, local: &Atom<'_>) -> bool {
+    element
+        .breadth_first()
+        .any(|descendant| descendant.local_name() == local)
+}
+
+fn resolve_anchor<'input, 'arena>(
+    element: &Element<'input, 'arena>,
+    combinator: Combinator,
+    selector: &ComplexSelector,
+    offset: usize,
+    known_anchor: Option<&Element<'input, 'arena>>,
+) -> Option<Element<'input, 'arena>> {
+    if next_is_relative_anchor(selector, offset) {
+        let anchor = known_anchor?;
+        let linked = match combinator {
+            Combinator::Child => element
+                .parent_element()
+                .is_some_and(|parent| parent.id_eq(anchor)),
+            Combinator::Descendant => is_ancestor(anchor, element.clone()),
+            Combinator::NextSibling => element
+                .previous_element_sibling()
+                .is_some_and(|sibling| sibling.id_eq(anchor)),
+            Combinator::LaterSibling => {
+                previous_siblings(element).any(|sibling| sibling.id_eq(anchor))
+            }
+            _ => false,
+        };
+        if !linked {
+            return None;
+        }
+        if combinator == Combinator::NextSibling {
+            element.add_structural_guard(element::STRUCTURAL_NO_INSERT_BEFORE);
+        }
+        anchor.add_structural_guard(element::STRUCTURAL_KEEP | element::STRUCTURAL_NO_FLATTEN);
+        return None;
+    }
+    match combinator {
+        Combinator::Child => {
+            let parent = element.parent_element()?;
+            if !matches_from(selector, offset, &parent) {
+                return None;
+            }
+            parent.add_structural_guard(element::STRUCTURAL_NO_FLATTEN);
+            Some(parent)
+        }
+        Combinator::Descendant => {
+            // Keep the outermost ancestor that completes the relationship.
+            // Intermediate ancestors that also match are not required, so they
+            // stay eligible for collapse.
+            let mut parent = element.parent_element()?;
+            let mut matched = None;
+            loop {
+                if matches_from(selector, offset, &parent) {
+                    matched = Some(parent.clone());
+                }
+                parent = match parent.parent_element() {
+                    Some(next) => next,
+                    None => break,
+                };
+            }
+            let matched = matched?;
+            matched.add_structural_guard(element::STRUCTURAL_NO_FLATTEN);
+            Some(matched)
+        }
+        Combinator::NextSibling => {
+            let previous = element.previous_element_sibling()?;
+            if !matches_from(selector, offset, &previous) {
+                return None;
+            }
+            element.add_structural_guard(element::STRUCTURAL_NO_INSERT_BEFORE);
+            Some(previous)
+        }
+        Combinator::LaterSibling => {
+            // The furthest previous sibling that completes `~` is enough.
+            // A nearer match is only a piece of the same selector, not the
+            // relationship the rule depends on.
+            let mut sibling = element.previous_element_sibling()?;
+            let mut matched = None;
+            loop {
+                if matches_from(selector, offset, &sibling) {
+                    matched = Some(sibling.clone());
+                }
+                sibling = match sibling.previous_element_sibling() {
+                    Some(next) => next,
+                    None => break,
+                };
+            }
+            matched
+        }
+        _ => None,
+    }
+}
+
+fn next_is_relative_anchor(selector: &ComplexSelector, offset: usize) -> bool {
+    matches!(
+        selector.iter_from(offset).next(),
+        Some(Component::RelativeSelectorAnchor)
+    )
+}
+
+fn is_ancestor(ancestor: &Element, mut node: Element) -> bool {
+    while let Some(parent) = node.parent_element() {
+        if parent.id_eq(ancestor) {
+            return true;
+        }
+        node = parent;
+    }
+    false
+}
+
+fn previous_siblings<'input, 'arena>(
+    element: &Element<'input, 'arena>,
+) -> impl Iterator<Item = Element<'input, 'arena>> {
+    let mut sibling = element.previous_element_sibling();
+    std::iter::from_fn(move || {
+        let current = sibling.clone()?;
+        sibling = current.previous_element_sibling();
+        Some(current)
+    })
+}
+
+fn mark_has(anchor: &Element, relative: &RelativeSelector<SelectorImpl>, depth: u8) {
+    let anchor_element = SelectElement::new(anchor.clone());
+    let anchor_opaque = selectors::Element::opaque(&anchor_element);
+    for candidate in has_candidates(anchor, relative.match_hint) {
+        if relative_matches(relative, anchor_opaque, &candidate) {
+            mark_chain(&relative.selector, &candidate, Some(anchor), depth + 1);
+            break;
+        }
+    }
+}
+
+fn relative_matches(
+    relative: &RelativeSelector<SelectorImpl>,
+    anchor: selectors::OpaqueElement,
+    candidate: &Element,
+) -> bool {
+    let mut caches = SelectorCaches::default();
+    let mut context = matching::MatchingContext::new(
+        matching::MatchingMode::Normal,
+        None,
+        &mut caches,
+        matching::QuirksMode::NoQuirks,
+        matching::NeedsSelectorFlags::No,
+        matching::MatchingForInvalidation::No,
+    );
+    context.nest_for_relative_selector(anchor, |context| {
+        matching::matches_selector(
+            &relative.selector,
+            0,
+            None,
+            &SelectElement::new(candidate.clone()),
+            context,
+        )
+    })
+}
+
+fn has_candidates<'input, 'arena>(
+    anchor: &Element<'input, 'arena>,
+    hint: RelativeSelectorMatchHint,
+) -> Vec<Element<'input, 'arena>> {
+    match hint {
+        RelativeSelectorMatchHint::InChild => anchor.children_iter().collect(),
+        RelativeSelectorMatchHint::InSubtree => anchor.breadth_first().collect(),
+        RelativeSelectorMatchHint::InNextSibling => {
+            anchor.next_element_sibling().into_iter().collect()
+        }
+        RelativeSelectorMatchHint::InNextSiblingSubtree => anchor
+            .next_element_sibling()
+            .map(|sibling| std::iter::once(sibling.clone()).chain(sibling.breadth_first()))
+            .into_iter()
+            .flatten()
+            .collect(),
+        RelativeSelectorMatchHint::InSibling => following_siblings(anchor).collect(),
+        RelativeSelectorMatchHint::InSiblingSubtree => following_siblings(anchor)
+            .flat_map(|sibling| std::iter::once(sibling.clone()).chain(sibling.breadth_first()))
+            .collect(),
+    }
+}
+
+fn following_siblings<'input, 'arena>(
+    element: &Element<'input, 'arena>,
+) -> impl Iterator<Item = Element<'input, 'arena>> {
+    let mut sibling = element.next_element_sibling();
+    std::iter::from_fn(move || {
+        let current = sibling.clone()?;
+        sibling = current.next_element_sibling();
+        Some(current)
+    })
 }

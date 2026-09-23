@@ -45,14 +45,16 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
 
     fn prepare(
         &self,
-        _document: &Element<'input, 'arena>,
+        document: &Element<'input, 'arena>,
         _context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
-        Ok(if self.0 {
-            PrepareOutcome::none
-        } else {
-            PrepareOutcome::skip
-        })
+        if !self.0 {
+            return Ok(PrepareOutcome::skip);
+        }
+        // Positive marks are already on the tree. Also refuse a collapse that
+        // would make a structure-sensitive selector start matching.
+        seal_collapses_that_change_matches(document);
+        Ok(PrepareOutcome::none)
     }
 
     fn exit_element(
@@ -85,6 +87,11 @@ impl Default for CollapseGroups {
 
 fn move_attributes_to_child(element: &Element) {
     log::debug!("collapse_groups: move_attributes_to_child");
+    // Flattening is what this move prepares for. Doing it on an element whose
+    // structure a selector depends on would retarget that selector.
+    if element.structural_flatten_blocked() {
+        return;
+    }
 
     let mut children = element.children_iter();
     let Some(first_child) = children.next() else {
@@ -152,6 +159,102 @@ fn move_attributes_to_child(element: &Element) {
     for attr in removals {
         element.remove_attribute(&attr);
     }
+}
+
+/// Pins the smallest set of groups whose collapse would change which elements
+/// match a structure-sensitive selector.
+fn seal_collapses_that_change_matches<'input, 'arena>(root: &Element<'input, 'arena>) {
+    use oxvg_ast::selectors::{restore_dom, snapshot_dom, structural_match_fingerprint};
+
+    let original = structural_match_fingerprint(root);
+    if original.is_empty() {
+        return;
+    }
+    // Each pass pins one group. The bound is the number of elements.
+    let limit = std::iter::once(root.clone())
+        .chain(root.breadth_first())
+        .count();
+    for _ in 0..limit {
+        let snapshot = snapshot_dom(root);
+        let mut touched = Vec::new();
+        simulate_collapse_walk(root, &mut touched);
+        let changed = structural_match_fingerprint(root) != original;
+        restore_dom(&snapshot);
+        if !changed {
+            return;
+        }
+        let Some(candidate) = first_sufficient_pin(root, &original, &touched) else {
+            return;
+        };
+        candidate.block_structural_flatten();
+    }
+}
+
+/// Returns the earliest collapsed group that, held in place, preserves matches.
+fn first_sufficient_pin<'input, 'arena>(
+    root: &Element<'input, 'arena>,
+    original: &[Vec<usize>],
+    touched: &[Element<'input, 'arena>],
+) -> Option<Element<'input, 'arena>> {
+    use oxvg_ast::selectors::{restore_dom, snapshot_dom, structural_match_fingerprint};
+
+    for candidate in touched {
+        if candidate.structural_flatten_blocked() {
+            continue;
+        }
+        candidate.block_structural_flatten();
+        let snapshot = snapshot_dom(root);
+        let mut ignored = Vec::new();
+        simulate_collapse_walk(root, &mut ignored);
+        let preserves = structural_match_fingerprint(root) == original;
+        restore_dom(&snapshot);
+        if preserves {
+            return Some(candidate.clone());
+        }
+        candidate.unblock_structural_flatten();
+    }
+    touched
+        .iter()
+        .find(|element| !element.structural_flatten_blocked())
+        .cloned()
+}
+
+fn simulate_collapse_walk<'input, 'arena>(
+    element: &Element<'input, 'arena>,
+    touched: &mut Vec<Element<'input, 'arena>>,
+) {
+    // Collect first. A `<style>` child's next sibling can point at itself, and
+    // collapsing rewrites sibling links while this walk is in progress.
+    let children: Vec<_> = element.child_nodes_iter().collect();
+    for node in children {
+        let Some(child) = Element::new(node) else {
+            continue;
+        };
+        simulate_collapse_walk(&child, touched);
+        if collapse_changes_element(&child) {
+            touched.push(child);
+        }
+    }
+}
+
+fn collapse_changes_element(element: &Element) -> bool {
+    let Some(parent) = element.parent_element() else {
+        return false;
+    };
+    // Same gate as `CollapseGroups::exit_element`. Other elements, including
+    // `<style>`, are not candidates for this job.
+    if element.is_root() || is_element!(parent, Switch) {
+        return false;
+    }
+    if !is_element!(element, G) || !element.has_child_elements() {
+        return false;
+    }
+    let before_len = element.attributes().len();
+    let parent_before = element.parent.get();
+    move_attributes_to_child(element);
+    flatten_when_all_attributes_moved(element);
+    let flattened = parent_before.is_some() && element.parent.get().is_none();
+    flattened || element.attributes().len() != before_len
 }
 
 fn flatten_when_all_attributes_moved(element: &Element) {
@@ -492,6 +595,206 @@ fn collapse_groups() -> anyhow::Result<()> {
 </svg>"#
         )
     )?);
+
+    Ok(())
+}
+
+#[test]
+fn structural_selectors_block_only_implicated_groups() -> anyhow::Result<()> {
+    use crate::test_config;
+
+    // `g > rect` needs the direct parent. The outer group and an unrelated
+    // group are not part of that relationship, so they still collapse.
+    let child = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>g &gt; rect { fill: red }</style>
+    <g>
+        <g><rect id="target" width="1" height="1"/></g>
+        <circle id="sib" r="1"/>
+    </g>
+    <g><circle id="free" r="1"/></g>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        child.contains("<g>\n        <rect id=\"target\""),
+        "direct parent should stay:\n{child}"
+    );
+    assert!(
+        child.contains("<circle id=\"sib\""),
+        "sibling of the inner group is outside that relationship:\n{child}"
+    );
+    assert!(
+        !child.contains("<g>\n        <circle id=\"sib\""),
+        "outer group should collapse:\n{child}"
+    );
+    assert!(
+        !child.contains("<g>\n        <circle id=\"free\"") && child.contains("<circle id=\"free\""),
+        "unrelated group should collapse:\n{child}"
+    );
+
+    // `g rect` is satisfied by the outermost ancestor. The inner group can go.
+    let descendant = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>g rect { fill: red }</style>
+    <g>
+        <g><rect id="target" width="1" height="1"/></g>
+        <circle id="sib" r="1"/>
+    </g>
+    <g><circle id="free" r="1"/></g>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        descendant.contains("<g>\n        <rect id=\"target\"")
+            && descendant.contains("<circle id=\"sib\""),
+        "outermost ancestor should keep both children:\n{descendant}"
+    );
+    assert!(
+        !descendant.contains("<g>\n            <rect"),
+        "inner group should collapse:\n{descendant}"
+    );
+    assert!(
+        !descendant.contains("<g>\n        <circle id=\"free\"")
+            && descendant.contains("<circle id=\"free\""),
+        "unrelated group should collapse:\n{descendant}"
+    );
+
+    // Nothing matches `svg > rect` yet. Collapsing every group around the rect
+    // would make it match, so one implicated group stays. The other group goes.
+    let near_miss = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>svg &gt; rect { fill: red }</style>
+    <g>
+        <g><rect id="target" width="1" height="1"/></g>
+    </g>
+    <g><circle id="free" r="1"/></g>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        near_miss.contains("<g") && near_miss.contains("<rect id=\"target\""),
+        "{near_miss}"
+    );
+    assert!(
+        !near_miss.contains("<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <style>\n        svg>rect{fill:red}\n    </style>\n    <rect"),
+        "collapsing every group made svg > rect match:\n{near_miss}"
+    );
+    assert!(
+        near_miss.contains("<circle id=\"free\"") && !near_miss.contains("<g>\n        <circle id=\"free\""),
+        "unrelated group should collapse:\n{near_miss}"
+    );
+
+    // The plain group only shares the `g` piece. The group that parents `.special` stays.
+    let nearby_piece = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>g &gt; .special { fill: red }</style>
+    <g><rect id="plain" width="1" height="1"/></g>
+    <g><rect id="holder" class="special" width="1" height="1"/></g>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        !nearby_piece.contains("<g>\n        <rect id=\"plain\""),
+        "plain group should collapse:\n{nearby_piece}"
+    );
+    assert!(
+        nearby_piece.contains("<g>\n        <rect id=\"holder\" class=\"special\""),
+        "holder completes g > .special:\n{nearby_piece}"
+    );
+
+    // `:nth-child` depends on the parent and the preceding sibling slot.
+    // The inner group can collapse without changing which element is 2nd.
+    let nth = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>rect:nth-child(2) { fill: red }</style>
+    <g>
+        <g><circle id="first" r="1"/></g>
+        <rect id="second" width="1" height="1"/>
+    </g>
+    <g><circle id="other" r="2"/></g>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        nth.contains("<g>\n        <circle id=\"first\"") && nth.contains("<rect id=\"second\""),
+        "parent and position should stay:\n{nth}"
+    );
+    assert!(
+        !nth.contains("<g>\n            <circle id=\"first\""),
+        "inner group is not the nth anchor:\n{nth}"
+    );
+    assert!(
+        !nth.contains("<g>\n        <circle id=\"other\"") && nth.contains("<circle id=\"other\""),
+        "unrelated group should collapse:\n{nth}"
+    );
+
+    // The anchor is the group next to the rect, not the group inside it.
+    let has_anchor = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>g:has(+ rect) { fill: red }</style>
+    <g class="anchor">
+        <g><circle id="inner" r="1"/></g>
+    </g>
+    <rect id="next" width="1" height="1"/>
+    <g><circle id="other" r="2"/></g>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        has_anchor.contains("<g class=\"anchor\">"),
+        "anchor group should stay:\n{has_anchor}"
+    );
+    assert!(
+        has_anchor.contains("<circle id=\"inner\"") && !has_anchor.contains("<g>\n            <circle id=\"inner\""),
+        "inner group should collapse:\n{has_anchor}"
+    );
+    assert!(
+        has_anchor.contains("<rect id=\"next\"")
+            && !has_anchor.contains("<g>\n        <circle id=\"other\"")
+            && has_anchor.contains("<circle id=\"other\""),
+        "unrelated group should collapse:\n{has_anchor}"
+    );
+
+    // Collapsing the inner group would make `g.foo > rect` start matching.
+    let donated_class = test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>g.foo &gt; rect { fill: red }</style>
+    <g class="foo">
+        <g><rect id="inner" width="1" height="1"/></g>
+        <circle id="sib" r="1"/>
+    </g>
+    <g><circle id="other" r="2"/></g>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        donated_class.contains("<g class=\"foo\">"),
+        "class should stay on the group:\n{donated_class}"
+    );
+    assert!(
+        donated_class.contains("<g>\n            <rect id=\"inner\""),
+        "inner group keeps g.foo from matching the rect:\n{donated_class}"
+    );
+    assert!(
+        !donated_class.contains("<g>\n        <circle id=\"other\"")
+            && donated_class.contains("<circle id=\"other\""),
+        "unrelated group should collapse:\n{donated_class}"
+    );
 
     Ok(())
 }

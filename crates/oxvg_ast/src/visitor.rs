@@ -296,6 +296,8 @@ pub trait Visitor<'input, 'arena> {
         root: &Element<'input, 'arena>,
         context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
+        #[cfg(feature = "selectors")]
+        crate::selectors::protect_structural_selectors(root);
         let prepare_outcome = self.prepare(root, context)?;
         if prepare_outcome.contains(PrepareOutcome::skip) {
             return Ok(prepare_outcome);

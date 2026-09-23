@@ -40,13 +40,13 @@ impl<'input, 'arena> Visitor<'input, 'arena> for RemoveEmptyContainers {
         document: &Element<'input, 'arena>,
         context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
-        Ok(if self.0 {
-            context.query_has_stylesheet(document);
-            context.query_has_script(document);
-            PrepareOutcome::none
-        } else {
-            PrepareOutcome::skip
-        })
+        if !self.0 {
+            return Ok(PrepareOutcome::skip);
+        }
+        context.query_has_stylesheet(document);
+        context.query_has_script(document);
+        seal_removals_that_change_matches(document, context);
+        Ok(PrepareOutcome::none)
     }
 
     fn exit_element(
@@ -54,38 +54,130 @@ impl<'input, 'arena> Visitor<'input, 'arena> for RemoveEmptyContainers {
         element: &Element<'input, 'arena>,
         context: &mut Context<'input, 'arena, '_>,
     ) -> Result<(), Self::Error> {
-        let name = element.qual_name();
-
-        if !name.categories().contains(ElementCategory::Container) || !element.is_empty() {
-            return Ok(());
+        if container_is_removable(element, context)? {
+            element.remove();
         }
-        if is_element!(element, Svg) {
-            return Ok(());
-        } else if is_element!(element, Pattern) {
-            if !element.attributes().is_empty() {
-                return Ok(());
-            }
-        } else if is_element!(element, Mask) {
-            if has_attribute!(element, Id) {
-                return Ok(());
-            }
-        } else if element
-            .parent_element()
-            .is_some_and(|e| is_element!(e, Switch))
-        {
-            return Ok(());
-        }
-        if is_element!(element, G) {
-            let computed_styles = ComputedStyles::default()
-                .with_all(element, &context.query_has_stylesheet_result)
-                .map_err(JobsError::ComputedStylesError)?;
-            if has_computed_style!(computed_styles, Filter) {
-                return Ok(());
-            }
-        }
-
-        element.remove();
         Ok(())
+    }
+}
+
+fn container_is_removable<'input, 'arena>(
+    element: &Element<'input, 'arena>,
+    context: &Context<'input, 'arena, '_>,
+) -> Result<bool, JobsError<'input>> {
+    let name = element.qual_name();
+
+    if !name.categories().contains(ElementCategory::Container) || !element.is_empty() {
+        return Ok(false);
+    }
+    if is_element!(element, Svg) {
+        return Ok(false);
+    } else if is_element!(element, Pattern) {
+        if !element.attributes().is_empty() {
+            return Ok(false);
+        }
+    } else if is_element!(element, Mask) {
+        if has_attribute!(element, Id) {
+            return Ok(false);
+        }
+    } else if element
+        .parent_element()
+        .is_some_and(|e| is_element!(e, Switch))
+    {
+        return Ok(false);
+    }
+    if is_element!(element, G) {
+        let computed_styles = ComputedStyles::default()
+            .with_all(element, &context.query_has_stylesheet_result)
+            .map_err(JobsError::ComputedStylesError)?;
+        if has_computed_style!(computed_styles, Filter) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Keeps an empty container when removing it would make a structure-sensitive
+/// selector match an element it does not match now.
+fn seal_removals_that_change_matches<'input, 'arena>(
+    root: &Element<'input, 'arena>,
+    context: &Context<'input, 'arena, '_>,
+) {
+    use oxvg_ast::selectors::{restore_dom, snapshot_dom, structural_match_fingerprint};
+
+    let original = structural_match_fingerprint(root);
+    if original.is_empty() {
+        return;
+    }
+    let limit = std::iter::once(root.clone())
+        .chain(root.breadth_first())
+        .count();
+    for _ in 0..limit {
+        let snapshot = snapshot_dom(root);
+        let mut touched = Vec::new();
+        simulate_removal_walk(root, context, &mut touched);
+        let changed = structural_match_fingerprint(root) != original;
+        restore_dom(&snapshot);
+        if !changed {
+            return;
+        }
+        let Some(candidate) = first_sufficient_removal_pin(root, context, &original, &touched)
+        else {
+            return;
+        };
+        candidate.block_structural_removal();
+    }
+}
+
+fn first_sufficient_removal_pin<'input, 'arena>(
+    root: &Element<'input, 'arena>,
+    context: &Context<'input, 'arena, '_>,
+    original: &[Vec<usize>],
+    touched: &[Element<'input, 'arena>],
+) -> Option<Element<'input, 'arena>> {
+    use oxvg_ast::selectors::{restore_dom, snapshot_dom, structural_match_fingerprint};
+
+    for candidate in touched {
+        if candidate.structural_removal_blocked() {
+            continue;
+        }
+        candidate.block_structural_removal();
+        let snapshot = snapshot_dom(root);
+        let mut ignored = Vec::new();
+        simulate_removal_walk(root, context, &mut ignored);
+        let preserves = structural_match_fingerprint(root) == original;
+        restore_dom(&snapshot);
+        if preserves {
+            return Some(candidate.clone());
+        }
+        candidate.unblock_structural_removal();
+    }
+    touched
+        .iter()
+        .find(|element| !element.structural_removal_blocked())
+        .cloned()
+}
+
+fn simulate_removal_walk<'input, 'arena>(
+    element: &Element<'input, 'arena>,
+    context: &Context<'input, 'arena, '_>,
+    touched: &mut Vec<Element<'input, 'arena>>,
+) {
+    // Collect first. A `<style>` child's next sibling can point at itself, and
+    // removal rewrites sibling links while this walk is in progress.
+    let children: Vec<_> = element.child_nodes_iter().collect();
+    for node in children {
+        let Some(child) = Element::new(node) else {
+            continue;
+        };
+        simulate_removal_walk(&child, context, touched);
+        if container_is_removable(&child, context).unwrap_or(false) {
+            let parent = child.parent.get();
+            child.remove();
+            if parent.is_some() && child.parent.get().is_none() {
+                touched.push(child);
+            }
+        }
     }
 }
 
@@ -217,6 +309,53 @@ fn remove_empty_containers() -> anyhow::Result<()> {
 </svg>"##
         ),
     )?);
+
+    Ok(())
+}
+
+#[test]
+fn structural_selectors_block_only_implicated_containers() -> anyhow::Result<()> {
+    use crate::test_config;
+
+    let matched = test_config(
+        r#"{ "removeEmptyContainers": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>#a:empty { display: none }</style>
+    <g id="a"></g>
+    <g id="b"></g>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        matched.contains("id=\"a\""),
+        "empty group implicated by :empty should stay:\n{matched}"
+    );
+    assert!(
+        !matched.contains("id=\"b\""),
+        "unrelated empty group should be removed:\n{matched}"
+    );
+
+    // The `<style>` element is the svg's first child, so the empty group has to
+    // sit with the rect under another parent. Removing it would make the rect
+    // `:nth-child(1)`.
+    let created = test_config(
+        r#"{ "removeEmptyContainers": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <style>rect:nth-child(1) { fill: red }</style>
+    <g>
+        <g id="slot"></g>
+        <rect id="shape" width="1" height="1"/>
+    </g>
+</svg>"#,
+        ),
+    )?;
+    assert!(
+        created.contains("id=\"slot\""),
+        "removing the slot would make rect:nth-child(1) match:\n{created}"
+    );
+    assert!(created.contains("id=\"shape\""), "{created}");
 
     Ok(())
 }

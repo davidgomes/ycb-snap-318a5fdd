@@ -177,6 +177,9 @@ impl<'input, 'arena> Visitor<'input, 'arena> for State<'input, 'arena> {
             let new_id: Atom<'input> = format!("#{}", new_id_attr.0).into();
             drop(new_id_attr);
             for path in list {
+                if path.structural_rename_blocked() {
+                    continue;
+                }
                 remove_attribute!(path, D);
                 remove_attribute!(path, Stroke);
                 remove_attribute!(path, Fill);
