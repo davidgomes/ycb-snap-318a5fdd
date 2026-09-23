@@ -23,6 +23,7 @@ from ._decoders import (
 )
 from ._exceptions import (
     CookieConflict,
+    DecodingError,
     HTTPStatusError,
     RequestNotRead,
     ResponseNotRead,
@@ -831,6 +832,53 @@ class Response:
     def json(self, **kwargs: typing.Any) -> typing.Any:
         return jsonlib.loads(self.content, **kwargs)
 
+    def _json_stream_format(self) -> tuple[str, str | None]:
+        content_type = self.headers.get("Content-Type", "")
+        media_type = content_type.split(";", 1)[0].strip().lower()
+        if media_type == "application/json-seq":
+            kind = "json-seq"
+        elif media_type in ("application/ndjson", "application/x-ndjson"):
+            kind = "ndjson"
+        elif media_type == "application/json" or (
+            media_type.startswith("application/")
+            and media_type.endswith("+json")
+            and len(media_type) > len("application/+json")
+        ):
+            kind = "json"
+        else:
+            raise DecodingError(
+                f"Unsupported Content-Type for JSON iteration: {content_type!r}",
+                request=self._request,
+            )
+        charset = None
+        if "charset" in content_type.lower():
+            charset = self.charset_encoding
+            try:
+                codecs.lookup(charset or "")
+            except LookupError:
+                raise DecodingError(
+                    f"Invalid charset in Content-Type: {content_type!r}",
+                    request=self._request,
+                )
+        return kind, charset
+
+    def _parse_json_stream(
+        self, kind: str, charset: str | None, content: bytes
+    ) -> list[typing.Any]:
+        try:
+            text = content.decode(charset or jsonlib.detect_encoding(content))
+            return _parse_json_payload(kind, text)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise DecodingError(str(exc), request=self._request) from exc
+
+    def iter_json(self) -> typing.Iterator[typing.Any]:
+        kind, charset = self._json_stream_format()
+        if hasattr(self, "_content"):
+            content = self._content
+        else:
+            content = b"".join(self.iter_bytes())
+        yield from self._parse_json_stream(kind, charset, content)
+
     @property
     def cookies(self) -> Cookies:
         if not hasattr(self, "_cookies"):
@@ -1024,6 +1072,15 @@ class Response:
                 yield chunk  # pragma: no cover
             for chunk in chunker.flush():
                 yield chunk
+
+    async def aiter_json(self) -> typing.AsyncIterator[typing.Any]:
+        kind, charset = self._json_stream_format()
+        if hasattr(self, "_content"):
+            content = self._content
+        else:
+            content = b"".join([part async for part in self.aiter_bytes()])
+        for value in self._parse_json_stream(kind, charset, content):
+            yield value
 
     async def aiter_lines(self) -> typing.AsyncIterator[str]:
         decoder = LineDecoder()
@@ -1275,3 +1332,54 @@ class Cookies(typing.MutableMapping[str, str]):
                 # https://docs.python.org/3/library/email.compat32-message.html#email.message.Message.__setitem__
                 info[key] = value
             return info
+
+
+_JSON_WS = " \t\n\r"
+
+
+def _decode_single_json(text: str) -> typing.Any:
+    stripped = text.strip(_JSON_WS)
+    if not stripped:
+        raise ValueError("Expected a JSON text")
+    value, end = jsonlib.JSONDecoder().raw_decode(stripped)
+    if end != len(stripped):
+        raise ValueError("Unexpected trailing data after JSON text")
+    return value
+
+
+def _parse_json_payload(kind: str, text: str) -> list[typing.Any]:
+    if kind == "json":
+        text = text.lstrip(_JSON_WS)
+        if text.startswith("\ufeff"):
+            text = text[1:]
+        if text.lstrip(_JSON_WS).startswith("["):
+            value = _decode_single_json(text)
+            return list(value)
+        return [_decode_single_json(text)]
+
+    if kind == "ndjson":
+        values = []
+        first = True
+        for line in re.split(r"\r\n|\r|\n", text):
+            if not line.strip(_JSON_WS):
+                continue
+            if first and line.lstrip(_JSON_WS).startswith("\ufeff"):
+                line = line.lstrip(_JSON_WS)[1:]
+            first = False
+            values.append(_decode_single_json(line))
+        return values
+
+    text = text.lstrip(_JSON_WS)
+    if not text:
+        return []
+    if not text.startswith("\x1e"):
+        raise ValueError("JSON text sequence must begin with RS")
+    records = text[1:].split("\x1e")
+    values = []
+    for index, record in enumerate(records):
+        if record.endswith("\n"):
+            record = record[:-1]
+        if not record.strip(_JSON_WS) and index < len(records) - 1:
+            continue
+        values.append(_decode_single_json(record))
+    return values
