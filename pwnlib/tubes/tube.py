@@ -1670,6 +1670,16 @@ class tube(Timeout, Logger):
     def flat(self, *a, **kw):       return self.send(packing.flat(*a,**kw))
     def fit(self, *a, **kw):        return self.send(packing.fit(*a, **kw))
 
+    def mux(self, **kwargs):
+        """mux(**kwargs) -> TubeMultiplexer
+
+        Wrap this tube in a :class:`~pwnlib.tubes.mux.TubeMultiplexer`.
+
+        Keyword arguments are forwarded to the multiplexer constructor.
+        """
+        from pwnlib.tubes.mux import TubeMultiplexer
+        return TubeMultiplexer(self, **kwargs)
+
     # Dynamic functions
 
     def make_wrapper(func):

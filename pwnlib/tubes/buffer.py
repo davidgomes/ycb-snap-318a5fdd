@@ -33,6 +33,56 @@ class Buffer(object):
         self.data = [] # Buffer
         self.size = 0  # Length
         self.buffer_fill_size = buffer_fill_size
+        self._high_water = None
+        self._low_water = None
+
+    def set_watermarks(self, high=None, low=None):
+        """Set the high and/or low water marks used by :attr:`over_high_water`
+        and :attr:`under_low_water`.
+
+        Arguments:
+            high(int): High water mark. ``None`` leaves the current value unchanged.
+            low(int): Low water mark. ``None`` leaves the current value unchanged.
+
+        Raises:
+            ValueError: ``low`` is greater than ``high``.
+        """
+        new_high = self._high_water if high is None else high
+        new_low = self._low_water if low is None else low
+        if new_high is not None and new_low is not None and new_low > new_high:
+            raise ValueError('low water mark cannot exceed high water mark')
+        self._high_water = new_high
+        self._low_water = new_low
+
+    @property
+    def high_water(self):
+        """High water mark, or ``None`` if unset."""
+        return self._high_water
+
+    @property
+    def low_water(self):
+        """Low water mark, or ``None`` if unset."""
+        return self._low_water
+
+    @property
+    def over_high_water(self):
+        """``True`` when the buffer size is at least :attr:`high_water`.
+
+        ``False`` when the high water mark is unset.
+        """
+        if self._high_water is None:
+            return False
+        return self.size >= self._high_water
+
+    @property
+    def under_low_water(self):
+        """``True`` when the buffer size is at most :attr:`low_water`.
+
+        ``False`` when the low water mark is unset.
+        """
+        if self._low_water is None:
+            return False
+        return self.size <= self._low_water
 
     def __len__(self):
         """
