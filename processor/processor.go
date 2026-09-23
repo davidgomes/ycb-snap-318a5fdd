@@ -124,6 +124,9 @@ var Dryness = false
 // SortBy sets which column output in formatter should be sorted by
 var SortBy = ""
 
+// SortBySet indicates the sort column was explicitly requested rather than left as the default
+var SortBySet = false
+
 // Exclude is a regular expression which is used to exclude files from being processed
 var Exclude = []string{}
 
@@ -579,6 +582,11 @@ func Process() {
 		return
 	}
 
+	if err := validateBoundedMemory(); err != nil {
+		printError(err.Error())
+		os.Exit(1)
+	}
+
 	ProcessConstants()
 	processFlags()
 
@@ -608,6 +616,7 @@ func Process() {
 	}
 
 	SortBy = strings.ToLower(SortBy)
+	spillDirPrefixes := boundedMemorySpillPrefixes(dirPaths)
 
 	printDebugF("NumCPU: %d", runtime.NumCPU())
 	printDebugF("SortBy: %s", SortBy)
@@ -669,6 +678,12 @@ func Process() {
 			shouldExclude := false
 			for _, re := range excludePathRegexes {
 				if re.MatchString(fi.Location) {
+					shouldExclude = true
+					break
+				}
+			}
+			for _, prefix := range spillDirPrefixes {
+				if strings.HasPrefix(fi.Location, prefix) {
 					shouldExclude = true
 					break
 				}

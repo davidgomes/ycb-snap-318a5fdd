@@ -111,6 +111,27 @@ func sortSummaryFiles(summary *LanguageSummary) {
 	}
 }
 
+// summarySortKey returns the value sortSummaryFiles sorts by as either a number
+// to sort descending or a string to sort ascending
+func summarySortKey(sortBy string, job *FileJob) (int64, string) {
+	switch sortBy {
+	case "name", "names", "language", "languages", "lang", "langs":
+		return 0, job.Location
+	case "line", "lines":
+		return job.Lines, ""
+	case "blank", "blanks":
+		return job.Blank, ""
+	case "code", "codes":
+		return job.Code, ""
+	case "comment", "comments":
+		return job.Comment, ""
+	case "complexity", "complexitys", "comp":
+		return job.Complexity, ""
+	default:
+		return job.Lines, ""
+	}
+}
+
 // LanguageSummary to generate output like cloc
 type languageSummaryCloc struct {
 	Name    string `yaml:"name"`
@@ -463,6 +484,38 @@ func getCSVFilesSortFunc(sortBy string) func(a, b []string) int {
 	}
 }
 
+// csvSortKey returns the column getCSVFilesSortFunc sorts by as either a number
+// to sort descending or a string to sort ascending
+func csvSortKey(sortBy string, job *FileJob) (int64, string) {
+	switch sortBy {
+	case "name", "names":
+		return 0, job.Filename
+	case "language", "languages", "lang", "langs":
+		return 0, job.Language
+	case "line", "lines":
+		return job.Lines, ""
+	case "blank", "blanks":
+		return job.Blank, ""
+	case "code", "codes":
+		return job.Code, ""
+	case "comment", "comments":
+		return job.Comment, ""
+	case "complexity", "complexitys":
+		return job.Complexity, ""
+	case "byte", "bytes":
+		return job.Bytes, ""
+	default:
+		return 0, job.Filename
+	}
+}
+
+// compareCSVFileJobs orders files the same way as the rows of toCSVFiles
+func compareCSVFileJobs(a, b *FileJob) int {
+	ka := newFileSortKey(0, csvSortKey, a, 0)
+	kb := newFileSortKey(0, csvSortKey, b, 0)
+	return compareFileSortKeys(&ka, &kb)
+}
+
 var csvFilesHeader = []string{
 	"Language",
 	"Provider",
@@ -498,7 +551,14 @@ func toCSVFiles(input chan *FileJob) string {
 		records = append(records, csvFileRecord(result))
 	}
 
-	slices.SortFunc(records, getCSVFilesSortFunc(SortBy))
+	// Location breaks ties so the order does not depend on the order files were processed in
+	sortFunc := getCSVFilesSortFunc(SortBy)
+	slices.SortFunc(records, func(a, b []string) int {
+		if order := sortFunc(a, b); order != 0 {
+			return order
+		}
+		return strings.Compare(a[1], b[1])
+	})
 
 	recordsEnd := [][]string{csvFilesHeader}
 
@@ -893,6 +953,10 @@ create table t        (
 }
 
 func fileSummarize(input chan *FileJob) string {
+	if BoundedMemory {
+		return fileSummarizeBounded(input)
+	}
+
 	if FormatMulti != "" {
 		return fileSummarizeMulti(input)
 	}
@@ -941,9 +1005,15 @@ func fileSummarizeMulti(input chan *FileJob) string {
 	for s := range strings.SplitSeq(FormatMulti, ",") {
 		t := strings.Split(s, ":")
 		if len(t) == 2 {
-			i := make(chan *FileJob, len(results))
+			jobs := results
+			if SortBySet && strings.EqualFold(t[0], "csv-stream") {
+				jobs = slices.Clone(results)
+				slices.SortStableFunc(jobs, compareCSVFileJobs)
+			}
 
-			for _, r := range results {
+			i := make(chan *FileJob, len(jobs))
+
+			for _, r := range jobs {
 				i <- r
 			}
 			close(i)
