@@ -140,6 +140,7 @@ async def test_follow_end(widget_type) -> None:
             False,
             True,
         ]
+        assert app.messages[1].scroll_y == widget.max_scroll_y
 
         # Already following, so no message.
         widget.follow_end()

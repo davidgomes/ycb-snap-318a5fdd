@@ -67,8 +67,14 @@ class FollowEndMixin(_Base):
         Args:
             animate: Animate the scroll to the end.
         """
-        self._set_following_end(True)
-        self._scroll_to_end_if_following(animate=animate, immediate=True)
+        if animate:
+            self._set_following_end(True)
+            self._scroll_to_end_if_following(animate=True, immediate=True)
+        else:
+            # Scroll first, so that `FollowChanged` reports the final position.
+            self._follow_animating = False
+            self.scroll_end(animate=False, immediate=True, x_axis=False)
+            self._set_following_end(True)
 
     def _is_at_end(self) -> bool:
         """Is the vertical scroll position at (or beyond) the maximum?"""
@@ -141,8 +147,11 @@ class FollowEndMixin(_Base):
                 and not self.is_vertical_scrollbar_grabbed
             )
         if scroll_end:
-            self._set_following_end(True)
-            self._scroll_to_end_if_following(animate=animate, immediate=immediate)
+            if immediate:
+                self.follow_end(animate=animate)
+            else:
+                self._set_following_end(True)
+                self._scroll_to_end_if_following(animate=animate)
             return
         self._preserve_viewport(removed_lines)
         if self.size:
