@@ -27,21 +27,30 @@ func ensureUniqueness(path string, unique bool) string {
 }
 
 // Ensure a file has proper file extension.
-func EnsureFileSuffix(filename string, shouldGzip bool) string {
-	if !shouldGzip {
-		return filename
+// Gzip is applied first. Encryption appends .enc after .gz. Both suffixes are idempotent.
+func EnsureFileSuffix(filename string, shouldGzip, shouldEncrypt bool) string {
+	if shouldGzip {
+		base := filename
+		enc := ""
+		if shouldEncrypt && strings.HasSuffix(base, ".enc") {
+			enc = ".enc"
+			base = strings.TrimSuffix(base, ".enc")
+		}
+		if filepath.Ext(base) != ".gz" {
+			base += ".gz"
+		}
+		filename = base + enc
 	}
 
-	fileExt := filepath.Ext(filename)
-	if fileExt == ".gz" {
-		return filename
+	if shouldEncrypt && !strings.HasSuffix(filename, ".enc") {
+		filename += ".enc"
 	}
 
-	return filename + ".gz"
+	return filename
 }
 
-func EnsureFileName(path string, shouldGzip, unique bool) string {
-	p := EnsureFileSuffix(path, shouldGzip)
+func EnsureFileName(path string, shouldGzip, shouldEncrypt, unique bool) string {
+	p := EnsureFileSuffix(path, shouldGzip, shouldEncrypt)
 	return ensureUniqueness(p, unique)
 }
 
