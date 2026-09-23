@@ -70,7 +70,12 @@ class ToolbarGroup {
     toolbar.update(toolbar.quill.selection.getRange()[0]);
     this.syncEnabled();
     toolbar.quill.emitter.emit(Quill.events.TOOLBAR_ACTIVE_CHANGE, true);
-    previous?.quill.emitter.emit(Quill.events.TOOLBAR_ACTIVE_CHANGE, false);
+    if (previous != null) {
+      previous.quill.emitter.emit(Quill.events.TOOLBAR_ACTIVE_CHANGE, false);
+      // The native selectionchange event that clears the previous editor's
+      // selection is asynchronous, so sync its state now.
+      previous.quill.update();
+    }
   }
 
   resolveActive() {
