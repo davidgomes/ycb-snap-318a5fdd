@@ -20,6 +20,7 @@ macro_rules! box_tree {
     ($expr:expr) => ($expr);
 }
 
+mod coalescer;
 mod concatenator;
 mod factorizer;
 mod lister;
@@ -46,6 +47,7 @@ pub fn optimize(rules: Vec<Rule>) -> Vec<OptimizedRule> {
     optimized
         .into_iter()
         .map(|rule| restorer::restore_on_err(rule, &optimized_map))
+        .map(coalescer::coalesce)
         .collect()
 }
 
@@ -161,6 +163,10 @@ pub enum OptimizedExpr {
     NodeTag(Box<OptimizedExpr>, String),
     /// Restores an expression's checkpoint
     RestoreOnErr(Box<OptimizedExpr>),
+    /// Matches one character in any of the inclusive ranges
+    CharClass(Vec<(String, String)>),
+    /// Matches one character not in any of the inclusive ranges
+    NegCharClass(Vec<(String, String)>),
 }
 
 impl OptimizedExpr {
@@ -337,6 +343,22 @@ impl core::fmt::Display for OptimizedExpr {
                 write!(f, "(#{} = {})", tag, expr)
             }
             OptimizedExpr::RestoreOnErr(expr) => core::fmt::Display::fmt(expr.as_ref(), f),
+            OptimizedExpr::CharClass(ranges) | OptimizedExpr::NegCharClass(ranges) => {
+                let alts = ranges
+                    .iter()
+                    .map(|(s, e)| {
+                        let s = s.chars().next().expect("Empty range start.");
+                        let e = e.chars().next().expect("Empty range end.");
+                        format!("{:?}..{:?}", s, e)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                if matches!(self, OptimizedExpr::CharClass(_)) {
+                    write!(f, "({})", alts)
+                } else {
+                    write!(f, "(!({}) ~ ANY)", alts)
+                }
+            }
         }
     }
 }
@@ -414,7 +436,7 @@ mod tests {
                 ty: RuleType::Normal,
                 expr: box_tree!(Choice(
                     Choice(
-                        Choice(Str(String::from("a")), Str(String::from("b"))),
+                        Choice(Str(String::from("a")), Str(String::from("bb"))),
                         Str(String::from("c"))
                     ),
                     Str(String::from("d"))
@@ -429,7 +451,7 @@ mod tests {
                 expr: box_tree!(Choice(
                     Str(String::from("a")),
                     Choice(
-                        Str(String::from("b")),
+                        Str(String::from("bb")),
                         Choice(Str(String::from("c")), Str(String::from("d")))
                     )
                 )),

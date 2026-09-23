@@ -327,7 +327,7 @@ mod tests {
                 "  |                          ^---",
                 "  |",
                 "  = error: parsing error occurred.",
-                r#"    note: expected one of tokens: WHITESPACE, `"`, `-`, `A..Z`, `PRIMARY`, `_`, `a..z`, `А..Я`, `а..я`"#,
+                r#"    note: expected one of tokens: WHITESPACE, `"`, `BUILTIN_RULE`, `PRIMARY`"#,
                 "    help: Expected table creation.",
                 "          - Add primary key consisting of non nullable table columns.",
             ]
@@ -345,7 +345,7 @@ mod tests {
                 "  |                                                                                 ^---",
                 "  |",
                 "  = error: parsing error occurred.",
-                "    note: expected one of tokens: WHITESPACE, `''`, `'`",
+                "    note: expected one of tokens: WHITESPACE, `''`, `'`, `BUILTIN_RULE`",
                 "    help: Expected user creation.",
                 "          - Add a string in single quotes.",
             ]
@@ -362,7 +362,7 @@ mod tests {
                 "  |            ^---",
                 "  |",
                 "  = error: parsing error occurred.",
-                r#"    note: expected one of tokens: WHITESPACE, `"`, `$`, `''`, `'`, `(`, `+`, `-`, `0..9`, `?`, `CAST`, `EXISTS`, `FALSE`, `NOT`, `NULL`, `TRUE`"#,
+                r#"    note: expected one of tokens: WHITESPACE, `"`, `$`, `''`, `'`, `(`, `+`, `-`, `0..9`, `?`, `BUILTIN_RULE`, `CAST`, `EXISTS`, `FALSE`, `NOT`, `NULL`, `TRUE`"#,
                 "    note: unexpected token: `FROM`",
                 "    help: DML query expected.",
                 "          - Expected expression.",

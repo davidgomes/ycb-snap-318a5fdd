@@ -28,6 +28,14 @@ use std::panic::{RefUnwindSafe, UnwindSafe};
 
 mod macros;
 
+fn in_ranges(ranges: &[(String, String)], c: char) -> bool {
+    ranges.iter().any(|(start, end)| {
+        let start = start.chars().next().unwrap_or('\0');
+        let end = end.chars().next().unwrap_or('\0');
+        start <= c && c <= end
+    })
+}
+
 /// A callback function that is called when a rule is matched.
 /// The first argument is the name of the rule and the second is the span of the rule.
 /// The function should return `true` if parsing should be terminated
@@ -250,6 +258,10 @@ impl Vm {
                 .and_then(|state| state.tag_node(tag)),
             OptimizedExpr::RestoreOnErr(ref expr) => {
                 state.restore_on_err(|state| self.parse_expr(expr, state))
+            }
+            OptimizedExpr::CharClass(ref ranges) => state.match_char_by(|c| in_ranges(ranges, c)),
+            OptimizedExpr::NegCharClass(ref ranges) => {
+                state.match_char_by(|c| !in_ranges(ranges, c))
             }
         }
     }

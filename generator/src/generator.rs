@@ -414,6 +414,15 @@ fn generate_skip(rules: &[OptimizedRule]) -> TokenStream {
     }
 }
 
+fn generate_char_class_pattern(ranges: &[(String, String)]) -> TokenStream {
+    let patterns = ranges.iter().map(|(start, end)| {
+        let start = start.chars().next().unwrap();
+        let end = end.chars().next().unwrap();
+        quote! { #start..=#end }
+    });
+    quote! { #(#patterns)|* }
+}
+
 fn generate_expr(expr: OptimizedExpr) -> TokenStream {
     match expr {
         OptimizedExpr::Str(string) => {
@@ -581,6 +590,18 @@ fn generate_expr(expr: OptimizedExpr) -> TokenStream {
 
             quote! {
                 state.restore_on_err(|state| #expr)
+            }
+        }
+        OptimizedExpr::CharClass(ranges) => {
+            let pattern = generate_char_class_pattern(&ranges);
+            quote! {
+                state.match_char_by(|c| matches!(c, #pattern))
+            }
+        }
+        OptimizedExpr::NegCharClass(ranges) => {
+            let pattern = generate_char_class_pattern(&ranges);
+            quote! {
+                state.match_char_by(|c| !matches!(c, #pattern))
             }
         }
         #[cfg(feature = "grammar-extras")]
@@ -772,6 +793,18 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
 
             quote! {
                 state.restore_on_err(|state| #expr)
+            }
+        }
+        OptimizedExpr::CharClass(ranges) => {
+            let pattern = generate_char_class_pattern(&ranges);
+            quote! {
+                state.match_char_by(|c| matches!(c, #pattern))
+            }
+        }
+        OptimizedExpr::NegCharClass(ranges) => {
+            let pattern = generate_char_class_pattern(&ranges);
+            quote! {
+                state.match_char_by(|c| !matches!(c, #pattern))
             }
         }
         #[cfg(feature = "grammar-extras")]
