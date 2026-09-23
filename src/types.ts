@@ -61,6 +61,14 @@ export interface FetchOptions<R extends ResponseType = ResponseType, T = any>
   /** timeout in milliseconds */
   timeout?: number;
 
+  /**
+   * Opt-in per-origin circuit breaker.
+   * Omitted or falsey values disable tracking and blocking.
+   * `true` uses threshold 5, cooldown 30000, halfOpenMaxRequests 1,
+   * and failureStatusCodes [408, 409, 425, 429, 500, 502, 503, 504].
+   */
+  circuitBreaker?: boolean | CircuitBreakerOptions;
+
   retry?: number | false;
 
   /** Delay between retries in milliseconds. */
@@ -68,6 +76,23 @@ export interface FetchOptions<R extends ResponseType = ResponseType, T = any>
 
   /** Default is [408, 409, 425, 429, 500, 502, 503, 504] */
   retryStatusCodes?: number[];
+}
+
+export interface CircuitBreakerOptions {
+  /** Consecutive failures before the circuit opens. Default: 5 */
+  threshold?: number;
+
+  /** Milliseconds to stay open before half-open probes. Default: 30000 */
+  cooldown?: number;
+
+  /** Concurrent half-open probes allowed for the origin. Default: 1 */
+  halfOpenMaxRequests?: number;
+
+  /**
+   * Status codes that count as circuit failures.
+   * Default: [408, 409, 425, 429, 500, 502, 503, 504]
+   */
+  failureStatusCodes?: number[];
 }
 
 export interface ResolvedFetchOptions<
@@ -159,7 +184,7 @@ export interface IFetchError<T = any> extends Error {
 
 export type Fetch = typeof globalThis.fetch;
 
-export type FetchRequest = RequestInfo;
+export type FetchRequest = RequestInfo | URL;
 
 export interface SearchParameters {
   [key: string]: any;

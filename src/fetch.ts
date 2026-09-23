@@ -8,6 +8,22 @@ import {
   resolveFetchOptions,
   callHooks,
 } from "./utils.ts";
+import {
+  CIRCUIT_ATTEMPT,
+  type CircuitAttempt,
+  type CircuitOutcome,
+  type CircuitRegistry,
+  classifyCircuitThrow,
+  circuitOutcomeFromStatus,
+  gateCircuit,
+  getCircuitRegistry,
+  markStatusRejection,
+  shareCircuitRegistry,
+  normalizeCircuitBreaker,
+  recordCircuitOutcome,
+  releaseProbe,
+  resolveRequestOrigin,
+} from "./circuit-breaker.ts";
 import type {
   CreateFetchOptions,
   FetchResponse,
@@ -16,7 +32,12 @@ import type {
   $Fetch,
   FetchRequest,
   FetchOptions,
+  ResolvedFetchOptions,
 } from "./types.ts";
+
+type OptionsWithCircuit = ResolvedFetchOptions & {
+  [CIRCUIT_ATTEMPT]?: CircuitAttempt;
+};
 
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
 const retryStatusCodes = new Set([
@@ -35,6 +56,7 @@ const nullBodyResponses = new Set([101, 204, 205, 304]);
 
 export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
   const { fetch = globalThis.fetch } = globalOptions;
+  const circuitRegistry: CircuitRegistry = getCircuitRegistry(globalOptions);
 
   async function onError(context: FetchContext): Promise<FetchResponse<any>> {
     // Is Abort
@@ -69,15 +91,26 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         }
         // Timeout
+        // Keep the circuit admission so retries stay one logical request.
         return $fetchRaw(context.request, {
           ...context.options,
           retry: retries - 1,
-        });
+          [CIRCUIT_ATTEMPT]: (context.options as OptionsWithCircuit)[
+            CIRCUIT_ATTEMPT
+          ],
+        } as FetchOptions);
       }
     }
 
     // Throw normalized error
     const error = createFetchError(context);
+    if (
+      context.response &&
+      context.response.status >= 400 &&
+      context.response.status < 600
+    ) {
+      markStatusRejection(error);
+    }
 
     // Only available on V8 based runtimes (https://v8.dev/docs/stack-trace-api)
     if (Error.captureStackTrace) {
@@ -90,6 +123,8 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
     T = any,
     R extends ResponseType = "json",
   >(_request: FetchRequest, _options: FetchOptions<R> = {}) {
+    const inheritedAttempt = (_options as OptionsWithCircuit)[CIRCUIT_ATTEMPT];
+
     const context: FetchContext = {
       request: _request,
       options: resolveFetchOptions<R, T>(
@@ -101,6 +136,11 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
       response: undefined,
       error: undefined,
     };
+
+    if (inheritedAttempt) {
+      (context.options as OptionsWithCircuit)[CIRCUIT_ATTEMPT] =
+        inheritedAttempt;
+    }
 
     // Uppercase method name
     if (context.options.method) {
@@ -127,6 +167,76 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
       }
     }
 
+    let attempt: CircuitAttempt | undefined = inheritedAttempt;
+    let acquiredProbeHere = false;
+
+    if (!attempt) {
+      const circuitConfig = normalizeCircuitBreaker(
+        context.options.circuitBreaker
+      );
+      const origin = circuitConfig
+        ? resolveRequestOrigin(context.request)
+        : undefined;
+      if (circuitConfig && origin) {
+        const gate = gateCircuit(circuitRegistry, origin, circuitConfig);
+        if (gate.blocked) {
+          context.error = new Error("Circuit breaker is open");
+          const error = createFetchError(context);
+          if (Error.captureStackTrace) {
+            Error.captureStackTrace(error, $fetchRaw);
+          }
+          throw error;
+        }
+        attempt = {
+          settled: false,
+          probe: gate.probe,
+          origin,
+          config: circuitConfig,
+        };
+        (context.options as OptionsWithCircuit)[CIRCUIT_ATTEMPT] = attempt;
+        acquiredProbeHere = gate.probe;
+      }
+    }
+
+    const settle = (outcome: CircuitOutcome) => {
+      if (!attempt || attempt.settled) {
+        return;
+      }
+      attempt.settled = true;
+      recordCircuitOutcome(
+        circuitRegistry,
+        attempt.origin,
+        attempt.config,
+        outcome,
+        attempt.probe
+      );
+    };
+
+    try {
+      return await dispatch(context, settle, attempt);
+    } catch (error) {
+      if (attempt && !attempt.settled) {
+        settle(
+          classifyCircuitThrow(
+            error,
+            context.response?.status,
+            attempt.config.failureStatusCodes
+          )
+        );
+      }
+      throw error;
+    } finally {
+      if (acquiredProbeHere && attempt) {
+        releaseProbe(circuitRegistry, attempt.origin);
+      }
+    }
+  };
+
+  async function dispatch(
+    context: FetchContext,
+    settle: (outcome: CircuitOutcome) => void,
+    attempt: CircuitAttempt | undefined
+  ): Promise<FetchResponse<any>> {
     if (context.options.body && isPayloadMethod(context.options.method)) {
       if (isJSONSerializable(context.options.body)) {
         const contentType = context.options.headers.get("content-type");
@@ -253,8 +363,17 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
       return await onError(context);
     }
 
+    if (attempt) {
+      settle(
+        circuitOutcomeFromStatus(
+          context.response?.status,
+          attempt.config.failureStatusCodes
+        )
+      );
+    }
+
     return context.response;
-  };
+  }
 
   const $fetch = async function $fetch(request, options) {
     const r = await $fetchRaw(request, options);
@@ -265,8 +384,8 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
 
   $fetch.native = (...args) => fetch(...args);
 
-  $fetch.create = (defaultOptions = {}, customGlobalOptions = {}) =>
-    createFetch({
+  $fetch.create = (defaultOptions = {}, customGlobalOptions = {}) => {
+    const nextOptions: CreateFetchOptions = {
       ...globalOptions,
       ...customGlobalOptions,
       defaults: {
@@ -274,7 +393,11 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
         ...customGlobalOptions.defaults,
         ...defaultOptions,
       },
-    });
+    };
+    // Spread does not copy the parent registry. Children must share it.
+    shareCircuitRegistry(nextOptions, circuitRegistry);
+    return createFetch(nextOptions);
+  };
 
   return $fetch;
 }
