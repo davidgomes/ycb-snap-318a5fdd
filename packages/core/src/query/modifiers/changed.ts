@@ -1,3 +1,6 @@
+import { aspectHooks } from '../../aspect/aspect-hooks';
+import { isAspect } from '../../aspect/is-aspect';
+import type { AspectOperations } from '../../aspect/types';
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
@@ -75,9 +78,17 @@ function markChanged(world: World, entity: Entity, trait: Trait) {
 }
 
 export function setChanged(world: World, entity: Entity, trait: Trait) {
+    if (isAspect(trait) && aspectHooks.depth === 0) {
+        (trait[$internal] as unknown as AspectOperations).commit(world, entity);
+        return;
+    }
+
     const data = markChanged(world, entity, trait);
     if (!data) return;
+
     for (const sub of data.changeSubscriptions) sub(entity);
+
+    if (!isAspect(trait)) aspectHooks.changed?.(world, entity, trait);
 }
 
 export function setPairChanged(world: World, entity: Entity, trait: Trait, target: Entity) {

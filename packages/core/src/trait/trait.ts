@@ -1,3 +1,6 @@
+import { aspectHooks } from '../aspect/aspect-hooks';
+import type { AspectOperations } from '../aspect/types';
+import { isAspect } from '../aspect/is-aspect';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -48,6 +51,10 @@ import type {
 const tagSchema = Object.freeze({});
 let traitId = 0;
 
+export function allocateTraitId() {
+    return traitId++;
+}
+
 function createTrait(schema?: undefined | Record<string, never>): TagTrait;
 function createTrait<S extends Schema>(schema: S): Trait<Norm<S>>;
 function createTrait<S extends Schema>(schema: S = tagSchema as S): Trait<Norm<S>> {
@@ -57,7 +64,7 @@ function createTrait<S extends Schema>(schema: S = tagSchema as S): Trait<Norm<S
 
     validateSchema(schema);
 
-    const id = traitId++;
+    const id = allocateTraitId();
     const Trait = Object.assign((params: TraitValue<Norm<S>>) => [Trait, params], {
         [$internal]: {
             id: id,
@@ -92,6 +99,11 @@ function createTrait<S extends Schema>(schema: S = tagSchema as S): Trait<Norm<S
 export const trait = createTrait;
 
 export function registerTrait(world: World, trait: Trait) {
+    if (isAspect(trait)) {
+        (trait[$internal] as unknown as AspectOperations).register(world);
+        return;
+    }
+
     const ctx = world[$internal];
     const traitCtx = trait[$internal];
 
@@ -149,6 +161,11 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
             trait = config as Trait;
         }
 
+        if (isAspect(trait)) {
+            (trait[$internal] as unknown as AspectOperations).addTo(world, entity, params);
+            continue;
+        }
+
         // Add the trait to the entity
         const data = addTraitToEntity(world, entity, trait);
         if (!data) continue; // Already had the trait
@@ -170,6 +187,7 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
 
         // Call add subscriptions after values are set
         for (const sub of data.addSubscriptions) sub(entity);
+        aspectHooks.added?.(world, entity, trait);
     }
 }
 
@@ -233,9 +251,15 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
             continue;
         }
 
+        if (isAspect(trait)) {
+            (trait[$internal] as unknown as AspectOperations).removeFrom(world, entity);
+            continue;
+        }
+
         if (!hasTrait(world, entity, trait)) continue;
 
         const traitCtx = trait[$internal];
+        aspectHooks.removing?.(world, entity, trait);
 
         if (traitCtx.relation) {
             // Relation trait: emit per-pair removes, then teardown
@@ -256,6 +280,7 @@ export function removeTrait(world: World, entity: Entity, ...traits: (Trait | Re
         }
 
         removeTraitFromEntity(world, entity, trait);
+        aspectHooks.removed?.(world, entity, trait);
     }
 }
 
@@ -410,6 +435,21 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
     value: any,
     triggerChanged: boolean
 ) {
+    if (isAspect(trait)) {
+        if (!hasTraitInstance(world[$internal].traitInstances, trait)) registerTrait(world, trait);
+        const ctx = trait[$internal];
+        const store = getStore(world, trait);
+        const index = getEntityId(entity);
+        value instanceof Function && (value = value(ctx.get(index, store)));
+        if (triggerChanged) {
+            ctx.set(index, store, value);
+            setChanged(world, entity, trait);
+        } else {
+            ctx.fastSet(index, store, value);
+        }
+        return;
+    }
+
     const ctx = trait[$internal];
     const store = getStore(world, trait);
     const index = getEntityId(entity);
@@ -424,7 +464,7 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
 /**
  * Core logic for adding a trait to an entity.
  */
-/* @inline */ function addTraitToEntity(
+/* @inline */ export function addTraitToEntity(
     world: World,
     entity: Entity,
     trait: Trait
@@ -484,7 +524,7 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
  * Core logic for removing a trait from an entity.
  * Does not emit remove subscriptions — callers handle emission.
  */
-function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void {
+export function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void {
     if (!hasTrait(world, entity, trait)) return;
 
     const ctx = world[$internal];

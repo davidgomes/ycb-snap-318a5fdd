@@ -1,6 +1,6 @@
 ---
 name: koota
-description: Real-time ECS state management for TypeScript and React. Use when the user mentions koota, ECS, entities, traits, queries, or building data-oriented applications.
+description: Real-time ECS state management for TypeScript and React. Use when the user mentions koota, ECS, entities, traits, aspects, queries, or building data-oriented applications.
 ---
 
 # Koota ECS
@@ -11,6 +11,7 @@ Koota manages state using entities with composable traits.
 
 - **Entity** - A unique identifier pointing to data defined by traits. Spawned from a world.
 - **Trait** - A reusable data definition. Can be schema-based (SoA), callback-based (AoS), or a tag.
+- **Aspect** - A named group of traits. Queries, entity accessors, and lifecycle hooks treat the group as one unit.
 - **Relation** - A directional connection between entities to build graphs.
 - **World** - The context for all entities and their data (traits).
 - **Archetype** - A unique combination of traits that entities share.
@@ -140,6 +141,30 @@ world.query(Position, Velocity).updateEach(([pos, vel]) => {
   pos.y += vel.y
 })
 ```
+
+## Aspects
+
+`createAspect` groups two or more traits so systems can query and mutate them together. Nested aspects flatten. Overlapping field names and relations throw when the aspect is created. Tag traits are allowed.
+
+```typescript
+import { createAspect, trait } from 'koota'
+
+const Position = trait({ x: 0, y: 0 })
+const Velocity = trait({ vx: 0, vy: 0 })
+const Movement = createAspect(Position, Velocity)
+
+const entity = world.spawn(Movement({ x: 1, vx: 2 }))
+entity.get(Movement) // { x, y, vx, vy } or undefined when any constituent is missing
+entity.set(Movement, { x: 5 }) // writes x onto Position and emits per-trait changes
+
+world.query(Movement).updateEach(([movement]) => {
+  movement.x += movement.vx
+})
+```
+
+`query(Movement)` matches entities that have every constituent. `Not(Movement)` matches entities missing at least one. `Added` / `Removed` follow the transition into or out of that complete set. `Changed` and `onChange` run when any constituent changes while all of them are present. `onAdd` / `onRemove` run on that same completeness transition.
+
+Each `createAspect` call returns a new instance.
 
 ## Entities
 

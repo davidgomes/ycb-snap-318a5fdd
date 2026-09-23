@@ -24,21 +24,21 @@ const Position = trait({ x: 0, y: 0, z: 0 })
 A schema supports primitive values with **no** nested objects or arrays. In cases where the data needs to initialized for each instance of the trait, or complex structures are required, a callback initializer can be used.
 
 > [!TIP]
-> Take note of the difference between schema-based and 
-callback-based traits as shown below
+> Take note of the difference between schema-based and
+> callback-based traits as shown below
 
 ```js
 // ❌ Arrays and objects are not allowed in trait schemas
 const Inventory = trait({
   items: [],
-  vec3: { x: 0, y: 0, z: 0},
+  vec3: { x: 0, y: 0, z: 0 },
   max: 10,
 })
 
 // ✅ Use a callback initializer for arrays and objects
 const Inventory = trait({
   items: () => [],
-  vec3: () => ({ x: 0, y: 0, z: 0}),
+  vec3: () => ({ x: 0, y: 0, z: 0 }),
   max: 10,
 })
 ```
@@ -167,6 +167,30 @@ const Attacker = trait<Pick<AttackerSchema, keyof AttackerSchema>>({
   startedAt: null,
 })
 ```
+
+## Aspects
+
+`createAspect` builds one handle for two or more traits. Field names must be unique across the group. Relations are rejected. Tag traits are allowed, and nested aspects are flattened to their traits.
+
+```js
+import { createAspect } from 'koota'
+
+const Movement = createAspect(Position, Velocity)
+
+const entity = world.spawn(Movement({ x: 1, vx: 2 }))
+entity.has(Movement) // true when Position and Velocity are both present
+entity.get(Movement) // { x, y, vx, vy }, or undefined if either trait is missing
+entity.set(Movement, { x: 4 }) // writes x to Position
+entity.remove(Movement) // removes Position and Velocity
+
+world.query(Movement).updateEach(([movement]) => {
+  movement.x += movement.vx
+})
+```
+
+Each call returns a distinct aspect. The result exposes `id`, `traits`, and `schema`.
+
+Query modifiers treat that aspect as a single parameter. `Not` matches an entity missing any constituent. `Added` and `Removed` match the transition into and out of the full set. `Changed`, `onAdd`, `onRemove`, and `onChange` follow that same completeness rule: change events run only while every constituent is present.
 
 ## Accessing the store directly
 

@@ -1,3 +1,4 @@
+import { isAspect } from '../aspect/is-aspect';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -204,13 +205,26 @@ export function createQueryResult<T extends QueryParameter[]>(
     untrackedIndices: number[]
 ) {
     for (let i = 0; i < traits.length; i++) {
-        const trait = traits[i];
-        const hasTracked = world[$internal].trackedTraits.has(trait);
-        const hasChanged = query.hasChangedModifiers && query.changedTraits.has(trait);
-
-        if (hasTracked || hasChanged) trackedIndices.push(i);
+        if (isObserved(traits[i], world, query)) trackedIndices.push(i);
         else untrackedIndices.push(i);
     }
+}
+
+function isObserved(trait: Trait, world: World, query: QueryInstance) {
+    const internals = world[$internal];
+    if (internals.trackedTraits.has(trait)) return true;
+    if (query.hasChangedModifiers && query.changedTraits.has(trait)) return true;
+
+    if (isAspect(trait)) {
+        const parts = trait.traits;
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            if (internals.trackedTraits.has(part)) return true;
+            if (query.hasChangedModifiers && query.changedTraits.has(part)) return true;
+        }
+    }
+
+    return false;
 }
 
 /* @inline */ function createSnapshots(

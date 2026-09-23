@@ -4,7 +4,7 @@ description: Using modifiers with queries
 nav: 6
 ---
 
-Modifiers are used to filter query results enabling powerful patterns. All modifiers can be mixed together.
+Modifiers are used to filter query results enabling powerful patterns. All modifiers can be mixed together. An aspect counts as one parameter: `Not` excludes entities that have every constituent, and `Added`, `Removed`, and `Changed` follow the transition of that whole set.
 
 ## Not
 

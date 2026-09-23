@@ -19,7 +19,7 @@ npx skills add pmndrs/koota
 Traits are the building blocks of your state. They represent slices of data with specific meanings.
 
 ```js
-import { trait } from 'koota'
+import { createAspect, trait } from 'koota'
 
 // Basic trait with default values
 const Position = trait({ x: 0, y: 0 })
@@ -31,6 +31,10 @@ const Mesh = trait(() => new THREE.Mesh())
 
 // Tag trait (no data)
 const IsActive = trait()
+
+// Aspect: one handle for traits whose field names do not overlap
+const Health = trait({ hp: 100 })
+const Body = createAspect(Position, Health)
 ```
 
 ### Spawn entities

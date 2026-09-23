@@ -12,6 +12,23 @@ Complete guide to querying entities in Koota.
 - [Query + select](#query--select) - Select subset of traits for updates
 - [Direct store access](#direct-store-access) - useStores for performance
 
+## Aspects
+
+An aspect is a query parameter for every constituent trait. `readEach` yields one merged object. `updateEach` writes fields back to the owning traits.
+
+```typescript
+const Movement = createAspect(Position, Velocity)
+
+world.query(Movement).updateEach(([movement]) => {
+  movement.x += movement.vx
+})
+
+world.query(Not(Movement)) // missing Position or Velocity
+world.query(Added(Movement)) // just gained the full set
+world.query(Removed(Movement)) // just lost the full set
+world.query(Changed(Movement)) // any constituent changed while complete
+```
+
 ## Basic queries
 
 Queries fetch entities that share specific traits (archetypes).
