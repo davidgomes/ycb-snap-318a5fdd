@@ -646,32 +646,66 @@ func (p *Parser) parseIdentList() *IdentList {
 	}
 
 	var params []*Ident
+	var ext []*FuncParam
+	allSimple := true
 	lparen := p.expect(token.LParen)
 	isVarArgs := false
 	if p.token != token.RParen {
-		if p.token == token.Ellipsis {
-			isVarArgs = true
-			p.next()
-		}
-
-		params = append(params, p.parseIdent())
-		for !isVarArgs && p.token == token.Comma {
-			p.next()
+		for {
 			if p.token == token.Ellipsis {
 				isVarArgs = true
 				p.next()
+				id := p.parseIdent()
+				params = append(params, id)
+				ext = append(ext, &FuncParam{Name: id})
+				break
 			}
-			params = append(params, p.parseIdent())
+			if p.token == token.LBrack || p.token == token.LBrace {
+				allSimple = false
+				pr := p.parseBindingPattern()
+				if pr.soft || pr.pat == nil {
+					p.errorExpected(p.pos, "identifier")
+					pr.pat = &BindingPattern{
+						LPos: p.pos,
+						RPos: p.pos,
+						Kind: p.token,
+					}
+				}
+				fp := &FuncParam{Pattern: pr.pat}
+				if p.token == token.Assign {
+					p.next()
+					fp.Default = p.parseExpr()
+				}
+				ext = append(ext, fp)
+			} else {
+				id := p.parseIdent()
+				fp := &FuncParam{Name: id}
+				params = append(params, id)
+				if p.token == token.Assign {
+					allSimple = false
+					p.next()
+					fp.Default = p.parseExpr()
+				}
+				ext = append(ext, fp)
+			}
+			if isVarArgs || p.token != token.Comma {
+				break
+			}
+			p.next()
 		}
 	}
 
 	rparen := p.expect(token.RParen)
-	return &IdentList{
+	il := &IdentList{
 		LParen:  lparen,
 		RParen:  rparen,
 		VarArgs: isVarArgs,
 		List:    params,
 	}
+	if !allSimple {
+		il.Params = ext
+	}
+	return il
 }
 
 func (p *Parser) parseStmt() (stmt Stmt) {
@@ -942,6 +976,10 @@ func (p *Parser) parseExportStmt() Stmt {
 func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 	if p.trace {
 		defer untracep(tracep(p, "SimpleStmt"))
+	}
+
+	if stmt, ok := p.tryDestructureAssign(); ok {
+		return stmt
 	}
 
 	x := p.parseExprList()

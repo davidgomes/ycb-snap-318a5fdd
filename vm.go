@@ -587,11 +587,15 @@ func (v *VM) run() {
 						v.sp = spStart + 1
 					}
 				}
-				if numArgs != callee.NumParameters {
+				if !validArgCount(callee, numArgs) {
 					if callee.VarArgs {
 						v.err = fmt.Errorf(
 							"wrong number of arguments: want>=%d, got=%d",
 							callee.NumParameters-1, numArgs)
+					} else if callee.HasMinArgs {
+						v.err = fmt.Errorf(
+							"wrong number of arguments: want=%d..%d, got=%d",
+							callee.MinArgs, callee.NumParameters, numArgs)
 					} else {
 						v.err = fmt.Errorf(
 							"wrong number of arguments: want=%d, got=%d",
@@ -610,6 +614,13 @@ func (v *VM) run() {
 							v.stack[v.curFrame.basePointer+p] =
 								v.stack[v.sp-numArgs+p]
 						}
+						for p := numArgs; p < callee.NumParameters; p++ {
+							v.stack[v.curFrame.basePointer+p] = nil
+						}
+						if callee.VarArgs && numArgs < callee.NumParameters {
+							v.stack[v.curFrame.basePointer+callee.NumParameters-1] =
+								&Array{}
+						}
 						v.sp -= numArgs + 1
 						v.ip = -1 // reset IP to beginning of the frame
 						continue
@@ -626,6 +637,13 @@ func (v *VM) run() {
 				v.curFrame.fn = callee
 				v.curFrame.freeVars = callee.Free
 				v.curFrame.basePointer = v.sp - numArgs
+				for i := numArgs; i < callee.NumParameters; i++ {
+					v.stack[v.curFrame.basePointer+i] = nil
+				}
+				if callee.VarArgs && numArgs < callee.NumParameters {
+					v.stack[v.curFrame.basePointer+callee.NumParameters-1] =
+						&Array{}
+				}
 				v.curInsts = callee.Instructions
 				v.ip = -1
 				v.framesIndex++
@@ -770,6 +788,8 @@ func (v *VM) run() {
 				NumLocals:     fn.NumLocals,
 				NumParameters: fn.NumParameters,
 				VarArgs:       fn.VarArgs,
+				HasMinArgs:    fn.HasMinArgs,
+				MinArgs:       fn.MinArgs,
 				SourceMap:     fn.SourceMap,
 				Free:          free,
 			}
@@ -867,12 +887,125 @@ func (v *VM) run() {
 			val := iterator.(Iterator).Value()
 			v.stack[v.sp] = val
 			v.sp++
+		case parser.OpHasIndex:
+			index := v.stack[v.sp-1]
+			left := v.stack[v.sp-2]
+			v.sp -= 2
+			ok, err := indexExists(left, index)
+			if err != nil {
+				v.err = err
+				return
+			}
+			if ok {
+				v.stack[v.sp] = TrueValue
+			} else {
+				v.stack[v.sp] = FalseValue
+			}
+			v.sp++
+		case parser.OpArrayTail:
+			start := v.stack[v.sp-1]
+			left := v.stack[v.sp-2]
+			v.sp -= 2
+			startInt, ok := start.(*Int)
+			if !ok {
+				v.err = fmt.Errorf("invalid index type: %s", start.TypeName())
+				return
+			}
+			var elems []Object
+			switch left := left.(type) {
+			case *Undefined:
+				elems = nil
+			case *Array:
+				elems = left.Value
+			case *ImmutableArray:
+				elems = left.Value
+			default:
+				v.err = fmt.Errorf("not indexable: %s", left.TypeName())
+				return
+			}
+			from := int(startInt.Value)
+			if from < 0 {
+				from = 0
+			}
+			if from > len(elems) {
+				from = len(elems)
+			}
+			tail := make([]Object, len(elems)-from)
+			copy(tail, elems[from:])
+			var val Object = &Array{Value: tail}
+			v.allocs--
+			if v.allocs == 0 {
+				v.err = ErrObjectAllocLimit
+				return
+			}
+			v.stack[v.sp] = val
+			v.sp++
+		case parser.OpIsNil:
+			if v.stack[v.sp-1] == nil {
+				v.stack[v.sp-1] = TrueValue
+			} else {
+				v.stack[v.sp-1] = FalseValue
+			}
 		case parser.OpSuspend:
 			return
 		default:
 			v.err = fmt.Errorf("unknown opcode: %d", v.curInsts[v.ip])
 			return
 		}
+	}
+}
+
+func validArgCount(fn *CompiledFunction, numArgs int) bool {
+	if fn.VarArgs {
+		min := fn.NumParameters - 1
+		if fn.HasMinArgs {
+			min = fn.MinArgs
+		}
+		return numArgs >= min
+	}
+	if fn.HasMinArgs {
+		return numArgs >= fn.MinArgs && numArgs <= fn.NumParameters
+	}
+	return numArgs == fn.NumParameters
+}
+
+func indexExists(obj, index Object) (bool, error) {
+	switch obj := obj.(type) {
+	case *Undefined:
+		return false, nil
+	case *Array:
+		i, ok := index.(*Int)
+		if !ok {
+			return false, fmt.Errorf("invalid index type: %s", index.TypeName())
+		}
+		idx := int(i.Value)
+		return idx >= 0 && idx < len(obj.Value), nil
+	case *ImmutableArray:
+		i, ok := index.(*Int)
+		if !ok {
+			return false, fmt.Errorf("invalid index type: %s", index.TypeName())
+		}
+		idx := int(i.Value)
+		return idx >= 0 && idx < len(obj.Value), nil
+	case *Map:
+		key, ok := index.(*String)
+		if !ok {
+			return false, fmt.Errorf("invalid index type: %s", index.TypeName())
+		}
+		_, exists := obj.Value[key.Value]
+		return exists, nil
+	case *ImmutableMap:
+		key, ok := index.(*String)
+		if !ok {
+			return false, fmt.Errorf("invalid index type: %s", index.TypeName())
+		}
+		_, exists := obj.Value[key.Value]
+		return exists, nil
+	default:
+		if obj == nil {
+			return false, nil
+		}
+		return false, fmt.Errorf("not indexable: %s", obj.TypeName())
 	}
 }
 

@@ -574,8 +574,11 @@ type CompiledFunction struct {
 	NumLocals     int // number of local variables (including function parameters)
 	NumParameters int
 	VarArgs       bool
-	SourceMap     map[int]parser.Pos
-	Free          []*ObjectPtr
+	// HasMinArgs is true when trailing parameters have defaults and may be omitted.
+	HasMinArgs bool
+	MinArgs    int
+	SourceMap  map[int]parser.Pos
+	Free       []*ObjectPtr
 }
 
 // TypeName returns the name of the type.
@@ -600,6 +603,8 @@ func (o *CompiledFunction) Copy() Object {
 		NumLocals:     o.NumLocals,
 		NumParameters: o.NumParameters,
 		VarArgs:       o.VarArgs,
+		HasMinArgs:    o.HasMinArgs,
+		MinArgs:       o.MinArgs,
 		Free:          append([]*ObjectPtr{}, o.Free...), // DO NOT Copy() of elements; these are variable pointers
 	}
 }

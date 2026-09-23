@@ -297,14 +297,16 @@ func addPrints(file *parser.File) *parser.File {
 		case *parser.AssignStmt:
 			stmts = append(stmts, s)
 
-			stmts = append(stmts, &parser.ExprStmt{
-				Expr: &parser.CallExpr{
-					Func: &parser.Ident{
-						Name: "__repl_println__",
-					},
-					Args: s.LHS,
-				},
-			})
+			args := s.LHS
+			if len(s.LHS) == 1 {
+				if pat, ok := s.LHS[0].(*parser.BindingPattern); ok {
+					for _, name := range bindingNames(pat) {
+						stmts = append(stmts, replPrint(name))
+					}
+					continue
+				}
+			}
+			stmts = append(stmts, replPrint(args...))
 		default:
 			stmts = append(stmts, s)
 		}
@@ -313,6 +315,29 @@ func addPrints(file *parser.File) *parser.File {
 		InputFile: file.InputFile,
 		Stmts:     stmts,
 	}
+}
+
+func replPrint(args ...parser.Expr) parser.Stmt {
+	return &parser.ExprStmt{
+		Expr: &parser.CallExpr{
+			Func: &parser.Ident{Name: "__repl_println__"},
+			Args: args,
+		},
+	}
+}
+
+func bindingNames(pat *parser.BindingPattern) []parser.Expr {
+	var names []parser.Expr
+	for _, el := range pat.Elements {
+		if el.Nested != nil {
+			names = append(names, bindingNames(el.Nested)...)
+			continue
+		}
+		if el.Name != nil && el.Name.Name != "" && el.Name.Name != "_" {
+			names = append(names, el.Name)
+		}
+	}
+	return names
 }
 
 func basename(s string) string {

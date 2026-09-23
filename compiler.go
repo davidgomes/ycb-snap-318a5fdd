@@ -43,22 +43,23 @@ func (e *CompilerError) Error() string {
 
 // Compiler compiles the AST into a bytecode.
 type Compiler struct {
-	file            *parser.SourceFile
-	parent          *Compiler
-	modulePath      string
-	importDir       string
-	importFileExt   []string
-	constants       []Object
-	symbolTable     *SymbolTable
-	scopes          []compilationScope
-	scopeIndex      int
-	modules         ModuleGetter
-	compiledModules map[string]*CompiledFunction
-	allowFileImport bool
-	loops           []*loop
-	loopIndex       int
-	trace           io.Writer
-	indent          int
+	file             *parser.SourceFile
+	parent           *Compiler
+	modulePath       string
+	importDir        string
+	importFileExt    []string
+	constants        []Object
+	symbolTable      *SymbolTable
+	scopes           []compilationScope
+	scopeIndex       int
+	modules          ModuleGetter
+	compiledModules  map[string]*CompiledFunction
+	allowFileImport  bool
+	loops            []*loop
+	loopIndex        int
+	destructureTemps int
+	trace            io.Writer
+	indent           int
 }
 
 // NewCompiler creates a Compiler.
@@ -386,14 +387,14 @@ func (c *Compiler) Compile(node parser.Node) error {
 			c.emit(node, parser.OpNull)
 		}
 		c.emit(node, parser.OpSliceIndex)
+	case *parser.BindingPattern:
+		return c.errorf(node, "invalid destructuring pattern")
 	case *parser.FuncLit:
 		c.enterScope()
 
-		for _, p := range node.Type.Params.List {
-			s := c.symbolTable.Define(p.Name)
-
-			// function arguments is not assigned directly.
-			s.LocalAssigned = true
+		meta, err := c.compileFuncParams(node)
+		if err != nil {
+			return err
 		}
 
 		if err := c.Compile(node.Body); err != nil {
@@ -463,8 +464,10 @@ func (c *Compiler) Compile(node parser.Node) error {
 		compiledFunction := &CompiledFunction{
 			Instructions:  instructions,
 			NumLocals:     numLocals,
-			NumParameters: len(node.Type.Params.List),
-			VarArgs:       node.Type.Params.VarArgs,
+			NumParameters: meta.numParams,
+			VarArgs:       meta.varArgs,
+			HasMinArgs:    meta.hasMin,
+			MinArgs:       meta.minArgs,
 			SourceMap:     sourceMap,
 		}
 		if len(freeSymbols) > 0 {
@@ -631,8 +634,8 @@ func (c *Compiler) SetImportDir(dir string) {
 //
 // Use this method if you want other source file extension than ".tengo".
 //
-//     // this will search for *.tengo, *.foo, *.bar
-//     err := c.SetImportFileExt(".tengo", ".foo", ".bar")
+//	// this will search for *.tengo, *.foo, *.bar
+//	err := c.SetImportFileExt(".tengo", ".foo", ".bar")
 //
 // This function requires at least one argument, since it will replace the
 // current list of extension name.
@@ -665,6 +668,32 @@ func (c *Compiler) compileAssign(
 	op token.Token,
 ) error {
 	numLHS, numRHS := len(lhs), len(rhs)
+	if numLHS == 1 {
+		if pat, ok := lhs[0].(*parser.BindingPattern); ok {
+			if op != token.Define {
+				return c.errorf(node, "cannot use destructuring with =")
+			}
+			if numRHS != 1 {
+				return c.errorf(node, "tuple assignment not allowed")
+			}
+			if err := c.validatePattern(node, pat); err != nil {
+				return err
+			}
+			if err := c.Compile(rhs[0]); err != nil {
+				return err
+			}
+			return c.compileDestructure(node, pat)
+		}
+		switch lhs[0].(type) {
+		case *parser.ArrayLit, *parser.MapLit:
+			if op == token.Assign {
+				return c.errorf(node, "cannot use destructuring with =")
+			}
+			if op == token.Define {
+				return c.errorf(node, "invalid destructuring pattern")
+			}
+		}
+	}
 	if numLHS > 1 || numRHS > 1 {
 		return c.errorf(node, "tuple assignment not allowed")
 	}
@@ -1335,6 +1364,258 @@ func (c *Compiler) getPathModule(moduleName string) (pathFile string, err error)
 	}
 
 	return "", fmt.Errorf("module '%s' not found at: %s", moduleName, pathFile)
+}
+
+type funcParamMeta struct {
+	numParams int
+	varArgs   bool
+	hasMin    bool
+	minArgs   int
+}
+
+func (c *Compiler) compileFuncParams(node *parser.FuncLit) (funcParamMeta, error) {
+	params := node.Type.Params
+	meta := funcParamMeta{
+		numParams: params.NumFields(),
+		varArgs:   params.VarArgs,
+	}
+	if len(params.Params) == 0 {
+		for _, p := range params.List {
+			s := c.symbolTable.Define(p.Name)
+			// function arguments are not assigned directly
+			s.LocalAssigned = true
+		}
+		return meta, nil
+	}
+
+	meta.numParams = len(params.Params)
+	// Trailing parameters with defaults may be omitted. A default that is
+	// followed by a required parameter is kept, but the call must still pass
+	// that required parameter. The variadic parameter is not part of that
+	// trailing-default run.
+	end := len(params.Params)
+	if params.VarArgs && end > 0 {
+		end--
+	}
+	minArgs := end
+	for i := end - 1; i >= 0; i-- {
+		if params.Params[i].Default != nil {
+			minArgs = i
+		} else {
+			break
+		}
+	}
+	if minArgs < end {
+		meta.hasMin = true
+		meta.minArgs = minArgs
+	}
+
+	type paramSlot struct {
+		sym   *Symbol
+		param *parser.FuncParam
+	}
+	slots := make([]paramSlot, len(params.Params))
+	for i, p := range params.Params {
+		if p.Pattern != nil {
+			if err := c.validatePattern(node, p.Pattern); err != nil {
+				return meta, err
+			}
+		}
+		name := "_"
+		if p.Pattern != nil {
+			name = fmt.Sprintf(":p%d", i)
+		} else if p.Name != nil && p.Name.Name != "" {
+			name = p.Name.Name
+		}
+		sym := c.symbolTable.Define(name)
+		sym.LocalAssigned = true
+		slots[i] = paramSlot{sym: sym, param: p}
+	}
+
+	for _, sl := range slots {
+		if sl.param.Default != nil {
+			c.emitLoad(node, sl.sym)
+			c.emit(node, parser.OpIsNil)
+			skip := c.emit(node, parser.OpJumpFalsy, 0)
+			if err := c.Compile(sl.param.Default); err != nil {
+				return meta, err
+			}
+			c.emitStore(node, sl.sym, true)
+			c.changeOperand(skip, len(c.currentInstructions()))
+		}
+		if sl.param.Pattern != nil {
+			c.emitLoad(node, sl.sym)
+			if err := c.compileDestructure(node, sl.param.Pattern); err != nil {
+				return meta, err
+			}
+		}
+	}
+	return meta, nil
+}
+
+func (c *Compiler) validatePattern(node parser.Node, pat *parser.BindingPattern) error {
+	if pat == nil {
+		return nil
+	}
+	if pat.Kind == token.LBrace {
+		for _, el := range pat.Elements {
+			if el.Rest {
+				return c.errorf(node, "rest not supported in map patterns")
+			}
+			if el.Nested != nil {
+				if err := c.validatePattern(node, el.Nested); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	seenRest := false
+	for _, el := range pat.Elements {
+		if seenRest {
+			return c.errorf(node, "rest element must be last")
+		}
+		if el.Rest {
+			seenRest = true
+		}
+		if el.Nested != nil {
+			if err := c.validatePattern(node, el.Nested); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c *Compiler) compileDestructure(node parser.Node, pat *parser.BindingPattern) error {
+	if len(pat.Elements) == 0 {
+		c.emit(node, parser.OpPop)
+		return nil
+	}
+	c.destructureTemps++
+	tmp := c.symbolTable.Define(fmt.Sprintf(":d%d", c.destructureTemps))
+	c.emitStore(node, tmp, false)
+
+	if pat.Kind == token.LBrace {
+		for _, el := range pat.Elements {
+			if err := c.compileMapElem(node, tmp, el); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	index := 0
+	for _, el := range pat.Elements {
+		if el.Rest {
+			c.emitLoad(node, tmp)
+			c.emit(node, parser.OpConstant, c.addConstant(&Int{Value: int64(index)}))
+			c.emit(node, parser.OpArrayTail)
+			if err := c.bindDestructure(node, el); err != nil {
+				return err
+			}
+			continue
+		}
+		c.emitLoad(node, tmp)
+		c.emit(node, parser.OpConstant, c.addConstant(&Int{Value: int64(index)}))
+		c.emit(node, parser.OpHasIndex)
+		missing := c.emit(node, parser.OpJumpFalsy, 0)
+		c.emitLoad(node, tmp)
+		c.emit(node, parser.OpConstant, c.addConstant(&Int{Value: int64(index)}))
+		c.emit(node, parser.OpIndex)
+		done := c.emit(node, parser.OpJump, 0)
+		c.changeOperand(missing, len(c.currentInstructions()))
+		if el.Default != nil {
+			if err := c.Compile(el.Default); err != nil {
+				return err
+			}
+		} else {
+			c.emit(node, parser.OpNull)
+		}
+		c.changeOperand(done, len(c.currentInstructions()))
+		if err := c.bindDestructure(node, el); err != nil {
+			return err
+		}
+		index++
+	}
+	return nil
+}
+
+func (c *Compiler) compileMapElem(node parser.Node, tmp *Symbol, el *parser.BindingElem) error {
+	if len(el.Key) > MaxStringLen {
+		return c.error(node, ErrStringLimit)
+	}
+	keyIdx := c.addConstant(&String{Value: el.Key})
+	c.emitLoad(node, tmp)
+	c.emit(node, parser.OpConstant, keyIdx)
+	c.emit(node, parser.OpHasIndex)
+	missing := c.emit(node, parser.OpJumpFalsy, 0)
+	c.emitLoad(node, tmp)
+	c.emit(node, parser.OpConstant, keyIdx)
+	c.emit(node, parser.OpIndex)
+	done := c.emit(node, parser.OpJump, 0)
+	c.changeOperand(missing, len(c.currentInstructions()))
+	if el.Default != nil {
+		if err := c.Compile(el.Default); err != nil {
+			return err
+		}
+	} else {
+		c.emit(node, parser.OpNull)
+	}
+	c.changeOperand(done, len(c.currentInstructions()))
+	return c.bindDestructure(node, el)
+}
+
+func (c *Compiler) bindDestructure(node parser.Node, el *parser.BindingElem) error {
+	if el.Nested != nil {
+		return c.compileDestructure(node, el.Nested)
+	}
+	name := "_"
+	if el.Name != nil {
+		name = el.Name.Name
+	}
+	if name == "_" || name == "" {
+		c.emit(node, parser.OpPop)
+		return nil
+	}
+	if _, depth, exists := c.symbolTable.Resolve(name, false); depth == 0 && exists {
+		return c.errorf(node, "'%s' redeclared in this block", name)
+	}
+	sym := c.symbolTable.Define(name)
+	c.emitStore(node, sym, false)
+	return nil
+}
+
+func (c *Compiler) emitLoad(node parser.Node, sym *Symbol) {
+	switch sym.Scope {
+	case ScopeGlobal:
+		c.emit(node, parser.OpGetGlobal, sym.Index)
+	case ScopeLocal:
+		c.emit(node, parser.OpGetLocal, sym.Index)
+	case ScopeFree:
+		c.emit(node, parser.OpGetFree, sym.Index)
+	default:
+		panic(fmt.Errorf("invalid load scope: %s", sym.Scope))
+	}
+}
+
+// emitStore writes the value on the stack into sym.
+// alreadySet is true when the symbol's slot already exists (parameters).
+func (c *Compiler) emitStore(node parser.Node, sym *Symbol, alreadySet bool) {
+	switch sym.Scope {
+	case ScopeGlobal:
+		c.emit(node, parser.OpSetGlobal, sym.Index)
+	case ScopeLocal:
+		if !alreadySet && !sym.LocalAssigned {
+			c.emit(node, parser.OpDefineLocal, sym.Index)
+		} else {
+			c.emit(node, parser.OpSetLocal, sym.Index)
+		}
+		sym.LocalAssigned = true
+	case ScopeFree:
+		c.emit(node, parser.OpSetFree, sym.Index)
+	default:
+		panic(fmt.Errorf("invalid store scope: %s", sym.Scope))
+	}
 }
 
 func resolveAssignLHS(

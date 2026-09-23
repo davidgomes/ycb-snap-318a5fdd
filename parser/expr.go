@@ -599,3 +599,64 @@ func (e *UndefinedLit) End() Pos {
 func (e *UndefinedLit) String() string {
 	return "undefined"
 }
+
+// BindingPattern is an array or map destructuring pattern.
+// Kind is token.LBrack for arrays and token.LBrace for maps.
+type BindingPattern struct {
+	LPos     Pos
+	RPos     Pos
+	Kind     token.Token
+	Elements []*BindingElem
+}
+
+func (e *BindingPattern) exprNode() {}
+
+// Pos returns the position of first character belonging to the node.
+func (e *BindingPattern) Pos() Pos {
+	return e.LPos
+}
+
+// End returns the position of first character immediately after the node.
+func (e *BindingPattern) End() Pos {
+	return e.RPos + 1
+}
+
+func (e *BindingPattern) String() string {
+	var elements []string
+	for _, el := range e.Elements {
+		elements = append(elements, el.String())
+	}
+	if e.Kind == token.LBrack {
+		return "[" + strings.Join(elements, ", ") + "]"
+	}
+	return "{" + strings.Join(elements, ", ") + "}"
+}
+
+// BindingElem is one element of a destructuring pattern.
+type BindingElem struct {
+	Key     string // map key; empty for array elements
+	KeyPos  Pos
+	Name    *Ident
+	Nested  *BindingPattern
+	Default Expr
+	Rest    bool
+}
+
+func (e *BindingElem) String() string {
+	s := ""
+	if e.Rest {
+		s = "..."
+	}
+	if e.Key != "" && (e.Name == nil || e.Name.Name != e.Key || e.Nested != nil || e.Rest) {
+		s += e.Key + ": "
+	}
+	if e.Nested != nil {
+		s += e.Nested.String()
+	} else if e.Name != nil {
+		s += e.Name.String()
+	}
+	if e.Default != nil {
+		s += " = " + e.Default.String()
+	}
+	return s
+}
