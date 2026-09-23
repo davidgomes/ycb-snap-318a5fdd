@@ -33,6 +33,8 @@ class Buffer(object):
         self.data = [] # Buffer
         self.size = 0  # Length
         self.buffer_fill_size = buffer_fill_size
+        self._high_water = None
+        self._low_water = None
 
     def __len__(self):
         """
@@ -170,6 +172,83 @@ class Buffer(object):
         self.size -= len(data)
 
         return data
+
+    def set_watermarks(self, high=None, low=None):
+        """set_watermarks(high=None, low=None)
+
+        Set the high and low water marks used by :attr:`over_high_water`
+        and :attr:`under_low_water`.
+
+        ``None`` leaves the corresponding mark unset. An unset mark never
+        trips: :attr:`over_high_water` and :attr:`under_low_water` are
+        ``False`` until a mark is installed.
+
+        Arguments:
+            high(int): High water mark, or ``None`` to unset it.
+            low(int): Low water mark, or ``None`` to unset it.
+
+        Raises:
+            ValueError: ``low`` is greater than ``high``.
+
+        Examples:
+
+            >>> b = Buffer()
+            >>> b.high_water is None and b.low_water is None
+            True
+            >>> b.over_high_water or b.under_low_water
+            False
+            >>> b.set_watermarks(10, 20)
+            Traceback (most recent call last):
+                ...
+            ValueError: low water mark cannot be greater than high water mark
+            >>> b.set_watermarks(10, 4)
+            >>> b.high_water == 10 and b.low_water == 4
+            True
+            >>> b.add(b'abcdef')
+            >>> b.over_high_water or b.under_low_water
+            False
+            >>> b.add(b'WXYZ')
+            >>> b.over_high_water
+            True
+            >>> b.under_low_water
+            False
+            >>> _ = b.get(6)
+            >>> b.over_high_water
+            False
+            >>> b.under_low_water
+            True
+            >>> b.set_watermarks(None, None)
+            >>> b.over_high_water or b.under_low_water
+            False
+        """
+        if high is not None and low is not None and low > high:
+            raise ValueError('low water mark cannot be greater than high water mark')
+        self._high_water = high
+        self._low_water = low
+
+    @property
+    def high_water(self):
+        """High water mark, or ``None`` if unset."""
+        return self._high_water
+
+    @property
+    def low_water(self):
+        """Low water mark, or ``None`` if unset."""
+        return self._low_water
+
+    @property
+    def over_high_water(self):
+        """``True`` when ``size >= high`` water mark. ``False`` if unset."""
+        if self._high_water is None:
+            return False
+        return self.size >= self._high_water
+
+    @property
+    def under_low_water(self):
+        """``True`` when ``size <= low`` water mark. ``False`` if unset."""
+        if self._low_water is None:
+            return False
+        return self.size <= self._low_water
 
     def get_fill_size(self, size=None):
         """
