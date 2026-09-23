@@ -1007,6 +1007,75 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
             ** 0.5
         )
 
+    def _rolling_apply(
+        self,
+        window_size: int,
+        *,
+        min_samples: int,
+        center: bool,
+        func: Callable[[pa.Array], Any],
+        dtype: pa.DataType,
+    ) -> Self:
+        native = self.native
+        n = len(native)
+        if center:
+            before = window_size // 2
+            after = window_size - before - 1
+        else:
+            before, after = window_size - 1, 0
+        values: list[Any] = []
+        for i in range(n):
+            window = pc.drop_null(native[max(i - before, 0) : min(i + after + 1, n)])
+            values.append(func(window).as_py() if len(window) >= min_samples else None)
+        return self._with_native(pa.chunked_array([pa.array(values, type=dtype)]))
+
+    def rolling_min(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._rolling_apply(
+            window_size,
+            min_samples=min_samples,
+            center=center,
+            func=pc.min,
+            dtype=self.native.type,
+        )
+
+    def rolling_max(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._rolling_apply(
+            window_size,
+            min_samples=min_samples,
+            center=center,
+            func=pc.max,
+            dtype=self.native.type,
+        )
+
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self.rolling_quantile(
+            window_size,
+            quantile=0.5,
+            interpolation="linear",
+            min_samples=min_samples,
+            center=center,
+        )
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        def func(window: pa.Array) -> Any:
+            return pc.quantile(window, q=quantile, interpolation=interpolation)[0]
+
+        return self._rolling_apply(
+            window_size,
+            min_samples=min_samples,
+            center=center,
+            func=func,
+            dtype=pa.float64(),
+        )
+
     def rank(self, method: RankMethod, *, descending: bool) -> Self:
         if method == "average":
             msg = (

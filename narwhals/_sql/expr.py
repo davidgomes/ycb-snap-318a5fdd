@@ -35,7 +35,12 @@ if TYPE_CHECKING:
     from narwhals._sql.expr_dt import SQLExprDateTimeNamesSpace
     from narwhals._sql.expr_str import SQLExprStringNamespace
     from narwhals._sql.namespace import SQLNamespace
-    from narwhals.typing import ModeKeepStrategy, PythonLiteral, RankMethod
+    from narwhals.typing import (
+        ModeKeepStrategy,
+        PythonLiteral,
+        RankMethod,
+        RollingInterpolationMethod,
+    )
 
 
 class SQLExpr(LazyExpr[SQLLazyFrameT, NativeExprT], Protocol[SQLLazyFrameT, NativeExprT]):
@@ -242,14 +247,14 @@ class SQLExpr(LazyExpr[SQLLazyFrameT, NativeExprT], Protocol[SQLLazyFrameT, Nati
 
     def _rolling_window_func(
         self,
-        func_name: Literal["sum", "mean", "std", "var"],
+        func_name: Literal["sum", "mean", "std", "var", "min", "max", "median"],
         window_size: int,
         min_samples: int,
         ddof: int | None = None,
         *,
         center: bool,
     ) -> WindowFunction[SQLLazyFrameT, NativeExprT]:
-        supported_funcs = ["sum", "mean", "std", "var"]
+        supported_funcs = ["sum", "mean", "std", "var", "min", "max", "median"]
         if center:
             half = (window_size - 1) // 2
             remainder = (window_size - 1) % 2
@@ -262,7 +267,7 @@ class SQLExpr(LazyExpr[SQLLazyFrameT, NativeExprT], Protocol[SQLLazyFrameT, Nati
         def func(
             df: SQLLazyFrameT, inputs: WindowInputs[NativeExprT]
         ) -> Sequence[NativeExprT]:
-            if func_name in {"sum", "mean"}:
+            if func_name in {"sum", "mean", "min", "max", "median"}:
                 func_: str = func_name
             elif func_name == "var" and ddof == 0:
                 func_ = "var_pop"
@@ -686,6 +691,33 @@ class SQLExpr(LazyExpr[SQLLazyFrameT, NativeExprT], Protocol[SQLLazyFrameT, Nati
                 "std", window_size, min_samples, ddof=ddof, center=center
             )
         )
+
+    def rolling_min(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._with_window_function(
+            self._rolling_window_func("min", window_size, min_samples, center=center)
+        )
+
+    def rolling_max(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._with_window_function(
+            self._rolling_window_func("max", window_size, min_samples, center=center)
+        )
+
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._with_window_function(
+            self._rolling_window_func("median", window_size, min_samples, center=center)
+        )
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        msg = f"`rolling_quantile` is not supported for {self._implementation} backend."
+        raise NotImplementedError(msg)
 
     # Other window functions
     def diff(self) -> Self:

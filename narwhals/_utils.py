@@ -1466,6 +1466,16 @@ def _validate_rolling_arguments(
     return window_size, min_samples
 
 
+def _validate_rolling_quantile_arguments(quantile: float, interpolation: str) -> None:
+    if not 0.0 <= quantile <= 1.0:
+        msg = f"Quantile must be between 0.0 and 1.0, got {quantile}"
+        raise ValueError(msg)
+    valid = ("linear", "lower", "higher", "nearest", "midpoint")
+    if interpolation not in valid:
+        msg = f"Interpolation must be one of {valid}, got {interpolation!r}"
+        raise ValueError(msg)
+
+
 def generate_repr(header: str, native_repr: str) -> str:
     try:
         terminal_width = os.get_terminal_size().columns
