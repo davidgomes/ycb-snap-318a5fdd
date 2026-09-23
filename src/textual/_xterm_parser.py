@@ -10,7 +10,12 @@ from textual import constants, events, messages
 from textual._ansi_sequences import ANSI_SEQUENCES_KEYS, IGNORE_SEQUENCE
 from textual._keyboard_protocol import FUNCTIONAL_KEYS
 from textual._parser import ParseEOF, Parser, ParseTimeout, Peek1, Read1, TokenCallback
-from textual.keys import KEY_NAME_REPLACEMENTS, Keys, _character_to_key
+from textual.keys import (
+    KEY_NAME_REPLACEMENTS,
+    Keys,
+    _character_to_key,
+    _split_key_modifiers,
+)
 from textual.message import Message
 
 # When trying to determine whether the current sequence is a supported/valid
@@ -37,7 +42,17 @@ FOCUSOUT: Final[str] = "\x1b[O"
 SPECIAL_SEQUENCES = {BRACKETED_PASTE_START, BRACKETED_PASTE_END, FOCUSIN, FOCUSOUT}
 """Set of special sequences."""
 
-_re_extended_key: Final = re.compile(r"\x1b\[(?:(\d+)(?:;(\d+))?)?([u~ABCDEFHPQRS])")
+_re_extended_key: Final = re.compile(
+    r"\x1b\[(?:([\d:]+)(?:;([\d:]*))?(?:;([\d:]*))?)?([u~ABCDEFHPQRS])"
+)
+
+_KITTY_MODIFIERS: Final = ("shift", "alt", "ctrl", "super", "hyper", "meta")
+"""Kitty modifier bits, in bit order (caps_lock and num_lock are ignored)."""
+_KITTY_PHASES: Final[dict[str, events.KeyPhase]] = {
+    "1": "press",
+    "2": "repeat",
+    "3": "release",
+}
 _re_in_band_window_resize: Final = re.compile(
     r"\x1b\[48;(\d+(?:\:.*?)?);(\d+(?:\:.*?)?);(\d+(?:\:.*?)?);(\d+(?:\:.*?)?)t"
 )
@@ -324,6 +339,145 @@ class XTermParser(Parser[Message]):
             self._debug_log_file.close()
             self._debug_log_file = None
 
+    @classmethod
+    def _parse_extended_key(cls, match: re.Match[str]) -> events.Key | None:
+        """Build a key event from a Kitty keyboard protocol sequence.
+
+        See https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+
+        Args:
+            match: A match from `_re_extended_key`.
+
+        Returns:
+            A key event, or `None` if the sequence isn't a valid key.
+        """
+        key_codes, modifier_field, text_field, end = match.groups()
+        key_codes = key_codes or "1"
+        if end != "u" and (":" in key_codes or text_field is not None):
+            # Alternate keys and associated text are only valid for CSI u
+            return None
+
+        code_str, shifted_str, base_layout_str, *_ = key_codes.split(":") + ["", ""]
+        modifier_str, _, phase_str = (modifier_field or "").partition(":")
+        if phase_str and phase_str not in _KITTY_PHASES:
+            return None
+        phase = _KITTY_PHASES.get(phase_str, "press")
+
+        modifier_bits = max(0, int(modifier_str) - 1) if modifier_str else 0
+        modifiers = sorted(
+            modifier
+            for bit, modifier in enumerate(_KITTY_MODIFIERS)
+            if modifier_bits & (1 << bit)
+        )
+        non_shift_modifiers = [
+            modifier for modifier in modifiers if modifier != "shift"
+        ]
+        shift = "shift" in modifiers
+
+        def codepoint_to_character(codepoint: str) -> str | None:
+            """Convert a decimal codepoint to a character (or `None`)."""
+            if not codepoint or not codepoint.isdecimal():
+                return None
+            try:
+                return chr(int(codepoint)) if int(codepoint) else None
+            except (ValueError, OverflowError):
+                return None
+
+        def character_to_key(character: str) -> str:
+            """Convert a character to a Textual key name."""
+            try:
+                return _character_to_key(character)
+            except Exception:
+                return character
+
+        text = "".join(
+            character
+            for character in map(codepoint_to_character, (text_field or "").split(":"))
+            if character is not None
+        )
+        if not text.isprintable():
+            text = ""
+
+        shifted_character = codepoint_to_character(shifted_str)
+        shifted_key = (
+            None if shifted_character is None else character_to_key(shifted_character)
+        )
+        base_layout_character = codepoint_to_character(base_layout_str)
+        base_layout_key = (
+            None
+            if base_layout_character is None
+            else character_to_key(base_layout_character)
+        )
+
+        def make_key(
+            key: str, character: str | None, base_key: str, *extra_aliases: str
+        ) -> events.Key:
+            key_event = events.Key(
+                key,
+                character,
+                phase=phase,
+                modifiers=modifiers,
+                base_key=base_key,
+                shifted_key=shifted_key,
+                base_layout_key=base_layout_key,
+            )
+            for alias in extra_aliases:
+                if alias not in key_event.aliases:
+                    key_event.aliases.append(alias)
+            return key_event
+
+        functional_key = FUNCTIONAL_KEYS.get(f"{code_str or 1}{end}")
+        if functional_key is not None:
+            return make_key(
+                "+".join([*modifiers, functional_key]), None, functional_key
+            )
+
+        code_character = codepoint_to_character(code_str)
+        if code_character is None:
+            if not text:
+                return None
+            # Key code 0: the terminal only reported associated text.
+            text_key = character_to_key(text) if len(text) == 1 else text
+            if non_shift_modifiers:
+                return make_key("+".join([*modifiers, text_key]), None, text_key)
+            return make_key(text, text, text_key, text_key)
+
+        lower_character = code_character.lower()
+        base_character = (
+            lower_character if len(lower_character) == 1 else code_character
+        )
+        base_key = character_to_key(base_character).lower()
+
+        if non_shift_modifiers:
+            return make_key("+".join([*modifiers, base_key]), None, base_key)
+
+        character: str | None
+        if shift:
+            upper_character = base_character.upper()
+            character = (
+                text
+                or shifted_character
+                or (
+                    upper_character
+                    if len(upper_character) == 1 and upper_character != base_character
+                    else None
+                )
+            )
+            if character is None and base_character.isspace():
+                character = base_character
+        else:
+            character = text or base_character
+        if character is not None and not character.isprintable():
+            character = None
+
+        if character is None or (shift and character.isspace()):
+            key = "+".join([*modifiers, base_key])
+        elif len(character) == 1:
+            key = character_to_key(character)
+        else:
+            key = character
+        return make_key(key, character, base_key)
+
     def _sequence_to_key_events(
         self, sequence: str, alt: bool = False
     ) -> Iterable[events.Key]:
@@ -337,28 +491,8 @@ class XTermParser(Parser[Message]):
         """
 
         if (match := _re_extended_key.fullmatch(sequence)) is not None:
-            number, modifiers, end = match.groups()
-            number = number or 1
-            if not (key := FUNCTIONAL_KEYS.get(f"{number}{end}", "")):
-                try:
-                    key = _character_to_key(chr(int(number)))
-                except Exception:
-                    key = chr(int(number))
-            key_tokens: list[str] = []
-            if modifiers:
-                modifier_bits = int(modifiers) - 1
-                # Not convinced of the utility in reporting caps_lock and num_lock
-                MODIFIERS = ("shift", "alt", "ctrl", "super", "hyper", "meta")
-                # Ignore caps_lock and num_lock modifiers
-                for bit, modifier in enumerate(MODIFIERS):
-                    if modifier_bits & (1 << bit):
-                        key_tokens.append(modifier)
-
-            key_tokens.sort()
-            key_tokens.append(key.lower())
-            yield events.Key(
-                "+".join(key_tokens), sequence if len(sequence) == 1 else None
-            )
+            if (key_event := self._parse_extended_key(match)) is not None:
+                yield key_event
             return
 
         keys = ANSI_SEQUENCES_KEYS.get(sequence)
@@ -374,7 +508,20 @@ class XTermParser(Parser[Message]):
             # If the sequence mapped to a tuple, then it's values from the
             # `Keys` enum. Raise key events from what we find in the tuple.
             for key in keys:
-                yield events.Key(key.value, sequence if len(sequence) == 1 else None)
+                if alt and len(sequence) == 1:
+                    # Legacy ESC prefixed key: add alt to the existing key name.
+                    key_modifiers, base_key = _split_key_modifiers(key.value)
+                    modifiers = sorted({*key_modifiers, "alt"})
+                    yield events.Key(
+                        "+".join([*modifiers, base_key]),
+                        sequence,
+                        modifiers=modifiers,
+                        base_key=base_key,
+                    )
+                else:
+                    yield events.Key(
+                        key.value, sequence if len(sequence) == 1 else None
+                    )
             return
         # If keys is a string, the intention is that it's a mapping to a
         # character, which should really be treated as the sequence for the

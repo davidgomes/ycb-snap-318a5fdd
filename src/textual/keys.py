@@ -286,6 +286,27 @@ def _get_key_aliases(key: str) -> list[str]:
     return [key] + KEY_ALIASES.get(key, [])
 
 
+KEY_MODIFIERS: frozenset[str] = frozenset(
+    {"shift", "alt", "ctrl", "super", "hyper", "meta"}
+)
+"""Modifier names that may prefix a key."""
+
+
+def _split_key_modifiers(key: str) -> tuple[tuple[str, ...], str]:
+    """Split a key in to its (sorted) modifiers and the key without modifiers.
+
+    Args:
+        key: A key, such as "ctrl+shift+a".
+
+    Returns:
+        A tuple of sorted modifiers, and the key without modifiers.
+    """
+    *modifiers, base_key = key.split("+")
+    if not base_key or not all(modifier in KEY_MODIFIERS for modifier in modifiers):
+        return (), key
+    return tuple(sorted(set(modifiers))), base_key
+
+
 @lru_cache(1024)
 def format_key(key: str) -> str:
     """Given a key (i.e. the `key` string argument to Binding __init__),
