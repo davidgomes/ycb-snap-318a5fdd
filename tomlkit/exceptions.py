@@ -227,6 +227,21 @@ class InvalidStringError(ValueError, TOMLKitError):
         )
 
 
+class ConversionError(TOMLKitError):
+    """
+    A table could not be converted between its structural forms
+    (standard table, inline table, dotted keys).
+    """
+
+    def __init__(self, key_path: str, message: str | None = None) -> None:
+        self.key_path = key_path
+        msg = f'Cannot convert "{key_path}"'
+        if message:
+            msg += f": {message}"
+
+        super().__init__(msg)
+
+
 class ConvertError(TypeError, ValueError, TOMLKitError):
     """Raised when item() fails to convert a value.
     It should be a TypeError, but due to historical reasons
