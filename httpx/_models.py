@@ -30,6 +30,11 @@ from ._exceptions import (
     StreamConsumed,
     request_context,
 )
+from ._json_stream import (
+    JSONTextDecoder,
+    parser_for_json_format,
+    resolve_json_content_type,
+)
 from ._multipart import get_multipart_boundary_from_content_type
 from ._status_codes import codes
 from ._types import (
@@ -932,6 +937,48 @@ class Response:
             for line in decoder.flush():
                 yield line
 
+    def iter_json(self) -> typing.Iterator[typing.Any]:
+        """
+        Yield JSON values from the response body.
+
+        ``Content-Type`` must be ``application/json`` (or any
+        ``application/*+json``), ``application/ndjson``,
+        ``application/x-ndjson``, or ``application/json-seq``. Matching is
+        case-insensitive and parameters are allowed. A top-level JSON array
+        yields one value per element. NDJSON and JSON text sequences yield
+        one value per record.
+
+        Streaming responses are consumed and closed. In-memory responses can
+        be iterated more than once.
+        """
+        byte_iter: typing.Iterator[bytes] | None = None
+        started = False
+        try:
+            with request_context(request=self._request):
+                json_format, charset = resolve_json_content_type(
+                    self.headers.get("Content-Type")
+                )
+                decoder = JSONTextDecoder(charset)
+                parser = parser_for_json_format(json_format)
+                byte_iter = self.iter_bytes()
+                started = True
+                for chunk in byte_iter:
+                    for value in parser.feed(decoder.decode(chunk)):
+                        yield value
+                for value in parser.feed(decoder.flush()):
+                    yield value
+                for value in parser.finish():
+                    yield value
+        finally:
+            if byte_iter is not None:
+                typing.cast(typing.Generator[bytes, None, None], byte_iter).close()
+            if (
+                started
+                and not self.is_closed
+                and isinstance(self.stream, SyncByteStream)
+            ):
+                self.close()
+
     def iter_raw(self, chunk_size: int | None = None) -> typing.Iterator[bytes]:
         """
         A byte-iterator over the raw response content.
@@ -1033,6 +1080,42 @@ class Response:
                     yield line
             for line in decoder.flush():
                 yield line
+
+    async def aiter_json(self) -> typing.AsyncIterator[typing.Any]:
+        """
+        Yield JSON values from the response body.
+
+        Async equivalent of ``iter_json()``.
+        """
+        byte_iter: typing.AsyncIterator[bytes] | None = None
+        started = False
+        try:
+            with request_context(request=self._request):
+                json_format, charset = resolve_json_content_type(
+                    self.headers.get("Content-Type")
+                )
+                decoder = JSONTextDecoder(charset)
+                parser = parser_for_json_format(json_format)
+                byte_iter = self.aiter_bytes()
+                started = True
+                async for chunk in byte_iter:
+                    for value in parser.feed(decoder.decode(chunk)):
+                        yield value
+                for value in parser.feed(decoder.flush()):
+                    yield value
+                for value in parser.finish():
+                    yield value
+        finally:
+            if byte_iter is not None:
+                await typing.cast(
+                    typing.AsyncGenerator[bytes, None], byte_iter
+                ).aclose()
+            if (
+                started
+                and not self.is_closed
+                and isinstance(self.stream, AsyncByteStream)
+            ):
+                await self.aclose()
 
     async def aiter_raw(
         self, chunk_size: int | None = None
