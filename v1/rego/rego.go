@@ -2653,6 +2653,12 @@ func (r *Rego) partial(ctx context.Context, ectx *EvalContext) (*PartialQueries,
 		}
 	}
 
+	// Template strings are lowered to internal.template_string during compilation.
+	// Put user-facing template-string syntax back before partial results are returned
+	// so callers of Partial, PartialResult, and `opa eval --partial --format=source`
+	// do not observe that compiler detail.
+	queries, support = reconstructPartialTemplateStrings(queries, support)
+
 	pq := &PartialQueries{
 		Queries: queries,
 		Support: support,
