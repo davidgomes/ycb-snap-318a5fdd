@@ -34,6 +34,7 @@ from graphql import (
     FragmentDefinitionNode,
     FragmentSpreadNode,
     GraphQLArgument,
+    GraphQLDeferDirective,
     GraphQLDirective,
     GraphQLEnumType,
     GraphQLError,
@@ -48,6 +49,7 @@ from graphql import (
     GraphQLObjectType,
     GraphQLScalarType,
     GraphQLSchema,
+    GraphQLStreamDirective,
     GraphQLString,
     InlineFragmentNode,
     IntValueNode,
@@ -69,6 +71,7 @@ from graphql import (
     VariableDefinitionNode,
     VariableNode,
     get_named_type,
+    get_nullable_type,
     introspection_types,
     is_enum_type,
     is_input_object_type,
@@ -447,6 +450,27 @@ class DSLDirective:
             for arg in self.ast_directive.arguments
         )
         return f"<DSLDirective @{self.name}({args_str})>"
+
+
+def _incremental_directive(
+    directive_def: GraphQLDirective, **kwargs: Any
+) -> DSLDirective:
+    """Create a @defer or @stream DSLDirective from the graphql-core definition,
+    as these directives are usually not part of the client schema.
+
+    Arguments with a None value are not included.
+    """
+    directive = DSLDirective.__new__(DSLDirective)
+    directive.directive_def = directive_def
+    directive.ast_directive = DirectiveNode(
+        name=NameNode(value=directive_def.name), arguments=()
+    )
+
+    args = {key: value for key, value in kwargs.items() if value is not None}
+    if args:
+        directive.args(**args)
+
+    return directive
 
 
 class DSLDirectable(ABC):
@@ -1190,6 +1214,32 @@ class DSLField(DSLSelectableWithAlias, DSLFieldSelector):
         """Check if directive is valid for Field locations."""
         return DirectiveLocation.FIELD in directive.directive_def.locations
 
+    def stream(
+        self, label: Optional[str] = None, initial_count: Optional[int] = None
+    ) -> Self:
+        """Add a @stream directive to this list field, requesting the server
+        to send the items of the list incrementally.
+
+        :param label: optional label identifying the streamed payloads
+        :param initial_count: number of items to include in the initial payload
+        :return: itself
+
+        :raises graphql.error.GraphQLError: if the field is not a list field
+        """
+        if not is_list_type(get_nullable_type(self.field.type)):
+            raise GraphQLError(
+                f"@stream can only be used on list fields: {self!r} "
+                f"is of type {self.field.type}"
+            )
+
+        return self.directives(
+            _incremental_directive(
+                GraphQLStreamDirective,
+                label=label,
+                initialCount=initial_count,
+            )
+        )
+
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} {self.parent_type.name}" f"::{self.name}>"
 
@@ -1288,6 +1338,17 @@ class DSLInlineFragment(DSLSelectable, DSLFragmentSelector):
         self.ast_field.directives = self.directives_ast
         return self
 
+    def defer(self, label: Optional[str] = None) -> Self:
+        """Add a @defer directive to this inline fragment, requesting the server
+        to send its fields in a subsequent payload.
+
+        :param label: optional label identifying the deferred payload
+        :return: itself
+        """
+        return self.directives(
+            _incremental_directive(GraphQLDeferDirective, label=label)
+        )
+
     def __repr__(self) -> str:
         type_info = ""
 
@@ -1345,6 +1406,17 @@ class DSLFragmentSpread(DSLSelectable):
         """Check if directive is valid for Fragment Spread locations."""
         return DirectiveLocation.FRAGMENT_SPREAD in directive.directive_def.locations
 
+    def defer(self, label: Optional[str] = None) -> Self:
+        """Add a @defer directive to this fragment spread, requesting the server
+        to send the fragment fields in a subsequent payload.
+
+        :param label: optional label identifying the deferred payload
+        :return: itself
+        """
+        return self.directives(
+            _incremental_directive(GraphQLDeferDirective, label=label)
+        )
+
     def __repr__(self) -> str:
         return f"<DSLFragmentSpread {self.name}>"
 
@@ -1393,6 +1465,23 @@ class DSLFragment(DSLSelectable, DSLFragmentSelector, DSLExecutable):
         :return: DSLFragmentSpread instance for this fragment
         """
         return DSLFragmentSpread(self)
+
+    def defer(self, label: Optional[str] = None) -> Self:
+        """Add a @defer directive where this fragment is spread, requesting the
+        server to send the fragment fields in a subsequent payload.
+
+        The directive is not added to the fragment definition.
+        Use :meth:`spread <gql.dsl.DSLFragment.spread>` to defer only some of
+        the spreads of this fragment.
+
+        :param label: optional label identifying the deferred payload
+        :return: itself
+        """
+        directive = _incremental_directive(GraphQLDeferDirective, label=label)
+        self.ast_field.directives = self.ast_field.directives + (
+            directive.ast_directive,
+        )
+        return self
 
     def select(
         self, *fields: DSLSelectable, **fields_with_alias: DSLSelectableWithAlias
