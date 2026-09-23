@@ -880,6 +880,75 @@ eval instant at 50m sort_by_label(node_uname_info, "release")
 	node_uname_info{job="node_exporter", instance="4m5", release="1.11.3"} 100
 	node_uname_info{job="node_exporter", instance="4m1000", release="1.111.3"} 100
 
+clear
+load 5m
+	mixed{v="abc"} 1
+	mixed{v=""} 2
+	mixed{v=" 5"} 3
+	mixed{v="+Inf"} 4
+	mixed{v="-Inf"} 5
+	mixed{v="1e3"} 6
+	mixed{v="+2.5"} 7
+	mixed{v="NaN"} 8
+	mixed{v="1e"} 9
+	mixed{v="90s"} 10
+	mixed{v="1m"} 11
+	mixed{v="1KiB"} 12
+	mixed{v="1000B"} 13
+	mixed{v="v1.2.3"} 14
+	mixed{v="1.2.3-rc.1"} 15
+	mixed{v="::ffff:10.0.0.1"} 16
+	mixed{v="10.0.0.1"} 17
+	mixed{v="10.0.0.0/16"} 18
+	mixed{v="10.0.0.0/8"} 19
+	mixed{v="2024-01-01T00:00:00Z"} 20
+
+eval instant at 0m sort_by_label(mixed, "v")
+	expect ordered
+	mixed{v=" 5"} 3
+	mixed{v="+Inf"} 4
+	mixed{v="+2.5"} 7
+	mixed{v="1e3"} 6
+	mixed{v="-Inf"} 5
+	mixed{v="1m"} 11
+	mixed{v="90s"} 10
+	mixed{v="1000B"} 13
+	mixed{v="1KiB"} 12
+	mixed{v="1.2.3-rc.1"} 15
+	mixed{v="v1.2.3"} 14
+	mixed{v="10.0.0.1"} 17
+	mixed{v="::ffff:10.0.0.1"} 16
+	mixed{v="10.0.0.0/8"} 19
+	mixed{v="10.0.0.0/16"} 18
+	mixed{v="2024-01-01T00:00:00Z"} 20
+	mixed{v=""} 2
+	mixed{v="1e"} 9
+	mixed{v="NaN"} 8
+	mixed{v="abc"} 1
+
+eval instant at 0m sort_by_label_desc(mixed, "v")
+	expect ordered
+	mixed{v="abc"} 1
+	mixed{v="NaN"} 8
+	mixed{v="1e"} 9
+	mixed{v=""} 2
+	mixed{v="2024-01-01T00:00:00Z"} 20
+	mixed{v="10.0.0.0/16"} 18
+	mixed{v="10.0.0.0/8"} 19
+	mixed{v="::ffff:10.0.0.1"} 16
+	mixed{v="10.0.0.1"} 17
+	mixed{v="v1.2.3"} 14
+	mixed{v="1.2.3-rc.1"} 15
+	mixed{v="1KiB"} 12
+	mixed{v="1000B"} 13
+	mixed{v="90s"} 10
+	mixed{v="1m"} 11
+	mixed{v="-Inf"} 5
+	mixed{v="1e3"} 6
+	mixed{v="+2.5"} 7
+	mixed{v="+Inf"} 4
+	mixed{v=" 5"} 3
+
 # Tests for double_exponential_smoothing
 clear
 
