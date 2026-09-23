@@ -518,8 +518,8 @@ const lowerBound = (structs, clock) => {
 }
 
 /**
- * The structs of an update (and of the pending updates it unblocks) that are not yet part of the
- * document. Mirrors how `integrateStructs` and `Item.getMissing` are going to integrate them.
+ * The structs of an update (and of the pending structs it unblocks) that are not yet part of the
+ * document. Mirrors how `readUpdateV2`, `integrateStructs`, and `Item.getMissing` integrate them.
  */
 class UpdateStructs {
   /**
@@ -528,15 +528,15 @@ class UpdateStructs {
   constructor (store) {
     this.store = store
     /**
+     * All added structs, sorted by clock.
+     *
      * @type {Map<number,Array<Item|GC>>}
      */
     this.clients = new Map()
     /**
-     * The first `integrable.get(client)` structs of each client can be integrated.
-     *
-     * @type {Map<number,number>}
+     * @type {Set<Item|GC>}
      */
-    this.integrable = new Map()
+    this.integrable = new Set()
     /**
      * @type {Map<Item,ResolvedParent|null>}
      */
@@ -553,8 +553,13 @@ class UpdateStructs {
 
   /**
    * @param {BlockSet} blocks
+   * @return {Map<number,Array<Item|GC>>} The structs that were added, sorted by clock
    */
   add (blocks) {
+    /**
+     * @type {Map<number,Array<Item|GC>>}
+     */
+    const added = new Map()
     blocks.clients.forEach(({ refs }, client) => {
       const fresh = refs.filter(struct =>
         struct.constructor !== Skip &&
@@ -562,11 +567,13 @@ class UpdateStructs {
         this.indexOf(client, struct.id.clock) < 0
       )
       if (fresh.length > 0) {
+        added.set(client, fresh)
         const structs = map.setIfUndefined(this.clients, client, () => /** @type {Array<Item|GC>} */ ([]))
         structs.push(...fresh)
         structs.sort((a, b) => a.id.clock - b.id.clock)
       }
     })
+    return added
   }
 
   /**
@@ -585,23 +592,44 @@ class UpdateStructs {
 
   /**
    * @param {ID} id
+   * @return {Item|GC|null}
+   */
+  find (id) {
+    const i = this.indexOf(id.client, id.clock)
+    return i < 0 ? null : /** @type {Array<Item|GC>} */ (this.clients.get(id.client))[i]
+  }
+
+  /**
+   * @param {ID} id
    * @return {{ struct: Item|GC, inDoc: boolean }|null} The struct if it is available once the update is integrated
    */
   get (id) {
     if (this.docHas(id.client, id.clock)) {
       return { struct: /** @type {Item|GC} */ (getItem(this.store, id)), inDoc: true }
     }
-    const i = this.indexOf(id.client, id.clock)
-    return i >= 0 && i < (this.integrable.get(id.client) ?? 0) ? { struct: /** @type {Array<Item|GC>} */ (this.clients.get(id.client))[i], inDoc: false } : null
+    const struct = this.find(id)
+    return struct !== null && this.integrable.has(struct) ? { struct, inDoc: false } : null
   }
 
   /**
-   * Structs are integrated if all of their dependencies are available. Once a struct of a client
-   * can't be integrated, the remaining structs of that client are postponed as well.
+   * Mirrors a single `integrateStructs` pass. A struct is integrated once all of its dependencies
+   * are available (gaps are filled with skips). If a struct of a client can't be integrated, the
+   * remaining structs of that client are postponed as well.
+   *
+   * @param {Map<number,Array<Item|GC>>} candidates Structs of this pass, sorted by clock
+   * @return {Set<number>} Clients with postponed structs
    */
-  computeIntegrable () {
-    const clients = array.from(this.clients.keys()).sort((a, b) => a - b)
+  integrate (candidates) {
+    const clients = array.from(candidates.keys()).sort((a, b) => a - b)
+    /**
+     * @type {Set<number>}
+     */
     const blocked = new Set()
+    /**
+     * @type {Set<Item|GC>}
+     */
+    const inPass = new Set()
+    candidates.forEach(structs => structs.forEach(struct => inPass.add(struct)))
     /**
      * @param {ID|null} id
      * @return {number} 0: available, 1: might become available, 2: missing
@@ -610,21 +638,25 @@ class UpdateStructs {
       if (id === null || this.docHas(id.client, id.clock)) {
         return 0
       }
-      const i = this.indexOf(id.client, id.clock)
-      if (i < 0) {
+      const struct = this.find(id)
+      if (struct === null) {
         return 2
       }
-      if (i < (this.integrable.get(id.client) ?? 0)) {
+      if (this.integrable.has(struct)) {
         return 0
       }
-      return blocked.has(id.client) ? 2 : 1
+      return inPass.has(struct) && !blocked.has(id.client) ? 1 : 2
     }
-    clients.forEach(client => this.integrable.set(client, 0))
+    /**
+     * @type {Map<number,number>}
+     */
+    const next = new Map()
     for (let progress = true; progress;) {
       progress = false
       for (const client of clients) {
-        const structs = /** @type {Array<Item|GC>} */ (this.clients.get(client))
-        for (let i = this.integrable.get(client) ?? 0; !blocked.has(client) && i < structs.length; i++) {
+        const structs = /** @type {Array<Item|GC>} */ (candidates.get(client))
+        let i = next.get(client) ?? 0
+        for (; !blocked.has(client) && i < structs.length; i++) {
           const struct = structs[i]
           const state = struct instanceof Item
             ? Math.max(dependencyState(struct.origin), dependencyState(struct.rightOrigin), dependencyState(struct.parent instanceof ID ? struct.parent : null))
@@ -635,11 +667,18 @@ class UpdateStructs {
           if (state !== 0) {
             break
           }
-          this.integrable.set(client, i + 1)
+          this.integrable.add(struct)
           progress = true
         }
+        next.set(client, i)
       }
     }
+    clients.forEach(client => {
+      if ((next.get(client) ?? 0) < /** @type {Array<Item|GC>} */ (candidates.get(client)).length) {
+        blocked.add(client)
+      }
+    })
+    return blocked
   }
 
   /**
@@ -757,11 +796,25 @@ export const trackRemoteMapWrites = (transaction, blocks, ds) => {
   }
   const store = doc.store
   const structs = new UpdateStructs(store)
-  structs.add(blocks)
+  const incoming = structs.add(blocks)
+  const postponed = structs.integrate(incoming)
+  /**
+   * @param {number} client
+   */
+  const stateAfterIntegration = client => (incoming.get(client) ?? []).reduce((state, struct) => structs.integrable.has(struct) ? math.max(state, struct.id.clock + struct.length) : state, getState(store, client))
   const pending = store.pendingStructs
-  // readUpdateV2 retries pending structs in the same transaction if this update unblocks them
-  if (pending !== null && array.from(pending.missing).some(([client, clock]) => blocks.clients.has(client) || clock < getState(store, client))) {
-    structs.add(readBlockSet(new UpdateDecoderV2(decoding.createDecoder(pending.update))))
+  // readUpdateV2 retries the pending structs (merged with the postponed structs of this update) in
+  // the same transaction if this update unblocks them
+  if (pending !== null && array.from(pending.missing).some(([client, clock]) => (blocks.clients.has(client) && !postponed.has(client)) || clock < stateAfterIntegration(client))) {
+    const retried = structs.add(readBlockSet(new UpdateDecoderV2(decoding.createDecoder(pending.update))))
+    incoming.forEach((added, client) => {
+      const rest = added.filter(struct => !structs.integrable.has(struct))
+      if (rest.length > 0) {
+        map.setIfUndefined(retried, client, () => /** @type {Array<Item|GC>} */ ([])).push(...rest)
+      }
+    })
+    retried.forEach(list => list.sort((a, b) => a.id.clock - b.id.clock))
+    structs.integrate(retried)
   }
   let deletes = ds
   if (store.pendingDs !== null) {
@@ -769,7 +822,6 @@ export const trackRemoteMapWrites = (transaction, blocks, ds) => {
     decoding.readVarUint(decoder.restDecoder) // pending deletes are encoded without structs
     deletes = mergeIdSets([ds, readIdSet(decoder)])
   }
-  structs.computeIntegrable()
   /**
    * @type {Map<string,Map<string,UpdateKeyWrites>>}
    */
@@ -785,13 +837,10 @@ export const trackRemoteMapWrites = (transaction, blocks, ds) => {
   }
   const clients = array.from(structs.clients.keys()).sort((a, b) => a - b)
   clients.forEach(client => {
-    const clientStructs = /** @type {Array<Item|GC>} */ (structs.clients.get(client))
-    const integrable = structs.integrable.get(client) ?? 0
-    for (let i = 0; i < integrable; i++) {
-      const struct = clientStructs[i]
-      const resolved = struct instanceof Item ? structs.resolveParent(struct) : null
+    /** @type {Array<Item|GC>} */ (structs.clients.get(client)).forEach(struct => {
+      const resolved = struct instanceof Item && structs.integrable.has(struct) ? structs.resolveParent(struct) : null
       if (resolved == null || resolved.parentSub === null) {
-        continue
+        return
       }
       const group = getGroup(resolved.parent, resolved.parentSub)
       const item = /** @type {Item} */ (struct)
@@ -806,13 +855,12 @@ export const trackRemoteMapWrites = (transaction, blocks, ds) => {
           group.writes.push(createMapWrite('set', group.parentId, group.key, client, clock, 'remote', item.content, j))
         }
       }
-    }
+    })
   })
   array.from(deletes.clients.entries()).sort((a, b) => a[0] - b[0]).forEach(([client, ranges]) => {
     const docStructs = store.clients.get(client) ?? []
     const state = getState(store, client)
     const clientStructs = structs.clients.get(client) ?? []
-    const integrable = structs.integrable.get(client) ?? 0
     ranges.getIds().forEach(({ clock, len }) => {
       const end = clock + len
       for (let c = clock; c < math.min(end, state);) {
@@ -825,9 +873,9 @@ export const trackRemoteMapWrites = (transaction, blocks, ds) => {
         }
         c = struct.id.clock + struct.length
       }
-      for (let i = lowerBound(clientStructs, clock); i < integrable && clientStructs[i].id.clock < end; i++) {
+      for (let i = lowerBound(clientStructs, clock); i < clientStructs.length && clientStructs[i].id.clock < end; i++) {
         const struct = clientStructs[i]
-        const resolved = struct instanceof Item ? structs.resolveParent(struct) : null
+        const resolved = struct instanceof Item && structs.integrable.has(struct) ? structs.resolveParent(struct) : null
         if (resolved == null || resolved.parentSub === null || structs.isParentDeleted(resolved.parent, deletes)) {
           continue
         }
