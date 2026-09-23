@@ -11,6 +11,7 @@ import type { TResponseBody } from '../types/TResponseBody.js';
 import { Buffer } from 'buffer';
 import Stream from 'stream';
 import type BrowserWindow from '../../window/BrowserWindow.js';
+import { releaseActiveReader, trackActiveReader } from './BodyReaderRegistry.js';
 
 /**
  * Fetch body utility.
@@ -201,24 +202,49 @@ export default class FetchBodyUtility {
 		const chunks = [];
 		let bytes = 0;
 
+		trackActiveReader(requestOrResponse, reader);
+
+		const throwIfAborted = (): void => {
+			const settledError = requestOrResponse[PropertySymbol.error];
+			if (requestOrResponse[PropertySymbol.aborted]) {
+				if (
+					settledError instanceof DOMException &&
+					settledError.name === DOMExceptionNameEnum.abortError
+				) {
+					throw settledError;
+				}
+				throw new window.DOMException(
+					'Failed to read response body: The stream was aborted.',
+					DOMExceptionNameEnum.abortError
+				);
+			}
+			if (settledError) {
+				throw settledError;
+			}
+		};
+
 		try {
+			throwIfAborted();
 			let readResult = await reader.read();
 			while (!readResult.done) {
-				if (requestOrResponse[PropertySymbol.error]) {
-					throw requestOrResponse[PropertySymbol.error];
-				}
-				if (requestOrResponse[PropertySymbol.aborted]) {
-					throw new window.DOMException(
-						'Failed to read response body: The stream was aborted.',
-						DOMExceptionNameEnum.abortError
-					);
-				}
+				throwIfAborted();
 				const chunk = readResult.value;
 				bytes += chunk.length;
 				chunks.push(chunk);
 				readResult = await reader.read();
 			}
+			// cancel() resolves the pending read with { done: true } instead of rejecting it.
+			throwIfAborted();
 		} catch (error) {
+			if (requestOrResponse[PropertySymbol.aborted]) {
+				if (error instanceof DOMException && error.name === DOMExceptionNameEnum.abortError) {
+					throw error;
+				}
+				throw new window.DOMException(
+					'Failed to read response body: The stream was aborted.',
+					DOMExceptionNameEnum.abortError
+				);
+			}
 			if (error instanceof DOMException) {
 				throw error;
 			}
@@ -226,6 +252,8 @@ export default class FetchBodyUtility {
 				`Failed to read response body. Error: ${(<Error>error).message}.`,
 				DOMExceptionNameEnum.encodingError
 			);
+		} finally {
+			releaseActiveReader(requestOrResponse);
 		}
 
 		try {

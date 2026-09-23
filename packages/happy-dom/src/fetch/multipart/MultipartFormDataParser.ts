@@ -2,9 +2,11 @@ import type FormData from '../../form-data/FormData.js';
 import { ReadableStream } from 'stream/web';
 import * as PropertySymbol from '../../PropertySymbol.js';
 import MultipartReader from './MultipartReader.js';
+import DOMException from '../../exception/DOMException.js';
 import DOMExceptionNameEnum from '../../exception/DOMExceptionNameEnum.js';
 import { Buffer } from 'buffer';
 import type BrowserWindow from '../../window/BrowserWindow.js';
+import { releaseActiveReader, trackActiveReader } from '../utilities/BodyReaderRegistry.js';
 
 /**
  * Multipart form data factory.
@@ -64,20 +66,52 @@ export default class MultipartFormDataParser {
 		let buffer: Buffer;
 		const bytes = 0;
 
-		let readResult = await bodyReader.read();
+		trackActiveReader(requestOrResponse, bodyReader);
 
-		while (!readResult.done) {
-			if (requestOrResponse[PropertySymbol.error]) {
-				throw requestOrResponse[PropertySymbol.error];
-			}
+		const throwIfAborted = (): void => {
+			const settledError = requestOrResponse[PropertySymbol.error];
 			if (requestOrResponse[PropertySymbol.aborted]) {
+				if (
+					settledError instanceof DOMException &&
+					settledError.name === DOMExceptionNameEnum.abortError
+				) {
+					throw settledError;
+				}
 				throw new window.DOMException(
 					'Failed to read response body: The stream was aborted.',
 					DOMExceptionNameEnum.abortError
 				);
 			}
-			reader.write(readResult.value);
-			readResult = await bodyReader.read();
+			if (settledError) {
+				throw settledError;
+			}
+		};
+
+		try {
+			throwIfAborted();
+			let readResult = await bodyReader.read();
+
+			while (!readResult.done) {
+				throwIfAborted();
+				reader.write(readResult.value);
+				readResult = await bodyReader.read();
+			}
+
+			// cancel() resolves the pending read with { done: true } instead of rejecting it.
+			throwIfAborted();
+		} catch (error) {
+			if (requestOrResponse[PropertySymbol.aborted]) {
+				if (error instanceof DOMException && error.name === DOMExceptionNameEnum.abortError) {
+					throw error;
+				}
+				throw new window.DOMException(
+					'Failed to read response body: The stream was aborted.',
+					DOMExceptionNameEnum.abortError
+				);
+			}
+			throw error;
+		} finally {
+			releaseActiveReader(requestOrResponse);
 		}
 
 		try {

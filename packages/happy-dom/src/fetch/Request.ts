@@ -19,6 +19,8 @@ import MultipartFormDataParser from './multipart/MultipartFormDataParser.js';
 import type BrowserWindow from '../window/BrowserWindow.js';
 import WindowBrowserContext from '../window/WindowBrowserContext.js';
 import type { TRequestMode } from './types/TRequestMode.js';
+import type AsyncTaskManager from '../async-task-manager/AsyncTaskManager.js';
+import { cancelActiveReader } from './utilities/BodyReaderRegistry.js';
 
 /**
  * Fetch request.
@@ -303,12 +305,11 @@ export default class Request implements Request {
 			);
 		}
 
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
+		const asyncTaskManager = requireAsyncTaskManager(window);
 
 		this[PropertySymbol.bodyUsed] = true;
 
-		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
+		const taskID = startBodyReadTask(window, asyncTaskManager, this, () => {
 			this.signal[PropertySymbol.abort]();
 		});
 		let buffer: Buffer;
@@ -354,12 +355,11 @@ export default class Request implements Request {
 			);
 		}
 
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
+		const asyncTaskManager = requireAsyncTaskManager(window);
 
 		this[PropertySymbol.bodyUsed] = true;
 
-		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
+		const taskID = startBodyReadTask(window, asyncTaskManager, this, () => {
 			this.signal[PropertySymbol.abort]();
 		});
 		let buffer: Buffer;
@@ -391,12 +391,11 @@ export default class Request implements Request {
 			);
 		}
 
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
+		const asyncTaskManager = requireAsyncTaskManager(window);
 
 		this[PropertySymbol.bodyUsed] = true;
 
-		const taskID = asyncTaskManager.startTask(() => {
-			this[PropertySymbol.aborted] = true;
+		const taskID = startBodyReadTask(window, asyncTaskManager, this, () => {
 			this.signal[PropertySymbol.abort]();
 		});
 		let buffer: Buffer;
@@ -430,9 +429,14 @@ export default class Request implements Request {
 	 */
 	public async formData(): Promise<FormData> {
 		const window = this[PropertySymbol.window];
-		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager()!;
 
-		const contentType = this[PropertySymbol.contentType];
+		const headerContentType = this.headers.get('Content-Type');
+		const contentType =
+			this[PropertySymbol.contentType] && /multipart/i.test(this[PropertySymbol.contentType])
+				? this[PropertySymbol.contentType]
+				: headerContentType && /multipart/i.test(headerContentType)
+					? headerContentType
+					: this[PropertySymbol.contentType];
 
 		if (this.body && contentType && /multipart/i.test(contentType)) {
 			if (this[PropertySymbol.bodyUsed]) {
@@ -444,8 +448,21 @@ export default class Request implements Request {
 
 			this[PropertySymbol.bodyUsed] = true;
 
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
+			const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+
+			if (!asyncTaskManager) {
+				if (!this[PropertySymbol.bodyBuffer]) {
+					throw new window.DOMException(
+						'Failed to read response body: The stream was aborted.',
+						DOMExceptionNameEnum.abortError
+					);
+				}
+
+				const result = await MultipartFormDataParser.streamToFormData(window, this, contentType);
+				return result.formData;
+			}
+
+			const taskID = startBodyReadTask(window, asyncTaskManager, this, () => {
 				this.signal[PropertySymbol.abort]();
 			});
 			let formData: FormData;
@@ -487,5 +504,54 @@ export default class Request implements Request {
 	 */
 	public clone(): Request {
 		return new this[PropertySymbol.window].Request(this);
+	}
+}
+
+/**
+ * Returns the async task manager or throws AbortError when the page has been discarded.
+ *
+ * @param window Window.
+ * @returns Async task manager.
+ */
+function requireAsyncTaskManager(window: BrowserWindow): AsyncTaskManager {
+	const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+	if (!asyncTaskManager) {
+		throw new window.DOMException(
+			'Failed to read response body: The stream was aborted.',
+			DOMExceptionNameEnum.abortError
+		);
+	}
+	return asyncTaskManager;
+}
+
+/**
+ * Starts a body read task that rejects the read when the page is shut down.
+ *
+ * @param window Window.
+ * @param asyncTaskManager Async task manager.
+ * @param requestOrResponse Request or response.
+ * @param abort Additional abort callback.
+ * @returns Task ID.
+ */
+function startBodyReadTask(
+	window: BrowserWindow,
+	asyncTaskManager: AsyncTaskManager,
+	requestOrResponse: object & { [PropertySymbol.aborted]: boolean },
+	abort: () => void
+): number {
+	try {
+		return asyncTaskManager.startTask(() => {
+			requestOrResponse[PropertySymbol.aborted] = true;
+			cancelActiveReader(requestOrResponse);
+			abort();
+		});
+	} catch (error) {
+		if (requestOrResponse[PropertySymbol.aborted]) {
+			throw new window.DOMException(
+				'Failed to read response body: The stream was aborted.',
+				DOMExceptionNameEnum.abortError
+			);
+		}
+		throw error;
 	}
 }

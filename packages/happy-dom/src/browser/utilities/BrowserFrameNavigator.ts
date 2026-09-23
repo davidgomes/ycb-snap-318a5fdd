@@ -173,10 +173,14 @@ export default class BrowserFrameNavigator {
 			frame.window.document[PropertySymbol.referrer] = referrer;
 		}
 
+		// Abort in-flight body reads and clear timers/animation frames for the discarded page
+		// immediately. Child frames can still be destroyed before the old window object is torn down.
+		const previousTasksDestroyed = previousAsyncTaskManager.destroy();
+
 		// Destroy child frames and Window
 		const destroyTaskID = frame[PropertySymbol.asyncTaskManager].startTask();
-		const destroyWindowAndAsyncTaskManager = (): void => {
-			previousAsyncTaskManager.destroy().then(() => {
+		const destroyWindow = (): void => {
+			previousTasksDestroyed.then(() => {
 				if (exceptionObserver) {
 					exceptionObserver.disconnect(previousWindow);
 				}
@@ -189,9 +193,9 @@ export default class BrowserFrameNavigator {
 		if (frame.childFrames.length) {
 			Promise.all(
 				frame.childFrames.map((childFrame) => BrowserFrameFactory.destroyFrame(childFrame))
-			).then(destroyWindowAndAsyncTaskManager);
+			).then(destroyWindow);
 		} else {
-			destroyWindowAndAsyncTaskManager();
+			destroyWindow();
 		}
 
 		// About protocol

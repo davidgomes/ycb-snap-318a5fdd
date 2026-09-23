@@ -29,6 +29,7 @@ import FetchResponseHeaderUtility from './utilities/FetchResponseHeaderUtility.j
 import FetchHTTPSCertificate from './certificate/FetchHTTPSCertificate.js';
 import { Buffer } from 'buffer';
 import FetchBodyUtility from './utilities/FetchBodyUtility.js';
+import { cancelActiveReader } from './utilities/BodyReaderRegistry.js';
 import type IFetchInterceptor from './types/IFetchInterceptor.js';
 import VirtualServerUtility from './utilities/VirtualServerUtility.js';
 import PreloadUtility from './preload/PreloadUtility.js';
@@ -733,8 +734,11 @@ export default class Fetch {
 			this.nodeResponse.destroy(error);
 		}
 
-		if (this.response && this.response.body) {
-			if (!this.response.body.locked) {
+		cancelActiveReader(this.request);
+
+		if (this.response) {
+			cancelActiveReader(this.response);
+			if (this.response.body && !this.response.body.locked) {
 				this.response.body.cancel(error);
 			}
 		}
@@ -1059,8 +1063,11 @@ export default class Fetch {
 			this.nodeResponse.destroy(error);
 		}
 
-		if (this.response && this.response.body) {
-			if (!this.response.body.locked) {
+		cancelActiveReader(this.request);
+
+		if (this.response) {
+			cancelActiveReader(this.response);
+			if (this.response.body && !this.response.body.locked) {
 				this.response.body.cancel(error);
 			}
 		}
