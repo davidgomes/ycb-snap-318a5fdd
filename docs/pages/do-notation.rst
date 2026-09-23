@@ -81,6 +81,21 @@ For example:
 
 This behavior is consistent with ``.map`` and other methods.
 
+``Validated`` do-notation also stops at the first failure.
+It does not accumulate later errors; use
+:meth:`~returns.validated.Validated.combine` or
+:meth:`~returns.validated.Validated.apply` for that.
+
+.. code:: python
+
+  >>> from returns.validated import Invalid, Valid, Validated
+
+  >>> assert Validated.do(
+  ...     first + second
+  ...     for first in Invalid(('a',))
+  ...     for second in Invalid(('b',))
+  ... ) == Invalid(('a',))
+
 
 Async containers
 ----------------

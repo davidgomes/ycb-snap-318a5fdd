@@ -11,6 +11,8 @@ List of supported containers:
 
 - :class:`Maybe <returns.maybe.Maybe>` to handle ``None`` cases
 - :class:`Result <returns.result.Result>` to handle possible exceptions
+- :class:`Validated <returns.validated.Validated>` to accumulate validation
+  errors
 - :class:`IO <returns.io.IO>` to mark explicit ``IO`` actions
 - :class:`Future <returns.future.Future>` to work with ``async`` code
 - :class:`RequiresContext <returns.context.requires_context.RequiresContext>`

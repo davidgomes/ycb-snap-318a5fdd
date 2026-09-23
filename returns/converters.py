@@ -6,6 +6,7 @@ from returns.maybe import Maybe, Nothing, Some
 from returns.pipeline import is_successful
 from returns.primitives.hkt import KindN, kinded
 from returns.result import Failure, Result, Success
+from returns.validated import Invalid, Validated
 
 _FirstType = TypeVar('_FirstType')
 _SecondType = TypeVar('_SecondType')
@@ -108,3 +109,52 @@ def maybe_to_result(
     if is_successful(maybe_container):
         return Success(maybe_container.unwrap())
     return Failure(default_error)
+
+
+def result_to_validated(
+    result_container: Result[_FirstType, _SecondType],
+) -> Validated[_FirstType, _SecondType]:
+    """
+    Converts ``Result`` container to ``Validated`` container.
+
+    ``Success`` becomes ``Valid``.
+    ``Failure``'s error is wrapped into a one-element tuple
+    and becomes ``Invalid``.
+
+    .. code:: python
+
+      >>> from returns.converters import result_to_validated
+      >>> from returns.result import Failure, Success
+      >>> from returns.validated import Invalid, Valid
+
+      >>> assert result_to_validated(Success(1)) == Valid(1)
+      >>> assert result_to_validated(Failure('err')) == Invalid(('err',))
+
+    """
+    return Validated.from_result(result_container)
+
+
+def validated_to_result(
+    validated_container: Validated[_FirstType, _SecondType],
+) -> Result[_FirstType, tuple[_SecondType, ...]]:
+    """
+    Converts ``Validated`` container to ``Result`` container.
+
+    ``Valid`` becomes ``Success``.
+    ``Invalid`` becomes ``Failure`` holding the error tuple.
+
+    .. code:: python
+
+      >>> from returns.converters import validated_to_result
+      >>> from returns.result import Failure, Success
+      >>> from returns.validated import Invalid, Valid
+
+      >>> assert validated_to_result(Valid(1)) == Success(1)
+      >>> assert validated_to_result(Invalid(('a', 'b'))) == Failure(
+      ...     ('a', 'b'),
+      ... )
+
+    """
+    if isinstance(validated_container, Invalid):
+        return Failure(validated_container.failure())
+    return Success(validated_container.unwrap())

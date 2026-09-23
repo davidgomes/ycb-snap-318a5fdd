@@ -6,6 +6,16 @@ incremental in minor, bugfixes only are patches.
 See [0Ver](https://0ver.org/).
 
 
+## 0.27.0
+
+### Features
+
+- Add `Validated` container with `Valid` and `Invalid` subtypes
+  for applicative error accumulation
+- Add `validated` decorator, `result_to_validated` and
+  `validated_to_result` converters, and pointfree `bind_validated`
+
+
 ## 0.26.0
 
 ### Features

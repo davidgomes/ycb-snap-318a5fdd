@@ -33,7 +33,11 @@ def strategy_from_container(
     and only exceptions for failure cases.
     """
     from returns.interfaces.applicative import ApplicativeN  # noqa: PLC0415
-    from returns.interfaces.specific import maybe, result  # noqa: PLC0415
+    from returns.interfaces.specific import (  # noqa: PLC0415
+        maybe,
+        result,
+        validated,
+    )
 
     def factory(type_: type) -> st.SearchStrategy:
         value_type, error_type = _get_type_vars(type_)
@@ -48,13 +52,18 @@ def strategy_from_container(
                     st.from_type(value_type),
                 )
             )
-        if issubclass(container_type, result.ResultLikeN):
-            strategies.append(
-                st.builds(
-                    container_type.from_failure,
-                    st.from_type(error_type),
-                )
-            )
+        _append_from_failure(
+            strategies,
+            container_type,
+            result.ResultLikeN,
+            error_type,
+        )
+        _append_from_failure(
+            strategies,
+            container_type,
+            validated.ValidatedLikeN,
+            error_type,
+        )
         if issubclass(container_type, maybe.MaybeLikeN):
             strategies.append(
                 st.builds(
@@ -69,6 +78,22 @@ def strategy_from_container(
 
 _FirstType = TypeVar('_FirstType')
 _SecondType = TypeVar('_SecondType')
+
+
+def _append_from_failure(
+    strategies: list[st.SearchStrategy[Any]],
+    container_type: Any,
+    interface: Any,
+    error_type: Any,
+) -> None:
+    """Register ``from_failure`` for diverse and validated containers."""
+    if issubclass(container_type, interface):
+        strategies.append(
+            st.builds(
+                container_type.from_failure,
+                st.from_type(error_type),
+            )
+        )
 
 
 def _get_type_vars(thing: type):
