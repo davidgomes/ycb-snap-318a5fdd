@@ -1,4 +1,5 @@
 import Window from '../../src/window/Window.js';
+import Browser from '../../src/browser/Browser.js';
 import type Document from '../../src/nodes/document/Document.js';
 import Request from '../../src/fetch/Request.js';
 import URL from '../../src/url/URL.js';
@@ -558,6 +559,28 @@ describe('Request', () => {
 				}, 50);
 			});
 		});
+
+		it('Rejects with an "AbortError" and aborts the signal if the window is closed while reading the body.', async () => {
+			const request = new window.Request(TEST_URL, {
+				method: 'POST',
+				body: new ReadableStream({
+					start(controller) {
+						controller.enqueue(Buffer.from('Hello'));
+					}
+				})
+			});
+			let error: Error | null = null;
+			const promise = request.arrayBuffer().catch((e) => (error = e));
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			await window.happyDOM.close();
+			await promise;
+
+			expect(error).toEqual(
+				new window.DOMException('The operation was aborted.', DOMExceptionNameEnum.abortError)
+			);
+			expect(request.signal.aborted).toBe(true);
+		});
 	});
 
 	describe('blob()', () => {
@@ -665,6 +688,40 @@ describe('Request', () => {
 					resolve(null);
 				}, 50);
 			});
+		});
+
+		it('Returns text of a buffered body after the window has been closed.', async () => {
+			const request = new window.Request(TEST_URL, { method: 'POST', body: 'Hello World' });
+
+			await window.happyDOM.close();
+
+			expect(await request.text()).toBe('Hello World');
+		});
+
+		it('Rejects with an "AbortError" if the body is not buffered and the window has been closed.', async () => {
+			const request = new window.Request(TEST_URL, {
+				method: 'POST',
+				body: new ReadableStream({
+					start(controller) {
+						controller.enqueue(Buffer.from('Hello World'));
+						controller.close();
+					}
+				})
+			});
+
+			await window.happyDOM.close();
+
+			let error: Error | null = null;
+
+			try {
+				await request.text();
+			} catch (e) {
+				error = e;
+			}
+
+			expect(error).toEqual(
+				new window.DOMException('The operation was aborted.', DOMExceptionNameEnum.abortError)
+			);
 		});
 	});
 
@@ -838,6 +895,31 @@ describe('Request', () => {
 					resolve(null);
 				}, 50);
 			});
+		});
+
+		it('Rejects with an "AbortError" if the page is closed while parsing multipart content.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const pageWindow = page.mainFrame.window;
+			const formData = new pageWindow.FormData();
+			formData.append('some', 'test');
+			const request = new pageWindow.Request(TEST_URL, { method: 'POST', body: formData });
+
+			vi.spyOn(MultipartFormDataParser, 'streamToFormData').mockImplementation(
+				(): Promise<{ formData; buffer: Buffer }> => new Promise(() => {})
+			);
+
+			let error: Error | null = null;
+			const promise = request.formData().catch((e) => (error = e));
+
+			await page.close();
+			await promise;
+
+			expect(error).toEqual(
+				new pageWindow.DOMException('The operation was aborted.', DOMExceptionNameEnum.abortError)
+			);
+
+			await browser.close();
 		});
 	});
 

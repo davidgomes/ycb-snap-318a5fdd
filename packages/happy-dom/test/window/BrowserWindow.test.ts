@@ -1501,6 +1501,43 @@ describe('BrowserWindow', () => {
 
 			expect(loopCount).toBe(7);
 		});
+
+		it('Clears timeouts of the previous window when the browser frame navigates.', async () => {
+			document.body.appendChild(document.createElement('iframe'));
+
+			const calls: string[] = [];
+
+			window.setTimeout(() => calls.push('before'));
+			window.setTimeout(() => calls.push('before-delayed'), 10);
+
+			const navigation = browserFrame.goto('about:blank');
+
+			window.setTimeout(() => calls.push('after'));
+
+			await navigation;
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			expect(calls).toEqual([]);
+
+			await new Promise((resolve) => browserFrame.window.setTimeout(resolve));
+		});
+
+		it('Clears timeouts when the page is closed.', async () => {
+			document.body.appendChild(document.createElement('iframe'));
+
+			const calls: string[] = [];
+
+			window.setTimeout(() => calls.push('before'));
+
+			const close = browserPage.close();
+
+			window.setTimeout(() => calls.push('after'));
+
+			await close;
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			expect(calls).toEqual([]);
+		});
 	});
 
 	describe('queueMicrotask()', () => {
@@ -1662,6 +1699,23 @@ describe('BrowserWindow', () => {
 				}, 20);
 			});
 		});
+
+		it('Clears intervals of the previous window when the browser frame navigates.', async () => {
+			document.body.appendChild(document.createElement('iframe'));
+
+			const calls: string[] = [];
+
+			window.setInterval(() => calls.push('before'));
+
+			const navigation = browserFrame.goto('about:blank');
+
+			window.setInterval(() => calls.push('after'));
+
+			await navigation;
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			expect(calls).toEqual([]);
+		});
 	});
 
 	describe('clearInterval()', () => {
@@ -1784,6 +1838,42 @@ describe('BrowserWindow', () => {
 			await new Promise((resolve) => setTimeout(resolve, 100));
 
 			expect(loopCount).toBe(5);
+		});
+
+		it('Clears animation frames of the previous window when the browser frame navigates.', async () => {
+			document.body.appendChild(document.createElement('iframe'));
+
+			const calls: string[] = [];
+
+			window.requestAnimationFrame(() => calls.push('before'));
+
+			const navigation = browserFrame.goto('about:blank');
+
+			window.requestAnimationFrame(() => calls.push('after'));
+
+			await navigation;
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			expect(calls).toEqual([]);
+
+			await new Promise((resolve) => browserFrame.window.requestAnimationFrame(resolve));
+		});
+
+		it('Clears animation frames when the page is closed.', async () => {
+			document.body.appendChild(document.createElement('iframe'));
+
+			const calls: string[] = [];
+
+			window.requestAnimationFrame(() => calls.push('before'));
+
+			const close = browserPage.close();
+
+			window.requestAnimationFrame(() => calls.push('after'));
+
+			await close;
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			expect(calls).toEqual([]);
 		});
 	});
 

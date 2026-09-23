@@ -12,6 +12,7 @@ import File from '../../src/file/File.js';
 import FormData from '../../src/form-data/FormData.js';
 import type Document from '../../src/nodes/document/Document.js';
 import Window from '../../src/window/Window.js';
+import Browser from '../../src/browser/Browser.js';
 import * as PropertySymbol from '../../src/PropertySymbol.js';
 import { ReadableStream } from 'stream/web';
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
@@ -144,6 +145,36 @@ describe('Response', () => {
 				}, 50);
 			});
 		});
+
+		it('Rejects with an "AbortError" if the window is closed while reading the body.', async () => {
+			const response = new window.Response(
+				new ReadableStream({
+					start(controller) {
+						controller.enqueue('Hello');
+					}
+				})
+			);
+			let error: Error | null = null;
+			const promise = response.arrayBuffer().catch((e) => (error = e));
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			await window.happyDOM.close();
+			await promise;
+
+			expect(error).toEqual(
+				new window.DOMException('The operation was aborted.', DOMExceptionNameEnum.abortError)
+			);
+		});
+
+		it('Returns ArrayBuffer of a buffered body after the window has been closed.', async () => {
+			const response = new window.Response('Hello World');
+
+			await window.happyDOM.close();
+
+			const arrayBuffer = await response.arrayBuffer();
+
+			expect(Buffer.from(arrayBuffer).toString()).toBe('Hello World');
+		});
 	});
 
 	describe('blob()', () => {
@@ -236,6 +267,31 @@ describe('Response', () => {
 				}, 50);
 			});
 		});
+
+		it('Rejects with an "AbortError" if the page is closed while reading the body.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			const pageWindow = page.mainFrame.window;
+			const response = new pageWindow.Response(
+				new ReadableStream({
+					start(controller) {
+						controller.enqueue('Hello');
+					}
+				})
+			);
+			let error: Error | null = null;
+			const promise = response.buffer().catch((e) => (error = e));
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			await page.close();
+			await promise;
+
+			expect(error).toEqual(
+				new pageWindow.DOMException('The operation was aborted.', DOMExceptionNameEnum.abortError)
+			);
+
+			await browser.close();
+		});
 	});
 
 	describe('text()', () => {
@@ -275,6 +331,87 @@ describe('Response', () => {
 					resolve(null);
 				}, 50);
 			});
+		});
+
+		it('Rejects with an "AbortError" if the browser is closed while reading the body.', async () => {
+			const browser = new Browser();
+			const pageWindow = browser.newPage().mainFrame.window;
+			const response = new pageWindow.Response(
+				new ReadableStream({
+					start(controller) {
+						controller.enqueue('Hello');
+					}
+				})
+			);
+			let error: Error | null = null;
+			const promise = response.text().catch((e) => (error = e));
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			await browser.close();
+			await promise;
+
+			expect(error).toEqual(
+				new pageWindow.DOMException('The operation was aborted.', DOMExceptionNameEnum.abortError)
+			);
+		});
+
+		it('Rejects with an "AbortError" if the page navigates while reading the body.', async () => {
+			const browser = new Browser();
+			const page = browser.newPage();
+			page.content = '<iframe></iframe>';
+			const pageWindow = page.mainFrame.window;
+			const response = new pageWindow.Response(
+				new ReadableStream({
+					start(controller) {
+						controller.enqueue('Hello');
+					}
+				})
+			);
+			let error: Error | null = null;
+			const promise = response.text().catch((e) => (error = e));
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			await page.goto('about:blank');
+			await promise;
+
+			expect(error).toEqual(
+				new pageWindow.DOMException('The operation was aborted.', DOMExceptionNameEnum.abortError)
+			);
+
+			await browser.close();
+		});
+
+		it('Returns text of a buffered body after the window has been closed.', async () => {
+			const response = new window.Response('Hello World');
+
+			await window.happyDOM.close();
+
+			expect(await response.text()).toBe('Hello World');
+		});
+
+		it('Rejects with an "AbortError" if the body is not buffered and the window has been closed.', async () => {
+			const response = new window.Response(
+				new ReadableStream({
+					start(controller) {
+						controller.enqueue('Hello World');
+						controller.close();
+					}
+				})
+			);
+
+			await window.happyDOM.close();
+
+			let error: Error | null = null;
+
+			try {
+				await response.text();
+			} catch (e) {
+				error = e;
+			}
+
+			expect(error).toEqual(
+				new window.DOMException('The operation was aborted.', DOMExceptionNameEnum.abortError)
+			);
 		});
 	});
 
@@ -486,6 +623,45 @@ describe('Response', () => {
 					resolve(null);
 				}, 50);
 			});
+		});
+
+		it('Rejects with an "AbortError" if the window is closed while parsing multipart content.', async () => {
+			const response = new window.Response(
+				new ReadableStream({
+					start(controller) {
+						controller.enqueue(
+							Buffer.from(
+								'--boundary\r\nContent-Disposition: form-data; name="key1"\r\n\r\nvalue1\r\n'
+							)
+						);
+					}
+				}),
+				{
+					headers: { 'Content-Type': 'multipart/form-data; boundary=boundary' }
+				}
+			);
+			let error: Error | null = null;
+			const promise = response.formData().catch((e) => (error = e));
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			await window.happyDOM.close();
+			await promise;
+
+			expect(error).toEqual(
+				new window.DOMException('The operation was aborted.', DOMExceptionNameEnum.abortError)
+			);
+		});
+
+		it('Returns FormData of buffered multipart content after the window has been closed.', async () => {
+			const formData = new window.FormData();
+			formData.append('some', 'test');
+			const response = new window.Response(formData);
+
+			await window.happyDOM.close();
+
+			const formDataResponse = await response.formData();
+
+			expect(formDataResponse.get('some')).toBe('test');
 		});
 	});
 
