@@ -46,6 +46,7 @@ class BaseStateKwargs(TypedDict, total=False):
     enter: "str | ActionProtocol | Sequence[str] | Sequence[ActionProtocol]"
     exit: "str | ActionProtocol | Sequence[str] | Sequence[ActionProtocol]"
     donedata: "ActionProtocol | None"
+    data: Dict[str, Any]
 
 
 class StateKwargs(BaseStateKwargs, total=False):
@@ -152,7 +153,7 @@ def create_machine_class_from_definition(
         name: The class name for the generated state machine.
         states: A mapping of state IDs to state definitions. Each state definition
             can include ``initial``, ``final``, ``parallel``, ``name``, ``value``,
-            ``enter``/``exit`` callbacks, ``donedata``, nested ``states``,
+            ``enter``/``exit`` callbacks, ``donedata``, ``data``, nested ``states``,
             ``history``, and transitions via ``on`` (event-triggered) or
             ``transitions`` (eventless).
         **definition: Additional keyword arguments passed to the metaclass

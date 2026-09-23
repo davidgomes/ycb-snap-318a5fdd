@@ -177,6 +177,8 @@ class SCXMLProcessor:
             state_dict["final"] = True
         if state.parallel:
             state_dict["parallel"] = True
+        if state.data:
+            state_dict["data"] = state.data
 
         # Process enter actions
         enter_callables: list = [

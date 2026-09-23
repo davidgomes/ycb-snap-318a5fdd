@@ -73,6 +73,57 @@ class TestParseState:
         assert state_ids[0].startswith("__auto_")
 
 
+class TestParseStateData:
+    SCXML = """
+    <scxml xmlns="http://www.w3.org/2005/07/scxml" initial="s1">
+      <state id="s1">
+        <datamodel>
+          <data id="count" expr="0"/>
+          <data id="items" expr="[1, 'two']"/>
+          <data id="config" expr=" {'retries': 3} "/>
+          <data id="derived" expr="count + 1"/>
+          <data id="broken" expr="("/>
+          <data id="unhashable" expr="{[]: 1}"/>
+          <data id="noexpr"/>
+        </datamodel>
+        <transition event="go" target="s2"/>
+      </state>
+      <state id="s2">
+        <transition event="back" target="s1"/>
+      </state>
+    </scxml>
+    """
+
+    def test_literal_exprs_become_state_data(self):
+        definition = parse_scxml(self.SCXML)
+
+        assert definition.states["s1"].data == {
+            "count": 0,
+            "items": [1, "two"],
+            "config": {"retries": 3},
+        }
+        assert definition.states["s2"].data == {}
+
+    def test_processed_machine_owns_the_state_data(self):
+        from statemachine.io.scxml.processor import SCXMLProcessor
+
+        processor = SCXMLProcessor()
+        processor.parse_scxml("state_data", self.SCXML)
+        sm = processor.start()
+        sm.get_state_data("s1")["items"].append(3)
+
+        sm.send("go")
+        assert sm.get_state_data("s1") is None
+        sm.send("back")
+
+        assert sm.get_state_data("s1") == {
+            "count": 0,
+            "items": [1, "two"],
+            "config": {"retries": 3},
+        }
+        assert sm.model.count == 0
+
+
 class TestParseHistory:
     def test_history_without_id_raises(self):
         """History element without id attribute raises ValueError."""
