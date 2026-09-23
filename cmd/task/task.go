@@ -193,6 +193,10 @@ func run() error {
 		e.InterceptInterruptSignals()
 	}
 
+	if flags.Graph {
+		return e.Graph(calls...)
+	}
+
 	ctx := context.Background()
 
 	if flags.Status {

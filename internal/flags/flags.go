@@ -51,6 +51,9 @@ var (
 	List                bool
 	ListAll             bool
 	ListJson            bool
+	Graph               bool
+	GraphFormat         string
+	GraphReverse        bool
 	TaskSort            string
 	Status              bool
 	NoStatus            bool
@@ -126,6 +129,9 @@ func init() {
 	pflag.BoolVarP(&List, "list", "l", false, "Lists tasks with description of current Taskfile.")
 	pflag.BoolVarP(&ListAll, "list-all", "a", false, "Lists tasks with or without a description.")
 	pflag.BoolVarP(&ListJson, "json", "j", false, "Formats task list as JSON.")
+	pflag.BoolVar(&Graph, "graph", false, "Shows the dependency graph of the given tasks.")
+	pflag.StringVar(&GraphFormat, "graph-format", "json", "Format of the dependency graph: json, dot or text.")
+	pflag.BoolVar(&GraphReverse, "reverse", false, "Shows tasks depending on the given tasks when used with --graph.")
 	pflag.StringVar(&TaskSort, "sort", "", "Changes the order of the tasks when listed. [default|alphanumeric|none].")
 	pflag.BoolVar(&Status, "status", false, "Exits with non-zero exit code if any of the given tasks is not up-to-date.")
 	pflag.BoolVar(&NoStatus, "no-status", false, "Ignore status when listing tasks as JSON")
@@ -234,8 +240,8 @@ func Validate() error {
 		return errors.New("task: --json only applies to --list or --list-all")
 	}
 
-	if NoStatus && !ListJson {
-		return errors.New("task: --no-status only applies to --json with --list or --list-all")
+	if NoStatus && !ListJson && !Graph {
+		return errors.New("task: --no-status only applies to --graph or --json with --list or --list-all")
 	}
 
 	if Nested && !ListJson {
@@ -308,6 +314,9 @@ func (o *flagsOption) ApplyToExecutor(e *task.Executor) {
 		task.WithTaskSorter(sorter),
 		task.WithVersionCheck(true),
 		task.WithFailfast(Failfast),
+		task.WithGraphFormat(GraphFormat),
+		task.WithGraphReverse(GraphReverse),
+		task.WithGraphNoStatus(NoStatus),
 	)
 }
 
