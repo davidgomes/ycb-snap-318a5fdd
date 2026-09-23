@@ -31,6 +31,7 @@ class Emitter extends EventEmitter<string> {
     COMPOSITION_START: 'composition-start',
     COMPOSITION_BEFORE_END: 'composition-before-end',
     COMPOSITION_END: 'composition-end',
+    ENABLE_CHANGE: 'enable-change',
   } as const;
 
   static sources = {
