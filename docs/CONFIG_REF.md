@@ -22,6 +22,14 @@ jobs:
   dbdsn: user:password@tcp(127.0.0.1:3306)/dbname # dbdsn is required. you should replace, <user>, <password>, <127.0.0.1:3306> and <dbname> with your real db credentials
   gzip: true #optional, false by default
   unique: true #optional, false by default
+  encryption: #optional, encrypt the dump file with AES-256-GCM, the file name gets a .enc suffix (after .gz).
+    enabled: true
+    keysource: env #required when enabled, one of env, file, literal or derive. Only the fields of the chosen source are allowed.
+    keyenvvar: ONEDUMP_ENCRYPTION_KEY #env: environment variable holding a base64 encoded 32-byte key.
+    # keyfile: /etc/onedump/key #file: file containing a base64 encoded 32-byte key.
+    # key: <base64 encoded 32-byte key> #literal: the base64 encoded 32-byte key inline.
+    # passphrase: <passphrase> #derive: the key is derived from the passphrase and salt with argon2id.
+    # salt: <base64 encoded salt> #derive: at least 16 bytes once decoded.
   options: #optional, database dump options, depends on different drivers.
   - --skip-comments
   - --no-create-info
