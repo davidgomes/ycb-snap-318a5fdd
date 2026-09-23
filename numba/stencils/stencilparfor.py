@@ -166,6 +166,7 @@ class StencilPass(object):
         ndims = self.typemap[in_arr.name].ndim
         scope = in_arr.scope
         loc = in_arr.loc
+        modes = stencil_func.get_modes(ndims)
         parfor_vars = []
         for i in range(ndims):
             parfor_var = ir.Var(scope, mk_unique_var(
@@ -175,7 +176,7 @@ class StencilPass(object):
 
         start_lengths, end_lengths = self._replace_stencil_accesses(
              stencil_ir, parfor_vars, in_args, index_offsets, stencil_func,
-             arg_to_arr_dict)
+             arg_to_arr_dict, modes)
 
         if config.DEBUG_ARRAY_OPT >= 1:
             print("stencil_blocks after replace stencil accesses")
@@ -241,7 +242,7 @@ class StencilPass(object):
 
             zero_name = ir_utils.mk_unique_var("zero_val")
             zero_var = ir.Var(scope, zero_name, loc)
-            if "cval" in stencil_func.options:
+            if "cval" in stencil_func.options and 'constant' in modes:
                 cval = stencil_func.options["cval"]
                 # TODO: Loosen this restriction to adhere to casting rules.
                 cval_ty = typing.typeof.typeof(cval)
@@ -376,8 +377,11 @@ class StencilPass(object):
                                                 )
                 stmts.append(setitem_call)
 
-            # For each dimension, add setitem to set border values.
+            # For each dimension, add setitem to set border values.  Only
+            # dimensions using mode 'constant' have a border.
             for dim in range(in_arr_typ.ndim):
+                if modes[dim] != 'constant':
+                    continue
                 # First, fill all entries with ":".
                 start_tuple_items = [slice_var] * in_arr_typ.ndim
                 last_tuple_items = [slice_var] * in_arr_typ.ndim
@@ -408,7 +412,7 @@ class StencilPass(object):
             equiv_set.insert_equiv(out_arr, in_arr_dim_sizes)
             init_block.body.extend(stmts)
         else: # out is present
-            if "cval" in stencil_func.options: # do out[:] = cval
+            if "cval" in stencil_func.options and 'constant' in modes: # do out[:] = cval
                 cval = stencil_func.options["cval"]
                 # TODO: Loosen this restriction to adhere to casting rules.
                 cval_ty = typing.typeof.typeof(cval)
@@ -548,10 +552,12 @@ class StencilPass(object):
         return ret_var
 
     def _replace_stencil_accesses(self, stencil_ir, parfor_vars, in_args,
-                                  index_offsets, stencil_func, arg_to_arr_dict):
+                                  index_offsets, stencil_func, arg_to_arr_dict,
+                                  modes):
         """ Convert relative indexing in the stencil kernel to standard indexing
             by adding the loop index variables to the corresponding dimensions
-            of the array index tuples.
+            of the array index tuples.  Accesses in dimensions whose mode is
+            not 'constant' also map out-of-bounds indices back into the array.
         """
         stencil_blocks = stencil_ir.blocks
         in_arr = in_args[0]
@@ -655,6 +661,13 @@ class StencilPass(object):
                     index_vars = self._add_index_offsets(parfor_vars,
                                 list(index_list), new_body, scope, loc)
 
+                    if any(m != 'constant' for m in modes):
+                        stmt.value = self._mk_access_with_modes(
+                            stmt.value.value, index_vars, modes, stencil_func,
+                            new_body, scope, loc)
+                        new_body.append(stmt)
+                        continue
+
                     # new access index tuple
                     if ndims == 1:
                         ind_var = index_vars[0]
@@ -690,7 +703,46 @@ class StencilPass(object):
             raise NumbaValueError("Stencil kernel with no accesses to " \
                                   "relatively indexed arrays.")
 
+        # Only dimensions using mode 'constant' exclude the border from the
+        # iteration space.
+        for i in range(ndims):
+            if modes[i] != 'constant':
+                start_lengths[i] = 0
+                end_lengths[i] = 0
+
         return start_lengths, end_lengths
+
+    def _mk_access_with_modes(self, arr, index_vars, modes, stencil_func,
+                              new_body, scope, loc):
+        """ Returns a call that reads array arr at the absolute indices
+            index_vars after mapping out-of-bounds indices according to the
+            per-dimension modes.
+        """
+        from numba.stencils.stencil import (_stencil_cval_modes,
+                                            check_stencil_access_modes,
+                                            get_stencil_access_func,
+                                            stencil_access_cval)
+        arr_typ = self.typemap[arr.name]
+        check_stencil_access_modes(modes,
+                                   [self.typemap[v.name] for v in index_vars])
+        access_func = get_stencil_access_func(modes)
+        access_typ = types.functions.Dispatcher(access_func)
+        access_var = ir.Var(scope, mk_unique_var("$stencil_access"), loc)
+        self.typemap[access_var.name] = access_typ
+        new_body.append(ir.Assign(ir.Global("stencil_access", access_func,
+                                            loc), access_var, loc))
+        args = [arr] + index_vars
+        if any(m in _stencil_cval_modes for m in modes):
+            cval = stencil_access_cval(self.typingctx, stencil_func.options,
+                                       arr_typ)
+            cval_var = ir.Var(scope, mk_unique_var("$stencil_cval"), loc)
+            self.typemap[cval_var.name] = arr_typ.dtype
+            new_body.append(ir.Assign(ir.Const(cval, loc), cval_var, loc))
+            args.append(cval_var)
+        call = ir.Expr.call(access_var, args, (), loc)
+        self.calltypes[call] = access_typ.get_call_type(
+            self.typingctx, [self.typemap[v.name] for v in args], {})
+        return call
 
     def _add_index_offsets(self, index_list, index_offsets, new_body,
                            scope, loc):

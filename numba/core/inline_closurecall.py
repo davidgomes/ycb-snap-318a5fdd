@@ -18,6 +18,7 @@ from numba.core.ir_utils import (
     guard,
     get_definition,
     find_callname,
+    find_const,
     find_build_sequence,
     get_np_ufunc_typ,
     get_ir_of_code,
@@ -192,7 +193,7 @@ class InlineClosureCallPass(object):
         return True
 
     def _inline_stencil(self, instr, call_name, func_def):
-        from numba.stencils.stencil import StencilFunc
+        from numba.stencils.stencil import StencilFunc, _normalize_stencil_mode
         lhs = instr.target
         expr = instr.value
         # We keep the escaping variables of the stencil kernel
@@ -234,7 +235,18 @@ class InlineClosureCallPass(object):
                     "stencil index_offsets option should be a tuple"
                     " with constant structure such as (offset, )"
                 )
-        sf = StencilFunc(kernel_ir, 'constant', options)
+        mode = 'constant'
+        if 'mode' in options:
+            mode = guard(self._get_stencil_mode, options.pop('mode'))
+            if mode is None:
+                raise ValueError(
+                    "stencil mode option should be a constant string or"
+                    " a tuple of constant strings"
+                )
+            # The mode is resolved at compile time so it is not a kernel
+            # argument.
+            expr.kws = [kw for kw in expr.kws if kw[0] != 'mode']
+        sf = StencilFunc(kernel_ir, _normalize_stencil_mode(mode), options)
         sf.kws = expr.kws # hack to keep variables live
         sf_global = ir.Global('stencil', sf, expr.loc)
         self.func_ir._definitions[lhs.name] = [sf_global]
@@ -256,6 +268,20 @@ class InlineClosureCallPass(object):
             res.append(tuple(win_build_tuple.items))
         options['neighborhood'] = tuple(res)
         return True
+
+    def _get_stencil_mode(self, mode_var):
+        """
+        Extract the stencil mode, a string or a tuple of strings, from the
+        program IR to provide to StencilFunc.
+        """
+        mode = guard(find_const, self.func_ir, mode_var)
+        if mode is None:
+            mode_build_tuple = get_definition(self.func_ir, mode_var)
+            require(isinstance(mode_build_tuple, ir.Expr) and
+                    mode_build_tuple.op == 'build_tuple')
+            mode = tuple(find_const(self.func_ir, item)
+                         for item in mode_build_tuple.items)
+        return mode
 
     def _fix_stencil_index_offsets(self, options):
         """
