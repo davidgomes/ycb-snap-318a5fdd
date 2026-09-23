@@ -1,0 +1,46 @@
+version: '3'
+
+includes:
+  lib: ./lib
+
+tasks:
+  default:
+    deps: [build]
+
+  build:
+    desc: Build the project
+    aliases: [b]
+    deps: [generate, lint]
+    cmds:
+      - task: lib:compile
+      - echo building
+
+  generate:
+    cmds:
+      - task: setup
+
+  lint:
+    deps: [setup]
+    sources:
+      - Taskfile.yml
+
+  setup:
+    status:
+      - "true"
+
+  release:
+    cmds:
+      - for: [linux, darwin]
+        task: package
+        vars:
+          OS: '{{.ITEM}}'
+      - defer: { task: cleanup }
+
+  package:
+    deps: [build]
+
+  cleanup: echo cleanup
+
+  deploy-*:
+    cmds:
+      - task: build
