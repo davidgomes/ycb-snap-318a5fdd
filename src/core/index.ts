@@ -1,6 +1,6 @@
 import { CreateStoreOptions, KeaPlugin } from '../types'
 import { listeners, ListenersPluginContext, sharedListeners } from './listeners'
-import { getPluginContext, setPluginContext } from '../kea/context'
+import { getContext, getPluginContext, setPluginContext } from '../kea/context'
 import { connect } from './connect'
 import { actions } from './actions'
 import { defaults } from './defaults'
@@ -42,6 +42,9 @@ export const corePlugin: KeaPlugin = {
     sharedListeners: undefined,
     values: {},
     events: {},
+    // Registered only when atomic selectors are on, so proxyFields can forward
+    // logic.selectorHealth() after mount. Left undefined until build finishes.
+    ...(getContext().options.atomicSelectors ? { selectorHealth: undefined } : {}),
   }),
 
   events: {

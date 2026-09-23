@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'use-sync-external-store/shim'
 import { LogicWrapper, BuiltLogic, Logic, Selector } from '../types'
 import { getContext } from '../kea/context'
 import { isLogicWrapper } from '../utils'
+import { readTrackedSnapshot } from '../core/atomic-selectors'
 
 /** True if we dispatched an action in a component's body *while* rendering. For example when mounting a logic.
  * Old subscriptions shouldn't update until after rendering. */
@@ -12,7 +13,15 @@ export const isPaused = () => pauseCounter !== 0
 const getStoreState = () => getContext().store.getState()
 
 export function useSelector(selector: Selector): any {
-  return useSyncExternalStore(getContext().store.subscribe, () => selector(getStoreState()))
+  // Always allocated so hook order stays stable when atomicSelectors is toggled per context.
+  const track = useRef<any>(null)
+  return useSyncExternalStore(getContext().store.subscribe, () => {
+    const state = getStoreState()
+    if (!getContext().options.atomicSelectors) {
+      return selector(state)
+    }
+    return readTrackedSnapshot(track, selector, state)
+  })
 }
 
 export function useValues<L extends Logic = Logic>(logic: BuiltLogic<L> | LogicWrapper<L>): L['values'] {

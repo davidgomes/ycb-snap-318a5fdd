@@ -43,6 +43,12 @@ export interface Logic {
     propsChanged?: (props: any, oldProps: any) => void
   }
 
+  /**
+   * Present only when the context was opened with `atomicSelectors: true`.
+   * Reports leaf dependencies, dependents, evaluation counts, and the last invalidation.
+   */
+  selectorHealth?: () => SelectorHealth
+
   // listeners
   listeners?: Record<string, ListenerFunctionWrapper[]>
   sharedListeners?: Record<string, ListenerFunction>
@@ -530,6 +536,22 @@ export interface CreateStoreOptions {
   plugins: KeaPlugin[]
 }
 
+export interface SelectorHealthEntry {
+  /** Leaf paths (e.g. `user.name`, `data.map:a`) or local selector names. */
+  dependencies: string[]
+  /** Local names of selectors that depend on this one. */
+  dependents: string[]
+  /** How many times this selector's compute function has run. */
+  evaluations: number
+  /** `selector:<name>` or a raw leaf path. Null until the first invalidation. */
+  dirtyCause: string | null
+}
+
+export interface SelectorHealth {
+  selectors: Record<string, SelectorHealthEntry>
+  topologicalOrder: string[]
+}
+
 export interface InternalContextOptions {
   debug: boolean
   proxyFields: boolean
@@ -538,6 +560,8 @@ export interface InternalContextOptions {
   detachStrategy: 'dispatch' | 'replace' | 'persist'
   defaultPath: string[]
   disableAsyncActions: boolean
+  /** Fine-grained selector dependency tracking. Defaults to false. */
+  atomicSelectors: boolean
   // ...otherOptions
 }
 

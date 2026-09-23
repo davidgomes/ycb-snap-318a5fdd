@@ -1,6 +1,7 @@
 import { Logic, LogicBuilder, LogicPropSelectors, Selector, SelectorDefinition, SelectorDefinitions } from '../types'
 import { createSelector, createSelectorCreator, defaultMemoize, ParametricSelector } from 'reselect'
-import { getStoreState } from '../kea/context'
+import { getContext, getStoreState } from '../kea/context'
+import { installAtomicSelectors } from './atomic-selectors'
 
 /**
   Logic builder:
@@ -25,6 +26,11 @@ export function selectors<L extends Logic = Logic>(
 ): LogicBuilder<L> {
   return (logic) => {
     const selectorInputs = typeof input === 'function' ? input(logic) : input
+
+    if (getContext().options.atomicSelectors) {
+      installAtomicSelectors(logic, selectorInputs as Record<string, any>)
+      return
+    }
 
     // small cache so the order would not count
     const builtSelectors: Record<string, Selector> = {}
