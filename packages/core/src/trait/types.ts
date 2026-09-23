@@ -29,6 +29,8 @@ export type Trait<TSchema extends Schema = any> = {
         /** Reference to parent relation if this trait is owned by a relation */
         relation: Relation<any> | null;
         type: StoreType;
+        /** Dependencies and predicate function if this trait is a predicate */
+        predicate?: { traits: Trait[]; fn: (values: any) => boolean };
     };
 } & ((params?: TraitValue<TSchema>) => [Trait<TSchema>, TraitValue<TSchema>]);
 
@@ -93,6 +95,8 @@ export interface TraitInstance<T extends Trait = Trait, S extends Schema = Extra
     notQueries: Set<QueryInstance>;
     /** Queries that filter by this relation (only for relation traits) */
     relationQueries: Set<QueryInstance>;
+    /** Predicates that depend on this trait */
+    predicates: Trait[];
     schema: S;
     changeSubscriptions: Set<(entity: Entity, target?: Entity) => void>;
     addSubscriptions: Set<(entity: Entity, target?: Entity) => void>;

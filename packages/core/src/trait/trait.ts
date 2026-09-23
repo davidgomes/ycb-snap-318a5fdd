@@ -2,6 +2,7 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { setChanged, setPairChanged } from '../query/modifiers/changed';
+import { setupPredicate, updatePredicates } from '../query/predicate';
 import { checkQueryTrackingWithRelations } from '../query/utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
 import { getOrderedTraitRelation, isOrderedTrait, setupOrderedTraitSync } from '../relation/ordered';
@@ -104,6 +105,7 @@ export function registerTrait(world: World, trait: Trait) {
         trackingQueries: new Set(),
         notQueries: new Set(),
         relationQueries: new Set(),
+        predicates: [],
         schema: trait.schema,
         changeSubscriptions: new Set(),
         addSubscriptions: new Set(),
@@ -122,6 +124,8 @@ export function registerTrait(world: World, trait: Trait) {
 
     // Setup ordered trait sync if this is an ordered trait
     if (isOrderedTrait(trait)) setupOrderedTraitSync(world, trait);
+
+    if (traitCtx.predicate) setupPredicate(world, trait);
 }
 
 function getOrderedTrait(world: World, entity: Entity, trait: OrderedRelation): OrderedList {
@@ -418,13 +422,14 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
     value instanceof Function && (value = value(ctx.get(index, store)));
 
     ctx.set(index, store, value);
-    triggerChanged && setChanged(world, entity, trait);
+    if (triggerChanged) setChanged(world, entity, trait);
+    else updatePredicates(world, entity, trait);
 }
 
 /**
  * Core logic for adding a trait to an entity.
  */
-/* @inline */ function addTraitToEntity(
+export /* @inline */ function addTraitToEntity(
     world: World,
     entity: Entity,
     trait: Trait
@@ -484,7 +489,7 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
  * Core logic for removing a trait from an entity.
  * Does not emit remove subscriptions — callers handle emission.
  */
-function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void {
+export function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void {
     if (!hasTrait(world, entity, trait)) return;
 
     const ctx = world[$internal];
@@ -531,4 +536,6 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
 
     // Remove trait from entity internally
     ctx.entityTraits.get(entity)!.delete(trait);
+
+    updatePredicates(world, entity, trait);
 }

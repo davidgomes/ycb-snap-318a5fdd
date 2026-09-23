@@ -1,3 +1,4 @@
+import type { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { RelationPair } from '../relation/types';
 import { AoSFactory } from '../storage';
@@ -5,6 +6,7 @@ import type {
     ExtractSchema,
     ExtractStore,
     IsTag,
+    TagTrait,
     Trait,
     TraitInstance,
     TraitRecord,
@@ -95,6 +97,21 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     traitIds: number[];
 };
 
+/** The data of each dependency trait, in order, passed to a predicate function */
+export type PredicateValues<T extends Trait[]> = {
+    [K in keyof T]: T[K] extends Trait ? TraitRecord<T[K]> : never;
+};
+
+export type PredicateDefinition<T extends Trait[] = Trait[]> = {
+    traits: T;
+    fn: (values: PredicateValues<T>) => boolean;
+};
+
+/** A value-based filter that can be used anywhere a trait is accepted in a query */
+export type Predicate<T extends Trait[] = Trait[]> = TagTrait & {
+    [$internal]: { predicate: PredicateDefinition<T> };
+};
+
 /** Parameter types that can be passed to Or modifier */
 export type OrParameter = Trait | Modifier;
 
@@ -124,8 +141,8 @@ type ExtractTraitsFromOrParams<T extends OrParameter[]> = T extends [infer First
 export type TrackingGroup = {
     /** Whether all traits must match (and) or any trait can match (or) */
     logic: 'and' | 'or';
-    /** The type of tracking event */
-    type: 'add' | 'remove' | 'change';
+    /** The type of tracking event. `toggle` matches both add and remove events (Changed on a predicate). */
+    type: 'add' | 'remove' | 'change' | 'toggle';
     /** Tracking modifier ID for snapshot/mask lookups */
     id: number;
     /** Bitmasks indexed by generationId */

@@ -8,6 +8,7 @@ import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
 import { createModifier } from '../modifier';
+import { updatePredicates } from '../predicate';
 import type { Modifier } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
@@ -77,6 +78,7 @@ function markChanged(world: World, entity: Entity, trait: Trait) {
 export function setChanged(world: World, entity: Entity, trait: Trait) {
     const data = markChanged(world, entity, trait);
     if (!data) return;
+    updatePredicates(world, entity, trait);
     for (const sub of data.changeSubscriptions) sub(entity);
 }
 

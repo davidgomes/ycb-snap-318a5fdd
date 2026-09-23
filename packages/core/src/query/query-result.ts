@@ -10,6 +10,7 @@ import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
 import { isModifier } from './modifier';
 import { setChanged } from './modifiers/changed';
+import { deferPredicates, flushPredicates, hasPredicates, updatePredicates } from './predicate';
 import type {
     InstancesFromParameters,
     QueryInstance,
@@ -55,119 +56,136 @@ export function createQueryResult<T extends QueryParameter[]>(
         ) {
             const state = Array.from({ length: traits.length });
 
-            // Inline all three permutations of updateEach for performance.
-            if (options.changeDetection === 'auto') {
-                const changedPairs: [Entity, Trait][] = [];
-                const atomicSnapshots: any[] = [];
-                const trackedIndices: number[] = [];
-                const untrackedIndices: number[] = [];
+            // Predicates depending on traits changed during iteration are evaluated once it ends.
+            deferPredicates(world);
 
-                getTrackedTraits(traits, world, query, trackedIndices, untrackedIndices);
+            try {
+                // Inline all three permutations of updateEach for performance.
+                if (options.changeDetection === 'auto') {
+                    const changedPairs: [Entity, Trait][] = [];
+                    const atomicSnapshots: any[] = [];
+                    const trackedIndices: number[] = [];
+                    const untrackedIndices: number[] = [];
 
-                for (let i = 0; i < entities.length; i++) {
-                    const entity = entities[i];
-                    const eid = getEntityId(entity);
+                    getTrackedTraits(traits, world, query, trackedIndices, untrackedIndices);
 
-                    createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    for (let i = 0; i < entities.length; i++) {
+                        const entity = entities[i];
+                        const eid = getEntityId(entity);
 
-                    // Skip if the entity has been destroyed.
-                    if (!world.has(entity)) continue;
+                        createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
+                        callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
-                    // Commit all changes back to the stores for tracked traits.
-                    for (let j = 0; j < trackedIndices.length; j++) {
-                        const index = trackedIndices[j];
-                        const trait = traits[index];
-                        const ctx = trait[$internal];
-                        const newValue = state[index];
-                        const store = stores[index];
+                        // Skip if the entity has been destroyed.
+                        if (!world.has(entity)) continue;
 
-                        let changed = false;
-                        if (ctx.type === 'aos') {
-                            changed = ctx.fastSetWithChangeDetection(eid, store, newValue);
-                            if (!changed) {
-                                changed = !shallowEqual(newValue, atomicSnapshots[index]);
+                        // Commit all changes back to the stores for tracked traits.
+                        for (let j = 0; j < trackedIndices.length; j++) {
+                            const index = trackedIndices[j];
+                            const trait = traits[index];
+                            const ctx = trait[$internal];
+                            const newValue = state[index];
+                            const store = stores[index];
+
+                            let changed = false;
+                            if (ctx.type === 'aos') {
+                                changed = ctx.fastSetWithChangeDetection(eid, store, newValue);
+                                if (!changed) {
+                                    changed = !shallowEqual(newValue, atomicSnapshots[index]);
+                                }
+                            } else {
+                                changed = ctx.fastSetWithChangeDetection(eid, store, newValue);
                             }
-                        } else {
-                            changed = ctx.fastSetWithChangeDetection(eid, store, newValue);
+
+                            // Collect changed traits.
+                            if (changed) changedPairs.push([entity, trait] as const);
                         }
 
-                        // Collect changed traits.
-                        if (changed) changedPairs.push([entity, trait] as const);
+                        // Commit all changes back to the stores for untracked traits.
+                        for (let j = 0; j < untrackedIndices.length; j++) {
+                            const index = untrackedIndices[j];
+                            const trait = traits[index];
+                            const ctx = trait[$internal];
+                            const store = stores[index];
+                            ctx.fastSet(eid, store, state[index]);
+                        }
                     }
 
-                    // Commit all changes back to the stores for untracked traits.
-                    for (let j = 0; j < untrackedIndices.length; j++) {
-                        const index = untrackedIndices[j];
-                        const trait = traits[index];
-                        const ctx = trait[$internal];
-                        const store = stores[index];
-                        ctx.fastSet(eid, store, state[index]);
+                    // Trigger change events for each entity that was modified.
+                    for (let i = 0; i < changedPairs.length; i++) {
+                        const [entity, trait] = changedPairs[i];
+                        setChanged(world, entity, trait);
                     }
-                }
+                } else if (options.changeDetection === 'always') {
+                    const changedPairs: [Entity, Trait][] = [];
+                    const atomicSnapshots: any[] = [];
 
-                // Trigger change events for each entity that was modified.
-                for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
-                }
-            } else if (options.changeDetection === 'always') {
-                const changedPairs: [Entity, Trait][] = [];
-                const atomicSnapshots: any[] = [];
+                    for (let i = 0; i < entities.length; i++) {
+                        const entity = entities[i];
+                        const eid = getEntityId(entity);
 
-                for (let i = 0; i < entities.length; i++) {
-                    const entity = entities[i];
-                    const eid = getEntityId(entity);
+                        createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
+                        callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
-                    createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                        // Skip if the entity has been destroyed.
+                        if (!world.has(entity)) continue;
 
-                    // Skip if the entity has been destroyed.
-                    if (!world.has(entity)) continue;
+                        // Commit all changes back to the stores.
+                        for (let j = 0; j < traits.length; j++) {
+                            const trait = traits[j];
+                            const ctx = trait[$internal];
+                            const newValue = state[j];
 
-                    // Commit all changes back to the stores.
-                    for (let j = 0; j < traits.length; j++) {
-                        const trait = traits[j];
-                        const ctx = trait[$internal];
-                        const newValue = state[j];
-
-                        let changed = false;
-                        if (ctx.type === 'aos') {
-                            changed = ctx.fastSetWithChangeDetection(eid, stores[j], newValue);
-                            if (!changed) {
-                                changed = !shallowEqual(newValue, atomicSnapshots[j]);
+                            let changed = false;
+                            if (ctx.type === 'aos') {
+                                changed = ctx.fastSetWithChangeDetection(eid, stores[j], newValue);
+                                if (!changed) {
+                                    changed = !shallowEqual(newValue, atomicSnapshots[j]);
+                                }
+                            } else {
+                                changed = ctx.fastSetWithChangeDetection(eid, stores[j], newValue);
                             }
-                        } else {
-                            changed = ctx.fastSetWithChangeDetection(eid, stores[j], newValue);
+
+                            // Collect changed traits.
+                            if (changed) changedPairs.push([entity, trait] as const);
+                        }
+                    }
+
+                    // Trigger change events for each entity that was modified.
+                    for (let i = 0; i < changedPairs.length; i++) {
+                        const [entity, trait] = changedPairs[i];
+                        setChanged(world, entity, trait);
+                    }
+                } else if (options.changeDetection === 'never') {
+                    const predicateIndices: number[] = [];
+                    for (let j = 0; j < traits.length; j++) {
+                        if (hasPredicates(world, traits[j])) predicateIndices.push(j);
+                    }
+
+                    for (let i = 0; i < entities.length; i++) {
+                        const entity = entities[i];
+                        const eid = getEntityId(entity);
+                        createSnapshots(eid, traits, stores, state);
+                        callback(state as unknown as InstancesFromParameters<T>, entity, i);
+
+                        // Skip if the entity has been destroyed.
+                        if (!world.has(entity)) continue;
+
+                        // Commit all changes back to the stores.
+                        for (let j = 0; j < traits.length; j++) {
+                            const trait = traits[j];
+                            const ctx = trait[$internal];
+                            ctx.fastSet(eid, stores[j], state[j]);
                         }
 
-                        // Collect changed traits.
-                        if (changed) changedPairs.push([entity, trait] as const);
+                        // No change events are emitted, so queue predicates unconditionally.
+                        for (let j = 0; j < predicateIndices.length; j++) {
+                            updatePredicates(world, entity, traits[predicateIndices[j]]);
+                        }
                     }
                 }
-
-                // Trigger change events for each entity that was modified.
-                for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
-                }
-            } else if (options.changeDetection === 'never') {
-                for (let i = 0; i < entities.length; i++) {
-                    const entity = entities[i];
-                    const eid = getEntityId(entity);
-                    createSnapshots(eid, traits, stores, state);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
-
-                    // Skip if the entity has been destroyed.
-                    if (!world.has(entity)) continue;
-
-                    // Commit all changes back to the stores.
-                    for (let j = 0; j < traits.length; j++) {
-                        const trait = traits[j];
-                        const ctx = trait[$internal];
-                        ctx.fastSet(eid, stores[j], state[j]);
-                    }
-                }
+            } finally {
+                flushPredicates(world);
             }
 
             return results;
@@ -208,7 +226,7 @@ export function createQueryResult<T extends QueryParameter[]>(
         const hasTracked = world[$internal].trackedTraits.has(trait);
         const hasChanged = query.hasChangedModifiers && query.changedTraits.has(trait);
 
-        if (hasTracked || hasChanged) trackedIndices.push(i);
+        if (hasTracked || hasChanged || hasPredicates(world, trait)) trackedIndices.push(i);
         else untrackedIndices.push(i);
     }
 }

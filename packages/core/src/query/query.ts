@@ -11,6 +11,7 @@ import { universe } from '../universe/universe';
 import { SparseSet } from '../utils/sparse-set';
 import type { World } from '../world';
 import { getTrackingType, isModifier, isOrWithModifiers, isTrackingModifier } from './modifier';
+import { isPredicate } from './predicate';
 import { createQueryResult } from './query-result';
 import { $queryRef } from './symbols';
 import {
@@ -127,25 +128,28 @@ function processTrackingModifier(
     if (!trackingType) return;
 
     const id = modifier.id;
-    // Key includes logic so Changed(A) at top-level stays separate from Or(Changed(A))
-    const key = `${trackingType}-${id}-${logic}`;
-
-    // Find or create tracking group
-    let group = groupsMap.get(key);
-    if (!group) {
-        group = {
-            logic,
-            type: trackingType,
-            id,
-            bitmasks: [],
-            trackers: [],
-        };
-        groupsMap.set(key, group);
-        query.trackingGroups.push(group);
-    }
 
     // Register traits and build bitmasks
     for (const trait of modifier.traits) {
+        // A predicate changes when its tag is either added or removed
+        const type = trackingType === 'change' && isPredicate(trait) ? 'toggle' : trackingType;
+        // Key includes logic so Changed(A) at top-level stays separate from Or(Changed(A))
+        const key = `${type}-${id}-${logic}`;
+
+        // Find or create tracking group
+        let group = groupsMap.get(key);
+        if (!group) {
+            group = {
+                logic,
+                type,
+                id,
+                bitmasks: [],
+                trackers: [],
+            };
+            groupsMap.set(key, group);
+            query.trackingGroups.push(group);
+        }
+
         if (!hasTraitInstance(ctx.traitInstances, trait)) registerTrait(world, trait);
         const instance = getTraitInstance(ctx.traitInstances, trait)!;
         query.traits.push(trait);
@@ -158,7 +162,7 @@ function processTrackingModifier(
         group.bitmasks[genId] = (group.bitmasks[genId] || 0) | instance.bitflag;
 
         // Track changed traits for change detection in query-result
-        if (trackingType === 'change') {
+        if (type === 'change') {
             query.changedTraits.add(trait);
             query.hasChangedModifiers = true;
         }
@@ -387,6 +391,11 @@ export function createQueryInstance<T extends QueryParameter[]>(
                                 break;
                             case 'change':
                                 traitMatches = ((changedMask[genId]?.[eid] ?? 0) & bit) === bit;
+                                break;
+                            case 'toggle':
+                                traitMatches =
+                                    (oldMask & bit) !== (currentMask & bit) ||
+                                    ((dirtyMask[genId]?.[eid] ?? 0) & bit) === bit;
                                 break;
                         }
 

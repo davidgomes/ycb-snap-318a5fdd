@@ -86,7 +86,7 @@ export function checkQueryTracking(
             }
 
             // Update tracker if event type matches group type
-            if (groupType === eventType) {
+            if (groupType === eventType || (groupType === 'toggle' && eventType !== 'change')) {
                 // For change events, verify entity still has the trait
                 if (eventType === 'change') {
                     const genMasks = entityMasks[eventGenerationId];
