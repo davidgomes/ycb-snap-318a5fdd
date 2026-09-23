@@ -863,6 +863,49 @@ class FastAPI(Starlette):
                 """
             ),
         ] = True,
+        auto_head: Annotated[
+            bool,
+            Doc(
+                """
+                Enable implicit HEAD responses for GET *path operations* added
+                directly to this app.
+
+                When `True` (the default), a GET route also answers HEAD. HEAD runs
+                the same dependencies, status code, headers, and validation as GET,
+                and returns no body.
+
+                Explicit HEAD operations are unchanged.
+
+                Routes brought in with `include_router` do not use this value.
+                They keep the nearest explicit `auto_head` among the route, the
+                `include_router` call, and the included router.
+                """
+            ),
+        ] = True,
+        auto_options: Annotated[
+            bool,
+            Doc(
+                """
+                Enable an implicit OPTIONS response for paths added directly to
+                this app.
+
+                When `True`, and a path has no explicit OPTIONS operation, OPTIONS
+                returns `200` JSON with `path`, ordered `methods`, and
+                `operations`. `operations` matches the OpenAPI path item excluding
+                HEAD and OPTIONS, and the response includes an `Allow` header.
+
+                One OPTIONS response is generated for a path when any of its
+                operations enables this. The default is `False`.
+
+                Routes brought in with `include_router` do not use this value.
+                They keep the nearest explicit `auto_options` among the route, the
+                `include_router` call, and the included router.
+
+                Methods are ordered
+                `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, TRACE`.
+                """
+            ),
+        ] = False,
         **extra: Annotated[
             Any,
             Doc(
@@ -998,6 +1041,8 @@ class FastAPI(Starlette):
             responses=responses,
             generate_unique_id_function=generate_unique_id_function,
             strict_content_type=strict_content_type,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
         self.exception_handlers: dict[
             Any, Callable[[Request, Any], Response | Awaitable[Response]]
@@ -1188,6 +1233,48 @@ class FastAPI(Starlette):
         generate_unique_id_function: Callable[[routing.APIRoute], str] = Default(
             generate_unique_id
         ),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Override implicit HEAD for this GET *path operation*.
+
+                `True` serves HEAD with the GET dependencies, status code, headers,
+                and validation, and with no response body. `False` does not add
+                implicit HEAD.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit HEAD is enabled by default for GET
+                routes.
+
+                An explicit HEAD operation on the same path always wins.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Include this operation in the path's implicit OPTIONS response.
+
+                When any operation on a path resolves this to `True`, and that path
+                has no explicit OPTIONS operation, OPTIONS returns `200` JSON with
+                `path`, ordered `methods`, and `operations`. `operations` matches
+                OpenAPI for that path, excluding HEAD and OPTIONS, and the response
+                sends an `Allow` header.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit OPTIONS is disabled by default.
+
+                Methods are ordered
+                `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, TRACE`.
+                One implicit OPTIONS response is generated per path. An explicit
+                OPTIONS operation on the same path always wins.
+                """
+            ),
+        ] = None,
     ) -> None:
         self.router.add_api_route(
             path,
@@ -1214,6 +1301,8 @@ class FastAPI(Starlette):
             name=name,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def api_route(
@@ -1244,6 +1333,48 @@ class FastAPI(Starlette):
         generate_unique_id_function: Callable[[routing.APIRoute], str] = Default(
             generate_unique_id
         ),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Override implicit HEAD for this GET *path operation*.
+
+                `True` serves HEAD with the GET dependencies, status code, headers,
+                and validation, and with no response body. `False` does not add
+                implicit HEAD.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit HEAD is enabled by default for GET
+                routes.
+
+                An explicit HEAD operation on the same path always wins.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Include this operation in the path's implicit OPTIONS response.
+
+                When any operation on a path resolves this to `True`, and that path
+                has no explicit OPTIONS operation, OPTIONS returns `200` JSON with
+                `path`, ordered `methods`, and `operations`. `operations` matches
+                OpenAPI for that path, excluding HEAD and OPTIONS, and the response
+                sends an `Allow` header.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit OPTIONS is disabled by default.
+
+                Methods are ordered
+                `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, TRACE`.
+                One implicit OPTIONS response is generated per path. An explicit
+                OPTIONS operation on the same path always wins.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         def decorator(func: DecoratedCallable) -> DecoratedCallable:
             self.router.add_api_route(
@@ -1271,6 +1402,8 @@ class FastAPI(Starlette):
                 name=name,
                 openapi_extra=openapi_extra,
                 generate_unique_id_function=generate_unique_id_function,
+                auto_head=auto_head,
+                auto_options=auto_options,
             )
             return func
 
@@ -1529,6 +1662,43 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Override implicit HEAD for routes included from `router`.
+
+                `True` enables implicit HEAD for included GET routes that omit
+                `auto_head`. `False` disables it. Omit this to keep each route's
+                own value, or the included router's value when the route omits it.
+
+                The nearest explicit value wins: the route, then this argument,
+                then the included router. This does not fall back to the parent
+                app or router. The included router defaults to enabling implicit
+                HEAD for GET routes.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Override implicit OPTIONS for routes included from `router`.
+
+                `True` includes those operations in the path's implicit OPTIONS
+                response. `False` does not. Omit this to keep each route's own
+                value, or the included router's value when the route omits it.
+
+                The nearest explicit value wins: the route, then this argument,
+                then the included router. This does not fall back to the parent
+                app or router. The included router defaults to leaving implicit
+                OPTIONS disabled.
+
+                One implicit OPTIONS response is generated per path when any
+                included operation enables it. An explicit OPTIONS operation wins.
+                """
+            ),
+        ] = None,
     ) -> None:
         """
         Include an `APIRouter` in the same app.
@@ -1559,6 +1729,8 @@ class FastAPI(Starlette):
             default_response_class=default_response_class,
             callbacks=callbacks,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def get(
@@ -1892,6 +2064,48 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Override implicit HEAD for this GET *path operation*.
+
+                `True` serves HEAD with the GET dependencies, status code, headers,
+                and validation, and with no response body. `False` does not add
+                implicit HEAD.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit HEAD is enabled by default for GET
+                routes.
+
+                An explicit HEAD operation on the same path always wins.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Include this operation in the path's implicit OPTIONS response.
+
+                When any operation on a path resolves this to `True`, and that path
+                has no explicit OPTIONS operation, OPTIONS returns `200` JSON with
+                `path`, ordered `methods`, and `operations`. `operations` matches
+                OpenAPI for that path, excluding HEAD and OPTIONS, and the response
+                sends an `Allow` header.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit OPTIONS is disabled by default.
+
+                Methods are ordered
+                `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, TRACE`.
+                One implicit OPTIONS response is generated per path. An explicit
+                OPTIONS operation on the same path always wins.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP GET operation.
@@ -1932,6 +2146,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def put(
@@ -2265,6 +2481,48 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Override implicit HEAD for this GET *path operation*.
+
+                `True` serves HEAD with the GET dependencies, status code, headers,
+                and validation, and with no response body. `False` does not add
+                implicit HEAD.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit HEAD is enabled by default for GET
+                routes.
+
+                An explicit HEAD operation on the same path always wins.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Include this operation in the path's implicit OPTIONS response.
+
+                When any operation on a path resolves this to `True`, and that path
+                has no explicit OPTIONS operation, OPTIONS returns `200` JSON with
+                `path`, ordered `methods`, and `operations`. `operations` matches
+                OpenAPI for that path, excluding HEAD and OPTIONS, and the response
+                sends an `Allow` header.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit OPTIONS is disabled by default.
+
+                Methods are ordered
+                `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, TRACE`.
+                One implicit OPTIONS response is generated per path. An explicit
+                OPTIONS operation on the same path always wins.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP PUT operation.
@@ -2310,6 +2568,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def post(
@@ -2643,6 +2903,48 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Override implicit HEAD for this GET *path operation*.
+
+                `True` serves HEAD with the GET dependencies, status code, headers,
+                and validation, and with no response body. `False` does not add
+                implicit HEAD.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit HEAD is enabled by default for GET
+                routes.
+
+                An explicit HEAD operation on the same path always wins.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Include this operation in the path's implicit OPTIONS response.
+
+                When any operation on a path resolves this to `True`, and that path
+                has no explicit OPTIONS operation, OPTIONS returns `200` JSON with
+                `path`, ordered `methods`, and `operations`. `operations` matches
+                OpenAPI for that path, excluding HEAD and OPTIONS, and the response
+                sends an `Allow` header.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit OPTIONS is disabled by default.
+
+                Methods are ordered
+                `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, TRACE`.
+                One implicit OPTIONS response is generated per path. An explicit
+                OPTIONS operation on the same path always wins.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP POST operation.
@@ -2688,6 +2990,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def delete(
@@ -3021,6 +3325,48 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Override implicit HEAD for this GET *path operation*.
+
+                `True` serves HEAD with the GET dependencies, status code, headers,
+                and validation, and with no response body. `False` does not add
+                implicit HEAD.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit HEAD is enabled by default for GET
+                routes.
+
+                An explicit HEAD operation on the same path always wins.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Include this operation in the path's implicit OPTIONS response.
+
+                When any operation on a path resolves this to `True`, and that path
+                has no explicit OPTIONS operation, OPTIONS returns `200` JSON with
+                `path`, ordered `methods`, and `operations`. `operations` matches
+                OpenAPI for that path, excluding HEAD and OPTIONS, and the response
+                sends an `Allow` header.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit OPTIONS is disabled by default.
+
+                Methods are ordered
+                `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, TRACE`.
+                One implicit OPTIONS response is generated per path. An explicit
+                OPTIONS operation on the same path always wins.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP DELETE operation.
@@ -3061,6 +3407,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def options(
@@ -3394,6 +3742,48 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Override implicit HEAD for this GET *path operation*.
+
+                `True` serves HEAD with the GET dependencies, status code, headers,
+                and validation, and with no response body. `False` does not add
+                implicit HEAD.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit HEAD is enabled by default for GET
+                routes.
+
+                An explicit HEAD operation on the same path always wins.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Include this operation in the path's implicit OPTIONS response.
+
+                When any operation on a path resolves this to `True`, and that path
+                has no explicit OPTIONS operation, OPTIONS returns `200` JSON with
+                `path`, ordered `methods`, and `operations`. `operations` matches
+                OpenAPI for that path, excluding HEAD and OPTIONS, and the response
+                sends an `Allow` header.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit OPTIONS is disabled by default.
+
+                Methods are ordered
+                `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, TRACE`.
+                One implicit OPTIONS response is generated per path. An explicit
+                OPTIONS operation on the same path always wins.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP OPTIONS operation.
@@ -3434,6 +3824,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def head(
@@ -3767,6 +4159,48 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Override implicit HEAD for this GET *path operation*.
+
+                `True` serves HEAD with the GET dependencies, status code, headers,
+                and validation, and with no response body. `False` does not add
+                implicit HEAD.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit HEAD is enabled by default for GET
+                routes.
+
+                An explicit HEAD operation on the same path always wins.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Include this operation in the path's implicit OPTIONS response.
+
+                When any operation on a path resolves this to `True`, and that path
+                has no explicit OPTIONS operation, OPTIONS returns `200` JSON with
+                `path`, ordered `methods`, and `operations`. `operations` matches
+                OpenAPI for that path, excluding HEAD and OPTIONS, and the response
+                sends an `Allow` header.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit OPTIONS is disabled by default.
+
+                Methods are ordered
+                `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, TRACE`.
+                One implicit OPTIONS response is generated per path. An explicit
+                OPTIONS operation on the same path always wins.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP HEAD operation.
@@ -3807,6 +4241,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def patch(
@@ -4140,6 +4576,48 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Override implicit HEAD for this GET *path operation*.
+
+                `True` serves HEAD with the GET dependencies, status code, headers,
+                and validation, and with no response body. `False` does not add
+                implicit HEAD.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit HEAD is enabled by default for GET
+                routes.
+
+                An explicit HEAD operation on the same path always wins.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Include this operation in the path's implicit OPTIONS response.
+
+                When any operation on a path resolves this to `True`, and that path
+                has no explicit OPTIONS operation, OPTIONS returns `200` JSON with
+                `path`, ordered `methods`, and `operations`. `operations` matches
+                OpenAPI for that path, excluding HEAD and OPTIONS, and the response
+                sends an `Allow` header.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit OPTIONS is disabled by default.
+
+                Methods are ordered
+                `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, TRACE`.
+                One implicit OPTIONS response is generated per path. An explicit
+                OPTIONS operation on the same path always wins.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP PATCH operation.
@@ -4185,6 +4663,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def trace(
@@ -4518,6 +4998,48 @@ class FastAPI(Starlette):
                 """
             ),
         ] = Default(generate_unique_id),
+        auto_head: Annotated[
+            bool | None,
+            Doc(
+                """
+                Override implicit HEAD for this GET *path operation*.
+
+                `True` serves HEAD with the GET dependencies, status code, headers,
+                and validation, and with no response body. `False` does not add
+                implicit HEAD.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit HEAD is enabled by default for GET
+                routes.
+
+                An explicit HEAD operation on the same path always wins.
+                """
+            ),
+        ] = None,
+        auto_options: Annotated[
+            bool | None,
+            Doc(
+                """
+                Include this operation in the path's implicit OPTIONS response.
+
+                When any operation on a path resolves this to `True`, and that path
+                has no explicit OPTIONS operation, OPTIONS returns `200` JSON with
+                `path`, ordered `methods`, and `operations`. `operations` matches
+                OpenAPI for that path, excluding HEAD and OPTIONS, and the response
+                sends an `Allow` header.
+
+                Omit this to inherit the nearest explicit value from `include_router`
+                or the router that owns the route. Direct routes on a `FastAPI` app
+                inherit the app value. Implicit OPTIONS is disabled by default.
+
+                Methods are ordered
+                `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, TRACE`.
+                One implicit OPTIONS response is generated per path. An explicit
+                OPTIONS operation on the same path always wins.
+                """
+            ),
+        ] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """
         Add a *path operation* using an HTTP TRACE operation.
@@ -4558,6 +5080,8 @@ class FastAPI(Starlette):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            auto_head=auto_head,
+            auto_options=auto_options,
         )
 
     def websocket_route(
