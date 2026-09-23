@@ -13,6 +13,8 @@ import {
   ClauseNode,
   FunctionCallNode,
   LimitClauseNode,
+  PipeQueryNode,
+  PipeStepNode,
   NodeType,
   ParenthesisNode,
   LiteralNode,
@@ -122,6 +124,10 @@ export default class ExpressionFormatter {
         return this.formatSetOperation(node);
       case NodeType.limit_clause:
         return this.formatLimitClause(node);
+      case NodeType.pipe_query:
+        return this.formatPipeQuery(node);
+      case NodeType.pipe_step:
+        return this.formatPipeStep(node);
       case NodeType.all_columns_asterisk:
         return this.formatAllColumnsAsterisk(node);
       case NodeType.literal:
@@ -289,6 +295,72 @@ export default class ExpressionFormatter {
     this.layout.add(WS.NEWLINE, WS.INDENT, this.showKw(node.nameKw), WS.NEWLINE);
     this.layout.add(WS.INDENT);
     this.layout = this.formatSubExpression(node.children);
+  }
+
+  private formatPipeQuery(node: PipeQueryNode) {
+    this.formatPipeClause(node.from);
+    node.steps.forEach(step => this.formatPipeStep(step));
+  }
+
+  private formatPipeStep(node: PipeStepNode) {
+    this.formatPipeClause(node.clause, node.operator, node.leadingComments);
+  }
+
+  // Indented pipe clauses place the body on the next line, matching traditional
+  // clause layout. One-line pipe clauses (LIMIT, JOIN, AS) keep the body with
+  // the keyword. Each |> returns to the indentation of the opening FROM.
+  private formatPipeClause(
+    node: ClauseNode | LimitClauseNode,
+    pipeOperator?: string,
+    comments?: CommentNode[]
+  ) {
+    this.layout.add(WS.NEWLINE, WS.INDENT);
+    if (pipeOperator) {
+      this.layout.add(pipeOperator, WS.SPACE);
+    }
+    this.formatComments(comments);
+
+    if (node.type === NodeType.limit_clause) {
+      this.formatPipeLimitClause(node);
+      return;
+    }
+
+    this.withComments(node.nameKw, () => {
+      this.layout.add(this.showKw(node.nameKw));
+    });
+
+    if (this.isPipeOnelineClause(node)) {
+      this.layout.add(WS.SPACE);
+      this.layout = this.formatSubExpression(node.children);
+      return;
+    }
+
+    this.layout.add(WS.NEWLINE);
+    this.layout.indentation.increaseTopLevel();
+    this.layout.add(WS.INDENT);
+    this.layout = this.formatSubExpression(node.children);
+    this.layout.indentation.decreaseTopLevel();
+  }
+
+  private isPipeOnelineClause(node: ClauseNode): boolean {
+    return node.nameKw.tokenType === TokenType.RESERVED_JOIN || node.nameKw.text === 'AS';
+  }
+
+  private formatPipeLimitClause(node: LimitClauseNode) {
+    this.withComments(node.limitKw, () => {
+      this.layout.add(this.showKw(node.limitKw), WS.SPACE);
+    });
+
+    if (node.offset) {
+      this.layout = this.formatSubExpression(node.offset);
+      this.layout.add(WS.NO_SPACE, ',', WS.SPACE);
+    }
+    this.layout = this.formatSubExpression(node.count);
+
+    if (node.offsetClause) {
+      this.layout.add(this.showKw(node.offsetClause.nameKw), WS.SPACE);
+      this.layout = this.formatSubExpression(node.offsetClause.children);
+    }
   }
 
   private formatLimitClause(node: LimitClauseNode) {

@@ -29,6 +29,12 @@ const toDataTypeNode = (token: Token): DataTypeNode => ({
   raw: token.raw,
 });
 
+const toClauseNode = (nameToken: Token, children: AstNode[]): AstNode => ({
+  type: NodeType.clause,
+  nameKw: toKeywordNode(nameToken),
+  children,
+});
+
 interface CommentAttachments {
   leading?: CommentNode[];
   trailing?: CommentNode[];
@@ -80,10 +86,10 @@ main -> statement:* {%
   }
 %}
 
-statement -> expressions_or_clauses (%DELIMITER | %EOF) {%
-  ([children, [delimiter]]) => ({
+statement -> (pipe_query | expressions_or_clauses) (%DELIMITER | %EOF) {%
+  ([[body], [delimiter]]) => ({
     type: NodeType.statement,
-    children,
+    children: body.type === NodeType.pipe_query ? [body] : body,
     hasSemicolon: delimiter.type === TokenType.DELIMITER,
   })
 %}
@@ -152,6 +158,89 @@ set_operation -> %RESERVED_SET_OPERATION free_form_sql:* {%
     nameKw: toKeywordNode(nameToken),
     children,
   })
+%}
+
+# BigQuery pipe syntax, starting with a standalone FROM:
+#   FROM table |> WHERE cond |> SELECT cols
+pipe_query -> pipe_from_clause pipe_step:+ {%
+  ([from, steps]) => ({
+    type: NodeType.pipe_query,
+    from,
+    steps,
+  })
+%}
+
+pipe_from_clause -> %RESERVED_CLAUSE free_form_sql:* {%
+  ([nameToken, children], _loc, reject) => {
+    if (nameToken.text !== "FROM") {
+      return reject;
+    }
+    return toClauseNode(nameToken, children);
+  }
+%}
+
+pipe_step -> %PIPE _ pipe_operator_clause {%
+  ([pipeToken, comments, clause]) => {
+    const step = {
+      type: NodeType.pipe_step,
+      operator: pipeToken.text,
+      clause,
+    };
+    return comments.length ? { ...step, leadingComments: comments } : step;
+  }
+%}
+
+pipe_operator_clause ->
+  ( select_clause
+  | pipe_limit_clause
+  | join_pipe_clause
+  | as_pipe_clause
+  | reserved_pipe_clause ) {% unwrap %}
+
+pipe_limit_clause -> limit_clause offset_clause:? {%
+  ([limitNode, offsetClause]) => offsetClause ? { ...limitNode, offsetClause } : limitNode
+%}
+
+offset_clause -> %RESERVED_CLAUSE free_form_sql:* {%
+  ([nameToken, children], _loc, reject) => {
+    if (nameToken.text !== "OFFSET") {
+      return reject;
+    }
+    return toClauseNode(nameToken, children);
+  }
+%}
+
+join_pipe_clause -> %RESERVED_JOIN free_form_sql:* {%
+  ([nameToken, children]) => toClauseNode(nameToken, children)
+%}
+
+as_pipe_clause -> %RESERVED_KEYWORD free_form_sql:* {%
+  ([nameToken, children], _loc, reject) => {
+    if (nameToken.text !== "AS") {
+      return reject;
+    }
+    return toClauseNode(nameToken, children);
+  }
+%}
+
+# AGGREGATE / EXTEND are promoted to RESERVED_CLAUSE after |>.
+# GROUP BY nests inside AGGREGATE rather than standing as its own pipe step.
+reserved_pipe_clause -> %RESERVED_CLAUSE free_form_sql:* group_by_clause:? {%
+  ([nameToken, children, groupBy], _loc, reject) => {
+    if (groupBy && nameToken.text !== "AGGREGATE") {
+      return reject;
+    }
+    return toClauseNode(nameToken, groupBy ? [...children, groupBy] : children);
+  }
+%}
+
+group_by_clause -> %RESERVED_CLAUSE free_form_sql:* {%
+  ([nameToken, children], _loc, reject) => {
+    if (nameToken.text !== "GROUP BY") {
+      return reject;
+    }
+    return toClauseNode(nameToken, children);
+  }
 %}
 
 expression_chain_ -> expression_with_comments_:+ {% id %}
@@ -229,10 +318,10 @@ function_call -> %RESERVED_FUNCTION_NAME _ parenthesis {%
   })
 %}
 
-parenthesis -> "(" expressions_or_clauses ")" {%
-  ([open, children, close]) => ({
+parenthesis -> "(" (pipe_query | expressions_or_clauses) ")" {%
+  ([open, [children], close]) => ({
     type: NodeType.parenthesis,
-    children: children,
+    children: children.type === NodeType.pipe_query ? [children] : children,
     openParen: "(",
     closeParen: ")",
   })

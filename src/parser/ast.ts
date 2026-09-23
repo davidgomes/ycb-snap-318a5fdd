@@ -14,6 +14,8 @@ export enum NodeType {
   case_when = 'case_when',
   case_else = 'case_else',
   limit_clause = 'limit_clause',
+  pipe_query = 'pipe_query',
+  pipe_step = 'pipe_step',
   all_columns_asterisk = 'all_columns_asterisk',
   literal = 'literal',
   identifier = 'identifier',
@@ -109,11 +111,26 @@ export interface CaseElseNode extends BaseNode {
 
 // LIMIT <count>
 // LIMIT <offset>, <count>
+// BigQuery pipe syntax also allows: LIMIT <count> OFFSET <skip>
 export interface LimitClauseNode extends BaseNode {
   type: NodeType.limit_clause;
   limitKw: KeywordNode;
   count: AstNode[];
   offset?: AstNode[];
+  offsetClause?: ClauseNode;
+}
+
+// BigQuery pipe syntax: FROM ... |> clause |> clause ...
+export interface PipeQueryNode extends BaseNode {
+  type: NodeType.pipe_query;
+  from: ClauseNode;
+  steps: PipeStepNode[];
+}
+
+export interface PipeStepNode extends BaseNode {
+  type: NodeType.pipe_step;
+  operator: string;
+  clause: ClauseNode | LimitClauseNode;
 }
 
 // The "*" operator used in SELECT *
@@ -200,6 +217,8 @@ export type AstNode =
   | CaseWhenNode
   | CaseElseNode
   | LimitClauseNode
+  | PipeQueryNode
+  | PipeStepNode
   | AllColumnsAsteriskNode
   | LiteralNode
   | IdentifierNode

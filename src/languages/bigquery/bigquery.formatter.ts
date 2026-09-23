@@ -190,6 +190,7 @@ export const bigquery: DialectOptions = {
     variableTypes: [{ regex: String.raw`@@\w+` }],
     lineCommentTypes: ['--', '#'],
     operators: ['&', '|', '^', '~', '>>', '<<', '||', '=>'],
+    supportsPipeOperator: true,
     postProcess,
   },
   formatOptions: {
@@ -199,7 +200,35 @@ export const bigquery: DialectOptions = {
 };
 
 function postProcess(tokens: Token[]): Token[] {
-  return detectArraySubscripts(combineParameterizedTypes(tokens));
+  return promotePipeClauses(detectArraySubscripts(combineParameterizedTypes(tokens)));
+}
+
+const PIPE_EXCLUSIVE_CLAUSES = new Set(['AGGREGATE', 'EXTEND']);
+
+// After |>, AGGREGATE and EXTEND become reserved clauses so the parser can
+// treat them like WHERE / SELECT. Elsewhere they stay ordinary identifiers.
+function promotePipeClauses(tokens: Token[]): Token[] {
+  return tokens.map((token, index) => {
+    if (!PIPE_EXCLUSIVE_CLAUSES.has(token.text.toUpperCase())) {
+      return token;
+    }
+    let previous = index - 1;
+    while (previous >= 0 && isCommentToken(tokens[previous])) {
+      previous--;
+    }
+    if (previous >= 0 && tokens[previous].type === TokenType.PIPE) {
+      return { ...token, type: TokenType.RESERVED_CLAUSE, text: token.text.toUpperCase() };
+    }
+    return token;
+  });
+}
+
+function isCommentToken(token: Token): boolean {
+  return (
+    token.type === TokenType.LINE_COMMENT ||
+    token.type === TokenType.BLOCK_COMMENT ||
+    token.type === TokenType.DISABLE_COMMENT
+  );
 }
 
 // Converts OFFSET token inside array from RESERVED_CLAUSE to RESERVED_FUNCTION_NAME

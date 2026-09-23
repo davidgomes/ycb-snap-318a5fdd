@@ -1,6 +1,11 @@
 import dedent from 'dedent-js';
 
 import { format as originalFormat, FormatFn } from '../src/sqlFormatter.js';
+import { bigquery } from '../src/languages/bigquery/bigquery.formatter.js';
+import Tokenizer from '../src/lexer/Tokenizer.js';
+import { TokenType } from '../src/lexer/token.js';
+import { createParser } from '../src/parser/createParser.js';
+import { ClauseNode, NodeType, PipeQueryNode } from '../src/parser/ast.js';
 import behavesLikeSqlFormatter from './behavesLikeSqlFormatter.js';
 
 import supportsCreateTable from './features/createTable.js';
@@ -599,6 +604,196 @@ describe('BigQueryFormatter', () => {
         DROP ALL ROW ACCESS POLICIES ON table_name;
       `;
       expect(format(input, { linesBetweenQueries: 0 })).toBe(input);
+    });
+  });
+
+  describe('pipe syntax', () => {
+    const tokenize = (sql: string) =>
+      new Tokenizer(bigquery.tokenizerOptions, 'bigquery').tokenize(sql, {});
+
+    it('tokenizes |> as a single pipe token', () => {
+      const tokens = tokenize('a|>b');
+      expect(tokens.map(token => token.type)).toEqual([
+        TokenType.IDENTIFIER,
+        TokenType.PIPE,
+        TokenType.IDENTIFIER,
+      ]);
+      expect(tokens.map(token => token.text)).toEqual(['a', '|>', 'b']);
+    });
+
+    it('keeps spaced bitwise OR and greater-than as separate operators', () => {
+      const tokens = tokenize('a | > b');
+      expect(tokens.map(token => token.text)).toEqual(['a', '|', '>', 'b']);
+      expect(tokens.map(token => token.type)).toEqual([
+        TokenType.IDENTIFIER,
+        TokenType.OPERATOR,
+        TokenType.OPERATOR,
+        TokenType.IDENTIFIER,
+      ]);
+    });
+
+    it('promotes AGGREGATE and EXTEND to reserved clauses only after |>', () => {
+      const plain = tokenize('SELECT aggregate, extend FROM t');
+      expect(
+        plain.filter(token => token.text.toUpperCase() === 'AGGREGATE').map(t => t.type)
+      ).toEqual([TokenType.IDENTIFIER]);
+      expect(plain.filter(token => token.text.toUpperCase() === 'EXTEND').map(t => t.type)).toEqual(
+        [TokenType.IDENTIFIER]
+      );
+
+      const piped = tokenize('FROM t |> /* note */ AGGREGATE x |> extend y');
+      expect(piped.find(token => token.text === 'AGGREGATE')?.type).toBe(TokenType.RESERVED_CLAUSE);
+      expect(piped.find(token => token.text === 'EXTEND')?.type).toBe(TokenType.RESERVED_CLAUSE);
+    });
+
+    it('parses pipe steps and nests GROUP BY under AGGREGATE', () => {
+      const [statement] = createParser(new Tokenizer(bigquery.tokenizerOptions, 'bigquery')).parse(
+        'FROM t |> AGGREGATE SUM(x) AS s GROUP BY id |> EXTEND y',
+        {}
+      );
+      const pipe = statement.children[0] as PipeQueryNode;
+      expect(pipe.type).toBe(NodeType.pipe_query);
+      expect(pipe.steps.map(step => step.operator)).toEqual(['|>', '|>']);
+      const aggregate = pipe.steps[0].clause as ClauseNode;
+      expect(aggregate.nameKw).toMatchObject({
+        text: 'AGGREGATE',
+        tokenType: TokenType.RESERVED_CLAUSE,
+      });
+      const groupBy = aggregate.children[aggregate.children.length - 1] as ClauseNode;
+      expect(groupBy).toMatchObject({
+        type: NodeType.clause,
+        nameKw: { text: 'GROUP BY' },
+      });
+      expect(pipe.steps[1].clause).toMatchObject({
+        nameKw: { text: 'EXTEND', tokenType: TokenType.RESERVED_CLAUSE },
+      });
+    });
+
+    it('formats a pipe query with indented and one-line clauses', () => {
+      expect(
+        format(`
+          FROM Produce
+          |> WHERE item != 'bananas' AND category IN ('fruit', 'nut')
+          |> AGGREGATE COUNT(*) AS num_items, SUM(sales) AS total_sales GROUP BY item
+          |> ORDER BY item DESC
+          |> LIMIT 2;
+        `)
+      ).toBe(dedent`
+        FROM
+          Produce
+        |> WHERE
+          item != 'bananas'
+          AND category IN ('fruit', 'nut')
+        |> AGGREGATE
+          COUNT(*) AS num_items,
+          SUM(sales) AS total_sales
+          GROUP BY
+            item
+        |> ORDER BY
+          item DESC
+        |> LIMIT 2;
+      `);
+    });
+
+    it('formats pipe-exclusive EXTEND, SET, DROP, AS, and JOIN clauses', () => {
+      expect(
+        format(`
+          FROM sales |> EXTEND item IN ('bananas', 'lemons') AS is_yellow
+          |> SET x = x * x, y = 3
+          |> DROP sales, category
+          |> AS t1
+          |> LEFT JOIN customers ON t1.id = customers.id
+          |> LIMIT 10 OFFSET 5
+        `)
+      ).toBe(dedent`
+        FROM
+          sales
+        |> EXTEND
+          item IN ('bananas', 'lemons') AS is_yellow
+        |> SET
+          x = x * x,
+          y = 3
+        |> DROP
+          sales,
+          category
+        |> AS t1
+        |> LEFT JOIN customers ON t1.id = customers.id
+        |> LIMIT 10 OFFSET 5
+      `);
+    });
+
+    it('applies keywordCase to pipe keywords', () => {
+      expect(
+        format('from t |> where a > 1 |> aggregate count(*) as c group by a |> extend b |> as s', {
+          keywordCase: 'upper',
+        })
+      ).toBe(dedent`
+        FROM
+          t
+        |> WHERE
+          a > 1
+        |> AGGREGATE
+          count(*) AS c
+          GROUP BY
+            a
+        |> EXTEND
+          b
+        |> AS s
+      `);
+
+      expect(
+        format('FROM t |> WHERE a > 1 |> AGGREGATE COUNT(*) GROUP BY a |> DROP b', {
+          keywordCase: 'lower',
+        })
+      ).toBe(dedent`
+        from
+          t
+        |> where
+          a > 1
+        |> aggregate
+          COUNT(*)
+          group by
+            a
+        |> drop
+          b
+      `);
+    });
+
+    it('formats pipe queries nested in parentheses', () => {
+      expect(
+        format(`
+          SELECT * FROM (
+            FROM t |> WHERE a > 1 |> SELECT a, b
+          ) AS sub
+        `)
+      ).toBe(dedent`
+        SELECT
+          *
+        FROM
+          (
+            FROM
+              t
+            |> WHERE
+              a > 1
+            |> SELECT
+              a,
+              b
+          ) AS sub
+      `);
+    });
+
+    it('formats mixed pipe and traditional statements independently', () => {
+      expect(format('SELECT 1; FROM t |> WHERE a > 1 |> SELECT a;')).toBe(dedent`
+        SELECT
+          1;
+
+        FROM
+          t
+        |> WHERE
+          a > 1
+        |> SELECT
+          a;
+      `);
     });
   });
 });
