@@ -126,6 +126,22 @@ def get_expected_scaling_method(training_config):
     return scaling_options.get("method")
 
 
+def get_model_input_width(training_config):
+    """
+    get the number of inputs the model was fitted on from the parsed training configuration (description.json)
+    """
+    train_data_shape = training_config.get("train_data_shape")
+    if train_data_shape and len(train_data_shape) > 1:
+        return int(train_data_shape[1])
+    input_features = training_config.get("input_features")
+    if input_features:
+        return len(input_features)
+    raise Exception(
+        "cannot derive the model input width: the description file has neither "
+        "train_data_shape nor input_features"
+    )
+
+
 def show_model_info(model_name: str, model_type: str):
     if not model_name:
         print(f"Please enter a supported model")

@@ -30,6 +30,7 @@ try:
         _reshape,
         create_yaml,
         extract_params,
+        get_model_input_width,
         read_json,
         read_yaml,
     )
@@ -38,6 +39,7 @@ except ImportError:
         read_yaml,
         create_yaml,
         extract_params,
+        get_model_input_width,
         _reshape,
         read_json,
     )
@@ -172,7 +174,16 @@ class Igel:
                 "model_path", self.default_model_path
             )
             logger.info(f"path of the pre-fitted model => {self.model_path}")
-        
+            sibling_description_file = (
+                Path(self.model_path).parent / Path(self.description_file).name
+            )
+            self.description_file = cli_args.get(
+                "description_file",
+                sibling_description_file
+                if sibling_description_file.exists()
+                else self.description_file,
+            )
+
         # if entered command is evaluate or predict, then the pre-fitted model needs to be loaded and used
         else:
             self.model_path = cli_args.get(
@@ -767,7 +778,14 @@ class Igel:
                 f"Trying to load sklearn model from directory - {self.model_path} "
             )
             model = self._load_model(f=self.model_path)
-            initial_type = [('float_input', FloatTensorType([None, 4]))]
+            logger.info(
+                f"reading the model input width from {self.description_file}"
+            )
+            with open(self.description_file) as f:
+                n_inputs = get_model_input_width(json.load(f))
+            initial_type = [
+                ("float_input", FloatTensorType([None, n_inputs]))
+            ]
             onx = convert_sklearn(model, initial_types=initial_type)
             
             # check if model_results folder is present and create if absent
