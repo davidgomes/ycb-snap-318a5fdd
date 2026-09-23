@@ -244,4 +244,20 @@ describe('Launcher', function() {
       });
     });
   });
+
+  describe('sanitized names', function() {
+    let config = new Config(null, {port: '7357', url: 'http://blah.com/'});
+
+    it('returns a filesystem-safe name for the launcher', function() {
+      let launcher = new Launcher('Chrome 120.0 (Mac OS X)', {command: 'echo hello'}, config);
+      expect(launcher.getSanitizedName()).to.equal('Chrome_120.0__Mac_OS_X_');
+    });
+
+    it('sanitizes names statically', function() {
+      expect(Launcher.sanitizeLauncherName('Headless   Firefox')).to.equal('Headless_Firefox');
+      expect(Launcher.sanitizeLauncherName('a/b\\c:d*e?f"g<h>i|j')).to.equal('a_b_c_d_e_f_g_h_i_j');
+      expect(Launcher.sanitizeLauncherName(null)).to.equal('unknown');
+      expect(Launcher.sanitizeLauncherName(undefined)).to.equal('unknown');
+    });
+  });
 });
