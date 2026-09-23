@@ -14,6 +14,7 @@
 
 import contextlib
 import logging
+import threading
 import time
 
 from mobly import asserts
@@ -29,15 +30,45 @@ from mobly import signals
 DEFAULT_TEST_RESULT_RECORD = records.TestResultRecord('mobly', 'global')
 
 
+class _RecorderState:
+  """The record errors are added to, and the number of errors added so far."""
+
+  def __init__(self, record):
+    self.record = record
+    self.count = 0
+
+
 class _ExpectErrorRecorder:
   """Singleton used to store errors caught via `expect_*` functions in test.
 
   This class is only instantiated once as a singleton. It holds a reference
   to the record object for the test currently executing.
+
+  By default, the state is shared by all threads. A thread executing its own
+  test concurrently with others can get an isolated state with
+  `isolate_current_thread`.
   """
 
   def __init__(self, record=None):
-    self.reset_internal_states(record=record)
+    self._thread_local = threading.local()
+    self._shared_state = _RecorderState(record)
+
+  @property
+  def _state(self):
+    return getattr(self._thread_local, 'state', None) or self._shared_state
+
+  @contextlib.contextmanager
+  def isolate_current_thread(self):
+    """Gives the calling thread its own state within the context.
+
+    Resets and errors from the calling thread inside the context do not
+    affect, and are not affected by, other threads.
+    """
+    self._thread_local.state = _RecorderState(self._state.record)
+    try:
+      yield
+    finally:
+      del self._thread_local.state
 
   def reset_internal_states(self, record=None):
     """Resets the internal state of the recorder.
@@ -45,19 +76,21 @@ class _ExpectErrorRecorder:
     Args:
       record: records.TestResultRecord, the test record for a test.
     """
-    self._record = None
-    self._count = 0
-    self._record = record
+    state = _RecorderState(record)
+    if getattr(self._thread_local, 'state', None) is None:
+      self._shared_state = state
+    else:
+      self._thread_local.state = state
 
   @property
   def has_error(self):
     """If any error has been recorded since the last reset."""
-    return self._count > 0
+    return self._state.count > 0
 
   @property
   def error_count(self):
     """The number of errors that have been recorded since last reset."""
-    return self._count
+    return self._state.count
 
   def add_error(self, error):
     """Record an error from expect APIs.
@@ -68,8 +101,9 @@ class _ExpectErrorRecorder:
     Args:
       error: Exception or signals.ExceptionRecord, the error to add.
     """
-    self._count += 1
-    self._record.add_error('expect@%s+%s' % (time.time(), self._count), error)
+    state = self._state
+    state.count += 1
+    state.record.add_error('expect@%s+%s' % (time.time(), state.count), error)
 
 
 def expect_true(condition, msg, extras=None):
