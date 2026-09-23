@@ -68,15 +68,11 @@ type tsReconstructor struct {
 	next  int
 }
 
-// tsRoot is the rule or query that a body belongs to. Var occurrence counts are
-// computed once per root; since reconstruction only ever removes or moves
-// occurrences of generated vars, the counts remain upper bounds.
-type tsRoot struct {
-	counts map[ast.Var]int
-}
-
 type tsScope struct {
-	root *tsRoot
+	// counts holds var occurrences in the rule or query owning the body. They're
+	// computed once up front; since reconstruction only ever removes or moves
+	// occurrences of generated vars, the counts remain upper bounds.
+	counts map[ast.Var]int
 
 	// visible holds vars that may be referenced from the body being processed:
 	// vars from enclosing bodies and from the body itself.
@@ -106,18 +102,16 @@ func (tr *tsReconstructor) fresh() *ast.Term {
 }
 
 func (tr *tsReconstructor) query(body ast.Body) ast.Body {
-	root := &tsRoot{counts: countVars(body)}
-	return tr.body(body, &tsScope{root: root, visible: ast.ReservedVars.Copy()})
+	return tr.body(body, &tsScope{counts: countVars(body), visible: ast.ReservedVars.Copy()})
 }
 
 func (tr *tsReconstructor) rule(rule *ast.Rule) {
 	if !containsTemplateStringCall(rule.Body) {
 		return
 	}
-	root := &tsRoot{counts: countVars(rule.Head, rule.Head.Reference, rule.Body)}
 	visible := rule.Head.Args.Vars()
 	visible.Update(ast.ReservedVars)
-	sc := &tsScope{root: root, visible: visible, head: []any{rule.Head, rule.Head.Reference}, mayEmpty: true}
+	sc := &tsScope{counts: countVars(rule.Head, rule.Head.Reference, rule.Body), visible: visible, head: []any{rule.Head, rule.Head.Reference}, mayEmpty: true}
 	rule.Body = tr.body(rule.Body, sc)
 	if len(rule.Body) == 0 {
 		rule.Body = ast.NewBody(ast.NewExpr(ast.BooleanTerm(true)))
@@ -127,10 +121,10 @@ func (tr *tsReconstructor) rule(rule *ast.Rule) {
 func (tr *tsReconstructor) body(body ast.Body, sc *tsScope) ast.Body {
 	visible := sc.visible.Copy()
 	visible.Update(topLevelVars(body))
-	inner := &tsScope{root: sc.root, visible: visible, head: sc.head, mayEmpty: sc.mayEmpty}
+	inner := &tsScope{counts: sc.counts, visible: visible, head: sc.head, mayEmpty: sc.mayEmpty}
 
 	for _, expr := range body {
-		tr.closures(expr, visible, sc.root)
+		tr.closures(expr, visible, sc.counts)
 	}
 
 	out := make(ast.Body, 0, len(body))
@@ -186,9 +180,9 @@ func (tr *tsReconstructor) body(body ast.Body, sc *tsScope) ast.Body {
 
 // closures processes the bodies of closures (comprehensions and every) nested
 // directly under x.
-func (tr *tsReconstructor) closures(x any, visible ast.VarSet, root *tsRoot) {
+func (tr *tsReconstructor) closures(x any, visible ast.VarSet, counts map[ast.Var]int) {
 	scope := func(head ...any) *tsScope {
-		return &tsScope{root: root, visible: visible, head: head}
+		return &tsScope{counts: counts, visible: visible, head: head}
 	}
 
 	var vis *ast.GenericVisitor
@@ -280,7 +274,7 @@ func (tr *tsReconstructor) templateString(terms []*ast.Term, ctx tsContext, sc *
 		case ast.Number, ast.Boolean, ast.Null:
 			literal(v.String())
 		case ast.Var:
-			binding, compr := comprehensionBinding(v, ctx, sc.root)
+			binding, compr := comprehensionBinding(v, ctx, sc.counts)
 			if binding == nil {
 				return nil, nil, nil, false
 			}
@@ -357,7 +351,7 @@ func (tr *tsReconstructor) collapse(compr *ast.SetComprehension, sc *tsScope) (*
 		changed = false
 		for i, def := range body {
 			g, val, ok := tr.definition(def)
-			if !ok || g.Equal(head) || sc.root.counts[g] != 2 {
+			if !ok || g.Equal(head) || sc.counts[g] != 2 {
 				continue
 			}
 			j := slices.IndexFunc(body[i+1:], func(e *ast.Expr) bool {
@@ -480,7 +474,7 @@ func elideOutput(body ast.Body, expr *ast.Expr, sc *tsScope) ast.Body {
 
 	switch {
 	case uses == 1:
-		if sc.root.counts[g] != 2 || use.IsSome() || topLevelVarCount(use, g) != 1 || !withEqual(use.With, expr.With) {
+		if sc.counts[g] != 2 || use.IsSome() || topLevelVarCount(use, g) != 1 || !withEqual(use.With, expr.With) {
 			return body
 		}
 		substitute(use, g, ts)
@@ -489,7 +483,7 @@ func elideOutput(body ast.Body, expr *ast.Expr, sc *tsScope) ast.Body {
 			return body
 		}
 		n := countVars(sc.head...)[g]
-		if n == 0 || sc.root.counts[g] != n+1 {
+		if n == 0 || sc.counts[g] != n+1 {
 			return body
 		}
 		for _, h := range sc.head {
@@ -504,8 +498,8 @@ func elideOutput(body ast.Body, expr *ast.Expr, sc *tsScope) ast.Body {
 
 // comprehensionBinding finds the generated binding `v = {... | ...}` for a
 // comprehension hoisted out of the internal.template_string call.
-func comprehensionBinding(v ast.Var, ctx tsContext, root *tsRoot) (*ast.Expr, *ast.SetComprehension) {
-	if !v.IsGenerated() || root.counts[v] != 2 {
+func comprehensionBinding(v ast.Var, ctx tsContext, counts map[ast.Var]int) (*ast.Expr, *ast.SetComprehension) {
+	if !v.IsGenerated() || counts[v] != 2 {
 		return nil, nil
 	}
 
