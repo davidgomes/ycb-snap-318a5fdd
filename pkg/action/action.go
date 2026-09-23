@@ -27,6 +27,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"text/template"
@@ -115,6 +116,11 @@ type Configuration struct {
 
 	// Embed a LogHolder to provide logger functionality
 	logging.LogHolder
+
+	// manifestDocuments is the source-ordered output of the latest renderResources
+	// call, including hooks. It is copied onto the release for CLI display and
+	// is not persisted.
+	manifestDocuments []release.ManifestDocument
 }
 
 type ConfigurationOption func(c *Configuration)
@@ -347,6 +353,23 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 		if err != nil {
 			return hs, b, notes, fmt.Errorf("error while parsing post rendered output: %w", err)
 		}
+	}
+
+	// Display order follows source path. Install order is unchanged below.
+	cfg.manifestDocuments = nil
+	if ordered, orderErr := releaseutil.SourceOrderedDocuments(files, hideSecret); orderErr == nil {
+		if includeCrds {
+			for _, crd := range ch.CRDObjects() {
+				ordered = append(ordered, release.ManifestDocument{
+					Source: crd.Filename,
+					Body:   string(crd.File.Data),
+				})
+			}
+			sort.SliceStable(ordered, func(i, j int) bool {
+				return ordered[i].Source < ordered[j].Source
+			})
+		}
+		cfg.manifestDocuments = ordered
 	}
 
 	// Sort hooks, manifests, and partials. Only hooks and manifests are returned,

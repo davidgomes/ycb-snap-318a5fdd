@@ -109,6 +109,81 @@ func SortManifests(files map[string]string, _ common.VersionSet, ordering KindSo
 	return sortHooksByKind(result.hooks, ordering), sortManifestsByKind(result.generic, ordering), nil
 }
 
+// SourceOrderedDocuments lists rendered documents by full source path.
+// Documents that share a path keep their top-to-bottom order. Hooks are
+// included in that order. Unknown hooks are omitted, matching SortManifests.
+func SourceOrderedDocuments(files map[string]string, hideSecret bool) ([]release.ManifestDocument, error) {
+	paths := make([]string, 0, len(files))
+	for filePath := range files {
+		paths = append(paths, filePath)
+	}
+	sort.Strings(paths)
+
+	docs := make([]release.ManifestDocument, 0)
+	for _, filePath := range paths {
+		content := files[filePath]
+		if strings.HasPrefix(path.Base(filePath), "_") {
+			continue
+		}
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+
+		entries := SplitManifests(content)
+		keys := make([]string, 0, len(entries))
+		for entryKey := range entries {
+			keys = append(keys, entryKey)
+		}
+		sort.Sort(BySplitManifestsOrder(keys))
+
+		for _, entryKey := range keys {
+			m := entries[entryKey]
+			var entry SimpleHead
+			if err := yaml.Unmarshal([]byte(m), &entry); err != nil {
+				return nil, fmt.Errorf("YAML parse error on %s: %w", filePath, err)
+			}
+
+			isHook, isTest, skip := classifyHook(entry)
+			if skip {
+				continue
+			}
+
+			body := m
+			if hideSecret && entry.Kind == "Secret" && entry.Version == "v1" {
+				body = "# HIDDEN: The Secret output has been suppressed"
+			}
+			docs = append(docs, release.ManifestDocument{
+				Source: filePath,
+				Body:   body,
+				Hook:   isHook,
+				Test:   isTest,
+			})
+		}
+	}
+	return docs, nil
+}
+
+// classifyHook reports whether a manifest is a hook. Unknown hook types are skipped.
+func classifyHook(entry SimpleHead) (isHook, isTest, skip bool) {
+	if !hasAnyAnnotation(entry) {
+		return false, false, false
+	}
+	hookTypes, ok := entry.Metadata.Annotations[release.HookAnnotation]
+	if !ok {
+		return false, false, false
+	}
+	for hookType := range strings.SplitSeq(hookTypes, ",") {
+		hookType = strings.ToLower(strings.TrimSpace(hookType))
+		if _, known := events[hookType]; !known {
+			return false, false, true
+		}
+		if hookType == release.HookTest.String() || hookType == "test-success" {
+			isTest = true
+		}
+	}
+	return true, isTest, false
+}
+
 // sort takes a manifestFile object which may contain multiple resource definition
 // entries and sorts each entry by hook types, and saves the resulting hooks and
 // generic manifests (or non-hooks) to the result struct.

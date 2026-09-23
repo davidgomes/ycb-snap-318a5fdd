@@ -118,16 +118,14 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			// we always want to print the YAML, even if it is not valid. The error is still returned afterwards.
 			if rel != nil {
 				var manifests bytes.Buffer
-				fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
-				if !client.DisableHooks {
-					fileWritten := make(map[string]bool)
-					for _, m := range rel.Hooks {
-						if skipTests && isTestHook(m) {
-							continue
-						}
-						if client.OutputDir == "" {
-							fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", m.Path, m.Manifest)
-						} else {
+				if client.OutputDir != "" {
+					fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
+					if !client.DisableHooks {
+						fileWritten := make(map[string]bool)
+						for _, m := range rel.Hooks {
+							if skipTests && isTestHook(m) {
+								continue
+							}
 							newDir := client.OutputDir
 							if client.UseReleaseName {
 								newDir = filepath.Join(client.OutputDir, client.ReleaseName)
@@ -142,7 +140,31 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 								return err
 							}
 						}
-
+					}
+				} else if len(rel.ManifestDocuments) > 0 {
+					stream := formatManifestDocuments(rel.ManifestDocuments, func(doc release.ManifestDocument) bool {
+						if client.DisableHooks && doc.Hook {
+							return false
+						}
+						if skipTests && doc.Test {
+							return false
+						}
+						return true
+					})
+					if stream == "" || !strings.HasSuffix(stream, "\n") {
+						fmt.Fprintln(&manifests, stream)
+					} else {
+						fmt.Fprint(&manifests, stream)
+					}
+				} else {
+					fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
+					if !client.DisableHooks {
+						for _, m := range rel.Hooks {
+							if skipTests && isTestHook(m) {
+								continue
+							}
+							fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", m.Path, m.Manifest)
+						}
 					}
 				}
 

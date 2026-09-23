@@ -297,6 +297,8 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 	}
 
 	hooks, manifestDoc, notesTxt, err := u.cfg.renderResources(chart, valuesToRender, "", "", u.SubNotes, false, false, u.PostRenderer, interactWithServer(u.DryRunStrategy), u.EnableDNS, u.HideSecret)
+	manifestDocuments := u.cfg.manifestDocuments
+	u.cfg.manifestDocuments = nil
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -324,11 +326,12 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 			Status:        rcommon.StatusPendingUpgrade,
 			Description:   "Preparing upgrade", // This should be overwritten later.
 		},
-		Version:     revision,
-		Manifest:    manifestDoc.String(),
-		Hooks:       hooks,
-		Labels:      mergeCustomLabels(lastRelease.Labels, u.Labels),
-		ApplyMethod: string(determineReleaseSSApplyMethod(serverSideApply)),
+		Version:           revision,
+		Manifest:          manifestDoc.String(),
+		Hooks:             hooks,
+		ManifestDocuments: manifestDocuments,
+		Labels:            mergeCustomLabels(lastRelease.Labels, u.Labels),
+		ApplyMethod:       string(determineReleaseSSApplyMethod(serverSideApply)),
 	}
 
 	if len(notesTxt) > 0 {

@@ -375,6 +375,8 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 	if manifestDoc != nil {
 		rel.Manifest = manifestDoc.String()
 	}
+	rel.ManifestDocuments = i.cfg.manifestDocuments
+	i.cfg.manifestDocuments = nil
 	// Check error from render
 	if err != nil {
 		rel.SetStatus(rcommon.StatusFailed, "failed to render resource: "+err.Error())

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -59,7 +60,16 @@ func newGetManifestCmd(cfg *action.Configuration, out io.Writer) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(out, rac.Manifest())
+			hooks, err := hooksFromRelease(rac)
+			if err != nil {
+				return err
+			}
+			stream := unifiedManifest(rac.Manifest(), hooks)
+			if stream == "" || !strings.HasSuffix(stream, "\n") {
+				fmt.Fprintln(out, stream)
+			} else {
+				fmt.Fprint(out, stream)
+			}
 			return nil
 		},
 	}

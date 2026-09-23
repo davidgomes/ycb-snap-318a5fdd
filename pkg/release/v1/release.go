@@ -51,6 +51,23 @@ type Release struct {
 	// ApplyMethod stores whether server-side or client-side apply was used for the release
 	// Unset (empty string) should be treated as the default of client-side apply
 	ApplyMethod string `json:"apply_method,omitempty"` // "ssa" | "csa"
+
+	// ManifestDocuments is a display-only, source-ordered rendering of the
+	// chart, including hooks. It is not stored with the release. The manifest
+	// used for install and upgrade remains in install order.
+	ManifestDocuments []ManifestDocument `json:"-"`
+}
+
+// ManifestDocument is one rendered YAML document in source order.
+type ManifestDocument struct {
+	// Source is the chart-relative path of the template that produced this document.
+	Source string
+	// Body is the YAML document without a leading document separator.
+	Body string
+	// Hook reports whether this document is a hook.
+	Hook bool
+	// Test reports whether this hook runs on the test event.
+	Test bool
 }
 
 // SetStatus is a helper for setting the status on a release.

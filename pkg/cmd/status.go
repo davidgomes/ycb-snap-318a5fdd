@@ -227,7 +227,17 @@ func (s statusPrinter) WriteTable(out io.Writer) error {
 		_, _ = fmt.Fprintln(out)
 	}
 
-	if strings.EqualFold(rel.Info.Description, "Dry run complete") || s.debug {
+	if strings.EqualFold(rel.Info.Description, "Dry run complete") {
+		stream := formatManifestDocuments(rel.ManifestDocuments, nil)
+		if len(rel.ManifestDocuments) == 0 {
+			hooks := make([]manifestHook, 0, len(rel.Hooks))
+			for _, h := range rel.Hooks {
+				hooks = append(hooks, manifestHook{path: h.Path, manifest: h.Manifest})
+			}
+			stream = unifiedManifest(rel.Manifest, hooks)
+		}
+		_, _ = fmt.Fprintf(out, "MANIFEST:\n%s", stream)
+	} else if s.debug {
 		_, _ = fmt.Fprintln(out, "HOOKS:")
 		for _, h := range rel.Hooks {
 			_, _ = fmt.Fprintf(out, "---\n# Source: %s\n%s\n", h.Path, h.Manifest)
