@@ -372,9 +372,7 @@ def test_replay_stop_on_error(ip, tmp_path):
 
 def test_replay_refuses_invalid_bundle(ip, tmp_path):
     path = tmp_path / "s.ipybundle"
-    save_session_bundle(
-        path, make_meta(), [make_event(2, code="should_not_run = 1")]
-    )
+    save_session_bundle(path, make_meta(), [make_event(2, code="should_not_run = 1")])
     with pytest.raises(SessionBundleValidationError):
         replay_session_bundle(ip, path)
     assert "should_not_run" not in ip.user_ns
@@ -407,12 +405,16 @@ def test_validate_recorded_bundle(ip, tmp_path):
 
 def test_validate_reports_problems(tmp_path):
     path = tmp_path / "bad.ipybundle"
-    meta = make_meta(format="nope", format_version=0, redactions=["s3cret"], event_count=5)
+    meta = make_meta(
+        format="nope", format_version=0, redactions=["s3cret"], event_count=7
+    )
     events = [
         make_event(1, execute_result={"text/html": "<b>1</b>"}),
         make_event(3, stdout="leaked s3cret"),
         make_event(4, success=False),
-        make_event(5, success=False, error={"ename": "E", "evalue": "", "traceback": []}),
+        make_event(
+            5, success=False, error={"ename": "E", "evalue": "", "traceback": []}
+        ),
         make_event(6, recorded_at="yesterday", code=None),
     ]
     save_session_bundle(path, meta, events)
@@ -474,7 +476,9 @@ def test_validate_structural_problems(tmp_path):
     only_metadata = tmp_path / "only-metadata.ipybundle"
     with zipfile.ZipFile(only_metadata, "w") as zf:
         zf.writestr("metadata.json", json.dumps(make_meta()))
-    assert validate_session_bundle(only_metadata, strict=False) == ["missing events.jsonl"]
+    assert validate_session_bundle(only_metadata, strict=False) == [
+        "missing events.jsonl"
+    ]
 
     missing = tmp_path / "missing.ipybundle"
     assert len(validate_session_bundle(missing, strict=False)) == 1
