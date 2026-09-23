@@ -129,7 +129,13 @@ type Install struct {
 	UseReleaseName bool
 	// TakeOwnership will ignore the check for helm annotations and take ownership of the resources.
 	TakeOwnership bool
-	PostRenderer  postrenderer.PostRenderer
+	// MergeStrategies overrides chart helm.sh/merge-strategy annotations.
+	// Each entry is path=append or path=merge and takes precedence for that path.
+	MergeStrategies []string
+	// MergeKeys overrides chart helm.sh/merge-key annotations.
+	// Each entry is path=key and takes precedence for that path.
+	MergeKeys    []string
+	PostRenderer postrenderer.PostRenderer
 	// Lock to control raceconditions when the process receives a SIGTERM
 	Lock           sync.Mutex
 	goroutineCount atomic.Int32
@@ -305,6 +311,9 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 		return nil, fmt.Errorf("release name check failed: %w", err)
 	}
 
+	restoreMerge := util.WithChartMergeOverrides(chrt, i.MergeStrategies, i.MergeKeys)
+	defer restoreMerge()
+
 	if err := chartutil.ProcessDependencies(chrt, vals); err != nil {
 		i.cfg.Logger().Error("chart dependencies processing failed", slog.Any("error", err))
 		return nil, fmt.Errorf("chart dependencies processing failed: %w", err)
@@ -359,6 +368,7 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 		IsUpgrade: isUpgrade,
 	}
 	valuesToRender, err := util.ToRenderValuesWithSchemaValidation(chrt, vals, options, caps, i.SkipSchemaValidation)
+	restoreMerge()
 	if err != nil {
 		return nil, err
 	}

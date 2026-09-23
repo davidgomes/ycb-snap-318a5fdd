@@ -235,6 +235,9 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 				slog.Warn("this chart is deprecated")
 			}
 
+			client.MergeStrategies = valueOpts.MergeStrategies
+			client.MergeKeys = valueOpts.MergeKeys
+
 			// Create context and prepare the handle of SIGTERM
 			ctx := context.Background()
 			ctx, cancel := context.WithCancel(ctx)

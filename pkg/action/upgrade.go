@@ -131,6 +131,12 @@ type Upgrade struct {
 	EnableDNS bool
 	// TakeOwnership will skip the check for helm annotations and adopt all existing resources.
 	TakeOwnership bool
+	// MergeStrategies overrides chart helm.sh/merge-strategy annotations.
+	// Each entry is path=append or path=merge and takes precedence for that path.
+	MergeStrategies []string
+	// MergeKeys overrides chart helm.sh/merge-key annotations.
+	// Each entry is path=key and takes precedence for that path.
+	MergeKeys []string
 }
 
 type resultMessage struct {
@@ -264,6 +270,15 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 			}
 		}
 
+	}
+
+	// CLI merge overrides take precedence over chart annotations. ResetValues
+	// ignores strategies entirely, including those overrides.
+	restoreMerge := util.WithChartMergeOverrides(chart, u.MergeStrategies, u.MergeKeys)
+	defer restoreMerge()
+	if u.ResetValues {
+		restoreSuppressed := util.WithoutChartMergeStrategies(chart)
+		defer restoreSuppressed()
 	}
 
 	// determine if values will be reused
@@ -618,9 +633,17 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 			return nil, fmt.Errorf("failed to rebuild old values: %w", err)
 		}
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		// Append places old config elements before new values.
+		newVals = util.CoalesceTablesWithStrategies(newVals, current.Config, chart)
 
 		chart.Values = oldVals
+		// oldVals already includes strategy merges against the previous chart.
+		// Put the original default arrays back so rendering coalesces once.
+		var previousDefaults map[string]any
+		if current.Chart != nil {
+			previousDefaults = current.Chart.Values
+		}
+		util.RestoreStrategyBasePaths(chart.Values, previousDefaults, chart)
 
 		return newVals, nil
 	}
@@ -629,7 +652,9 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 	if u.ResetThenReuseValues {
 		u.cfg.Logger().Debug("merging values from old release to new values")
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		// New chart defaults stay in chart.Values and are the coalesce base.
+		// Old config is merged onto the new values with strategies (append: old before new).
+		newVals = util.CoalesceTablesWithStrategies(newVals, current.Config, chart)
 
 		return newVals, nil
 	}

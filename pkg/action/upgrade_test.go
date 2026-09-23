@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/cli-runtime/pkg/resource"
 
+	chartutil "helm.sh/helm/v4/pkg/chart/common/util"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/kube"
 	kubefake "helm.sh/helm/v4/pkg/kube/fake"
@@ -394,6 +395,76 @@ func TestUpgradeRelease_ResetThenReuseValues(t *testing.T) {
 		is.Equal(common.StatusDeployed, updatedRes.Info.Status)
 		is.Equal(expectedValues, updatedRes.Config)
 		is.Equal(newChartValues, updatedRes.Chart.Values)
+	})
+}
+
+func TestUpgradeArrayMergeStrategies(t *testing.T) {
+	is := assert.New(t)
+	ann := map[string]string{"helm.sh/merge-strategy/items": "append"}
+
+	newChart := func() *chart.Chart {
+		return buildChart(
+			withValues(map[string]any{"items": []any{"default"}, "extra": "from-chart"}),
+			func(opts *chartOptions) {
+				opts.Metadata.Annotations = ann
+			},
+		)
+	}
+	oldChart := buildChart(
+		withValues(map[string]any{"items": []any{"default"}}),
+		func(opts *chartOptions) {
+			opts.Metadata.Annotations = ann
+		},
+	)
+	rel := releaseStub()
+	rel.Chart = oldChart
+	rel.Config = map[string]any{"items": []any{"old"}}
+	newVals := func() map[string]any {
+		return map[string]any{"items": []any{"new"}}
+	}
+
+	t.Run("reuse values appends old config before new values", func(t *testing.T) {
+		up := upgradeAction(t)
+		up.ReuseValues = true
+		ch := newChart()
+		got, err := up.reuseValues(ch, rel, newVals())
+		is.NoError(err)
+		is.Equal([]any{"old", "new"}, got["items"])
+
+		rendered, err := chartutil.CoalesceValues(ch, got)
+		is.NoError(err)
+		is.Equal([]any{"default", "old", "new"}, rendered["items"])
+	})
+
+	t.Run("reset then reuse uses new chart defaults as the base", func(t *testing.T) {
+		up := upgradeAction(t)
+		up.ResetThenReuseValues = true
+		ch := newChart()
+		got, err := up.reuseValues(ch, rel, newVals())
+		is.NoError(err)
+		is.Equal([]any{"old", "new"}, got["items"])
+		is.Equal([]any{"default"}, ch.Values["items"])
+		is.Equal("from-chart", ch.Values["extra"])
+
+		rendered, err := chartutil.CoalesceValues(ch, got)
+		is.NoError(err)
+		is.Equal([]any{"default", "old", "new"}, rendered["items"])
+		is.Equal("from-chart", rendered["extra"])
+	})
+
+	t.Run("reset values ignores strategies", func(t *testing.T) {
+		up := upgradeAction(t)
+		up.ResetValues = true
+		ch := newChart()
+		restore := chartutil.WithoutChartMergeStrategies(ch)
+		defer restore()
+		got, err := up.reuseValues(ch, rel, newVals())
+		is.NoError(err)
+		is.Equal([]any{"new"}, got["items"])
+
+		rendered, err := chartutil.CoalesceValues(ch, got)
+		is.NoError(err)
+		is.Equal([]any{"new"}, rendered["items"])
 	})
 }
 

@@ -317,3 +317,48 @@ func TestChartfile(t *testing.T) {
 		}
 	})
 }
+
+func TestChartfileMergeStrategyWarnings(t *testing.T) {
+	dir := t.TempDir()
+	chartYAML := []byte(`apiVersion: v2
+name: merge
+description: merge strategy warnings
+version: 0.1.0
+icon: https://example.com/icon.png
+annotations:
+  helm.sh/merge-strategy/missing: append
+  helm.sh/merge-strategy/name: append
+  helm.sh/merge-strategy/items: nope
+  helm.sh/merge-strategy/obj: merge
+  helm.sh/merge-key/orphan: name
+`)
+	valuesYAML := []byte(`name: chart
+items:
+  - a
+obj:
+  k: v
+`)
+	if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), chartYAML, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "values.yaml"), valuesYAML, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	linter := support.Linter{ChartDir: dir}
+	Chartfile(&linter)
+
+	var texts []string
+	for _, msg := range linter.Messages {
+		if msg.Path != "Chart.yaml" {
+			t.Errorf("merge warning emitted outside Chart.yaml rule: %s", msg.Path)
+		}
+		texts = append(texts, msg.Err.Error())
+	}
+	joined := strings.Join(texts, "\n")
+	for _, part := range []string{"unsupported", "items", "obj", "orphan", "not found", "non-array"} {
+		if !strings.Contains(joined, part) {
+			t.Errorf("Chart.yaml warnings %q missing %q", joined, part)
+		}
+	}
+}
