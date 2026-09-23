@@ -999,6 +999,106 @@ Alternative upserts using INSERT OR IGNORE
 
 Upserts use ``INSERT INTO ... ON CONFLICT SET``. Prior to ``sqlite-utils 4.0`` these used a sequence of ``INSERT OR IGNORE`` followed by an ``UPDATE``. This older method is still used for SQLite 3.23.1 and earlier. You can force the older implementation by passing ``use_old_upsert=True`` to the ``Database()`` constructor.
 
+.. _python_api_safe_import:
+
+Safe imports
+============
+
+A bulk insert that fails part of the way through can leave a table half-imported. Safe imports avoid this: they record a checkpoint before writing anything, check the table against a set of :ref:`import invariants <python_api_safe_import_invariants>` once the write has finished, and only keep the changes if both the write and the checks succeeded. Otherwise the database is rolled back to exactly the state it was in before the import, including any tables, columns, indexes or triggers that the import created or changed.
+
+.. _python_api_safe_import_invariants:
+
+Import invariants
+-----------------
+
+An invariant is a piece of SQL that must hold for a table after every safe import. Invariants are stored in an ``_import_invariants`` table in the database, so they apply to every connection:
+
+.. code-block:: python
+
+    invariant_id = db.add_import_invariant("products", "price >= 0")
+
+The SQL is evaluated in one of three ways:
+
+- If it starts with ``SELECT`` (or ``WITH``) it is executed as a query, and passes if the first column of the first row is truthy - for example ``SELECT count(*) = 0 FROM products WHERE sku IS NULL``.
+- Aggregate expressions such as ``count(*) > 0`` or ``max(price) < 1000`` are evaluated once against the whole table.
+- Any other expression, such as ``price >= 0``, must be true for every row in the table. A ``NULL`` result counts as a failure.
+
+``db.list_import_invariants(table)`` returns the invariants for a table as a list of ``{"id": ..., "expression": ...}`` dictionaries, and ``db.remove_import_invariant(table, invariant_id)`` removes one.
+
+You can check a table against its invariants at any time using ``db.validate_import_invariants(table)``:
+
+.. code-block:: python
+
+    >>> db.validate_import_invariants("products")
+    {'valid': False, 'failures': [{'id': '3f2a9c1e0b7d4e21', 'expression': 'price >= 0', 'error': '2 rows did not satisfy the expression'}]}
+
+An invariant that raises a SQL error, for example because it references a column that does not exist, is reported as a failure with the error message.
+
+.. _python_api_safe_import_operations:
+
+Safe insert, upsert and import methods
+--------------------------------------
+
+These methods run an import in safe mode:
+
+.. code-block:: python
+
+    result = db.safe_bulk_insert("products", records)
+    result = db.safe_bulk_upsert("products", records, pk="id")
+    result = db.import_csv("products", "products.csv", safe_mode=True)
+    result = db.import_json("products", records, safe_mode=True)
+
+``safe_bulk_insert()`` and ``safe_bulk_upsert()`` pass any extra keyword arguments on to :ref:`insert_all() <python_api_bulk_inserts>` and :ref:`upsert_all() <python_api_upsert>`. ``import_csv()`` accepts a path or a text file-like object, and detects column types if it creates the table. ``import_json()`` accepts a list of dictionaries, a single dictionary, a string of JSON, a path to a JSON file or a file-like object. Without ``safe_mode=True`` those two methods perform an ordinary import.
+
+On success these methods return ``{"success": True}``. If the import fails or breaks an invariant, the database is rolled back and they return a dictionary like this:
+
+.. code-block:: python
+
+    {
+        "success": False,
+        "checkpoint_id": "5b1e53ebad0b2db0",
+        "failures": [
+            {"id": "3f2a9c1e0b7d4e21", "expression": "price >= 0", "error": "1 row did not satisfy the expression"}
+        ],
+        "error_report": "Import invariant validation failed, all changes have been rolled back:\n- products: invariant 3f2a9c1e0b7d4e21 (price >= 0): 1 row did not satisfy the expression",
+    }
+
+``failures`` is empty if the import failed because of an error such as a primary key conflict, in which case ``error_report`` describes that error. The ``checkpoint_id`` refers to the checkpoint that was rolled back - you can pass it to ``db.cleanup_checkpoint()`` once you no longer need it.
+
+Pass ``strict=True`` to raise an exception after rolling back instead. Invariant failures raise ``sqlite_utils.db.ImportValidationError``, which has ``checkpoint_id``, ``failures`` and ``error_report`` attributes. Any other error is re-raised unchanged.
+
+These methods work whether or not safe import mode has been enabled for the database.
+
+.. _python_api_safe_import_checkpoints:
+
+Working with checkpoints directly
+---------------------------------
+
+You can also create checkpoints yourself, to protect any sequence of changes. This requires safe import mode to be enabled for the database first - the setting is stored in a ``_safe_import`` table so it persists across connections:
+
+.. code-block:: python
+
+    db.enable_safe_import()
+
+    checkpoint_id = db.create_import_checkpoint()
+    db.table("products").insert_all(records, alter=True)
+    db.table("products").create_index(["sku"])
+    if db.validate_import_invariants("products")["valid"]:
+        db.commit_checkpoint(checkpoint_id)
+    else:
+        db.rollback_to_checkpoint(checkpoint_id)
+    db.cleanup_checkpoint(checkpoint_id)
+
+``db.create_import_checkpoint()`` raises ``sqlite_utils.db.SafeImportNotEnabledError`` if safe import mode is disabled. ``db.disable_safe_import()`` turns it off again, and ``db.safe_import_enabled`` returns the current setting.
+
+Once a checkpoint has been committed or rolled back, trying to commit or roll it back again raises ``sqlite_utils.db.CheckpointNotActiveError``. ``db.cleanup_checkpoint(checkpoint_id)`` discards a checkpoint without changing the database, after which that ID - like any unknown ID - raises ``sqlite_utils.db.CheckpointNotFoundError``.
+
+Checkpoints can be nested. Rolling back or committing a checkpoint also rolls back or commits any checkpoints that were created after it and are still active.
+
+A checkpoint is a complete copy of the database, taken using the `SQLite backup API <https://www.sqlite.org/backup.html>`__ - in memory for in-memory databases, or in a temporary file otherwise. This means creating a checkpoint takes time and space proportional to the size of the database. Checkpoints are deleted when they are committed, rolled back or cleaned up, and when the database is closed. Creating a checkpoint commits any pending transaction first.
+
+Changes made after a checkpoint are written to the database as normal, so other connections can see them before they are committed or rolled back. If your process crashes in the middle of an import those changes will not be rolled back.
+
 .. _python_api_convert:
 
 Converting data in columns

@@ -257,6 +257,7 @@ Available ``--fmt`` options are:
 .. ]]]
 
 - ``asciidoc``
+- ``colon_grid``
 - ``double_grid``
 - ``double_outline``
 - ``fancy_grid``
@@ -1560,6 +1561,99 @@ You could insert those rows into a pre-created ``chickens`` table like so:
 This command takes the same options as the ``sqlite-utils insert`` command - so it defaults to expecting JSON but can accept other formats using ``--csv`` or ``--tsv`` or ``--nl`` or other options described above.
 
 By default all of the SQL queries will be executed in a single transaction. To commit every 20 records, use ``--batch-size 20``.
+
+.. _cli_safe_import:
+
+Safe imports
+============
+
+An import that fails part of the way through can leave a table half-imported. The ``insert``, ``upsert`` and ``bulk`` commands accept a ``--safe-mode`` option to avoid this. In safe mode a checkpoint of the database is recorded before anything is written, and after the import the affected tables are checked against their :ref:`import invariants <cli_safe_import_invariants>`. If the import fails or breaks an invariant, the database is rolled back to exactly the state it was in before the command ran - including any tables, columns, indexes or triggers the import created or changed - and the command exits with a non-zero status code:
+
+.. code-block:: bash
+
+    sqlite-utils insert products.db products new-products.csv --safe-mode
+
+.. code-block:: output
+
+    Error: Import invariant validation failed, all changes have been rolled back:
+    - products: invariant 3f2a9c1e0b7d4e21 (price >= 0): 1 row did not satisfy the expression
+
+The command only exits with a status of 0 if the import was committed.
+
+In safe mode the format options such as ``--csv``, ``--tsv`` and ``--nl`` are optional. If none of them are provided the format is detected from the file extension - ``.csv``, ``.tsv``, ``.json``, ``.jsonl`` or ``.ndjson`` - or, for other files and for data piped to standard input, from the content itself.
+
+``bulk --safe-mode`` works with any SQL, including ``UPDATE`` and ``DELETE`` statements. Since that SQL can modify any table, the invariants for every table that has them are checked afterwards:
+
+.. code-block:: bash
+
+    sqlite-utils bulk products.db \
+      'update products set price = :price where id = :id' \
+      prices.csv --safe-mode
+
+See :ref:`python_api_safe_import` for how to use safe imports from Python, including how to create checkpoints directly.
+
+.. _cli_safe_import_invariants:
+
+Import invariants
+-----------------
+
+An invariant is a piece of SQL that must hold for a table after every safe import. Use ``add-import-invariant`` to add one - this outputs the ID of the new invariant:
+
+.. code-block:: bash
+
+    sqlite-utils add-import-invariant products.db products 'price >= 0'
+
+.. code-block:: output
+
+    3f2a9c1e0b7d4e21
+
+The SQL is evaluated in one of three ways:
+
+- If it starts with ``SELECT`` it is executed as a query, and passes if the first column of the first row is truthy - for example ``SELECT count(*) = 0 FROM products WHERE sku IS NULL``.
+- Aggregate expressions such as ``count(*) > 0`` or ``max(price) < 1000`` are evaluated once against the whole table.
+- Any other expression, such as ``price >= 0``, must be true for every row in the table.
+
+Invariants are stored in an ``_import_invariants`` table in the database. Use ``list-import-invariants`` to see the ID and SQL of each invariant for a table:
+
+.. code-block:: bash
+
+    sqlite-utils list-import-invariants products.db products
+
+.. code-block:: output
+
+    3f2a9c1e0b7d4e21	price >= 0
+    a91c07d2e5b84f13	count(*) > 0
+
+To remove an invariant, pass its ID to ``remove-import-invariant``:
+
+.. code-block:: bash
+
+    sqlite-utils remove-import-invariant products.db products a91c07d2e5b84f13
+
+``validate-import-invariants`` checks the current contents of a table against its invariants, and lists the ID of each invariant that failed along with the reason:
+
+.. code-block:: bash
+
+    sqlite-utils validate-import-invariants products.db products
+
+.. code-block:: output
+
+    Invalid: 1 of 2 import invariants failed for table products
+    3f2a9c1e0b7d4e21	price >= 0	2 rows did not satisfy the expression
+
+This command always exits with a status of 0 - use ``--json`` to get the result as JSON, with a ``"valid"`` key that is ``true`` or ``false``.
+
+The ``--safe-mode`` option works on any database. To create checkpoints directly using the :ref:`Python API <python_api_safe_import_checkpoints>` you first need to enable safe import mode for the database, which stores the setting in a ``_safe_import`` table:
+
+.. code-block:: bash
+
+    sqlite-utils enable-safe-import products.db
+
+To disable it again:
+
+.. code-block:: bash
+
+    sqlite-utils disable-safe-import products.db
 
 .. _cli_insert_files:
 
