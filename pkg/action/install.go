@@ -129,7 +129,11 @@ type Install struct {
 	UseReleaseName bool
 	// TakeOwnership will ignore the check for helm annotations and take ownership of the resources.
 	TakeOwnership bool
-	PostRenderer  postrenderer.PostRenderer
+	// MergeStrategies overrides chart array merge strategies, in path=strategy format.
+	MergeStrategies []string
+	// MergeKeys overrides chart array merge keys, in path=key format.
+	MergeKeys    []string
+	PostRenderer postrenderer.PostRenderer
 	// Lock to control raceconditions when the process receives a SIGTERM
 	Lock           sync.Mutex
 	goroutineCount atomic.Int32
@@ -358,6 +362,10 @@ func (i *Install) RunWithContext(ctx context.Context, ch ci.Charter, vals map[st
 		IsInstall: !isUpgrade,
 		IsUpgrade: isUpgrade,
 	}
+	if err := applyMergeStrategyOverrides(chrt, i.MergeStrategies, i.MergeKeys); err != nil {
+		return nil, err
+	}
+
 	valuesToRender, err := util.ToRenderValuesWithSchemaValidation(chrt, vals, options, caps, i.SkipSchemaValidation)
 	if err != nil {
 		return nil, err
@@ -985,4 +993,21 @@ func (c *ChartPathOptions) LocateChart(name string, settings *cli.EnvSettings) (
 		return filename, err
 	}
 	return lname, nil
+}
+
+// applyMergeStrategyOverrides records CLI merge strategy overrides as chart
+// annotations so they take precedence over those declared in Chart.yaml.
+func applyMergeStrategyOverrides(ch *chart.Chart, strategies, keys []string) error {
+	if len(strategies) == 0 && len(keys) == 0 {
+		return nil
+	}
+	if ch.Metadata == nil {
+		ch.Metadata = &chart.Metadata{}
+	}
+	annotations, err := util.ApplyMergeStrategyOverrides(ch.Metadata.Annotations, strategies, keys)
+	if err != nil {
+		return err
+	}
+	ch.Metadata.Annotations = annotations
+	return nil
 }

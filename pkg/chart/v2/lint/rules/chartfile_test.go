@@ -317,3 +317,27 @@ func TestChartfile(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateChartMergeStrategies(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "values.yaml"), []byte("list: []\nscalar: x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cf := &chart.Metadata{Annotations: map[string]string{
+		"helm.sh/merge-strategy/list":    "merge",
+		"helm.sh/merge-strategy/scalar":  "append",
+		"helm.sh/merge-strategy/missing": "append",
+		"helm.sh/merge-strategy/bad":     "zip",
+		"helm.sh/merge-key/orphan":       "name",
+	}}
+	var msgs []string
+	for _, err := range validateChartMergeStrategies(dir, cf) {
+		msgs = append(msgs, err.Error())
+	}
+	joined := strings.Join(msgs, "\n")
+	for _, want := range []string{"unsupported", `"list"`, `"orphan"`, "not found", "non-array"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected warning containing %q, got:\n%s", want, joined)
+		}
+	}
+}

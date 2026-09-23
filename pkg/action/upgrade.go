@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/cli-runtime/pkg/resource"
 
+	"helm.sh/helm/v4/internal/copystructure"
 	"helm.sh/helm/v4/pkg/chart"
 	"helm.sh/helm/v4/pkg/chart/common"
 	"helm.sh/helm/v4/pkg/chart/common/util"
@@ -131,6 +132,10 @@ type Upgrade struct {
 	EnableDNS bool
 	// TakeOwnership will skip the check for helm annotations and adopt all existing resources.
 	TakeOwnership bool
+	// MergeStrategies overrides chart array merge strategies, in path=strategy format.
+	MergeStrategies []string
+	// MergeKeys overrides chart array merge keys, in path=key format.
+	MergeKeys []string
 }
 
 type resultMessage struct {
@@ -267,6 +272,10 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 	}
 
 	// determine if values will be reused
+	if err := applyMergeStrategyOverrides(chart, u.MergeStrategies, u.MergeKeys); err != nil {
+		return nil, nil, false, err
+	}
+
 	vals, err = u.reuseValues(chart, currentRelease, vals)
 	if err != nil {
 		return nil, nil, false, err
@@ -618,7 +627,16 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 			return nil, fmt.Errorf("failed to rebuild old values: %w", err)
 		}
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		strategies := mergeStrategiesFor(chart)
+		if len(strategies) == 0 {
+			newVals = util.CoalesceTables(newVals, current.Config)
+		} else {
+			newVals = util.CoalesceTablesWithStrategies(newVals, current.Config, strategies)
+			// The old values already contain the old config for these arrays;
+			// drop the merged paths from the chart defaults so they are not
+			// applied a second time when the chart values are coalesced.
+			oldVals = removeMergedPaths(oldVals, newVals, strategies)
+		}
 
 		chart.Values = oldVals
 
@@ -629,7 +647,7 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 	if u.ResetThenReuseValues {
 		u.cfg.Logger().Debug("merging values from old release to new values")
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		newVals = util.CoalesceTablesWithStrategies(newVals, current.Config, mergeStrategiesFor(chart))
 
 		return newVals, nil
 	}
@@ -639,6 +657,51 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 		newVals = current.Config
 	}
 	return newVals, nil
+}
+
+func mergeStrategiesFor(ch *chartv2.Chart) map[string]util.MergeStrategy {
+	if ch.Metadata == nil {
+		return nil
+	}
+	return util.ExtractMergeStrategies(ch.Metadata.Annotations)
+}
+
+// removeMergedPaths returns a copy of vals without the strategy paths that
+// already hold an array in merged.
+func removeMergedPaths(vals, merged map[string]any, strategies map[string]util.MergeStrategy) map[string]any {
+	c, err := copystructure.Copy(vals)
+	if err != nil {
+		return vals
+	}
+	out, _ := c.(map[string]any)
+	for path := range strategies {
+		segs := strings.Split(path, ".")
+		var mv any = merged
+		for _, seg := range segs {
+			m, ok := mv.(map[string]any)
+			if !ok {
+				mv = nil
+				break
+			}
+			mv = m[seg]
+		}
+		if _, ok := mv.([]any); !ok {
+			continue
+		}
+		parent := out
+		for _, seg := range segs[:len(segs)-1] {
+			next, ok := parent[seg].(map[string]any)
+			if !ok {
+				parent = nil
+				break
+			}
+			parent = next
+		}
+		if parent != nil {
+			delete(parent, segs[len(segs)-1])
+		}
+	}
+	return out
 }
 
 func validateManifest(c kube.Interface, manifest []byte, openAPIValidation bool) error {

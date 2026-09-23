@@ -108,6 +108,13 @@ func (r *v2Accessor) Schema() []byte {
 	return r.chrt.Schema
 }
 
+func (r *v2Accessor) Annotations() map[string]string {
+	if r.chrt.Metadata == nil {
+		return nil
+	}
+	return r.chrt.Metadata.Annotations
+}
+
 func (r *v2Accessor) Deprecated() bool {
 	return r.chrt.Metadata.Deprecated
 }
@@ -175,6 +182,13 @@ func (r *v3Accessor) Values() map[string]any {
 
 func (r *v3Accessor) Schema() []byte {
 	return r.chrt.Schema
+}
+
+func (r *v3Accessor) Annotations() map[string]string {
+	if r.chrt.Metadata == nil {
+		return nil
+	}
+	return r.chrt.Metadata.Annotations
 }
 
 func (r *v3Accessor) Deprecated() bool {

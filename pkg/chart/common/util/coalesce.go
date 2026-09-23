@@ -121,8 +121,9 @@ func coalesceDeps(printf printFn, chrt chart.Charter, dest map[string]any, prefi
 		if dv, ok := dest[sub.Name()]; ok {
 			dvmap := dv.(map[string]any)
 			subPrefix := concatPrefix(prefix, ch.Name())
-			// Get globals out of dest and merge them into dvmap.
-			coalesceGlobals(printf, dvmap, dest, subPrefix, merge)
+			// Get globals out of dest and merge them into dvmap, honoring the
+			// subchart's strategies declared for global.* paths.
+			coalesceGlobalsWithStrategies(printf, dvmap, dest, subPrefix, globalStrategies(ExtractMergeStrategies(sub.Annotations())))
 			// Now coalesce the rest of the values.
 			var err error
 			dest[sub.Name()], err = coalesce(printf, subchart, dvmap, subPrefix, merge)
@@ -138,6 +139,10 @@ func coalesceDeps(printf printFn, chrt chart.Charter, dest map[string]any, prefi
 //
 // For convenience, returns dest.
 func coalesceGlobals(printf printFn, dest, src map[string]any, prefix string, _ bool) {
+	coalesceGlobalsWithStrategies(printf, dest, src, prefix, nil)
+}
+
+func coalesceGlobalsWithStrategies(printf printFn, dest, src map[string]any, prefix string, strategies map[string]MergeStrategy) {
 	var dg, sg map[string]any
 
 	if destglob, ok := dest[common.GlobalKey]; !ok {
@@ -152,6 +157,13 @@ func coalesceGlobals(printf printFn, dest, src map[string]any, prefix string, _ 
 	} else if sg, ok = srcglob.(map[string]any); !ok {
 		printf("warning: skipping globals because source %s is not a table.", common.GlobalKey)
 		return
+	}
+
+	if len(strategies) > 0 {
+		if c, err := copystructure.Copy(sg); err == nil {
+			sg = c.(map[string]any)
+			applyMergeStrategies(printf, strategies, sg, dg, true)
+		}
 	}
 
 	// EXPERIMENTAL: In the past, we have disallowed globals to test tables. This
@@ -229,6 +241,8 @@ func coalesceValues(printf printFn, c chart.Charter, v map[string]any, prefix st
 			vc = ch.Values()
 		}
 	}
+
+	applyMergeStrategies(printf, ExtractMergeStrategies(ch.Annotations()), v, vc, merge)
 
 	for key, val := range vc {
 		if value, ok := v[key]; ok {

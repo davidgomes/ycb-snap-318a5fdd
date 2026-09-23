@@ -26,6 +26,8 @@ import (
 	"github.com/asaskevich/govalidator"
 	"sigs.k8s.io/yaml"
 
+	"helm.sh/helm/v4/pkg/chart/common"
+	commonutil "helm.sh/helm/v4/pkg/chart/common/util"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/lint/support"
 	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
@@ -68,6 +70,25 @@ func Chartfile(linter *support.Linter) {
 	linter.RunLinterRule(support.ErrorSev, chartFileName, validateChartType(chartFile))
 	linter.RunLinterRule(support.ErrorSev, chartFileName, validateChartDependencies(chartFile))
 	linter.RunLinterRule(support.WarningSev, chartFileName, validateChartVersionStrictSemVerV2(chartFile))
+	for _, err := range validateChartMergeStrategies(linter.ChartDir, chartFile) {
+		linter.RunLinterRule(support.WarningSev, chartFileName, err)
+	}
+}
+
+// validateChartMergeStrategies checks helm.sh/merge-strategy and helm.sh/merge-key
+// annotations, including that strategy paths resolve to arrays in the chart's
+// default values.
+func validateChartMergeStrategies(chartDir string, cf *chart.Metadata) []error {
+	if len(cf.Annotations) == 0 {
+		return nil
+	}
+	var values map[string]any
+	if v, err := common.ReadValuesFile(filepath.Join(chartDir, "values.yaml")); err == nil {
+		values = v
+	} else {
+		values = map[string]any{}
+	}
+	return commonutil.ValidateMergeStrategyAnnotations(cf.Annotations, values)
 }
 
 func validateChartVersionType(data map[string]any) error {
