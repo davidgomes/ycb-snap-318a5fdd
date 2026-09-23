@@ -1,4 +1,5 @@
 import {
+  createPersisterRestoreResult,
   hashKey,
   matchQuery,
   notifyManager,
@@ -126,6 +127,17 @@ export function experimental_createQueryPersister<TStorageValue = string>({
     queryHash: string,
     afterRestoreMacroTask?: (persistedQuery: PersistedQuery) => void,
   ) {
+    const persistedQuery = await retrievePersistedQuery(
+      queryHash,
+      afterRestoreMacroTask,
+    )
+    return persistedQuery?.state.data as T | undefined
+  }
+
+  async function retrievePersistedQuery(
+    queryHash: string,
+    afterRestoreMacroTask?: (persistedQuery: PersistedQuery) => void,
+  ): Promise<PersistedQuery | undefined> {
     if (storage != null) {
       const storageKey = `${prefix}-${queryHash}`
       try {
@@ -149,7 +161,7 @@ export function experimental_createQueryPersister<TStorageValue = string>({
               )
             }
             // We must resolve the promise here, as otherwise we will have `loading` state in the app until `queryFn` resolves
-            return persistedQuery.state.data as T
+            return persistedQuery
           }
         }
       } catch (err) {
@@ -209,14 +221,17 @@ export function experimental_createQueryPersister<TStorageValue = string>({
 
     // Try to restore only if we do not have any data in the cache and we have persister defined
     if (matchesFilter && query.state.data === undefined && storage != null) {
-      const restoredData = await retrieveQuery(
+      const persistedQuery = await retrievePersistedQuery(
         query.queryHash,
-        (persistedQuery: PersistedQuery) => {
-          // Set proper updatedAt, since resolving in the first pass overrides those values
-          query.setState({
-            dataUpdatedAt: persistedQuery.state.dataUpdatedAt,
-            errorUpdatedAt: persistedQuery.state.errorUpdatedAt,
-          })
+        ({ state }: PersistedQuery) => {
+          // `Query.fetch` adopts the restored state, so this only applies
+          // when the restore result is consumed by someone else
+          if (query.state.dataUpdatedAt < state.dataUpdatedAt) {
+            query.setState({
+              dataUpdatedAt: state.dataUpdatedAt,
+              errorUpdatedAt: state.errorUpdatedAt,
+            })
+          }
 
           if (
             refetchOnRestore === 'always' ||
@@ -227,8 +242,11 @@ export function experimental_createQueryPersister<TStorageValue = string>({
         },
       )
 
-      if (restoredData !== undefined) {
-        return Promise.resolve(restoredData as T)
+      if (persistedQuery?.state.data !== undefined) {
+        return createPersisterRestoreResult({
+          data: persistedQuery.state.data as T,
+          state: persistedQuery.state as QueryState<T, unknown>,
+        })
       }
     }
 
@@ -303,13 +321,27 @@ export function experimental_createQueryPersister<TStorageValue = string>({
             }
           }
 
-          queryClient.setQueryData(
-            persistedQuery.queryKey,
-            persistedQuery.state.data,
-            {
-              updatedAt: persistedQuery.state.dataUpdatedAt,
-            },
-          )
+          const queryCache = queryClient.getQueryCache()
+          const query = queryCache.get(persistedQuery.queryHash)
+
+          if (query) {
+            const restoredState = mergeQueryState(
+              query.state,
+              persistedQuery.state,
+            )
+            if (restoredState) {
+              query.setState(restoredState)
+            }
+          } else {
+            queryCache.build(
+              queryClient,
+              {
+                queryKey: persistedQuery.queryKey,
+                queryHash: persistedQuery.queryHash,
+              },
+              { ...persistedQuery.state, fetchStatus: 'idle' },
+            )
+          }
         }
       }
     } else if (process.env.NODE_ENV === 'development') {
@@ -368,5 +400,52 @@ export function experimental_createQueryPersister<TStorageValue = string>({
     persisterGc,
     restoreQueries,
     removeQueries,
+  }
+}
+
+/**
+ * Data and error freshness are compared independently, so newer data on one
+ * side is kept even when the other side holds the newer error, and vice versa.
+ */
+function mergeQueryState(
+  current: QueryState,
+  persisted: QueryState,
+): QueryState | undefined {
+  const hasNewerData = persisted.dataUpdatedAt > current.dataUpdatedAt
+  const hasNewerError = persisted.errorUpdatedAt > current.errorUpdatedAt
+
+  if (!hasNewerData && !hasNewerError) {
+    return undefined
+  }
+
+  // These describe a fetch of the in-memory query, which may still be running
+  const { fetchStatus, fetchMeta } = current
+
+  if (hasNewerData && hasNewerError) {
+    return { ...persisted, fetchStatus, fetchMeta }
+  }
+
+  const dataState = hasNewerData ? persisted : current
+  const errorState = hasNewerError ? persisted : current
+  const isError = errorState.status === 'error'
+
+  return {
+    data: dataState.data,
+    dataUpdateCount: dataState.dataUpdateCount,
+    dataUpdatedAt: dataState.dataUpdatedAt,
+    error: errorState.error,
+    errorUpdateCount: errorState.errorUpdateCount,
+    errorUpdatedAt: errorState.errorUpdatedAt,
+    fetchFailureCount: errorState.fetchFailureCount,
+    fetchFailureReason: errorState.fetchFailureReason,
+    fetchMeta,
+    fetchStatus,
+    // Like a background refetch error, an error marks the data as stale
+    isInvalidated: dataState.isInvalidated || isError,
+    status: isError
+      ? 'error'
+      : dataState.data === undefined
+        ? 'pending'
+        : 'success',
   }
 }
