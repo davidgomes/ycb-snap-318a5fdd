@@ -263,6 +263,10 @@ Usage:
 Flags:
       --avg-wage int                       average wage value used for basic COCOMO calculation (default 56286)
       --binary                             disable binary file detection
+      --bounded-memory                     spill per file results to disk so formatting holds a bounded number in memory (requires --bounded-memory-dir and --bounded-memory-max-in-memory-files)
+      --bounded-memory-dir string          directory to write --bounded-memory spill files to, created if missing and never counted
+      --bounded-memory-max-in-memory-files int   maximum number of file records --bounded-memory holds in memory at once, must be greater than 0
+      --bounded-memory-stats               print a bounded-memory: line of spill statistics to stderr
       --by-file                            display output for every file
   -m, --character                          calculate max and mean characters per line
       --ci                                 enable CI output settings where stdout is ASCII
@@ -761,6 +765,24 @@ scc --format-multi "tabular:stdout,html:output.html,csv:output.csv"
 The above will run against the current directory, outputting to standard output the default output, as well as writing
 to output.html and output.csv with the appropriate formats.
 
+#### Bounded Memory
+
+By default the results for every file are held in memory until they are formatted, which for very large runs can use a
+lot of memory. The opt-in `--bounded-memory` mode never holds more than `--bounded-memory-max-in-memory-files` file
+records in memory at once, spilling the rest to `--bounded-memory-dir`, which is created if it does not exist and is
+never counted even when it is inside a scanned directory.
+
+```bash
+scc --format-multi "json:out.json,csv-stream:out.csv" --by-file \
+  --bounded-memory --bounded-memory-dir /tmp/scc-spill --bounded-memory-max-in-memory-files 10000 --bounded-memory-stats
+```
+
+Output is the same as without the mode, except that `csv-stream` writes to its destination in `--format-multi` rather
+than always printing to standard output. `--bounded-memory-stats` prints a single `bounded-memory:` line to standard
+error including `spills=` and `peak_in_memory_files=`. The spill file is left in the directory after the run. Note that
+`scc` also delays garbage collection until `--file-gc-count` files have been read, so lower that as well to keep memory
+use down from the start.
+
 #### Tabular
 
 This is the default output format when scc is run.
@@ -790,6 +812,9 @@ csv-stream is an option useful for processing very large repositories where you 
 
 Note that you should not use this with the `format-multi` option as it will always print to standard output, and because of how it works will negate the memory saving it normally gains.
 savings that this option provides. Note that there is no sort applied with this option.
+
+With `--format-multi`, if `--sort` is explicitly set then rows are sorted the same way as `csv` with `--by-file`. Combine it
+with `--bounded-memory` to keep memory use low, in which case it is also written to its destination file if one is given.
 
 #### cloc-yaml
 
