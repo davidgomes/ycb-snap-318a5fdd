@@ -18,12 +18,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"slices"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/facette/natsort"
 	"github.com/grafana/regexp"
 	"github.com/prometheus/common/model"
 
@@ -641,54 +639,12 @@ func funcSortDesc(vectorVals []Vector, _ Matrix, _ parser.Expressions, _ *EvalNo
 
 // === sort_by_label(vector parser.ValueTypeVector, label parser.ValueTypeString...) (Vector, Annotations) ===
 func funcSortByLabel(vectorVals []Vector, _ Matrix, args parser.Expressions, _ *EvalNodeHelper) (Vector, annotations.Annotations) {
-	lbls := stringSliceFromArgs(args[1:])
-	slices.SortFunc(vectorVals[0], func(a, b Sample) int {
-		for _, label := range lbls {
-			lv1 := a.Metric.Get(label)
-			lv2 := b.Metric.Get(label)
-
-			if lv1 == lv2 {
-				continue
-			}
-
-			if natsort.Compare(lv1, lv2) {
-				return -1
-			}
-
-			return +1
-		}
-
-		// If all labels provided as arguments were equal, sort by the full label set. This ensures a consistent ordering.
-		return labels.Compare(a.Metric, b.Metric)
-	})
-
-	return vectorVals[0], nil
+	return sortByLabel(vectorVals[0], stringSliceFromArgs(args[1:]), false), nil
 }
 
 // === sort_by_label_desc(vector parser.ValueTypeVector, label parser.ValueTypeString...) (Vector, Annotations) ===
 func funcSortByLabelDesc(vectorVals []Vector, _ Matrix, args parser.Expressions, _ *EvalNodeHelper) (Vector, annotations.Annotations) {
-	lbls := stringSliceFromArgs(args[1:])
-	slices.SortFunc(vectorVals[0], func(a, b Sample) int {
-		for _, label := range lbls {
-			lv1 := a.Metric.Get(label)
-			lv2 := b.Metric.Get(label)
-
-			if lv1 == lv2 {
-				continue
-			}
-
-			if natsort.Compare(lv1, lv2) {
-				return +1
-			}
-
-			return -1
-		}
-
-		// If all labels provided as arguments were equal, sort by the full label set. This ensures a consistent ordering.
-		return -labels.Compare(a.Metric, b.Metric)
-	})
-
-	return vectorVals[0], nil
+	return sortByLabel(vectorVals[0], stringSliceFromArgs(args[1:]), true), nil
 }
 
 func clamp(vec Vector, minVal, maxVal float64, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
