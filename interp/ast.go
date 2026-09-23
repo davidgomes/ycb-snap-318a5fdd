@@ -386,6 +386,8 @@ func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err
 		}
 		// Parse comments in REPL mode, to allow tag setting.
 		mode |= parser.ParseComments
+	} else if hasEmbedDirective(src) {
+		mode |= parser.ParseComments
 	}
 
 	if ok, err := interp.buildOk(&interp.context, name, src); !ok || err != nil {
@@ -417,7 +419,9 @@ func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err
 		return f.Decls[0].(*ast.FuncDecl).Body, nil
 	}
 
-	setYaegiTags(&interp.context, f.Comments)
+	if inc {
+		setYaegiTags(&interp.context, f.Comments)
+	}
 	return f, nil
 }
 
@@ -433,6 +437,7 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 	var root *node
 	var anc astNode
 	var st nodestack
+	var embeds map[*ast.ValueSpec]*embedDirective
 	pkgName := "main"
 
 	addChild := func(root **node, anc astNode, pos token.Pos, kind nkind, act action) *node {
@@ -683,6 +688,9 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 		case *ast.File:
 			pkgName = a.Name.Name
 			st.push(addChild(&root, anc, pos, fileStmt, aNop), nod)
+			if embeds, err = embedDirectives(interp.fset, a); err != nil {
+				return false
+			}
 
 		case *ast.ForStmt:
 			// Disambiguate variants of FOR statements with a node kind per variant
@@ -926,6 +934,9 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 			n := addChild(&root, anc, pos, kind, act)
 			n.nleft = len(a.Names)
 			n.nright = len(a.Values)
+			if d := embeds[a]; d != nil {
+				n.meta = d
+			}
 			st.push(n, nod)
 
 		default:

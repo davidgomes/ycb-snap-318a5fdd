@@ -7,6 +7,7 @@ import (
 	"math"
 	"path"
 	"reflect"
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -2296,6 +2297,13 @@ func (interp *Interpreter) cfg(root *node, sc *scope, importPath, pkgName string
 				c.typ = n.typ
 				c.findex = index
 			}
+
+			if d, ok := n.meta.(*embedDirective); ok {
+				if n.rval, err = interp.embedValue(n, d); err != nil {
+					return
+				}
+				n.gen = embedVar
+			}
 		}
 	})
 
@@ -2487,6 +2495,10 @@ func genGlobalVars(roots []*node, sc *scope) (*node, error) {
 	if len(vars) == 0 {
 		return nil, nil
 	}
+
+	// Embedded variables are set first, so their content is available to
+	// all other initializers, including the ones calling functions.
+	sort.SliceStable(vars, func(i, j int) bool { return isEmbedVar(vars[i]) && !isEmbedVar(vars[j]) })
 
 	varNode, err := genGlobalVarDecl(vars, sc)
 	if err != nil {

@@ -3590,6 +3590,26 @@ func reset(n *node) {
 	}
 }
 
+// embedVar initializes a global variable with the content embedded by its
+// //go:embed directive, in place of the zero value set by reset.
+func embedVar(n *node) {
+	next := getExec(n.tnext)
+	i := n.child[0].findex
+	src := n.rval
+
+	n.exec = func(f *frame) bltn {
+		v := reflect.New(src.Type()).Elem()
+		if v.Kind() == reflect.Slice {
+			// Byte slices are mutable: each initialization gets its own copy.
+			v.SetBytes(append([]byte{}, src.Bytes()...))
+		} else {
+			v.Set(src)
+		}
+		f.data[i] = v
+		return next
+	}
+}
+
 // recv reads from a channel.
 func recv(n *node) {
 	value := genValue(n.child[0])
