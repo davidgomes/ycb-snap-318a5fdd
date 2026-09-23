@@ -33,4 +33,5 @@ DO_NOTATION_METHODS: Final = (
     'returns.result.Result.do',
     'returns.io.IOResult.do',
     'returns.future.FutureResult.do',
+    'returns.validated.Validated.do',
 )
