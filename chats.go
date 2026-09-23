@@ -252,6 +252,11 @@ func (c *Chat) SendStream(ctx context.Context, parts ...*Part) iter.Seq2[*Genera
 			}
 		}
 		// Record history. By default, use the first candidate for history.
+		// A turn that is only streamed function calls is stored once, with each
+		// completed call's final arguments and no partial fragments.
+		if merged, ok := mergeStreamedFunctionCallTurn(outputContents); ok {
+			outputContents = []*Content{merged}
+		}
 		finalIsValid := isValid && finishReason != FinishReasonUnspecified
 		c.recordHistory(ctx, inputContent, outputContents, finalIsValid)
 	}
