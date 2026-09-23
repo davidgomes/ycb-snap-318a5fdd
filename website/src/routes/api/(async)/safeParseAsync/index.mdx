@@ -7,7 +7,7 @@ contributors:
   - EltonLobo07
 ---
 
-import { ApiList, Property } from '~/components';
+import { ApiList, Link, Property } from '~/components';
 import { properties } from './properties';
 
 # safeParseAsync
@@ -27,6 +27,8 @@ const result = v.safeParseAsync<TSchema>(schema, input, config);
 - `schema` <Property {...properties.schema} />
 - `input` <Property {...properties.input} />
 - `config` <Property {...properties.config} />
+
+`safeParseAsync` rejects schemas that still contain an unresolved <Link href="../Recur/">`Recur`</Link> placeholder in the input or output type. Wrap those schemas with <Link href="../recursive/">`recursive`</Link> or <Link href="../recursiveAsync/">`recursiveAsync`</Link> first.
 
 ## Returns
 
@@ -125,6 +127,9 @@ The following APIs can be combined with `safeParseAsync`.
     'pick',
     'pipe',
     'required',
+    'Recur',
+    'recursive',
+    'recursiveAsync',
     'summarize',
     'unwrap',
   ]}

@@ -1,0 +1,81 @@
+---
+title: recursiveAsync
+description: Resolves Recur placeholders in an async schema.
+source: /methods/recursive/recursiveAsync.ts
+---
+
+import { ApiList, Link, Property } from '~/components';
+import { properties } from './properties';
+
+# recursiveAsync
+
+Resolves `Recur` placeholders in an async schema.
+
+```ts
+const Schema = v.recursiveAsync<TSchema>(schema);
+```
+
+## Generics
+
+- `TSchema` <Property {...properties.TSchema} />
+
+## Parameters
+
+- `schema` <Property {...properties.schema} />
+
+### Explanation
+
+Place <Link href="/api/Recur/">`Recur`</Link> where the schema should refer to itself, then pass the finished schema to `recursiveAsync`. Nested containers must be async so they can await the recursive parse.
+
+> Place `Recur` where the schema should refer to itself, then pass the finished schema to `recursiveAsync`. Nested containers must be async so they can await the recursive parse.
+
+## Returns
+
+- `Schema` <Property {...properties.Schema} />
+
+## Examples
+
+The following examples show how `recursiveAsync` can be used.
+
+### Binary tree schema
+
+Async schema to validate a binary tree.
+
+```ts
+import * as v from 'valibot';
+
+const BinaryTreeSchema = v.recursiveAsync(
+  v.objectAsync({
+    value: v.string(),
+    left: v.nullableAsync(v.Recur),
+    right: v.nullableAsync(v.Recur),
+  })
+);
+```
+
+## Related
+
+The following APIs can be combined with `recursiveAsync`.
+
+### Schemas
+
+<ApiList
+  items={[
+    'arrayAsync',
+    'intersectAsync',
+    'mapAsync',
+    'nullableAsync',
+    'objectAsync',
+    'optionalAsync',
+    'recordAsync',
+    'setAsync',
+  ]}
+/>
+
+### Methods
+
+<ApiList items={['parseAsync', 'pipeAsync', 'Recur', 'safeParseAsync']} />
+
+### Actions
+
+<ApiList items={['transformAsync']} />

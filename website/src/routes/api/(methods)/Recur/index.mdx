@@ -1,0 +1,73 @@
+---
+title: Recur
+description: Placeholder schema for recursive schema composition.
+source: /methods/recursive/recur.ts
+---
+
+import { ApiList, Link, Property } from '~/components';
+import { properties } from './properties';
+
+# Recur
+
+Placeholder schema for recursive schema composition.
+
+```ts
+const Schema = v.Recur;
+```
+
+## Definition
+
+- `Schema` <Property {...properties.Schema} />
+
+### Explanation
+
+Place `Recur` where a schema should refer to itself, then wrap the finished schema with <Link href="/api/recursive/">`recursive`</Link> or <Link href="/api/recursiveAsync/">`recursiveAsync`</Link>.
+
+> Place `Recur` where a schema should refer to itself, then wrap the finished schema with `recursive` or `recursiveAsync`.
+
+`parse`, `safeParse`, `parseAsync`, and `safeParseAsync` reject a schema while `Recur` is still present in its input or output type.
+
+## Examples
+
+The following examples show how `Recur` can be used.
+
+### Binary tree schema
+
+Schema to validate a binary tree.
+
+```ts
+import * as v from 'valibot';
+
+const BinaryTreeSchema = v.recursive(
+  v.object({
+    value: v.string(),
+    left: v.nullable(v.Recur),
+    right: v.nullable(v.Recur),
+  })
+);
+```
+
+## Related
+
+The following APIs can be combined with `Recur`.
+
+### Schemas
+
+<ApiList
+  items={[
+    'array',
+    'intersect',
+    'map',
+    'nullable',
+    'object',
+    'optional',
+    'record',
+    'set',
+  ]}
+/>
+
+### Methods
+
+<ApiList
+  items={['parse', 'pipe', 'recursive', 'recursiveAsync', 'safeParse']}
+/>

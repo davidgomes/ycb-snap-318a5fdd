@@ -1,0 +1,23 @@
+---
+title: RecursiveSchema
+description: Recursive schema interface.
+---
+
+import { Property } from '~/components';
+import { properties } from './properties';
+
+# RecursiveSchema
+
+Recursive schema interface.
+
+## Generics
+
+- `TSchema` <Property {...properties.TSchema} />
+
+## Definition
+
+- `RecursiveSchema` <Property {...properties.BaseSchema} />
+  - `type` <Property {...properties.type} />
+  - `reference` <Property {...properties.reference} />
+  - `expects` <Property {...properties.expects} />
+  - `wrapped` <Property {...properties.wrapped} />

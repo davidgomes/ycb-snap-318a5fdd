@@ -32,6 +32,8 @@ const output = v.parseAsync<TSchema>(schema, input, config);
 
 `parseAsync` will throw a <Link href="../ValiError/">`ValiError`</Link> if the `input` does not match the `schema`. Therefore you should use a try/catch block to catch errors. If the input matches the schema, it is valid and the `output` of the schema will be returned typed.
 
+`parseAsync` rejects schemas that still contain an unresolved <Link href="../Recur/">`Recur`</Link> placeholder in the input or output type. Wrap those schemas with <Link href="../recursive/">`recursive`</Link> or <Link href="../recursiveAsync/">`recursiveAsync`</Link> first.
+
 > If an asynchronous operation associated with the passed schema throws an error, the promise returned by `parseAsync` is rejected and the error thrown may not be a <Link href="../ValiError/">`ValiError`</Link>.
 
 ## Returns
@@ -131,6 +133,9 @@ The following APIs can be combined with `parseAsync`.
     'pick',
     'pipe',
     'required',
+    'Recur',
+    'recursive',
+    'recursiveAsync',
     'summarize',
     'unwrap',
   ]}

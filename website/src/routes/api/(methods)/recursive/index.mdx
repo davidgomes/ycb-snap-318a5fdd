@@ -1,0 +1,102 @@
+---
+title: recursive
+description: Resolves Recur placeholders in a sync schema.
+source: /methods/recursive/recursive.ts
+---
+
+import { ApiList, Link, Property } from '~/components';
+import { properties } from './properties';
+
+# recursive
+
+Resolves `Recur` placeholders in a sync schema.
+
+```ts
+const Schema = v.recursive<TSchema>(schema);
+```
+
+## Generics
+
+- `TSchema` <Property {...properties.TSchema} />
+
+## Parameters
+
+- `schema` <Property {...properties.schema} />
+
+### Explanation
+
+Place <Link href="/api/Recur/">`Recur`</Link> where the schema should refer to itself, then pass the finished schema to `recursive`. The inferred input and output types stay self-referential. Use <Link href="/api/recursiveAsync/">`recursiveAsync`</Link> for async schemas.
+
+> Place `Recur` where the schema should refer to itself, then pass the finished schema to `recursive`. Use `recursiveAsync` for async schemas.
+
+## Returns
+
+- `Schema` <Property {...properties.Schema} />
+
+## Examples
+
+The following examples show how `recursive` can be used.
+
+### Binary tree schema
+
+Schema to validate a binary tree.
+
+```ts
+import * as v from 'valibot';
+
+const BinaryTreeSchema = v.recursive(
+  v.object({
+    value: v.string(),
+    left: v.nullable(v.Recur),
+    right: v.nullable(v.Recur),
+  })
+);
+```
+
+### Transformed tree schema
+
+Schema that keeps a different input and output type.
+
+```ts
+import * as v from 'valibot';
+
+const TreeSchema = v.recursive(
+  v.pipe(
+    v.object({
+      value: v.string(),
+      child: v.nullable(v.Recur),
+    }),
+    v.transform((input) => ({
+      length: input.value.length,
+      child: input.child,
+    }))
+  )
+);
+```
+
+## Related
+
+The following APIs can be combined with `recursive`.
+
+### Schemas
+
+<ApiList
+  items={[
+    'array',
+    'intersect',
+    'map',
+    'nullable',
+    'object',
+    'optional',
+    'record',
+    'set',
+  ]}
+/>
+
+### Methods
+
+<ApiList items={['parse', 'pipe', 'Recur', 'safeParse']} />
+
+### Actions
+
+<ApiList items={['transform']} />

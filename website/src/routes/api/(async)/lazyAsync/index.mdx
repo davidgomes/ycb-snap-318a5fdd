@@ -30,6 +30,8 @@ const Schema = v.lazyAsync<TWrapped>(getter);
 
 The `getter` function is called lazily to retrieve the schema. This is necessary to be able to access the input through the first argument of the `getter` function and to avoid a circular dependency for recursive schemas.
 
+If the recursive shape can be written by placing <Link href="/api/Recur/">`Recur`</Link> inside the schema, <Link href="/api/recursiveAsync/">`recursiveAsync`</Link> infers the input and output types for you.
+
 ## Returns
 
 - `Schema` <Property {...properties.Schema} />
@@ -163,7 +165,7 @@ The following APIs can be combined with `lazyAsync`.
 
 ### Methods
 
-<ApiList items={['config', 'getDefault', 'getFallback']} />
+<ApiList items={['config', 'getDefault', 'getFallback', 'Recur']} />
 
 ### Actions
 
@@ -316,6 +318,7 @@ The following APIs can be combined with `lazyAsync`.
     'rawCheckAsync',
     'rawTransformAsync',
     'recordAsync',
+    'recursiveAsync',
     'safeParseAsync',
     'safeParserAsync',
     'setAsync',

@@ -31,6 +31,8 @@ const Schema = v.lazy<TWrapped>(getter);
 
 The `getter` function is called lazily to retrieve the schema. This is necessary to be able to access the input through the first argument of the `getter` function and to avoid a circular dependency for recursive schemas.
 
+If the recursive shape can be written by placing <Link href="/api/Recur/">`Recur`</Link> inside the schema, <Link href="/api/recursive/">`recursive`</Link> infers the input and output types for you.
+
 > Due to a TypeScript limitation, the input and output types of recursive schemas cannot be inferred automatically. Therefore, you must explicitly specify these types using <Link href="/api/GenericSchema/">`GenericSchema`</Link>. Please see the examples below.
 
 ## Returns
@@ -189,6 +191,8 @@ The following APIs can be combined with `lazy`.
     'parse',
     'parser',
     'pipe',
+    'Recur',
+    'recursive',
     'safeParse',
     'safeParser',
   ]}

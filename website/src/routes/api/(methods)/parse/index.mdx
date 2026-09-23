@@ -31,6 +31,8 @@ const output = v.parse<TSchema>(schema, input, config);
 
 `parse` will throw a <Link href="../ValiError/">`ValiError`</Link> if the `input` does not match the `schema`. Therefore you should use a try/catch block to catch errors. If the input matches the schema, it is valid and the `output` of the schema will be returned typed.
 
+`parse` rejects schemas that still contain an unresolved <Link href="../Recur/">`Recur`</Link> placeholder in the input or output type. Wrap those schemas with <Link href="../recursive/">`recursive`</Link> or <Link href="../recursiveAsync/">`recursiveAsync`</Link> first.
+
 ## Returns
 
 - `output` <Property {...properties.output} />
@@ -122,6 +124,8 @@ The following APIs can be combined with `parse`.
     'pick',
     'pipe',
     'required',
+    'Recur',
+    'recursive',
     'summarize',
     'unwrap',
   ]}
