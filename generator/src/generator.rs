@@ -583,6 +583,29 @@ fn generate_expr(expr: OptimizedExpr) -> TokenStream {
                 state.restore_on_err(|state| #expr)
             }
         }
+        OptimizedExpr::CharClass(ranges) => {
+            let class = generate_char_class(&ranges);
+
+            quote! {
+                state.match_char_by(#class)
+            }
+        }
+        OptimizedExpr::NegCharClass(ranges) => {
+            let class = generate_char_class(&ranges);
+
+            // Implicit whitespace may sit between the lookahead and `ANY`.
+            quote! {
+                state.sequence(|state| {
+                    state.lookahead(false, |state| {
+                        state.match_char_by(#class)
+                    }).and_then(|state| {
+                        super::hidden::skip(state)
+                    }).and_then(|state| {
+                        state.skip(1)
+                    })
+                })
+            }
+        }
         #[cfg(feature = "grammar-extras")]
         OptimizedExpr::NodeTag(expr, tag) => match *expr {
             OptimizedExpr::Opt(expr) => {
@@ -774,6 +797,20 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
                 state.restore_on_err(|state| #expr)
             }
         }
+        OptimizedExpr::CharClass(ranges) => {
+            let class = generate_char_class(&ranges);
+
+            quote! {
+                state.match_char_by(#class)
+            }
+        }
+        OptimizedExpr::NegCharClass(ranges) => {
+            let class = generate_char_class(&ranges);
+
+            quote! {
+                state.match_char_by(|c| !(#class)(c))
+            }
+        }
         #[cfg(feature = "grammar-extras")]
         OptimizedExpr::NodeTag(expr, tag) => match *expr {
             OptimizedExpr::Opt(expr) => {
@@ -801,6 +838,30 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
                 }
             }
         },
+    }
+}
+
+fn generate_char_class(ranges: &[(String, String)]) -> TokenStream {
+    if ranges.is_empty() {
+        return quote! { |_: char| false };
+    }
+
+    let patterns = ranges.iter().map(|(start, end)| {
+        let start = start.chars().next().unwrap();
+        let end = end.chars().next().unwrap();
+
+        if start == end {
+            quote! { #start }
+        } else {
+            quote! { #start..=#end }
+        }
+    });
+
+    quote! {
+        |c: char| match c {
+            #(#patterns)|* => true,
+            _ => false,
+        }
     }
 }
 

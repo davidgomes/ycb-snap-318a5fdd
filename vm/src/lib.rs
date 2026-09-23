@@ -251,6 +251,18 @@ impl Vm {
             OptimizedExpr::RestoreOnErr(ref expr) => {
                 state.restore_on_err(|state| self.parse_expr(expr, state))
             }
+            OptimizedExpr::CharClass(ref ranges) => {
+                state.match_char_by(|c| char_class_contains(ranges, c))
+            }
+            // Implicit whitespace may sit between the lookahead and `ANY`.
+            OptimizedExpr::NegCharClass(ref ranges) => state.sequence(|state| {
+                state
+                    .lookahead(false, |state| {
+                        state.match_char_by(|c| char_class_contains(ranges, c))
+                    })
+                    .and_then(|state| self.skip(state))
+                    .and_then(|state| state.skip(1))
+            }),
         }
     }
 
@@ -300,4 +312,13 @@ impl Vm {
             }
         }
     }
+}
+
+fn char_class_contains(ranges: &[(String, String)], c: char) -> bool {
+    ranges.iter().any(|(start, end)| {
+        let start = start.chars().next().expect("empty char literal");
+        let end = end.chars().next().expect("empty char literal");
+
+        start <= c && c <= end
+    })
 }

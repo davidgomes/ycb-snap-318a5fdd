@@ -20,6 +20,7 @@ macro_rules! box_tree {
     ($expr:expr) => ($expr);
 }
 
+mod coalescer;
 mod concatenator;
 mod factorizer;
 mod lister;
@@ -46,6 +47,7 @@ pub fn optimize(rules: Vec<Rule>) -> Vec<OptimizedRule> {
     optimized
         .into_iter()
         .map(|rule| restorer::restore_on_err(rule, &optimized_map))
+        .map(coalescer::coalesce)
         .collect()
 }
 
@@ -161,6 +163,10 @@ pub enum OptimizedExpr {
     NodeTag(Box<OptimizedExpr>, String),
     /// Restores an expression's checkpoint
     RestoreOnErr(Box<OptimizedExpr>),
+    /// Matches one character in any of the inclusive ranges, e.g. `'a'..'z' | "_"`
+    CharClass(Vec<(String, String)>),
+    /// Matches one character outside all of the inclusive ranges, e.g. `!('a'..'z' | "_") ~ ANY`
+    NegCharClass(Vec<(String, String)>),
 }
 
 impl OptimizedExpr {
@@ -210,6 +216,20 @@ impl OptimizedExpr {
                 OptimizedExpr::Push(expr) => {
                     let mapped = Box::new(map_internal(*expr, f));
                     OptimizedExpr::Push(mapped)
+                }
+                #[cfg(feature = "grammar-extras")]
+                OptimizedExpr::RepOnce(expr) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::RepOnce(mapped)
+                }
+                #[cfg(feature = "grammar-extras")]
+                OptimizedExpr::NodeTag(expr, tag) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::NodeTag(mapped, tag)
+                }
+                OptimizedExpr::RestoreOnErr(expr) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::RestoreOnErr(mapped)
                 }
                 expr => expr,
             }
@@ -337,7 +357,31 @@ impl core::fmt::Display for OptimizedExpr {
                 write!(f, "(#{} = {})", tag, expr)
             }
             OptimizedExpr::RestoreOnErr(expr) => core::fmt::Display::fmt(expr.as_ref(), f),
+            OptimizedExpr::CharClass(ranges) => write!(f, "({})", CharClassDisplay(ranges)),
+            OptimizedExpr::NegCharClass(ranges) => {
+                write!(f, "(!({}) ~ ANY)", CharClassDisplay(ranges))
+            }
         }
+    }
+}
+
+struct CharClassDisplay<'a>(&'a [(String, String)]);
+
+impl core::fmt::Display for CharClassDisplay<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for (i, (start, end)) in self.0.iter().enumerate() {
+            if i > 0 {
+                write!(f, " | ")?;
+            }
+            if start == end {
+                write!(f, "{:?}", start)?;
+            } else {
+                let start = start.chars().next().expect("Empty range start.");
+                let end = end.chars().next().expect("Empty range end.");
+                write!(f, "{:?}..{:?}", start, end)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -414,10 +458,10 @@ mod tests {
                 ty: RuleType::Normal,
                 expr: box_tree!(Choice(
                     Choice(
-                        Choice(Str(String::from("a")), Str(String::from("b"))),
-                        Str(String::from("c"))
+                        Choice(Ident(String::from("a")), Ident(String::from("b"))),
+                        Ident(String::from("c"))
                     ),
-                    Str(String::from("d"))
+                    Ident(String::from("d"))
                 )),
             }]
         };
@@ -427,10 +471,10 @@ mod tests {
                 name: "rule".to_owned(),
                 ty: RuleType::Normal,
                 expr: box_tree!(Choice(
-                    Str(String::from("a")),
+                    Ident(String::from("a")),
                     Choice(
-                        Str(String::from("b")),
-                        Choice(Str(String::from("c")), Str(String::from("d")))
+                        Ident(String::from("b")),
+                        Choice(Ident(String::from("c")), Ident(String::from("d")))
                     )
                 )),
             }]
@@ -709,6 +753,55 @@ mod tests {
                     Ident(String::from("a")),
                     Rep(Seq(Ident(String::from("b")), Ident(String::from("a"))))
                 )),
+            }]
+        };
+
+        assert_eq!(optimize(rules), optimized);
+    }
+
+    #[test]
+    fn coalesce_char_classes() {
+        let rules = {
+            use crate::ast::Expr::*;
+            vec![Rule {
+                name: "rule".to_owned(),
+                ty: RuleType::Normal,
+                expr: box_tree!(Seq(
+                    Choice(
+                        Choice(
+                            Choice(
+                                Str(String::from("_")),
+                                Range(String::from("a"), String::from("z"))
+                            ),
+                            Range(String::from("A"), String::from("Z"))
+                        ),
+                        Insens(String::from("q"))
+                    ),
+                    Rep(Seq(
+                        NegPred(Choice(Str(String::from("\n")), Str(String::from("\r")))),
+                        Ident(String::from("ANY"))
+                    ))
+                )),
+            }]
+        };
+        let optimized = {
+            use crate::optimizer::OptimizedExpr::*;
+            let class = |ranges: &[(&str, &str)]| {
+                ranges
+                    .iter()
+                    .map(|(start, end)| (start.to_string(), end.to_string()))
+                    .collect::<Vec<_>>()
+            };
+            vec![OptimizedRule {
+                name: "rule".to_owned(),
+                ty: RuleType::Normal,
+                expr: Seq(
+                    Box::new(CharClass(class(&[("A", "Z"), ("_", "_"), ("a", "z")]))),
+                    Box::new(Rep(Box::new(NegCharClass(class(&[
+                        ("\n", "\n"),
+                        ("\r", "\r"),
+                    ]))))),
+                ),
             }]
         };
 
@@ -1140,6 +1233,22 @@ mod tests {
                 OptimizedExpr::RestoreOnErr(Box::new(OptimizedExpr::Ident("e".to_owned())))
                     .to_string(),
                 "e",
+            );
+        }
+
+        #[test]
+        fn char_class() {
+            let ranges = vec![
+                ("\n".to_owned(), "\n".to_owned()),
+                ("a".to_owned(), "z".to_owned()),
+            ];
+            assert_eq!(
+                OptimizedExpr::CharClass(ranges.clone()).to_string(),
+                r#"("\n" | 'a'..'z')"#,
+            );
+            assert_eq!(
+                OptimizedExpr::NegCharClass(ranges).to_string(),
+                r#"(!("\n" | 'a'..'z') ~ ANY)"#,
             );
         }
     }
