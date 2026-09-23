@@ -10,6 +10,8 @@ import type { Relation, RelationPair } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
 import { addTrait, getTrait, hasTrait, removeTrait, setTrait } from '../trait/trait';
 import type { ConfigurableTrait, Trait } from '../trait/types';
+import { rollbackEntity, snapshotEntity } from '../snapshot/snapshot';
+import type { EntitySnapshot, TraitRegistry } from '../snapshot/types';
 import { destroyEntity, getEntityWorld } from './entity';
 import type { Entity } from './types';
 import { isEntityAlive } from './utils/entity-index';
@@ -82,4 +84,18 @@ Number.prototype.isAlive = function (this: Entity) {
     const world = getEntityWorld(this);
     const entityIndex = world[$internal].entityIndex;
     return isEntityAlive(entityIndex, this);
+};
+
+// @ts-expect-error
+Number.prototype.snapshot = function (this: Entity, registry: TraitRegistry): EntitySnapshot {
+    return snapshotEntity(getEntityWorld(this), this, registry);
+};
+
+// @ts-expect-error
+Number.prototype.rollback = function (
+    this: Entity,
+    registry: TraitRegistry,
+    snapshot: EntitySnapshot
+) {
+    return rollbackEntity(getEntityWorld(this), this, registry, snapshot);
 };

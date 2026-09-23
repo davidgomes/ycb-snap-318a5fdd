@@ -1,6 +1,6 @@
 ---
 name: koota
-description: Real-time ECS state management for TypeScript and React. Use when the user mentions koota, ECS, entities, traits, queries, or building data-oriented applications.
+description: Real-time ECS state management for TypeScript and React. Use when the user mentions koota, ECS, entities, traits, queries, snapshots, or building data-oriented applications.
 ---
 
 # Koota ECS
@@ -211,6 +211,34 @@ world.query(IsPlayer, Position, Velocity).updateEach(([pos, vel]) => {
 ```
 
 For tracking changes, caching queries, and advanced patterns, see [references/queries.md](references/queries.md).
+
+## Snapshots
+
+Snapshot and roll back entity state through a trait registry. Tag traits are stored as `true`. Data traits and relation stores are deep-copied. `relations` is omitted when an entity has none.
+
+```typescript
+import { createTraitRegistry, diffWorldSnapshots } from 'koota'
+
+const registry = createTraitRegistry(
+  ['Position', Position],
+  ['IsPlayer', IsPlayer],
+  ['ChildOf', ChildOf]
+)
+
+const checkpoint = world.snapshot(registry)
+player.set(Position, { x: 0, y: 0 })
+world.rollback(registry, checkpoint)
+
+entity.snapshot(registry)
+entity.rollback(registry, entity.snapshot(registry))
+
+diffWorldSnapshots(before, after)
+// { added: number[], removed: number[], changed: number[] }
+```
+
+`snapshot.id` and relation `targetId` are `entity.id()` values. `rollbackWorld` recreates those ids. Shallow equality is used when diffing trait and relation data. `relations: {}` matches a missing `relations` key.
+
+For the full contract, see [references/snapshots.md](references/snapshots.md).
 
 ## React integration
 

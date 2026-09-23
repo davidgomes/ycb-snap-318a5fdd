@@ -747,6 +747,10 @@ world.reset()
 
 // Nukes the world and releases its ID
 world.destroy()
+
+// Capture or restore every non-world entity. See Snapshot below.
+const checkpoint = world.snapshot(registry)
+world.rollback(registry, checkpoint)
 ```
 
 ### Entity
@@ -794,6 +798,10 @@ const generation = entity.generation()
 
 // Destroys the entity making its number no longer valid
 entity.destroy()
+
+// Capture or restore this entity. See Snapshot below.
+const snapshot = entity.snapshot(registry)
+entity.rollback(registry, snapshot)
 ```
 
 For introspection, `unpackEntity` can be used to get all of the encoded values. This can be useful for debugging.
@@ -801,6 +809,57 @@ For introspection, `unpackEntity` can be used to get all of the encoded values. 
 ```js
 const { entityId, generation, worldId } = unpackEntity(entity)
 ```
+
+### Snapshot
+
+Snapshots copy entity state out of a world so it can be diffed or restored later. A trait registry names the traits and relations the snapshot is allowed to touch. Registering the same key, trait, or relation twice throws.
+
+```js
+import { createTraitRegistry, createWorld, diffWorldSnapshots, trait, relation } from 'koota'
+
+const Position = trait({ x: 0, y: 0 })
+const IsPlayer = trait()
+const ChildOf = relation({ exclusive: true })
+const Contains = relation({ store: { amount: 0 } })
+
+const registry = createTraitRegistry(
+  ['Position', Position],
+  ['IsPlayer', IsPlayer],
+  ['ChildOf', ChildOf],
+  ['Contains', Contains]
+)
+
+const world = createWorld()
+const player = world.spawn(IsPlayer, Position({ x: 1, y: 2 }))
+const item = world.spawn()
+player.add(Contains(item, { amount: 3 }))
+
+const checkpoint = world.snapshot(registry)
+player.set(Position, { x: 9, y: 9 })
+world.rollback(registry, checkpoint)
+```
+
+`snapshotEntity` / `entity.snapshot` returns:
+
+```ts
+{
+  id: number // entity.id()
+  traits: Record<string, object | true> // tags are true, data traits are deep copies
+  relations?: Record<string, Array<{ targetId: number, data?: object }>>
+}
+```
+
+`relations` is omitted when the entity has no relations. Relation targets are stored as `entity.id()`. A relation created with a `store` includes `data` as a deep copy; a tag relation does not. Snapshotting a destroyed entity, or an entity that has a trait or relation missing from the registry, throws. The internal `IsExcluded` tag is ignored unless it is registered.
+
+`snapshotWorld` / `world.snapshot` returns `{ entities: EntitySnapshot[] }` and skips the internal world entity. Entity ids are sorted ascending.
+
+`rollbackEntity` / `entity.rollback` removes registry traits and relations the entity has that are not in the snapshot, then adds or overwrites traits and relations so the entity matches. It throws if the entity is destroyed, a snapshot key is not in the registry, or a relation target id is not alive in the world.
+
+`rollbackWorld` / `world.rollback` replaces the world and recreates entities at the same `entity.id()` values. Fresh entity references stay valid because recreated entities use generation 0. It throws if a snapshot key is unknown or a relation points at an id that is neither in the checkpoint nor the world entity.
+
+`diffEntitySnapshots(a, b)` returns `{ addedTraits, removedTraits, changedTraits }`, each sorted ascending. Trait data is compared with shallow equality. Either argument being null or undefined throws.
+
+`diffWorldSnapshots(before, after)` returns `{ added, removed, changed }` entity ids, each sorted ascending. Trait key order, relation key order, and relation target order do not affect equality. Trait and relation data are compared shallowly. `relations: {}` matches a missing `relations` key. A null argument, or a snapshot without an `entities` array, throws.
 
 ### Trait
 

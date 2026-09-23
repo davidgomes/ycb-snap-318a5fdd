@@ -21,6 +21,8 @@ import type {
     TraitRecord,
     TraitValue,
 } from '../trait/types';
+import { rollbackWorld, snapshotWorld } from '../snapshot/snapshot';
+import type { TraitRegistry, WorldSnapshot } from '../snapshot/types';
 import { universe } from '../universe/universe';
 import type { World, WorldInternal, WorldOptions } from './types';
 import { allocateWorldId, releaseWorldId } from './utils/world-index';
@@ -371,6 +373,14 @@ export function createWorld(
                 data.changeSubscriptions.delete(resolvedCallback);
                 if (data.changeSubscriptions.size === 0) ctx.trackedTraits.delete(resolvedTrait);
             };
+        },
+
+        snapshot(registry: TraitRegistry) {
+            return snapshotWorld(world, registry);
+        },
+
+        rollback(registry: TraitRegistry, checkpoint: WorldSnapshot) {
+            return rollbackWorld(world, registry, checkpoint);
         },
     } as World;
 

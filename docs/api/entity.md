@@ -47,9 +47,14 @@ const generation = entity.generation()
 
 // Destroys the entity making its number no longer valid
 entity.destroy()
+
+// Capture and restore this entity. See Snapshot.
+const snapshot = entity.snapshot(registry)
+entity.rollback(registry, snapshot)
 ```
 
 For introspection, `unpackEntity` can be used to get all of the encoded values. This can be useful for debugging.
 
 ```js
 const { entityId, generation, worldId } = unpackEntity(entity)
+```
