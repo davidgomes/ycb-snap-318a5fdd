@@ -25,6 +25,7 @@ from graphql import ExecutionResult
 from multidict import CIMultiDictProxy
 
 from ..graphql_request import GraphQLRequest
+from ..incremental import IncrementalExecutionResult, is_incremental_payload
 from .appsync_auth import AppSyncAuthentication
 from .async_transport import AsyncTransport
 from .common.aiohttp_closed_event import create_aiohttp_closed_event
@@ -486,17 +487,103 @@ class AIOHTTPTransport(AsyncTransport):
         except Exception as e:
             raise TransportConnectionFailed(str(e)) from e
 
-    async def _parse_multipart_response(
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        extra_args: Optional[Dict[str, Any]] = None,
+    ) -> AsyncGenerator[ExecutionResult, None]:
+        """Execute a request which may contain :code:`@defer` or :code:`@stream`
+        directives and yield each payload received from the server.
+
+        The payloads are received in a multipart response following the
+        incremental delivery over HTTP specification (:code:`deferSpec=20220824`).
+        If the server answers with a single JSON response instead,
+        then a single result is yielded.
+
+        Don't call this method directly on the transport, instead use
+        :code:`execute_incremental` on a session.
+
+        :param request: GraphQL request as a
+                        :class:`GraphQLRequest <gql.GraphQLRequest>` object.
+        :param extra_args: additional arguments to send to the aiohttp post method
+        :yields: :class:`IncrementalExecutionResult
+                 <gql.incremental.IncrementalExecutionResult>` objects
+                 for each part of a multipart response
+        """
+        if self.session is None:
+            raise TransportClosed("Transport is not connected")
+
+        post_args = self._prepare_request(request, extra_args)
+
+        headers = dict(post_args.get("headers") or {})
+        headers.update(
+            {
+                "Content-Type": "application/json",
+                "Accept": (
+                    "multipart/mixed;boundary=graphql;"
+                    "deferSpec=20220824,application/json"
+                ),
+            }
+        )
+        post_args["headers"] = headers
+
+        try:
+            async with self.session.post(self.url, ssl=self.ssl, **post_args) as resp:
+                # Saving latest response headers in the transport
+                self.response_headers = resp.headers
+
+                content_type = resp.headers.get("Content-Type", "")
+
+                if "multipart/mixed" not in content_type:
+                    yield await self._prepare_result(resp)
+                    return
+
+                self._raise_transport_server_error_if_status_more_than_400(resp)
+
+                async for part in self._get_multipart_parts(resp):
+                    result = await self._parse_incremental_part(part)
+                    if result is not None:
+                        yield result
+
+        except TransportError:
+            raise
+        except Exception as e:
+            raise TransportConnectionFailed(str(e)) from e
+
+    async def _parse_incremental_part(
+        self, part: BodyPartReader
+    ) -> Optional[IncrementalExecutionResult]:
+        """
+        Parse a single part from an incremental delivery multipart response.
+
+        :param part: aiohttp BodyPartReader for the part
+        :return: IncrementalExecutionResult or None if part is empty/heartbeat
+        """
+        payload = await self._read_multipart_part_json(part)
+
+        if not payload:
+            return None
+
+        if not isinstance(payload, dict) or not (
+            "data" in payload or "errors" in payload or is_incremental_payload(payload)
+        ):
+            log.warning(f"Invalid incremental response: {ascii(payload)}")
+            return None
+
+        return IncrementalExecutionResult.from_payload(payload)
+
+    async def _get_multipart_parts(
         self,
         response: aiohttp.ClientResponse,
-    ) -> AsyncGenerator[ExecutionResult, None]:
+    ) -> AsyncGenerator[BodyPartReader, None]:
         """
-        Parse a multipart response stream and yield execution results.
+        Iterate over the parts of a multipart response stream.
 
         Uses aiohttp's built-in MultipartReader to handle the multipart protocol.
 
         :param response: The aiohttp response object
-        :yields: ExecutionResult objects
+        :yields: BodyPartReader objects
         """
         # Use aiohttp's built-in multipart reader
         reader = MultipartReader.from_response(response)
@@ -523,20 +610,31 @@ class AIOHTTPTransport(AsyncTransport):
 
             assert not isinstance(
                 part, MultipartReader
-            ), "Nested multipart parts are not supported in GraphQL subscriptions"
+            ), "Nested multipart parts are not supported in GraphQL responses"
 
+            yield part
+
+    async def _parse_multipart_response(
+        self,
+        response: aiohttp.ClientResponse,
+    ) -> AsyncGenerator[ExecutionResult, None]:
+        """
+        Parse a multipart response stream and yield execution results.
+
+        :param response: The aiohttp response object
+        :yields: ExecutionResult objects
+        """
+        async for part in self._get_multipart_parts(response):
             result = await self._parse_multipart_part(part)
             if result:
                 yield result
 
-    async def _parse_multipart_part(
-        self, part: BodyPartReader
-    ) -> Optional[ExecutionResult]:
+    async def _read_multipart_part_json(self, part: BodyPartReader) -> Any:
         """
-        Parse a single part from a multipart response.
+        Read the JSON content of a single part from a multipart response.
 
         :param part: aiohttp BodyPartReader for the part
-        :return: ExecutionResult or None if part is empty/heartbeat
+        :return: the deserialized JSON or None if the part is empty or invalid
         """
         # Verify the part has the correct content type
         content_type = part.headers.get(aiohttp.hdrs.CONTENT_TYPE, "")
@@ -545,6 +643,8 @@ class AIOHTTPTransport(AsyncTransport):
                 f"Unexpected part content-type: {content_type}. "
                 "Expected 'application/json'."
             )
+
+        body = None
 
         try:
             # Read the part content as text
@@ -558,44 +658,8 @@ class AIOHTTPTransport(AsyncTransport):
                 return None
 
             # Parse JSON body using custom deserializer
-            data = self.json_deserialize(body)
+            return self.json_deserialize(body)
 
-            # Handle heartbeats - empty JSON objects
-            if not data:
-                log.debug("Received heartbeat, ignoring")
-                return None
-
-            # The multipart subscription protocol wraps data in a "payload" property
-            if "payload" not in data:
-                log.warning("Invalid response: missing 'payload' field")
-                return None
-
-            payload = data["payload"]
-
-            # Check for transport-level errors (payload is null)
-            if payload is None:
-                # If there are errors, this is a transport-level error
-                errors = data.get("errors")
-                if errors:
-                    error_messages = [
-                        error.get("message", "Unknown transport error")
-                        for error in errors
-                    ]
-
-                    for message in error_messages:
-                        log.error(f"Transport error: {message}")
-
-                    raise TransportServerError("\n\n".join(error_messages))
-                else:
-                    # Null payload without errors - just skip this part
-                    return None
-
-            # Extract GraphQL data from payload
-            return ExecutionResult(
-                data=payload.get("data"),
-                errors=payload.get("errors"),
-                extensions=payload.get("extensions"),
-            )
         except json.JSONDecodeError as e:
             log.warning(
                 f"Failed to parse JSON: {ascii(e)}, "
@@ -605,3 +669,53 @@ class AIOHTTPTransport(AsyncTransport):
         except UnicodeDecodeError as e:
             log.warning(f"Failed to decode part: {ascii(e)}")
             return None
+
+    async def _parse_multipart_part(
+        self, part: BodyPartReader
+    ) -> Optional[ExecutionResult]:
+        """
+        Parse a single part from a multipart subscription response.
+
+        :param part: aiohttp BodyPartReader for the part
+        :return: ExecutionResult or None if part is empty/heartbeat
+        """
+        data = await self._read_multipart_part_json(part)
+
+        if data is None:
+            return None
+
+        # Handle heartbeats - empty JSON objects
+        if not data:
+            log.debug("Received heartbeat, ignoring")
+            return None
+
+        # The multipart subscription protocol wraps data in a "payload" property
+        if "payload" not in data:
+            log.warning("Invalid response: missing 'payload' field")
+            return None
+
+        payload = data["payload"]
+
+        # Check for transport-level errors (payload is null)
+        if payload is None:
+            # If there are errors, this is a transport-level error
+            errors = data.get("errors")
+            if errors:
+                error_messages = [
+                    error.get("message", "Unknown transport error") for error in errors
+                ]
+
+                for message in error_messages:
+                    log.error(f"Transport error: {message}")
+
+                raise TransportServerError("\n\n".join(error_messages))
+            else:
+                # Null payload without errors - just skip this part
+                return None
+
+        # Extract GraphQL data from payload
+        return ExecutionResult(
+            data=payload.get("data"),
+            errors=payload.get("errors"),
+            extensions=payload.get("extensions"),
+        )
