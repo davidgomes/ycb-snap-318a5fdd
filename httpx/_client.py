@@ -19,6 +19,7 @@ from ._config import (
     Proxy,
     Timeout,
 )
+from ._cookies import CookieStore
 from ._decoders import SUPPORTED_DECODERS
 from ._exceptions import (
     InvalidURL,
@@ -57,6 +58,12 @@ __all__ = ["USE_CLIENT_DEFAULT", "AsyncClient", "Client"]
 # https://www.python.org/dev/peps/pep-0484/#annotating-instance-and-class-methods
 T = typing.TypeVar("T", bound="Client")
 U = typing.TypeVar("U", bound="AsyncClient")
+
+
+def _make_cookies(cookies: CookieTypes | None) -> Cookies | CookieStore:
+    if isinstance(cookies, CookieStore):
+        return cookies
+    return Cookies(cookies)
 
 
 def _is_https_redirect(url: URL, location: URL) -> bool:
@@ -208,7 +215,7 @@ class BaseClient:
         self._auth = self._build_auth(auth)
         self._params = QueryParams(params)
         self.headers = Headers(headers)
-        self._cookies = Cookies(cookies)
+        self._cookies = _make_cookies(cookies)
         self._timeout = Timeout(timeout)
         self.follow_redirects = follow_redirects
         self.max_redirects = max_redirects
@@ -316,7 +323,7 @@ class BaseClient:
         self._headers = client_headers
 
     @property
-    def cookies(self) -> Cookies:
+    def cookies(self) -> Cookies | CookieStore:
         """
         Cookie values to include when sending requests.
         """
@@ -324,7 +331,7 @@ class BaseClient:
 
     @cookies.setter
     def cookies(self, cookies: CookieTypes) -> None:
-        self._cookies = Cookies(cookies)
+        self._cookies = _make_cookies(cookies)
 
     @property
     def params(self) -> QueryParams:
@@ -415,6 +422,13 @@ class BaseClient:
         Merge a cookies argument together with any cookies on the client,
         to create the cookies used for the outgoing request.
         """
+        if isinstance(self.cookies, CookieStore):
+            if not cookies:
+                return self.cookies
+            merged_store = CookieStore()
+            merged_store.update(self.cookies)
+            merged_store.update(cookies)
+            return merged_store
         if cookies or self.cookies:
             merged_cookies = Cookies(self.cookies)
             merged_cookies.update(cookies)
@@ -481,7 +495,7 @@ class BaseClient:
         url = self._redirect_url(request, response)
         headers = self._redirect_headers(request, url, method)
         stream = self._redirect_stream(request, method)
-        cookies = Cookies(self.cookies)
+        cookies = _make_cookies(self.cookies)
         return Request(
             method=method,
             url=url,
