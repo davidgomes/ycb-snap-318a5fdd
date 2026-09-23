@@ -93,6 +93,8 @@ export interface TraitInstance<T extends Trait = Trait, S extends Schema = Extra
     notQueries: Set<QueryInstance>;
     /** Queries that filter by this relation (only for relation traits) */
     relationQueries: Set<QueryInstance>;
+    /** Tracking queries that track pairs of this relation (only for relation traits) */
+    pairTrackingQueries: Set<QueryInstance>;
     schema: S;
     changeSubscriptions: Set<(entity: Entity, target?: Entity) => void>;
     addSubscriptions: Set<(entity: Entity, target?: Entity) => void>;
@@ -107,10 +109,14 @@ export interface TraitInstance<T extends Trait = Trait, S extends Schema = Extra
 
 export type TraitOrRelation = Trait | Relation<Trait>;
 
-/** Extracts the underlying Trait from a TraitOrRelation (Relations contain a Trait) */
-export type ExtractTrait<T> = T extends Relation<infer TTrait> ? TTrait : T;
+/** Inputs accepted by tracking modifiers such as `Added`, `Removed` and `Changed` */
+export type TrackingInput = TraitOrRelation | RelationPair<Trait>;
 
-/** Maps a tuple of TraitOrRelation to their underlying Traits */
-export type ExtractTraits<T extends TraitOrRelation[]> = {
+/** Extracts the underlying Trait from a TrackingInput (Relations and pairs contain a Trait) */
+export type ExtractTrait<T> =
+    T extends Relation<infer TTrait> ? TTrait : T extends RelationPair<infer TTrait> ? TTrait : T;
+
+/** Maps a tuple of TrackingInput to their underlying Traits */
+export type ExtractTraits<T extends TrackingInput[]> = {
     [K in keyof T]: ExtractTrait<T[K]>;
 };

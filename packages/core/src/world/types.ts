@@ -40,6 +40,10 @@ export type WorldInternal = {
     dirtyMasks: Map<number, number[][]>;
     trackingSnapshots: Map<number, number[][]>;
     changedMasks: Map<number, number[][]>;
+    /** Relation targets per tracking modifier ID, relation trait ID and source entity */
+    trackingPairSnapshots: Map<number, Map<number, Map<Entity, readonly Entity[]>>>;
+    /** Changed relation targets per tracking modifier ID, relation trait ID and source entity */
+    changedPairs: Map<number, Map<number, Map<Entity, Set<Entity>>>>;
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;

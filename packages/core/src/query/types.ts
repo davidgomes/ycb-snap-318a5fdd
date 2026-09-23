@@ -1,5 +1,5 @@
 import type { Entity } from '../entity/types';
-import type { RelationPair } from '../relation/types';
+import type { Relation, RelationPair, RelationTarget } from '../relation/types';
 import { AoSFactory } from '../storage';
 import type {
     ExtractSchema,
@@ -93,6 +93,11 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /**
+     * Relation pair targets aligned with `traits`. An entry is set when the
+     * trait was passed as a relation pair, such as `Added(ChildOf(parent))`.
+     */
+    pairTargets?: (RelationTarget | undefined)[];
 };
 
 /** Parameter types that can be passed to Or modifier */
@@ -132,6 +137,30 @@ export type TrackingGroup = {
     bitmasks: (number | undefined)[];
     /** Per-entity tracker state indexed by [generationId][entityId] */
     trackers: (number[] | undefined)[];
+    /** Relation pairs tracked at the pair level, combined with the group logic */
+    pairs: TrackingPair[];
+};
+
+/**
+ * Per-query state for tracking relation pairs of one relation with one tracking modifier.
+ * Added and Removed compare current targets against a baseline, so opposite events on
+ * the same target cancel. Changed keeps the set of targets signaled since the baseline.
+ */
+export type PairTracker = {
+    /** Tracking modifier ID */
+    id: number;
+    type: EventType;
+    relation: Relation<Trait>;
+    relationTrait: Trait;
+    /** Targets per entity at the start of the observation window (absent means none) */
+    baseline: Map<Entity, readonly Entity[]>;
+    /** Targets changed per entity during the observation window */
+    changed: Map<Entity, Set<Entity>>;
+};
+
+export type TrackingPair = {
+    tracker: PairTracker;
+    target: RelationTarget;
 };
 
 export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
@@ -155,6 +184,8 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     }[];
     /** Unified tracking groups with explicit AND/OR logic */
     trackingGroups: TrackingGroup[];
+    /** Pair trackers used by the tracking groups, one per (tracking modifier, relation) */
+    pairTrackers: PairTracker[];
     generations: number[];
     entities: SparseSet;
     isTracking: boolean;

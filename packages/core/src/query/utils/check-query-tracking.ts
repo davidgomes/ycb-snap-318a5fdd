@@ -3,6 +3,7 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import { checkTrackingPair } from './pair-tracking';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -104,6 +105,9 @@ export function checkQueryTracking(
         }
 
         // 3. Verify tracking group satisfaction (merged into same loop)
+        const groupPairs = group.pairs;
+        const groupPairsLen = groupPairs.length;
+
         if (groupLogic === 'or') {
             hasOrGroup = true;
             if (!anyOrMatched) {
@@ -121,6 +125,14 @@ export function checkQueryTracking(
                     }
                 }
             }
+            if (!anyOrMatched) {
+                for (let j = 0; j < groupPairsLen; j++) {
+                    if (checkTrackingPair(world, groupPairs[j], entity)) {
+                        anyOrMatched = true;
+                        break;
+                    }
+                }
+            }
         } else {
             // AND group: all traits must be tracked
             const groupTrackers = group.trackers;
@@ -133,6 +145,9 @@ export function checkQueryTracking(
                 if ((tracker & mask) !== mask) {
                     return false;
                 }
+            }
+            for (let j = 0; j < groupPairsLen; j++) {
+                if (!checkTrackingPair(world, groupPairs[j], entity)) return false;
             }
         }
     }

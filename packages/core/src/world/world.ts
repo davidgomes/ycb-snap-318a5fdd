@@ -70,6 +70,8 @@ export function createWorld(
             dirtyMasks: new Map(),
             trackingSnapshots: new Map(),
             changedMasks: new Map(),
+            trackingPairSnapshots: new Map(),
+            changedPairs: new Map(),
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
@@ -172,7 +174,15 @@ export function createWorld(
             ctx.trackingSnapshots.clear();
             ctx.dirtyMasks.clear();
             ctx.changedMasks.clear();
+            ctx.trackingPairSnapshots.clear();
+            ctx.changedPairs.clear();
             ctx.trackedTraits.clear();
+
+            // Tracking modifiers outlive resets, so their masks are recreated for the fresh state.
+            const cursor = getTrackingCursor();
+            for (let i = 0; i < cursor; i++) {
+                setTrackingMasks(world, i);
+            }
 
             // Create new world entity.
             ctx.worldEntity = createEntity(world, IsExcluded);

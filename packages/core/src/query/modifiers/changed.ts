@@ -1,15 +1,17 @@
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
-import { isRelation } from '../../relation/utils/is-relation';
+import { getRelationTargets, hasRelationToTarget } from '../../relation/relation';
+import type { Relation, RelationPair } from '../../relation/types';
 import { hasTrait, registerTrait } from '../../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../../trait/trait-instance';
-import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
+import type { ExtractTraits, Trait, TrackingInput } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
-import { createModifier } from '../modifier';
+import { createTrackingModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
+import { notifyPairEvent } from '../utils/pair-tracking';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
 
 export function createChanged() {
@@ -20,13 +22,10 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends TrackingInput[]>(
         ...inputs: T
     ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`changed-${id}`, id, traits);
+        return createTrackingModifier(`changed-${id}`, id, inputs);
     };
 }
 
@@ -83,5 +82,28 @@ export function setChanged(world: World, entity: Entity, trait: Trait) {
 export function setPairChanged(world: World, entity: Entity, trait: Trait, target: Entity) {
     const data = markChanged(world, entity, trait);
     if (!data) return;
+    if (hasRelationToTarget(world, trait[$internal].relation!, entity, target)) {
+        notifyPairEvent(world, entity, trait, target, 'change');
+    }
     for (const sub of data.changeSubscriptions) sub(entity, target);
+}
+
+/**
+ * Flag a relation pair as changed. A wildcard target flags every target on the entity.
+ */
+export function setChangedForPair(world: World, entity: Entity, pair: RelationPair) {
+    const pairCtx = pair[$internal];
+    const relation = pairCtx.relation as Relation<Trait>;
+    const trait = relation[$internal].trait;
+    const target = pairCtx.target;
+
+    if (target === '*') {
+        for (const t of getRelationTargets(world, relation, entity)) {
+            setPairChanged(world, entity, trait, t);
+        }
+        return;
+    }
+
+    if (!hasRelationToTarget(world, relation, entity, target)) return;
+    setPairChanged(world, entity, trait, target);
 }

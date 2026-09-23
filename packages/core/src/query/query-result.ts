@@ -1,6 +1,7 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
+import { getRelationData, setRelationData } from '../relation/relation';
 import { isRelationPair } from '../relation/utils/is-relation';
 import type { Relation } from '../relation/types';
 import { Store } from '../storage';
@@ -9,7 +10,7 @@ import type { Trait } from '../trait/types';
 import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
 import { isModifier } from './modifier';
-import { setChanged } from './modifiers/changed';
+import { setChanged, setPairChanged } from './modifiers/changed';
 import type {
     InstancesFromParameters,
     QueryInstance,
@@ -27,8 +28,9 @@ export function createQueryResult<T extends QueryParameter[]>(
 ): QueryResult<T> {
     const traits: Trait[] = [];
     const stores: Store<any>[] = [];
+    const targets: (Entity | undefined)[] = [];
 
-    getQueryStores(params, traits, stores, world);
+    getQueryStores(params, traits, stores, world, targets);
 
     const results = Object.assign(entities, {
         readEach(
@@ -41,7 +43,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                 const eid = getEntityId(entity);
 
                 // Create snapshots without atomic tracking
-                createSnapshots(eid, traits, stores, state);
+                createSnapshots(world, entity, eid, traits, stores, targets, state);
 
                 callback(state, entity, i);
             }
@@ -57,7 +59,7 @@ export function createQueryResult<T extends QueryParameter[]>(
 
             // Inline all three permutations of updateEach for performance.
             if (options.changeDetection === 'auto') {
-                const changedPairs: [Entity, Trait][] = [];
+                const changedPairs: [Entity, Trait, Entity | undefined][] = [];
                 const atomicSnapshots: any[] = [];
                 const trackedIndices: number[] = [];
                 const untrackedIndices: number[] = [];
@@ -68,7 +70,16 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const entity = entities[i];
                     const eid = getEntityId(entity);
 
-                    createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
+                    createSnapshotsWithAtomic(
+                        world,
+                        entity,
+                        eid,
+                        traits,
+                        stores,
+                        targets,
+                        state,
+                        atomicSnapshots
+                    );
                     callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
@@ -81,9 +92,19 @@ export function createQueryResult<T extends QueryParameter[]>(
                         const ctx = trait[$internal];
                         const newValue = state[index];
                         const store = stores[index];
+                        const target = targets[index];
 
                         let changed = false;
-                        if (ctx.type === 'aos') {
+                        if (target !== undefined) {
+                            changed = commitPairValue(
+                                world,
+                                entity,
+                                trait,
+                                target,
+                                newValue,
+                                atomicSnapshots[index]
+                            );
+                        } else if (ctx.type === 'aos') {
                             changed = ctx.fastSetWithChangeDetection(eid, store, newValue);
                             if (!changed) {
                                 changed = !shallowEqual(newValue, atomicSnapshots[index]);
@@ -93,7 +114,7 @@ export function createQueryResult<T extends QueryParameter[]>(
                         }
 
                         // Collect changed traits.
-                        if (changed) changedPairs.push([entity, trait] as const);
+                        if (changed) changedPairs.push([entity, trait, target]);
                     }
 
                     // Commit all changes back to the stores for untracked traits.
@@ -102,24 +123,36 @@ export function createQueryResult<T extends QueryParameter[]>(
                         const trait = traits[index];
                         const ctx = trait[$internal];
                         const store = stores[index];
-                        ctx.fastSet(eid, store, state[index]);
+                        const target = targets[index];
+                        if (target !== undefined) writePairValue(world, entity, trait, target, state[index]);
+                        else ctx.fastSet(eid, store, state[index]);
                     }
                 }
 
                 // Trigger change events for each entity that was modified.
                 for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
+                    const [entity, trait, target] = changedPairs[i];
+                    if (target !== undefined) setPairChanged(world, entity, trait, target);
+                    else setChanged(world, entity, trait);
                 }
             } else if (options.changeDetection === 'always') {
-                const changedPairs: [Entity, Trait][] = [];
+                const changedPairs: [Entity, Trait, Entity | undefined][] = [];
                 const atomicSnapshots: any[] = [];
 
                 for (let i = 0; i < entities.length; i++) {
                     const entity = entities[i];
                     const eid = getEntityId(entity);
 
-                    createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
+                    createSnapshotsWithAtomic(
+                        world,
+                        entity,
+                        eid,
+                        traits,
+                        stores,
+                        targets,
+                        state,
+                        atomicSnapshots
+                    );
                     callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
@@ -130,9 +163,19 @@ export function createQueryResult<T extends QueryParameter[]>(
                         const trait = traits[j];
                         const ctx = trait[$internal];
                         const newValue = state[j];
+                        const target = targets[j];
 
                         let changed = false;
-                        if (ctx.type === 'aos') {
+                        if (target !== undefined) {
+                            changed = commitPairValue(
+                                world,
+                                entity,
+                                trait,
+                                target,
+                                newValue,
+                                atomicSnapshots[j]
+                            );
+                        } else if (ctx.type === 'aos') {
                             changed = ctx.fastSetWithChangeDetection(eid, stores[j], newValue);
                             if (!changed) {
                                 changed = !shallowEqual(newValue, atomicSnapshots[j]);
@@ -142,20 +185,21 @@ export function createQueryResult<T extends QueryParameter[]>(
                         }
 
                         // Collect changed traits.
-                        if (changed) changedPairs.push([entity, trait] as const);
+                        if (changed) changedPairs.push([entity, trait, target]);
                     }
                 }
 
                 // Trigger change events for each entity that was modified.
                 for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
+                    const [entity, trait, target] = changedPairs[i];
+                    if (target !== undefined) setPairChanged(world, entity, trait, target);
+                    else setChanged(world, entity, trait);
                 }
             } else if (options.changeDetection === 'never') {
                 for (let i = 0; i < entities.length; i++) {
                     const entity = entities[i];
                     const eid = getEntityId(entity);
-                    createSnapshots(eid, traits, stores, state);
+                    createSnapshots(world, entity, eid, traits, stores, targets, state);
                     callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
@@ -165,7 +209,9 @@ export function createQueryResult<T extends QueryParameter[]>(
                     for (let j = 0; j < traits.length; j++) {
                         const trait = traits[j];
                         const ctx = trait[$internal];
-                        ctx.fastSet(eid, stores[j], state[j]);
+                        const target = targets[j];
+                        if (target !== undefined) writePairValue(world, entity, trait, target, state[j]);
+                        else ctx.fastSet(eid, stores[j], state[j]);
                     }
                 }
             }
@@ -181,7 +227,8 @@ export function createQueryResult<T extends QueryParameter[]>(
         select<U extends QueryParameter[]>(...params: U): QueryResult<U> {
             traits.length = 0;
             stores.length = 0;
-            getQueryStores(params, traits, stores, world);
+            targets.length = 0;
+            getQueryStores(params, traits, stores, world, targets);
             return results as unknown as QueryResult<U>;
         },
 
@@ -214,40 +261,95 @@ export function createQueryResult<T extends QueryParameter[]>(
 }
 
 /* @inline */ function createSnapshots(
+    world: World,
+    entity: Entity,
     entityId: number,
     traits: Trait[],
     stores: Store<any>[],
+    targets: (Entity | undefined)[],
     state: any[]
 ) {
     for (let i = 0; i < traits.length; i++) {
         const trait = traits[i];
         const ctx = trait[$internal];
-        const value = ctx.get(entityId, stores[i]);
+        const target = targets[i];
+        const value =
+            target === undefined
+                ? ctx.get(entityId, stores[i])
+                : getRelationData(world, entity, ctx.relation!, target);
         state[i] = value;
     }
 }
 
 /* @inline */ function createSnapshotsWithAtomic(
+    world: World,
+    entity: Entity,
     entityId: number,
     traits: Trait[],
     stores: Store<any>[],
+    targets: (Entity | undefined)[],
     state: any[],
     atomicSnapshots: any[]
 ) {
     for (let j = 0; j < traits.length; j++) {
         const trait = traits[j];
         const ctx = trait[$internal];
-        const value = ctx.get(entityId, stores[j]);
+        const target = targets[j];
+        const value =
+            target === undefined
+                ? ctx.get(entityId, stores[j])
+                : getRelationData(world, entity, ctx.relation!, target);
         state[j] = value;
-        atomicSnapshots[j] = ctx.type === 'aos' ? { ...value } : null;
+        atomicSnapshots[j] = ctx.type === 'aos' ? { ...(value as object) } : null;
     }
+}
+
+/**
+ * Write the data of a single relation pair back to the store.
+ * Returns true if any value changed. Does nothing if the pair is no longer on the entity.
+ */
+function commitPairValue(
+    world: World,
+    entity: Entity,
+    trait: Trait,
+    target: Entity,
+    value: any,
+    atomicSnapshot: any
+): boolean {
+    if (value === undefined) return false;
+
+    const relation = trait[$internal].relation!;
+    const current = getRelationData(world, entity, relation, target) as any;
+    if (current === undefined) return false;
+
+    if (trait[$internal].type === 'aos') {
+        if (current !== value) {
+            setRelationData(world, entity, relation, target, value);
+            return true;
+        }
+        return !shallowEqual(value, atomicSnapshot);
+    }
+
+    for (const key in current) {
+        if (current[key] !== value[key]) {
+            setRelationData(world, entity, relation, target, value);
+            return true;
+        }
+    }
+    return false;
+}
+
+function writePairValue(world: World, entity: Entity, trait: Trait, target: Entity, value: any) {
+    if (value === undefined) return;
+    setRelationData(world, entity, trait[$internal].relation!, target, value);
 }
 
 /* @inline */ export function getQueryStores<T extends QueryParameter[]>(
     params: T,
     traits: Trait[],
     stores: Store<any>[],
-    world: World
+    world: World,
+    targets?: (Entity | undefined)[]
 ) {
     for (let i = 0; i < params.length; i++) {
         const param = params[i];
@@ -260,6 +362,7 @@ export function createQueryResult<T extends QueryParameter[]>(
             if (baseTrait[$internal].type !== 'tag') {
                 traits.push(baseTrait);
                 stores.push(getStore(world, baseTrait));
+                targets?.push(undefined);
             }
             continue;
         }
@@ -269,16 +372,22 @@ export function createQueryResult<T extends QueryParameter[]>(
             if (param.type === 'not') continue;
 
             const modifierTraits = param.traits;
-            for (const trait of modifierTraits) {
+            const pairTargets = param.pairTargets;
+            for (let j = 0; j < modifierTraits.length; j++) {
+                const trait = modifierTraits[j];
                 if (trait[$internal].type === 'tag') continue; // Skip tags
                 traits.push(trait);
                 stores.push(getStore(world, trait));
+                // Pair-tracked traits with a specific target resolve that target's data
+                const target = pairTargets?.[j];
+                targets?.push(typeof target === 'number' ? target : undefined);
             }
         } else {
             const trait = param as Trait;
             if (trait[$internal].type === 'tag') continue; // Skip tags
             traits.push(trait);
             stores.push(getStore(world, trait));
+            targets?.push(undefined);
         }
     }
 }

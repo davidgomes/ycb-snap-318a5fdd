@@ -1,5 +1,7 @@
-import { Brand } from '../common';
-import { Trait } from '../trait/types';
+import { $internal, Brand } from '../common';
+import type { RelationTarget } from '../relation/types';
+import { isRelation, isRelationPair } from '../relation/utils/is-relation';
+import { Trait, TrackingInput } from '../trait/types';
 import { EventType, Modifier, OrModifier, QueryParameter } from './types';
 
 export const $modifier = Symbol('modifier');
@@ -7,15 +9,45 @@ export const $modifier = Symbol('modifier');
 export function createModifier<TTrait extends Trait[] = Trait[], TType extends string = string>(
     type: TType,
     id: number,
-    traits: TTrait
+    traits: TTrait,
+    pairTargets?: (RelationTarget | undefined)[]
 ): Modifier<TTrait, TType> {
-    return {
+    const modifier: Modifier<TTrait, TType> = {
         [$modifier]: true,
         type,
         id,
         traits,
         traitIds: traits.map((trait) => trait.id),
-    } as const;
+    };
+    if (pairTargets) modifier.pairTargets = pairTargets;
+    return modifier;
+}
+
+/** Create a tracking modifier from traits, relations and relation pairs. */
+export function createTrackingModifier<TTrait extends Trait[], TType extends string>(
+    type: TType,
+    id: number,
+    inputs: TrackingInput[]
+): Modifier<TTrait, TType> {
+    const traits: Trait[] = [];
+    let pairTargets: (RelationTarget | undefined)[] | undefined;
+
+    for (let i = 0; i < inputs.length; i++) {
+        const input = inputs[i];
+
+        if (isRelationPair(input)) {
+            const pairCtx = input[$internal];
+            pairTargets ??= new Array(i).fill(undefined);
+            pairTargets.push(pairCtx.target);
+            traits.push(pairCtx.relation[$internal].trait);
+            continue;
+        }
+
+        pairTargets?.push(undefined);
+        traits.push(isRelation(input) ? input[$internal].trait : input);
+    }
+
+    return createModifier(type, id, traits as TTrait, pairTargets);
 }
 
 export /* @inline @pure */ function isModifier(param: QueryParameter): param is Modifier {

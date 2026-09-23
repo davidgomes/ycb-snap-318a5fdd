@@ -2,7 +2,7 @@ import { $internal } from '../../common';
 import { isRelationPair } from '../../relation/utils/is-relation';
 import type { Relation } from '../../relation/types';
 import type { Trait } from '../../trait/types';
-import { isModifier } from '../modifier';
+import { isModifier, isOrWithModifiers } from '../modifier';
 import type { QueryHash, QueryParameter } from '../types';
 
 const sortedIDs = new Float64Array(1024); // Use Float64 for larger IDs with relation encoding
@@ -10,6 +10,8 @@ const sortedIDs = new Float64Array(1024); // Use Float64 for larger IDs with rel
 export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
     sortedIDs.fill(0);
     let cursor = 0;
+    // Parameters that cannot be encoded as a single number, such as tracked pairs
+    const keys: string[] = [];
 
     for (let i = 0; i < parameters.length; i++) {
         const param = parameters[i];
@@ -29,10 +31,25 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
         } else if (isModifier(param)) {
             const modifierId = param.id;
             const traitIds = param.traitIds;
+            const pairTargets = param.pairTargets;
 
             for (let i = 0; i < traitIds.length; i++) {
                 const traitId = traitIds[i];
-                sortedIDs[cursor++] = modifierId * 100000 + traitId;
+                const target = pairTargets?.[i];
+                if (target !== undefined) keys.push(`${modifierId}:${traitId}:${target}`);
+                else sortedIDs[cursor++] = modifierId * 100000 + traitId;
+            }
+
+            if (isOrWithModifiers(param)) {
+                for (const nested of param.modifiers) {
+                    for (let j = 0; j < nested.traitIds.length; j++) {
+                        const target = nested.pairTargets?.[j];
+                        keys.push(
+                            `or:${nested.id}:${nested.traitIds[j]}` +
+                                (target !== undefined ? `:${target}` : '')
+                        );
+                    }
+                }
             }
         } else {
             const traitId = (param as Trait).id;
@@ -45,7 +62,8 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
     filledArray.sort();
 
     // Create string key.
-    const hash = filledArray.join(',');
+    let hash = filledArray.join(',');
+    if (keys.length > 0) hash += '|' + keys.sort().join(',');
 
     return hash;
 };
