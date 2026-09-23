@@ -11,6 +11,20 @@ type DocCommentVisitor interface {
 	VisitDocComment(*ast.CommentGroup)
 }
 
+// DocLinkVisitor visits every doc comment attached to a declaration,
+// together with that declaration.
+//
+// decl is the documented declaration node (function, gen decl, spec, or field).
+// Checkers should emit diagnostics at decl, not at the comment text.
+// f is the file that contains the declaration, so import-sensitive checks
+// can resolve names against that file.
+//
+// Does not visit doc comments for function-local definitions.
+// Also does not visit the package doc comment.
+type DocLinkVisitor interface {
+	VisitDocLink(f *ast.File, decl ast.Node, doc *ast.CommentGroup)
+}
+
 // FuncDeclVisitor visits every top-level function declaration.
 type FuncDeclVisitor interface {
 	walkerEvents
