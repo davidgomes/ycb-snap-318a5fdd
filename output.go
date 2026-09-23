@@ -26,13 +26,14 @@ type Output struct {
 	w       io.Writer
 	environ Environ
 
-	assumeTTY bool
-	unsafe    bool
-	cache     bool
-	fgSync    *sync.Once
-	fgColor   Color
-	bgSync    *sync.Once
-	bgColor   Color
+	assumeTTY      bool
+	unsafe         bool
+	cache          bool
+	preserveResets bool
+	fgSync         *sync.Once
+	fgColor        Color
+	bgSync         *sync.Once
+	bgColor        Color
 }
 
 // Environ is an interface for getting environment variables.

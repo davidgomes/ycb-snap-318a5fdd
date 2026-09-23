@@ -25,6 +25,8 @@ type Style struct {
 	profile Profile
 	string
 	styles []string
+
+	preserveResets bool
 }
 
 // String returns a new Style.
@@ -53,7 +55,11 @@ func (t Style) Styled(s string) string {
 		return s
 	}
 
-	return fmt.Sprintf("%s%sm%s%sm", CSI, seq, s, CSI+ResetSeq)
+	out := fmt.Sprintf("%s%sm%s%sm", CSI, seq, s, CSI+ResetSeq)
+	if t.preserveResets {
+		return preserveResets(out)
+	}
+	return out
 }
 
 // Foreground sets a foreground color.

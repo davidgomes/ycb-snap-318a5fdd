@@ -6,20 +6,46 @@ import (
 
 // TemplateFuncs returns template helpers for the given output.
 func (o Output) TemplateFuncs() template.FuncMap {
-	return TemplateFuncs(o.Profile)
+	return templateFuncs(o.Profile, o.preserveResets)
 }
 
 // TemplateFuncs contains a few useful template helpers.
 //
 //nolint:mnd
 func TemplateFuncs(p Profile) template.FuncMap {
+	return templateFuncs(p, false)
+}
+
+//nolint:mnd
+func templateFuncs(p Profile, preserve bool) template.FuncMap {
+	truncFuncs := template.FuncMap{
+		"Truncate": func(width int, tail, s string) string {
+			return truncateFor(p, preserve, s, width, TruncateOptions{Tail: tail})
+		},
+		"truncate": func(width int, s string) string {
+			return truncateFor(p, preserve, s, width, TruncateOptions{})
+		},
+	}
 	if p == Ascii {
-		return noopTemplateFuncs
+		fm := template.FuncMap{}
+		for k, v := range noopTemplateFuncs {
+			fm[k] = v
+		}
+		for k, v := range truncFuncs {
+			fm[k] = v
+		}
+		return fm
 	}
 
-	return template.FuncMap{
+	newStyle := func(s string) Style {
+		st := p.String(s)
+		st.preserveResets = preserve
+		return st
+	}
+
+	fm := template.FuncMap{
 		"Color": func(values ...interface{}) string {
-			s := p.String(values[len(values)-1].(string))
+			s := newStyle(values[len(values)-1].(string))
 			switch len(values) {
 			case 2:
 				s = s.Foreground(p.Color(values[0].(string)))
@@ -32,7 +58,7 @@ func TemplateFuncs(p Profile) template.FuncMap {
 			return s.String()
 		},
 		"Foreground": func(values ...interface{}) string {
-			s := p.String(values[len(values)-1].(string))
+			s := newStyle(values[len(values)-1].(string))
 			if len(values) == 2 {
 				s = s.Foreground(p.Color(values[0].(string)))
 			}
@@ -40,27 +66,31 @@ func TemplateFuncs(p Profile) template.FuncMap {
 			return s.String()
 		},
 		"Background": func(values ...interface{}) string {
-			s := p.String(values[len(values)-1].(string))
+			s := newStyle(values[len(values)-1].(string))
 			if len(values) == 2 {
 				s = s.Background(p.Color(values[0].(string)))
 			}
 
 			return s.String()
 		},
-		"Bold":      styleFunc(p, Style.Bold),
-		"Faint":     styleFunc(p, Style.Faint),
-		"Italic":    styleFunc(p, Style.Italic),
-		"Underline": styleFunc(p, Style.Underline),
-		"Overline":  styleFunc(p, Style.Overline),
-		"Blink":     styleFunc(p, Style.Blink),
-		"Reverse":   styleFunc(p, Style.Reverse),
-		"CrossOut":  styleFunc(p, Style.CrossOut),
+		"Bold":      styleFunc(newStyle, Style.Bold),
+		"Faint":     styleFunc(newStyle, Style.Faint),
+		"Italic":    styleFunc(newStyle, Style.Italic),
+		"Underline": styleFunc(newStyle, Style.Underline),
+		"Overline":  styleFunc(newStyle, Style.Overline),
+		"Blink":     styleFunc(newStyle, Style.Blink),
+		"Reverse":   styleFunc(newStyle, Style.Reverse),
+		"CrossOut":  styleFunc(newStyle, Style.CrossOut),
 	}
+	for k, v := range truncFuncs {
+		fm[k] = v
+	}
+	return fm
 }
 
-func styleFunc(p Profile, f func(Style) Style) func(...interface{}) string {
+func styleFunc(newStyle func(string) Style, f func(Style) Style) func(...interface{}) string {
 	return func(values ...interface{}) string {
-		s := p.String(values[0].(string))
+		s := newStyle(values[0].(string))
 		return f(s).String()
 	}
 }
