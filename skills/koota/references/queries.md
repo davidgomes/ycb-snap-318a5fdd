@@ -7,6 +7,7 @@ Complete guide to querying entities in Koota.
 - [Basic queries](#basic-queries)
 - [Query modifiers](#query-modifiers) - Not, Or
 - [Tracking modifiers](#tracking-modifiers) - Added, Removed, Changed
+- [Predicates](#predicates) - Filter by trait values with createPredicate
 - [Caching queries](#caching-queries) - createQuery for performance
 - [Change detection](#change-detection) - updateEach options
 - [Query + select](#query--select) - Select subset of traits for updates
@@ -132,6 +133,34 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 - Create instances at module scope, not inside functions
 - Tracking resets after each query execution
 - Changed only tracks `set()` calls and `entity.changed()` signals
+
+## Predicates
+
+Filter by trait **values** instead of presence. `createPredicate(dependencies, fn)` — `fn` receives one array with each dependency's data in order. An entity matches when it has every dependency and `fn` returns `true`.
+
+```typescript
+import { createPredicate } from 'koota'
+
+// Create at module scope; each call is a distinct predicate
+const isLowHealth = createPredicate([Health], ([health]) => health.amount < 20)
+
+world.query(Position, isLowHealth).updateEach(([pos]) => {}) // No data added to the tuple
+world.query(Not(isLowHealth)) // Missing Health, or fn returns false
+world.query(Or(isLowHealth, IsBoss)) // Accepts traits and predicates
+world.query(isLowHealth, ChildOf(squad)) // Composes with relation pairs
+
+// Tracking modifiers work on the predicate result
+world.query(Added(isLowHealth)) // Became true
+world.query(Removed(isLowHealth)) // Became false (includes losing a dependency)
+world.query(Changed(isLowHealth)) // Flipped either way
+```
+
+**Key points:**
+
+- Re-evaluated when a dependency is added, set (`entity.set`, `entity.changed`, `updateEach`) or removed
+- Changes during `updateEach` are evaluated after the iteration ends, so results are stable while iterating
+- Dependencies must be data traits — tags and relations throw
+- Mutating stores directly (`useStores`, `getStore`) does not re-evaluate; call `entity.changed(Trait)` afterwards
 
 ## Caching queries
 

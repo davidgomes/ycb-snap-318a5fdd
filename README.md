@@ -509,6 +509,43 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 // After running the query, the Changed modifier is reset
 ```
 
+#### Predicates
+
+Predicates filter entities by the values of their traits instead of trait presence. `createPredicate` takes an array of dependency traits and a function that receives an array with each dependency's data in order. An entity matches when it has every dependency and the function returns `true`. Each call creates a distinct predicate. Tags and relations cannot be dependencies and will throw.
+
+The predicate is re-evaluated whenever a dependency is added or set with `entity.set`, `entity.changed` or `updateEach`. Changes made while an `updateEach` is iterating are evaluated once the iteration ends.
+
+```js
+import { createPredicate } from 'koota'
+
+const isLowHealth = createPredicate([Health], ([health]) => health.amount < 20)
+const isMovingFast = createPredicate([Velocity], ([vel]) => Math.hypot(vel.x, vel.y) > 10)
+
+// Predicates add no data to the callback tuple
+world.query(Position, isLowHealth).updateEach(([position]) => {})
+
+// Entities missing Health or with 20 or more health
+world.query(Not(isLowHealth))
+
+// Either predicate matches
+world.query(Or(isLowHealth, isMovingFast))
+
+// Compose with relation pairs
+world.query(isLowHealth, ChildOf(squad))
+```
+
+Tracking modifiers accept predicates. `Added` returns entities that started satisfying the predicate, `Removed` returns entities that stopped satisfying it (including when a dependency is removed) and `Changed` returns entities whose result flipped either way.
+
+```js
+const Added = createAdded()
+const Removed = createRemoved()
+const Changed = createChanged()
+
+const becameLowHealth = world.query(Added(isLowHealth))
+const recovered = world.query(Removed(isLowHealth))
+const toggled = world.query(Changed(isLowHealth))
+```
+
 ### Add, remove and change events
 
 Koota allows you to subscribe to add, remove, and change events for specific traits.

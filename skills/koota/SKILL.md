@@ -15,6 +15,7 @@ Koota manages state using entities with composable traits.
 - **World** - The context for all entities and their data (traits).
 - **Archetype** - A unique combination of traits that entities share.
 - **Query** - Fetches entities matching an archetype. The primary way to batch update state.
+- **Predicate** - A value-based query filter created with `createPredicate` from dependency traits and a function.
 - **Action** - A discrete, synchronous data mutation (create, update, destroy). Reusable from any call site.
 - **System** - A reactive orchestrator that observes state changes and coordinates work, including async workflows. Runs in the frame loop or event callbacks.
 
@@ -200,11 +201,15 @@ const player = world.queryFirst(IsPlayer, Position)
 // Filter with modifiers
 world.query(Position, Not(Velocity)) // Has Position but not Velocity
 world.query(Or(IsPlayer, IsEnemy)) // Has either trait
+
+// Filter by trait values with a predicate
+const isLowHealth = createPredicate([Health], ([health]) => health.amount < 20)
+world.query(Position, isLowHealth)
 ```
 
 Prefer `updateEach`/`readEach` over `for...of` + `entity.get()` for data-bearing queries. `readEach` still gives you the entity as the second argument.
 
-**Note:** `updateEach`/`readEach` only return data-bearing traits (SoA/AoS). Tags, `Not()`, and relation filters are **excluded**:
+**Note:** `updateEach`/`readEach` only return data-bearing traits (SoA/AoS). Tags, `Not()`, predicates, and relation filters are **excluded**:
 
 ```typescript
 world.query(IsPlayer, Position, Velocity).updateEach(([pos, vel]) => {
