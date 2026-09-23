@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"reflect"
+	"sync"
 )
 
 // A Proxy is a Go value that holds a value with a Scriggo type, used when
@@ -69,6 +70,53 @@ func (vm *VM) wrap(t ScriggoType, v reflect.Value) reflect.Value {
 		return reflect.ValueOf(sortErrorStringerProxy{p})
 	}
 	return t.Wrap(v)
+}
+
+// A ScriggoProxy holds a value with a Scriggo type in the proxies created by
+// adaptProxy.
+type ScriggoProxy struct {
+	value reflect.Value
+	sign  ScriggoType
+}
+
+// ScriggoValue implements the Proxy interface.
+func (p ScriggoProxy) ScriggoValue() (reflect.Value, ScriggoType) {
+	return p.value, p.sign
+}
+
+var scriggoProxyType = reflect.TypeOf(ScriggoProxy{})
+
+// interfaceProxyTypes caches the types of the proxies created by adaptProxy.
+var interfaceProxyTypes sync.Map
+
+// adaptProxy adapts the value v, if it is a proxy, so that it can be stored
+// in a value of the interface type t.
+//
+// If v is a proxy that does not implement t in Go, it returns a new proxy
+// that implements t, embedding it, so that v can be stored. The methods of t
+// can be called from Scriggo code, but calling them from native code panics.
+func adaptProxy(v reflect.Value, t reflect.Type) reflect.Value {
+	if t.NumMethod() == 0 || v.Type().Implements(t) {
+		return v
+	}
+	p, ok := v.Interface().(Proxy)
+	if !ok {
+		return v
+	}
+	var typ reflect.Type
+	if pt, ok := interfaceProxyTypes.Load(t); ok {
+		typ = pt.(reflect.Type)
+	} else {
+		typ = reflect.StructOf([]reflect.StructField{
+			{Name: "ScriggoProxy", Type: scriggoProxyType, Anonymous: true},
+			{Name: "Interface", Type: t, Anonymous: true},
+		})
+		interfaceProxyTypes.Store(t, typ)
+	}
+	value, sign := p.ScriggoValue()
+	w := reflect.New(typ).Elem()
+	w.Field(0).Set(reflect.ValueOf(ScriggoProxy{value: value, sign: sign}))
+	return w
 }
 
 // hasMethod reports whether the method set ms has a method, declared in

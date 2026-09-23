@@ -276,7 +276,7 @@ func (vm *VM) getIntoReflectValue(r int8, v reflect.Value, k bool) registerType 
 				v.Set(reflect.Zero(t))
 			}
 		} else {
-			v.Set(g)
+			v.Set(adaptProxy(g, v.Type()))
 		}
 		return generalRegister
 	default:
@@ -446,6 +446,16 @@ func (vm *VM) appendSlice(first int8, length int, slice reflect.Value) reflect.V
 			regs := vm.regs.general[vm.fp[3]+Addr(first):]
 			for i, j := 0, ol; i < length; i, j = i+1, j+1 {
 				slice.Index(j).Set(regs[i].Interface().(*callable).Value(vm.env))
+			}
+		case reflect.Interface:
+			t := slice.Type().Elem()
+			regs := vm.regs.general[vm.fp[3]+Addr(first):]
+			for i, j := 0, ol; i < length; i, j = i+1, j+1 {
+				if regs[i].IsValid() {
+					slice.Index(j).Set(adaptProxy(regs[i], t))
+				} else {
+					slice.Index(j).Set(reflect.Zero(t))
+				}
 			}
 		default:
 			regs := vm.regs.general[vm.fp[3]+Addr(first):]

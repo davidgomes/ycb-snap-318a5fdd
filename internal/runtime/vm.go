@@ -401,7 +401,7 @@ func (vm *VM) callNative(fn *NativeFunction, numVariadic int8, shift StackShift,
 								slice.Index(j).Set(reflect.Zero(t))
 							}
 						} else {
-							slice.Index(j).Set(v)
+							slice.Index(j).Set(adaptProxy(v, slice.Index(j).Type()))
 						}
 					}
 				default:
