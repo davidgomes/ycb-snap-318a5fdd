@@ -1466,6 +1466,28 @@ def _validate_rolling_arguments(
     return window_size, min_samples
 
 
+_ROLLING_QUANTILE_INTERPOLATIONS = frozenset(
+    {"linear", "lower", "higher", "nearest", "midpoint"}
+)
+
+
+def _validate_rolling_quantile_arguments(quantile: Any, interpolation: Any) -> None:
+    """Validate `rolling_quantile` arguments shared by `Expr` and `Series`."""
+    if (
+        isinstance(quantile, bool)
+        or not isinstance(quantile, (int, float))
+        or not 0.0 <= quantile <= 1.0
+    ):
+        msg = "Quantile must be between 0.0 and 1.0"
+        raise ValueError(msg)
+    if interpolation not in _ROLLING_QUANTILE_INTERPOLATIONS:
+        msg = (
+            "Interpolation must be one of "
+            "{'linear', 'lower', 'higher', 'nearest', 'midpoint'}"
+        )
+        raise ValueError(msg)
+
+
 def generate_repr(header: str, native_repr: str) -> str:
     try:
         terminal_width = os.get_terminal_size().columns

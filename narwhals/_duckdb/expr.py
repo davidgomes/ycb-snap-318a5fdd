@@ -213,6 +213,18 @@ class DuckDBExpr(SQLExpr["DuckDBLazyFrame", "Expression"]):
 
         return self._with_callable(func)
 
+    def _quantile_agg(
+        self,
+        expr: Expression,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+    ) -> Expression:
+        msg = (
+            "rolling_quantile with `.over()` is not available on DuckDB. "
+            "DuckDB does not support percentile_cont as a windowed aggregate function."
+        )
+        raise NotImplementedError(msg)
+
     def len(self) -> Self:
         return self._with_callable(lambda _expr: F("count"))
 

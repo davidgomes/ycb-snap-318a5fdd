@@ -45,6 +45,7 @@ if TYPE_CHECKING:
         MultiIndexSelector,
         NonNestedLiteral,
         PythonLiteral,
+        RollingInterpolationMethod,
         _1DArray,
     )
 
@@ -489,6 +490,66 @@ class PolarsSeries:
         return self._with_native(
             self.native.rolling_mean(
                 window_size=window_size, center=center, **extra_kwargs
+            )
+        )
+
+    def rolling_min(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        extra_kwargs: dict[str, Any] = (
+            {"min_periods": min_samples}
+            if self._backend_version < (1, 21, 0)
+            else {"min_samples": min_samples}
+        )
+        return self._with_native(
+            self.native.rolling_min(
+                window_size=window_size, center=center, **extra_kwargs
+            )
+        )
+
+    def rolling_max(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        extra_kwargs: dict[str, Any] = (
+            {"min_periods": min_samples}
+            if self._backend_version < (1, 21, 0)
+            else {"min_samples": min_samples}
+        )
+        return self._with_native(
+            self.native.rolling_max(
+                window_size=window_size, center=center, **extra_kwargs
+            )
+        )
+
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        extra_kwargs: dict[str, Any] = (
+            {"min_periods": min_samples}
+            if self._backend_version < (1, 21, 0)
+            else {"min_samples": min_samples}
+        )
+        return self._with_native(
+            self.native.rolling_median(
+                window_size=window_size, center=center, **extra_kwargs
+            )
+        )
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        extra_kwargs: dict[str, Any] = (
+            {"min_periods": min_samples}
+            if self._backend_version < (1, 21, 0)
+            else {"min_samples": min_samples}
+        )
+        return self._with_native(
+            self.native.rolling_quantile(
+                quantile=quantile,
+                interpolation=interpolation,
+                window_size=window_size,
+                center=center,
+                **extra_kwargs,
             )
         )
 

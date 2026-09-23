@@ -901,6 +901,78 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
         )
         return self._with_native(result)
 
+    def _rolling_apply(
+        self,
+        window_size: int,
+        min_samples: int,
+        *,
+        center: bool,
+        aggregate: Callable[[ArrayAny], Any],
+        result_type: pa.DataType[Any],
+    ) -> Self:
+        """Apply `aggregate` over each row window, ignoring nulls."""
+        native = self.native.combine_chunks()
+        n_rows = len(native)
+        end_offset = (window_size - 1) // 2 if center else 0
+        values: list[Any] = []
+        for index in range(n_rows):
+            start = index - (window_size - 1) + end_offset
+            stop = index + 1 + end_offset
+            start = max(start, 0)
+            stop = min(stop, n_rows)
+            non_null = pc.drop_null(native.slice(start, stop - start))
+            if len(non_null) < min_samples:
+                values.append(None)
+            else:
+                values.append(aggregate(non_null))
+        return self._with_native(pa.array(values, type=result_type))
+
+    def rolling_min(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._rolling_apply(
+            window_size,
+            min_samples,
+            center=center,
+            aggregate=lambda array: pc.min(array).as_py(),
+            result_type=self.native.type,
+        )
+
+    def rolling_max(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._rolling_apply(
+            window_size,
+            min_samples,
+            center=center,
+            aggregate=lambda array: pc.max(array).as_py(),
+            result_type=self.native.type,
+        )
+
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self.rolling_quantile(
+            window_size,
+            quantile=0.5,
+            interpolation="linear",
+            min_samples=min_samples,
+            center=center,
+        )
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        return self._rolling_apply(
+            window_size,
+            min_samples,
+            center=center,
+            aggregate=lambda array: pc.quantile(
+                array, q=quantile, interpolation=interpolation
+            )[0].as_py(),
+            result_type=pa.float64(),
+        )
+
     def rolling_sum(self, window_size: int, *, min_samples: int, center: bool) -> Self:
         min_samples = min_samples if min_samples is not None else window_size
         padded_series, offset = pad_series(self, window_size=window_size, center=center)
