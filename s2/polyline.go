@@ -372,11 +372,11 @@ func (p Polyline) encode(e *encoder) {
 // Decode decodes the polyline.
 func (p *Polyline) Decode(r io.Reader) error {
 	d := decoder{r: asByteReader(r)}
-	p.decode(d)
+	p.decode(&d)
 	return d.err
 }
 
-func (p *Polyline) decode(d decoder) {
+func (p *Polyline) decode(d *decoder) {
 	version := d.readInt8()
 	if d.err != nil {
 		return
