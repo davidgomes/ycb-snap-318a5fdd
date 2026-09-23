@@ -61,6 +61,7 @@ func MergeTrafficPolicies(
 		mergeURLRewrite,
 		mergeAPIKeyAuth,
 		mergeOAuth,
+		mergeConsistentHash,
 	}
 
 	for _, mergeFunc := range mergeFuncs {
@@ -619,6 +620,53 @@ func mergeURLRewrite(
 		Set: func(spec *trafficPolicySpecIr, val *urlRewriteIR) { spec.urlRewrite = val },
 	}
 	defaultMerge(p1, p2, p2Ref, p2MergeOrigins, opts, mergeOrigins, accessor, "urlRewrite")
+}
+
+// mergeConsistentHash unions the hash policies of p1 and p2 regardless of the merge strategy, with the
+// hash policies of the higher priority policy taking precedence.
+func mergeConsistentHash(
+	p1, p2 *TrafficPolicy,
+	p2Ref *ir.AttachedPolicyRef,
+	p2MergeOrigins ir.MergeOrigins,
+	opts policy.MergeOptions,
+	mergeOrigins ir.MergeOrigins,
+	_ TrafficPolicyMergeOpts,
+) {
+	const fieldName = "consistentHash"
+
+	p1Field := p1.spec.consistentHash
+	p2Field := p2.spec.consistentHash
+	if p2Field == nil {
+		return
+	}
+	if p1Field == nil {
+		p1.spec.consistentHash = p2Field
+		mergeOrigins.SetOne(fieldName, p2Ref, p2MergeOrigins)
+		return
+	}
+
+	switch opts.Strategy {
+	case policy.AugmentedShallowMerge, policy.AugmentedDeepMerge:
+		merged := unionConsistentHash(p1Field, p2Field)
+		// p2 is only a merge origin if it contributed hash policies that p1 did not have
+		if len(merged.policies) > len(p1Field.policies) {
+			p1.spec.consistentHash = merged
+			mergeOrigins.Append(fieldName, p2Ref, p2MergeOrigins)
+		}
+
+	case policy.OverridableShallowMerge, policy.OverridableDeepMerge:
+		merged := unionConsistentHash(p2Field, p1Field)
+		p1.spec.consistentHash = merged
+		// p1 remains a merge origin only if it contributed hash policies that p2 did not have
+		if len(merged.policies) > len(p2Field.policies) {
+			mergeOrigins.Append(fieldName, p2Ref, p2MergeOrigins)
+		} else {
+			mergeOrigins.SetOne(fieldName, p2Ref, p2MergeOrigins)
+		}
+
+	default:
+		logger.Warn("unsupported merge strategy for policy", "strategy", opts.Strategy, "policy", p2Ref, "field", fieldName)
+	}
 }
 
 // fieldAccessor defines how to access and set a field on trafficPolicySpecIr
