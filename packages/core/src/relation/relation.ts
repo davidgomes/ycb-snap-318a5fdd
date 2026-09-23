@@ -2,6 +2,7 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
+import { dropPendingPairAdd, recordPairEvent } from '../query/utils/pair-tracking';
 import { Schema } from '../storage';
 import { hasTrait, trait } from '../trait/trait';
 import { getTraitInstance } from '../trait/trait-instance';
@@ -243,6 +244,7 @@ export function addRelationTarget(
     }
 
     updateQueriesForRelationChange(world, relation, entity);
+    recordPairEvent(world, entity, relation, target, 'add');
 
     return targetIndex;
 }
@@ -268,10 +270,12 @@ export function removeRelationTarget(
 
     let removedIndex = -1;
     let hasRemainingTargets = false;
+    let removedData: unknown;
 
     if (relationCtx.exclusive) {
         const targets = data.relationTargets as Array<Entity | undefined>;
         if (targets[eid] === target) {
+            removedData = getRelationData(world, entity, relation, target);
             targets[eid] = undefined;
             removedIndex = 0;
             hasRemainingTargets = false;
@@ -283,6 +287,7 @@ export function removeRelationTarget(
         if (entityTargets) {
             const idx = entityTargets.indexOf(target);
             if (idx !== -1) {
+                removedData = getRelationData(world, entity, relation, target);
                 const lastIdx = entityTargets.length - 1;
                 if (idx !== lastIdx) {
                     entityTargets[idx] = entityTargets[lastIdx];
@@ -296,7 +301,12 @@ export function removeRelationTarget(
     }
 
     if (removedIndex !== -1) {
+        // A removal that leaves the relation in place is invisible to trait-level
+        // Removed. Keep it even when the add is still unobserved. Removing the
+        // last target still cancels an unobserved add.
+        if (hasRemainingTargets) dropPendingPairAdd(world, entity, relation, target);
         updateQueriesForRelationChange(world, relation, entity);
+        recordPairEvent(world, entity, relation, target, 'remove', removedData);
     }
 
     const wasLastTarget = removedIndex !== -1 && !hasRemainingTargets;

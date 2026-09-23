@@ -345,9 +345,6 @@ player.has(banana) // false
 
 Relations work with tracking modifiers to detect when entities gain, lose, or update relations. Changes can only be tracked on relations that have a store.
 
-> 👉 **Note**<br>
-> You can currently only track changes to all relations of a given type, such as `ChildOf`, but not specific relation pairs, such as `ChildOf(parent)`.
-
 ```js
 import { createAdded, createRemoved, createChanged } from 'koota'
 
@@ -367,13 +364,24 @@ const orphaned = world.query(Removed(ChildOf))
 const updated = world.query(Changed(ChildOf))
 ```
 
-Combine with relation filters to track changes for specific targets.
+Tracking modifiers also accept relation pairs. A specific target observes that pair, and `'*'` observes any target. Pair adds are detected even when the entity already has the relation, and pair removes are detected while other targets remain. An exclusive target swap reports both the removed target and the added one. `entity.changed(ChildOf(parent))` flags that pair.
 
 ```js
 const parent = world.spawn()
+const child = world.spawn(ChildOf(parent, { priority: 1 }))
 
-// Track changes only for entities related to parent
-const changedChildren = world.query(Changed(ChildOf), ChildOf(parent))
+const linkedToParent = world.query(Added(ChildOf(parent)))
+const retargeted = world.query(Removed(ChildOf('*')))
+
+linkedToParent.readEach(([childOf]) => {
+  childOf.priority // 1
+})
+
+child.changed(ChildOf(parent))
+const changedChildren = world.query(Changed(ChildOf(parent)))
+
+// Pair modifiers compose with traits and Or
+const activeChildren = world.query(Added(ChildOf(parent)), IsActive)
 ```
 
 #### Relation events

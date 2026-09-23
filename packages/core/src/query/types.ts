@@ -1,5 +1,5 @@
 import type { Entity } from '../entity/types';
-import type { RelationPair } from '../relation/types';
+import type { Relation, RelationPair, RelationTarget } from '../relation/types';
 import { AoSFactory } from '../storage';
 import type {
     ExtractSchema,
@@ -93,6 +93,42 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /**
+     * Traits tracked with bitmask Added/Removed/Changed.
+     * Relation pair inputs are omitted so they can be tracked per target.
+     */
+    trackedTraits?: Trait[];
+    trackedTraitIds?: number[];
+    /** Parallel to `traits`. True when that entry was passed as a RelationPair. */
+    pairMask?: boolean[];
+    pairs?: RelationPair[];
+};
+
+/** Per-target tracking filter compiled from a RelationPair passed to a tracking modifier. */
+export type PairFilter = {
+    relationTraitId: number;
+    trait: Trait;
+    relation: Relation<Trait>;
+    target: RelationTarget;
+    type: EventType;
+    id: number;
+    logic: 'and' | 'or';
+};
+
+export type PairNetState = 'add' | 'remove' | 'change' | 'add-change';
+
+export type PairNetRecord = {
+    net: PairNetState;
+    entity: Entity;
+    relationTraitId: number;
+    target: Entity;
+    removedData?: unknown;
+};
+
+export type PairSnapshot = {
+    target: Entity;
+    removedData?: unknown;
+    removed: boolean;
 };
 
 /** Parameter types that can be passed to Or modifier */
@@ -165,6 +201,15 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     removeSubscriptions: Set<QuerySubscriber>;
     /** Relation pairs for target-specific queries */
     relationFilters?: RelationPair[];
+    /** Pair-level tracking filters compiled from RelationPair modifier inputs. */
+    pairFilters: PairFilter[];
+    /**
+     * Net pair events since this query was last read.
+     * Key: `${trackingId}:${entity}:${relationTraitId}:${target}`.
+     */
+    pairNets: Map<string, PairNetRecord>;
+    /** Resolved pair targets for the entities returned by the last run. */
+    pairSnapshots: Map<string, PairSnapshot>;
     run: (world: World, params: QueryParameter[]) => QueryResult<T>;
     add: (entity: Entity) => void;
     remove: (world: World, entity: Entity) => void;

@@ -148,6 +148,23 @@ const threats = world.query(IsEnemy, Targeting(player))
 const positionedChildren = world.query(ChildOf(parent), Position)
 ```
 
+### Track a specific pair
+
+`Added`, `Removed`, and `Changed` accept pairs. `'*'` matches any target. Iteration yields that pair's store data. `entity.changed(ChildOf(parent))` flags the pair manually.
+
+```typescript
+const Added = createAdded()
+const Changed = createChanged()
+
+const linked = world.query(Added(ChildOf(parent)))
+linked.readEach(([childOf]) => {
+  childOf.priority
+})
+
+child.changed(ChildOf(parent))
+const changed = world.query(Changed(ChildOf(parent)))
+```
+
 ## Traversing Graphs
 
 ### Recursive traversal

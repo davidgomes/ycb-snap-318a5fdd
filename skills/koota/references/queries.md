@@ -75,6 +75,10 @@ const newPositions = world.query(Added(Position))
 
 // Track relation additions
 const newChildren = world.query(Added(ChildOf))
+
+// Track one target, or any target with '*'
+const linked = world.query(Added(ChildOf(parent)))
+const anyLink = world.query(Added(ChildOf('*')))
 ```
 
 **Removed** - Entities that removed a trait since last query (includes destroyed entities):
@@ -129,9 +133,14 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 
 **Key points:**
 
-- Create instances at module scope, not inside functions
+- Create instances at module scope, not inside functions. The same factory keeps working after `world.reset()`.
 - Tracking resets after each query execution
 - Changed only tracks `set()` calls and `entity.changed()` signals
+- `Added`, `Removed`, and `Changed` accept a `RelationPair`. `Relation('*')` is a wildcard. `entity.changed(Relation(target))` signals that pair
+- Pair results include that target's store data, including data captured for a removed pair
+- Opposite add and remove events for the same target cancel until the query is read. An exclusive retarget still reports the old target as removed and the new one as added
+- `Or(Added(ChildOf(a)), Added(ChildOf(b)))` matches either pair. Different targets are cached separately
+- A pair modifier plus a normal trait matches only entities that satisfy both
 
 ## Caching queries
 

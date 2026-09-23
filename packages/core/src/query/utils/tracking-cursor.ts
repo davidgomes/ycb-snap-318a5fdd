@@ -7,8 +7,16 @@ import type { World } from '../../world';
 // 2 - or
 let cursor = 3;
 
-export function createTrackingId() {
-    return cursor++;
+const trackingKinds = new Map<number, 'add' | 'remove' | 'change'>();
+
+export function createTrackingId(kind: 'add' | 'remove' | 'change') {
+    const id = cursor++;
+    trackingKinds.set(id, kind);
+    return id;
+}
+
+export function getTrackingKind(id: number) {
+    return trackingKinds.get(id);
 }
 
 export function getTrackingCursor() {
@@ -30,4 +38,7 @@ export function setTrackingMasks(world: World, id: number) {
         id,
         snapshot.map((mask) => mask.map(() => 0))
     );
+
+    const kind = trackingKinds.get(id);
+    if (kind) ctx.pairTrackers.set(id, { kind, nets: new Map() });
 }

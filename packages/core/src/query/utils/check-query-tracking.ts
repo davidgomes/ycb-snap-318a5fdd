@@ -20,7 +20,8 @@ export function checkQueryTracking(
     entity: Entity,
     eventType: EventType,
     eventGenerationId: number,
-    eventBitflag: number
+    eventBitflag: number,
+    ignoreUnmatchedTrackingOr = false
 ): boolean {
     // Cache all property accesses upfront
     const staticBitmasks = query.staticBitmasks;
@@ -137,10 +138,39 @@ export function checkQueryTracking(
         }
     }
 
-    // If we have OR groups, at least one must match
-    if (hasOrGroup && !anyOrMatched) {
+    // If we have OR groups, at least one must match unless a pair-level OR can satisfy it.
+    if (hasOrGroup && !anyOrMatched && !ignoreUnmatchedTrackingOr) {
         return false;
     }
 
     return true;
+}
+
+export function hasTrackingOrGroup(query: QueryInstance) {
+    for (let i = 0; i < query.trackingGroups.length; i++) {
+        if (query.trackingGroups[i].logic === 'or') return true;
+    }
+    return false;
+}
+
+/** True when an OR tracking group already has a tracked bit for this entity. */
+export function trackingOrMatches(query: QueryInstance, entity: Entity) {
+    const eid = getEntityId(entity);
+
+    for (let i = 0; i < query.trackingGroups.length; i++) {
+        const group = query.trackingGroups[i];
+        if (group.logic !== 'or') continue;
+
+        const bitmasks = group.bitmasks;
+        const trackers = group.trackers;
+        for (let genId = 0; genId < bitmasks.length; genId++) {
+            const mask = bitmasks[genId];
+            if (!mask) continue;
+            const trackerArr = trackers[genId];
+            const tracker = trackerArr ? (trackerArr[eid] | 0) : 0;
+            if (tracker & mask) return true;
+        }
+    }
+
+    return false;
 }

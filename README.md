@@ -364,14 +364,31 @@ const orphaned = world.query(Removed(ChildOf))
 const updated = world.query(Changed(ChildOf))
 ```
 
-> 👉 **Note**<br>
-> Tracking modifiers do not accept pairs directly such as `Changed(ChildOf(parent))`. Instead, pass the base relation to the modifier and add the pair as a separate query parameter to filter by target.
+Tracking modifiers also accept relation pairs. A specific target observes that pair, and `'*'` observes any target. Pair adds are detected even when the entity already has the relation, and pair removes are detected while other targets remain. An exclusive target swap reports both the removed target and the added one. `entity.changed(ChildOf(parent))` flags that pair.
 
 ```js
 const parent = world.spawn()
+const child = world.spawn(ChildOf(parent, { priority: 1 }))
 
-// Filter changed entities by a specific target
-const changedChildren = world.query(Changed(ChildOf), ChildOf(parent))
+// This target only
+const linkedToParent = world.query(Added(ChildOf(parent)))
+
+// Any target
+const retargeted = world.query(Removed(ChildOf('*')))
+
+linkedToParent.readEach(([childOf]) => {
+  childOf.priority // 1
+})
+
+child.changed(ChildOf(parent))
+const changedChildren = world.query(Changed(ChildOf(parent)))
+```
+
+A pair modifier can be combined with traits, `Not`, and `Or`. Every parameter must match.
+
+```js
+const activeChildren = world.query(Added(ChildOf(parent)), IsActive)
+const eitherParent = world.query(Or(Added(ChildOf(parentA)), Added(ChildOf(parentB))))
 ```
 
 #### Relation events

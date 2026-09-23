@@ -1,32 +1,37 @@
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
-import { isRelation } from '../../relation/utils/is-relation';
+import { hasRelationToTarget } from '../../relation/relation';
 import { hasTrait, registerTrait } from '../../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../../trait/trait-instance';
-import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
+import type { ExtractTrackingTraits, TrackingModifierInput, Trait } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
 import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
-import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
+import { matchTrackingQuery } from '../utils/check-query-tracking-with-relations';
+import { recordPairEvent } from '../utils/pair-tracking';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
+import { resolveTrackingInputs } from './resolve-tracking-inputs';
 
 export function createChanged() {
-    const id = createTrackingId();
+    const id = createTrackingId('change');
 
     for (const world of universe.worlds) {
         if (!world) continue;
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends TrackingModifierInput[]>(
         ...inputs: T
-    ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`changed-${id}`, id, traits);
+    ): Modifier<ExtractTrackingTraits<T>, `changed-${number}`> => {
+        const resolved = resolveTrackingInputs(inputs);
+        return createModifier(
+            `changed-${id}`,
+            id,
+            resolved.traits as ExtractTrackingTraits<T>,
+            resolved
+        );
     };
 }
 
@@ -56,17 +61,7 @@ function markChanged(world: World, entity: Entity, trait: Trait) {
         if (!query.hasChangedModifiers) continue;
         if (!query.changedTraits.has(trait)) continue;
 
-        const match =
-            query.relationFilters && query.relationFilters.length > 0
-                ? checkQueryTrackingWithRelations(
-                      world,
-                      query,
-                      entity,
-                      'change',
-                      generationId,
-                      bitflag
-                  )
-                : query.checkTracking(world, entity, 'change', generationId, bitflag);
+        const match = matchTrackingQuery(world, query, entity, 'change', generationId, bitflag);
         if (match) query.add(entity);
         else query.remove(world, entity);
     }
@@ -81,6 +76,11 @@ export function setChanged(world: World, entity: Entity, trait: Trait) {
 }
 
 export function setPairChanged(world: World, entity: Entity, trait: Trait, target: Entity) {
+    const relation = trait[$internal].relation;
+    if (!relation || !hasRelationToTarget(world, relation, entity, target)) return;
+
+    recordPairEvent(world, entity, relation, target, 'change');
+
     const data = markChanged(world, entity, trait);
     if (!data) return;
     for (const sub of data.changeSubscriptions) sub(entity, target);

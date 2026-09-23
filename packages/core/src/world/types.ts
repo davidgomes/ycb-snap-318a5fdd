@@ -3,6 +3,7 @@ import type { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
 import type {
+    PairNetRecord,
     Query,
     QueryInstance,
     QueryParameter,
@@ -40,6 +41,13 @@ export type WorldInternal = {
     dirtyMasks: Map<number, number[][]>;
     trackingSnapshots: Map<number, number[][]>;
     changedMasks: Map<number, number[][]>;
+    /**
+     * Per tracking-modifier net pair events since that modifier was created.
+     * Used to seed queries that are built after the events.
+     */
+    pairTrackers: Map<number, { kind: 'add' | 'remove' | 'change'; nets: Map<string, PairNetRecord> }>;
+    /** While true, pair removals replace any pending add instead of cancelling it. */
+    forcingPairRemovals: boolean;
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;

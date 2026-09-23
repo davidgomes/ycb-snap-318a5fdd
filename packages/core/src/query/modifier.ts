@@ -1,4 +1,5 @@
 import { Brand } from '../common';
+import type { RelationPair } from '../relation/types';
 import { Trait } from '../trait/types';
 import { EventType, Modifier, OrModifier, QueryParameter } from './types';
 
@@ -7,14 +8,24 @@ export const $modifier = Symbol('modifier');
 export function createModifier<TTrait extends Trait[] = Trait[], TType extends string = string>(
     type: TType,
     id: number,
-    traits: TTrait
+    traits: TTrait,
+    pairInfo?: {
+        pairs?: RelationPair[];
+        pairMask?: boolean[];
+        trackedTraits?: Trait[];
+    }
 ): Modifier<TTrait, TType> {
+    const trackedTraits = pairInfo?.trackedTraits ?? traits;
     return {
         [$modifier]: true,
         type,
         id,
         traits,
         traitIds: traits.map((trait) => trait.id),
+        trackedTraits,
+        trackedTraitIds: trackedTraits.map((trait) => trait.id),
+        pairs: pairInfo?.pairs,
+        pairMask: pairInfo?.pairMask,
     } as const;
 }
 

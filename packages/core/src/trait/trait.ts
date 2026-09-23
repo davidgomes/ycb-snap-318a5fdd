@@ -2,7 +2,8 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { setChanged, setPairChanged } from '../query/modifiers/changed';
-import { checkQueryTrackingWithRelations } from '../query/utils/check-query-tracking-with-relations';
+import { dropPendingPairAdd } from '../query/utils/pair-tracking';
+import { matchTrackingQuery } from '../query/utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
 import { getOrderedTraitRelation, isOrderedTrait, setupOrderedTraitSync } from '../relation/ordered';
 import { OrderedList } from '../relation/ordered-list';
@@ -104,6 +105,7 @@ export function registerTrait(world: World, trait: Trait) {
         trackingQueries: new Set(),
         notQueries: new Set(),
         relationQueries: new Set(),
+        pairQueries: new Set(),
         schema: trait.schema,
         changeSubscriptions: new Set(),
         addSubscriptions: new Set(),
@@ -192,10 +194,12 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
     // For example, adding Likes(alice) when this pair is already on the entity.
     if (hasRelationToTarget(world, relation, entity, target)) return;
 
-    // For exclusive relations, remove the old target first
+    // For exclusive relations, remove the old target first.
+    // Drop a pending add so the replacement still reports that target as removed.
     if (relationCtx.exclusive) {
         const oldTarget = getFirstRelationTarget(world, relation, entity);
         if (oldTarget !== undefined && oldTarget !== target) {
+            dropPendingPairAdd(world, entity, relation, oldTarget);
             const instance = getTraitInstance(world[$internal].traitInstances, relationTrait);
             if (instance) {
                 for (const sub of instance.removeSubscriptions) sub(entity, oldTarget);
@@ -466,10 +470,7 @@ export function getTrait(world: World, entity: Entity, trait: Trait | RelationPa
     for (const query of trackingQueries) {
         query.toRemove.remove(entity);
         // Use checkQueryTrackingWithRelations if query has relation filters, otherwise use checkQueryTracking
-        const match =
-            query.relationFilters && query.relationFilters.length > 0
-                ? checkQueryTrackingWithRelations(world, query, entity, 'add', generationId, bitflag)
-                : query.checkTracking(world, entity, 'add', generationId, bitflag);
+        const match = matchTrackingQuery(world, query, entity, 'add', generationId, bitflag);
         if (match) query.add(entity);
         else query.remove(world, entity);
     }
@@ -514,17 +515,7 @@ function removeTraitFromEntity(world: World, entity: Entity, trait: Trait): void
     // Update tracking queries (with event data)
     for (const query of trackingQueries) {
         // Use checkQueryTrackingWithRelations if query has relation filters, otherwise use checkQueryTracking
-        const match =
-            query.relationFilters && query.relationFilters.length > 0
-                ? checkQueryTrackingWithRelations(
-                      world,
-                      query,
-                      entity,
-                      'remove',
-                      generationId,
-                      bitflag
-                  )
-                : query.checkTracking(world, entity, 'remove', generationId, bitflag);
+        const match = matchTrackingQuery(world, query, entity, 'remove', generationId, bitflag);
         if (match) query.add(entity);
         else query.remove(world, entity);
     }
