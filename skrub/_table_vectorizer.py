@@ -16,6 +16,7 @@ from ._clean_categories import CleanCategories
 from ._clean_null_strings import CleanNullStrings
 from ._datetime_encoder import DatetimeEncoder
 from ._drop_uninformative import DropUninformative
+from ._duration_encoder import DurationEncoder
 from ._select_cols import Drop
 from ._single_column_transformer import SingleColumnTransformer
 from ._sklearn_compat import _VisualBlock
@@ -44,6 +45,7 @@ LOW_CARDINALITY_TRANSFORMER = OneHotEncoder(
     drop="if_binary",
 )
 DATETIME_TRANSFORMER = DatetimeEncoder()
+DURATION_TRANSFORMER = DurationEncoder()
 NUMERIC_TRANSFORMER = PassThrough()
 
 
@@ -194,7 +196,8 @@ class Cleaner(TransformerMixin, BaseEstimator):
 
     cast_to_str : bool, default=False
         If ``True``, apply the ``ToStr`` transformer to non-numeric,
-        non-categorical, and non-datetime columns, converting them to strings.
+        non-categorical, non-datetime, and non-duration columns, converting
+        them to strings.
         If ``False``, this step is skipped and such columns retain their
         original dtype (e.g., lists, structs).
 
@@ -487,6 +490,10 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
         The transformer for date and datetime columns. By default, we use a
         :class:`~skrub.DatetimeEncoder`.
 
+    duration : transformer, "passthrough" or "drop", default=DurationEncoder instance
+        The transformer for duration columns (pandas ``timedelta64`` and polars
+        ``Duration``). By default, we use a :class:`~skrub.DurationEncoder`.
+
     specific_transformers : list of (transformer, list of column names) pairs, \
             default=()
         Override the categories above for the given columns and force using the
@@ -540,7 +547,8 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
         The reverse of ``column_to_kind_``: maps each kind of column
         (``"high_cardinality"``, ``"low_cardinality"``, etc.) to a list of
         column names. For example ``kind_to_columns['datetime']`` contains the
-        names of all datetime columns.
+        names of all datetime columns. ``kind_to_columns_['duration']`` contains
+        the names of all duration columns.
 
     input_to_outputs_ : dict
         Maps the name of each input column to the names of the corresponding
@@ -598,6 +606,7 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
 
     - `numeric`: floats, integers, and booleans.
     - `datetime`: datetimes and dates.
+    - `duration`: durations (pandas ``timedelta64``, polars ``Duration``).
     - `low_cardinality`: string and categorical columns with a count
       of unique values smaller than a given threshold (40 by default). Category encoding
       schemes such as one-hot encoding, ordinal encoding etc. are typically appropriate
@@ -681,7 +690,7 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
     to them:
 
     >>> vectorizer.kind_to_columns_
-    {'numeric': ['C'], 'datetime': ['B'], 'low_cardinality': ['A'], 'high_cardinality': [], 'specific': []}
+    {'numeric': ['C'], 'datetime': ['B'], 'duration': [], 'low_cardinality': ['A'], 'high_cardinality': [], 'specific': []}
 
     As well as the reverse mapping (from each column to its kind):
 
@@ -791,6 +800,7 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
         high_cardinality=HIGH_CARDINALITY_TRANSFORMER,
         numeric=NUMERIC_TRANSFORMER,
         datetime=DATETIME_TRANSFORMER,
+        duration=DURATION_TRANSFORMER,
         specific_transformers=(),
         drop_null_fraction=1.0,
         drop_if_constant=False,
@@ -808,6 +818,7 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
         )
         self.numeric = _utils.clone_if_default(numeric, NUMERIC_TRANSFORMER)
         self.datetime = _utils.clone_if_default(datetime, DATETIME_TRANSFORMER)
+        self.duration = _utils.clone_if_default(duration, DURATION_TRANSFORMER)
         self.specific_transformers = specific_transformers
         self.n_jobs = n_jobs
         self.drop_null_fraction = drop_null_fraction
@@ -940,6 +951,7 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
         for name, selector in [
             ("numeric", s.numeric()),
             ("datetime", s.any_date()),
+            ("duration", s.duration()),
             (
                 "low_cardinality",
                 s.cardinality_below(self.cardinality_threshold),
@@ -1016,6 +1028,7 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
             name_details = [
                 self.kind_to_columns_["numeric"],
                 self.kind_to_columns_["datetime"],
+                self.kind_to_columns_["duration"],
                 self.kind_to_columns_["low_cardinality"],
                 self.kind_to_columns_["high_cardinality"],
             ]
@@ -1023,8 +1036,20 @@ class TableVectorizer(TransformerMixin, BaseEstimator):
             name_details = None
         return _VisualBlock(
             "parallel",
-            [self.numeric, self.datetime, self.low_cardinality, self.high_cardinality],
-            names=["numeric", "datetime", "low_cardinality", "high_cardinality"],
+            [
+                self.numeric,
+                self.datetime,
+                self.duration,
+                self.low_cardinality,
+                self.high_cardinality,
+            ],
+            names=[
+                "numeric",
+                "datetime",
+                "duration",
+                "low_cardinality",
+                "high_cardinality",
+            ],
             name_details=name_details,
         )
 
