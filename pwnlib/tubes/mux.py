@@ -8,10 +8,10 @@ Both ends of the underlying tube must be wrapped in a
 :class:`pwnlib.tubes.tube.tube`, so all the usual ``recv*``/``send*``
 helpers work on it.
 
-Each channel has its own receive buffer and its own flow control: when the
-receive buffer of a channel reaches the high water mark, the remote sender
-of that channel is paused until the buffer has drained to the low water
-mark.  Other channels are unaffected.
+Each channel has its own receive buffer and its own flow control: once the
+remote sender of a channel has sent as much data as the high water mark
+without it being consumed, it is paused until the receive buffer has drained
+to the low water mark.  Other channels are unaffected.
 
 Example:
 
@@ -49,9 +49,15 @@ Wire format:
     ``channel_id:u16``, ``length:u32``, followed by ``length`` bytes of
     payload.  Channel ``0`` is reserved for frames addressing the
     multiplexer as a whole.
+
+    ``OPEN`` and ``OPEN_ACK`` carry the high water mark of their sender as
+    ``u32``.  The other end may send up to that many bytes on the channel
+    before it has to wait for a ``CREDIT`` frame (``u64``) that reports how
+    many bytes were consumed.
 """
 import collections
 import random
+import socket
 import struct
 import threading
 import time
@@ -71,6 +77,8 @@ MAX_CHANNEL_ID = 0xffff
 MAX_PAYLOAD = 0xffffffff
 
 _HEADER = struct.Struct('>BHI')
+_WINDOW = struct.Struct('>I')
+_CREDIT_AMOUNT = struct.Struct('>Q')
 
 _OPEN     = 1
 _OPEN_ACK = 2
@@ -78,10 +86,11 @@ _REJECT   = 3
 _DATA     = 4
 _FIN      = 5   # sender will not send any more data on the channel
 _CLOSE    = 6   # channel is closed; answered with a CLOSE of its own
-_PAUSE    = 7
-_RESUME   = 8
-_RDSHUT   = 9   # sender will not read any more data on the channel
-_GOAWAY   = 10  # multiplexer is shutting down
+_CREDIT   = 7   # receiver consumed data, the sender may send more
+_RDSHUT   = 8   # sender will not read any more data on the channel
+_GOAWAY   = 9   # multiplexer is shutting down
+
+_POLL_INTERVAL = 0.05
 
 _REJECT_IN_USE  = 1
 _REJECT_FULL    = 2
@@ -142,8 +151,13 @@ class MuxChannel(tube):
         self._close_sent = False
         self._dead = False          # multiplexer is gone
 
-        self._paused = False        # peer asked us to stop sending
-        self._pausing_peer = False  # we asked the peer to stop sending
+        # Flow control.  _unacked counts bytes sent that the peer has not
+        # reported as consumed yet; sending pauses once it reaches the peer's
+        # high water mark.  _unreported counts bytes consumed locally that
+        # have not been reported to the peer yet.
+        self._peer_window = None
+        self._unacked = 0
+        self._unreported = 0
 
     def __repr__(self):
         return '<%s channel_id=%d>' % (type(self).__name__, self._channel_id)
@@ -163,6 +177,22 @@ class MuxChannel(tube):
     def _send_blocked(self):
         return self._send_closed or self._peer_rdshut or self._dead
 
+    def _flow_blocked(self):
+        return self._peer_window is not None and 0 < self._unacked and self._peer_window <= self._unacked
+
+    def _maybe_credit(self):
+        """Returns consumed bytes to the peer once the receive buffer has
+        drained to the low water mark.  The caller must hold ``_cond``.
+
+        The peer can only be paused if everything it sent but was not
+        credited yet (``_unreported`` plus the buffer) reached the high water
+        mark, so smaller amounts are not worth a frame.
+        """
+        rx = self._rx
+        if self._unreported and rx.under_low_water and self._unreported + rx.size >= rx.high_water:
+            self._mux._queue_control(_CREDIT, self._channel_id, _CREDIT_AMOUNT.pack(self._unreported))
+            self._unreported = 0
+
     def recv_raw(self, numb):
         deadline = _deadline(self.timeout)
         with self._cond:
@@ -179,9 +209,8 @@ class MuxChannel(tube):
                     return None
                 self._cond.wait(remaining)
 
-            if self._pausing_peer and self._rx.under_low_water:
-                self._pausing_peer = False
-                self._mux._queue_control(_RESUME, self._channel_id)
+            self._unreported += len(data)
+            self._maybe_credit()
         return data
 
     def send_raw(self, data):
@@ -194,7 +223,7 @@ class MuxChannel(tube):
             while True:
                 if self._send_blocked():
                     raise EOFError
-                if not self._paused:
+                if not self._flow_blocked():
                     break
                 remaining = _remaining(deadline)
                 if remaining == 0:
@@ -205,10 +234,12 @@ class MuxChannel(tube):
             with self._cond:
                 if self._send_blocked():
                     raise EOFError
-            mux._write_frame(_DATA, self._channel_id, data)
-            with self._cond:
+                # Account before writing, the peer may credit the data
+                # before we get to run again.
+                self._unacked += len(data)
                 self._stats['bytes_sent'] += len(data)
                 self._stats['frames_sent'] += 1
+            mux._write_frame(_DATA, self._channel_id, data)
 
     def settimeout_raw(self, timeout):
         pass
@@ -310,6 +341,33 @@ class TubeMultiplexer(object):
         TypeError: ``underlying`` is not a tube.
         ValueError: ``max_channels`` is out of range, or ``low_water_mark``
             exceeds ``high_water_mark``.
+
+    Example:
+
+        A sender that is paused by flow control times out according to the
+        timeout of its channel, and resumes once the receiver drained its
+        buffer:
+
+        >>> l = listen()
+        >>> a = remote('localhost', l.lport).mux(high_water_mark=4, low_water_mark=0)
+        >>> b = l.wait_for_connection().mux(high_water_mark=4, low_water_mark=0)
+        >>> ch, other = a.open_channel(), a.open_channel()
+        >>> peer, other_peer = b.accept_channel(), b.accept_channel()
+        >>> ch.settimeout(0.5)
+        >>> ch.send(b'full')
+        >>> ch.send(b'more')
+        Traceback (most recent call last):
+        ...
+        TimeoutError: channel 1: send blocked by flow control
+        >>> other.send(b'fine')
+        >>> other_peer.recv()
+        b'fine'
+        >>> peer.recv()
+        b'full'
+        >>> ch.send(b'more')
+        >>> peer.recv()
+        b'more'
+        >>> a.close(); b.close()
     """
 
     def __init__(self, underlying, max_channels=256, high_water_mark=1048576, low_water_mark=262144):
@@ -350,6 +408,16 @@ class TubeMultiplexer(object):
 
         self._closed = False
         self._closed_locally = False
+
+        # Credit frames are tiny and a paused sender waits for them, so do
+        # not let Nagle's algorithm hold them back.
+        sock = getattr(underlying, 'sock', None)
+        if isinstance(sock, socket.socket) and sock.type == socket.SOCK_STREAM \
+                and sock.family in (socket.AF_INET, socket.AF_INET6):
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass
 
         self._reader = context.Thread(target=self._reader_loop, name='mux-reader')
         self._reader.daemon = True
@@ -443,7 +511,7 @@ class TubeMultiplexer(object):
                 self._pending[cid] = ch
 
             try:
-                self._send_frame(_OPEN, cid)
+                self._send_frame(_OPEN, cid, self._window_payload())
             except EOFError:
                 raise EOFError('multiplexer is closed')
 
@@ -514,6 +582,15 @@ class TubeMultiplexer(object):
 
     # Internals
 
+    def _window_payload(self):
+        return _WINDOW.pack(min(self._high_water_mark, 0xffffffff))
+
+    @staticmethod
+    def _parse_window(payload):
+        if len(payload) < _WINDOW.size:
+            return None
+        return _WINDOW.unpack_from(payload)[0]
+
     def _check_capacity(self):
         if len(self._channels) + len(self._pending) >= self._max_channels:
             raise ValueError('maximum number of channels (%d) reached' % self._max_channels)
@@ -579,11 +656,38 @@ class TubeMultiplexer(object):
             except EOFError:
                 return
 
+    def _read_underlying(self, poll):
+        """Returns data from the underlying tube, or ``b''`` if there is none
+        yet.  Raises :exc:`EOFError` once the underlying tube is gone.
+
+        Polling instead of blocking in ``recv`` lets us notice when the
+        underlying tube is closed behind our back: closing a socket does not
+        wake up a thread blocked reading from it.  ``can_recv`` does not touch
+        the timeout of the underlying tube, which would affect concurrent
+        senders.
+        """
+        underlying = self._underlying
+        if poll:
+            if not underlying.can_recv(timeout=_POLL_INTERVAL):
+                try:
+                    alive = underlying.connected('recv')
+                except NotImplementedError:
+                    alive = True
+                if not alive:
+                    raise EOFError
+                return b''
+        return underlying.recv(65536)
+
     def _reader_loop(self):
         buf = bytearray()
+        poll = True
         try:
             while not self._closed:
-                data = self._underlying.recv(65536)
+                try:
+                    data = self._read_underlying(poll)
+                except NotImplementedError:
+                    poll = False
+                    continue
                 if not data:
                     continue
                 buf += data
@@ -604,7 +708,7 @@ class TubeMultiplexer(object):
     def _handle_frame(self, ftype, cid, payload):
         if ftype == _GOAWAY:
             return False
-        if ftype not in (_OPEN, _OPEN_ACK, _REJECT, _DATA, _FIN, _CLOSE, _PAUSE, _RESUME, _RDSHUT) \
+        if ftype not in (_OPEN, _OPEN_ACK, _REJECT, _DATA, _FIN, _CLOSE, _CREDIT, _RDSHUT) \
                 or not MIN_CHANNEL_ID <= cid <= MAX_CHANNEL_ID:
             log.debug('mux: protocol error, frame type %d on channel %d', ftype, cid)
             return False
@@ -614,9 +718,9 @@ class TubeMultiplexer(object):
                 return False
 
             if ftype == _OPEN:
-                self._handle_open(cid)
+                self._handle_open(cid, self._parse_window(payload))
             elif ftype == _OPEN_ACK:
-                self._handle_open_ack(cid)
+                self._handle_open_ack(cid, self._parse_window(payload))
             elif ftype == _REJECT:
                 ch = self._pending.pop(cid, None)
                 if ch is not None:
@@ -636,14 +740,12 @@ class TubeMultiplexer(object):
                     ch._remote_eof = True
                 elif ftype == _RDSHUT:
                     ch._peer_rdshut = True
-                elif ftype == _PAUSE:
-                    ch._paused = True
-                elif ftype == _RESUME:
-                    ch._paused = False
+                elif ftype == _CREDIT and len(payload) >= _CREDIT_AMOUNT.size:
+                    ch._unacked -= _CREDIT_AMOUNT.unpack_from(payload)[0]
             self._cond.notify_all()
         return True
 
-    def _handle_open(self, cid):
+    def _handle_open(self, cid, window):
         if self._id_in_use(cid):
             self._queue_control(_REJECT, cid, bytes([_REJECT_IN_USE]))
             return
@@ -653,16 +755,19 @@ class TubeMultiplexer(object):
 
         ch = MuxChannel(self, cid)
         ch._open_state = _ACKED
+        ch._peer_window = window
         self._channels[cid] = ch
 
         # Only hand the channel out once the ack is on the wire, so that
         # nothing sent on it can overtake the ack.
-        self._queue_control(_OPEN_ACK, cid, done=lambda: self._accept_queue.append(ch))
+        self._queue_control(_OPEN_ACK, cid, self._window_payload(),
+                            done=lambda: self._accept_queue.append(ch))
 
-    def _handle_open_ack(self, cid):
+    def _handle_open_ack(self, cid, window):
         ch = self._pending.pop(cid, None)
         if ch is not None:
             ch._open_state = _ACKED
+            ch._peer_window = window
             self._channels[cid] = ch
         elif cid in self._abandoned:
             self._abandoned.discard(cid)
@@ -678,7 +783,6 @@ class TubeMultiplexer(object):
             return
         ch._remote_eof = True
         ch._peer_rdshut = True
-        ch._paused = False
         ch._close_sent = True
         self._closing[cid] = _SENDING_ACK
 
@@ -693,9 +797,7 @@ class TubeMultiplexer(object):
         ch._rx.add(payload)
         ch._stats['bytes_received'] += len(payload)
         ch._stats['frames_received'] += 1
-        if not ch._pausing_peer and ch._rx.over_high_water:
-            ch._pausing_peer = True
-            self._queue_control(_PAUSE, ch._channel_id)
+        ch._maybe_credit()
 
     def _teardown(self, notify_remote):
         with self._cond:
