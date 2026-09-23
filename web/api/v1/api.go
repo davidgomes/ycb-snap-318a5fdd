@@ -59,6 +59,7 @@ import (
 	"github.com/prometheus/prometheus/util/features"
 	"github.com/prometheus/prometheus/util/httputil"
 	"github.com/prometheus/prometheus/util/notifications"
+	"github.com/prometheus/prometheus/util/reloadstatus"
 	"github.com/prometheus/prometheus/util/stats"
 )
 
@@ -261,6 +262,8 @@ type API struct {
 	openAPIBuilder  *OpenAPIBuilder
 
 	parser parser.Parser
+
+	reloadStatus func() reloadstatus.Status
 }
 
 // NewAPI returns an initialized API type.
@@ -369,6 +372,12 @@ func NewAPI(
 	return a
 }
 
+// SetReloadStatusFunc sets the function used by /status/reload to retrieve
+// the outcome of the most recent configuration reload attempt.
+func (api *API) SetReloadStatusFunc(f func() reloadstatus.Status) {
+	api.reloadStatus = f
+}
+
 // InstallCodec adds codec to this API's available codecs.
 // Codecs installed first take precedence over codecs installed later when evaluating wildcards in Accept headers.
 // The first installed codec is used as a fallback when the Accept header cannot be satisfied or if there is no Accept header.
@@ -457,6 +466,7 @@ func (api *API) Register(r *route.Router) {
 	r.Get("/status/runtimeinfo", wrap(api.serveRuntimeInfo))
 	r.Get("/status/buildinfo", wrap(api.serveBuildInfo))
 	r.Get("/status/flags", wrap(api.serveFlags))
+	r.Get("/status/reload", wrap(api.serveReloadStatus))
 	r.Get("/status/tsdb", wrapAgent(api.serveTSDBStatus))
 	r.Get("/status/tsdb/blocks", wrapAgent(api.serveTSDBBlocks))
 	r.Get("/features", wrap(api.features))
@@ -1811,6 +1821,13 @@ func (api *API) serveConfig(*http.Request) apiFuncResult {
 
 func (api *API) serveFlags(*http.Request) apiFuncResult {
 	return apiFuncResult{api.flagsMap, nil, nil, nil}
+}
+
+func (api *API) serveReloadStatus(*http.Request) apiFuncResult {
+	if api.reloadStatus == nil {
+		return apiFuncResult{reloadstatus.Initial(), nil, nil, nil}
+	}
+	return apiFuncResult{api.reloadStatus(), nil, nil, nil}
 }
 
 // featuresData wraps feature flags data to provide custom JSON marshaling without HTML escaping.

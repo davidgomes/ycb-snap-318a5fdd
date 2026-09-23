@@ -63,6 +63,7 @@ import (
 	"github.com/prometheus/prometheus/util/httputil"
 	"github.com/prometheus/prometheus/util/netconnlimit"
 	"github.com/prometheus/prometheus/util/notifications"
+	"github.com/prometheus/prometheus/util/reloadstatus"
 	api_v1 "github.com/prometheus/prometheus/web/api/v1"
 	"github.com/prometheus/prometheus/web/ui"
 )
@@ -275,6 +276,7 @@ type Options struct {
 	Version               *PrometheusVersion
 	NotificationsGetter   func() []notifications.Notification
 	NotificationsSub      func() (<-chan notifications.Notification, func(), bool)
+	ReloadStatus          func() reloadstatus.Status
 	Flags                 map[string]string
 
 	ListenAddresses            []string
@@ -427,6 +429,7 @@ func New(logger *slog.Logger, o *Options) *Handler {
 		},
 		o.Parser,
 	)
+	h.apiV1.SetReloadStatusFunc(o.ReloadStatus)
 
 	if r := o.FeatureRegistry; r != nil {
 		// Set dynamic API features (based on configuration).

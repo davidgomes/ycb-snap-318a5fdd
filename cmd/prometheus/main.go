@@ -84,6 +84,7 @@ import (
 	"github.com/prometheus/prometheus/util/features"
 	"github.com/prometheus/prometheus/util/logging"
 	"github.com/prometheus/prometheus/util/notifications"
+	"github.com/prometheus/prometheus/util/reloadstatus"
 	prom_runtime "github.com/prometheus/prometheus/util/runtime"
 	"github.com/prometheus/prometheus/web"
 )
@@ -205,6 +206,8 @@ type flagConfig struct {
 	enableAutoReload   bool
 	autoReloadInterval model.Duration
 
+	enableTransactionalReload bool
+
 	maxprocsEnable bool
 	memlimitEnable bool
 	memlimitRatio  float64
@@ -255,6 +258,9 @@ func (c *flagConfig) setFeatureListOptions(logger *slog.Logger) error {
 					c.autoReloadInterval, _ = model.ParseDuration("1s")
 				}
 				logger.Info("Enabled automatic configuration file reloading. Checking for configuration changes every", "interval", c.autoReloadInterval)
+			case "transactional-reload-config":
+				c.enableTransactionalReload = true
+				logger.Info("Experimental transactional configuration reloading enabled.")
 			case "concurrent-rule-eval":
 				c.enableConcurrentRuleEval = true
 				logger.Info("Experimental concurrent rule evaluation enabled.")
@@ -601,7 +607,7 @@ func main() {
 	a.Flag("scrape.discovery-reload-interval", "Interval used by scrape manager to throttle target groups updates.").
 		Hidden().Default("5s").SetValue(&cfg.scrape.DiscoveryReloadInterval)
 
-	a.Flag("enable-feature", "Comma separated feature names to enable. Valid options: exemplar-storage, expand-external-labels, memory-snapshot-on-shutdown, promql-per-step-stats, promql-experimental-functions, extra-scrape-metrics, auto-gomaxprocs, created-timestamp-zero-ingestion, concurrent-rule-eval, delayed-compaction, old-ui, otlp-deltatocumulative, promql-duration-expr, use-uncached-io, promql-extended-range-selectors, promql-binop-fill-modifiers. See https://prometheus.io/docs/prometheus/latest/feature_flags/ for more details.").
+	a.Flag("enable-feature", "Comma separated feature names to enable. Valid options: exemplar-storage, expand-external-labels, memory-snapshot-on-shutdown, promql-per-step-stats, promql-experimental-functions, extra-scrape-metrics, auto-gomaxprocs, created-timestamp-zero-ingestion, concurrent-rule-eval, transactional-reload-config, delayed-compaction, old-ui, otlp-deltatocumulative, promql-duration-expr, use-uncached-io, promql-extended-range-selectors, promql-binop-fill-modifiers. See https://prometheus.io/docs/prometheus/latest/feature_flags/ for more details.").
 		Default("").StringsVar(&cfg.featureList)
 
 	a.Flag("agent", "Run Prometheus in 'Agent mode'.").BoolVar(&agentMode)
@@ -863,6 +869,7 @@ func main() {
 	features.Set(features.Prometheus, "agent_mode", agentMode)
 	features.Set(features.Prometheus, "server_mode", !agentMode)
 	features.Set(features.Prometheus, "auto_reload_config", cfg.enableAutoReload)
+	features.Set(features.Prometheus, "transactional_reload_config", cfg.enableTransactionalReload)
 	features.Enable(features.Prometheus, labels.ImplementationName)
 	template.RegisterFeatures(features.DefaultRegistry)
 
@@ -985,6 +992,9 @@ func main() {
 	cfg.web.TSDBMaxBytes = cfg.tsdb.MaxBytes
 	cfg.web.TSDBMaxPercentage = cfg.tsdb.MaxPercentage
 	cfg.web.TSDBDir = localStoragePath
+
+	reloadStatusStore := reloadstatus.NewStore(localStoragePath, logger.With("component", "reload_status"))
+	cfg.web.ReloadStatus = reloadStatusStore.Get
 	cfg.web.LocalStorage = localStorage
 	cfg.web.Storage = fanoutStorage
 	cfg.web.ExemplarStorage = localStorage
@@ -1123,6 +1133,19 @@ func main() {
 
 	prometheus.MustRegister(configSuccess)
 	prometheus.MustRegister(configSuccessTime)
+
+	var txReloader *transactionalReloader
+	if cfg.enableTransactionalReload {
+		txReloader = &transactionalReloader{store: reloadStatusStore}
+	}
+	// doReloadConfig loads and applies the configuration file. initial must be true
+	// only for the configuration load at startup, which is not recorded as a reload attempt.
+	doReloadConfig := func(initial bool, callback func(bool)) error {
+		if txReloader != nil {
+			return txReloader.reload(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, !initial, reloaders...)
+		}
+		return reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...)
+	}
 
 	// Start all components while we wait for TSDB to open but only load
 	// initial config and mark ourselves as ready after it completed.
@@ -1297,7 +1320,7 @@ func main() {
 				for {
 					select {
 					case <-hup:
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := doReloadConfig(false, callback); err != nil {
 							logger.Error("Error reloading config", "err", err)
 						} else if cfg.enableAutoReload {
 							checksum, err = config.GenerateChecksum(cfg.configFile)
@@ -1306,7 +1329,7 @@ func main() {
 							}
 						}
 					case rc := <-webHandler.Reload():
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := doReloadConfig(false, callback); err != nil {
 							logger.Error("Error reloading config", "err", err)
 							rc <- err
 						} else {
@@ -1331,7 +1354,7 @@ func main() {
 						}
 						logger.Info("Configuration file change detected, reloading the configuration.")
 
-						if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, callback, reloaders...); err != nil {
+						if err := doReloadConfig(false, callback); err != nil {
 							logger.Error("Error reloading config", "err", err)
 						} else {
 							checksum = currentChecksum
@@ -1363,7 +1386,7 @@ func main() {
 					return nil
 				}
 
-				if err := reloadConfig(cfg.configFile, cfg.tsdb.EnableExemplarStorage, logger, noStepSubqueryInterval, func(bool) {}, reloaders...); err != nil {
+				if err := doReloadConfig(true, func(bool) {}); err != nil {
 					return fmt.Errorf("error loading config from %q: %w", cfg.configFile, err)
 				}
 
