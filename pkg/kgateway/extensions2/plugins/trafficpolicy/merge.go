@@ -61,6 +61,7 @@ func MergeTrafficPolicies(
 		mergeURLRewrite,
 		mergeAPIKeyAuth,
 		mergeOAuth,
+		mergeConsistentHash,
 	}
 
 	for _, mergeFunc := range mergeFuncs {
@@ -619,6 +620,62 @@ func mergeURLRewrite(
 		Set: func(spec *trafficPolicySpecIr, val *urlRewriteIR) { spec.urlRewrite = val },
 	}
 	defaultMerge(p1, p2, p2Ref, p2MergeOrigins, opts, mergeOrigins, accessor, "urlRewrite")
+}
+
+// mergeConsistentHash unions the hash policies of p1 and p2 with the higher-priority policy's
+// entries first, deduplicated by key. The higher-priority policy's sourceIp and disable
+// settings take precedence.
+func mergeConsistentHash(
+	p1, p2 *TrafficPolicy,
+	p2Ref *ir.AttachedPolicyRef,
+	p2MergeOrigins ir.MergeOrigins,
+	opts policy.MergeOptions,
+	mergeOrigins ir.MergeOrigins,
+	_ TrafficPolicyMergeOpts,
+) {
+	p2CH := p2.spec.consistentHash
+	if p2CH == nil {
+		return
+	}
+	p1CH := p1.spec.consistentHash
+	if p1CH == nil {
+		p1.spec.consistentHash = p2CH
+		mergeOrigins.SetOne(consistentHashMergeField, p2Ref, p2MergeOrigins)
+		return
+	}
+
+	var preferP2 bool
+	switch opts.Strategy {
+	case policy.AugmentedShallowMerge, policy.AugmentedDeepMerge:
+		preferP2 = false
+	case policy.OverridableShallowMerge, policy.OverridableDeepMerge:
+		preferP2 = true
+	default:
+		logger.Warn("unsupported merge strategy for policy", "strategy", opts.Strategy, "policy", p2Ref, "field", consistentHashMergeField)
+		return
+	}
+
+	higher, lower := p1CH, p2CH
+	if preferP2 {
+		higher, lower = p2CH, p1CH
+	}
+
+	if higher.disable || lower.disable {
+		// the higher-priority policy wins outright when either side disables hashing
+		if preferP2 {
+			p1.spec.consistentHash = p2CH
+			mergeOrigins.SetOne(consistentHashMergeField, p2Ref, p2MergeOrigins)
+		}
+		return
+	}
+
+	merged := higher.union(lower)
+	if !preferP2 && merged.Equals(p1CH) {
+		// p2 did not contribute any new entries
+		return
+	}
+	p1.spec.consistentHash = merged
+	mergeOrigins.Append(consistentHashMergeField, p2Ref, p2MergeOrigins)
 }
 
 // fieldAccessor defines how to access and set a field on trafficPolicySpecIr

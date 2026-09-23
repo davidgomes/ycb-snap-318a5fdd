@@ -113,6 +113,10 @@ func (c *TrafficPolicyConstructor) ConstructIR(
 
 	// Construct url rewrite specific IR
 	constructURLRewrite(policyCR.Spec, &outSpec)
+	// Construct consistent hash specific IR
+	if err := constructConsistentHash(policyCR.Spec, &outSpec); err != nil {
+		errors = append(errors, err)
+	}
 	// Construct basic auth specific IR
 	if err := constructBasicAuth(krtctx, policyCR, &outSpec, c.commoncol.Secrets); err != nil {
 		errors = append(errors, err)
