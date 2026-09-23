@@ -326,15 +326,18 @@ class Compositor(object):
         else:
             color, shape, alpha = self._get_object(layer)
 
+        # "This Layer" blend-if ranges refer to the layer's own pixels.
+        blend_if = self._get_blend_if(layer, color, knockout)
+
         # Composite clip layers.
         if layer.has_clip_layers():
             color = self._apply_clip_layers(layer, color, alpha)
 
-        # Apply masks and opacity.
+        # Apply masks, blend-if ranges, and opacity.
         shape_mask, opacity_mask = self._get_mask(layer)
         shape_const, opacity_const = self._get_const(layer)
-        shape *= shape_mask
-        alpha *= shape_mask * opacity_mask * opacity_const
+        shape *= shape_mask * blend_if
+        alpha *= shape_mask * blend_if * opacity_mask * opacity_const
 
         # TODO: Tag.BLEND_INTERIOR_ELEMENTS controls how inner effects apply.
 
@@ -549,6 +552,16 @@ class Compositor(object):
         assert shape is not None
         assert opacity is not None
         return shape, opacity
+
+    def _get_blend_if(
+        self, layer: Layer, color: np.ndarray, knockout: bool
+    ) -> float | np.ndarray:
+        """Get blend-if visibility against the current backdrop."""
+        blend_ranges = layer.blend_ranges
+        if blend_ranges.is_default:
+            return 1.0
+        backdrop = self._color_0 if knockout else self._color
+        return blend_ranges.compute_visibility(color, backdrop)
 
     def _get_const(self, layer: Layer) -> tuple[float, float]:
         """Get constant attributes."""
