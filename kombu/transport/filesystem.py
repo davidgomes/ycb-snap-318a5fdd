@@ -347,6 +347,8 @@ class Transport(virtual.Transport):
     def __init__(self, client, **kwargs):
         super().__init__(client, **kwargs)
         self.state = self.global_state
+        # Consumer registrations are per connection. Queue files stay global.
+        self.state.clear_consumer_state()
 
     def driver_version(self):
         return 'N/A'

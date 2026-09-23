@@ -730,3 +730,46 @@ class test_Consumer:
         p = self.connection.Consumer()
         p.channel = object()
         assert p.connection is None
+
+    def test_cancel_notify_and_sac_helpers(self):
+        connection = Connection(transport='memory')
+        channel = connection.channel()
+        seen = []
+
+        def bad(tag):
+            raise RuntimeError(tag)
+
+        def good(tag):
+            seen.append(tag)
+
+        queue = Queue.with_single_active_consumer(
+            'messaging-sac-q', Exchange('messaging-sac-ex'), 'rk',
+        )
+        consumer = Consumer(channel, queue, on_cancel=bad)
+        assert consumer.on_cancel_notify(good) is consumer
+        consumer.consume()
+        assert consumer.consuming_from_sac(queue) is True
+        assert consumer.is_active_on(queue) is True
+        assert consumer.active_consumer_tags == [
+            consumer._active_tags[queue.name],
+        ]
+
+        standby = Consumer(
+            connection.channel(),
+            Queue.with_priority_and_sac(
+                'messaging-sac-q', Exchange('messaging-sac-ex'),
+                priority=1, routing_key='rk',
+            ),
+        )
+        standby.consume()
+        assert consumer.is_active_on(queue) is False
+        assert standby.is_active_on('messaging-sac-q') is True
+        assert seen == [consumer._active_tags[queue.name]]
+
+        seen.clear()
+        standby.cancel()
+        assert seen == []
+        assert consumer.is_active_on(queue) is True
+        active_tag = consumer._active_tags[queue.name]
+        consumer.cancel()
+        assert seen == [active_tag]

@@ -435,6 +435,40 @@ class test_Queue:
         assert 'foo' in repr(b)
         assert 'Queue' in repr(b)
 
+    def test_single_active_consumer_and_priority_helpers(self) -> None:
+        plain = Queue('plain', self.exchange, 'rk')
+        assert plain.consumer_priority == 0
+        assert plain.is_single_active_consumer is False
+
+        original = {'x-other': 1}
+        prioritized = Queue.with_consumer_priority(
+            'prio', self.exchange, priority=4, routing_key='rk',
+            consumer_arguments=original,
+        )
+        assert prioritized.consumer_priority == 4
+        assert prioritized.consumer_arguments == {
+            'x-other': 1, 'x-priority': 4,
+        }
+        assert 'x-priority' not in original
+        assert prioritized.is_single_active_consumer is False
+
+        sac = Queue.with_single_active_consumer(
+            'sac', self.exchange, routing_key='rk',
+            queue_arguments={'x-message-ttl': 5},
+        )
+        assert sac.durable is True
+        assert sac.is_single_active_consumer is True
+        assert sac.queue_arguments['x-message-ttl'] == 5
+        assert sac.consumer_priority == 0
+
+        both = Queue.with_priority_and_sac(
+            'both', 'ex-name', priority=7, durable=False,
+        )
+        assert both.durable is False
+        assert both.is_single_active_consumer is True
+        assert both.consumer_priority == 7
+        assert both.exchange.name == 'ex-name'
+
 
 class test_MaybeChannelBound:
 
