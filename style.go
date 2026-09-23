@@ -1,9 +1,9 @@
 package termenv
 
 import (
-	"fmt"
 	"strings"
 
+	"github.com/muesli/termenv/ansi"
 	"github.com/rivo/uniseg"
 )
 
@@ -24,7 +24,8 @@ const (
 type Style struct {
 	profile Profile
 	string
-	styles []string
+	styles         []string
+	preserveResets bool
 }
 
 // String returns a new Style.
@@ -53,7 +54,59 @@ func (t Style) Styled(s string) string {
 		return s
 	}
 
-	return fmt.Sprintf("%s%sm%s%sm", CSI, seq, s, CSI+ResetSeq)
+	open := CSI + seq + "m"
+	if t.preserveResets {
+		s = reopenAfterResets(s, open)
+	}
+	return open + s + CSI + ResetSeq + "m"
+}
+
+// PreserveResets re-opens this style after every reset run in the text.
+func (t Style) PreserveResets() Style {
+	t.preserveResets = true
+	return t
+}
+
+// Truncate shortens the styled string to width visible columns.
+// Under the Ascii profile the result is plain text and opts.Tail is ignored.
+func (t Style) Truncate(width int, opts TruncateOptions) string {
+	if t.profile == Ascii {
+		return TruncateANSI(StripANSI(t.string), width, TruncateOptions{})
+	}
+	if opts.PreserveResets {
+		t.preserveResets = true
+	}
+	if len(t.styles) == 0 {
+		return TruncateANSI(t.string, width, opts)
+	}
+	opts.PreserveResets = false
+	return TruncateANSI(t.String(), width, opts)
+}
+
+// reopenAfterResets inserts open after each reset run that is followed by
+// more input, so the enclosing style continues.
+func reopenAfterResets(s, open string) string {
+	if open == "" || !ansi.HasANSI(s) {
+		return s
+	}
+	tokens := ansi.Tokenize(s)
+	var b strings.Builder
+	b.Grow(len(s) + len(open))
+	for i := 0; i < len(tokens); {
+		if tokens[i].Type != ansi.TokenReset {
+			b.WriteString(tokens[i].Raw)
+			i++
+			continue
+		}
+		for i < len(tokens) && tokens[i].Type == ansi.TokenReset {
+			b.WriteString(tokens[i].Raw)
+			i++
+		}
+		if i < len(tokens) {
+			b.WriteString(open)
+		}
+	}
+	return b.String()
 }
 
 // Foreground sets a foreground color.

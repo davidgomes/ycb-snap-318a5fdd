@@ -26,13 +26,14 @@ type Output struct {
 	w       io.Writer
 	environ Environ
 
-	assumeTTY bool
-	unsafe    bool
-	cache     bool
-	fgSync    *sync.Once
-	fgColor   Color
-	bgSync    *sync.Once
-	bgColor   Color
+	assumeTTY      bool
+	unsafe         bool
+	cache          bool
+	preserveResets bool
+	fgSync         *sync.Once
+	fgColor        Color
+	bgSync         *sync.Once
+	bgColor        Color
 }
 
 // Environ is an interface for getting environment variables.
@@ -118,6 +119,34 @@ func WithTTY(v bool) OutputOption {
 	return func(o *Output) {
 		o.assumeTTY = v
 	}
+}
+
+// WithPreserveResets sets the default PreserveResets flag for styles created
+// by this Output. When enabled, a style is re-opened after each reset run.
+func WithPreserveResets(v bool) OutputOption {
+	return func(o *Output) {
+		o.preserveResets = v
+	}
+}
+
+// String returns a new Style using this Output's profile and preserve-resets default.
+func (o Output) String(s ...string) Style {
+	st := o.Profile.String(s...)
+	st.preserveResets = o.preserveResets
+	return st
+}
+
+// Truncate shortens s to width visible columns.
+// Preserve-resets is enabled when it is the Output default or opts.PreserveResets is set.
+// Under the Ascii profile the result is plain text with opts.Tail and no ANSI sequences.
+func (o Output) Truncate(s string, width int, opts TruncateOptions) string {
+	if o.Profile == Ascii {
+		return TruncateANSI(StripANSI(s), width, TruncateOptions{Tail: StripANSI(opts.Tail)})
+	}
+	if o.preserveResets {
+		opts.PreserveResets = true
+	}
+	return TruncateANSI(s, width, opts)
 }
 
 // WithUnsafe returns a new OutputOption with unsafe mode enabled. Unsafe mode doesn't
