@@ -214,3 +214,20 @@ class UnresolvedTypeReferenceError(NameError):
 
 class BadDialect(ValueError):
     pass
+
+
+class InvalidFlattenedField(ValueError):
+    def __init__(self, field_name: str, holder_class: Type, msg: str):
+        self.field_name = field_name
+        self.holder_class = holder_class
+        self.msg = msg
+
+    @property
+    def holder_class_name(self) -> str:
+        return type_name(self.holder_class, short=True)
+
+    def __str__(self) -> str:
+        return (
+            f'Flattened field "{self.field_name}" '
+            f"in {self.holder_class_name} is invalid: {self.msg}"
+        )
