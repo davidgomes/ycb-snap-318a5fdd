@@ -360,3 +360,14 @@ Example query:
 ```
 
 See [the fill modifiers documentation](querying/operators.md#filling-in-missing-matches) for more details and examples.
+
+## Transactional configuration reload
+
+`--enable-feature=transactional-reload-config`
+
+Configuration reloaders are applied in sequence and stop at the first failure.
+If some components already applied the new configuration, Prometheus attempts to
+roll them back to the last known-good configuration. The outcome of the most
+recent reload attempt is served at `GET /api/v1/status/reload` and persisted as
+`reload_status.json` in the storage directory. `error_category` is one of
+`none`, `load_error`, `apply_error` or `rollback_error`.

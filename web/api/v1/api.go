@@ -57,6 +57,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb/index"
 	"github.com/prometheus/prometheus/util/annotations"
 	"github.com/prometheus/prometheus/util/features"
+	"github.com/prometheus/prometheus/util/reloadstatus"
 	"github.com/prometheus/prometheus/util/httputil"
 	"github.com/prometheus/prometheus/util/notifications"
 	"github.com/prometheus/prometheus/util/stats"
@@ -455,6 +456,7 @@ func (api *API) Register(r *route.Router) {
 
 	r.Get("/status/config", wrap(api.serveConfig))
 	r.Get("/status/runtimeinfo", wrap(api.serveRuntimeInfo))
+	r.Get("/status/reload", wrap(api.serveReloadStatus))
 	r.Get("/status/buildinfo", wrap(api.serveBuildInfo))
 	r.Get("/status/flags", wrap(api.serveFlags))
 	r.Get("/status/tsdb", wrapAgent(api.serveTSDBStatus))
@@ -1788,6 +1790,10 @@ func getRuleGroupNextToken(file, group string) string {
 
 type prometheusConfig struct {
 	YAML string `json:"yaml"`
+}
+
+func (*API) serveReloadStatus(*http.Request) apiFuncResult {
+	return apiFuncResult{reloadstatus.Default.Get(), nil, nil, nil}
 }
 
 func (api *API) serveRuntimeInfo(*http.Request) apiFuncResult {
