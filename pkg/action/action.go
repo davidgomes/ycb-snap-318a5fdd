@@ -27,6 +27,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"text/template"
@@ -39,6 +40,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/kustomize/kyaml/kio"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
+	"sigs.k8s.io/yaml"
 
 	"helm.sh/helm/v4/internal/logging"
 	"helm.sh/helm/v4/pkg/chart/common"
@@ -260,17 +262,24 @@ func splitAndDeannotate(postrendered string) (map[string]string, error) {
 //
 //	This code has to do with writing files to disk.
 func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values, releaseName, outputDir string, subNotes, useReleaseName, includeCrds bool, pr postrenderer.PostRenderer, interactWithRemote, enableDNS, hideSecret bool) ([]*release.Hook, *bytes.Buffer, string, error) {
+	hs, b, notes, _, err := cfg.renderResourcesWithStream(ch, values, releaseName, outputDir, subNotes, useReleaseName, includeCrds, pr, interactWithRemote, enableDNS, hideSecret)
+	return hs, b, notes, err
+}
+
+// renderResourcesWithStream behaves like renderResources and additionally
+// returns the rendered manifest stream described by release.Release.ManifestStream.
+func (cfg *Configuration) renderResourcesWithStream(ch *chart.Chart, values common.Values, releaseName, outputDir string, subNotes, useReleaseName, includeCrds bool, pr postrenderer.PostRenderer, interactWithRemote, enableDNS, hideSecret bool) ([]*release.Hook, *bytes.Buffer, string, string, error) {
 	var hs []*release.Hook
 	b := bytes.NewBuffer(nil)
 
 	caps, err := cfg.getCapabilities()
 	if err != nil {
-		return hs, b, "", err
+		return hs, b, "", "", err
 	}
 
 	if ch.Metadata.KubeVersion != "" {
 		if !chartutil.IsCompatibleRange(ch.Metadata.KubeVersion, caps.KubeVersion.String()) {
-			return hs, b, "", fmt.Errorf("chart requires kubeVersion: %s which is incompatible with Kubernetes %s", ch.Metadata.KubeVersion, caps.KubeVersion.Version)
+			return hs, b, "", "", fmt.Errorf("chart requires kubeVersion: %s which is incompatible with Kubernetes %s", ch.Metadata.KubeVersion, caps.KubeVersion.Version)
 		}
 	}
 
@@ -283,7 +292,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 	if interactWithRemote && cfg.RESTClientGetter != nil {
 		restConfig, err := cfg.RESTClientGetter.ToRESTConfig()
 		if err != nil {
-			return hs, b, "", err
+			return hs, b, "", "", err
 		}
 		e := engine.New(restConfig)
 		e.EnableDNS = enableDNS
@@ -299,7 +308,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 	}
 
 	if err2 != nil {
-		return hs, b, "", err2
+		return hs, b, "", "", err2
 	}
 
 	// NOTES.txt gets rendered like all the other files, but because it's not a hook nor a resource,
@@ -333,19 +342,19 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 		// Merge files as stream of documents for sending to post renderer
 		merged, err := annotateAndMerge(files)
 		if err != nil {
-			return hs, b, notes, fmt.Errorf("error merging manifests: %w", err)
+			return hs, b, notes, "", fmt.Errorf("error merging manifests: %w", err)
 		}
 
 		// Run the post renderer
 		postRendered, err := pr.Run(bytes.NewBufferString(merged))
 		if err != nil {
-			return hs, b, notes, fmt.Errorf("error while running post render on files: %w", err)
+			return hs, b, notes, "", fmt.Errorf("error while running post render on files: %w", err)
 		}
 
 		// Use the file list and contents received from the post renderer
 		files, err = splitAndDeannotate(postRendered.String())
 		if err != nil {
-			return hs, b, notes, fmt.Errorf("error while parsing post rendered output: %w", err)
+			return hs, b, notes, "", fmt.Errorf("error while parsing post rendered output: %w", err)
 		}
 	}
 
@@ -365,20 +374,22 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 			}
 			fmt.Fprintf(b, "---\n# Source: %s\n%s\n", name, content)
 		}
-		return hs, b, "", err
+		return hs, b, "", "", err
 	}
 
 	// Aggregate all valid manifests into one big doc.
 	fileWritten := make(map[string]bool)
 
+	var crds []chart.CRD
 	if includeCrds {
-		for _, crd := range ch.CRDObjects() {
+		crds = ch.CRDObjects()
+		for _, crd := range crds {
 			if outputDir == "" {
 				fmt.Fprintf(b, "---\n# Source: %s\n%s\n", crd.Filename, string(crd.File.Data[:]))
 			} else {
 				err = writeToFile(outputDir, crd.Filename, string(crd.File.Data[:]), fileWritten[crd.Filename])
 				if err != nil {
-					return hs, b, "", err
+					return hs, b, "", "", err
 				}
 				fileWritten[crd.Filename] = true
 			}
@@ -403,13 +414,87 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 			// used by install or upgrade
 			err = writeToFile(newDir, m.Name, m.Content, fileWritten[m.Name])
 			if err != nil {
-				return hs, b, "", err
+				return hs, b, "", "", err
 			}
 			fileWritten[m.Name] = true
 		}
 	}
 
-	return hs, b, notes, nil
+	return hs, b, notes, manifestStream(files, crds, hs, manifests, hideSecret), nil
+}
+
+// manifestStream joins the CRDs and every hook and resource rendered from files
+// into a single stream. Documents are ordered by source path and then by their
+// position within that file.
+func manifestStream(files map[string]string, crds []chart.CRD, hooks []*release.Hook, manifests []releaseutil.Manifest, hideSecret bool) string {
+	type document struct {
+		source  string
+		content string
+	}
+
+	var docs []document
+	for _, crd := range crds {
+		for _, content := range splitManifestsInOrder(string(crd.File.Data)) {
+			docs = append(docs, document{source: crd.Filename, content: content})
+		}
+	}
+
+	hookDocs := make(map[document]*release.Hook, len(hooks))
+	for _, h := range hooks {
+		hookDocs[document{source: h.Path, content: h.Manifest}] = h
+	}
+	resourceDocs := make(map[document]releaseutil.Manifest, len(manifests))
+	for _, m := range manifests {
+		resourceDocs[document{source: m.Name, content: m.Content}] = m
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		for _, content := range splitManifestsInOrder(files[name]) {
+			doc := document{source: name, content: content}
+			var secret bool
+			if m, ok := resourceDocs[doc]; ok {
+				secret = m.Head.Kind == "Secret" && m.Head.Version == "v1"
+			} else if h, ok := hookDocs[doc]; ok {
+				secret = h.Kind == "Secret" && isV1Secret(h.Manifest)
+			} else {
+				// Partials and hooks of unknown types are neither released nor displayed.
+				continue
+			}
+			if hideSecret && secret {
+				doc.content = "# HIDDEN: The Secret output has been suppressed"
+			}
+			docs = append(docs, doc)
+		}
+	}
+
+	slices.SortStableFunc(docs, func(a, b document) int { return strings.Compare(a.source, b.source) })
+
+	var stream strings.Builder
+	for _, doc := range docs {
+		fmt.Fprintf(&stream, "---\n# Source: %s\n%s\n", doc.source, doc.content)
+	}
+	return stream.String()
+}
+
+// splitManifestsInOrder splits a multi-document YAML file into its documents,
+// keeping the order in which they appear in the file.
+func splitManifestsInOrder(content string) []string {
+	entries := releaseutil.SplitManifests(content)
+	keys := slices.Collect(maps.Keys(entries))
+	sort.Sort(releaseutil.BySplitManifestsOrder(keys))
+	docs := make([]string, len(keys))
+	for i, key := range keys {
+		docs[i] = entries[key]
+	}
+	return docs
+}
+
+func isV1Secret(manifest string) bool {
+	var head releaseutil.SimpleHead
+	if err := yaml.Unmarshal([]byte(manifest), &head); err != nil {
+		return false
+	}
+	return head.Kind == "Secret" && head.Version == "v1"
 }
 
 // RESTClientGetter gets the rest client

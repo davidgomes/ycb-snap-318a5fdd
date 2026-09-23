@@ -34,6 +34,10 @@ This command fetches the generated manifest for a given release.
 A manifest is a YAML-encoded representation of the Kubernetes resources that
 were generated from this release's chart(s). If a chart is dependent on other
 charts, those resources will also be included in the manifest.
+
+Hooks are included in the manifest, and documents are ordered by the path of the
+template that generated them. Hooks are listed before the other resources
+generated from the same template.
 `
 
 func newGetManifestCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
@@ -59,7 +63,20 @@ func newGetManifestCmd(cfg *action.Configuration, out io.Writer) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(out, rac.Manifest())
+			var hooks []manifestDocument
+			for _, hook := range rac.Hooks() {
+				hac, err := release.NewHookAccessor(hook)
+				if err != nil {
+					return err
+				}
+				hooks = append(hooks, hookDocument(hac.Path(), hac.Manifest()))
+			}
+			docs := mergeManifestStream(rac.Manifest(), hooks)
+			if len(docs) == 0 {
+				fmt.Fprintln(out)
+				return nil
+			}
+			writeManifestStream(out, docs)
 			return nil
 		},
 	}

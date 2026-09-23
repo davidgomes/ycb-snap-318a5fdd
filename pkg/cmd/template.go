@@ -17,16 +17,13 @@ limitations under the License.
 package cmd
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	release "helm.sh/helm/v4/pkg/release/v1"
@@ -37,7 +34,6 @@ import (
 	"helm.sh/helm/v4/pkg/chart/common"
 	"helm.sh/helm/v4/pkg/cli/values"
 	"helm.sh/helm/v4/pkg/cmd/require"
-	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 )
 
 const templateDesc = `
@@ -117,66 +113,48 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			// We ignore a potential error here because, when the --debug flag was specified,
 			// we always want to print the YAML, even if it is not valid. The error is still returned afterwards.
 			if rel != nil {
-				var manifests bytes.Buffer
-				fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
-				if !client.DisableHooks {
+				var manifests []manifestDocument
+				if client.OutputDir == "" {
+					manifests = releaseManifestStream(rel, func(h *release.Hook) bool {
+						return !client.DisableHooks && !(skipTests && isTestHook(h))
+					})
+				} else if !client.DisableHooks {
 					fileWritten := make(map[string]bool)
 					for _, m := range rel.Hooks {
 						if skipTests && isTestHook(m) {
 							continue
 						}
-						if client.OutputDir == "" {
-							fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", m.Path, m.Manifest)
-						} else {
-							newDir := client.OutputDir
-							if client.UseReleaseName {
-								newDir = filepath.Join(client.OutputDir, client.ReleaseName)
-							}
-							_, err := os.Stat(filepath.Join(newDir, m.Path))
-							if err == nil {
-								fileWritten[m.Path] = true
-							}
-
-							err = writeToFile(newDir, m.Path, m.Manifest, fileWritten[m.Path])
-							if err != nil {
-								return err
-							}
+						newDir := client.OutputDir
+						if client.UseReleaseName {
+							newDir = filepath.Join(client.OutputDir, client.ReleaseName)
+						}
+						_, err := os.Stat(filepath.Join(newDir, m.Path))
+						if err == nil {
+							fileWritten[m.Path] = true
 						}
 
+						err = writeToFile(newDir, m.Path, m.Manifest, fileWritten[m.Path])
+						if err != nil {
+							return err
+						}
 					}
 				}
 
 				// if we have a list of files to render, then check that each of the
 				// provided files exists in the chart.
 				if len(showFiles) > 0 {
-					// This is necessary to ensure consistent manifest ordering when using --show-only
-					// with globs or directory names.
-					splitManifests := releaseutil.SplitManifests(manifests.String())
-					manifestsKeys := make([]string, 0, len(splitManifests))
-					for k := range splitManifests {
-						manifestsKeys = append(manifestsKeys, k)
-					}
-					sort.Sort(releaseutil.BySplitManifestsOrder(manifestsKeys))
-
-					manifestNameRegex := regexp.MustCompile("# Source: [^/]+/(.+)")
-					var manifestsToRender []string
+					var manifestsToRender []manifestDocument
 					for _, f := range showFiles {
 						missing := true
 						// Use linux-style filepath separators to unify user's input path
 						f = filepath.ToSlash(f)
-						for _, manifestKey := range manifestsKeys {
-							manifest := splitManifests[manifestKey]
-							submatch := manifestNameRegex.FindStringSubmatch(manifest)
-							if len(submatch) == 0 {
+						for _, manifest := range manifests {
+							// The source is rendered using linux-style filepath separators on
+							// Windows as well as macOS/linux, and starts with the chart name.
+							chartName, manifestPath, ok := strings.Cut(manifest.source, "/")
+							if !ok || chartName == "" {
 								continue
 							}
-							manifestName := submatch[1]
-							// manifest.Name is rendered using linux-style filepath separators on Windows as
-							// well as macOS/linux.
-							manifestPathSplit := strings.Split(manifestName, "/")
-							// manifest.Path is connected using linux-style filepath separators on Windows as
-							// well as macOS/linux
-							manifestPath := strings.Join(manifestPathSplit, "/")
 
 							// if the filepath provided matches a manifest path in the
 							// chart, render that manifest
@@ -190,11 +168,11 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 							return fmt.Errorf("could not find template %s in chart", f)
 						}
 					}
-					for _, m := range manifestsToRender {
-						fmt.Fprintf(out, "---\n%s\n", m)
-					}
+					writeManifestStream(out, manifestsToRender)
+				} else if len(manifests) == 0 {
+					fmt.Fprintln(out)
 				} else {
-					fmt.Fprintf(out, "%s", manifests.String())
+					writeManifestStream(out, manifests)
 				}
 			}
 
