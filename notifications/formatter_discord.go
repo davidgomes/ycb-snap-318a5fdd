@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	_discordColorRed   = 15158332
-	_discordColorGreen = 3066993
+	_discordColorRed    = 15158332
+	_discordColorOrange = 15105570
+	_discordColorGreen  = 3066993
 )
 
 type discordMessage struct {
@@ -35,14 +36,33 @@ type DiscordFormatter struct{}
 func (f *DiscordFormatter) Format(payload WebhookPayload) ([]byte, error) {
 	symbol := _symbolDown
 	color := _discordColorRed
-	if payload.Event == _eventTargetUp {
+	switch severityOf(payload.Event) {
+	case _severityOK:
 		symbol = _symbolUp
 		color = _discordColorGreen
+	case _severityWarning:
+		symbol = _symbolWarning
+		color = _discordColorOrange
 	}
 
 	content := fmt.Sprintf("%s %s", symbol, payload.Event)
 
 	var fields []discordField
+
+	if payload.Reason != "" {
+		fields = append(fields, discordField{
+			Name:  "Reason",
+			Value: payload.Reason,
+		})
+	}
+
+	if payload.Region != "" {
+		fields = append(fields, discordField{
+			Name:   "Region",
+			Value:  payload.Region,
+			Inline: true,
+		})
+	}
 
 	if payload.Error != "" {
 		fields = append(fields, discordField{

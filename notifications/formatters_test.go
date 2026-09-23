@@ -91,6 +91,28 @@ func TestSlackFormatter_Format(t *testing.T) {
 			},
 			wantColor: "good",
 		},
+		{
+			name: "target_degraded",
+			payload: WebhookPayload{
+				Event:          "target_degraded",
+				Target:         "API Service",
+				URL:            "https://api.example.com",
+				Timestamp:      time.Date(2025, 10, 7, 12, 0, 0, 0, time.UTC),
+				ResponseTimeMs: 1200,
+				Reason:         "response time 1200ms exceeded latency threshold 500ms",
+			},
+			wantColor: "warning",
+		},
+		{
+			name: "target_recovered",
+			payload: WebhookPayload{
+				Event:     "target_recovered",
+				Target:    "API Service",
+				URL:       "https://api.example.com",
+				Timestamp: time.Date(2025, 10, 7, 12, 0, 0, 0, time.UTC),
+			},
+			wantColor: "good",
+		},
 	}
 
 	for _, tt := range tests {
@@ -154,6 +176,17 @@ func TestDiscordFormatter_Format(t *testing.T) {
 				ResponseTimeMs: 50,
 			},
 			wantColor: _discordColorGreen,
+		},
+		{
+			name: "ssl_expiring",
+			payload: WebhookPayload{
+				Event:     "ssl_expiring",
+				Target:    "Database",
+				URL:       "https://db.example.com",
+				Timestamp: time.Date(2025, 10, 7, 12, 0, 0, 0, time.UTC),
+				Reason:    "SSL certificate expires in 5 days (threshold 14 days)",
+			},
+			wantColor: _discordColorOrange,
 		},
 	}
 

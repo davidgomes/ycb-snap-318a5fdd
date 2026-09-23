@@ -9,8 +9,10 @@ const (
 	_eventTargetDown = "target_down"
 	_eventTargetUp   = "target_up"
 	_colorDanger     = "danger"
+	_colorWarning    = "warning"
 	_colorGood       = "good"
 	_symbolDown      = "✘"
+	_symbolWarning   = "⚠"
 	_symbolUp        = "✔"
 )
 
@@ -35,9 +37,13 @@ type SlackFormatter struct{}
 func (f *SlackFormatter) Format(payload WebhookPayload) ([]byte, error) {
 	symbol := _symbolDown
 	color := _colorDanger
-	if payload.Event == _eventTargetUp {
+	switch severityOf(payload.Event) {
+	case _severityOK:
 		symbol = _symbolUp
 		color = _colorGood
+	case _severityWarning:
+		symbol = _symbolWarning
+		color = _colorWarning
 	}
 
 	text := fmt.Sprintf("%s %s: %s", symbol, payload.Event, payload.Target)
@@ -48,6 +54,21 @@ func (f *SlackFormatter) Format(payload WebhookPayload) ([]byte, error) {
 		Title: "URL",
 		Value: payload.URL,
 	})
+
+	if payload.Reason != "" {
+		fields = append(fields, slackField{
+			Title: "Reason",
+			Value: payload.Reason,
+		})
+	}
+
+	if payload.Region != "" {
+		fields = append(fields, slackField{
+			Title: "Region",
+			Value: payload.Region,
+			Short: true,
+		})
+	}
 
 	if payload.Error != "" {
 		fields = append(fields, slackField{
