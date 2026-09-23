@@ -39,6 +39,18 @@ export type {
     RelationPair,
     RelationTarget,
 } from './relation/types';
+export { diffEntitySnapshots, diffWorldSnapshots } from './snapshot/diff';
+export { rollbackEntity, rollbackWorld, snapshotEntity, snapshotWorld } from './snapshot/snapshot';
+export { createTraitRegistry } from './snapshot/trait-registry';
+export type {
+    EntitySnapshot,
+    EntitySnapshotDiff,
+    RelationTargetSnapshot,
+    TraitRegistry,
+    TraitRegistryEntry,
+    WorldSnapshot,
+    WorldSnapshotDiff,
+} from './snapshot/types';
 export { getStore, trait } from './trait/trait';
 export type {
     ConfigurableTrait,
