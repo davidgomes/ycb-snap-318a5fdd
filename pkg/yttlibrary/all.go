@@ -48,6 +48,9 @@ func NewAPI(
 		"math":   NewMathModule(ui).AsModule(),
 		"regexp": RegexpAPI,
 
+		// Querying
+		"jsonpath": JSONPathAPI,
+
 		// Hashes
 		"md5":    MD5API,
 		"sha256": SHA256API,

@@ -1,0 +1,29 @@
+#@ load("@ytt:jsonpath", "jsonpath")
+
+#@ doc = {"items": [{"name": "a", "num": 1}, {"name": "b", "num": 5}, {"name": "c", "num": 3}]}
+
+test1: #@ jsonpath.query(doc, "$.items[*].name")
+test2: #@ jsonpath.query(doc, "$.items[?(@.num > 2)].name")
+test3: #@ jsonpath.query(doc, "$.missing")
+test4: #@ jsonpath.query_one(doc, "$.items[(@.length-1)]")
+test5: #@ jsonpath.query_one(doc, "$.missing")
+test6: #@ jsonpath.query_one(doc, "$.items.length()")
+test7: #@ jsonpath.query([1, 2, 3], "$[-1]")
+
++++
+
+test1:
+- a
+- b
+- c
+test2:
+- b
+- c
+test3: []
+test4:
+  name: c
+  num: 3
+test5: null
+test6: 3
+test7:
+- 3
