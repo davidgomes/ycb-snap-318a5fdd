@@ -232,3 +232,16 @@ class ConvertError(TypeError, ValueError, TOMLKitError):
     It should be a TypeError, but due to historical reasons
     it needs to subclass ValueError as well.
     """
+
+
+class ConversionError(TOMLKitError):
+    """Raised when a table cannot be converted to another structural form.
+
+    ``key_path`` is the dotted key path that was requested.
+    """
+
+    def __init__(self, key_path: str, message: str | None = None) -> None:
+        self.key_path = key_path
+        if message is None:
+            message = f"Cannot convert {key_path!r}"
+        super().__init__(message)
