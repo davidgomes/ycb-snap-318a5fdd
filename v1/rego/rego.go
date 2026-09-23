@@ -2606,6 +2606,7 @@ func (r *Rego) partial(ctx context.Context, ectx *EvalContext) (*PartialQueries,
 	if err != nil {
 		return nil, err
 	}
+	queries, support = reconstructPartialTemplateStrings(queries, support)
 
 	// If the target rego-version is v0, and the rego.v1 import is available, then we attempt to apply it to support modules.
 	if r.regoVersion == ast.RegoV0 &&
