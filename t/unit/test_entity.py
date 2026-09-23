@@ -435,6 +435,109 @@ class test_Queue:
         assert 'foo' in repr(b)
         assert 'Queue' in repr(b)
 
+    def test_dead_letter_helpers(self) -> None:
+        plain = Queue('q', self.exchange, routing_key='rk')
+        assert plain.has_dead_letter_exchange is False
+        assert plain.effective_dead_letter_exchange is None
+        assert plain.effective_dead_letter_routing_key == 'rk'
+        assert plain.effective_message_ttl is None
+
+        via_attr = Queue(
+            'q', self.exchange, routing_key='rk',
+            dead_letter_exchange='dlx',
+            dead_letter_routing_key='dlk',
+            message_ttl=4,
+        )
+        assert via_attr.has_dead_letter_exchange is True
+        assert via_attr.effective_dead_letter_exchange == 'dlx'
+        assert via_attr.effective_dead_letter_routing_key == 'dlk'
+        assert via_attr.effective_message_ttl == 4.0
+
+        via_args = Queue(
+            'q', self.exchange, routing_key='orders',
+            queue_arguments={
+                'x-dead-letter-exchange': 'dlx-args',
+                'x-message-ttl': 2500,
+            },
+        )
+        assert via_args.has_dead_letter_exchange is True
+        assert via_args.effective_dead_letter_exchange == 'dlx-args'
+        assert via_args.effective_dead_letter_routing_key == 'orders'
+        assert via_args.effective_message_ttl == 2.5
+
+        both = Queue(
+            'q', routing_key='rk',
+            dead_letter_exchange='from-attr',
+            dead_letter_routing_key='from-attr-key',
+            message_ttl=1,
+            queue_arguments={
+                'x-dead-letter-exchange': 'from-args',
+                'x-dead-letter-routing-key': 'from-args-key',
+                'x-message-ttl': 9000,
+            },
+        )
+        assert both.effective_dead_letter_exchange == 'from-attr'
+        assert both.effective_dead_letter_routing_key == 'from-attr-key'
+        assert both.effective_message_ttl == 1.0
+
+        from_args_key = Queue(
+            'q', routing_key='rk',
+            queue_arguments={'x-dead-letter-routing-key': 'from-args-key'},
+        )
+        assert from_args_key.effective_dead_letter_routing_key == 'from-args-key'
+
+    def test_with_dead_letter_and_from_dict(self) -> None:
+        queue = Queue.with_dead_letter(
+            'work', 'dlx', dead_letter_routing_key='failed',
+            routing_key='work', message_ttl=3,
+        )
+        assert queue.name == 'work'
+        assert queue.dead_letter_exchange == 'dlx'
+        assert queue.dead_letter_routing_key == 'failed'
+        assert queue.routing_key == 'work'
+        assert queue.message_ttl == 3
+
+        restored = Queue.from_dict(
+            'work',
+            exchange='ex',
+            routing_key='work',
+            dead_letter_exchange='dlx',
+            dead_letter_routing_key='failed',
+        )
+        assert restored.dead_letter_exchange == 'dlx'
+        assert restored.dead_letter_routing_key == 'failed'
+        assert restored.routing_key == 'work'
+        assert restored.exchange.name == 'ex'
+
+    def test_declare_stores_dead_letter_properties(self) -> None:
+        from kombu.utils.uuid import uuid
+
+        connection = Connection('memory://')
+        channel = connection.channel()
+        name = f'entity-dlx-q-{uuid()[:8]}'
+        queue = Queue(
+            name,
+            Exchange(f'entity-dlx-ex-{uuid()[:8]}'),
+            routing_key='rk',
+            dead_letter_exchange='entity-dlx',
+            dead_letter_routing_key='dead',
+            message_ttl=2.5,
+            max_length=4,
+            channel=channel,
+        )
+        try:
+            queue.declare()
+            assert channel.get_queue_properties(name) == {
+                'dead_letter_exchange': 'entity-dlx',
+                'dead_letter_routing_key': 'dead',
+                'message_ttl': 2500,
+                'max_length': 4,
+            }
+        finally:
+            if channel._qos is not None:
+                channel._qos._on_collect.cancel()
+            channel.queue_delete(name)
+
 
 class test_MaybeChannelBound:
 

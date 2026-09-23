@@ -70,7 +70,7 @@ class DirectExchange(ExchangeType):
 
     def deliver(self, message, exchange, routing_key, **kwargs):
         _lookup = self.channel._lookup
-        _put = self.channel._put
+        _put = self.channel.put
         for queue in _lookup(exchange, routing_key):
             _put(queue, message, **kwargs)
 
@@ -100,7 +100,7 @@ class TopicExchange(ExchangeType):
 
     def deliver(self, message, exchange, routing_key, **kwargs):
         _lookup = self.channel._lookup
-        _put = self.channel._put
+        _put = self.channel.put
         deadletter = self.channel.deadletter_queue
         for queue in [q for q in _lookup(exchange, routing_key)
                       if q and q != deadletter]:

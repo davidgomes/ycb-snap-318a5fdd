@@ -84,6 +84,17 @@ class Channel(virtual.Channel):
     def after_reply_message_received(self, queue):
         pass
 
+    def expire_messages(self, queue):
+        """Scan ``queue`` and dead-letter expired messages.
+
+        Returns
+        -------
+            int: Number of expired messages removed.
+        """
+        if queue not in self.queues:
+            return 0
+        return self.drain_expired(queue)
+
 
 class Transport(virtual.Transport):
     """In-memory Transport."""

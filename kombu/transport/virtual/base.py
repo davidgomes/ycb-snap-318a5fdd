@@ -14,7 +14,7 @@ from collections import OrderedDict, defaultdict, namedtuple
 from itertools import count
 from multiprocessing.util import Finalize
 from queue import Empty
-from time import monotonic, sleep
+from time import monotonic, sleep, time
 from typing import TYPE_CHECKING
 
 from amqp.protocol import queue_declare_ok_t
@@ -62,6 +62,109 @@ binding_key_t = namedtuple('binding_key_t', (
 queue_binding_t = namedtuple('queue_binding_t', (
     'exchange', 'routing_key', 'arguments',
 ))
+
+#: RabbitMQ ``x-*`` queue arguments stored under short property names.
+QUEUE_ARGUMENT_TO_PROPERTY = (
+    ('x-dead-letter-exchange', 'dead_letter_exchange'),
+    ('x-dead-letter-routing-key', 'dead_letter_routing_key'),
+    ('x-message-ttl', 'message_ttl'),
+    ('x-max-length', 'max_length'),
+    ('x-max-length-bytes', 'max_length_bytes'),
+    ('x-expires', 'expires'),
+    ('x-max-priority', 'max_priority'),
+)
+
+#: Nested dead-letter routing stops after this many hops.
+_DEAD_LETTER_RECURSION_LIMIT = 64
+
+
+def properties_from_queue_arguments(arguments):
+    """Map ``x-*`` queue arguments onto short property names."""
+    if not arguments:
+        return {}
+    properties = {}
+    for argument, name in QUEUE_ARGUMENT_TO_PROPERTY:
+        if argument in arguments and arguments[argument] is not None:
+            properties[name] = arguments[argument]
+    return properties
+
+
+def _message_properties(message):
+    if isinstance(message, dict):
+        properties = message.get('properties') or {}
+    else:
+        properties = getattr(message, 'properties', None) or {}
+    return properties if isinstance(properties, dict) else {}
+
+
+def _message_headers(message):
+    if isinstance(message, dict):
+        headers = message.get('headers') or {}
+    else:
+        headers = getattr(message, 'headers', None) or {}
+    return headers if isinstance(headers, dict) else {}
+
+
+def _message_queue_name(message):
+    info = _message_properties(message).get('delivery_info')
+    if not isinstance(info, dict):
+        info = getattr(message, 'delivery_info', None)
+    if isinstance(info, dict):
+        return info.get('queue')
+    return None
+
+
+def _x_death_count(message):
+    deaths = _message_headers(message).get('x-death') or []
+    if not isinstance(deaths, list):
+        return 0
+    total = 0
+    for entry in deaths:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            total += int(entry.get('count') or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _clone_message(message):
+    """Copy a raw message so per-queue mutations stay independent."""
+    if not isinstance(message, dict):
+        return message
+    cloned = dict(message)
+    properties = cloned.get('properties')
+    if isinstance(properties, dict):
+        properties = dict(properties)
+        cloned['properties'] = properties
+        delivery_info = properties.get('delivery_info')
+        if isinstance(delivery_info, dict):
+            properties['delivery_info'] = dict(delivery_info)
+    headers = cloned.get('headers')
+    if isinstance(headers, dict):
+        headers = dict(headers)
+        cloned['headers'] = headers
+        deaths = headers.get('x-death')
+        if isinstance(deaths, list):
+            headers['x-death'] = [
+                dict(entry) if isinstance(entry, dict) else entry
+                for entry in deaths
+            ]
+    return cloned
+
+
+def _has_per_message_expiration(properties):
+    if not isinstance(properties, dict):
+        return False
+    expiration = properties.get('expiration')
+    if expiration is None or expiration == '':
+        return False
+    try:
+        float(expiration)
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 class Base64:
@@ -111,15 +214,20 @@ class BrokerState:
     #:     }
     queue_index = None
 
+    #: Per-queue arguments (dead letter exchange, TTL, max-length, ...).
+    queue_properties = None
+
     def __init__(self, exchanges=None):
         self.exchanges = {} if exchanges is None else exchanges
         self.bindings = {}
         self.queue_index = defaultdict(set)
+        self.queue_properties = {}
 
     def clear(self):
         self.exchanges.clear()
         self.bindings.clear()
         self.queue_index.clear()
+        self.queue_properties.clear()
 
     def has_binding(self, queue, exchange, routing_key):
         return (queue, exchange, routing_key) in self.bindings
@@ -145,6 +253,19 @@ class BrokerState:
             pass
         else:
             [self.bindings.pop(binding, None) for binding in bindings]
+        self.queue_properties_delete(queue)
+
+    def queue_properties_set(self, queue, **props):
+        """Replace stored properties for ``queue``."""
+        self.queue_properties[queue] = dict(props)
+
+    def queue_properties_get(self, queue):
+        """Return properties for ``queue`` (empty dict when unset)."""
+        return self.queue_properties.get(queue, {})
+
+    def queue_properties_delete(self, queue):
+        """Forget stored properties for ``queue``."""
+        self.queue_properties.pop(queue, None)
 
     def queue_bindings(self, queue):
         return (
@@ -245,10 +366,32 @@ class QoS:
         self._quick_ack(delivery_tag)
 
     def reject(self, delivery_tag, requeue=False):
-        """Remove from transactional state and requeue message."""
+        """Remove from transactional state and requeue or dead-letter.
+
+        ``requeue=False`` routes the message to the origin queue's dead
+        letter exchange with reason ``"rejected"``. ``requeue=True`` restores
+        the message to its original queue.
+        """
         if requeue:
             self.channel._restore_at_beginning(self._delivered[delivery_tag])
+        else:
+            message = self._delivered.get(delivery_tag)
+            if message is not None:
+                queue = _message_queue_name(message)
+                if queue:
+                    self.channel.dead_letter(message, queue, 'rejected')
         self._quick_ack(delivery_tag)
+
+    def redelivery_count(self, delivery_tag):
+        """Return the sum of ``x-death`` counts for ``delivery_tag``.
+
+        Unknown tags, and messages without an ``x-death`` header, return 0.
+        """
+        try:
+            message = self.get(delivery_tag)
+        except KeyError:
+            return 0
+        return _x_death_count(message)
 
     def restore_unacked(self):
         """Restore all unacknowledged messages."""
@@ -457,8 +600,15 @@ class Channel(AbstractChannel, base.StdChannel):
     #: Set by ``transport_options['deadletter_queue']``.
     deadletter_queue = None
 
+    #: Maximum number of times a message may be dead-lettered.
+    #: ``None`` means unlimited. Set by
+    #: ``transport_options['dead_letter_max_hops']``.
+    dead_letter_max_hops = None
+
     # List of options to transfer from :attr:`transport_options`.
-    from_transport_options = ('body_encoding', 'deadletter_queue')
+    from_transport_options = (
+        'body_encoding', 'deadletter_queue', 'dead_letter_max_hops',
+    )
 
     # Priority defaults
     default_priority = 0
@@ -535,6 +685,13 @@ class Channel(AbstractChannel, base.StdChannel):
             )
         else:
             self._new_queue(queue, **kwargs)
+            if not passive:
+                # Redeclare replaces properties; it does not merge them.
+                self.state.queue_properties_set(
+                    queue, **properties_from_queue_arguments(
+                        kwargs.get('arguments'),
+                    ),
+                )
         return queue_declare_ok_t(queue, self._size(queue), 0)
 
     def queue_delete(self, queue, if_unused=False, if_empty=False, **kwargs):
@@ -610,8 +767,8 @@ class Channel(AbstractChannel, base.StdChannel):
             return self.typeof(exchange).deliver(
                 message, exchange, routing_key, **kwargs
             )
-        # anon exchange: routing_key is the destination queue
-        return self._put(routing_key, message, **kwargs)
+        # anon exchange: routing_key is the destination queue.
+        return self.put(routing_key, message, **kwargs)
 
     def _inplace_augment_message(self, message, exchange, routing_key):
         message['body'], body_encoding = self.encode_body(
@@ -633,6 +790,7 @@ class Channel(AbstractChannel, base.StdChannel):
         self._active_queues.append(queue)
 
         def _callback(raw_message):
+            raw_message = self._stamp_delivery_queue(raw_message, queue)
             message = self.Message(raw_message, channel=self)
             if not no_ack:
                 self.qos.append(message, message.delivery_tag)
@@ -656,14 +814,20 @@ class Channel(AbstractChannel, base.StdChannel):
             self.connection._callbacks.pop(queue, None)
 
     def basic_get(self, queue, no_ack=False, **kwargs):
-        """Get message by direct access (synchronous)."""
+        """Get message by direct access (synchronous).
+
+        Expired messages are dead-lettered and skipped. Returns ``None``
+        when the queue has no live message.
+        """
         try:
-            message = self.Message(self._get(queue), channel=self)
-            if not no_ack:
-                self.qos.append(message, message.delivery_tag)
-            return message
+            raw_message = self._get_pending(queue)
         except Empty:
-            pass
+            return None
+        raw_message = self._stamp_delivery_queue(raw_message, queue)
+        message = self.Message(raw_message, channel=self)
+        if not no_ack:
+            self.qos.append(message, message.delivery_tag)
+        return message
 
     def basic_ack(self, delivery_tag, multiple=False):
         """Acknowledge message."""
@@ -762,16 +926,358 @@ class Channel(AbstractChannel, base.StdChannel):
 
     def prepare_message(self, body, priority=None, content_type=None,
                         content_encoding=None, headers=None, properties=None):
-        """Prepare message data."""
+        """Prepare message data.
+
+        A per-message ``expiration`` (TTL in milliseconds, as a string)
+        is converted to an absolute ``x-expires-at`` timestamp.
+        """
         properties = properties or {}
         properties.setdefault('delivery_info', {})
         properties.setdefault('priority', priority or self.default_priority)
+        self._stamp_per_message_expiration(properties)
 
         return {'body': body,
                 'content-encoding': content_encoding,
                 'content-type': content_type,
                 'headers': headers or {},
                 'properties': properties or {}}
+
+    def prepare_queue_arguments(self, arguments, **kwargs):
+        """Convert queue options into RabbitMQ ``x-*`` arguments.
+
+        ``message_ttl`` and ``expires`` are seconds and become milliseconds.
+        ``dead_letter_exchange``, ``dead_letter_routing_key``, ``max_length``,
+        ``max_length_bytes``, and ``max_priority`` are copied under their
+        ``x-*`` names.
+        """
+        return base.to_rabbitmq_queue_arguments(arguments or {}, **kwargs)
+
+    def get_queue_properties(self, queue):
+        """Return the stored property dict for ``queue``."""
+        return self.state.queue_properties_get(queue)
+
+    def queue_properties_for_declare(self, queue):
+        """Rebuild ``x-*`` arguments from stored queue properties."""
+        props = self.get_queue_properties(queue)
+        arguments = {}
+        for argument, name in QUEUE_ARGUMENT_TO_PROPERTY:
+            if name in props and props[name] is not None:
+                arguments[argument] = props[name]
+        return arguments
+
+    def put(self, queue, message, **kwargs):
+        """Enqueue ``message``, applying queue TTL and max-length policy."""
+        if isinstance(message, dict):
+            message = self._apply_queue_ttl(queue, message)
+            if not self._make_room_for(queue, message):
+                return
+        return self._put(queue, message, **kwargs)
+
+    def message_ttl_remaining(self, message):
+        """Return remaining TTL in seconds.
+
+        ``None`` when unset. Negative when the message has already expired.
+        """
+        expires_at = _message_properties(message).get('x-expires-at')
+        if expires_at is None:
+            return None
+        try:
+            return float(expires_at) - time()
+        except (TypeError, ValueError):
+            return None
+
+    def drain_expired(self, queue):
+        """Remove expired messages from ``queue`` and dead-letter them.
+
+        Messages that are still live stay on the queue, in order.
+
+        Returns
+        -------
+            int: How many expired messages were removed.
+        """
+        kept = []
+        expired = []
+        while True:
+            try:
+                message = self._get(queue)
+            except Empty:
+                break
+            if self._message_expired(message):
+                expired.append(message)
+            else:
+                kept.append(message)
+        for message in kept:
+            self._put(queue, message)
+        for message in expired:
+            self.dead_letter(message, queue, 'expired')
+        return len(expired)
+
+    def dead_letter(self, message, queue, reason):
+        """Route ``message`` via the dead letter exchange of ``queue``.
+
+        ``reason`` is ``"rejected"``, ``"expired"``, or ``"maxlen"``.
+        The message is discarded when ``queue`` has no dead letter exchange,
+        that exchange was never declared, the message would enter a queue it
+        has already visited, or ``dead_letter_max_hops`` is exhausted.
+        """
+        depth = getattr(self, '_dead_letter_depth', 0)
+        if depth >= _DEAD_LETTER_RECURSION_LIMIT:
+            return
+        raw = self._coerce_raw_message(message)
+        if not isinstance(raw, dict):
+            return
+        queue_props = self.get_queue_properties(queue)
+        dead_exchange = queue_props.get('dead_letter_exchange')
+        if not dead_exchange or dead_exchange not in self.state.exchanges:
+            return
+        if self._death_hops_exceeded(raw):
+            return
+
+        self._dead_letter_depth = depth + 1
+        try:
+            raw = _clone_message(raw)
+            self._record_death(raw, queue, reason)
+            self._clear_message_expiration(raw)
+            routing_key = self._dead_letter_routing_key(queue_props, raw)
+            self._set_dead_letter_delivery(raw, dead_exchange, routing_key)
+            visited = self._visited_queues(raw)
+            visited.add(queue)
+            try:
+                queues = self.typeof(dead_exchange).lookup(
+                    self.get_table(dead_exchange),
+                    dead_exchange, routing_key, None,
+                )
+            except KeyError:
+                return
+            for dest in queues:
+                if not dest or dest in visited:
+                    continue
+                delivered = _clone_message(raw)
+                props = delivered.setdefault('properties', {})
+                props['delivery_tag'] = self._next_delivery_tag()
+                self.put(dest, delivered)
+        finally:
+            self._dead_letter_depth = depth
+
+    def _get_and_deliver(self, queue, callback):
+        message = self._get_pending(queue)
+        callback(self._stamp_delivery_queue(message, queue), queue)
+
+    def _get_pending(self, queue):
+        """Return the next unexpired message, dead-lettering expired ones."""
+        scanned = 0
+        while True:
+            message = self._get(queue)
+            if not self._message_expired(message):
+                return message
+            self.dead_letter(message, queue, 'expired')
+            scanned += 1
+            if scanned > 100000:  # pragma: no cover
+                raise Empty()
+
+    def _message_expired(self, message):
+        remaining = self.message_ttl_remaining(message)
+        return remaining is not None and remaining <= 0
+
+    def _stamp_per_message_expiration(self, properties):
+        expiration = properties.get('expiration') if properties else None
+        if expiration is None or expiration == '':
+            return
+        try:
+            ttl_ms = float(expiration)
+        except (TypeError, ValueError):
+            return
+        properties['x-expires-at'] = time() + (ttl_ms / 1000.0)
+
+    def _apply_queue_ttl(self, queue, message):
+        """Copy ``message`` and apply queue TTL when it has no expiration."""
+        properties = message.get('properties')
+        if isinstance(properties, dict) and _has_per_message_expiration(
+            properties,
+        ):
+            if properties.get('x-expires-at') is None:
+                self._stamp_per_message_expiration(properties)
+            return message
+        ttl_ms = self.get_queue_properties(queue).get('message_ttl')
+        if ttl_ms is None:
+            return message
+        try:
+            ttl_ms = float(ttl_ms)
+        except (TypeError, ValueError):
+            return message
+        message = _clone_message(message)
+        props = message.get('properties')
+        if not isinstance(props, dict):
+            props = {}
+            message['properties'] = props
+        props['expiration'] = str(int(ttl_ms))
+        props['x-expires-at'] = time() + (ttl_ms / 1000.0)
+        return message
+
+    def _make_room_for(self, queue, message):
+        """Evict oldest messages until ``message`` fits.
+
+        Returns ``False`` when ``message`` itself was dead-lettered instead
+        of being queued.
+        """
+        props = self.get_queue_properties(queue)
+        if 'max_length' not in props or props['max_length'] is None:
+            return True
+        try:
+            max_length = int(props['max_length'])
+        except (TypeError, ValueError):
+            return True
+        if max_length <= 0:
+            self.dead_letter(message, queue, 'maxlen')
+            return False
+        safety = 0
+        limit = max(max_length, 1) + _DEAD_LETTER_RECURSION_LIMIT
+        while self._size(queue) >= max_length:
+            safety += 1
+            if safety > limit:
+                break
+            try:
+                oldest = self._get(queue)
+            except Empty:
+                break
+            self.dead_letter(oldest, queue, 'maxlen')
+        if self._size(queue) >= max_length:
+            self.dead_letter(message, queue, 'maxlen')
+            return False
+        return True
+
+    def _death_hops_exceeded(self, message):
+        limit = self.dead_letter_max_hops
+        if limit is None:
+            return False
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            return False
+        return _x_death_count(message) >= limit
+
+    def _record_death(self, raw, queue, reason):
+        headers = raw.get('headers')
+        if not isinstance(headers, dict):
+            headers = {}
+            raw['headers'] = headers
+        info = _message_properties(raw).get('delivery_info')
+        if not isinstance(info, dict):
+            info = {}
+        exchange = info.get('exchange')
+        routing_key = info.get('routing_key')
+        deaths = headers.get('x-death')
+        if not isinstance(deaths, list):
+            deaths = []
+        now = time()
+        updated = False
+        for entry in deaths:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get('queue') == queue and entry.get('reason') == reason:
+                try:
+                    count = int(entry.get('count') or 0)
+                except (TypeError, ValueError):
+                    count = 0
+                entry['count'] = count + 1
+                entry['time'] = now
+                updated = True
+                break
+        if not updated:
+            deaths.append({
+                'queue': queue,
+                'reason': reason,
+                'exchange': exchange,
+                'routing-key': routing_key,
+                'count': 1,
+                'time': now,
+            })
+        headers['x-death'] = deaths
+        if 'x-first-death-reason' not in headers:
+            headers['x-first-death-reason'] = reason
+            headers['x-first-death-queue'] = queue
+            headers['x-first-death-exchange'] = exchange
+
+    def _clear_message_expiration(self, raw):
+        properties = raw.get('properties')
+        if isinstance(properties, dict):
+            properties.pop('expiration', None)
+            properties.pop('x-expires-at', None)
+
+    def _dead_letter_routing_key(self, queue_props, raw):
+        if ('dead_letter_routing_key' in queue_props and
+                queue_props.get('dead_letter_routing_key') is not None):
+            return queue_props['dead_letter_routing_key']
+        info = _message_properties(raw).get('delivery_info')
+        if isinstance(info, dict) and info.get('routing_key') is not None:
+            return info.get('routing_key')
+        return ''
+
+    def _set_dead_letter_delivery(self, raw, exchange, routing_key):
+        properties = raw.setdefault('properties', {})
+        if not isinstance(properties, dict):
+            properties = {}
+            raw['properties'] = properties
+        info = properties.get('delivery_info')
+        if isinstance(info, dict):
+            info = dict(info)
+        else:
+            info = {}
+        info['exchange'] = exchange
+        info['routing_key'] = routing_key
+        properties['delivery_info'] = info
+
+    def _visited_queues(self, raw):
+        visited = set()
+        deaths = _message_headers(raw).get('x-death') or []
+        if not isinstance(deaths, list):
+            return visited
+        for entry in deaths:
+            if isinstance(entry, dict) and entry.get('queue'):
+                visited.add(entry['queue'])
+        return visited
+
+    def _coerce_raw_message(self, message):
+        if isinstance(message, dict):
+            return message
+        serializable = getattr(message, 'serializable', None)
+        if callable(serializable):
+            raw = serializable()
+            if isinstance(raw, dict):
+                return raw
+        properties = getattr(message, 'properties', None)
+        headers = getattr(message, 'headers', None)
+        if properties is None and not hasattr(message, 'body'):
+            return None
+        if not isinstance(headers, dict):
+            headers = {}
+        return {
+            'body': getattr(message, 'body', None),
+            'properties': dict(properties or {}),
+            'content-type': getattr(message, 'content_type', None),
+            'content-encoding': getattr(message, 'content_encoding', None),
+            'headers': dict(headers),
+        }
+
+    def _stamp_delivery_queue(self, message, queue):
+        if not isinstance(message, dict):
+            info = getattr(message, 'delivery_info', None)
+            if isinstance(info, dict):
+                info['queue'] = queue
+            return message
+        message = _clone_message(message)
+        properties = message.get('properties')
+        if not isinstance(properties, dict):
+            properties = {}
+            message['properties'] = properties
+        info = properties.get('delivery_info')
+        if isinstance(info, dict):
+            info = dict(info)
+        else:
+            info = {}
+        info['queue'] = queue
+        properties['delivery_info'] = info
+        return message
 
     def flow(self, active=True):
         """Enable/disable message flow.
