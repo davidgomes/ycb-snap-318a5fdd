@@ -12,6 +12,7 @@ import (
 
 	"github.com/liweiyi88/onedump/config"
 	"github.com/liweiyi88/onedump/dumper"
+	"github.com/liweiyi88/onedump/encryption"
 	"github.com/liweiyi88/onedump/fileutil"
 	"github.com/liweiyi88/onedump/jobresult"
 	"github.com/liweiyi88/onedump/storage"
@@ -29,7 +30,8 @@ func NewJobHandler(job *config.Job) *JobHandler {
 }
 
 // Pipe readers, writer and closers for fanout the same writer.
-func storageReadWriteCloser(count int, compress bool) ([]io.Reader, io.Writer, io.Closer) {
+// Data is compressed first (if enabled) and then encrypted (if encryptor is not nil).
+func storageReadWriteCloser(count int, compress bool, encryptor *encryption.Encryptor) ([]io.Reader, io.Writer, io.Closer) {
 	var prs []io.Reader
 	var pws []io.Writer
 	var pcs []io.Closer
@@ -38,16 +40,27 @@ func storageReadWriteCloser(count int, compress bool) ([]io.Reader, io.Writer, i
 
 		prs = append(prs, pr)
 
-		if compress {
-			gw := gzip.NewWriter(pw)
-			pws = append(pws, gw)
-			pcs = append(pcs, gw)
-		} else {
-			pws = append(pws, pw)
+		var w io.Writer = pw
+		var closers []io.Closer
+
+		if encryptor != nil {
+			ew := encryptor.EncryptWriter(w)
+			w = ew
+			closers = append(closers, ew)
 		}
 
-		// This following append method must not be moved before pcs = append(pcs, gw) if compress is in use as the closer won't be able to close properly.
-		// Thus, we put this line here and do not move it to other place.
+		if compress {
+			gw := gzip.NewWriter(w)
+			w = gw
+			closers = append(closers, gw)
+		}
+
+		pws = append(pws, w)
+
+		// Closers must run from the outermost writer to the pipe writer so each layer flushes into the next.
+		for j := len(closers) - 1; j >= 0; j-- {
+			pcs = append(pcs, closers[j])
+		}
 		pcs = append(pcs, pw)
 	}
 
@@ -57,6 +70,16 @@ func storageReadWriteCloser(count int, compress bool) ([]io.Reader, io.Writer, i
 // Save database dump to different storages.
 func (handler *JobHandler) save() error {
 	job := handler.Job
+
+	var encryptor *encryption.Encryptor
+	if job.Encrypted() {
+		var err error
+		encryptor, err = handler.getEncryptor()
+		if err != nil {
+			return err
+		}
+	}
+
 	storages := handler.getStorages()
 
 	numberOfStorages := len(storages)
@@ -71,7 +94,7 @@ func (handler *JobHandler) save() error {
 
 	if numberOfStorages > 0 {
 		// Use pipe to pass content from the database dump to different writer.
-		readers, writer, closer := storageReadWriteCloser(numberOfStorages, job.Gzip)
+		readers, writer, closer := storageReadWriteCloser(numberOfStorages, job.Gzip, encryptor)
 
 		var dumpWg sync.WaitGroup
 		dumpWg.Add(1)
@@ -100,7 +123,7 @@ func (handler *JobHandler) save() error {
 				defer readWg.Done()
 
 				pathGenerator := func(filename string) string {
-					return fileutil.EnsureFileName(filename, job.Gzip, job.Unique)
+					return fileutil.EnsureFileName(filename, job.Gzip, job.Encrypted(), job.Unique)
 				}
 
 				e := storage.Save(readers[i], pathGenerator)
@@ -128,6 +151,27 @@ func (handler *JobHandler) save() error {
 	}
 
 	return nil
+}
+
+// Load the encryption key and create the encryptor.
+func (handler *JobHandler) getEncryptor() (*encryption.Encryptor, error) {
+	cfg := handler.Job.Encryption
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid encryption config: %w", err)
+	}
+
+	key, err := encryption.LoadKey(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("could not load encryption key: %w", err)
+	}
+
+	encryptor, err := encryption.NewEncryptor(key)
+	if err != nil {
+		return nil, fmt.Errorf("could not create encryptor with the loaded key: %w", err)
+	}
+
+	return encryptor, nil
 }
 
 // Get all storage structs based on job configuration.
