@@ -1,8 +1,10 @@
 package extrafiles
 
 import (
+	"path/filepath"
 	"testing"
 
+	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/testctx"
 	"github.com/goreleaser/goreleaser/v2/internal/testlib"
 	"github.com/goreleaser/goreleaser/v2/pkg/config"
@@ -165,6 +167,18 @@ func TestGlobEvalsToEmpty(t *testing.T) {
 	files, err := Find(ctx, globs)
 	require.Empty(t, files)
 	require.NoError(t, err)
+}
+
+func TestArtifactReusedAcrossPublishers(t *testing.T) {
+	ctx := testctx.Wrap(t.Context())
+	rel := "testdata/file1.golden"
+	abs, err := filepath.Abs(rel)
+	require.NoError(t, err)
+
+	first := Artifact(ctx, "file1.golden", rel)
+	second := Artifact(ctx, "file1.golden", abs)
+	require.Equal(t, first, second)
+	require.Len(t, ctx.Artifacts.Filter(artifact.ByType(artifact.UploadableFile)).List(), 1)
 }
 
 func TestTargetNameNoGlob(t *testing.T) {

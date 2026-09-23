@@ -64,6 +64,28 @@ blobs:
     # Templates: allowed.
     disable: '{{ ne .BLOB_UPLOAD_ONLY "foo" }}'
 
+    # Retry transient failures for each artifact, including extra_files.
+    #
+    # `attempts` is the total number of tries, including the first.
+    # Default: 1.
+    # `delay` is the first wait. Later waits double.
+    # `max_delay` caps every wait. Default: 0, which means no cap.
+    #
+    # An error is transient when it implements `Timeout() bool` or
+    # `Temporary() bool` and that method returns true.
+    # Opening the bucket uses the same retry budget, but those tries are not
+    # recorded as publish attempts.
+    # Each upload try sends the full artifact again.
+    # Upload tries are recorded on the artifact as `extra.publish_attempts`.
+    # For blobs, `instance` is `provider://bucket` after templates run, and
+    # `target` is the object path.
+    #
+    # <!-- md:inline_version v2.15-unreleased -->.
+    retry:
+      attempts: 3
+      delay: 1s
+      max_delay: 10s
+
     # You can add extra pre-existing files to the bucket.
     #
     # The filename on the release will be the last part of the path (base).

@@ -249,6 +249,27 @@ uploads:
       TyzMJasj5BPZrmKjJb6O/tOtEIJ66xPSBTxPShkEYHnB7A==
       -----END CERTIFICATE-----
 
+    # Retry transient failures for each artifact, including extra_files.
+    #
+    # `attempts` is the total number of tries, including the first.
+    # Default: 1.
+    # `delay` is the first wait. Later waits double.
+    # `max_delay` caps every wait. Default: 0, which means no cap.
+    #
+    # Retries happen for transport errors and for HTTP statuses
+    # 408, 429, 500, 502, 503, and 504.
+    # On 429 and 503, a valid `Retry-After` value (delta-seconds or HTTP-date)
+    # is honored: the wait is max(exponential backoff, retry-after), then
+    # capped by `max_delay`.
+    # Each try sends the full artifact again.
+    # Tries are recorded on the artifact as `extra.publish_attempts`.
+    #
+    # <!-- md:inline_version v2.15-unreleased -->.
+    retry:
+      attempts: 3
+      delay: 1s
+      max_delay: 10s
+
     # You can add extra pre-existing files to the upload.
     #
     # The filename on the release will be the last part of the path (base).

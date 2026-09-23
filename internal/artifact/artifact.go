@@ -217,7 +217,21 @@ const (
 	ExtraChecksumOf = "ChecksumOf"
 	ExtraBuilder    = "Builder"
 	ExtranDynLink   = "DynamicallyLinked"
+
+	// ExtraPublishAttempts is the artifact extra key holding []PublishAttempt.
+	// Attempts are ordered by publisher, instance, target, then attempt.
+	ExtraPublishAttempts = "publish_attempts"
 )
+
+// PublishAttempt is one try to publish an artifact.
+type PublishAttempt struct {
+	Publisher string `json:"publisher"`
+	Instance  string `json:"instance"`
+	Target    string `json:"target"`
+	Attempt   int    `json:"attempt"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
 
 // Extras represents the extra fields in an artifact.
 type Extras map[string]any

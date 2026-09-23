@@ -5,13 +5,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/caarlos0/log"
 	"github.com/goreleaser/fileglob"
+	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/tmpl"
 	"github.com/goreleaser/goreleaser/v2/pkg/config"
 	"github.com/goreleaser/goreleaser/v2/pkg/context"
 )
+
+// extraArtifactMu guards find-or-create of extra-file artifacts.
+// Blob publishers run in parallel and may upload the same file.
+var extraArtifactMu sync.Mutex
 
 // Find resolves extra files globs et al into a map of names/paths or an error.
 func Find(ctx *context.Context, files []config.ExtraFile) (map[string]string, error) {
@@ -54,4 +60,35 @@ func Find(ctx *context.Context, files []config.ExtraFile) (map[string]string, er
 		}
 	}
 	return result, nil
+}
+
+// Artifact returns the uploadable artifact for an extra file.
+// The first publisher registers it. Later publishers of the same file append
+// their publish attempts to that artifact instead of creating another one.
+func Artifact(ctx *context.Context, name, fullpath string) *artifact.Artifact {
+	extraArtifactMu.Lock()
+	defer extraArtifactMu.Unlock()
+
+	for _, art := range ctx.Artifacts.Filter(artifact.ByType(artifact.UploadableFile)).List() {
+		if art.Name == name && samePath(art.Path, fullpath) {
+			return art
+		}
+	}
+
+	art := &artifact.Artifact{
+		Name: name,
+		Path: fullpath,
+		Type: artifact.UploadableFile,
+	}
+	ctx.Artifacts.Add(art)
+	return art
+}
+
+func samePath(stored, full string) bool {
+	if stored == full || filepath.Clean(stored) == filepath.Clean(full) {
+		return true
+	}
+	left, err1 := filepath.Abs(stored)
+	right, err2 := filepath.Abs(full)
+	return err1 == nil && err2 == nil && left == right
 }

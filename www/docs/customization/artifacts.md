@@ -86,12 +86,25 @@ The most common fields are:
 | `Replaces`          | `bool`     | Whether a universal binary replaces single-arch ones       |
 | `Files`             | `[]string` | Any extra files an archive might have                      |
 | `DynamicallyLinked` | `bool`     | Whether or not the binary is dynamically linked            |
+| `publish_attempts`  | `[]object` | Publish tries, sorted by publisher, instance, target, attempt |
 
 !!! note
 
     There might be other fields in `extra` depending on the artifact type and
     configuration. The fields listed above are the most commonly used ones
     across multiple artifact types.
+
+`publish_attempts` is written by the `uploads`, `artifactories`, and `blobs`
+publishers. Each entry has:
+
+| Field       | Description                                                                 |
+| ----------- | --------------------------------------------------------------------------- |
+| `publisher` | `upload`, `artifactory`, or `blob`                                          |
+| `instance`  | Configured name, or `provider://bucket` for blobs                          |
+| `target`    | Resolved destination URL, or the object path for blobs                     |
+| `attempt`   | 1-based try number                                                          |
+| `status`    | `success` or `failure`                                                      |
+| `error`     | Present on `failure`                                                        |
 
 ## Example
 
