@@ -1,7 +1,10 @@
 package artifactory
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +12,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/testctx"
@@ -698,4 +702,80 @@ func TestSkip(t *testing.T) {
 
 		require.False(t, Pipe{}.Skip(ctx))
 	})
+}
+
+func TestRunPipe_Retry(t *testing.T) {
+	content := "hello\ngo\n"
+	sum := sha256.Sum256([]byte(content))
+	var mu sync.Mutex
+	var bodies []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireMethodPut(t, r)
+		requireHeader(t, r, "X-Checksum-SHA256", hex.EncodeToString(sum[:]))
+		bts, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		mu.Lock()
+		bodies = append(bodies, string(bts))
+		n := len(bodies)
+		mu.Unlock()
+		if n == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, `{"errors":[{"status":503,"message":"try again later"}]}`)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(server.Close)
+
+	binPath := filepath.Join(t.TempDir(), "mybin")
+	require.NoError(t, os.WriteFile(binPath, []byte(content), 0o644))
+
+	ctx := testctx.WrapWithCfg(t.Context(), config.Project{
+		ProjectName: "mybin",
+		Artifactories: []config.Upload{
+			{
+				Name:     "production",
+				Mode:     "binary",
+				Target:   server.URL + "/example-repo-local/{{ .ProjectName }}/{{ .Os }}/{{ .Arch }}",
+				Username: "deployuser",
+				Retry: config.Retry{
+					Attempts: 3,
+					Delay:    time.Millisecond,
+				},
+			},
+		},
+		Env: []string{"ARTIFACTORY_PRODUCTION_SECRET=deployuser-secret"},
+	})
+	bin := &artifact.Artifact{
+		Name:   "mybin",
+		Path:   binPath,
+		Goarch: "amd64",
+		Goos:   "linux",
+		Type:   artifact.UploadableBinary,
+	}
+	ctx.Artifacts.Add(bin)
+
+	require.NoError(t, Pipe{}.Default(ctx))
+	require.NoError(t, Pipe{}.Publish(ctx))
+
+	require.Equal(t, []string{content, content}, bodies)
+	target := server.URL + "/example-repo-local/mybin/linux/amd64/mybin"
+	require.Equal(t, []artifact.PublishAttempt{
+		{
+			Publisher: "artifactory",
+			Instance:  "production",
+			Target:    target,
+			Attempt:   1,
+			Status:    artifact.PublishAttemptFailure,
+			Error:     "PUT " + target + ": 503 [{Status:503 Message:try again later}]",
+		},
+		{
+			Publisher: "artifactory",
+			Instance:  "production",
+			Target:    target,
+			Attempt:   2,
+			Status:    artifact.PublishAttemptSuccess,
+		},
+	}, artifact.MustExtra[[]artifact.PublishAttempt](*bin, artifact.ExtraPublishAttempts))
 }

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
 	"github.com/goreleaser/goreleaser/v2/internal/pipe"
@@ -677,4 +678,69 @@ func TestSkip(t *testing.T) {
 
 		require.False(t, Pipe{}.Skip(ctx))
 	})
+}
+
+func TestRunPipe_Retry(t *testing.T) {
+	var mu sync.Mutex
+	requests := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests[r.URL.Path]++
+		n := requests[r.URL.Path]
+		mu.Unlock()
+		if n < 3 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	ctx := testctx.WrapWithCfg(t.Context(), config.Project{
+		ProjectName: "mybin",
+		Uploads: []config.Upload{
+			{
+				Name:   "production",
+				Mode:   "archive",
+				Target: server.URL + "/{{ .ProjectName }}",
+				Retry: config.Retry{
+					Attempts: 3,
+					Delay:    time.Millisecond,
+					MaxDelay: 2 * time.Millisecond,
+				},
+			},
+		},
+	})
+	var archives []*artifact.Artifact
+	for _, name := range []string{"b.tar.gz", "a.tar.gz"} {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(path, []byte(name), 0o644))
+		a := &artifact.Artifact{
+			Name: name,
+			Path: path,
+			Type: artifact.UploadableArchive,
+		}
+		archives = append(archives, a)
+		ctx.Artifacts.Add(a)
+	}
+
+	require.NoError(t, Pipe{}.Default(ctx))
+	require.NoError(t, Pipe{}.Publish(ctx))
+
+	for _, a := range archives {
+		require.Equal(t, 3, requests["/mybin/"+a.Name])
+		attempts := artifact.MustExtra[[]artifact.PublishAttempt](*a, artifact.ExtraPublishAttempts)
+		require.Len(t, attempts, 3)
+		for i, attempt := range attempts {
+			require.Equal(t, "upload", attempt.Publisher)
+			require.Equal(t, "production", attempt.Instance)
+			require.Equal(t, server.URL+"/mybin/"+a.Name, attempt.Target)
+			require.Equal(t, i+1, attempt.Attempt)
+		}
+		require.Equal(t, artifact.PublishAttemptFailure, attempts[0].Status)
+		require.Equal(t, "unexpected http response status: 502 Bad Gateway", attempts[0].Error)
+		require.Equal(t, artifact.PublishAttemptSuccess, attempts[2].Status)
+		require.Empty(t, attempts[2].Error)
+	}
 }
