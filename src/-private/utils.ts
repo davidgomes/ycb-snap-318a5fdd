@@ -18,6 +18,22 @@ export function curry1<T, U>(op: (t: T) => U, item?: T): U | ((t: T) => U) {
 }
 
 /**
+  Support both the `op(data, callback)` and `op(callback)(data)` call styles for
+  functions which take their data argument first.
+
+  @internal
+ */
+export function dataFirst<D, C, R>(
+  op: (data: D, callback: C) => R,
+  dataOrCallback: D | C,
+  callback?: C
+): R | ((data: D) => R) {
+  return callback !== undefined
+    ? op(dataOrCallback as D, callback)
+    : (data: D) => op(data, dataOrCallback as C);
+}
+
+/**
  * Check whether a given key is in an object
  * @internal
  */

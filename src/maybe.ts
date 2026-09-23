@@ -8,7 +8,14 @@ For a deep dive on the type, see [the guide](/guide/understanding/maybe.md).
   @module
  */
 
-import { type AnyFunction, curry1, identity, isVoid, safeToString } from './-private/utils.js';
+import {
+  type AnyFunction,
+  curry1,
+  dataFirst,
+  identity,
+  isVoid,
+  safeToString,
+} from './-private/utils.js';
 
 /**
   Discriminant for the {@linkcode Just} and {@linkcode Nothing} type instances.
@@ -404,6 +411,29 @@ class MaybeImpl<T extends {}> implements SomeMaybe<T> {
   // `Maybe<Maybe<Maybe<T>>>` at call sites with the wrapped value.
   flatten<A extends {}>(this: Maybe<Maybe<A>>): Maybe<A> {
     return this.andThen(identity);
+  }
+
+  /**
+    Iterate over the contents of the `Maybe`: a {@linkcode Just} yields its
+    wrapped value exactly once, while a {@linkcode Nothing} yields nothing at
+    all. This lets you use a `Maybe` anywhere JavaScript accepts an iterable,
+    including `for...of` loops, spread syntax, and `Array.from`.
+
+    ```ts
+    import * as maybe from 'true-myth/maybe';
+
+    console.log([...maybe.just(42)]); // [42]
+    console.log([...maybe.nothing<number>()]); // []
+
+    for (const value of maybe.just('hello')) {
+      console.log(value); // "hello"
+    }
+    ```
+   */
+  *[Symbol.iterator](): IterableIterator<T> {
+    if (this.repr[0] === 'Just') {
+      yield this.repr[1];
+    }
   }
 }
 
@@ -1845,6 +1875,260 @@ export function flatten<T extends {}>(nested: Maybe<Maybe<T>>): Maybe<T> {
   // Uses `andThen` directly rather than calling `.flatten()` to avoid an extra
   // function dispatch.
   return nested.andThen(identity);
+}
+
+/**
+  Given any iterable of {@linkcode Maybe}s, produce {@linkcode Just} an array of
+  all their values if every item is a `Just`, or {@linkcode Nothing} if any item
+  is a `Nothing`.
+
+  The iterable is consumed lazily, and it is not advanced any further once a
+  `Nothing` is found, so this is safe to use with generators and other lazy or
+  expensive iterables.
+
+  ## Examples
+
+  ```ts
+  import * as maybe from 'true-myth/maybe';
+
+  maybe.sequence([maybe.just(1), maybe.just(2)]); // Just([1, 2])
+  maybe.sequence([maybe.just(1), maybe.nothing<number>()]); // Nothing
+  maybe.sequence([]); // Just([])
+  ```
+
+  To transform each item into a `Maybe` as part of the same pass, use
+  {@linkcode traverse}. To preserve the types of a heterogeneous tuple of
+  `Maybe`s, use {@linkcode transposeArray}.
+
+  @template T  The type of the values wrapped in the `Maybe`s.
+  @param maybes The `Maybe`s to combine.
+  @returns      `Just` the array of values, or `Nothing` if any item was
+                `Nothing`.
+ */
+export function sequence<T extends {}>(maybes: Iterable<Maybe<T>>): Maybe<Array<T>> {
+  return traverse(maybes, identity);
+}
+
+/**
+  Apply a function which produces a {@linkcode Maybe} to every item in an
+  iterable, producing {@linkcode Just} an array of the results if every call
+  produced a `Just`, or {@linkcode Nothing} as soon as any call produces a
+  `Nothing`.
+
+  The iterable is consumed lazily, and it is not advanced any further once `fn`
+  produces a `Nothing`, so `fn` is never called for the remaining items.
+
+  ## Examples
+
+  ```ts
+  import * as maybe from 'true-myth/maybe';
+
+  const parse = (s: string) => {
+    const n = Number.parseInt(s, 10);
+    return Number.isNaN(n) ? maybe.nothing<number>() : maybe.just(n);
+  };
+
+  maybe.traverse(['1', '2', '3'], parse); // Just([1, 2, 3])
+  maybe.traverse(['1', 'two', '3'], parse); // Nothing
+  ```
+
+  @template A The type of the items in the iterable.
+  @template B The type of the values wrapped in the `Maybe`s `fn` produces.
+  @param items The items to transform.
+  @param fn    The function to apply to each item.
+  @returns     `Just` the array of results, or `Nothing` if `fn` produced
+               `Nothing` for any item.
+ */
+export function traverse<A, B extends {}>(
+  items: Iterable<A>,
+  fn: (item: A) => Maybe<B>
+): Maybe<Array<B>>;
+/**
+  Curried form of {@linkcode traverse}: provide the function first, and get
+  back a function which accepts the items to traverse.
+
+  ```ts
+  import * as maybe from 'true-myth/maybe';
+
+  const parse = (s: string) => {
+    const n = Number.parseInt(s, 10);
+    return Number.isNaN(n) ? maybe.nothing<number>() : maybe.just(n);
+  };
+
+  const parseAll = maybe.traverse(parse);
+  parseAll(['1', '2']); // Just([1, 2])
+  ```
+
+  @template A The type of the items in the iterable.
+  @template B The type of the values wrapped in the `Maybe`s `fn` produces.
+  @param fn   The function to apply to each item.
+ */
+export function traverse<A, B extends {}>(
+  fn: (item: A) => Maybe<B>
+): (items: Iterable<A>) => Maybe<Array<B>>;
+export function traverse<A, B extends {}>(
+  itemsOrFn: Iterable<A> | ((item: A) => Maybe<B>),
+  fn?: (item: A) => Maybe<B>
+): Maybe<Array<B>> | ((items: Iterable<A>) => Maybe<Array<B>>) {
+  const op = (items: Iterable<A>, mapFn: (item: A) => Maybe<B>): Maybe<Array<B>> => {
+    const values: Array<B> = [];
+    for (const item of items) {
+      const mapped = mapFn(item);
+      if (mapped.isNothing) {
+        return nothing();
+      }
+      values.push(mapped.value);
+    }
+    return just(values);
+  };
+
+  return dataFirst(op, itemsOrFn, fn);
+}
+
+/**
+  Combine two {@linkcode Maybe}s into a single `Maybe` of a tuple of their
+  values: {@linkcode Just} the pair if both are `Just`, or {@linkcode Nothing}
+  if either is `Nothing`.
+
+  ```ts
+  import * as maybe from 'true-myth/maybe';
+
+  maybe.zip(maybe.just(1), maybe.just('a')); // Just([1, 'a'])
+  maybe.zip(maybe.just(1), maybe.nothing<string>()); // Nothing
+  ```
+
+  @param a The first `Maybe`.
+  @param b The second `Maybe`.
+ */
+export function zip<A extends {}, B extends {}>(a: Maybe<A>, b: Maybe<B>): Maybe<[A, B]> {
+  return zipWith(a, b, (aValue, bValue): [A, B] => [aValue, bValue]);
+}
+
+/**
+  Combine the values of two {@linkcode Maybe}s using `fn`, producing
+  {@linkcode Just} the result if both are `Just`, or {@linkcode Nothing} (without
+  calling `fn`) if either is `Nothing`.
+
+  ```ts
+  import * as maybe from 'true-myth/maybe';
+
+  const add = (a: number, b: number) => a + b;
+
+  maybe.zipWith(maybe.just(1), maybe.just(2), add); // Just(3)
+  maybe.zipWith(maybe.just(1), maybe.nothing<number>(), add); // Nothing
+  ```
+
+  @param a  The first `Maybe`.
+  @param b  The second `Maybe`.
+  @param fn The function to combine the two values with.
+ */
+export function zipWith<A extends {}, B extends {}, C extends {}>(
+  a: Maybe<A>,
+  b: Maybe<B>,
+  fn: (a: A, b: B) => C
+): Maybe<C> {
+  return a.isJust && b.isJust ? just(fn(a.value, b.value)) : nothing();
+}
+
+/**
+  Given any iterable of {@linkcode Maybe}s, produce an array of the values of
+  every {@linkcode Just}, silently dropping every {@linkcode Nothing}.
+
+  ```ts
+  import * as maybe from 'true-myth/maybe';
+
+  maybe.compact([maybe.just(1), maybe.nothing<number>(), maybe.just(3)]); // [1, 3]
+  ```
+
+  @param maybes The `Maybe`s to collect the values from.
+ */
+export function compact<T extends {}>(maybes: Iterable<Maybe<T>>): Array<T> {
+  return filterMap(maybes, identity);
+}
+
+/**
+  Apply a function which produces a {@linkcode Maybe} to every item in an
+  iterable, and collect the values of every {@linkcode Just} into an array,
+  silently dropping every {@linkcode Nothing}.
+
+  ```ts
+  import * as maybe from 'true-myth/maybe';
+
+  const parse = (s: string) => {
+    const n = Number.parseInt(s, 10);
+    return Number.isNaN(n) ? maybe.nothing<number>() : maybe.just(n);
+  };
+
+  maybe.filterMap(['1', 'two', '3'], parse); // [1, 3]
+  ```
+
+  @template A The type of the items in the iterable.
+  @template B The type of the values wrapped in the `Maybe`s `fn` produces.
+  @param items The items to transform.
+  @param fn    The function to apply to each item.
+ */
+export function filterMap<A, B extends {}>(items: Iterable<A>, fn: (item: A) => Maybe<B>): Array<B>;
+/**
+  Curried form of {@linkcode filterMap}: provide the function first, and get
+  back a function which accepts the items to transform.
+
+  ```ts
+  import * as maybe from 'true-myth/maybe';
+
+  const parse = (s: string) => {
+    const n = Number.parseInt(s, 10);
+    return Number.isNaN(n) ? maybe.nothing<number>() : maybe.just(n);
+  };
+
+  const parseValid = maybe.filterMap(parse);
+  parseValid(['1', 'two', '3']); // [1, 3]
+  ```
+
+  @template A The type of the items in the iterable.
+  @template B The type of the values wrapped in the `Maybe`s `fn` produces.
+  @param fn   The function to apply to each item.
+ */
+export function filterMap<A, B extends {}>(
+  fn: (item: A) => Maybe<B>
+): (items: Iterable<A>) => Array<B>;
+export function filterMap<A, B extends {}>(
+  itemsOrFn: Iterable<A> | ((item: A) => Maybe<B>),
+  fn?: (item: A) => Maybe<B>
+): Array<B> | ((items: Iterable<A>) => Array<B>) {
+  const op = (items: Iterable<A>, mapFn: (item: A) => Maybe<B>): Array<B> => {
+    const values: Array<B> = [];
+    for (const item of items) {
+      const mapped = mapFn(item);
+      if (mapped.isJust) {
+        values.push(mapped.value);
+      }
+    }
+    return values;
+  };
+
+  return dataFirst(op, itemsOrFn, fn);
+}
+
+/**
+  Get the first {@linkcode Just} from an array (or any other iterable) of
+  {@linkcode Maybe}s, or {@linkcode Nothing} if there is no `Just` in it.
+
+  ```ts
+  import * as maybe from 'true-myth/maybe';
+
+  maybe.firstJust([maybe.nothing<number>(), maybe.just(2), maybe.just(3)]); // Just(2)
+  maybe.firstJust([maybe.nothing<number>()]); // Nothing
+  ```
+
+  @param maybes The `Maybe`s to search.
+ */
+export function firstJust<T extends {}>(maybes: Iterable<Maybe<T>>): Maybe<T> {
+  for (const maybe of maybes) {
+    if (maybe.isJust) {
+      return maybe;
+    }
+  }
+  return nothing();
 }
 
 /**
