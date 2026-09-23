@@ -67,7 +67,9 @@ export const parseTrackList = (value: string | undefined): GridTrack[] => {
 	const normalized = value
 		?.trim()
 		.toLowerCase()
-		.replaceAll(/\s*([(),])\s*/g, '$1');
+		.replaceAll(/\(\s*/g, '(')
+		.replaceAll(/\s*,\s*/g, ',')
+		.replaceAll(/\s*\)/g, ')');
 
 	if (!normalized) {
 		return [];
