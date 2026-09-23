@@ -11,6 +11,7 @@ import type { TResponseBody } from '../types/TResponseBody.js';
 import { Buffer } from 'buffer';
 import Stream from 'stream';
 import type BrowserWindow from '../../window/BrowserWindow.js';
+import WindowBrowserContext from '../../window/WindowBrowserContext.js';
 
 /**
  * Fetch body utility.
@@ -164,6 +165,66 @@ export default class FetchBodyUtility {
 
 		// Returns the other stream as the clone
 		return stream2;
+	}
+
+	/**
+	 * Runs the consumption of a request or response body as an async task of the window.
+	 *
+	 * The returned promise is rejected with an "AbortError" if the async task is aborted before the consumption completes, which happens when the page is closed or the frame navigates.
+	 *
+	 * @param window Window.
+	 * @param requestOrResponse Request or Response.
+	 * @param consume Function that consumes the body.
+	 * @param [onAbort] Called when the task is aborted.
+	 * @returns Promise.
+	 */
+	public static consumeBodyAsAsyncTask<T>(
+		window: BrowserWindow,
+		requestOrResponse: { [PropertySymbol.aborted]: boolean },
+		consume: () => Promise<T>,
+		onAbort?: () => void
+	): Promise<T> {
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+
+		return new Promise((resolve, reject) => {
+			const abort = (): void => {
+				requestOrResponse[PropertySymbol.aborted] = true;
+				if (onAbort) {
+					onAbort();
+				}
+				reject(
+					new window.DOMException(
+						'Failed to read body: The operation was aborted.',
+						DOMExceptionNameEnum.abortError
+					)
+				);
+			};
+
+			if (!asyncTaskManager) {
+				abort();
+				return;
+			}
+
+			let taskID: number;
+
+			try {
+				taskID = asyncTaskManager.startTask(abort);
+			} catch {
+				// The abort handler has already been called by startTask() when the manager is destroyed.
+				return;
+			}
+
+			consume().then(
+				(result) => {
+					asyncTaskManager.endTask(taskID);
+					resolve(result);
+				},
+				(error) => {
+					asyncTaskManager.endTask(taskID);
+					reject(error);
+				}
+			);
+		});
 	}
 
 	/**

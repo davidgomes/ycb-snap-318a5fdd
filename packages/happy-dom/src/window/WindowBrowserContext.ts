@@ -14,6 +14,7 @@ import type BrowserWindow from './BrowserWindow.js';
  */
 export default class WindowBrowserContext {
 	private static [PropertySymbol.browserFrames]: Map<number, IBrowserFrame> = new Map();
+	private static [PropertySymbol.asyncTaskManagers]: Map<number, AsyncTaskManager> = new Map();
 	private static [PropertySymbol.windowInternalId] = 0;
 	#window: BrowserWindow;
 
@@ -81,10 +82,19 @@ export default class WindowBrowserContext {
 	/**
 	 * Returns the async task manager of the window.
 	 *
+	 * The browser frame gets a new async task manager when it navigates, so the manager is bound to the window when the relation is created. This ensures that tasks started by a discarded window are aborted together with it.
+	 *
 	 * @returns Async task manager.
 	 */
 	public getAsyncTaskManager(): AsyncTaskManager | null {
-		return this.getBrowserFrame()?.[PropertySymbol.asyncTaskManager] || null;
+		if (!this.#window) {
+			return null;
+		}
+		return (
+			(<typeof WindowBrowserContext>this.constructor)[PropertySymbol.asyncTaskManagers].get(
+				this.#window[PropertySymbol.internalId]
+			) || null
+		);
 	}
 
 	/**
@@ -103,6 +113,10 @@ export default class WindowBrowserContext {
 			this[PropertySymbol.windowInternalId]++;
 		}
 		browserFrames.set(window[PropertySymbol.internalId], browserFrame);
+		this[PropertySymbol.asyncTaskManagers].set(
+			window[PropertySymbol.internalId],
+			browserFrame[PropertySymbol.asyncTaskManager]
+		);
 	}
 
 	/**
@@ -113,5 +127,6 @@ export default class WindowBrowserContext {
 	 */
 	public static removeWindowBrowserFrameRelation(window: BrowserWindow): void {
 		this[PropertySymbol.browserFrames].delete(window[PropertySymbol.internalId]);
+		this[PropertySymbol.asyncTaskManagers].delete(window[PropertySymbol.internalId]);
 	}
 }
