@@ -251,7 +251,7 @@ class Cache:
     All results are discarded when the runtime signature or the *settings*
     differ from the ones that the cache was created with.
 
-    Module entries have the following structure::
+    The "modules" section maps module keys to analysis results::
 
         {
             "path": <path of the analyzed module>,
@@ -265,11 +265,13 @@ class Cache:
 
     An empty message stands for the default message of the item type.
 
-    Entries without "defined" and "used" belong to modules that have not been
-    analyzed successfully, e.g., because they are invalid or because the
-    analysis was interrupted. Such modules are always analyzed, but they only
-    affect the modules importing them if they changed. Their imports are
-    omitted if they are unknown.
+    The "unanalyzed" section holds the paths, checksums and, if known, the
+    imports of modules without results, because they are invalid or because
+    the analysis was interrupted. Such modules are always analyzed, but they
+    only affect the modules importing them if they changed.
+
+    The "whitelists" section maps the names of whitelisted modules to the
+    checksums of their bundled whitelists.
     """
 
     def __init__(self, cache_dir, settings=None):
@@ -279,7 +281,8 @@ class Cache:
             json.dumps(settings or {}, sort_keys=True, default=str)
         )
         self.modules = {}
-        self.whitelists = {}
+        self._unanalyzed = {}
+        self._whitelists = {}
         self._signature = None
         self._loaded_checksum = None
 
@@ -289,8 +292,7 @@ class Cache:
         corrupt or unreadable cache is reported and ignored.
         """
         self._signature = get_runtime_signature()
-        self.modules = {}
-        self.whitelists = {}
+        self._set_sections(_get_empty_sections())
         self._loaded_checksum = None
         try:
             if not self.path.exists():
@@ -304,8 +306,7 @@ class Cache:
             )
             return
         if data is not None:
-            self.modules = data["modules"]
-            self.whitelists = data["whitelists"]
+            self._set_sections(data)
             self._loaded_checksum = checksum
 
     def get_stale_modules(self, current):
@@ -314,13 +315,12 @@ class Cache:
 
         *current* maps the keys of all modules of this run to pairs of their
         path and checksum. Modules are stale if they are new or changed, if
-        they (transitively) import changed, new or deleted modules, or if they
-        are affected by a changed whitelist.
+        they (transitively) import changed, new or deleted modules, if they
+        are affected by a changed whitelist, or if they have no results.
         """
         changed = set()
-        unanalyzed = set()
         for key, (path, checksum) in current.items():
-            entry = self.modules.get(key)
+            entry = self._get_entry(key)
             if (
                 entry is None
                 or checksum is None
@@ -328,11 +328,10 @@ class Cache:
                 or entry["path"] != str(path)
             ):
                 changed.add(key)
-            elif "defined" not in entry:
-                unanalyzed.add(key)
         deleted = {
             key
-            for key, entry in self.modules.items()
+            for section in (self.modules, self._unanalyzed)
+            for key, entry in section.items()
             if key not in current and not os.path.exists(entry["path"])
         }
         unchanged = current.keys() - changed
@@ -342,7 +341,7 @@ class Cache:
         # module, whitelist files affect the modules they import.
         changed_whitelists = {
             import_name
-            for import_name, checksum in self.whitelists.items()
+            for import_name, checksum in self._whitelists.items()
             if _get_whitelist_digest(import_name) != checksum
         }
         affected = {
@@ -351,8 +350,7 @@ class Cache:
             if changed_whitelists & self._get_imported_names(key)
         }
         for key in filter(_is_whitelist, changed | deleted):
-            if key in self.modules:
-                affected |= self._resolve_imports(index, key)
+            affected |= self._resolve_imports(index, key)
             if key in current:
                 names, stems = _read_import_targets(current[key][0])
                 affected |= index.resolve(names, stems, key)
@@ -360,7 +358,7 @@ class Cache:
         importers = defaultdict(set)
         unknown_imports = set()
         for key in unchanged:
-            if "imports" in self.modules[key]:
+            if "imports" in self._get_entry(key):
                 for imported in self._resolve_imports(index, key):
                     importers[imported].add(key)
             else:
@@ -376,21 +374,27 @@ class Cache:
                     outdated.add(importer)
                     queue.append(importer)
 
-        return (outdated | affected | unanalyzed) & current.keys()
+        without_results = current.keys() - self.modules.keys()
+        return ((outdated | affected) & current.keys()) | without_results
+
+    def _get_entry(self, key):
+        entry = self.modules.get(key)
+        return self._unanalyzed.get(key) if entry is None else entry
 
     def _resolve_imports(self, index, key):
-        entry = self.modules[key]
-        if "imports" not in entry:
+        entry = self._get_entry(key)
+        if entry is None or "imports" not in entry:
             return set()
         return index.resolve(entry["imports"], entry["relative_imports"], key)
 
     def _get_imported_names(self, key):
-        defined = self.modules[key].get("defined", {})
-        return {row[0] for row in defined.get("import", [])}
+        entry = self.modules.get(key)
+        rows = [] if entry is None else entry["defined"].get("import", [])
+        return {row[0] for row in rows}
 
     def _get_unanalyzed_entry(self, key, path, checksum):
         entry = {"path": str(path), "sha256": checksum}
-        previous = self.modules.get(key)
+        previous = self._get_entry(key)
         if (
             previous is not None
             and previous["sha256"] == checksum
@@ -402,38 +406,45 @@ class Cache:
 
     def save(self, modules, whitelists, current):
         """
-        Store the entries in *modules* and the checksums of the bundled
-        *whitelists* (mapping import names to checksums).
+        Store the analysis results in *modules* and the checksums of the
+        bundled *whitelists* (mapping import names to checksums).
 
         *current* maps the keys of all modules of this run to pairs of their
-        path and checksum (see get_stale_modules()). Modules without entry
+        path and checksum (see get_stale_modules()). Modules without results
         are stored as unanalyzed. Entries of other modules are kept if their
         files still exist, including entries that concurrent Vulture
         processes stored in the meantime.
         """
-        modules = dict(modules)
-        for key, (path, checksum) in current.items():
-            if key not in modules and checksum is not None:
-                modules[key] = self._get_unanalyzed_entry(key, path, checksum)
+        unanalyzed = {
+            key: self._get_unanalyzed_entry(key, path, checksum)
+            for key, (path, checksum) in current.items()
+            if key not in modules and checksum is not None
+        }
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             with _locked(self.cache_dir, exclusive=True):
-                stored_modules, stored_whitelists = self._read_stored()
-                merged = {
-                    key: entry
-                    for key, entry in stored_modules.items()
-                    if key not in current and os.path.exists(entry["path"])
-                }
-                merged.update(modules)
+                stored = self._read_stored()
                 data = {
-                    "modules": merged,
+                    "modules": {
+                        **_get_other_entries(stored["modules"], current),
+                        **modules,
+                    },
                     "settings": self.settings,
                     "signature": self._signature or get_runtime_signature(),
-                    "whitelists": {**stored_whitelists, **whitelists},
+                    "unanalyzed": {
+                        **_get_other_entries(stored["unanalyzed"], current),
+                        **unanalyzed,
+                    },
+                    "whitelists": {**stored["whitelists"], **whitelists},
                 }
                 self._write(data)
         except OSError as err:
             _warn(f"could not write vulture cache to {self.cache_dir}: {err}")
+
+    def _set_sections(self, data):
+        self.modules = data["modules"]
+        self._unanalyzed = data["unanalyzed"]
+        self._whitelists = data["whitelists"]
 
     def _read(self):
         """
@@ -457,7 +468,7 @@ class Cache:
         return checksum, data
 
     def _read_stored(self):
-        """Return the modules and whitelists currently stored on disk."""
+        """Return the sections currently stored on disk."""
         try:
             meta = json.loads(self._meta_path.read_bytes())
             if (
@@ -465,13 +476,15 @@ class Cache:
                 and self._loaded_checksum is not None
                 and meta.get("sha256") == self._loaded_checksum
             ):
-                return self.modules, self.whitelists
+                return {
+                    "modules": self.modules,
+                    "unanalyzed": self._unanalyzed,
+                    "whitelists": self._whitelists,
+                }
             _, data = self._read()
         except (OSError, ValueError, RecursionError):
             data = None
-        if data is None:
-            return {}, {}
-        return data["modules"], data["whitelists"]
+        return _get_empty_sections() if data is None else data
 
     def _write(self, data):
         contents = json.dumps(data, sort_keys=True, separators=(",", ":"))
@@ -488,29 +501,47 @@ class Cache:
                 (self._meta_path, meta),
             ]
         )
+        self._set_sections(data)
         self._loaded_checksum = checksum
-        self.modules = data["modules"]
-        self.whitelists = data["whitelists"]
 
     @property
     def _meta_path(self):
         return self.path.with_name(self.path.name + META_SUFFIX)
 
 
+def _get_empty_sections():
+    return {"modules": {}, "unanalyzed": {}, "whitelists": {}}
+
+
+def _get_other_entries(entries, current):
+    """Return the entries of existing modules that are not in *current*."""
+    return {
+        key: entry
+        for key, entry in entries.items()
+        if key not in current and os.path.exists(entry["path"])
+    }
+
+
 def _validate(data):
     """Raise ValueError if the cache contents are malformed."""
-    modules = data.get("modules")
-    whitelists = data.get("whitelists")
-    if not isinstance(modules, dict) or not isinstance(whitelists, dict):
+    sections = [data.get(name) for name in _get_empty_sections()]
+    if not all(isinstance(section, dict) for section in sections):
         raise ValueError("invalid format")
-    if not all(isinstance(value, str) for value in whitelists.values()):
-        raise ValueError("invalid whitelist entry")
-    for entry in modules.values():
-        if not _is_valid_entry(entry):
-            raise ValueError("invalid module entry")
+    modules, unanalyzed, whitelists = sections
+    if not (
+        all(
+            _is_valid_entry(entry, analyzed=True) for entry in modules.values()
+        )
+        and all(
+            _is_valid_entry(entry, analyzed=False)
+            for entry in unanalyzed.values()
+        )
+        and all(isinstance(value, str) for value in whitelists.values())
+    ):
+        raise ValueError("invalid entry")
 
 
-def _is_valid_entry(entry):
+def _is_valid_entry(entry, analyzed):
     def is_str_list(value):
         return isinstance(value, list) and all(
             isinstance(item, str) for item in value
@@ -531,17 +562,15 @@ def _is_valid_entry(entry):
         and isinstance(entry.get("sha256"), str)
     ):
         return False
-    has_imports = "imports" in entry or "relative_imports" in entry
-    if has_imports and not (
+    if (
+        analyzed or "imports" in entry or "relative_imports" in entry
+    ) and not (
         is_str_list(entry.get("imports"))
         and is_str_list(entry.get("relative_imports"))
     ):
         return False
-    if "defined" not in entry and "used" not in entry:
-        return True
-    return (
-        has_imports
-        and isinstance(entry.get("defined"), dict)
+    return not analyzed or (
+        isinstance(entry.get("defined"), dict)
         and all(
             isinstance(rows, list) and all(is_item_row(row) for row in rows)
             for rows in entry["defined"].values()

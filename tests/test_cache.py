@@ -50,12 +50,10 @@ def load_cache(cache_dir):
     return json.loads(cache.get_cache_path(cache_dir).read_text())
 
 
-def analyzed_modules(cache_dir):
-    return {
-        key
-        for key, entry in load_cache(cache_dir)["modules"].items()
-        if "defined" in entry
-    }
+def get_sections(cache_dir):
+    """Return the keys of analyzed and unanalyzed modules."""
+    data = load_cache(cache_dir)
+    return set(data["modules"]), set(data["unanalyzed"])
 
 
 def check_checksum(cache_dir):
@@ -463,8 +461,7 @@ def test_keyboard_interrupt_saves_partial_cache(
     monkeypatch.undo()
 
     check_checksum(cache_dir)
-    assert set(load_cache(cache_dir)["modules"]) == keys(*modules)
-    assert analyzed_modules(cache_dir) == keys(*modules[:2])
+    assert get_sections(cache_dir) == (keys(*modules[:2]), keys(*modules[2:]))
     v = run(modules, cache_dir)
     assert v._cache_stats == {
         "scanned": keys(*modules[2:]),
@@ -492,7 +489,7 @@ def test_resume_interrupted_first_run(tmp_path, cache_dir, monkeypatch):
         run([importer, other, late], cache_dir)
     monkeypatch.undo()
 
-    assert analyzed_modules(cache_dir) == keys(importer, other)
+    assert get_sections(cache_dir) == (keys(importer, other), keys(late))
     assert run([importer, other, late], cache_dir)._cache_stats == {
         "scanned": keys(late),
         "reused": keys(importer, other),
@@ -655,7 +652,7 @@ def test_invalid_modules_are_not_cached(
         assert v._cache_stats == stats
         assert message in capsys.readouterr().err
         assert v.exit_code == ExitCode.InvalidInput
-    assert analyzed_modules(cache_dir) == keys(importer)
+    assert get_sections(cache_dir) == (keys(importer), keys(invalid))
 
     invalid.write_text("x = 1\n")
     v = run([tmp_path], cache_dir)
