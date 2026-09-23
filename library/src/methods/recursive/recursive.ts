@@ -32,7 +32,9 @@ export interface RecurSchema
  * `recursive` or `recursiveAsync`.
  *
  * Hint: Schemas containing `Recur` must be wrapped with `recursive` or
- * `recursiveAsync` before they can be parsed.
+ * `recursiveAsync` before they can be parsed. Until then, the placeholder is
+ * typed as `RecurMarker`, so transformations inside of the wrapped schema can
+ * pass recursive values through, but not access their properties.
  */
 export const Recur: RecurSchema = {
   kind: 'schema',
@@ -50,7 +52,7 @@ export const Recur: RecurSchema = {
     // If placeholder is not resolved, throw error
     if (!schema) {
       throw new Error(
-        'Recur must be wrapped with recursive or recursiveAsync before parsing.'
+        'Recur must be resolved with recursive or recursiveAsync before parsing.'
       );
     }
 
