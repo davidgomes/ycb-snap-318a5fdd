@@ -28,6 +28,7 @@
 - [Error reporting](#error-reporting)
 - [Comments](#comments)
 - [Limitations](#limitations)
+- [Grammar analysis](#grammar-analysis)
 - [EBNF](#ebnf)
 - [Syntax/Railroad Diagrams](#syntaxrailroad-diagrams)
 
@@ -629,6 +630,39 @@ Internally, Participle is a recursive descent parser with backtracking (see
 
 Among other things, this means that Participle grammars do not support left
 recursion. Left recursion must be eliminated by restructuring your grammar.
+
+## Grammar analysis
+
+Because alternatives are tried in order, an ambiguous grammar will not fail to
+build, it will just silently prefer one interpretation. Participle can detect
+ambiguities statically when built with the `analyze` build tag:
+
+```go
+report, err := parser.Analyze()
+if err != nil {
+  return err
+}
+fmt.Println(report)
+```
+
+The following conflicts are detected:
+
+| Conflict       | Severity | Example                        |
+|----------------|----------|--------------------------------|
+| `first/first`  | warning  | `@Ident "=" @Int \| @Ident`    |
+| `first/follow` | warning  | `@Ident? @Ident`               |
+| `unreachable`  | error    | `@Ident \| @Ident`             |
+
+Each conflict includes its location (Go type and field), an EBNF snippet, an
+example token sequence that triggers the ambiguity, and a suggested fix.
+Literals and token types are treated as distinct, so `"keyword" | @Ident` is not
+a conflict, and lookahead groups and negations are not analysed. Conflict types
+can be excluded with `parser.AnalyzeWithOptions(participle.SuppressConflictType(...))`.
+
+The `participle.StrictMode()` option makes `Build()` fail if any conflict is
+detected. As analysis is only compiled in with the `analyze` build tag, this
+option can be left enabled in production code while running
+`go test -tags analyze ./...` in CI.
 
 ## EBNF
 
