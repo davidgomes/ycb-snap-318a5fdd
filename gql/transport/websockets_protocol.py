@@ -2,11 +2,12 @@ import asyncio
 import json
 import logging
 from contextlib import suppress
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 from graphql import ExecutionResult
 
 from ..graphql_request import GraphQLRequest
+from ..incremental import IncrementalExecutionResult, execution_result_to_payload
 from .common.adapters.connection import AdapterConnection
 from .common.base import SubscriptionTransportBase
 from .exceptions import (
@@ -17,6 +18,44 @@ from .exceptions import (
 )
 
 log = logging.getLogger("gql.transport.websockets")
+
+_INCREMENTAL_PAYLOAD_KEYS = (
+    "incremental",
+    "hasNext",
+    "pending",
+    "completed",
+    "path",
+)
+
+
+def _execution_result_from_payload(payload: Dict[str, Any]) -> ExecutionResult:
+    """Build an execution result from a GraphQL-over-WebSocket payload.
+
+    Payloads that belong to incremental delivery (``@defer`` / ``@stream``)
+    are forwarded intact, including messages that have ``hasNext`` or
+    ``incremental`` and no ``data`` or ``errors`` fields.
+    """
+
+    if any(key in payload for key in _INCREMENTAL_PAYLOAD_KEYS):
+        has_next = payload.get("hasNext") is True
+        result = IncrementalExecutionResult(
+            data=payload.get("data"),
+            errors=payload.get("errors"),
+            extensions=payload.get("extensions"),
+            has_next=has_next,
+        )
+        # Keep the original JSON so execute_incremental can merge patches.
+        result.raw_payload = payload
+        return result
+
+    if "errors" not in payload and "data" not in payload:
+        raise ValueError("payload does not contain 'data' or 'errors' fields")
+
+    return ExecutionResult(
+        errors=payload.get("errors"),
+        data=payload.get("data"),
+        extensions=payload.get("extensions"),
+    )
 
 
 class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
@@ -297,16 +336,7 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
                         if not isinstance(payload, dict):
                             raise ValueError("payload is not a dict")
 
-                        if "errors" not in payload and "data" not in payload:
-                            raise ValueError(
-                                "payload does not contain 'data' or 'errors' fields"
-                            )
-
-                        execution_result = ExecutionResult(
-                            errors=payload.get("errors"),
-                            data=payload.get("data"),
-                            extensions=payload.get("extensions"),
-                        )
+                        execution_result = _execution_result_from_payload(payload)
 
                         # Saving answer_type as 'data' to be understood with superclass
                         answer_type = "data"
@@ -368,16 +398,7 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
 
                     if answer_type == "data":
 
-                        if "errors" not in payload and "data" not in payload:
-                            raise ValueError(
-                                "payload does not contain 'data' or 'errors' fields"
-                            )
-
-                        execution_result = ExecutionResult(
-                            errors=payload.get("errors"),
-                            data=payload.get("data"),
-                            extensions=payload.get("extensions"),
-                        )
+                        execution_result = _execution_result_from_payload(payload)
 
                     elif answer_type == "error":
 
@@ -495,6 +516,28 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
         ):
 
             self.send_ping_task = asyncio.ensure_future(self._send_ping_coro())
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute a query and yield each incremental websocket payload.
+
+        Payloads are the JSON objects carried by ``next`` (graphql-ws) or
+        ``data`` (apollo) messages. The generator stops when a payload does
+        not set ``hasNext`` to true, or when the server completes the operation.
+        """
+
+        generator = self.subscribe(request, send_stop=False)
+
+        try:
+            async for result in generator:
+                payload = execution_result_to_payload(result)
+                yield payload
+                if payload.get("hasNext") is not True:
+                    break
+        finally:
+            await generator.aclose()
 
     async def _close_hook(self):
         log.debug("_close_hook: start")

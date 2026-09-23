@@ -1,9 +1,11 @@
 import asyncio
 from inspect import isawaitable
-from typing import Any, AsyncGenerator, Awaitable, cast
+from typing import Any, AsyncGenerator, Awaitable, Dict, cast
 
 from graphql import ExecutionResult, GraphQLSchema, execute, subscribe
+from graphql.execution.execute import experimental_execute_incrementally
 
+from gql.incremental import execution_result_to_payload
 from gql.transport import AsyncTransport
 
 from ..graphql_request import GraphQLRequest
@@ -61,6 +63,41 @@ class LocalSchemaTransport(AsyncTransport):
             execution_result = result_or_awaitable
 
         return execution_result
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute a query and yield each ``@defer`` / ``@stream`` payload.
+
+        Non-incremental queries yield a single payload. Payloads are the
+        formatted JSON objects produced by graphql-core, either path-based or
+        ``pending``/``id`` based.
+        """
+
+        inner_kwargs = {
+            "variable_values": request.variable_values,
+            "operation_name": request.operation_name,
+            **kwargs,
+        }
+
+        result = experimental_execute_incrementally(
+            self.schema,
+            request.document,
+            *args,
+            **inner_kwargs,
+        )
+        result = await self._await_if_necessary(result)
+
+        if isinstance(result, ExecutionResult):
+            yield execution_result_to_payload(result)
+            return
+
+        yield result.initial_result.formatted
+        async for subsequent in result.subsequent_results:
+            yield subsequent.formatted
 
     @staticmethod
     async def _await_if_necessary(obj):

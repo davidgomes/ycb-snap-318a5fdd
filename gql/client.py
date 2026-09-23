@@ -24,7 +24,9 @@ from typing import (
 from anyio import fail_after
 from graphql import (
     ExecutionResult,
+    GraphQLDeferDirective,
     GraphQLSchema,
+    GraphQLStreamDirective,
     IntrospectionQuery,
     build_ast_schema,
     parse,
@@ -39,6 +41,11 @@ from tenacity import (
 )
 
 from .graphql_request import GraphQLRequest, support_deprecated_request
+from .incremental import (
+    IncrementalExecutionResult,
+    IncrementalResultBuilder,
+    execution_result_to_payload,
+)
 from .transport.async_transport import AsyncTransport
 from .transport.exceptions import TransportConnectionFailed, TransportQueryError
 from .transport.local_schema import LocalSchemaTransport
@@ -48,6 +55,31 @@ from .utilities import parse_result as parse_result_fn
 from .utils import str_first_element
 
 log = logging.getLogger(__name__)
+
+
+def _schema_with_incremental_directives(schema: GraphQLSchema) -> GraphQLSchema:
+    """Return ``schema`` with ``@defer`` and ``@stream`` available for validation.
+
+    Most schemas do not declare these directives. Validation of an incremental
+    query still needs them, plus the built-in location rules.
+    """
+
+    names = {directive.name for directive in schema.directives}
+    extra = []
+    if "defer" not in names:
+        extra.append(GraphQLDeferDirective)
+    if "stream" not in names:
+        extra.append(GraphQLStreamDirective)
+    if not extra:
+        return schema
+
+    return GraphQLSchema(
+        query=schema.query_type,
+        mutation=schema.mutation_type,
+        subscription=schema.subscription_type,
+        directives=[*schema.directives, *extra],
+        assume_valid=True,
+    )
 
 
 class Client:
@@ -1594,6 +1626,83 @@ class AsyncClientSession:
             return result
 
         return result.data
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        parse_result: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalExecutionResult, None]:
+        """Execute a query and yield accumulated ``@defer`` / ``@stream`` results.
+
+        Each result has ``data``, ``has_next``, ``errors`` and ``extensions``.
+        ``data`` is the full result merged so far, not the raw patch from that
+        payload. ``extensions`` come from that payload only and are not merged
+        with earlier payloads.
+
+        GraphQL errors are exposed on the result and do not stop later payloads.
+        A transport that answers with a single JSON body yields one result with
+        ``has_next`` false.
+
+        :param request: GraphQL query as :class:`GraphQLRequest <gql.GraphQLRequest>`.
+        :param serialize_variables: whether the variable values should be
+            serialized. Used for custom scalars and/or enums.
+            By default use the serialize_variables argument of the client.
+        :param parse_result: Whether gql will deserialize the result.
+            By default use the parse_results argument of the client.
+
+        The extra arguments are passed to the transport ``execute_incremental``
+        method.
+        """
+
+        # Still supporting for now old method of providing
+        # variable_values and operation_name
+        request = support_deprecated_request(request, kwargs)
+
+        # Validate document. ``@defer`` / ``@stream`` are included when the
+        # schema does not already declare them.
+        if self.client.schema:
+            schema = _schema_with_incremental_directives(self.client.schema)
+            validation_errors = validate(schema, request.document)
+            if validation_errors:
+                raise validation_errors[0]
+
+            # Parse variable values for custom scalars if requested
+            if request.variable_values is not None:
+                if serialize_variables or (
+                    serialize_variables is None and self.client.serialize_variables
+                ):
+                    request = request.serialize_variable_values(self.client.schema)
+
+        should_parse = False
+        if self.client.schema:
+            should_parse = bool(
+                parse_result or (parse_result is None and self.client.parse_results)
+            )
+
+        builder = IncrementalResultBuilder()
+        generator = self.transport.execute_incremental(request, **kwargs)
+
+        try:
+            async for payload in generator:
+                if not isinstance(payload, dict):
+                    payload = execution_result_to_payload(payload)
+
+                result = builder.apply(payload)
+
+                if should_parse and result.data is not None:
+                    result.data = parse_result_fn(
+                        self.client.schema,
+                        request.document,
+                        result.data,
+                        operation_name=request.operation_name,
+                    )
+
+                yield result
+        finally:
+            await generator.aclose()
 
     async def _execute_batch(
         self,

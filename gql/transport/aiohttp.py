@@ -41,6 +41,22 @@ from .file_upload import FileVar, close_files, extract_files, open_files
 
 log = logging.getLogger(__name__)
 
+# GraphQL over HTTP incremental delivery (defer/stream), deferSpec=20220824.
+INCREMENTAL_DELIVERY_ACCEPT = (
+    "multipart/mixed;boundary=graphql;deferSpec=20220824,application/json"
+)
+
+_INCREMENTAL_PAYLOAD_KEYS = (
+    "data",
+    "errors",
+    "incremental",
+    "hasNext",
+    "extensions",
+    "path",
+    "pending",
+    "completed",
+)
+
 
 class AIOHTTPTransport(AsyncTransport):
     """:ref:`Async Transport <async_transports>` to execute GraphQL queries
@@ -421,6 +437,146 @@ class AIOHTTPTransport(AsyncTransport):
             raise
         except Exception as e:
             raise TransportConnectionFailed(str(e)) from e
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        extra_args: Optional[Dict[str, Any]] = None,
+        upload_files: bool = False,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute a query and yield incremental ``@defer`` / ``@stream`` payloads.
+
+        The request asks for ``multipart/mixed`` responses
+        (``boundary=graphql``, ``deferSpec=20220824``). A single
+        ``application/json`` body is yielded as one payload so non-incremental
+        servers keep working.
+
+        Each yielded dict is one response part, not an accumulated result.
+        """
+
+        if self.session is None:
+            raise TransportClosed("Transport is not connected")
+
+        post_args = self._prepare_request(
+            request,
+            extra_args,
+            upload_files,
+        )
+        headers = dict(post_args.get("headers") or {})
+        headers["Accept"] = INCREMENTAL_DELIVERY_ACCEPT
+        post_args["headers"] = headers
+
+        try:
+            async with self.session.post(self.url, ssl=self.ssl, **post_args) as resp:
+                self.response_headers = resp.headers
+
+                if resp.status >= 400:
+                    self._raise_transport_server_error_if_status_more_than_400(resp)
+
+                content_type = resp.headers.get("Content-Type", "")
+                if "multipart/mixed" in content_type.lower():
+                    async for payload in self._parse_incremental_multipart(resp):
+                        yield payload
+                else:
+                    yield await self._read_single_incremental_payload(resp)
+        except TransportError:
+            raise
+        except Exception as e:
+            raise TransportConnectionFailed(str(e)) from e
+        finally:
+            if upload_files:
+                close_files(list(self.files.values()))
+
+    async def _read_single_incremental_payload(
+        self,
+        response: aiohttp.ClientResponse,
+    ) -> Dict[str, Any]:
+        """Read a non-multipart JSON body as one incremental payload."""
+
+        result = await self._get_json_result(response)
+
+        if not isinstance(result, dict):
+            await self._raise_response_error(response, "Not a JSON object")
+
+        if not any(key in result for key in _INCREMENTAL_PAYLOAD_KEYS):
+            await self._raise_response_error(
+                response, 'No "data" or "errors" keys in answer'
+            )
+
+        return result
+
+    async def _parse_incremental_multipart(
+        self,
+        response: aiohttp.ClientResponse,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Yield each JSON part of an incremental multipart response.
+
+        Unlike multipart subscriptions, defer/stream parts are the GraphQL
+        payload itself (no ``payload`` wrapper).
+        """
+
+        reader = MultipartReader.from_response(response)
+
+        while True:
+            try:
+                part = await reader.next()
+            except Exception:
+                # reader.next() throws on empty parts at the end of the stream.
+                if reader.at_eof():
+                    break
+                raise  # pragma: no cover
+
+            if part is None:
+                break
+
+            if isinstance(part, MultipartReader):
+                raise TransportProtocolError(
+                    "Nested multipart parts are not supported in incremental delivery"
+                )
+
+            payload = await self._parse_incremental_part(part)
+            if payload is not None:
+                yield payload
+
+    async def _parse_incremental_part(
+        self, part: BodyPartReader
+    ) -> Optional[Dict[str, Any]]:
+        """Parse one incremental multipart part. Empty heartbeats return None."""
+
+        content_type = part.headers.get(aiohttp.hdrs.CONTENT_TYPE, "")
+        if content_type and "json" not in content_type.lower():
+            raise TransportProtocolError(
+                f"Unexpected part content-type: {content_type}. "
+                "Expected 'application/json'."
+            )
+
+        body = (await part.text()).strip()
+
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug("<<< %s", ascii(body or "(empty body, skipping)"))
+
+        if not body:
+            return None
+
+        try:
+            data = self.json_deserialize(body)
+        except json.JSONDecodeError as exc:
+            raise TransportProtocolError(
+                f"Failed to parse incremental JSON part: {exc}"
+            ) from exc
+
+        if not isinstance(data, dict):
+            raise TransportProtocolError(
+                "Incremental response part is not a JSON object"
+            )
+
+        # Heartbeats are empty JSON objects and are not yielded.
+        if not any(key in data for key in _INCREMENTAL_PAYLOAD_KEYS):
+            log.debug("Received heartbeat, ignoring")
+            return None
+
+        return data
 
     async def subscribe(
         self,

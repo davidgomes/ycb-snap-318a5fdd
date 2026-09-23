@@ -12,6 +12,7 @@ from typing import (
     Any,
     Dict,
     Iterable,
+    List,
     Literal,
     Mapping,
     Optional,
@@ -92,6 +93,30 @@ else:
 log = logging.getLogger(__name__)
 
 _re_integer_string = re.compile("^-?(?:0|[1-9][0-9]*)$")
+
+
+def _allow_ast_node_mutation() -> None:
+    """Let the DSL update AST nodes that graphql-core 3.3 freezes.
+
+    graphql-core 3.3.0a14 and later makes AST dataclasses frozen. This module
+    builds documents by filling those nodes in place, including ``@defer`` and
+    ``@stream`` directives added after the node is created.
+    """
+
+    from graphql.language import ast as ast_module
+
+    def _set_attr(self: Any, name: str, value: Any) -> None:
+        object.__setattr__(self, name, value)
+
+    node_type = ast_module.Node
+    for obj in vars(ast_module).values():
+        if not isinstance(obj, type) or not issubclass(obj, node_type):
+            continue
+        if "__setattr__" in obj.__dict__:
+            obj.__setattr__ = _set_attr  # type: ignore[method-assign]
+
+
+_allow_ast_node_mutation()
 
 
 def ast_from_serialized_value_untyped(serialized: Any) -> Optional[ValueNode]:
@@ -1066,6 +1091,66 @@ class DSLFieldSelector(DSLSelector):
         return False
 
 
+def _output_type_is_list(type_: Any) -> bool:
+    """Return True when ``type_`` is a GraphQL list, ignoring a non-null wrapper."""
+
+    if is_non_null_type(type_):
+        type_ = type_.of_type
+    return bool(is_list_type(type_))
+
+
+def _defer_directive_node(
+    label: Optional[str] = None,
+    if_: Optional[bool] = None,
+) -> DirectiveNode:
+    arguments: List[ArgumentNode] = []
+    if if_ is not None:
+        arguments.append(
+            ArgumentNode(
+                name=NameNode(value="if"),
+                value=BooleanValueNode(value=if_),
+            )
+        )
+    if label is not None:
+        arguments.append(
+            ArgumentNode(
+                name=NameNode(value="label"),
+                value=StringValueNode(value=label),
+            )
+        )
+    return DirectiveNode(name=NameNode(value="defer"), arguments=tuple(arguments))
+
+
+def _stream_directive_node(
+    label: Optional[str] = None,
+    initial_count: Optional[int] = None,
+    if_: Optional[bool] = None,
+) -> DirectiveNode:
+    arguments: List[ArgumentNode] = []
+    if if_ is not None:
+        arguments.append(
+            ArgumentNode(
+                name=NameNode(value="if"),
+                value=BooleanValueNode(value=if_),
+            )
+        )
+    if label is not None:
+        arguments.append(
+            ArgumentNode(
+                name=NameNode(value="label"),
+                value=StringValueNode(value=label),
+            )
+        )
+    if initial_count is not None:
+        arguments.append(
+            ArgumentNode(
+                name=NameNode(value="initialCount"),
+                value=IntValueNode(value=str(initial_count)),
+            )
+        )
+    return DirectiveNode(name=NameNode(value="stream"), arguments=tuple(arguments))
+
+
 class DSLField(DSLSelectableWithAlias, DSLFieldSelector):
     """The DSLField represents a GraphQL field for the DSL code.
 
@@ -1108,11 +1193,15 @@ class DSLField(DSLSelectableWithAlias, DSLFieldSelector):
             directives=(),
         )
         self.dsl_type = dsl_type
+        self._synthetic_directives: Tuple[DirectiveNode, ...] = ()
 
         log.debug(f"Creating {self!r}")
 
         DSLSelector.__init__(self)
         DSLDirectable.__init__(self)
+
+    def _apply_ast_directives(self) -> None:
+        self.ast_field.directives = self.directives_ast + self._synthetic_directives
 
     @property
     def name(self):
@@ -1182,8 +1271,44 @@ class DSLField(DSLSelectableWithAlias, DSLFieldSelector):
     def directives(self, *directives: DSLDirective) -> Self:
         """Add directives to this field."""
         super().directives(*directives)
-        self.ast_field.directives = self.directives_ast
+        self._apply_ast_directives()
 
+        return self
+
+    def stream(
+        self,
+        label: Optional[str] = None,
+        initial_count: Optional[int] = None,
+        *,
+        if_: Optional[bool] = None,
+    ) -> Self:
+        """Add an ``@stream`` directive to this list field.
+
+        :param label: optional ``label`` argument
+        :param initial_count: optional ``initialCount`` argument
+        :param if_: optional ``if`` argument
+        :raises GraphQLError: if this field does not return a list
+        :raises TypeError: if ``label`` or ``initial_count`` has the wrong type
+        """
+
+        if not _output_type_is_list(self.field.type):
+            raise GraphQLError(
+                "@stream directive can only be used on list fields "
+                f"({self.parent_type.name}.{self.name})."
+            )
+
+        if label is not None and not isinstance(label, str):
+            raise TypeError("stream label must be a string")
+        if initial_count is not None and (
+            isinstance(initial_count, bool) or not isinstance(initial_count, int)
+        ):
+            raise TypeError("stream initial_count must be an int")
+
+        directive = _stream_directive_node(
+            label=label, initial_count=initial_count, if_=if_
+        )
+        self._synthetic_directives = self._synthetic_directives + (directive,)
+        self._apply_ast_directives()
         return self
 
     def is_valid_directive(self, directive: DSLDirective) -> bool:
@@ -1322,10 +1447,14 @@ class DSLFragmentSpread(DSLSelectable):
         self.ast_field = FragmentSpreadNode(
             name=NameNode(value=fragment.name), directives=()
         )
+        self._synthetic_directives: Tuple[DirectiveNode, ...] = ()
 
         log.debug(f"Creating fragment spread for {fragment.name}")
 
         DSLDirectable.__init__(self)
+
+    def _apply_ast_directives(self) -> None:
+        self.ast_field.directives = self.directives_ast + self._synthetic_directives
 
     @property
     def name(self) -> str:
@@ -1338,7 +1467,28 @@ class DSLFragmentSpread(DSLSelectable):
         Fragment spreads support all directive types through auto-validation.
         """
         super().directives(*directives)
-        self.ast_field.directives = self.directives_ast
+        self._apply_ast_directives()
+        return self
+
+    def defer(
+        self,
+        label: Optional[str] = None,
+        *,
+        if_: Optional[bool] = None,
+    ) -> Self:
+        """Add an ``@defer`` directive to this fragment spread.
+
+        :param label: optional ``label`` argument
+        :param if_: optional ``if`` argument
+        :raises TypeError: if ``label`` is not a string
+        """
+
+        if label is not None and not isinstance(label, str):
+            raise TypeError("defer label must be a string")
+
+        directive = _defer_directive_node(label=label, if_=if_)
+        self._synthetic_directives = self._synthetic_directives + (directive,)
+        self._apply_ast_directives()
         return self
 
     def is_valid_directive(self, directive: DSLDirective) -> bool:
@@ -1393,6 +1543,30 @@ class DSLFragment(DSLSelectable, DSLFragmentSelector, DSLExecutable):
         :return: DSLFragmentSpread instance for this fragment
         """
         return DSLFragmentSpread(self)
+
+    def defer(
+        self,
+        label: Optional[str] = None,
+        *,
+        if_: Optional[bool] = None,
+    ) -> Self:
+        """Add ``@defer`` to the fragment spread used when this fragment is selected.
+
+        The directive is attached to the spread, which is where ``@defer`` is
+        valid. The fragment definition itself is left unchanged.
+
+        :param label: optional ``label`` argument
+        :param if_: optional ``if`` argument
+        :raises TypeError: if ``label`` is not a string
+        """
+
+        if label is not None and not isinstance(label, str):
+            raise TypeError("defer label must be a string")
+
+        directive = _defer_directive_node(label=label, if_=if_)
+        existing = self.ast_field.directives or ()
+        self.ast_field.directives = tuple(existing) + (directive,)
+        return self
 
     def select(
         self, *fields: DSLSelectable, **fields_with_alias: DSLSelectableWithAlias
@@ -1516,7 +1690,7 @@ def dsl_gql(
             )
 
     document = DocumentNode(
-        definitions=[operation.executable_ast for operation in all_operations]
+        definitions=tuple(operation.executable_ast for operation in all_operations)
     )
 
     return GraphQLRequest(document)

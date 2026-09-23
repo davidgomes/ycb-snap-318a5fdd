@@ -1,9 +1,10 @@
 import abc
-from typing import Any, AsyncGenerator, List
+from typing import Any, AsyncGenerator, Dict, List
 
 from graphql import ExecutionResult
 
 from ..graphql_request import GraphQLRequest
+from ..incremental import execution_result_to_payload
 
 
 class AsyncTransport(abc.ABC):
@@ -48,6 +49,25 @@ class AsyncTransport(abc.ABC):
         raise NotImplementedError(
             "This Transport has not implemented the execute_batch method"
         )  # pragma: no cover
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute a request and yield incremental delivery payloads.
+
+        The default implementation performs a single non-incremental execution
+        and yields that payload with ``hasNext`` set to false. Transports that
+        understand ``@defer`` and ``@stream`` override this method.
+
+        Payloads are raw JSON objects (``data``, ``incremental``, ``hasNext``,
+        ``errors``, ``extensions``), not accumulated results.
+        """
+
+        result = await self.execute(request, *args, **kwargs)
+        yield execution_result_to_payload(result)
 
     @abc.abstractmethod
     def subscribe(
