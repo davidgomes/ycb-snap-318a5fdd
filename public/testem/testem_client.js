@@ -172,29 +172,22 @@ var Testem = {
       argsWithoutFirst[i - 1] = arguments[i];
     }
 
-    this.callEventHandlers(evt, argsWithoutFirst);
-
-    this.emitMessage.apply(this, arguments);
-  },
-  callEventHandlers: function(evt, args) {
     if (this.evtHandlers && this.evtHandlers[evt]) {
       var handlers = this.evtHandlers[evt];
       for (var j = 0; j < handlers.length; j++) {
         var handler = handlers[j];
-        handler.apply(this, args);
+        handler.apply(this, argsWithoutFirst);
       }
     }
+
+    this.emitMessage.apply(this, arguments);
   },
   // Once aborted, emitMessage drops everything, so the final events bypass it.
   handleAbortTests: function() {
     Testem.aborted = true;
     this.aborted = true;
-
-    var finalEvents = ['abort-tests', 'after-tests-complete'];
-    for (var i = 0; i < finalEvents.length; i++) {
-      this.callEventHandlers(finalEvents[i], []);
-      this.sendMessage([finalEvents[i]]);
-    }
+    this.sendMessage(['abort-tests']);
+    this.sendMessage(['after-tests-complete']);
   },
   on: function(evt, callback) {
     if (!this.evtHandlers) {
