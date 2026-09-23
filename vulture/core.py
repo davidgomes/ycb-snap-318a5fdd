@@ -1,4 +1,5 @@
 import ast
+import os
 import pkgutil
 import re
 import string
@@ -7,8 +8,8 @@ from fnmatch import fnmatch, fnmatchcase
 from functools import partial
 from pathlib import Path
 
-from vulture import lines, noqa, utils
-from vulture.config import InputError, make_config
+from vulture import cache, lines, noqa, utils
+from vulture.config import DEFAULTS, InputError, make_config
 from vulture.reachability import Reachability
 from vulture.utils import ExitCode
 
@@ -191,7 +192,12 @@ class Vulture(ast.NodeVisitor):
     """Find dead code."""
 
     def __init__(
-        self, verbose=False, ignore_names=None, ignore_decorators=None
+        self,
+        verbose=False,
+        ignore_names=None,
+        ignore_decorators=None,
+        cache_dir=None,
+        cache_settings=None,
     ):
         self.verbose = verbose
 
@@ -223,6 +229,37 @@ class Vulture(ast.NodeVisitor):
             confidence=100,
         )
         self.reachability = Reachability(report=report)
+
+        self._cache = None
+        if cache_dir is not None:
+            self._cache = cache.Cache(
+                cache_dir,
+                settings={
+                    "ignore_names": self.ignore_names,
+                    "ignore_decorators": self.ignore_decorators,
+                    "cache_settings": cache_settings or {},
+                },
+            )
+        self._cache_stats = {"scanned": set(), "reused": set()}
+        # Only used while analyzing a single module for the cache.
+        self._captured_errors = None
+        self._imports = None
+        self._rel_imports = None
+
+    def _collections(self):
+        return {
+            collection.typ: collection
+            for collection in (
+                self.defined_attrs,
+                self.defined_classes,
+                self.defined_funcs,
+                self.defined_imports,
+                self.defined_methods,
+                self.defined_props,
+                self.defined_vars,
+                self.unreachable_code,
+            )
+        }
 
     def scan(self, code, filename=""):
         filename = Path(filename)
@@ -277,25 +314,45 @@ class Vulture(ast.NodeVisitor):
 
         paths = [Path(path) for path in paths]
 
+        modules = []
         for module in utils.get_modules(paths):
             if exclude_path(module):
                 self._log("Excluded:", module)
-                continue
-
-            self._log("Scanning:", module)
-            try:
-                module_string = utils.read_file(module)
-            except utils.VultureInputException as err:
-                self._log(
-                    f"Error: Could not read file {module} - {err}\n"
-                    f"Try to change the encoding to UTF-8.",
-                    file=sys.stderr,
-                    force=True,
-                )
-                self.exit_code = ExitCode.InvalidInput
             else:
-                self.scan(module_string, filename=module)
+                modules.append(module)
 
+        if self._cache is None:
+            for module in modules:
+                self._scan_file(module)
+                self._cache_stats["scanned"].add(cache.normalize_path(module))
+            self._scan_whitelists(exclude_path)
+            return
+
+        self._cache.load(log=self._log)
+        try:
+            self._scan_modules_incrementally(modules)
+            self._scan_whitelists(exclude_path)
+        except KeyboardInterrupt:
+            self._cache.save()
+            raise
+        self._cache.save()
+
+    def _scan_file(self, module):
+        self._log("Scanning:", module)
+        try:
+            module_string = utils.read_file(module)
+        except utils.VultureInputException as err:
+            self._log(
+                f"Error: Could not read file {module} - {err}\n"
+                f"Try to change the encoding to UTF-8.",
+                file=sys.stderr,
+                force=True,
+            )
+            self.exit_code = ExitCode.InvalidInput
+        else:
+            self.scan(module_string, filename=module)
+
+    def _scan_whitelists(self, exclude_path):
         unique_imports = {item.name for item in self.defined_imports}
         for import_name in unique_imports:
             path = Path("whitelists") / (import_name + "_whitelist.py")
@@ -310,7 +367,204 @@ class Vulture(ast.NodeVisitor):
                     continue
                 assert module_data is not None
                 module_string = module_data.decode("utf-8")
-                self.scan(module_string, filename=path)
+                if self._cache is None:
+                    self.scan(module_string, filename=path)
+                    continue
+                key = path.as_posix()
+                digest = cache.sha256(module_data)
+                entry = self._cache.whitelists.get(key)
+                if entry is not None and entry["sha256"] == digest:
+                    self._merge(path, entry["result"], replay_errors=True)
+                else:
+                    result = self._analyze(
+                        partial(self.scan, module_string, filename=path)
+                    )
+                    self._cache.store_whitelist(key, digest, result)
+                    self._merge(path, result, replay_errors=False)
+
+    def _scan_modules_incrementally(self, modules):
+        """
+        Analyze modules that changed (and modules that transitively import
+        them) and reuse the cached results for all other modules.
+        """
+        store = self._cache
+        keys = [cache.normalize_path(module) for module in modules]
+        pending = dict(zip(keys, modules))
+        digests = {
+            key: cache.file_digest(path) for key, path in pending.items()
+        }
+
+        changed = {
+            key
+            for key, digest in digests.items()
+            if digest is None
+            or store.modules.get(key, {}).get("sha256") != digest
+        }
+        deleted = {
+            key
+            for key in store.modules
+            if key not in pending and not os.path.exists(key)
+        }
+        old_results = {
+            key: store.modules[key]["result"]
+            for key in changed | deleted
+            if key in store.modules
+        }
+        # Drop outdated entries first, so that an interrupted run never
+        # leaves them behind.
+        store.discard(changed | deleted)
+
+        results = {}
+
+        def analyze(key):
+            results[key] = self._analyze(
+                partial(self._scan_file, pending[key])
+            )
+
+        # Whitelist modules are analyzed first because the names they use
+        # determine which other modules are affected by their changes.
+        whitelist_names = set()
+        for key in pending:
+            if key in changed and cache.is_whitelist(key):
+                analyze(key)
+                whitelist_names.update(results[key]["used"])
+        for key, result in old_results.items():
+            if cache.is_whitelist(key):
+                whitelist_names.update(result["used"])
+
+        seeds = changed | deleted
+        if whitelist_names:
+            seeds |= {
+                key
+                for key in pending
+                if key not in changed
+                and whitelist_names
+                & cache.defined_names(store.modules[key]["result"])
+            }
+        affected = cache.find_dependents(
+            seeds,
+            {
+                key: store.modules[key]["result"]
+                for key in pending
+                if key not in changed
+            },
+            set(pending) | deleted,
+        )
+        store.discard(affected)
+
+        def remember(key):
+            if digests[key] is not None:
+                store.store(key, digests[key], results[key])
+
+        for key in list(results):
+            remember(key)
+        for key in pending:
+            if key in affected and key not in results:
+                analyze(key)
+                remember(key)
+
+        for key, module in zip(keys, modules):
+            if key in results:
+                self._merge(module, results[key], replay_errors=False)
+            else:
+                self._log("Using cached result:", module)
+                self._merge(
+                    module, store.modules[key]["result"], replay_errors=True
+                )
+        self._cache_stats["scanned"].update(results)
+        self._cache_stats["reused"].update(set(pending) - set(results))
+
+    def _analyze(self, scan_module):
+        """
+        Call scan_module() and return its results in a cacheable format.
+
+        The defined items and used names are removed from this instance
+        again, use _merge() to add them.
+        """
+        collections = self._collections()
+        sizes = {typ: len(items) for typ, items in collections.items()}
+        used_names = self.used_names
+        self.used_names = utils.LoggingSet("name", self.verbose)
+        self._captured_errors = []
+        self._imports = set()
+        self._rel_imports = set()
+        try:
+            scan_module()
+            return {
+                "defined": {
+                    typ: [
+                        [
+                            item.name,
+                            item.first_lineno,
+                            item.last_lineno,
+                            item.message,
+                            item.confidence,
+                        ]
+                        for item in items[sizes[typ] :]
+                    ]
+                    for typ, items in collections.items()
+                    if len(items) > sizes[typ]
+                },
+                "used": sorted(self.used_names),
+                "errors": self._captured_errors,
+                "imports": sorted(self._imports),
+                "rel_imports": sorted(self._rel_imports),
+            }
+        finally:
+            for typ, items in collections.items():
+                del items[sizes[typ] :]
+            self.used_names = used_names
+            self._captured_errors = None
+            self._imports = None
+            self._rel_imports = None
+
+    def _merge(self, filename, result, replay_errors):
+        collections = self._collections()
+        for typ, items in result["defined"].items():
+            collections[typ].extend(
+                Item(
+                    name,
+                    typ,
+                    filename,
+                    first_lineno,
+                    last_lineno,
+                    message=message,
+                    confidence=confidence,
+                )
+                for name, first_lineno, last_lineno, message, confidence in (
+                    items
+                )
+            )
+        self.used_names.update(result["used"])
+        if result["errors"]:
+            if replay_errors:
+                for message in result["errors"]:
+                    self._log(message, file=sys.stderr, force=True)
+            self.exit_code = ExitCode.InvalidInput
+
+    def _record_import(self, node):
+        if self._imports is None:
+            return
+        if isinstance(node, ast.Import):
+            self._imports.update(alias.name for alias in node.names)
+            return
+        names = [alias.name for alias in node.names if alias.name != "*"]
+        if not node.level:
+            self._imports.add(node.module)
+            self._imports.update(f"{node.module}.{name}" for name in names)
+            return
+        parents = self.filename.resolve().parents
+        if node.level > len(parents):
+            return
+        package = parents[node.level - 1]
+        base = package.joinpath(*(node.module or "").split("."))
+        targets = [base] + [base / name for name in names]
+        self._rel_imports.add(cache.normalize_path(package / "__init__.py"))
+        for target in targets:
+            self._rel_imports.add(
+                cache.normalize_path(target.with_name(target.name + ".py"))
+            )
+            self._rel_imports.add(cache.normalize_path(target / "__init__.py"))
 
     def get_unused_code(
         self, min_confidence=0, sort_by_size=False
@@ -393,6 +647,8 @@ class Vulture(ast.NodeVisitor):
         return _get_unused_items(self.defined_attrs, self.used_names)
 
     def _log(self, *args, file=None, force=False):
+        if force and file is sys.stderr and self._captured_errors is not None:
+            self._captured_errors.append(" ".join(map(str, args)))
         if self.verbose or force:
             file = file or sys.stdout
             try:
@@ -597,10 +853,12 @@ class Vulture(ast.NodeVisitor):
 
     def visit_Import(self, node):
         self._add_aliases(node)
+        self._record_import(node)
 
     def visit_ImportFrom(self, node):
         if node.module != "__future__":
             self._add_aliases(node)
+            self._record_import(node)
 
     def visit_Name(self, node):
         if (
@@ -668,10 +926,19 @@ def main():
         print(e, file=sys.stderr)
         sys.exit(ExitCode.InvalidCmdlineArguments)
 
+    use_cache = (
+        config["cache"]
+        or config["cache_clear"]
+        or config["cache_dir"] != DEFAULTS["cache_dir"]
+    )
+    if config["cache_clear"]:
+        cache.clear_cache(config["cache_dir"])
+
     vulture = Vulture(
         verbose=config["verbose"],
         ignore_names=config["ignore_names"],
         ignore_decorators=config["ignore_decorators"],
+        cache_dir=config["cache_dir"] if use_cache else None,
     )
     vulture.scavenge(config["paths"], exclude=config["exclude"])
     sys.exit(

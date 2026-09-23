@@ -171,8 +171,27 @@ def test_config_merging():
         min_confidence=20,
         sort_by_size=True,
         verbose=True,
+        cache=False,
+        cache_clear=False,
+        cache_dir=".vulture-cache",
     )
     assert result == expected
+
+
+def test_cache_cli_args():
+    result = _parse_args(
+        ["--cache", "--cache-clear", "--cache-dir=my-cache", "path"]
+    )
+    assert result["cache"] is True
+    assert result["cache_clear"] is True
+    assert result["cache_dir"] == "my-cache"
+
+
+def test_cache_defaults():
+    result = make_config(["path"], get_toml_bytes(""))
+    assert result["cache"] is False
+    assert result["cache_clear"] is False
+    assert result["cache_dir"] == ".vulture-cache"
 
 
 def test_toml_config_custom_path():
