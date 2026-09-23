@@ -946,6 +946,109 @@ See [justify-content](https://css-tricks.com/almanac/properties/j/justify-conten
 // [   X   Y   ]
 ```
 
+#### Grid
+
+Set [`display`](#display) to `grid` to lay out children in a grid of columns and rows.
+Children are placed in the next free cell, row by row, unless they set [`gridColumn`](#gridcolumn) or [`gridRow`](#gridrow).
+They stretch to fill their cell, unless they have their own `width` or `height`.
+[`gap`](#gap), [`columnGap`](#columngap) and [`rowGap`](#rowgap) add space between columns and rows.
+
+```jsx
+<Box display="grid" gridTemplateColumns="8 1fr" columnGap={1}>
+	<Text>Name</Text>
+	<Text>Ink</Text>
+	<Text>Version</Text>
+	<Text>6</Text>
+</Box>
+// Name     Ink
+// Version  6
+```
+
+`repeat()`, named grid lines and `grid-auto-flow` aren't supported.
+
+##### gridTemplateColumns
+
+Type: `string`
+
+Space-separated list of column sizes.
+Each size can be:
+
+- A fixed number, like `10`.
+- A fraction of the remaining space, like `1fr`. The space left over by other columns is shared between fractional columns, in proportion to their fractions.
+- `auto` to fit the widest content in the column.
+- `minmax(min, max)`, where `min` is a fixed number and `max` is a fixed number or a fraction. The column is at least `min` wide and grows up to a fixed `max` if there's space. With a fractional `max`, the space remaining after all minimums are satisfied is distributed proportionally among fractional maximums.
+
+When the grid's width depends on its content, fractional columns fit their content instead.
+
+```jsx
+<Box display="grid" width={20} gridTemplateColumns="5 1fr 2fr">
+	<Text>A</Text>
+	<Text>B</Text>
+	<Text>C</Text>
+</Box>
+// A    B    C
+```
+
+##### gridTemplateRows
+
+Type: `string`
+
+Space-separated list of row sizes, with the same syntax as [`gridTemplateColumns`](#gridtemplatecolumns).
+Fractional rows share the grid's height when it's set, and fit their content otherwise.
+When `gridTemplateRows` is omitted, or there are more children than defined cells, rows are created automatically as needed and fit their content.
+
+```jsx
+<Box display="grid" gridTemplateColumns="3 3" gridTemplateRows="2 1">
+	<Text>A</Text>
+	<Text>B</Text>
+	<Text>C</Text>
+	<Text>D</Text>
+	<Text>E</Text>
+</Box>
+// A  B
+//
+// C  D
+// E
+```
+
+##### gridColumn
+
+Type: `number` `string`
+
+Columns occupied by a child of a grid.
+Set it to a 1-based column index, or to a `start / end` string of 1-based grid lines, where `end` is excluded.
+For example, `1 / 3` spans the first two columns.
+
+```jsx
+<Box display="grid" gridTemplateColumns="3 3 3">
+	<Box gridColumn="1 / 3">
+		<Text>Wide</Text>
+	</Box>
+	<Text>A</Text>
+	<Text>B</Text>
+</Box>
+// Wide  A
+// B
+```
+
+##### gridRow
+
+Type: `number` `string`
+
+Rows occupied by a child of a grid, with the same syntax as [`gridColumn`](#gridcolumn).
+
+```jsx
+<Box display="grid" gridTemplateColumns="5 5">
+	<Box gridRow="1 / 3">
+		<Text>Tall</Text>
+	</Box>
+	<Text>A</Text>
+	<Text>B</Text>
+</Box>
+// Tall A
+//      B
+```
+
 #### Position
 
 ##### position
@@ -991,10 +1094,10 @@ You can also set it as a percentage of the parent size.
 ##### display
 
 Type: `string`\
-Allowed values: `flex` `none`\
+Allowed values: `flex` `grid` `none`\
 Default: `flex`
 
-Set this property to `none` to hide the element.
+Set this property to `none` to hide the element, or to `grid` to lay out its children in a [grid](#grid).
 
 ##### overflowX
 
