@@ -20,6 +20,7 @@ macro_rules! box_tree {
     ($expr:expr) => ($expr);
 }
 
+mod coalescer;
 mod concatenator;
 mod factorizer;
 mod lister;
@@ -46,6 +47,7 @@ pub fn optimize(rules: Vec<Rule>) -> Vec<OptimizedRule> {
     optimized
         .into_iter()
         .map(|rule| restorer::restore_on_err(rule, &optimized_map))
+        .map(coalescer::coalesce)
         .collect()
 }
 
@@ -130,6 +132,10 @@ pub enum OptimizedExpr {
     Insens(String),
     /// Matches one character in the range, e.g. `'a'..'z'`
     Range(String, String),
+    /// Matches one character in any of the inclusive ranges.
+    CharClass(Vec<(String, String)>),
+    /// Matches one character outside every inclusive range.
+    NegCharClass(Vec<(String, String)>),
     /// Matches the rule with the given name, e.g. `a`
     Ident(String),
     /// Matches a custom part of the stack, e.g. `PEEK[..]`
@@ -268,6 +274,18 @@ impl OptimizedExpr {
     }
 }
 
+fn format_char_ranges(ranges: &[(String, String)]) -> String {
+    ranges
+        .iter()
+        .map(|(start, end)| {
+            let start = start.chars().next().expect("Empty range start.");
+            let end = end.chars().next().expect("Empty range end.");
+            format!("{:?}..{:?}", start, end)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 impl core::fmt::Display for OptimizedExpr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -277,6 +295,10 @@ impl core::fmt::Display for OptimizedExpr {
                 let start = start.chars().next().expect("Empty range start.");
                 let end = end.chars().next().expect("Empty range end.");
                 write!(f, "({:?}..{:?})", start, end)
+            }
+            OptimizedExpr::CharClass(ranges) => write!(f, "[{}]", format_char_ranges(ranges)),
+            OptimizedExpr::NegCharClass(ranges) => {
+                write!(f, "![{}]", format_char_ranges(ranges))
             }
             OptimizedExpr::Ident(id) => write!(f, "{}", id),
             OptimizedExpr::PeekSlice(start, end) => match end {
@@ -426,13 +448,8 @@ mod tests {
             vec![OptimizedRule {
                 name: "rule".to_owned(),
                 ty: RuleType::Normal,
-                expr: box_tree!(Choice(
-                    Str(String::from("a")),
-                    Choice(
-                        Str(String::from("b")),
-                        Choice(Str(String::from("c")), Str(String::from("d")))
-                    )
-                )),
+                // Adjacent single-character alternatives coalesce to one inclusive range.
+                expr: Range(String::from("a"), String::from("d")),
             }]
         };
 

@@ -28,6 +28,12 @@ use std::panic::{RefUnwindSafe, UnwindSafe};
 
 mod macros;
 
+fn inclusive_char_range(start: &str, end: &str) -> core::ops::Range<char> {
+    let start = start.chars().next().expect("empty char literal");
+    let end = end.chars().next().expect("empty char literal");
+    start..end
+}
+
 /// A callback function that is called when a rule is matched.
 /// The first argument is the name of the rule and the second is the span of the rule.
 /// The function should return `true` if parsing should be terminated
@@ -188,11 +194,24 @@ impl Vm {
             OptimizedExpr::Str(ref string) => state.match_string(string),
             OptimizedExpr::Insens(ref string) => state.match_insensitive(string),
             OptimizedExpr::Range(ref start, ref end) => {
-                let start = start.chars().next().expect("empty char literal");
-                let end = end.chars().next().expect("empty char literal");
-
-                state.match_range(start..end)
+                state.match_range(inclusive_char_range(start, end))
             }
+            OptimizedExpr::CharClass(ref ranges) => {
+                let mut iter = ranges.iter();
+                let (start, end) = iter.next().expect("empty char class");
+                let mut result = state.match_range(inclusive_char_range(start, end));
+                for (start, end) in iter {
+                    result =
+                        result.or_else(|state| state.match_range(inclusive_char_range(start, end)));
+                }
+                result
+            }
+            OptimizedExpr::NegCharClass(ref ranges) => state.match_char_by(|c| {
+                !ranges.iter().any(|(start, end)| {
+                    let range = inclusive_char_range(start, end);
+                    range.start <= c && c <= range.end
+                })
+            }),
             OptimizedExpr::Ident(ref name) => self.parse_rule(name, state),
             OptimizedExpr::PeekSlice(start, end) => {
                 state.stack_match_peek_slice(start, end, MatchDir::BottomToTop)

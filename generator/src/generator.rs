@@ -414,6 +414,51 @@ fn generate_skip(rules: &[OptimizedRule]) -> TokenStream {
     }
 }
 
+fn generate_char_class(ranges: Vec<(String, String)>, negated: bool) -> TokenStream {
+    if negated {
+        let checks: Vec<TokenStream> = ranges
+            .into_iter()
+            .map(|(start, end)| {
+                let start = start.chars().next().expect("empty char literal");
+                let end = end.chars().next().expect("empty char literal");
+                quote! { (#start <= c && c <= #end) }
+            })
+            .collect();
+        if checks.is_empty() {
+            quote! { state.match_char_by(|_| true) }
+        } else {
+            quote! {
+                state.match_char_by(|c| {
+                    !(#(#checks)||*)
+                })
+            }
+        }
+    } else if ranges.is_empty() {
+        quote! { state.match_char_by(|_| false) }
+    } else {
+        let mut iter = ranges.into_iter();
+        let (start, end) = iter.next().unwrap();
+        let start = start.chars().next().expect("empty char literal");
+        let end = end.chars().next().expect("empty char literal");
+        let head = quote! { state.match_range(#start..#end) };
+        let tail: Vec<TokenStream> = iter
+            .map(|(start, end)| {
+                let start = start.chars().next().expect("empty char literal");
+                let end = end.chars().next().expect("empty char literal");
+                quote! { state.match_range(#start..#end) }
+            })
+            .collect();
+        quote! {
+            #head
+            #(
+                .or_else(|state| {
+                    #tail
+                })
+            )*
+        }
+    }
+}
+
 fn generate_expr(expr: OptimizedExpr) -> TokenStream {
     match expr {
         OptimizedExpr::Str(string) => {
@@ -434,6 +479,8 @@ fn generate_expr(expr: OptimizedExpr) -> TokenStream {
                 state.match_range(#start..#end)
             }
         }
+        OptimizedExpr::CharClass(ranges) => generate_char_class(ranges, false),
+        OptimizedExpr::NegCharClass(ranges) => generate_char_class(ranges, true),
         OptimizedExpr::Ident(ident) => {
             let ident = format_ident!("r#{}", ident);
             quote! { self::#ident(state) }
@@ -643,6 +690,8 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
                 state.match_range(#start..#end)
             }
         }
+        OptimizedExpr::CharClass(ranges) => generate_char_class(ranges, false),
+        OptimizedExpr::NegCharClass(ranges) => generate_char_class(ranges, true),
         OptimizedExpr::Ident(ident) => {
             let ident = format_ident!("r#{}", ident);
             quote! { self::#ident(state) }
