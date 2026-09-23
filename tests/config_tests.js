@@ -600,6 +600,91 @@ describe('Config', function() {
     });
   });
 
+  describe('report_file templates', function() {
+    function configWithReportFile(reportFile) {
+      return new Config('ci', { report_file: reportFile });
+    }
+
+    it('reports no templates when report_file is unset', function() {
+      let config = new Config('ci', {});
+      expect(config.hasLauncherTemplate()).to.be.false();
+      expect(config.hasDateTemplate()).to.be.false();
+      expect(config.hasTimestampTemplate()).to.be.false();
+      expect(config.hasAnyReportTemplate()).to.be.false();
+    });
+
+    it('reports no templates for a plain report_file', function() {
+      expect(configWithReportFile('results.xml').hasAnyReportTemplate()).to.be.false();
+    });
+
+    it('detects each template', function() {
+      let launcherConfig = configWithReportFile('results/<launcher>.xml');
+      expect(launcherConfig.hasLauncherTemplate()).to.be.true();
+      expect(launcherConfig.hasDateTemplate()).to.be.false();
+      expect(launcherConfig.hasAnyReportTemplate()).to.be.true();
+
+      let dateConfig = configWithReportFile('results/<date>.xml');
+      expect(dateConfig.hasDateTemplate()).to.be.true();
+      expect(dateConfig.hasTimestampTemplate()).to.be.false();
+      expect(dateConfig.hasAnyReportTemplate()).to.be.true();
+
+      let timestampConfig = configWithReportFile('results/<timestamp>.xml');
+      expect(timestampConfig.hasTimestampTemplate()).to.be.true();
+      expect(timestampConfig.hasLauncherTemplate()).to.be.false();
+      expect(timestampConfig.hasAnyReportTemplate()).to.be.true();
+    });
+
+    describe('validateReportFile', function() {
+      it('is valid when report_file is unset', function() {
+        expect(new Config('ci', {}).validateReportFile()).to.deep.equal({ valid: true, errors: [], warnings: [] });
+      });
+
+      it('is valid for known templates', function() {
+        expect(configWithReportFile('results/<date>/<launcher>-<timestamp>.xml').validateReportFile())
+          .to.deep.equal({ valid: true, errors: [], warnings: [] });
+      });
+
+      it('reports an error for each unknown template', function() {
+        let result = configWithReportFile('results/<browser>-<launcher>-<time>.xml').validateReportFile();
+        expect(result.valid).to.be.false();
+        expect(result.errors).to.have.lengthOf(2);
+        expect(result.errors[0]).to.contain('<browser>');
+        expect(result.errors[1]).to.contain('<time>');
+      });
+
+      it('warns when <launcher> is used without a file extension', function() {
+        let result = configWithReportFile('results/<launcher>').validateReportFile();
+        expect(result.valid).to.be.true();
+        expect(result.errors).to.be.empty();
+        expect(result.warnings).to.have.lengthOf(1);
+        expect(result.warnings[0]).to.contain('extension');
+      });
+
+      it('warns when the only extension is a template', function() {
+        expect(configWithReportFile('results/report.<launcher>').validateReportFile().warnings).to.have.lengthOf(1);
+      });
+
+      it('does not warn about a missing extension without <launcher>', function() {
+        expect(configWithReportFile('results/<date>').validateReportFile().warnings).to.be.empty();
+      });
+    });
+
+    describe('getExpandedReportFile', function() {
+      it('returns null when report_file is unset', function() {
+        expect(new Config('ci', {}).getExpandedReportFile('Chrome')).to.be.null();
+      });
+
+      it('returns a plain report_file unchanged', function() {
+        expect(configWithReportFile('results.xml').getExpandedReportFile('Chrome')).to.equal('results.xml');
+      });
+
+      it('expands templates for the given launcher', function() {
+        expect(configWithReportFile('results/<date>/<launcher>.xml').getExpandedReportFile('Headless Chrome'))
+          .to.match(/^results\/\d{4}-\d{2}-\d{2}\/Headless_Chrome\.xml$/);
+      });
+    });
+  });
+
   describe('debug', function() {
     describe('when unset', function() {
       it('is not defined', function() {
