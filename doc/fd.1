@@ -148,6 +148,47 @@ Separate search results by the null character (instead of newlines). Useful for 
 .B \-\-max\-results count
 Limit the number of search results to 'count' and quit immediately.
 .TP
+.BI "\-\-sort " field
+Sort the search results by the given field before printing them. This option can be specified
+multiple times: keys are applied from left to right, and later keys break ties from earlier ones.
+Remaining ties are broken by path. When combined with '--max-results', the limit is applied after
+sorting. Cannot be combined with '--exec', '--exec-batch' or '--list-details'.
+Available fields:
+.RS
+.IP "path, name, extension"
+Text comparisons (case-insensitive by default).
+.IP "size"
+File size. Only defined for regular files.
+.IP "modified, created, accessed"
+File timestamps.
+.IP "depth"
+Depth below the search root.
+.IP "type"
+Entry kind: directories, then symlinks, then regular files, then others.
+.IP "name-length, path-length"
+Number of characters in the name or path.
+.IP "random"
+Pseudo-random order (see '--sort-seed').
+.RE
+.TP
+.B \-\-reverse
+Reverse the final sorted order. Requires '--sort'.
+.TP
+.B \-\-dirs\-first, \-\-files\-first
+List directories (or regular files) before all other entries. Requires '--sort'.
+.TP
+.B \-\-sort\-case\-sensitive
+Compare text sort fields case-sensitively. Requires '--sort'.
+.TP
+.B \-\-sort\-missing\-last
+Place entries with missing sort values (e.g. no extension) last instead of first. Requires '--sort'.
+.TP
+.B \-\-sort\-natural
+Compare embedded runs of digits in text sort fields numerically (file9 < file10). Requires '--sort'.
+.TP
+.BI "\-\-sort\-seed " n
+Seed for '--sort random', making the order reproducible. Requires '--sort'.
+.TP
 .B \-1
 Limit the search to a single result and quit immediately. This is an alias for '--max-results=1'.
 .TP
