@@ -30,6 +30,12 @@ The example below shows how to write text to a `Log` widget:
 
 
 
+## Following the end
+
+While [Log.is_following_end][textual.widgets.Log.is_following_end] is `True`, new lines scroll into view (if `auto_scroll` is enabled).
+Scrolling up stops the log following the end, and scrolling back to the end (or calling [Log.follow_end][textual.widgets.Log.follow_end]) resumes following.
+A [Log.FollowChanged][textual.widgets.Log.FollowChanged] message is posted when the follow state changes.
+
 ## Reactive Attributes
 
 | Name          | Type   | Default | Description                                                  |
@@ -39,7 +45,7 @@ The example below shows how to write text to a `Log` widget:
 
 ## Messages
 
-This widget posts no messages.
+- [Log.FollowChanged][textual.widgets.Log.FollowChanged]
 
 ## Bindings
 

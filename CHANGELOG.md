@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## Unreleased
+
+### Added
+
+- Added `Log.is_following_end`, `Log.follow_end`, and `Log.FollowChanged`
+- Added `RichLog.is_following_end`, `RichLog.follow_end`, and `RichLog.FollowChanged`
+
+### Changed
+
+- `Log` and `RichLog` only scroll to new content while following the end; scrolling back to the end resumes following
+- `Log` and `RichLog` keep the viewport stable when lines are appended or pruned by `max_lines` while not following the end
+- `RichLog` re-renders entries written with `expand=True` when its width or `min_width` changes
+
+### Fixed
+
+- Fixed `RichLog` snapping back to the newest entry after the user scrolls up
+- Fixed `RichLog` ignoring text justification (e.g. with `expand=True`) with Rich 15
+
 ## [8.1.1] - 2026-03-10
 
 ### Fixed

@@ -28,19 +28,27 @@ The example below shows an application showing a `RichLog` with different kinds 
 
 
 
+## Following the end
+
+While [RichLog.is_following_end][textual.widgets.RichLog.is_following_end] is `True`, new content scrolls into view (if `auto_scroll` is enabled).
+Scrolling up stops the log following the end, so the user can read earlier content without the log jumping back to the newest entry.
+Scrolling back to the end, or calling [RichLog.follow_end][textual.widgets.RichLog.follow_end], resumes following.
+A [RichLog.FollowChanged][textual.widgets.RichLog.FollowChanged] message is posted when the follow state changes.
+
 ## Reactive Attributes
 
-| Name        | Type   | Default | Description                                                  |
-| ----------- | ------ | ------- | ------------------------------------------------------------ |
-| `highlight` | `bool` | `False` | Automatically highlight content.                             |
-| `markup`    | `bool` | `False` | Apply markup.                                                |
-| `max_lines` | `int`  | `None`  | Maximum number of lines in the log or `None` for no maximum. |
-| `min_width` | `int`  | 78      | Minimum width of renderables.                                |
-| `wrap`      | `bool` | `False` | Enable word wrapping.                                        |
+| Name          | Type   | Default | Description                                                  |
+| ------------- | ------ | ------- | ------------------------------------------------------------ |
+| `auto_scroll` | `bool` | `True`  | Scroll to new content while following the end.               |
+| `highlight`   | `bool` | `False` | Automatically highlight content.                             |
+| `markup`      | `bool` | `False` | Apply markup.                                                |
+| `max_lines`   | `int`  | `None`  | Maximum number of lines in the log or `None` for no maximum. |
+| `min_width`   | `int`  | 78      | Minimum width of renderables.                                |
+| `wrap`        | `bool` | `False` | Enable word wrapping.                                        |
 
 ## Messages
 
-This widget sends no messages.
+- [RichLog.FollowChanged][textual.widgets.RichLog.FollowChanged]
 
 ## Bindings
 
