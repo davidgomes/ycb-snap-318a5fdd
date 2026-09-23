@@ -1466,6 +1466,35 @@ def _validate_rolling_arguments(
     return window_size, min_samples
 
 
+_ROLLING_INTERPOLATION_METHODS: tuple[str, ...] = (
+    "linear",
+    "lower",
+    "higher",
+    "nearest",
+    "midpoint",
+)
+
+
+def _validate_rolling_quantile_arguments(quantile: float, interpolation: str) -> None:
+    """Validate ``rolling_quantile`` arguments.
+
+    Arguments:
+        quantile: Requested quantile, required to lie in ``[0, 1]``.
+        interpolation: Interpolation method used when the quantile falls between points.
+    """
+    if (
+        isinstance(quantile, bool)
+        or not isinstance(quantile, (int, float))
+        or not 0.0 <= quantile <= 1.0
+    ):
+        msg = "Quantile must be between 0.0 and 1.0"
+        raise ValueError(msg)
+    if interpolation not in _ROLLING_INTERPOLATION_METHODS:
+        allowed = ", ".join(repr(method) for method in _ROLLING_INTERPOLATION_METHODS)
+        msg = f"Interpolation must be one of {allowed}"
+        raise ValueError(msg)
+
+
 def generate_repr(header: str, native_repr: str) -> str:
     try:
         terminal_width = os.get_terminal_size().columns

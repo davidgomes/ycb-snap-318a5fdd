@@ -901,6 +901,64 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
         )
         return self._with_native(result)
 
+    def _rolling_apply(
+        self,
+        window_size: int,
+        min_samples: int,
+        reducer: Callable[[list[Any]], Any],
+        result_type: pa.DataType,
+        *,
+        center: bool,
+    ) -> Self:
+        padded_series, offset = pad_series(self, window_size=window_size, center=center)
+        values = padded_series.native.to_pylist()
+        out: list[Any] = []
+        for i in range(len(values)):
+            start = max(0, i - window_size + 1)
+            window = [value for value in values[start : i + 1] if value is not None]
+            out.append(reducer(window) if len(window) >= min_samples else None)
+        return self._with_native(pa.array(out, type=result_type))._gather_slice(
+            slice(offset, None)
+        )
+
+    def rolling_min(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._rolling_apply(
+            window_size, min_samples, min, self.native.type, center=center
+        )
+
+    def rolling_max(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._rolling_apply(
+            window_size, min_samples, max, self.native.type, center=center
+        )
+
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self.rolling_quantile(
+            window_size,
+            quantile=0.5,
+            interpolation="linear",
+            min_samples=min_samples,
+            center=center,
+        )
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        def reducer(window: list[Any]) -> float:
+            scalar = pc.quantile(
+                pa.array(window), q=quantile, interpolation=interpolation
+            )[0]
+            return float(scalar.as_py())
+
+        return self._rolling_apply(
+            window_size, min_samples, reducer, pa.float64(), center=center
+        )
+
     def rolling_sum(self, window_size: int, *, min_samples: int, center: bool) -> Self:
         min_samples = min_samples if min_samples is not None else window_size
         padded_series, offset = pad_series(self, window_size=window_size, center=center)

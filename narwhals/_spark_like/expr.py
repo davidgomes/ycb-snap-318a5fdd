@@ -426,3 +426,6 @@ class SparkLikeExpr(SQLExpr["SparkLikeLazyFrame", "Column"]):
         return SparkLikeExprStructNamespace(self)
 
     quantile = not_implemented()
+
+    def _rolling_quantile_expr(self, expr: Column, quantile: float) -> Column:
+        return self._function("percentile", expr, self._lit(quantile))

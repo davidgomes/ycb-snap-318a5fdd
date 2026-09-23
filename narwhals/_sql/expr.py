@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 
     from typing_extensions import Self
 
-    from narwhals._compliant.typing import AliasNames, WindowFunction
     from narwhals._sql.expr_dt import SQLExprDateTimeNamesSpace
     from narwhals._sql.expr_str import SQLExprStringNamespace
     from narwhals._sql.namespace import SQLNamespace
@@ -242,14 +241,14 @@ class SQLExpr(LazyExpr[SQLLazyFrameT, NativeExprT], Protocol[SQLLazyFrameT, Nati
 
     def _rolling_window_func(
         self,
-        func_name: Literal["sum", "mean", "std", "var"],
+        func_name: Literal["sum", "mean", "std", "var", "min", "max", "median"],
         window_size: int,
         min_samples: int,
         ddof: int | None = None,
         *,
         center: bool,
     ) -> WindowFunction[SQLLazyFrameT, NativeExprT]:
-        supported_funcs = ["sum", "mean", "std", "var"]
+        supported_funcs = ["sum", "mean", "std", "var", "min", "max", "median"]
         if center:
             half = (window_size - 1) // 2
             remainder = (window_size - 1) % 2
@@ -262,7 +261,7 @@ class SQLExpr(LazyExpr[SQLLazyFrameT, NativeExprT], Protocol[SQLLazyFrameT, Nati
         def func(
             df: SQLLazyFrameT, inputs: WindowInputs[NativeExprT]
         ) -> Sequence[NativeExprT]:
-            if func_name in {"sum", "mean"}:
+            if func_name in {"sum", "mean", "min", "max", "median"}:
                 func_: str = func_name
             elif func_name == "var" and ddof == 0:
                 func_ = "var_pop"
@@ -686,6 +685,72 @@ class SQLExpr(LazyExpr[SQLLazyFrameT, NativeExprT], Protocol[SQLLazyFrameT, Nati
                 "std", window_size, min_samples, ddof=ddof, center=center
             )
         )
+
+    def rolling_min(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._with_window_function(
+            self._rolling_window_func("min", window_size, min_samples, center=center)
+        )
+
+    def rolling_max(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._with_window_function(
+            self._rolling_window_func("max", window_size, min_samples, center=center)
+        )
+
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._with_window_function(
+            self._rolling_window_func("median", window_size, min_samples, center=center)
+        )
+
+    def _rolling_quantile_expr(self, expr: NativeExprT, quantile: float) -> NativeExprT:
+        return self._function("quantile", expr, quantile)
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: str,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        if interpolation != "linear":
+            msg = (
+                "Only linear interpolation is currently supported for "
+                "`rolling_quantile` on SQL backends."
+            )
+            raise NotImplementedError(msg)
+        if center:
+            half = (window_size - 1) // 2
+            remainder = (window_size - 1) % 2
+            start = -(half + remainder)
+            end = half
+        else:
+            start = -(window_size - 1)
+            end = 0
+
+        def func(
+            df: SQLLazyFrameT, inputs: WindowInputs[NativeExprT]
+        ) -> Sequence[NativeExprT]:
+            window_kwargs: Any = {
+                "partition_by": inputs.partition_by,
+                "order_by": inputs.order_by,
+                "rows_start": start,
+                "rows_end": end,
+            }
+            return [
+                self._when(
+                    self._window_expression(
+                        self._function("count", expr), **window_kwargs
+                    )
+                    >= self._lit(min_samples),
+                    self._window_expression(
+                        self._rolling_quantile_expr(expr, quantile), **window_kwargs
+                    ),
+                )
+                for expr in self(df)
+            ]
+
+        return self._with_window_function(func)
 
     # Other window functions
     def diff(self) -> Self:
