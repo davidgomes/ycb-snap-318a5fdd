@@ -1,9 +1,19 @@
 use crate::{
-    Error, Func, TrapCode,
+    Error,
+    Func,
+    TrapCode,
     engine::{
-        ResumableHostTrapError, ResumableOutOfFuelError, StackConfig,
+        ResumableHostTrapError,
+        ResumableOutOfFuelError,
+        StackConfig,
         executor::{
-            Cell, CellError, CellsReader, CellsWriter, CodeMap, InOutParams, LoadFromCellsByValue,
+            Cell,
+            CellError,
+            CellsReader,
+            CellsWriter,
+            CodeMap,
+            InOutParams,
+            LoadFromCellsByValue,
             StoreToCells,
             handler::{
                 dispatch::{Control, ExecutionOutcome},
@@ -20,7 +30,8 @@ use alloc::vec::Vec;
 use core::{
     cmp,
     marker::PhantomData,
-    mem, ops,
+    mem,
+    ops,
     ptr::{self, NonNull},
     slice,
 };

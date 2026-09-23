@@ -14,31 +14,54 @@ pub(crate) use self::{
     block_type::BlockType,
     code_map::CodeMap,
     executor::{
-        Cell, FrameSnapshot, InOutParams, InOutResults, Inst, LiftFromCells, LiftFromCellsByValue,
-        LoadByVal, LowerToCells, Stack,
+        Cell,
+        FrameSnapshot,
+        InOutParams,
+        InOutResults,
+        Inst,
+        LiftFromCells,
+        LiftFromCellsByValue,
+        LoadByVal,
+        LowerToCells,
+        Stack,
     },
     func_types::DedupFuncType,
     translator::{
-        FuncTranslationDriver, FuncTranslator, FuncTranslatorAllocations, LazyFuncTranslator,
-        ValidatingFuncTranslator, WasmTranslator, required_cells_for_tys,
+        FuncTranslationDriver,
+        FuncTranslator,
+        FuncTranslatorAllocations,
+        LazyFuncTranslator,
+        ValidatingFuncTranslator,
+        WasmTranslator,
+        required_cells_for_tys,
     },
 };
 use self::{
-    code_map::CompiledFuncEntity, func_types::FuncTypeRegistry, resumable::ResumableCallBase,
+    code_map::CompiledFuncEntity,
+    func_types::FuncTypeRegistry,
+    resumable::ResumableCallBase,
 };
 pub use self::{
     code_map::{EngineFunc, EngineFuncSpan, EngineFuncSpanIter},
     config::{CompilationMode, Config},
     limits::{EnforcedLimits, EnforcedLimitsError, StackConfig},
     resumable::{
-        ResumableCall, ResumableCallHostTrap, ResumableCallOutOfFuel, ResumableHostTrapError,
-        ResumableOutOfFuelError, TypedResumableCall, TypedResumableCallHostTrap,
+        ResumableCall,
+        ResumableCallHostTrap,
+        ResumableCallOutOfFuel,
+        ResumableHostTrapError,
+        ResumableOutOfFuelError,
+        TypedResumableCall,
+        TypedResumableCallHostTrap,
         TypedResumableCallOutOfFuel,
     },
     translator::TranslationError,
 };
 use crate::{
-    Error, Func, FuncType, StoreContextMut,
+    Error,
+    Func,
+    FuncType,
+    StoreContextMut,
     module::{FuncIdx, ModuleHeader},
 };
 use alloc::{

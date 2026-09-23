@@ -2,12 +2,23 @@ use super::state::{Inst, Ip, Mem0Len, Mem0Ptr, Sp, VmState, mem0_bytes};
 #[cfg(feature = "simd")]
 use crate::core::simd::ImmLaneIdx;
 use crate::{
-    Error, Func, Global, Instance, Memory, Nullable, RefType, Table, TrapCode, V128,
+    Error,
+    Func,
+    Global,
+    Instance,
+    Memory,
+    Nullable,
+    RefType,
+    Table,
+    TrapCode,
+    V128,
     core::{CoreElementSegment, CoreGlobal, CoreMemory, CoreTable, RawVal, WriteAs},
     engine::{
-        DedupFuncType, EngineFunc,
+        DedupFuncType,
+        EngineFunc,
         executor::{
-            LoadFromCellsByValue, StoreToCells,
+            LoadFromCellsByValue,
+            StoreToCells,
             handler::{Break, Control, Done, DoneReason},
         },
         utils::unreachable_unchecked,

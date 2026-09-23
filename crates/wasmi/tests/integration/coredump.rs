@@ -1,7 +1,17 @@
 //! Tests for coredump generation upon Wasm traps.
 
 use wasmi::{
-    Caller, CompilationMode, Config, Engine, Error, Extern, Func, Linker, Module, Store, TrapCode,
+    Caller,
+    CompilationMode,
+    Config,
+    Engine,
+    Error,
+    Extern,
+    Func,
+    Linker,
+    Module,
+    Store,
+    TrapCode,
 };
 use wasmparser::{BinaryReader, DataKind, Operator, Parser, Payload, Validator};
 

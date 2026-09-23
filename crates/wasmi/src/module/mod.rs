@@ -34,7 +34,14 @@ pub(crate) use self::{
     utils::WasmiValueType,
 };
 use crate::{
-    Engine, Error, ExternType, FuncType, GlobalType, MemoryType, TableType, ValType,
+    Engine,
+    Error,
+    ExternType,
+    FuncType,
+    GlobalType,
+    MemoryType,
+    TableType,
+    ValType,
     collections::Map,
     engine::{DedupFuncType, EngineFunc, EngineFuncSpan, EngineFuncSpanIter, EngineWeak},
 };

@@ -23,7 +23,11 @@ use crate::{
 };
 use core::{fmt, mem};
 use wasmparser::{
-    BinaryReaderError, FuncToValidate, FuncValidatorAllocations, ValidatorResources, VisitOperator,
+    BinaryReaderError,
+    FuncToValidate,
+    FuncValidatorAllocations,
+    ValidatorResources,
+    VisitOperator,
     WasmFeatures,
 };
 

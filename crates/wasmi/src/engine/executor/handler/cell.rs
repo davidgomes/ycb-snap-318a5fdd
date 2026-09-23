@@ -1,5 +1,14 @@
 use crate::{
-    ExternRef, F32, F64, Func, Nullable, Ref, V128, Val, core::RawRef, handle::Handle,
+    ExternRef,
+    F32,
+    F64,
+    Func,
+    Nullable,
+    Ref,
+    V128,
+    Val,
+    core::RawRef,
+    handle::Handle,
     store::AsStoreId,
 };
 use core::{convert::identity, fmt, marker::PhantomData, mem};

@@ -5,7 +5,16 @@
 //! [Wasm coredump format]: https://github.com/WebAssembly/tool-conventions/blob/main/Coredump.md
 
 use crate::{
-    Config, Error, Global, GlobalType, Handle as _, Instance, Memory, Module, Mutability, ValType,
+    Config,
+    Error,
+    Global,
+    GlobalType,
+    Handle as _,
+    Instance,
+    Memory,
+    Module,
+    Mutability,
+    ValType,
     core::{CoreMemoryType as MemoryType, RawVal, ReadAs},
     engine::{CodeMap, EngineFunc, FrameSnapshot},
     instance::InstanceEntity,

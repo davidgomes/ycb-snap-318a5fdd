@@ -7,7 +7,9 @@
 
 use super::{FuncTranslationDriver, FuncTranslator, TranslationError, ValidatingFuncTranslator};
 use crate::{
-    Config, Error, TrapCode,
+    Config,
+    Error,
+    TrapCode,
     collections::arena::{Arena, ArenaKey},
     core::{Fuel, FuelCostsProvider},
     engine::{ResumableOutOfFuelError, utils::unreachable_unchecked},
