@@ -12,6 +12,7 @@ Koota manages state using entities with composable traits.
 - **Entity** - A unique identifier pointing to data defined by traits. Spawned from a world.
 - **Trait** - A reusable data definition. Can be schema-based (SoA), callback-based (AoS), or a tag.
 - **Relation** - A directional connection between entities to build graphs.
+- **Aspect** - A group of two or more traits used as one handle. Its data is the merged fields of its traits.
 - **World** - The context for all entities and their data (traits).
 - **Archetype** - A unique combination of traits that entities share.
 - **Query** - Fetches entities matching an archetype. The primary way to batch update state.
@@ -119,6 +120,37 @@ const target = entity.targetFor(Targeting) // Entity | undefined
 ```
 
 For detailed patterns, traversal, ordered relations, and anti-patterns, see [references/relations.md](references/relations.md).
+
+## Aspects
+
+Aspects group traits that are always used together so systems don't repeat the same trait lists.
+
+```typescript
+import { createAspect } from 'koota'
+
+const Position = trait({ x: 0, y: 0 })
+const Velocity = trait({ vx: 0, vy: 0 })
+
+const Movement = createAspect(Position, Velocity) // Movement.id, .traits, .schema
+
+const entity = world.spawn(Movement({ x: 1, vx: 2 })) // Adds only missing traits
+entity.has(Movement) // Has every trait
+entity.get(Movement) // { x, y, vx, vy } or undefined
+entity.set(Movement, { x: 5 }) // Distributed to Position
+entity.remove(Movement) // Removes every trait
+
+world.query(Movement).updateEach(([movement]) => {
+  movement.x += movement.vx // Written back to Position
+})
+```
+
+**Rules:**
+
+- Field names must be unique across traits, otherwise `createAspect` throws
+- Tags are allowed, relations throw
+- Nested aspects flatten: `createAspect(Movement, Mass)` has three traits
+- Each `createAspect` call is a distinct aspect
+- Modifiers and events treat the aspect as a whole. See [references/queries.md](references/queries.md#aspects)
 
 ## Basic usage
 

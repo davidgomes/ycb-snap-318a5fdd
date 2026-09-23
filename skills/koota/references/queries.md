@@ -7,6 +7,7 @@ Complete guide to querying entities in Koota.
 - [Basic queries](#basic-queries)
 - [Query modifiers](#query-modifiers) - Not, Or
 - [Tracking modifiers](#tracking-modifiers) - Added, Removed, Changed
+- [Aspects](#aspects) - Query groups of traits as one
 - [Caching queries](#caching-queries) - createQuery for performance
 - [Change detection](#change-detection) - updateEach options
 - [Query + select](#query--select) - Select subset of traits for updates
@@ -132,6 +133,33 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 - Create instances at module scope, not inside functions
 - Tracking resets after each query execution
 - Changed only tracks `set()` calls and `entity.changed()` signals
+
+## Aspects
+
+An aspect from `createAspect` requires all of its traits. `readEach`/`updateEach` provide one merged object per aspect and distribute writes back to each trait with per-trait change detection.
+
+```typescript
+const Movement = createAspect(Position, Velocity)
+
+world.query(Movement, Mass).updateEach(([movement, mass]) => {
+  movement.x += movement.vx / mass.m
+})
+```
+
+Modifiers treat the aspect as a whole, which differs from listing its traits:
+
+| Parameter           | Matches                                                   |
+| ------------------- | --------------------------------------------------------- |
+| `Movement`          | Entities with every trait                                 |
+| `Not(Movement)`     | Entities missing **at least one** trait                   |
+| `Or(Movement, Tag)` | Entities with every trait, or with `Tag`                  |
+| `Added(Movement)`   | Entities that became complete since the last query        |
+| `Removed(Movement)` | Entities that stopped being complete since the last query |
+| `Changed(Movement)` | Complete entities where **any** trait changed             |
+
+Compare with `Not(Position, Velocity)` (has neither) and `Changed(Position, Velocity)` (both changed).
+
+Events follow the same transitions: `world.onAdd(Movement, cb)` fires when an entity becomes complete, `onRemove` when it stops being complete, and `onChange` when any trait changes while complete.
 
 ## Caching queries
 

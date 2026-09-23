@@ -407,6 +407,63 @@ world.onAdd(ChildOf(parent), (entity, target) => {})
 world.onAdd(ChildOf('*'), (entity, target) => {})
 ```
 
+### Aspects
+
+An aspect groups two or more traits into a single handle so they can be added, read, written and queried together. Its data is a merged object of all the constituent fields. Field names must be unique across constituents, otherwise `createAspect` throws. Tags can be constituents, relations cannot. Nested aspects flatten to their traits, and every `createAspect` call returns a distinct aspect.
+
+```js
+import { createAspect } from 'koota'
+
+const Position = trait({ x: 0, y: 0 })
+const Velocity = trait({ vx: 0, vy: 0 })
+const Mass = trait({ m: 1 })
+
+const Movement = createAspect(Position, Velocity)
+const Body = createAspect(Movement, Mass) // Flattens to Position, Velocity, Mass
+
+Movement.id // Unique ID
+Movement.traits // [Position, Velocity]
+Movement.schema // { x: 0, y: 0, vx: 0, vy: 0 }
+```
+
+Aspects work anywhere a trait does on entities and the world.
+
+```js
+// Adds only the missing constituents, initial values are distributed by field
+const entity = world.spawn(Movement({ x: 1, vx: 2 }))
+
+entity.has(Movement) // True if the entity has every constituent
+entity.get(Movement) // { x: 1, y: 0, vx: 2, vy: 0 }, or undefined if any constituent is missing
+entity.set(Movement, { x: 10 }) // Writes to Position and triggers its change detection
+entity.set(Movement, (prev) => ({ x: prev.x + prev.vx }))
+entity.remove(Movement) // Removes every constituent
+```
+
+In queries an aspect requires all of its constituents. `readEach` and `updateEach` provide the merged object, and writes are distributed back to each constituent with per-trait change detection.
+
+```js
+world.query(Movement).updateEach(([movement]) => {
+  movement.x += movement.vx
+  movement.y += movement.vy
+})
+```
+
+Aspects compose with every query modifier. They match on the aspect as a whole.
+
+- `Not(Movement)` matches entities missing at least one constituent.
+- `Or(Movement, IsStatic)` matches entities with every constituent or with `IsStatic`.
+- `Added(Movement)` matches entities that became complete since the last query.
+- `Removed(Movement)` matches entities that stopped being complete since the last query.
+- `Changed(Movement)` matches complete entities where any constituent changed.
+
+Events follow the same rules. `onAdd` fires when an entity gains its last missing constituent, `onRemove` fires when a complete entity loses a constituent, and `onChange` fires when any constituent changes while the entity is complete.
+
+```js
+world.onAdd(Movement, (entity) => {})
+world.onRemove(Movement, (entity) => {})
+world.onChange(Movement, (entity) => {})
+```
+
 ### Query modifiers
 
 Modifiers are used to filter query results enabling powerful patterns. All modifiers can be mixed together.
