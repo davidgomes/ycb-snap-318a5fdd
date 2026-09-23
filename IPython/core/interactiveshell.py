@@ -36,7 +36,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import List as ListType, Any as AnyType
 from typing import Literal, Optional, Tuple
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from warnings import warn
 import textwrap
 
@@ -82,6 +82,7 @@ from IPython.core.macro import Macro
 from IPython.core.payload import PayloadManager
 from IPython.core.prefilter import PrefilterManager
 from IPython.core.profiledir import ProfileDir
+from IPython.core.sessionbundle import SessionBundleRecorder
 from IPython.core.tips import pick_tip
 from IPython.core.usage import default_banner
 from IPython.display import display
@@ -772,6 +773,8 @@ class InteractiveShell(SingletonConfigurable):
 
         # Dict to track post-execution functions that have been registered
         self._post_execute = {}
+
+        self._session_bundle_recorder: SessionBundleRecorder | None = None
 
     def init_environment(self):
         """Any changes we need to make to the user's environment."""
@@ -1954,6 +1957,66 @@ class InteractiveShell(SingletonConfigurable):
         self.configurables.append(self.history_manager)
 
     #-------------------------------------------------------------------------
+    # Things related to session bundles
+    #-------------------------------------------------------------------------
+
+    def start_session_bundle(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        overwrite: bool = False,
+        redact: str | Iterable[str] | None = None,
+    ) -> str:
+        """Start recording the cells that are run to a session bundle.
+
+        See :mod:`IPython.core.sessionbundle` for the bundle format.
+
+        Parameters
+        ----------
+        path : str or path-like
+            Where to write the ``.ipybundle`` file.
+        overwrite : bool
+            Replace an existing bundle at ``path`` instead of raising
+            :class:`FileExistsError`.
+        redact : str or iterable of str, optional
+            Literal strings replaced with ``<redacted>`` in the recorded
+            events.
+
+        Returns
+        -------
+        str
+            The absolute path of the bundle.
+        """
+        if self._session_bundle_recorder is not None:
+            raise RuntimeError(
+                "A session bundle is already being recorded to "
+                f"{self._session_bundle_recorder.path}"
+            )
+        recorder = SessionBundleRecorder(
+            self, path, overwrite=overwrite, redact=redact
+        )
+        recorder.start()
+        self._session_bundle_recorder = recorder
+        return str(recorder.path)
+
+    def stop_session_bundle(self) -> str:
+        """Stop recording the session bundle and return its path."""
+        recorder = self._session_bundle_recorder
+        if recorder is None:
+            raise RuntimeError("No session bundle is being recorded")
+        self._session_bundle_recorder = None
+        recorder.stop()
+        return str(recorder.path)
+
+    def session_bundle_status(self) -> dict[str, AnyType]:
+        """Return ``{"recording": bool, "path": str | None}``."""
+        recorder = self._session_bundle_recorder
+        return {
+            "recording": recorder is not None,
+            "path": None if recorder is None else str(recorder.path),
+        }
+
+    #-------------------------------------------------------------------------
     # Things related to exception handling and tracebacks (not debugging)
     #-------------------------------------------------------------------------
 
@@ -2431,7 +2494,7 @@ class InteractiveShell(SingletonConfigurable):
             m.ConfigMagics, m.DisplayMagics, m.ExecutionMagics,
             m.ExtensionMagics, m.HistoryMagics, m.LoggingMagics,
             m.NamespaceMagics, m.OSMagics, m.PackagingMagics,
-            m.PylabMagics, m.ScriptMagics,
+            m.PylabMagics, m.ScriptMagics, m.SessionBundleMagics,
         )
         self.register_magics(m.AsyncMagics)
 
