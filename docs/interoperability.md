@@ -159,14 +159,16 @@ fmt.Println(res, err, c.Get("total").Int()) // "5 <nil> 5"
 ```
 
 When a function is called from a Go function the script is calling, it runs on
-the script's VM and shares its allocation limit and cancellation. Calls on one
-compiled instance must not be made from multiple goroutines at the same time.
+the script's VM and shares its call depth, allocation limit and cancellation.
+Calls on one compiled instance must not be made from multiple goroutines at the
+same time.
 
 Functions keep running against the compiled instance they belong to.
 `Compiled.Clone` and `Compiled.Set` give the destination its own copies of the
 functions they move, including those inside arrays and maps: the copies run
 against the destination's globals, and start from the captured variables'
-values at the time of the copy.
+values at the time of the copy. Functions moved together, such as the values of
+one map, keep sharing the variables they shared before.
 
 ## Sandbox Environments
 
