@@ -20,6 +20,28 @@ from .exceptions import (
 log = logging.getLogger("gql.transport.websockets")
 
 
+def _payload_to_execution_result(payload: Dict[str, Any]) -> ExecutionResult:
+    """Convert a 'next' / 'data' payload to an ExecutionResult.
+
+    Incremental delivery payloads (@defer / @stream) may not contain
+    any 'data' or 'errors' field, the raw payload is then kept to be
+    forwarded to execute_incremental.
+
+    :raises ValueError: if the payload is not a valid GraphQL result
+    """
+    if is_incremental_payload(payload):
+        return IncrementalPayloadExecutionResult(payload)
+
+    if "errors" not in payload and "data" not in payload:
+        raise ValueError("payload does not contain 'data' or 'errors' fields")
+
+    return ExecutionResult(
+        errors=payload.get("errors"),
+        data=payload.get("data"),
+        extensions=payload.get("extensions"),
+    )
+
+
 class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
     """:ref:`Async Transport <async_transports>` used to execute GraphQL queries on
     remote servers with websocket connection.
@@ -257,28 +279,6 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
         if self.subprotocol == self.APOLLO_SUBPROTOCOL:
             await self._send_connection_terminate_message()
 
-    @staticmethod
-    def _payload_to_execution_result(payload: Dict[str, Any]) -> ExecutionResult:
-        """Convert a 'next' / 'data' payload to an ExecutionResult.
-
-        Incremental delivery payloads (@defer / @stream) may not contain
-        any 'data' or 'errors' field, the raw payload is then kept to be
-        forwarded to execute_incremental.
-
-        :raises ValueError: if the payload is not a valid GraphQL result
-        """
-        if is_incremental_payload(payload):
-            return IncrementalPayloadExecutionResult(payload)
-
-        if "errors" not in payload and "data" not in payload:
-            raise ValueError("payload does not contain 'data' or 'errors' fields")
-
-        return ExecutionResult(
-            errors=payload.get("errors"),
-            data=payload.get("data"),
-            extensions=payload.get("extensions"),
-        )
-
     def _parse_answer_graphqlws(
         self, json_answer: Dict[str, Any]
     ) -> Tuple[str, Optional[int], Optional[ExecutionResult]]:
@@ -320,9 +320,7 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
                         if not isinstance(payload, dict):
                             raise ValueError("payload is not a dict")
 
-                        execution_result = self._payload_to_execution_result(
-                            payload
-                        )
+                        execution_result = _payload_to_execution_result(payload)
 
                         # Saving answer_type as 'data' to be understood with superclass
                         answer_type = "data"
@@ -384,9 +382,7 @@ class WebsocketsProtocolTransportBase(SubscriptionTransportBase):
 
                     if answer_type == "data":
 
-                        execution_result = self._payload_to_execution_result(
-                            payload
-                        )
+                        execution_result = _payload_to_execution_result(payload)
 
                     elif answer_type == "error":
 

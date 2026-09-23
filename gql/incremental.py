@@ -112,9 +112,7 @@ def _navigate(data: Any, path: Path, create: bool) -> Any:
     current = data
     for key in path:
         if isinstance(key, int):
-            if not isinstance(current, list) or not -len(current) <= key < len(
-                current
-            ):
+            if not isinstance(current, list) or not -len(current) <= key < len(current):
                 raise LookupError(f"Cannot access index {key}")
             current = current[key]
         else:
@@ -170,7 +168,8 @@ class IncrementalResultAccumulator:
         if start > len(parent):
             parent.extend([None] * (start - len(parent)))
 
-        parent[start : start + len(items)] = copy.deepcopy(list(items))
+        end = start + len(items)
+        parent[start:end] = copy.deepcopy(list(items))
 
     def add_payload(self, payload: Dict[str, Any]) -> IncrementalResult:
         """Apply a received payload and return the corresponding result."""
