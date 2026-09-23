@@ -140,6 +140,83 @@ interface SequenceOptions {
    * @default 'stack'
    */
   hooks?: SequenceHooks
+  /**
+   * How files are distributed across shards.
+   * - `hash`: stable hash of the file path (default)
+   * - `time`: longest-processing-time bin packing using duration history
+   * - `round-robin`: duration-sorted bouncing round-robin
+   * - `affinity`: glob rules pin files to shards; the rest use time packing
+   * @default 'hash'
+   */
+  shardStrategy?: 'hash' | 'time' | 'round-robin' | 'affinity'
+  /**
+   * When `true` and `shardStrategy` is not set, resolve `shardStrategy` to `'time'`.
+   * Forced to `false` when the resolved strategy is not `'time'`.
+   * @default false
+   */
+  balanceShardsByTime?: boolean
+  /**
+   * Write per-file durations to `durationHistoryPath` after the run finishes.
+   * @default false
+   */
+  recordFileDurations?: boolean
+  /**
+   * Sort test files by recorded duration, longest first.
+   * Files absent from history are ordered last.
+   * @default false
+   */
+  durationBasedSorting?: boolean
+  /**
+   * Drop duration observations older than this many milliseconds.
+   * `0` disables expiry. Observations with `recordedAt: 0` never expire.
+   * @default 0
+   */
+  durationHistoryTTL?: number
+  /**
+   * Path to the duration history file, relative to the project root.
+   * @default 'duration-history.json'
+   */
+  durationHistoryPath?: string
+  /**
+   * Maximum number of duration observations stored per file.
+   * @default 1
+   */
+  durationHistoryMaxRuns?: number
+  /**
+   * How multiple duration observations are reduced to a single value.
+   * @default 'latest'
+   */
+  durationSmoothing?: 'latest' | 'average' | 'p95' | 'median'
+  /**
+   * Glob rules that pin files to a shard when `shardStrategy` is `'affinity'`.
+   * The first matching rule wins. `shardIndex` is zero-based and clamped to the last shard.
+   * @default []
+   */
+  shardAffinityRules?: ShardAffinityRule[]
+  /**
+   * When greater than `0`, warn if `minShardLoad / maxShardLoad` is below this ratio.
+   * @default 0
+   */
+  rebalanceThreshold?: number
+  /**
+   * Files with a duration greater than this threshold (milliseconds) are placed
+   * on their own shard before the remaining files are distributed.
+   * `0` disables the split.
+   * @default 0
+   */
+  isolateSlowThreshold?: number
+  /**
+   * Sharding algorithm used when duration history is missing or corrupt
+   * and the selected strategy needs durations.
+   * @default 'hash'
+   */
+  durationFallbackStrategy?: 'hash' | 'equal-split'
+}
+
+export interface ShardAffinityRule {
+  pattern: string
+  /** Zero-based shard index. */
+  shardIndex: number
 }
 
 export type DepsOptimizationOptions = Omit<
@@ -1189,6 +1266,18 @@ export interface ResolvedConfig
     concurrent?: boolean
     seed: number
     groupOrder: number
+    shardStrategy: 'hash' | 'time' | 'round-robin' | 'affinity'
+    balanceShardsByTime: boolean
+    recordFileDurations: boolean
+    durationBasedSorting: boolean
+    durationHistoryTTL: number
+    durationHistoryPath: string
+    durationHistoryMaxRuns: number
+    durationSmoothing: 'latest' | 'average' | 'p95' | 'median'
+    shardAffinityRules: ShardAffinityRule[]
+    rebalanceThreshold: number
+    isolateSlowThreshold: number
+    durationFallbackStrategy: 'hash' | 'equal-split'
   }
 
   typecheck: Omit<TypecheckConfig, 'enabled'> & {

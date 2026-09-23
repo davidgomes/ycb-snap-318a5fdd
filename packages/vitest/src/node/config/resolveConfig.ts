@@ -28,6 +28,92 @@ import { getWorkersCountByPercentage } from '../../utils/workers'
 import { BaseSequencer } from '../sequencers/BaseSequencer'
 import { RandomSequencer } from '../sequencers/RandomSequencer'
 
+const SHARD_STRATEGIES = ['hash', 'time', 'round-robin', 'affinity'] as const
+const DURATION_SMOOTHING = ['latest', 'average', 'p95', 'median'] as const
+const DURATION_FALLBACKS = ['hash', 'equal-split'] as const
+
+function resolveSequenceDurationOptions(sequence: ResolvedConfig['sequence']): void {
+  const strategyProvided = sequence.shardStrategy != null
+  if (strategyProvided && !SHARD_STRATEGIES.includes(sequence.shardStrategy)) {
+    throw new Error(`sequence.shardStrategy must be one of ${SHARD_STRATEGIES.join(', ')}, received ${JSON.stringify(sequence.shardStrategy)}`)
+  }
+  assertBoolean(sequence.balanceShardsByTime, 'sequence.balanceShardsByTime')
+  assertBoolean(sequence.recordFileDurations, 'sequence.recordFileDurations')
+  assertBoolean(sequence.durationBasedSorting, 'sequence.durationBasedSorting')
+  assertFiniteNumber(sequence.durationHistoryTTL, 'sequence.durationHistoryTTL', value => value >= 0, 'a finite number >= 0')
+  if (sequence.durationHistoryPath != null) {
+    if (typeof sequence.durationHistoryPath !== 'string' || sequence.durationHistoryPath.length === 0 || sequence.durationHistoryPath !== sequence.durationHistoryPath.trim()) {
+      throw new Error(`sequence.durationHistoryPath must be a non-empty string without leading or trailing whitespace, received ${JSON.stringify(sequence.durationHistoryPath)}`)
+    }
+  }
+  assertInteger(sequence.durationHistoryMaxRuns, 'sequence.durationHistoryMaxRuns', value => value >= 1, 'an integer >= 1')
+  if (sequence.durationSmoothing != null && !DURATION_SMOOTHING.includes(sequence.durationSmoothing)) {
+    throw new Error(`sequence.durationSmoothing must be one of ${DURATION_SMOOTHING.join(', ')}, received ${JSON.stringify(sequence.durationSmoothing)}`)
+  }
+  if (sequence.shardAffinityRules != null) {
+    if (!Array.isArray(sequence.shardAffinityRules)) {
+      throw new TypeError(`sequence.shardAffinityRules must be an array, received ${JSON.stringify(sequence.shardAffinityRules)}`)
+    }
+    sequence.shardAffinityRules.forEach((rule, index) => {
+      if (rule == null || typeof rule !== 'object' || typeof rule.pattern !== 'string' || rule.pattern.length === 0) {
+        throw new Error(`sequence.shardAffinityRules[${index}].pattern must be a non-empty string`)
+      }
+      if (!Number.isInteger(rule.shardIndex) || rule.shardIndex < 0) {
+        throw new Error(`sequence.shardAffinityRules[${index}].shardIndex must be an integer >= 0, received ${JSON.stringify(rule.shardIndex)}`)
+      }
+    })
+  }
+  assertFiniteNumber(sequence.rebalanceThreshold, 'sequence.rebalanceThreshold', value => value >= 0 && value <= 1, 'a number between 0 and 1 inclusive')
+  assertFiniteNumber(sequence.isolateSlowThreshold, 'sequence.isolateSlowThreshold', value => value >= 0, 'a finite number >= 0')
+  if (sequence.durationFallbackStrategy != null && !DURATION_FALLBACKS.includes(sequence.durationFallbackStrategy)) {
+    throw new Error(`sequence.durationFallbackStrategy must be one of ${DURATION_FALLBACKS.join(', ')}, received ${JSON.stringify(sequence.durationFallbackStrategy)}`)
+  }
+
+  sequence.shardStrategy ??= 'hash'
+  sequence.balanceShardsByTime ??= false
+  sequence.recordFileDurations ??= false
+  sequence.durationBasedSorting ??= false
+  sequence.durationHistoryTTL ??= 0
+  sequence.durationHistoryPath ??= 'duration-history.json'
+  sequence.durationHistoryMaxRuns ??= 1
+  sequence.durationSmoothing ??= 'latest'
+  sequence.shardAffinityRules ??= []
+  sequence.rebalanceThreshold ??= 0
+  sequence.isolateSlowThreshold ??= 0
+  sequence.durationFallbackStrategy ??= 'hash'
+
+  if (sequence.balanceShardsByTime && !strategyProvided) {
+    sequence.shardStrategy = 'time'
+  }
+  if (sequence.shardStrategy !== 'time') {
+    sequence.balanceShardsByTime = false
+  }
+}
+
+function assertBoolean(value: unknown, name: string): void {
+  if (value != null && typeof value !== 'boolean') {
+    throw new Error(`${name} must be a boolean, received ${JSON.stringify(value)}`)
+  }
+}
+
+function assertFiniteNumber(value: unknown, name: string, ok: (value: number) => boolean, expected: string): void {
+  if (value == null) {
+    return
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value) || !ok(value)) {
+    throw new Error(`${name} must be ${expected}, received ${JSON.stringify(value)}`)
+  }
+}
+
+function assertInteger(value: unknown, name: string, ok: (value: number) => boolean, expected: string): void {
+  if (value == null) {
+    return
+  }
+  if (typeof value !== 'number' || !Number.isInteger(value) || !ok(value)) {
+    throw new Error(`${name} must be ${expected}, received ${JSON.stringify(value)}`)
+  }
+}
+
 function resolvePath(path: string, root: string) {
   return normalize(
     /* @__PURE__ */ resolveModule(path, { paths: [root] })
@@ -778,6 +864,8 @@ export function resolveConfig(
   if (resolved.sequence.sequencer === RandomSequencer || resolved.sequence.shuffle) {
     resolved.sequence.seed ??= Date.now()
   }
+
+  resolveSequenceDurationOptions(resolved.sequence)
 
   resolved.typecheck = {
     ...configDefaults.typecheck,
