@@ -2431,7 +2431,7 @@ class InteractiveShell(SingletonConfigurable):
             m.ConfigMagics, m.DisplayMagics, m.ExecutionMagics,
             m.ExtensionMagics, m.HistoryMagics, m.LoggingMagics,
             m.NamespaceMagics, m.OSMagics, m.PackagingMagics,
-            m.PylabMagics, m.ScriptMagics,
+            m.PylabMagics, m.ScriptMagics, m.SessionBundleMagics,
         )
         self.register_magics(m.AsyncMagics)
 
@@ -3174,6 +3174,48 @@ class InteractiveShell(SingletonConfigurable):
                 if not silent:
                     self.events.trigger("post_run_cell", result)
         return result
+
+    def start_session_bundle(self, path, *, overwrite=False, redact=None) -> str:
+        """Start recording executed cells to an ``.ipybundle`` archive.
+
+        Parameters
+        ----------
+        path : str or path-like
+            Destination bundle path.
+        overwrite : bool, optional
+            Replace an existing bundle. When false, an existing path raises
+            ``FileExistsError``.
+        redact : sequence of str, optional
+            Literal strings to replace with ``<redacted>`` in recorded events.
+            Order is preserved in the bundle metadata.
+
+        Returns
+        -------
+        str
+            Absolute path of the bundle.
+
+        Raises
+        ------
+        RuntimeError
+            If a recording is already active on this shell.
+        FileExistsError
+            If ``path`` exists and ``overwrite`` is false.
+        """
+        from IPython.core.sessionbundle import start_session_bundle
+
+        return start_session_bundle(self, path, overwrite=overwrite, redact=redact)
+
+    def stop_session_bundle(self) -> str:
+        """Stop the active session-bundle recording and return its path."""
+        from IPython.core.sessionbundle import stop_session_bundle
+
+        return stop_session_bundle(self)
+
+    def session_bundle_status(self) -> dict:
+        """Return ``{"recording": bool, "path": str | None}``."""
+        from IPython.core.sessionbundle import session_bundle_status
+
+        return session_bundle_status(self)
 
     def _run_cell(
         self,
