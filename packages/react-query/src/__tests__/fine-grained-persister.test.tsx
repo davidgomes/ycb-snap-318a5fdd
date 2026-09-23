@@ -5,7 +5,13 @@ import {
   experimental_createQueryPersister,
 } from '@tanstack/query-persist-client-core'
 import { queryKey, sleep } from '@tanstack/query-test-utils'
-import { QueryCache, QueryClient, hashKey, useQuery } from '..'
+import {
+  QueryCache,
+  QueryClient,
+  createPersisterRestoreResult,
+  hashKey,
+  useQuery,
+} from '..'
 import { renderWithClient } from './utils'
 
 describe('fine grained persister', () => {
@@ -175,5 +181,57 @@ describe('fine grained persister', () => {
         data: 'Works from queryFn',
       },
     })
+  })
+
+  it('should expose persisted failure metadata from a restored snapshot', async () => {
+    const key = queryKey()
+    const error = new Error('restored')
+    const client = new QueryClient()
+    const state = {
+      data: 'cached',
+      dataUpdateCount: 2,
+      dataUpdatedAt: 111,
+      error,
+      errorUpdateCount: 3,
+      errorUpdatedAt: 222,
+      fetchFailureCount: 5,
+      fetchFailureReason: error,
+      fetchMeta: null,
+      isInvalidated: false,
+      status: 'error' as const,
+      fetchStatus: 'idle' as const,
+    }
+
+    function Test() {
+      const result = useQuery({
+        queryKey: key,
+        queryFn: () => 'fresh',
+        staleTime: Infinity,
+        persister: () =>
+          createPersisterRestoreResult({
+            data: state.data,
+            state,
+          }),
+      })
+
+      return (
+        <div>
+          <span>{result.data}</span>
+          <span>{String(result.isRefetchError)}</span>
+          <span>{result.failureCount}</span>
+          <span>{result.errorUpdatedAt}</span>
+          <span>{result.fetchStatus}</span>
+        </div>
+      )
+    }
+
+    const rendered = renderWithClient(client, <Test />)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(rendered.getByText('cached')).toBeInTheDocument()
+    expect(rendered.getByText('true')).toBeInTheDocument()
+    expect(rendered.getByText('5')).toBeInTheDocument()
+    expect(rendered.getByText('222')).toBeInTheDocument()
+    expect(rendered.getByText('idle')).toBeInTheDocument()
   })
 })

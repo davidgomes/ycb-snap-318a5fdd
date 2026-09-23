@@ -41,6 +41,12 @@ export {
 export type { MutationFilters, QueryFilters, SkipToken, Updater } from './utils'
 
 export { streamedQuery as experimental_streamedQuery } from './streamedQuery'
+export {
+  createPersisterRestoreResult,
+  isPersisterRestoreResult,
+  persisterRestoreResultSymbol,
+} from './persisterRestore'
+export type { PersisterRestoreResult } from './persisterRestore'
 
 // Types
 export type {

@@ -8,6 +8,7 @@ import {
   timeUntilStale,
 } from './utils'
 import { notifyManager } from './notifyManager'
+import { isPersisterRestoreResult } from './persisterRestore'
 import { CancelledError, canFetch, createRetryer } from './retryer'
 import { Removable } from './removable'
 import type { QueryCache } from './queryCache'
@@ -555,6 +556,20 @@ export class Query<
 
     try {
       const data = await this.#retryer.start()
+
+      if (isPersisterRestoreResult<TData, TError>(data)) {
+        // Adopt the persisted snapshot. This is not a fetch success: keep
+        // status, errors, counters, timestamps, and pagination intact.
+        const restoredData = data.data
+        this.setState({
+          ...data.state,
+          data: restoredData,
+          fetchStatus: 'idle',
+          fetchMeta: null,
+        })
+        return restoredData
+      }
+
       // this is more of a runtime guard
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (data === undefined) {
