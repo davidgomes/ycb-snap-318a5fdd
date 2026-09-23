@@ -503,6 +503,142 @@ __Test bold__
 ``````
 </details>
 
+## Link Style
+
+Alias: `link-style`
+
+Converts links and images between the Obsidian wiki link format and the markdown link format. <b>Note: external links and images are never converted to wiki links, and markdown links and images that have a title or span multiple lines are left as is.</b>
+
+### Options
+
+| Name | Description | List Items | Default Value |
+| ---- | ----------- | ---------- | ------------- |
+| `Link Style` | The style to convert links to | `no-change`: Leaves links as they are<br/><br/>`markdown`: Converts wiki links to markdown links<br/><br/>`wiki`: Converts internal markdown links to wiki links | `no-change` |
+| `Image Style` | The style to convert images and other embeds to | `no-change`: Leaves images and embeds as they are<br/><br/>`markdown`: Converts wiki embeds to markdown images<br/><br/>`wiki`: Converts internal markdown images to wiki embeds | `no-change` |
+
+
+
+### Examples
+
+<details><summary>Wiki links are converted to markdown links when `Link Style` is set to `markdown`</summary>
+
+Before:
+
+`````` markdown
+[[Note]]
+[[Note|Display Text]]
+[[Note#Heading]]
+[[#Heading]]
+[[My Note]]
+![[image.png]]
+``````
+
+After:
+
+`````` markdown
+[Note](Note)
+[Display Text](Note)
+[Note > Heading](Note#Heading)
+[Heading](#Heading)
+[My Note](<My Note>)
+![[image.png]]
+``````
+</details>
+<details><summary>Internal markdown links are converted to wiki links when `Link Style` is set to `wiki`</summary>
+
+Before:
+
+`````` markdown
+[Note](Note)
+[Display Text](Note)
+[Note > Heading](Note#Heading)
+[Display Text](<My Note>)
+[Obsidian](https://obsidian.md)
+[Link with a title](Note "Title")
+``````
+
+After:
+
+`````` markdown
+[[Note]]
+[[Note|Display Text]]
+[[Note#Heading]]
+[[My Note|Display Text]]
+[Obsidian](https://obsidian.md)
+[Link with a title](Note "Title")
+``````
+</details>
+<details><summary>Wiki embeds are converted to markdown images when `Image Style` is set to `markdown`</summary>
+
+Before:
+
+`````` markdown
+![[image.png]]
+![[image.png|300]]
+![[image.png|300x200]]
+![[image.png|Alt text]]
+[[Note]]
+``````
+
+After:
+
+`````` markdown
+![image.png](image.png)
+![image.png](image.png)
+![image.png](image.png)
+![Alt text](image.png)
+[[Note]]
+``````
+</details>
+<details><summary>Internal markdown images are converted to wiki embeds when `Image Style` is set to `wiki`</summary>
+
+Before:
+
+`````` markdown
+![](image.png)
+![image.png](image.png)
+![Alt text](image.png)
+![Remote image](https://example.com/image.png)
+``````
+
+After:
+
+`````` markdown
+![[image.png]]
+![[image.png]]
+![[image.png|Alt text]]
+![Remote image](https://example.com/image.png)
+``````
+</details>
+<details><summary>Links in code, math, comments, and tables are left alone</summary>
+
+Before:
+
+`````` markdown
+[[Note]]
+`[[Note]]`
+$[[Note]]$
+%% [[Note]] %%
+
+| Column |
+| ------ |
+| [[Note]] |
+``````
+
+After:
+
+`````` markdown
+[Note](Note)
+`[[Note]]`
+$[[Note]]$
+%% [[Note]] %%
+
+| Column |
+| ------ |
+| [[Note]] |
+``````
+</details>
+
 ## No Bare URLs
 
 Alias: `no-bare-urls`

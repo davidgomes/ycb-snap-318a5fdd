@@ -55,6 +55,7 @@ Each rule is its own set of logic and is designed to be run independently. This 
 - [convert-bullet-list-markers](https://platers.github.io/obsidian-linter/settings/content-rules/#convert-bullet-list-markers)
 - [default-language-for-code-fences](https://platers.github.io/obsidian-linter/settings/content-rules/#default-language-for-code-fences)
 - [emphasis-style](https://platers.github.io/obsidian-linter/settings/content-rules/#emphasis-style)
+- [link-style](https://platers.github.io/obsidian-linter/settings/content-rules/#link-style)
 - [no-bare-urls](https://platers.github.io/obsidian-linter/settings/content-rules/#no-bare-urls)
 - [ordered-list-style](https://platers.github.io/obsidian-linter/settings/content-rules/#ordered-list-style)
 - [proper-ellipsis](https://platers.github.io/obsidian-linter/settings/content-rules/#proper-ellipsis)
