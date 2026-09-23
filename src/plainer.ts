@@ -10,6 +10,7 @@ import {
 import { escapeKey, stringifyPath } from './pathstringifier.js';
 import {
   isInstanceOfRegisteredClass,
+  resetErrorCauseDepths,
   transformValue,
   TypeAnnotation,
   untransformValue,
@@ -185,6 +186,10 @@ export function generateReferentialEqualityAnnotations(
   }
 }
 
+function isBuiltInErrorAnnotation(type: TypeAnnotation | undefined): boolean {
+  return type === 'Error' || type === 'Error/stack' || type === 'Error/frames';
+}
+
 export const walker = (
   object: any,
   identities: Map<any, any[][]>,
@@ -194,6 +199,10 @@ export const walker = (
   objectsInThisPath: any[] = [],
   seenObjects = new Map<unknown, Result>()
 ): Result => {
+  if (path.length === 0) {
+    resetErrorCauseDepths(superJson);
+  }
+
   const primitive = isPrimitive(object);
 
   if (!primitive) {
@@ -285,6 +294,22 @@ export const walker = (
           ? [transformationResult.type, innerAnnotations]
           : innerAnnotations,
       };
+
+  if (
+    transformationResult &&
+    isBuiltInErrorAnnotation(transformationResult.type) &&
+    typeof object?.name === 'string' &&
+    superJson.errorClassRegistry.has(object.name)
+  ) {
+    const processor = superJson.errorClassRegistry.getProcessor(object.name);
+    if (processor) {
+      const replacement = processor(result.transformedValue);
+      if (replacement !== undefined) {
+        result.transformedValue = replacement;
+      }
+    }
+  }
+
   if (!primitive) {
     seenObjects.set(object, result);
   }
