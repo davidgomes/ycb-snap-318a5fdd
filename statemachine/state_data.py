@@ -168,7 +168,8 @@ class StateDataStore:
             return
         if restored is not None:
             self.active[state.id] = dict(restored)
-        else:
+        elif state.id not in self.active:
+            # Entry without a prior exit (internal self-transition) keeps the data.
             self.active[state.id] = {key: var.create() for key, var in spec.items()}
 
     def exit(self, state: "State") -> "Dict[str, Any] | None":
