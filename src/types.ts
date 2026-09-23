@@ -43,6 +43,9 @@ export interface Logic {
     propsChanged?: (props: any, oldProps: any) => void
   }
 
+  /** Only defined when the context is created with `atomicSelectors: true` */
+  selectorHealth?: () => SelectorHealth
+
   // listeners
   listeners?: Record<string, ListenerFunctionWrapper[]>
   sharedListeners?: Record<string, ListenerFunction>
@@ -538,7 +541,21 @@ export interface InternalContextOptions {
   detachStrategy: 'dispatch' | 'replace' | 'persist'
   defaultPath: string[]
   disableAsyncActions: boolean
+  /** Track selector dependencies at the leaf level and only re-evaluate selectors whose inputs changed */
+  atomicSelectors: boolean
   // ...otherOptions
+}
+
+export interface SelectorHealthEntry {
+  dependencies: string[]
+  dependents: string[]
+  evaluations: number
+  dirtyCause: string | null
+}
+
+export interface SelectorHealth {
+  selectors: Record<string, SelectorHealthEntry>
+  topologicalOrder: string[]
 }
 
 export interface ContextOptions extends Partial<InternalContextOptions> {

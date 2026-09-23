@@ -1,6 +1,7 @@
 import { Logic, LogicBuilder, LogicPropSelectors, Selector, SelectorDefinition, SelectorDefinitions } from '../types'
 import { createSelector, createSelectorCreator, defaultMemoize, ParametricSelector } from 'reselect'
 import { getStoreState } from '../kea/context'
+import { createAtomicSelector, isAtomicSelectorsEnabled, labelSelector, sortAtomicSelectors } from './atomic'
 
 /**
   Logic builder:
@@ -25,6 +26,7 @@ export function selectors<L extends Logic = Logic>(
 ): LogicBuilder<L> {
   return (logic) => {
     const selectorInputs = typeof input === 'function' ? input(logic) : input
+    const atomic = isAtomicSelectorsEnabled()
 
     // small cache so the order would not count
     const builtSelectors: Record<string, Selector> = {}
@@ -48,11 +50,15 @@ export function selectors<L extends Logic = Logic>(
                   )}: '' }) to resolve.`,
                 )
               }
-              return () => target[prop]
+              const propSelector = () => target[prop]
+              return atomic ? labelSelector(propSelector, `props.${String(prop)}`) : propSelector
             },
           })
         : (Object.fromEntries(
-            Object.keys(logic.props).map((key) => [key, () => logic.props[key]]),
+            Object.keys(logic.props).map((key) => {
+              const propSelector = () => logic.props[key]
+              return [key, atomic ? labelSelector(propSelector, `props.${key}`) : propSelector]
+            }),
           ) as LogicPropSelectors<L>)
 
     for (const entry of Object.entries(selectorInputs)) {
@@ -68,7 +74,9 @@ export function selectors<L extends Logic = Logic>(
         const msg = `[KEA] Logic "${logic.pathString}", selector "${key}" has incorrect input: [${argTypes}].`
         throw new Error(msg)
       }
-      builtSelectors[key] = createSelector(args, func, { memoizeOptions })
+      builtSelectors[key] = atomic
+        ? createAtomicSelector(logic, key, args, func, memoizeOptions)
+        : createSelector(args, func, { memoizeOptions })
 
       addSelectorAndValue(logic, key, (state = getStoreState(), props = logic.props) =>
         builtSelectors[key](state, props),
@@ -82,6 +90,10 @@ export function selectors<L extends Logic = Logic>(
           enumerable: true,
         })
       }
+    }
+
+    if (atomic) {
+      sortAtomicSelectors(logic)
     }
   }
 }
