@@ -133,11 +133,18 @@ func (s *Script) Compile() (*Compiled, error) {
 			return nil, fmt.Errorf("exceeding constant objects limit: %d", cnt)
 		}
 	}
+	rt := newVMRuntime(bytecode.Constants, globals, bytecode.FileSet,
+		s.maxAllocs)
+	t := newTransferer(rt)
+	for idx, g := range globals {
+		globals[idx] = t.transfer(g, false)
+	}
 	return &Compiled{
 		globalIndexes: globalIndexes,
 		bytecode:      bytecode,
 		globals:       globals,
 		maxAllocs:     s.maxAllocs,
+		rt:            rt,
 	}, nil
 }
 
@@ -199,6 +206,7 @@ type Compiled struct {
 	bytecode      *Bytecode
 	globals       []Object
 	maxAllocs     int64
+	rt            *vmRuntime
 	lock          sync.RWMutex
 }
 
@@ -207,7 +215,7 @@ func (c *Compiled) Run() error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	v := newVMFromRuntime(c.rt, c.bytecode.MainFunction)
 	return v.Run()
 }
 
@@ -216,7 +224,7 @@ func (c *Compiled) RunContext(ctx context.Context) (err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	v := NewVM(c.bytecode, c.globals, c.maxAllocs)
+	v := newVMFromRuntime(c.rt, c.bytecode.MainFunction)
 	ch := make(chan error, 1)
 	go func() {
 		defer func() {
@@ -259,17 +267,20 @@ func (c *Compiled) Clone() *Compiled {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
+	globals := make([]Object, len(c.globals))
+	rt := newVMRuntime(c.bytecode.Constants, globals, c.bytecode.FileSet,
+		c.maxAllocs)
 	clone := &Compiled{
 		globalIndexes: c.globalIndexes,
 		bytecode:      c.bytecode,
-		globals:       make([]Object, len(c.globals)),
+		globals:       globals,
 		maxAllocs:     c.maxAllocs,
+		rt:            rt,
 	}
-	// copy global objects
+	t := newTransferer(rt)
+	t.rts[c.rt] = rt
 	for idx, g := range c.globals {
-		if g != nil {
-			clone.globals[idx] = g.Copy()
-		}
+		globals[idx] = t.transfer(g, true)
 	}
 	return clone
 }
@@ -342,6 +353,6 @@ func (c *Compiled) Set(name string, value interface{}) error {
 	if !ok {
 		return fmt.Errorf("'%s' is not defined", name)
 	}
-	c.globals[idx] = obj
+	c.globals[idx] = newTransferer(c.rt).transfer(obj, false)
 	return nil
 }

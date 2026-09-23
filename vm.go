@@ -32,6 +32,7 @@ type VM struct {
 	maxAllocs   int64
 	allocs      int64
 	err         error
+	rt          *vmRuntime
 }
 
 // NewVM creates a VM.
@@ -43,16 +44,23 @@ func NewVM(
 	if globals == nil {
 		globals = make([]Object, GlobalsSize)
 	}
+	rt := newVMRuntime(bytecode.Constants, globals, bytecode.FileSet,
+		maxAllocs)
+	return newVMFromRuntime(rt, bytecode.MainFunction)
+}
+
+func newVMFromRuntime(rt *vmRuntime, main *CompiledFunction) *VM {
 	v := &VM{
-		constants:   bytecode.Constants,
+		constants:   rt.constants,
 		sp:          0,
-		globals:     globals,
-		fileSet:     bytecode.FileSet,
+		globals:     rt.globals,
+		fileSet:     rt.fileSet,
 		framesIndex: 1,
 		ip:          -1,
-		maxAllocs:   maxAllocs,
+		maxAllocs:   rt.maxAllocs,
+		rt:          rt,
 	}
-	v.frames[0].fn = bytecode.MainFunction
+	v.frames[0].fn = main
 	v.frames[0].ip = -1
 	v.curFrame = &v.frames[0]
 	v.curInsts = v.curFrame.fn.Instructions
@@ -78,18 +86,7 @@ func (v *VM) Run() (err error) {
 	atomic.StoreInt64(&v.aborting, 0)
 	err = v.err
 	if err != nil {
-		filePos := v.fileSet.Position(
-			v.curFrame.fn.SourcePos(v.ip - 1))
-		err = fmt.Errorf("Runtime Error: %w\n\tat %s",
-			err, filePos)
-		for v.framesIndex > 1 {
-			v.framesIndex--
-			v.curFrame = &v.frames[v.framesIndex-1]
-			filePos = v.fileSet.Position(
-				v.curFrame.fn.SourcePos(v.curFrame.ip - 1))
-			err = fmt.Errorf("%w\n\tat %s", err, filePos)
-		}
-		return err
+		return v.formatError(err, 0)
 	}
 	return nil
 }
@@ -772,6 +769,7 @@ func (v *VM) run() {
 				VarArgs:       fn.VarArgs,
 				SourceMap:     fn.SourceMap,
 				Free:          free,
+				rt:            v.rt,
 			}
 			v.allocs--
 			if v.allocs == 0 {
