@@ -93,6 +93,11 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /**
+     * Relation pairs tracked per target, aligned by index with `traits`.
+     * An undefined entry means that trait is tracked as a whole.
+     */
+    pairs?: (RelationPair | undefined)[];
 };
 
 /** Parameter types that can be passed to Or modifier */
@@ -132,6 +137,21 @@ export type TrackingGroup = {
     bitmasks: (number | undefined)[];
     /** Per-entity tracker state indexed by [generationId][entityId] */
     trackers: (number[] | undefined)[];
+    /** Relation pairs tracked per target. A `'*'` target matches any target. */
+    pairs: RelationPair[];
+    /**
+     * Per-entity pair tracker state keyed by entity ID, aligned by index with `pairs`.
+     * Each entry maps a target to its net event since the entity was last observed.
+     */
+    pairTrackers: Map<number, (Map<Entity, number> | undefined)[]>;
+};
+
+/** Relation pair state captured for a tracking modifier when it starts observing a world. */
+export type PairSnapshot = {
+    /** World pair tick at capture time. Pair changes with a later tick happened after it. */
+    tick: number;
+    /** Targets per source entity at capture time, indexed by relation trait id */
+    targets: (Map<Entity, readonly Entity[]> | undefined)[];
 };
 
 export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {

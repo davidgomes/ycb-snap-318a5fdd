@@ -1,7 +1,6 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
-import { hasRelationPair } from '../relation/relation';
 import type { Relation } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
 import { registerTrait, trait } from '../trait/trait';
@@ -25,8 +24,10 @@ import {
 } from './types';
 import { checkQuery } from './utils/check-query';
 import { checkQueryTracking } from './utils/check-query-tracking';
+import { checkQueryTrackingState } from './utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from './utils/check-query-with-relations';
 import { createQueryHash } from './utils/create-query-hash';
+import { seedPairTrackers } from './utils/pair-tracking';
 
 export const IsExcluded: TagTrait = trait();
 
@@ -47,7 +48,7 @@ export function runQuery<T extends QueryParameter[]>(
         // PERF: Use indexed loop instead of for...of
         const len = entities.length;
         for (let i = 0; i < len; i++) {
-            query.resetTrackingBitmasks(entities[i]);
+            query.resetTrackingBitmasks(getEntityId(entities[i]));
         }
     }
 
@@ -102,12 +103,50 @@ export function resetQueryTrackingBitmasks(query: QueryInstance, eid: number) {
     const groups = query.trackingGroups;
     const len = groups.length;
     for (let i = 0; i < len; i++) {
-        const trackers = groups[i].trackers;
+        const group = groups[i];
+        const trackers = group.trackers;
         const trackersLen = trackers.length;
         for (let j = 0; j < trackersLen; j++) {
             const tracker = trackers[j];
             if (tracker) tracker[eid] = 0;
         }
+        if (group.pairs.length > 0) group.pairTrackers.delete(eid);
+    }
+}
+
+/** Seed an entity's trait trackers with the events since the group's modifier started observing the world */
+function seedTraitTrackers(ctx: World[typeof $internal], group: TrackingGroup, eid: number) {
+    const { type, id, bitmasks, trackers } = group;
+    const snapshot = ctx.trackingSnapshots.get(id)!;
+    const dirtyMask = ctx.dirtyMasks.get(id)!;
+    const changedMask = ctx.changedMasks.get(id)!;
+
+    for (let genId = 0; genId < bitmasks.length; genId++) {
+        const mask = bitmasks[genId];
+        if (!mask) continue;
+
+        const oldMask = snapshot[genId]?.[eid] ?? 0;
+        const currentMask = ctx.entityMasks[genId]?.[eid] ?? 0;
+
+        let tracked: number;
+        switch (type) {
+            case 'add':
+                tracked = ~oldMask & currentMask;
+                break;
+            case 'remove':
+                // Removed since the snapshot, or added and removed again since then.
+                tracked = ~currentMask & (oldMask | (dirtyMask[genId]?.[eid] ?? 0));
+                break;
+            case 'change':
+                tracked = changedMask[genId]?.[eid] ?? 0;
+                break;
+        }
+
+        tracked &= mask;
+        if (!tracked) continue;
+
+        const tracker = (trackers[genId] ??= []);
+        tracker[eid] = (tracker[eid] ?? 0) | tracked;
     }
 }
 
@@ -139,16 +178,33 @@ function processTrackingModifier(
             id,
             bitmasks: [],
             trackers: [],
+            pairs: [],
+            pairTrackers: new Map(),
         };
         groupsMap.set(key, group);
         query.trackingGroups.push(group);
     }
 
     // Register traits and build bitmasks
-    for (const trait of modifier.traits) {
+    const traits = modifier.traits;
+    for (let i = 0; i < traits.length; i++) {
+        const trait = traits[i];
         if (!hasTraitInstance(ctx.traitInstances, trait)) registerTrait(world, trait);
         const instance = getTraitInstance(ctx.traitInstances, trait)!;
         query.traits.push(trait);
+
+        // Track changed traits for change detection in query-result
+        if (trackingType === 'change') {
+            query.changedTraits.add(trait);
+            query.hasChangedModifiers = true;
+        }
+
+        // Pairs are tracked per target instead of by the relation trait's bitflag
+        const pair = modifier.pairs?.[i];
+        if (pair) {
+            group.pairs.push(pair);
+            continue;
+        }
 
         // Add to traitInstances.all for query registration
         query.traitInstances.all.push(instance);
@@ -156,12 +212,6 @@ function processTrackingModifier(
         // Build bitmasks by generation
         const genId = instance.generationId;
         group.bitmasks[genId] = (group.bitmasks[genId] || 0) | instance.bitflag;
-
-        // Track changed traits for change detection in query-result
-        if (trackingType === 'change') {
-            query.changedTraits.add(trait);
-            query.hasChangedModifiers = true;
-        }
     }
 
     query.isTracking = true;
@@ -343,87 +393,31 @@ export function createQueryInstance<T extends QueryParameter[]>(
         }
     }
 
+    // Index queries with pair tracking by the tracked relations
+    for (const group of query.trackingGroups) {
+        for (const pair of group.pairs) {
+            const relationTrait = pair[$internal].relation[$internal].trait;
+            getTraitInstance(ctx.traitInstances, relationTrait)!.pairTrackingQueries.add(query);
+        }
+    }
+
     // Populate query with initial matching entities
     if (query.trackingGroups.length > 0) {
-        // For tracking queries, check each entity against tracking groups
-        for (const group of query.trackingGroups) {
-            const { type, id, logic, bitmasks } = group;
-            const snapshot = ctx.trackingSnapshots.get(id)!;
-            const dirtyMask = ctx.dirtyMasks.get(id)!;
-            const changedMask = ctx.changedMasks.get(id)!;
+        // For tracking queries, seed the trackers with the events since each modifier
+        // started observing the world, then check the entity against every constraint.
+        const groups = query.trackingGroups;
+        const entities = ctx.entityIndex.dense;
+        for (let i = 0; i < entities.length; i++) {
+            const entity = entities[i];
+            const eid = getEntityId(entity);
 
-            for (const entity of ctx.entityIndex.dense) {
-                // For AND groups, skip if already in query (will be checked by other groups)
-                // For OR groups, skip if already in query
-                if (query.entities.has(entity)) continue;
-
-                const eid = getEntityId(entity);
-                let matches = logic === 'and'; // AND starts true, OR starts false
-
-                // Check each generation that has bitmasks
-                for (let genId = 0; genId < bitmasks.length; genId++) {
-                    const mask = bitmasks[genId];
-                    if (!mask) continue;
-
-                    const oldMask = snapshot[genId]?.[eid] || 0;
-                    const currentMask = ctx.entityMasks[genId]?.[eid] || 0;
-
-                    // Check each bit in the mask
-                    for (let bit = 1; bit <= mask; bit <<= 1) {
-                        if (!(mask & bit)) continue;
-
-                        let traitMatches = false;
-
-                        switch (type) {
-                            case 'add':
-                                traitMatches = (oldMask & bit) === 0 && (currentMask & bit) === bit;
-                                break;
-                            case 'remove':
-                                traitMatches =
-                                    ((oldMask & bit) === bit && (currentMask & bit) === 0) ||
-                                    ((oldMask & bit) === 0 &&
-                                        (currentMask & bit) === 0 &&
-                                        ((dirtyMask[genId]?.[eid] ?? 0) & bit) === bit);
-                                break;
-                            case 'change':
-                                traitMatches = ((changedMask[genId]?.[eid] ?? 0) & bit) === bit;
-                                break;
-                        }
-
-                        if (logic === 'and') {
-                            if (!traitMatches) {
-                                matches = false;
-                                break;
-                            }
-                        } else {
-                            // OR logic
-                            if (traitMatches) {
-                                matches = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    // Early exit for AND that failed or OR that succeeded
-                    if (logic === 'and' && !matches) break;
-                    if (logic === 'or' && matches) break;
-                }
-
-                if (matches) {
-                    if (hasRelationFilters) {
-                        let relationMatch = true;
-                        for (const pair of query.relationFilters!) {
-                            if (!hasRelationPair(world, entity, pair)) {
-                                relationMatch = false;
-                                break;
-                            }
-                        }
-                        if (relationMatch) query.add(entity);
-                    } else {
-                        query.add(entity);
-                    }
-                }
+            for (let j = 0; j < groups.length; j++) {
+                const group = groups[j];
+                seedTraitTrackers(ctx, group, eid);
+                if (group.pairs.length > 0) seedPairTrackers(world, group, entity);
             }
+
+            if (checkQueryTrackingState(world, query, entity)) query.add(entity);
         }
     } else {
         // Non-tracking query: populate immediately

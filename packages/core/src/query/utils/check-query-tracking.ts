@@ -3,6 +3,7 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import { isPairGroupTracked } from './pair-tracking';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -120,6 +121,11 @@ export function checkQueryTracking(
                         break;
                     }
                 }
+
+                // Or any pair in OR group has been tracked
+                if (!anyOrMatched && group.pairs.length > 0 && isPairGroupTracked(group, eid)) {
+                    anyOrMatched = true;
+                }
             }
         } else {
             // AND group: all traits must be tracked
@@ -134,6 +140,9 @@ export function checkQueryTracking(
                     return false;
                 }
             }
+
+            // And all pairs must be tracked
+            if (group.pairs.length > 0 && !isPairGroupTracked(group, eid)) return false;
         }
     }
 

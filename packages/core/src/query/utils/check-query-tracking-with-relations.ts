@@ -32,3 +32,11 @@ export function checkQueryTrackingWithRelations(
 
     return true;
 }
+
+/**
+ * Check if an entity matches a tracking query using its current tracking state,
+ * without recording a trait event. An event bitflag of 0 matches no tracked trait.
+ */
+export function checkQueryTrackingState(world: World, query: QueryInstance, entity: Entity): boolean {
+    return checkQueryTrackingWithRelations(world, query, entity, 'change', 0, 0);
+}

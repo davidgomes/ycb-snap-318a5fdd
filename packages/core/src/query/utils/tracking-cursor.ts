@@ -1,5 +1,6 @@
 import { $internal } from '../../common';
 import type { World } from '../../world';
+import { createPairSnapshot } from './pair-tracking';
 
 // Some values are reserved.
 // 0 - has
@@ -30,4 +31,6 @@ export function setTrackingMasks(world: World, id: number) {
         id,
         snapshot.map((mask) => mask.map(() => 0))
     );
+
+    ctx.pairSnapshots.set(id, createPairSnapshot(world));
 }

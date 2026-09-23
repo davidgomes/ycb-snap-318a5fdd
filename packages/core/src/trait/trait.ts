@@ -104,6 +104,7 @@ export function registerTrait(world: World, trait: Trait) {
         trackingQueries: new Set(),
         notQueries: new Set(),
         relationQueries: new Set(),
+        pairTrackingQueries: new Set(),
         schema: trait.schema,
         changeSubscriptions: new Set(),
         addSubscriptions: new Set(),

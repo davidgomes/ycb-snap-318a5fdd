@@ -1,7 +1,9 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
+import { checkQueryTrackingState } from '../query/utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
+import { trackPairEvent } from '../query/utils/pair-tracking';
 import { Schema } from '../storage';
 import { hasTrait, trait } from '../trait/trait';
 import { getTraitInstance } from '../trait/trait-instance';
@@ -243,6 +245,7 @@ export function addRelationTarget(
     }
 
     updateQueriesForRelationChange(world, relation, entity);
+    trackPairEvent(world, relation, entity, target, 'add');
 
     return targetIndex;
 }
@@ -297,6 +300,7 @@ export function removeRelationTarget(
 
     if (removedIndex !== -1) {
         updateQueriesForRelationChange(world, relation, entity);
+        trackPairEvent(world, relation, entity, target, 'remove');
     }
 
     const wasLastTarget = removedIndex !== -1 && !hasRemainingTargets;
@@ -320,8 +324,10 @@ function updateQueriesForRelationChange(
     // Update queries indexed by this relation (much faster than iterating all queries)
     // All queries in relationQueries already filter by this relation
     for (const query of traitData.relationQueries) {
-        // Re-check entity against query
-        const match = checkQueryWithRelations(world, query, entity);
+        // Re-check entity against query. Tracking queries must also still satisfy their tracked events.
+        const match = query.isTracking
+            ? checkQueryTrackingState(world, query, entity)
+            : checkQueryWithRelations(world, query, entity);
         if (match) {
             query.add(entity);
         } else {

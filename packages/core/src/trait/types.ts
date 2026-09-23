@@ -103,14 +103,25 @@ export interface TraitInstance<T extends Trait = Trait, S extends Schema = Extra
      * For non-exclusive: relationTargets[eid] = [targetId1, targetId2, ...] (number[])
      */
     relationTargets?: number[] | number[][];
+    /** Tracking queries with tracking modifiers on pairs of this relation (only for relation traits) */
+    pairTrackingQueries: Set<QueryInstance>;
+    /**
+     * Only for relation traits.
+     * pairChangeTicks[eid] = Map<target, world pair tick of the last change to that pair>
+     */
+    pairChangeTicks?: (Map<Entity, number> | undefined)[];
 }
 
 export type TraitOrRelation = Trait | Relation<Trait>;
 
-/** Extracts the underlying Trait from a TraitOrRelation (Relations contain a Trait) */
-export type ExtractTrait<T> = T extends Relation<infer TTrait> ? TTrait : T;
+/** Parameters accepted by tracking modifiers such as `Added`, `Removed` and `Changed` */
+export type TrackingModifierInput = TraitOrRelation | RelationPair<Trait>;
 
-/** Maps a tuple of TraitOrRelation to their underlying Traits */
-export type ExtractTraits<T extends TraitOrRelation[]> = {
+/** Extracts the underlying Trait from a trait, relation or relation pair */
+export type ExtractTrait<T> =
+    T extends RelationPair<infer TTrait> ? TTrait : T extends Relation<infer TTrait> ? TTrait : T;
+
+/** Maps a tuple of traits, relations or relation pairs to their underlying Traits */
+export type ExtractTraits<T extends TrackingModifierInput[]> = {
     [K in keyof T]: ExtractTrait<T[K]>;
 };
