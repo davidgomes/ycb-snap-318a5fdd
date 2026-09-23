@@ -6,7 +6,7 @@ import type { Relation } from '../../relation/types';
 import { getTraitInstance } from '../../trait/trait-instance';
 import type { Trait } from '../../trait/types';
 import type { World } from '../../world';
-import type { EventType, PairSnapshot, TrackingGroup } from '../types';
+import type { EventType, PairSnapshot, QueryInstance, TrackingGroup } from '../types';
 import { checkQueryTrackingState } from './check-query-tracking-with-relations';
 
 // Per-target states. Added and removed are net events, so opposite events on a target cancel out.
@@ -174,9 +174,48 @@ export function seedPairTrackers(world: World, group: TrackingGroup, entity: Ent
     }
 }
 
-function seedPairState(group: TrackingGroup, eid: number, index: number, target: Entity, state: number) {
+function seedPairState(
+    group: TrackingGroup,
+    eid: number,
+    index: number,
+    target: Entity,
+    state: number
+) {
     const entityStates = getEntityPairStates(group, eid);
     (entityStates[index] ??= new Map()).set(target, state);
+}
+
+/**
+ * End the observation window of a query's pair trackers. Events that don't satisfy their group
+ * only exist to cancel opposite events within the window, so they are dropped.
+ */
+export function prunePairTrackers(query: QueryInstance) {
+    const groups = query.trackingGroups;
+
+    for (let i = 0; i < groups.length; i++) {
+        const group = groups[i];
+        if (group.pairs.length === 0) continue;
+
+        const state = getPairState(group.type);
+
+        for (const [eid, entityStates] of group.pairTrackers) {
+            let hasStates = false;
+
+            for (let j = 0; j < entityStates.length; j++) {
+                const states = entityStates[j];
+                if (!states) continue;
+
+                for (const [target, value] of states) {
+                    if (value !== state) states.delete(target);
+                }
+
+                if (states.size > 0) hasStates = true;
+                else entityStates[j] = undefined;
+            }
+
+            if (!hasStates) group.pairTrackers.delete(eid);
+        }
+    }
 }
 
 /** Check the tracked pairs of a group for an entity. AND groups need every pair, OR groups any pair. */

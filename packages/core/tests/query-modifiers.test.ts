@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     $internal,
     createAdded,
@@ -757,6 +757,48 @@ describe('Query modifiers', () => {
         });
     });
 
+    it('should not add newly spawned entities to tracking queries', () => {
+        const Added = createAdded();
+        const Removed = createRemoved();
+
+        expect(world.query(Added(Foo))).toHaveLength(0);
+        expect(world.query(Removed(Foo))).toHaveLength(0);
+
+        world.spawn();
+
+        expect(world.query(Added(Foo))).toHaveLength(0);
+        expect(world.query(Removed(Foo))).toHaveLength(0);
+    });
+
+    it('should apply every query constraint when a tracking query is first populated', () => {
+        const Added = createAdded();
+        const Removed = createRemoved();
+
+        const entityA = world.spawn(Foo, Position);
+        world.spawn(Foo);
+        world.spawn(Foo, Position, Bar);
+
+        expect(world.query(Added(Foo), Position, Not(Bar)).slice()).toEqual([entityA]);
+
+        // Both tracking groups must match, not just one of them.
+        const entityD = world.spawn(Foo, Bar);
+        entityD.remove(Bar);
+        expect(world.query(Added(Foo), Removed(Bar)).slice()).toEqual([entityD]);
+    });
+
+    it('should hash tracking modifiers nested in Or', () => {
+        const ctx = world[$internal];
+        const Added = createAdded();
+        const Changed = createChanged();
+
+        world.query(Or(Added(Foo)));
+        world.query(Or(Changed(Foo)));
+        world.query(Or(Added(Bar)));
+
+        expect(ctx.queriesHashMap.size).toBe(3);
+        expect(ctx.queriesHashMap.has('')).toBe(false);
+    });
+
     // @internal Tests internal implementation edge case with generation overflow
     it('[internal] should handle Changed modifier when trait registration causes generation overflow', () => {
         // Create a fresh world to control trait registration count
@@ -789,5 +831,358 @@ describe('Query modifiers', () => {
         expect(() => {
             testWorld.query(Changed(NewTrait));
         }).not.toThrow();
+    });
+});
+
+describe('Relation pair tracking modifiers', () => {
+    const world = createWorld();
+
+    // Modifier factories are long-lived and reused across world resets.
+    const Added = createAdded();
+    const Removed = createRemoved();
+    const Changed = createChanged();
+
+    const ChildOf = relation();
+    const Contains = relation({ store: { amount: 0 } });
+    const Targeting = relation({ exclusive: true });
+
+    beforeEach(() => {
+        world.reset();
+    });
+
+    it('should track added pairs per target', () => {
+        const parentA = world.spawn();
+        const parentB = world.spawn();
+
+        expect(world.query(Added(ChildOf(parentA)))).toHaveLength(0);
+
+        const childA = world.spawn(ChildOf(parentA));
+        world.spawn(ChildOf(parentB));
+
+        expect(world.query(Added(ChildOf(parentA))).slice()).toEqual([childA]);
+        expect(world.query(Added(ChildOf(parentA)))).toHaveLength(0);
+    });
+
+    it('should populate pair tracking queries registered after the events', () => {
+        const parent = world.spawn();
+        const child = world.spawn(ChildOf(parent), Contains(parent));
+        const orphan = world.spawn(ChildOf(parent));
+
+        // Starts observing while the orphan still has its pair.
+        const LaterRemoved = createRemoved();
+
+        orphan.remove(ChildOf(parent));
+        child.set(Contains(parent), { amount: 1 });
+
+        expect(world.query(Added(ChildOf(parent))).slice()).toEqual([child]);
+        expect(world.query(LaterRemoved(ChildOf(parent))).slice()).toEqual([orphan]);
+        // The orphan gained and lost the pair since the world reset, which cancels out.
+        expect(world.query(Removed(ChildOf(parent)))).toHaveLength(0);
+        expect(world.query(Changed(Contains(parent))).slice()).toEqual([child]);
+    });
+
+    it('should detect non-first pair additions and non-last pair removals', () => {
+        const parentA = world.spawn();
+        const parentB = world.spawn();
+        const child = world.spawn(ChildOf(parentA));
+
+        world.query(Added(ChildOf));
+        world.query(Added(ChildOf(parentB)));
+        world.query(Removed(ChildOf));
+        world.query(Removed(ChildOf(parentA)));
+
+        // The relation trait is already on the entity, so only the pair was added.
+        child.add(ChildOf(parentB));
+        expect(world.query(Added(ChildOf))).toHaveLength(0);
+        expect(world.query(Added(ChildOf(parentB))).slice()).toEqual([child]);
+
+        // Another target remains, so only the pair was removed.
+        child.remove(ChildOf(parentA));
+        expect(world.query(Removed(ChildOf))).toHaveLength(0);
+        expect(world.query(Removed(ChildOf(parentA))).slice()).toEqual([child]);
+    });
+
+    it('should treat a * target as a wildcard', () => {
+        const parentA = world.spawn();
+        const parentB = world.spawn();
+        const child = world.spawn(ChildOf(parentA));
+
+        expect(world.query(Added(ChildOf('*'))).slice()).toEqual([child]);
+
+        child.add(ChildOf(parentB));
+        expect(world.query(Added(ChildOf('*'))).slice()).toEqual([child]);
+        expect(world.query(Removed(ChildOf('*')))).toHaveLength(0);
+
+        child.remove(ChildOf(parentA));
+        expect(world.query(Removed(ChildOf('*'))).slice()).toEqual([child]);
+    });
+
+    it('should produce a removal and an addition for exclusive replacement', () => {
+        const hero = world.spawn();
+        const rat = world.spawn();
+        const goblin = world.spawn();
+
+        hero.add(Targeting(rat));
+        world.query(Added(Targeting(goblin)));
+        world.query(Removed(Targeting(rat)));
+        world.query(Added(Targeting('*')));
+        world.query(Removed(Targeting('*')));
+
+        hero.add(Targeting(goblin));
+
+        expect(world.query(Removed(Targeting(rat))).slice()).toEqual([hero]);
+        expect(world.query(Added(Targeting(goblin))).slice()).toEqual([hero]);
+        expect(world.query(Removed(Targeting('*'))).slice()).toEqual([hero]);
+        expect(world.query(Added(Targeting('*'))).slice()).toEqual([hero]);
+    });
+
+    it('should cancel opposite pair events on the same target within an observation window', () => {
+        const parentA = world.spawn();
+        const parentB = world.spawn();
+        const child = world.spawn(ChildOf(parentA));
+
+        world.query(Added(ChildOf('*')));
+        world.query(Removed(ChildOf('*')));
+
+        // Added then removed.
+        child.add(ChildOf(parentB));
+        child.remove(ChildOf(parentB));
+        expect(world.query(Added(ChildOf('*')))).toHaveLength(0);
+        expect(world.query(Removed(ChildOf('*')))).toHaveLength(0);
+
+        // Removed then added.
+        child.remove(ChildOf(parentA));
+        child.add(ChildOf(parentA));
+        expect(world.query(Added(ChildOf('*')))).toHaveLength(0);
+        expect(world.query(Removed(ChildOf('*')))).toHaveLength(0);
+
+        // Events on different targets do not cancel.
+        child.add(ChildOf(parentB));
+        child.remove(ChildOf(parentA));
+        expect(world.query(Added(ChildOf('*'))).slice()).toEqual([child]);
+        expect(world.query(Removed(ChildOf('*'))).slice()).toEqual([child]);
+    });
+
+    it('should fire pair removals for all active pairs when an entity is destroyed', () => {
+        const parentA = world.spawn();
+        const parentB = world.spawn();
+        const child = world.spawn(ChildOf(parentA), ChildOf(parentB));
+
+        world.query(Removed(ChildOf(parentA)));
+        world.query(Removed(ChildOf(parentB)));
+        world.query(Removed(ChildOf('*')));
+
+        child.destroy();
+
+        expect(world.query(Removed(ChildOf(parentA))).slice()).toEqual([child]);
+        expect(world.query(Removed(ChildOf(parentB))).slice()).toEqual([child]);
+        expect(world.query(Removed(ChildOf('*'))).slice()).toEqual([child]);
+    });
+
+    it('should fire pair removals on sources when a target is destroyed', () => {
+        const parent = world.spawn();
+        const child = world.spawn(ChildOf(parent));
+
+        world.query(Removed(ChildOf(parent)));
+        parent.destroy();
+
+        expect(world.query(Removed(ChildOf(parent))).slice()).toEqual([child]);
+        expect(world.has(child)).toBe(true);
+    });
+
+    it('should compose pair modifiers with Or', () => {
+        const parentA = world.spawn();
+        const parentB = world.spawn();
+        const parentC = world.spawn();
+
+        const eitherAdded = () => world.query(Or(Added(ChildOf(parentA)), Added(ChildOf(parentB))));
+        const mixed = () => world.query(Or(Removed(ChildOf(parentA)), Added(ChildOf(parentC))));
+        expect(eitherAdded()).toHaveLength(0);
+        expect(mixed()).toHaveLength(0);
+
+        const childA = world.spawn(ChildOf(parentA));
+        const childB = world.spawn(ChildOf(parentB));
+        const childC = world.spawn(ChildOf(parentC));
+
+        const entities = eitherAdded();
+        expect(entities).toHaveLength(2);
+        expect(entities).toContain(childA);
+        expect(entities).toContain(childB);
+
+        // Mixed event types.
+        expect(mixed().slice()).toEqual([childC]);
+        childA.remove(ChildOf(parentA));
+        expect(mixed().slice()).toEqual([childA]);
+    });
+
+    it('should cache a distinct query per pair target', () => {
+        const ctx = world[$internal];
+        const parentA = world.spawn();
+        const parentB = world.spawn();
+        const child = world.spawn(ChildOf(parentA));
+
+        const before = ctx.queriesHashMap.size;
+        expect(world.query(Added(ChildOf(parentA))).slice()).toEqual([child]);
+        expect(world.query(Added(ChildOf(parentB)))).toHaveLength(0);
+        expect(world.query(Added(ChildOf('*'))).slice()).toEqual([child]);
+        expect(world.query(Added(ChildOf)).slice()).toEqual([child]);
+        expect(world.query(Or(Added(ChildOf(parentA)))).slice()).toEqual([child]);
+        expect(world.query(Or(Added(ChildOf(parentB))))).toHaveLength(0);
+        expect(ctx.queriesHashMap.size).toBe(before + 6);
+
+        // The same pair maps to the same cached query.
+        world.query(Added(ChildOf(parentA)));
+        expect(ctx.queriesHashMap.size).toBe(before + 6);
+    });
+
+    it('should satisfy every constraint when combined with regular trait parameters', () => {
+        const parent = world.spawn();
+        const otherParent = world.spawn();
+
+        world.query(Added(ChildOf(parent)), Position, Not(Foo));
+
+        const child = world.spawn(Position, ChildOf(parent));
+        world.spawn(ChildOf(parent));
+        world.spawn(Position, Foo, ChildOf(parent));
+        world.spawn(Position, ChildOf(otherParent));
+
+        expect(world.query(Added(ChildOf(parent)), Position, Not(Foo)).slice()).toEqual([child]);
+
+        // Also when the query is first created after the events.
+        expect(world.query(Added(ChildOf(otherParent)), Not(Position))).toHaveLength(0);
+        expect(world.query(Added(ChildOf(otherParent)), Position)).toHaveLength(1);
+    });
+
+    it('should satisfy relation filters combined with pair modifiers', () => {
+        const parent = world.spawn();
+        const gold = world.spawn();
+
+        const child = world.spawn(ChildOf(parent), Contains(gold));
+        world.spawn(ChildOf(parent));
+        expect(world.query(Added(ChildOf(parent)), Contains(gold)).slice()).toEqual([child]);
+
+        // Adding an unrelated pair must not re-admit an already observed entity.
+        child.add(Contains(world.spawn()));
+        expect(world.query(Added(ChildOf(parent)), Contains(gold))).toHaveLength(0);
+    });
+
+    it('should track changed pairs per target', () => {
+        const gold = world.spawn();
+        const silver = world.spawn();
+        const inventory = world.spawn(Contains(gold), Contains(silver));
+
+        expect(world.query(Changed(Contains(gold)))).toHaveLength(0);
+        expect(world.query(Changed(Contains('*')))).toHaveLength(0);
+
+        inventory.set(Contains(silver), { amount: 5 });
+        expect(world.query(Changed(Contains(gold)))).toHaveLength(0);
+        expect(world.query(Changed(Contains('*'))).slice()).toEqual([inventory]);
+
+        inventory.set(Contains(gold), { amount: 10 });
+        expect(world.query(Changed(Contains(gold))).slice()).toEqual([inventory]);
+
+        // A removed pair no longer counts as changed.
+        inventory.set(Contains(gold), { amount: 20 });
+        inventory.remove(Contains(gold));
+        expect(world.query(Changed(Contains(gold)))).toHaveLength(0);
+    });
+
+    it('should flag pair changes manually with entity.changed', () => {
+        const gold = world.spawn();
+        const silver = world.spawn();
+        const inventory = world.spawn(Contains(gold), Contains(silver));
+
+        const onChange = vi.fn();
+        world.onChange(Contains(gold), onChange);
+
+        world.query(Changed(Contains(gold)));
+        world.query(Changed(Contains(silver)));
+
+        inventory.changed(Contains(gold));
+        expect(world.query(Changed(Contains(gold))).slice()).toEqual([inventory]);
+        expect(world.query(Changed(Contains(silver)))).toHaveLength(0);
+        expect(onChange).toHaveBeenCalledWith(inventory, gold);
+
+        inventory.changed(Contains('*'));
+        expect(world.query(Changed(Contains(gold))).slice()).toEqual([inventory]);
+        expect(world.query(Changed(Contains(silver))).slice()).toEqual([inventory]);
+
+        // Pairs the entity does not have are ignored.
+        expect(world.query(Changed(Contains('*'))).slice()).toEqual([inventory]);
+        inventory.changed(Contains(world.spawn()));
+        expect(world.query(Changed(Contains('*')))).toHaveLength(0);
+    });
+
+    it('should keep tracking pairs across world resets', () => {
+        const parent = world.spawn();
+        const child = world.spawn(ChildOf(parent));
+        expect(world.query(Added(ChildOf(parent))).slice()).toEqual([child]);
+
+        world.reset();
+
+        const newParent = world.spawn();
+        const newChild = world.spawn(ChildOf(newParent), Contains(newParent));
+        expect(world.query(Added(ChildOf(newParent))).slice()).toEqual([newChild]);
+        expect(world.query(Removed(ChildOf(newParent)))).toHaveLength(0);
+
+        newChild.set(Contains(newParent), { amount: 1 });
+        expect(world.query(Changed(Contains(newParent))).slice()).toEqual([newChild]);
+
+        newChild.remove(ChildOf(newParent));
+        expect(world.query(Removed(ChildOf(newParent))).slice()).toEqual([newChild]);
+    });
+
+    it('should resolve per-target relation data when iterating pair tracked traits', () => {
+        const gold = world.spawn();
+        const silver = world.spawn();
+        const inventory = world.spawn(Contains(gold, { amount: 1 }), Contains(silver, { amount: 2 }));
+
+        world.query(Changed(Contains(silver)));
+        inventory.set(Contains(silver), { amount: 3 });
+
+        const amounts: number[] = [];
+        world.query(Changed(Contains(silver))).readEach(([contains]) => {
+            amounts.push(contains.amount);
+        });
+        expect(amounts).toEqual([3]);
+
+        world.query(Added(Contains(gold))).readEach(([contains], entity) => {
+            expect(entity).toBe(inventory);
+            expect(contains.amount).toBe(1);
+        });
+    });
+
+    it('should write per-target relation data back when updating pair tracked traits', () => {
+        const gold = world.spawn();
+        const silver = world.spawn();
+        const inventory = world.spawn(Contains(gold, { amount: 1 }), Contains(silver, { amount: 2 }));
+
+        const onChange = vi.fn();
+        world.onChange(Contains, onChange);
+
+        world.query(Changed(Contains(gold)));
+        world.query(Changed(Contains(silver)));
+
+        world.query(Added(Contains(silver))).updateEach(([contains]) => {
+            contains.amount = 20;
+        });
+
+        expect(inventory.get(Contains(silver))!.amount).toBe(20);
+        expect(inventory.get(Contains(gold))!.amount).toBe(1);
+        expect(onChange).toHaveBeenCalledTimes(1);
+        expect(onChange).toHaveBeenCalledWith(inventory, silver);
+
+        // Changes made while iterating are flagged for their target only.
+        expect(world.query(Changed(Contains(gold)))).toHaveLength(0);
+        expect(world.query(Changed(Contains(silver))).slice()).toEqual([inventory]);
+
+        inventory.set(Contains(gold), { amount: 5 });
+        world.query(Changed(Contains(gold))).updateEach(([contains]) => {
+            expect(contains.amount).toBe(5);
+            contains.amount = 50;
+        });
+        expect(inventory.get(Contains(gold))!.amount).toBe(50);
+        expect(world.query(Changed(Contains(gold))).slice()).toEqual([inventory]);
+        expect(world.query(Changed(Contains(silver)))).toHaveLength(0);
     });
 });

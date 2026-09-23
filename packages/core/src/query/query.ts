@@ -27,7 +27,7 @@ import { checkQueryTracking } from './utils/check-query-tracking';
 import { checkQueryTrackingState } from './utils/check-query-tracking-with-relations';
 import { checkQueryWithRelations } from './utils/check-query-with-relations';
 import { createQueryHash } from './utils/create-query-hash';
-import { seedPairTrackers } from './utils/pair-tracking';
+import { prunePairTrackers, seedPairTrackers } from './utils/pair-tracking';
 
 export const IsExcluded: TagTrait = trait();
 
@@ -50,6 +50,7 @@ export function runQuery<T extends QueryParameter[]>(
         for (let i = 0; i < len; i++) {
             query.resetTrackingBitmasks(getEntityId(entities[i]));
         }
+        prunePairTrackers(query);
     }
 
     return createQueryResult(world, entities, query, params);

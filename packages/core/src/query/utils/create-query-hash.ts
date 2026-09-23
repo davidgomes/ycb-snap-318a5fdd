@@ -11,7 +11,12 @@ const sortedIDs = new Float64Array(1024); // Use Float64 for larger IDs with rel
  * Entries that can't be packed into a single number: pairs tracked by a modifier
  * (modifier, relation and target) and modifiers nested in `Or`.
  */
-function pushModifierTokens(tokens: string[], modifier: Modifier, prefix: string, pairsOnly: boolean) {
+function pushModifierTokens(
+    tokens: string[],
+    modifier: Modifier,
+    prefix: string,
+    pairsOnly: boolean
+) {
     const traitIds = modifier.traitIds;
     const pairs = modifier.pairs;
 
