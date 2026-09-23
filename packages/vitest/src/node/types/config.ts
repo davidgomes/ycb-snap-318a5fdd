@@ -140,6 +140,81 @@ interface SequenceOptions {
    * @default 'stack'
    */
   hooks?: SequenceHooks
+  /**
+   * How test files are divided across `--shard` workers.
+   * - `hash` keeps the historical hash distribution
+   * - `time` packs files by recorded duration (longest processing time)
+   * - `round-robin` deals files in duration order with a bouncing pointer
+   * - `affinity` pins files to shards with glob rules
+   * @default 'hash'
+   */
+  shardStrategy?: 'hash' | 'time' | 'round-robin' | 'affinity'
+  /**
+   * When `true` and `shardStrategy` is not set, resolve `shardStrategy` to `'time'`.
+   * Forced to `false` when the resolved strategy is not `'time'`.
+   * @default false
+   */
+  balanceShardsByTime?: boolean
+  /**
+   * Write per-file durations to `durationHistoryPath` after the run finishes.
+   * @default false
+   */
+  recordFileDurations?: boolean
+  /**
+   * Sort test files by recorded duration, longest first.
+   * Files missing from the history are ordered last.
+   * @default false
+   */
+  durationBasedSorting?: boolean
+  /**
+   * Drop history observations older than this many milliseconds.
+   * `0` disables expiry. Observations with `recordedAt: 0` never expire.
+   * @default 0
+   */
+  durationHistoryTTL?: number
+  /**
+   * History file location, relative to the project root.
+   * @default 'duration-history.json'
+   */
+  durationHistoryPath?: string
+  /**
+   * Maximum number of duration observations stored per file.
+   * @default 1
+   */
+  durationHistoryMaxRuns?: number
+  /**
+   * How multiple observations are reduced to one duration.
+   * @default 'latest'
+   */
+  durationSmoothing?: 'latest' | 'average' | 'p95' | 'median'
+  /**
+   * Glob rules that pin files to a zero-based shard index.
+   * The first matching pattern wins.
+   * @default []
+   */
+  shardAffinityRules?: ShardAffinityRule[]
+  /**
+   * Warn when `minShardLoad / maxShardLoad` is below this ratio.
+   * `0` disables the warning.
+   * @default 0
+   */
+  rebalanceThreshold?: number
+  /**
+   * Durations strictly above this threshold are placed one per shard
+   * before the remaining files are distributed. `0` disables isolation.
+   * @default 0
+   */
+  isolateSlowThreshold?: number
+  /**
+   * Distribution used when the duration history file is missing or corrupt.
+   * @default 'hash'
+   */
+  durationFallbackStrategy?: 'hash' | 'equal-split'
+}
+
+export interface ShardAffinityRule {
+  pattern: string
+  shardIndex: number
 }
 
 export type DepsOptimizationOptions = Omit<
@@ -1189,6 +1264,18 @@ export interface ResolvedConfig
     concurrent?: boolean
     seed: number
     groupOrder: number
+    shardStrategy: 'hash' | 'time' | 'round-robin' | 'affinity'
+    balanceShardsByTime: boolean
+    recordFileDurations: boolean
+    durationBasedSorting: boolean
+    durationHistoryTTL: number
+    durationHistoryPath: string
+    durationHistoryMaxRuns: number
+    durationSmoothing: 'latest' | 'average' | 'p95' | 'median'
+    shardAffinityRules: ShardAffinityRule[]
+    rebalanceThreshold: number
+    isolateSlowThreshold: number
+    durationFallbackStrategy: 'hash' | 'equal-split'
   }
 
   typecheck: Omit<TypecheckConfig, 'enabled'> & {

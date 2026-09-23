@@ -778,6 +778,7 @@ export function resolveConfig(
   if (resolved.sequence.sequencer === RandomSequencer || resolved.sequence.shuffle) {
     resolved.sequence.seed ??= Date.now()
   }
+  resolveSequenceDurationOptions(resolved.sequence)
 
   resolved.typecheck = {
     ...configDefaults.typecheck,
@@ -1005,6 +1006,111 @@ function hasBrowserChromium(vitest: Vitest, config: ResolvedConfig) {
     }
     return isChromiumName(browser.provider!.name, instance.browser)
   })
+}
+
+const SHARD_STRATEGIES = ['hash', 'time', 'round-robin', 'affinity'] as const
+const DURATION_SMOOTHING = ['latest', 'average', 'p95', 'median'] as const
+const DURATION_FALLBACKS = ['hash', 'equal-split'] as const
+
+function resolveSequenceDurationOptions(sequence: ResolvedConfig['sequence']): void {
+  const shardStrategyProvided = sequence.shardStrategy != null
+  validateSequenceDurationOptions(sequence)
+
+  if (sequence.balanceShardsByTime === true && !shardStrategyProvided) {
+    sequence.shardStrategy = 'time'
+  }
+
+  sequence.shardStrategy ??= 'hash'
+  if (sequence.shardStrategy !== 'time') {
+    sequence.balanceShardsByTime = false
+  }
+  else {
+    sequence.balanceShardsByTime ??= false
+  }
+
+  sequence.recordFileDurations ??= false
+  sequence.durationBasedSorting ??= false
+  sequence.durationHistoryTTL ??= 0
+  sequence.durationHistoryPath ??= 'duration-history.json'
+  sequence.durationHistoryMaxRuns ??= 1
+  sequence.durationSmoothing ??= 'latest'
+  sequence.shardAffinityRules ??= []
+  sequence.rebalanceThreshold ??= 0
+  sequence.isolateSlowThreshold ??= 0
+  sequence.durationFallbackStrategy ??= 'hash'
+}
+
+function validateSequenceDurationOptions(sequence: ResolvedConfig['sequence']): void {
+  if (sequence.shardStrategy != null && !SHARD_STRATEGIES.includes(sequence.shardStrategy)) {
+    throw new TypeError(`Invalid sequence.shardStrategy: expected "hash", "time", "round-robin", or "affinity", received ${JSON.stringify(sequence.shardStrategy)}`)
+  }
+  if (sequence.balanceShardsByTime != null && typeof sequence.balanceShardsByTime !== 'boolean') {
+    throw new TypeError(`Invalid sequence.balanceShardsByTime: expected a boolean, received ${JSON.stringify(sequence.balanceShardsByTime)}`)
+  }
+  if (sequence.recordFileDurations != null && typeof sequence.recordFileDurations !== 'boolean') {
+    throw new TypeError(`Invalid sequence.recordFileDurations: expected a boolean, received ${JSON.stringify(sequence.recordFileDurations)}`)
+  }
+  if (sequence.durationBasedSorting != null && typeof sequence.durationBasedSorting !== 'boolean') {
+    throw new TypeError(`Invalid sequence.durationBasedSorting: expected a boolean, received ${JSON.stringify(sequence.durationBasedSorting)}`)
+  }
+  if (sequence.durationHistoryTTL != null && !isFiniteNonNegative(sequence.durationHistoryTTL)) {
+    throw new TypeError(`Invalid sequence.durationHistoryTTL: expected a finite number >= 0, received ${JSON.stringify(sequence.durationHistoryTTL)}`)
+  }
+  if (sequence.durationHistoryPath != null && !isDurationHistoryPath(sequence.durationHistoryPath)) {
+    throw new TypeError('Invalid sequence.durationHistoryPath: expected a non-empty string with no leading or trailing whitespace')
+  }
+  if (
+    sequence.durationHistoryMaxRuns != null
+    && (!Number.isInteger(sequence.durationHistoryMaxRuns) || sequence.durationHistoryMaxRuns < 1)
+  ) {
+    throw new TypeError(`Invalid sequence.durationHistoryMaxRuns: expected an integer >= 1, received ${JSON.stringify(sequence.durationHistoryMaxRuns)}`)
+  }
+  if (sequence.durationSmoothing != null && !DURATION_SMOOTHING.includes(sequence.durationSmoothing)) {
+    throw new TypeError(`Invalid sequence.durationSmoothing: expected "latest", "average", "p95", or "median", received ${JSON.stringify(sequence.durationSmoothing)}`)
+  }
+  if (sequence.shardAffinityRules != null) {
+    validateShardAffinityRules(sequence.shardAffinityRules)
+  }
+  if (
+    sequence.rebalanceThreshold != null
+    && (!isFiniteNonNegative(sequence.rebalanceThreshold) || sequence.rebalanceThreshold > 1)
+  ) {
+    throw new TypeError(`Invalid sequence.rebalanceThreshold: expected a number between 0 and 1, received ${JSON.stringify(sequence.rebalanceThreshold)}`)
+  }
+  if (sequence.isolateSlowThreshold != null && !isFiniteNonNegative(sequence.isolateSlowThreshold)) {
+    throw new TypeError(`Invalid sequence.isolateSlowThreshold: expected a finite number >= 0, received ${JSON.stringify(sequence.isolateSlowThreshold)}`)
+  }
+  if (
+    sequence.durationFallbackStrategy != null
+    && !DURATION_FALLBACKS.includes(sequence.durationFallbackStrategy)
+  ) {
+    throw new TypeError(`Invalid sequence.durationFallbackStrategy: expected "hash" or "equal-split", received ${JSON.stringify(sequence.durationFallbackStrategy)}`)
+  }
+}
+
+function validateShardAffinityRules(rules: ResolvedConfig['sequence']['shardAffinityRules']): void {
+  if (!Array.isArray(rules)) {
+    throw new TypeError(`Invalid sequence.shardAffinityRules: expected an array, received ${JSON.stringify(rules)}`)
+  }
+  rules.forEach((rule, index) => {
+    if (!rule || typeof rule !== 'object' || Array.isArray(rule)) {
+      throw new TypeError(`Invalid sequence.shardAffinityRules[${index}]: expected an object with pattern and shardIndex`)
+    }
+    if (typeof rule.pattern !== 'string') {
+      throw new TypeError(`Invalid sequence.shardAffinityRules[${index}].pattern: expected a string, received ${JSON.stringify(rule.pattern)}`)
+    }
+    if (!Number.isInteger(rule.shardIndex) || rule.shardIndex < 0) {
+      throw new TypeError(`Invalid sequence.shardAffinityRules[${index}].shardIndex: expected an integer >= 0, received ${JSON.stringify(rule.shardIndex)}`)
+    }
+  })
+}
+
+function isFiniteNonNegative(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+function isDurationHistoryPath(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value === value.trim()
 }
 
 function hasOnlyBrowserChromium(vitest: Vitest, config: ResolvedConfig) {
