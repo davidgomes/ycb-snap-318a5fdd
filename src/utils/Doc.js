@@ -7,7 +7,9 @@ import {
   transact,
   applyUpdate,
   ContentDoc, Item, Transaction, // eslint-disable-line
-  encodeStateAsUpdate
+  encodeStateAsUpdate,
+  validateMapConflictPolicy,
+  summarizeMapConflicts
 } from '../internals.js'
 
 import { YType } from '../ytype.js'
@@ -31,6 +33,9 @@ export const generateNewClientId = random.uint32
  * @property {boolean} [DocOpts.isSuggestionDoc] Set to true if this document merely suggests
  * changes. If this flag is not set in a suggestion document, automatic formatting changes will be
  * displayed as suggestions, which might not be intended.
+ * @property {import('./MapConflicts.js').MapConflictPolicy} [DocOpts.mapConflictPolicy='allow'] How to handle conflicting
+ * map writes (set-set / delete-set on the same key) within a single transaction or update. `allow` applies them as usual,
+ * `collect` records them (see `ydoc.getMapConflicts()`), `error` throws a `MapConflictError` before they are applied.
  */
 
 /**
@@ -57,8 +62,13 @@ export class Doc extends ObservableV2 {
   /**
    * @param {DocOpts} opts configuration
    */
-  constructor ({ guid = random.uuidv4(), collectionid = null, gc = true, gcFilter = () => true, meta = null, autoLoad = false, shouldLoad = true, isSuggestionDoc = false } = {}) {
+  constructor ({ guid = random.uuidv4(), collectionid = null, gc = true, gcFilter = () => true, meta = null, autoLoad = false, shouldLoad = true, isSuggestionDoc = false, mapConflictPolicy = 'allow' } = {}) {
     super()
+    this.mapConflictPolicy = validateMapConflictPolicy(mapConflictPolicy)
+    /**
+     * @type {Array<import('./MapConflicts.js').MapConflict>}
+     */
+    this._mapConflicts = []
     this.gc = gc
     this.gcFilter = gcFilter
     this.clientID = generateNewClientId()
@@ -168,6 +178,26 @@ export class Doc extends ObservableV2 {
 
   getSubdocGuids () {
     return new Set(array.from(this.subdocs).map(doc => doc.guid))
+  }
+
+  /**
+   * Conflicting map writes recorded while `mapConflictPolicy` is `collect`.
+   *
+   * @return {Array<import('./MapConflicts.js').MapConflict>}
+   */
+  getMapConflicts () {
+    return this._mapConflicts.slice()
+  }
+
+  /**
+   * @return {import('./MapConflicts.js').MapConflictSummary}
+   */
+  getMapConflictSummary () {
+    return summarizeMapConflicts(this._mapConflicts)
+  }
+
+  clearMapConflicts () {
+    this._mapConflicts = []
   }
 
   /**

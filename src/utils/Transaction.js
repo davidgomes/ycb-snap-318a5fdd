@@ -11,6 +11,7 @@ import {
   createID,
   iterateStructsByIdSet,
   ContentFormat,
+  collectMapConflicts,
   IdSet, UpdateEncoderV1, UpdateEncoderV2, GC, StructStore, AbstractStruct, YEvent, Doc // eslint-disable-line
 } from '../internals.js'
 
@@ -130,6 +131,13 @@ export class Transaction {
      */
     this._needFormattingCleanup = false
     this._done = false
+    /**
+     * Map writes of this transaction, grouped by parent & key. Only tracked if
+     * `doc.mapConflictPolicy !== 'allow'`.
+     *
+     * @type {Map<string, import('./MapConflicts.js').MapWriteLog> | null}
+     */
+    this._mapWrites = null
   }
 
   /**
@@ -652,8 +660,12 @@ export const transact = (doc, f, origin = null, local = true) => {
     result = f(doc._transaction)
   } finally {
     if (initialCall) {
-      const finishCleanup = doc._transaction === transactionCleanups[0]
+      const transaction = /** @type {Transaction} */ (doc._transaction)
+      const finishCleanup = transaction === transactionCleanups[0]
       doc._transaction = null
+      if (transaction._mapWrites !== null) {
+        collectMapConflicts(transaction)
+      }
       if (finishCleanup) {
         // The first transaction ended, now process observer calls.
         // Observer call may create new transactions for which we need to call the observers and do cleanup.

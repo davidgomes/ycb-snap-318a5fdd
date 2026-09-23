@@ -37,7 +37,10 @@ import {
   createIdSet,
   BlockSet, IdSet, IdSetDecoderV2, Doc, Transaction, GC, Item, StructStore, // eslint-disable-line
   createID,
-  IdRange
+  IdRange,
+  readIdSet,
+  collectRemoteMapWrites,
+  recordMapWrites
 } from '../internals.js'
 
 import * as encoding from 'lib0/encoding'
@@ -332,6 +335,11 @@ const integrateStructs = (transaction, store, clientsStructRefs) => {
 export const writeStructsFromTransaction = (encoder, transaction) => writeStructsFromIdSet(encoder, transaction.doc.store, transaction.insertSet)
 
 /**
+ * Pending structs were already analyzed for map conflicts when they were received.
+ */
+let skipRemoteMapWrites = false
+
+/**
  * Read and apply a document update.
  *
  * This function has the same effect as `applyUpdate` but accepts a decoder.
@@ -366,6 +374,17 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
     })
     // remove known items from ss
     ss.exclude(knownState)
+    /**
+     * The delete set is read upfront if map conflicts are tracked, so conflicting updates can be
+     * rejected before anything is applied.
+     *
+     * @type {IdSet|null}
+     */
+    let ds = null
+    if (doc.mapConflictPolicy !== 'allow' && !skipRemoteMapWrites) {
+      ds = readIdSet(structDecoder)
+      recordMapWrites(transaction, collectRemoteMapWrites(transaction, ss, ds))
+    }
     // console.log('time to read structs: ', performance.now() - start) // @todo remove
     // start = performance.now()
     // console.log('time to merge: ', performance.now() - start) // @todo remove
@@ -395,7 +414,16 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
     }
     // console.log('time to integrate: ', performance.now() - start) // @todo remove
     // start = performance.now()
-    const dsRest = readAndApplyDeleteSet(structDecoder, transaction, store)
+    /**
+     * @type {UpdateDecoderV1 | UpdateDecoderV2 | IdSetDecoderV2}
+     */
+    let dsDecoder = structDecoder
+    if (ds !== null) {
+      const dsEncoder = new IdSetEncoderV2()
+      writeIdSet(dsEncoder, ds)
+      dsDecoder = new IdSetDecoderV2(decoding.createDecoder(dsEncoder.toUint8Array()))
+    }
+    const dsRest = readAndApplyDeleteSet(dsDecoder, transaction, store)
     if (store.pendingDs) {
       // @todo we could make a lower-bound state-vector check as we do above
       const pendingDSUpdate = new UpdateDecoderV2(decoding.createDecoder(store.pendingDs))
@@ -422,7 +450,13 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
     if (retry) {
       const update = /** @type {{update: Uint8Array}} */ (store.pendingStructs).update
       store.pendingStructs = null
-      applyUpdateV2(transaction.doc, update)
+      const prevSkip = skipRemoteMapWrites
+      skipRemoteMapWrites = true
+      try {
+        applyUpdateV2(transaction.doc, update)
+      } finally {
+        skipRemoteMapWrites = prevSkip
+      }
     }
   }, transactionOrigin, false)
 

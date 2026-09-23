@@ -19,6 +19,10 @@ import {
   getItemCleanStart,
   noAttributionsManager,
   transact,
+  checkMapWrites,
+  recordMapWrites,
+  createLocalMapSetWrite,
+  createLocalMapDeleteWrite,
   ContentDoc, UpdateEncoderV1, UpdateEncoderV2, Doc, Snapshot, Transaction, EventHandler, YEvent, Item, createAttributionFromAttributionItems, AbstractAttributionManager // eslint-disable-line
 } from './internals.js'
 
@@ -1034,6 +1038,20 @@ export class YType {
     } else {
       // @todo this was moved here from ytext. Make this more generic
       transact(this.doc, transaction => {
+        if (transaction.doc.mapConflictPolicy === 'error') {
+          // reject the whole delta before any part of it is applied
+          /**
+           * @type {Array<import('./utils/MapConflicts.js').PendingMapWrite>}
+           */
+          const pending = []
+          for (const op of d.attrs) {
+            const w = delta.$setAttrOp.check(op)
+              ? createLocalMapSetWrite(this, /** @type {any} */ (op.key), op.value, null)
+              : (delta.$deleteAttrOp.check(op) ? createLocalMapDeleteWrite(this, /** @type {any} */ (op.key)) : null)
+            if (w !== null) pending.push(w)
+          }
+          checkMapWrites(transaction, pending)
+        }
         const currPos = new ItemTextListPosition(null, this._start, 0, new Map(), am)
         for (const op of d.children) {
           if (delta.$textOp.check(op)) {
@@ -1740,6 +1758,10 @@ export const typeListDelete = (transaction, parent, index, length) => {
 export const typeMapDelete = (transaction, parent, key) => {
   const c = parent._map.get(key)
   if (c !== undefined) {
+    if (transaction.doc.mapConflictPolicy !== 'allow') {
+      const w = createLocalMapDeleteWrite(parent, key)
+      w !== null && recordMapWrites(transaction, [w])
+    }
     c.delete(transaction)
   }
 }
@@ -1785,7 +1807,11 @@ export const typeMapSet = (transaction, parent, key, value) => {
         }
     }
   }
-  new Item(createID(ownClientId, getState(doc.store, ownClientId)), left, left && left.lastId, null, null, parent, key, content).integrate(transaction, 0)
+  const id = createID(ownClientId, getState(doc.store, ownClientId))
+  if (doc.mapConflictPolicy !== 'allow') {
+    recordMapWrites(transaction, [createLocalMapSetWrite(parent, key, value, id)])
+  }
+  new Item(id, left, left && left.lastId, null, null, parent, key, content).integrate(transaction, 0)
 }
 
 /**
