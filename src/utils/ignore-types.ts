@@ -1,7 +1,8 @@
 import {obsidianMultilineCommentRegex, tagWithLeadingWhitespaceRegex, wikiLinkRegex, yamlRegex, escapeDollarSigns, genericLinkRegex, urlRegex, anchorTagRegex, templaterCommandRegex, footnoteDefinitionIndicatorAtStartOfLine} from './regex';
-import {getAllCustomIgnoreSectionsInText, getAllTablesInText, getPositions, MDAstTypes} from './mdast';
+import {getAllTablesInText, getPositions, MDAstTypes} from './mdast';
 import type {Position} from 'unist';
 import {replaceTextBetweenStartAndEndWithNewValue} from './strings';
+import {getLinterMarkerIgnoreRanges} from './linter-markers';
 
 export type IgnoreFunction = ((text: string, placeholder: string) => [string[], string]);
 export type IgnoreType = {replaceAction: MDAstTypes | RegExp | IgnoreFunction, placeholder: string};
@@ -200,20 +201,37 @@ function replaceTables(text: string, tablePlaceholder: string): [string[], strin
 
 
 function replaceCustomIgnore(text: string, customIgnorePlaceholder: string): [string[], string] {
-  const customIgnorePositions = getAllCustomIgnoreSectionsInText(text);
+  return replaceCustomIgnoreForRule(text, customIgnorePlaceholder, null);
+}
 
-  const replacedSections: string[] = new Array(customIgnorePositions.length);
-  let index = 0;
-  const length = replacedSections.length;
-  for (const customIgnorePosition of customIgnorePositions) {
-    replacedSections[length - 1 - index++] = text.substring(customIgnorePosition.startIndex, customIgnorePosition.endIndex);
-  }
+function replaceCustomIgnoreForRule(text: string, customIgnorePlaceholder: string, ruleAlias: string | null): [string[], string] {
+  const customIgnorePositions = getLinterMarkerIgnoreRanges(text, ruleAlias);
 
-  for (const customIgnorePosition of customIgnorePositions) {
-    text = replaceTextBetweenStartAndEndWithNewValue(text, customIgnorePosition.startIndex, customIgnorePosition.endIndex, customIgnorePlaceholder);
+  const replacedSections = customIgnorePositions.map((position) => text.substring(position.startIndex, position.endIndex));
+
+  for (let i = customIgnorePositions.length - 1; i >= 0; i--) {
+    text = replaceTextBetweenStartAndEndWithNewValue(text, customIgnorePositions[i].startIndex, customIgnorePositions[i].endIndex, customIgnorePlaceholder);
   }
 
   return [replacedSections, text];
+}
+
+const customIgnoreTypesForRules = new Map<string, IgnoreType>();
+
+/**
+ * Gets the custom ignore type that respects the linter markers which apply to the specified rule.
+ * @param {string} ruleAlias The alias of the rule
+ * @return {IgnoreType} The custom ignore type to use for the rule
+ */
+export function getCustomIgnoreTypeForRule(ruleAlias: string): IgnoreType {
+  if (!customIgnoreTypesForRules.has(ruleAlias)) {
+    customIgnoreTypesForRules.set(ruleAlias, {
+      replaceAction: (text: string, placeholder: string) => replaceCustomIgnoreForRule(text, placeholder, ruleAlias),
+      placeholder: IgnoreTypes.customIgnore.placeholder,
+    });
+  }
+
+  return customIgnoreTypesForRules.get(ruleAlias);
 }
 
 function removeOverlappingPositions(positions: Position[]): Position[] {

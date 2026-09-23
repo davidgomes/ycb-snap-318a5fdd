@@ -8,7 +8,7 @@ import {
 } from './option';
 import {LinterError} from './linter-error';
 import {getTextInLanguage, LanguageStringKey} from './lang/helpers';
-import {ignoreListOfTypes, IgnoreType} from './utils/ignore-types';
+import {getCustomIgnoreTypeForRule, ignoreListOfTypes, IgnoreType, IgnoreTypes} from './utils/ignore-types';
 import {LinterSettings} from './settings-data';
 import {App} from 'obsidian';
 import {YAMLParseError} from 'yaml';
@@ -110,7 +110,8 @@ export class Rule {
   }
 
   public apply(text: string, options?: Options): string {
-    return ignoreListOfTypes(this.ignoreTypes, text, (textAfterIgnore: string) => {
+    const ignoreTypes = this.ignoreTypes.map((ignoreType) => ignoreType === IgnoreTypes.customIgnore ? getCustomIgnoreTypeForRule(this.alias) : ignoreType);
+    return ignoreListOfTypes(ignoreTypes, text, (textAfterIgnore: string) => {
       return this.applyAfterIgnore(textAfterIgnore, options);
     });
   }
