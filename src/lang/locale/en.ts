@@ -308,6 +308,51 @@ export default {
       'name': 'Add Blockquote Indentation on Paste',
       'description': 'Adds blockquotes to all but the first line, when the cursor is in a blockquote/callout line during pasting',
     },
+    // auto-toc.ts
+    'auto-toc': {
+      'name': 'Auto TOC',
+      'description': 'Generates or updates a table of contents between <code>&lt;!-- toc --&gt;</code> and <code>&lt;!-- /toc --&gt;</code>. Only files that contain <code>&lt;!-- toc --&gt;</code> are affected and the end marker is inserted if it is missing. Headings in YAML, code blocks, math blocks, and the table of contents itself are ignored.',
+      'list-style': {
+        'name': 'List Style',
+        'description': 'The type of list to use for the table of contents',
+      },
+      'bullet-marker': {
+        'name': 'Bullet Marker',
+        'description': 'The list item indicator to use when <code>List Style</code> is <code>bullet</code>',
+      },
+      'ordered-list-style': {
+        'name': 'Ordered List Style',
+        'description': 'How list items are numbered when <code>List Style</code> is <code>number</code>',
+      },
+      'indent-size': {
+        'name': 'Indent Size',
+        'description': 'The number of spaces to indent each nested heading level by',
+      },
+      'min-level': {
+        'name': 'Minimum Heading Level',
+        'description': 'The lowest heading level to include in the table of contents (i.e. <code>2</code> for <code>##</code>)',
+      },
+      'max-level': {
+        'name': 'Maximum Heading Level',
+        'description': 'The highest heading level to include in the table of contents (i.e. <code>6</code> for <code>######</code>)',
+      },
+      'title': {
+        'name': 'Title',
+        'description': 'An optional line to add before the table of contents list (i.e. <code>## Table of Contents</code>). Leave empty to not add a title.',
+      },
+      'use-explicit-ids': {
+        'name': 'Use Explicit IDs',
+        'description': 'Uses a trailing <code>{#id}</code> on a heading as its anchor instead of generating one from the heading text',
+      },
+      'strip-formatting-in-toc': {
+        'name': 'Strip Formatting in TOC',
+        'description': 'Removes formatting like bold, italics, highlights, strikethroughs, inline code, and HTML tags from the table of contents entries',
+      },
+      'exclude-headings': {
+        'name': 'Exclude Headings',
+        'description': 'Headings to leave out of the table of contents with each value on its own line. Values are matched case-insensitively against the whole heading text unless they are wrapped in <code>/</code> (i.e. <code>/^appendix/</code>), in which case they are treated as a case-insensitive regex.',
+      },
+    },
     // blockquote-style.ts
     'blockquote-style': {
       'name': 'Blockquote Style',
@@ -975,5 +1020,10 @@ export default {
     '<br>': '<br>', // leave as is
     '  ': '  ', // leave as is
     '<br/>': '<br/>', // leave as is
+    // auto-toc.ts
+    'bullet': 'bullet',
+    'number': 'number',
+    'always-one': 'always one',
+    'increment': 'increment',
   },
 };
