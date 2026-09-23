@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/liweiyi88/onedump/encryption"
 	"github.com/liweiyi88/onedump/notifier/slack"
 	"github.com/liweiyi88/onedump/storage/dropbox"
 	"github.com/liweiyi88/onedump/storage/gdrive"
@@ -39,7 +40,7 @@ func (dump *Dump) Validate() error {
 	}
 
 	for _, job := range dump.Jobs {
-		err := job.validate()
+		err := job.Validate()
 		if err != nil {
 			errs = errors.Join(errs, err)
 		}
@@ -66,6 +67,11 @@ type Job struct {
 		Dropbox []*dropbox.Dropbox `yaml:"dropbox"`
 		Sftp    []*sftp.Sftp       `yaml:"sftp"`
 	} `yaml:"storage"`
+	Encryption encryption.Config `yaml:"encryption"`
+}
+
+func (job *Job) Encrypted() bool {
+	return job.Encryption.Enabled
 }
 
 type Option func(job *Job)
@@ -114,7 +120,7 @@ func NewJob(name, driver, dbDsn string, opts ...Option) *Job {
 	return job
 }
 
-func (job Job) validate() error {
+func (job Job) Validate() error {
 	if strings.TrimSpace(job.Name) == "" {
 		return ErrMissingJobName
 	}
@@ -125,6 +131,10 @@ func (job Job) validate() error {
 
 	if strings.TrimSpace(job.DBDriver) == "" {
 		return ErrMissingDBDriver
+	}
+
+	if err := job.Encryption.Validate(); err != nil {
+		return fmt.Errorf("job %s: %w", job.Name, err)
 	}
 
 	return nil
