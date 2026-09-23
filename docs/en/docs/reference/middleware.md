@@ -35,3 +35,11 @@ It can be imported from `fastapi`:
 ```python
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 ```
+
+::: fastapi.middleware.methods.ImplicitMethodTrackingMiddleware
+
+It can be imported from `fastapi`:
+
+```python
+from fastapi.middleware.methods import ImplicitMethodTrackingMiddleware
+```
