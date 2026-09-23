@@ -379,4 +379,70 @@ describe('Reporter', function() {
       expect(reporter.hasTests()).to.be.true();
     });
   });
+
+  describe('per-launcher report files', function() {
+    function appWith(reporterName, extra) {
+      extra = extra || {};
+      return {
+        config: {
+          get: function(key) {
+            if (Object.prototype.hasOwnProperty.call(extra, key)) {
+              return extra[key];
+            }
+            if (key === 'reporter') {
+              return reporterName;
+            }
+          }
+        }
+      };
+    }
+
+    it('writes each browser to its own file and keeps combined stdout', function() {
+      return tmpNameAsync().then(function(dir) {
+        let template = dir + '/<launcher>.tap';
+        let stream = new PassThrough();
+        let reporter = new Reporter(appWith('tap'), stream, template);
+        let date = reporter.reportDate;
+
+        reporter.report('Headless Firefox', { name: 'ff test', passed: true });
+        reporter.report('Chrome/Canary', { name: 'chrome test', passed: false });
+        reporter.report('testem', { name: 'internal', passed: false, error: { message: 'boom' } });
+        reporter.finish();
+        reporter.finish();
+
+        return reporter.close().then(function() {
+          let output = stream.read().toString();
+          expect(output).to.match(/ff test/);
+          expect(output).to.match(/chrome test/);
+          expect(output).to.match(/internal/);
+          expect(output.match(/1\.\.3/g)).to.have.lengthOf(1);
+
+          let firefoxPath = require('../../lib/utils/report-file').expandPath(template, {
+            launcher: 'Headless Firefox',
+            date: date
+          });
+          let chromePath = require('../../lib/utils/report-file').expandPath(template, {
+            launcher: 'Chrome/Canary',
+            date: date
+          });
+          let testemPath = require('../../lib/utils/report-file').expandPath(template, {
+            launcher: 'testem',
+            date: date
+          });
+
+          expect(fs.existsSync(testemPath)).to.equal(false);
+          return Bluebird.all([
+            fsReadFileAsync(firefoxPath, 'utf-8'),
+            fsReadFileAsync(chromePath, 'utf-8')
+          ]);
+        }).then(function(files) {
+          expect(files[0]).to.match(/ff test/);
+          expect(files[0]).to.not.match(/chrome test/);
+          expect(files[0].match(/1\.\.1/g)).to.have.lengthOf(1);
+          expect(files[1]).to.match(/chrome test/);
+          expect(files[1]).to.not.match(/ff test/);
+        });
+      });
+    });
+  });
 });

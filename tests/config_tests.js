@@ -626,6 +626,35 @@ describe('Config', function() {
       });
     });
   });
+
+  describe('report_file templates', function() {
+    it('returns null when report_file is unset', function() {
+      expect(config.getExpandedReportFile('Chrome')).to.equal(null);
+      expect(config.hasAnyReportTemplate()).to.equal(false);
+      expect(config.validateReportFile()).to.deep.equal({ valid: true, errors: [], warnings: [] });
+    });
+
+    it('detects template variables', function() {
+      config.set('report_file', 'reports/<launcher>-<date>-<timestamp>.xml');
+      expect(config.hasLauncherTemplate()).to.equal(true);
+      expect(config.hasDateTemplate()).to.equal(true);
+      expect(config.hasTimestampTemplate()).to.equal(true);
+      expect(config.hasAnyReportTemplate()).to.equal(true);
+    });
+
+    it('expands report_file for a launcher', function() {
+      config.set('report_file', 'reports/<launcher>-<date>.xml');
+      expect(config.getExpandedReportFile('Headless Firefox')).to.match(/^reports\/Headless_Firefox-\d{4}-\d{2}-\d{2}\.xml$/);
+    });
+
+    it('errors on unknown templates and warns when launcher has no extension', function() {
+      config.set('report_file', 'reports/<launcher>-<browser>');
+      let result = config.validateReportFile();
+      expect(result.valid).to.equal(false);
+      expect(result.errors).to.deep.equal(['Unknown report_file template: <browser>']);
+      expect(result.warnings).to.deep.equal(['report_file template <launcher> is missing a file extension']);
+    });
+  });
 });
 
 function mockTopLevelProgOptions() {

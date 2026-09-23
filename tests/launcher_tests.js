@@ -29,6 +29,12 @@ describe('Launcher', function() {
       expect(launcher.name).to.equal('say hello');
       expect(launcher.settings).to.equal(settings);
     });
+    it('sanitizes launcher names', function() {
+      expect(launcher.getSanitizedName()).to.equal('say_hello');
+      expect(Launcher.sanitizeLauncherName(null)).to.equal('unknown');
+      expect(Launcher.sanitizeLauncherName(undefined)).to.equal('unknown');
+      expect(Launcher.sanitizeLauncherName('Chrome/Headless (CI)')).to.equal('Chrome_Headless__CI_');
+    });
     it('should be process if protocol is not browser', function() {
       settings.protocol = 'browser';
       expect(launcher.isProcess()).not.to.be.ok();

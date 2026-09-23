@@ -681,6 +681,36 @@ describe('test reporters', function() {
       });
     });
 
+    context('with per-launcher summary', function() {
+      beforeEach(function() {
+        config = new Config('ci', { tap_show_launcher_summary: true, tap_quiet_logs: true });
+      });
+
+      it('writes pass fail and skip counts for each launcher', function() {
+        var reporter = new TapReporter(false, stream, config);
+        reporter.report('phantomjs', {
+          name: 'it does stuff',
+          passed: true,
+          runDuration: 3,
+        });
+        reporter.report('firefox', {
+          name: 'it fails',
+          passed: false,
+          runDuration: 4,
+        });
+        reporter.report('firefox', {
+          name: 'it is skipped',
+          skipped: true,
+          runDuration: 0,
+        });
+        reporter.finish();
+        var output = stream.read().toString();
+        assert.include(output, '# Per-launcher summary');
+        assert.include(output, '# phantomjs: 1 tests, 1 pass, 0 fail, 0 skip');
+        assert.include(output, '# firefox: 2 tests, 0 pass, 1 fail, 1 skip');
+      });
+    });
+
   });
 
   describe('dot reporter', function() {
@@ -1093,6 +1123,39 @@ describe('test reporters', function() {
       assert.match(output, /it failed with ampersands"/);
       assert.match(output, /&amp;&amp;/);
 
+      assertXmlIsValid(output);
+    });
+
+    it('includes launcher properties when configured', function() {
+      var config = new Config('ci', {
+        xunit_include_launcher_properties: true
+      });
+      var reporter = new XUnitReporter(false, stream, config);
+      reporter.setLauncherName('phantomjs');
+      reporter.report('phantomjs', {
+        name: 'it passed',
+        passed: true
+      });
+      reporter.report('phantomjs', {
+        name: 'it failed',
+        passed: false
+      });
+      reporter.report('firefox', {
+        name: 'it passed too',
+        passed: true
+      });
+      assert.deepEqual(reporter.getLauncherStats(), {
+        phantomjs: { total: 2, pass: 1, fail: 1 },
+        firefox: { total: 1, pass: 1, fail: 0 }
+      });
+      reporter.finish();
+      var output = stream.read().toString();
+      assert.match(output, /<property name="launcher" value="phantomjs"\/>/);
+      assert.match(output, /<property name="phantomjs_pass" value="1"\/>/);
+      assert.match(output, /<property name="phantomjs_fail" value="1"\/>/);
+      assert.match(output, /<property name="firefox_pass" value="1"\/>/);
+      assert.match(output, /<property name="firefox_fail" value="0"\/>/);
+      assert.match(output, /<property name="launchers" value="phantomjs,firefox"\/>/);
       assertXmlIsValid(output);
     });
 
