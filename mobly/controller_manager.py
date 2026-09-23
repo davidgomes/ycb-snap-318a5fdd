@@ -153,6 +153,20 @@ class ControllerManager:
     self._controller_modules[module_ref_name] = module
     return objects
 
+  def get_controller_objects_by_config_name(self):
+    """Gets the registered controller objects keyed by their config name.
+
+    Returns:
+      A dict mapping each registered controller module's
+      `MOBLY_CONTROLLER_CONFIG_NAME` to a shallow copy of its objects.
+    """
+    return {
+        module.MOBLY_CONTROLLER_CONFIG_NAME: copy.copy(
+            self._controller_objects[name]
+        )
+        for name, module in self._controller_modules.items()
+    }
+
   def unregister_controllers(self):
     """Destroy controller objects and clear internal registry.
 

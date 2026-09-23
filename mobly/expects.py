@@ -14,6 +14,7 @@
 
 import contextlib
 import logging
+import threading
 import time
 
 from mobly import asserts
@@ -29,6 +30,14 @@ from mobly import signals
 DEFAULT_TEST_RESULT_RECORD = records.TestResultRecord('mobly', 'global')
 
 
+class _RecorderState:
+  """The record and error count tracked by `_ExpectErrorRecorder`."""
+
+  def __init__(self):
+    self.record = None
+    self.count = 0
+
+
 class _ExpectErrorRecorder:
   """Singleton used to store errors caught via `expect_*` functions in test.
 
@@ -37,7 +46,33 @@ class _ExpectErrorRecorder:
   """
 
   def __init__(self, record=None):
+    self._shared_state = _RecorderState()
+    self._thread_local = threading.local()
     self.reset_internal_states(record=record)
+
+  def _get_state(self):
+    state = getattr(self._thread_local, 'state', None)
+    return state if state is not None else self._shared_state
+
+  def enable_thread_local_state(self):
+    """Makes the calling thread track its own record and error count.
+
+    Used when tests execute concurrently in multiple threads, so errors are
+    attributed to the record of the test running in the calling thread.
+    """
+    self._thread_local.state = _RecorderState()
+
+  def disable_thread_local_state(self):
+    """Makes the calling thread use the shared recorder state again."""
+    self._thread_local.state = None
+
+  @property
+  def _record(self):
+    return self._get_state().record
+
+  @property
+  def _count(self):
+    return self._get_state().count
 
   def reset_internal_states(self, record=None):
     """Resets the internal state of the recorder.
@@ -45,9 +80,9 @@ class _ExpectErrorRecorder:
     Args:
       record: records.TestResultRecord, the test record for a test.
     """
-    self._record = None
-    self._count = 0
-    self._record = record
+    state = self._get_state()
+    state.count = 0
+    state.record = record
 
   @property
   def has_error(self):
@@ -68,8 +103,9 @@ class _ExpectErrorRecorder:
     Args:
       error: Exception or signals.ExceptionRecord, the error to add.
     """
-    self._count += 1
-    self._record.add_error('expect@%s+%s' % (time.time(), self._count), error)
+    state = self._get_state()
+    state.count += 1
+    state.record.add_error('expect@%s+%s' % (time.time(), state.count), error)
 
 
 def expect_true(condition, msg, extras=None):
