@@ -278,6 +278,51 @@ export default {
 
   // rules
   'rules': {
+    // auto-toc.ts
+    'auto-toc': {
+      'name': 'Auto TOC',
+      'description': 'Generates or updates a table of contents when <code>&lt;!-- toc --&gt;</code> is present.',
+      'list-style': {
+        'name': 'List Style',
+        'description': 'Use a bulleted or numbered list for the table of contents',
+      },
+      'bullet-marker': {
+        'name': 'Bullet Marker',
+        'description': 'Marker used when List Style is bullet',
+      },
+      'ordered-list-style': {
+        'name': 'Ordered List Style',
+        'description': 'How numbered entries are numbered',
+      },
+      'indent-size': {
+        'name': 'Indent Size',
+        'description': 'Spaces added per heading level below the minimum level',
+      },
+      'min-level': {
+        'name': 'Minimum Heading Level',
+        'description': 'Lowest ATX heading level to include',
+      },
+      'max-level': {
+        'name': 'Maximum Heading Level',
+        'description': 'Highest ATX heading level to include',
+      },
+      'title': {
+        'name': 'Title',
+        'description': 'Optional title line inserted in the table of contents',
+      },
+      'use-explicit-ids': {
+        'name': 'Use Explicit Ids',
+        'description': 'Use a trailing <code>{#id}</code> on a heading as the anchor',
+      },
+      'strip-formatting-in-toc': {
+        'name': 'Strip Formatting in TOC',
+        'description': 'Remove formatting from the table of contents link text',
+      },
+      'exclude-headings': {
+        'name': 'Exclude Headings',
+        'description': 'Headings to omit. One per line. Literals are case-insensitive. Wrap a pattern in slashes for a case-insensitive regular expression.',
+      },
+    },
     // auto-correct-common-misspellings.ts
     'auto-correct-common-misspellings': {
       'name': 'Auto-correct Common Misspellings',
@@ -975,5 +1020,10 @@ export default {
     '<br>': '<br>', // leave as is
     '  ': '  ', // leave as is
     '<br/>': '<br/>', // leave as is
+    // auto-toc.ts
+    'bullet': 'bullet',
+    'number': 'number',
+    'always-one': 'always one',
+    'increment': 'increment',
   },
 };
