@@ -272,13 +272,13 @@ class InMemoryCoalesceBackend(CoalesceBackend):
         """Pick the execution a joiner waits on; must hold the lock."""
         queue = self._draining.get(key)
         if queue:
-            entry = queue[0]
-            entry.pending_joins -= 1
-            if entry.pending_joins <= 0:
+            drained = queue[0]
+            drained.pending_joins -= 1
+            if drained.pending_joins <= 0:
                 queue.popleft()
                 if not queue:
                     del self._draining[key]
-            return entry
+            return drained
         entry = self._active.get(key)
         if entry is None:
             msg = f"No in-flight execution to join for key {key!r}."
@@ -379,7 +379,9 @@ def _canonicalize(value: Any, seen: frozenset[int]) -> Any:
         )
         return (_type_name(value), fields)
     if isinstance(value, Mapping):
-        items = [(_canonicalize(k, seen), _canonicalize(v, seen)) for k, v in value.items()]
+        items = [
+            (_canonicalize(k, seen), _canonicalize(v, seen)) for k, v in value.items()
+        ]
         return ("mapping", tuple(sorted(items, key=repr)))
     if isinstance(value, (list, tuple)):
         return (_type_name(value), tuple(_canonicalize(v, seen) for v in value))
@@ -681,9 +683,9 @@ class RunnableCoalesce(RunnableBindingBase[Input, Output]):  # type: ignore[no-r
 
         ordered = [results[i] for i in range(len(inputs))]
         if not return_exceptions:
-            for output in ordered:
-                if isinstance(output, Exception):
-                    raise output
+            for item in ordered:
+                if isinstance(item, Exception):
+                    raise item
         return cast("list[Output]", ordered)
 
     @override
@@ -731,9 +733,9 @@ class RunnableCoalesce(RunnableBindingBase[Input, Output]):  # type: ignore[no-r
 
         ordered = [results[i] for i in range(len(inputs))]
         if not return_exceptions:
-            for output in ordered:
-                if isinstance(output, Exception):
-                    raise output
+            for item in ordered:
+                if isinstance(item, Exception):
+                    raise item
         return cast("list[Output]", ordered)
 
     @overload
