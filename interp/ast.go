@@ -388,6 +388,8 @@ func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err
 		mode |= parser.ParseComments
 	}
 
+	mode |= parser.ParseComments
+
 	if ok, err := interp.buildOk(&interp.context, name, src); !ok || err != nil {
 		return nil, err // skip source not matching build constraints
 	}
@@ -418,6 +420,9 @@ func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err
 	}
 
 	setYaegiTags(&interp.context, f.Comments)
+	if err := interp.processEmbed(f, name); err != nil {
+		return nil, err
+	}
 	return f, nil
 }
 
