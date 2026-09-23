@@ -13,7 +13,11 @@
  */
 
 import Result from './result.js';
-import Maybe from './maybe.js';
+import Maybe, {
+  sequence as maybeSequence,
+  traverse as maybeTraverse,
+  zip as maybeZip,
+} from './maybe.js';
 import { curry1 } from './-private/utils.js';
 
 /**
@@ -159,4 +163,83 @@ export function toOkOrElseErr<T extends {}, E>(
  */
 export function fromResult<T extends {}>(result: Result<T, unknown>): Maybe<T> {
   return result.isOk ? Maybe.just(result.value) : Maybe.nothing<T>();
+}
+
+/**
+  Like `maybe.sequence`, but produces a `Result`, using `errValue` as the error
+  when any item is `Nothing`.
+ */
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E,
+  maybes: Iterable<Maybe<T>>
+): Result<Array<T>, E>;
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E
+): (maybes: Iterable<Maybe<T>>) => Result<Array<T>, E>;
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E,
+  maybes?: Iterable<Maybe<T>>
+): Result<Array<T>, E> | ((maybes: Iterable<Maybe<T>>) => Result<Array<T>, E>) {
+  if (arguments.length === 1) {
+    return (ms: Iterable<Maybe<T>>) => sequenceMaybeAsResult(errValue, ms);
+  }
+  return maybeSequence(maybes as Iterable<Maybe<T>>).match({
+    Just: (values) => Result.ok<Array<T>, E>(values),
+    Nothing: () => Result.err<Array<T>, E>(errValue),
+  });
+}
+
+/**
+  Like `maybe.traverse`, but produces a `Result`, using `errValue` as the error
+  when `fn` produces `Nothing` for any item.
+ */
+export function traverseMaybeAsResult<A, B extends {}, E>(
+  errValue: E,
+  items: Iterable<A>,
+  fn: (item: A, index: number) => Maybe<B>
+): Result<Array<B>, E>;
+export function traverseMaybeAsResult<A, B extends {}, E>(
+  errValue: E
+): (items: Iterable<A>, fn: (item: A, index: number) => Maybe<B>) => Result<Array<B>, E>;
+export function traverseMaybeAsResult<A, B extends {}, E>(
+  errValue: E,
+  items?: Iterable<A>,
+  fn?: (item: A, index: number) => Maybe<B>
+):
+  | Result<Array<B>, E>
+  | ((items: Iterable<A>, fn: (item: A, index: number) => Maybe<B>) => Result<Array<B>, E>) {
+  if (arguments.length === 1) {
+    return (is: Iterable<A>, f: (item: A, index: number) => Maybe<B>) =>
+      traverseMaybeAsResult(errValue, is, f);
+  }
+  return maybeTraverse(items as Iterable<A>, fn as (item: A, index: number) => Maybe<B>).match({
+    Just: (values) => Result.ok<Array<B>, E>(values),
+    Nothing: () => Result.err<Array<B>, E>(errValue),
+  });
+}
+
+/**
+  Like `maybe.zip`, but produces a `Result`, using `errValue` as the error when
+  either `Maybe` is `Nothing`.
+ */
+export function zipMaybeAsResult<A extends {}, B extends {}, E>(
+  errValue: E,
+  a: Maybe<A>,
+  b: Maybe<B>
+): Result<[A, B], E>;
+export function zipMaybeAsResult<A extends {}, B extends {}, E>(
+  errValue: E
+): (a: Maybe<A>, b: Maybe<B>) => Result<[A, B], E>;
+export function zipMaybeAsResult<A extends {}, B extends {}, E>(
+  errValue: E,
+  a?: Maybe<A>,
+  b?: Maybe<B>
+): Result<[A, B], E> | ((a: Maybe<A>, b: Maybe<B>) => Result<[A, B], E>) {
+  if (arguments.length === 1) {
+    return (x: Maybe<A>, y: Maybe<B>) => zipMaybeAsResult(errValue, x, y);
+  }
+  return maybeZip(a as Maybe<A>, b as Maybe<B>).match({
+    Just: (pair) => Result.ok<[A, B], E>(pair),
+    Nothing: () => Result.err<[A, B], E>(errValue),
+  });
 }

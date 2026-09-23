@@ -384,6 +384,13 @@ class ResultImpl<T, E> {
   cast() {
     return this;
   }
+
+  /** Yields the wrapped value once if this is `Ok`; yields nothing for `Err`. */
+  *[Symbol.iterator](): Iterator<T> {
+    if (this.repr[0] === 'Ok') {
+      yield this.repr[1] as T;
+    }
+  }
 }
 
 /**
@@ -2049,3 +2056,81 @@ export const Result: ResultConstructor = ResultImpl as ResultConstructor;
  */
 export type Result<T, E> = Ok<T, E> | Err<T, E>;
 export default Result;
+
+/**
+  Convert an iterable of `Result`s into a `Result` of an array. Produces `Ok`
+  with all the values if every item is `Ok`; otherwise produces the first
+  `Err`, and stops advancing the iterator there.
+ */
+export function sequence<T, E>(results: Iterable<Result<T, E>>): Result<Array<T>, E> {
+  const values: T[] = [];
+  for (const r of results) {
+    if (r.isErr) {
+      return err(r.error);
+    }
+    values.push(r.value);
+  }
+  return ok(values);
+}
+
+/**
+  Map each item with `fn` and {@linkcode sequence} the results. Stops advancing
+  the iterator at the first `Err`.
+ */
+export function traverse<A, T, E>(
+  items: Iterable<A>,
+  fn: (item: A, index: number) => Result<T, E>
+): Result<Array<T>, E>;
+export function traverse<A, T, E>(
+  fn: (item: A, index: number) => Result<T, E>
+): (items: Iterable<A>) => Result<Array<T>, E>;
+export function traverse<A, T, E>(
+  itemsOrFn: Iterable<A> | ((item: A, index: number) => Result<T, E>),
+  fn?: (item: A, index: number) => Result<T, E>
+): Result<Array<T>, E> | ((items: Iterable<A>) => Result<Array<T>, E>) {
+  if (fn === undefined) {
+    const f = itemsOrFn as (item: A, index: number) => Result<T, E>;
+    return (items: Iterable<A>) => traverse(items, f);
+  }
+
+  const values: T[] = [];
+  let index = 0;
+  for (const item of itemsOrFn as Iterable<A>) {
+    const r = fn(item, index++);
+    if (r.isErr) {
+      return err(r.error);
+    }
+    values.push(r.value);
+  }
+  return ok(values);
+}
+
+/** Combine two `Result`s into a `Result` of a tuple; the first `Err` wins. */
+export function zip<A, B, E>(a: Result<A, E>, b: Result<B, E>): Result<[A, B], E> {
+  return zipWith(a, b, (x, y): [A, B] => [x, y]);
+}
+
+/** Combine two `Result`s with `fn`; the first `Err` wins. */
+export function zipWith<A, B, C, E>(
+  a: Result<A, E>,
+  b: Result<B, E>,
+  fn: (a: A, b: B) => C
+): Result<C, E> {
+  if (a.isErr) return err(a.error);
+  if (b.isErr) return err(b.error);
+  return ok(fn(a.value, b.value));
+}
+
+/** Split an iterable of `Result`s into `[oks, errs]`. */
+export function partition<T, E>(results: Iterable<Result<T, E>>): [Array<T>, Array<E>] {
+  const oks: T[] = [];
+  const errs: E[] = [];
+  for (const r of results) {
+    if (r.isOk) {
+      oks.push(r.value);
+    } else {
+      errs.push(r.error);
+    }
+  }
+  return [oks, errs];
+}

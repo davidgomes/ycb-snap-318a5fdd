@@ -405,6 +405,13 @@ class MaybeImpl<T extends {}> implements SomeMaybe<T> {
   flatten<A extends {}>(this: Maybe<Maybe<A>>): Maybe<A> {
     return this.andThen(identity);
   }
+
+  /** Yields the wrapped value once if this is `Just`; yields nothing for `Nothing`. */
+  *[Symbol.iterator](): Iterator<T> {
+    if (this.repr[0] === Variant.Just) {
+      yield this.repr[1];
+    }
+  }
 }
 
 /**
@@ -1877,3 +1884,114 @@ export const Maybe: MaybeConstructor = MaybeImpl as MaybeConstructor;
  */
 export type Maybe<T extends {}> = Just<T> | Nothing<T>;
 export default Maybe;
+
+/**
+  Convert an iterable of `Maybe`s into a `Maybe` of an array. Produces `Just`
+  with all the values if every item is `Just`; otherwise produces `Nothing`,
+  and stops advancing the iterator at the first `Nothing`.
+ */
+export function sequence<T extends {}>(maybes: Iterable<Maybe<T>>): Maybe<Array<T>> {
+  const values: T[] = [];
+  for (const m of maybes) {
+    if (m.isNothing) {
+      return nothing();
+    }
+    values.push(m.value);
+  }
+  return just(values);
+}
+
+/**
+  Map each item with `fn` and {@linkcode sequence} the results. Stops advancing
+  the iterator at the first `Nothing`.
+ */
+export function traverse<A, B extends {}>(
+  items: Iterable<A>,
+  fn: (item: A, index: number) => Maybe<B>
+): Maybe<Array<B>>;
+export function traverse<A, B extends {}>(
+  fn: (item: A, index: number) => Maybe<B>
+): (items: Iterable<A>) => Maybe<Array<B>>;
+export function traverse<A, B extends {}>(
+  itemsOrFn: Iterable<A> | ((item: A, index: number) => Maybe<B>),
+  fn?: (item: A, index: number) => Maybe<B>
+): Maybe<Array<B>> | ((items: Iterable<A>) => Maybe<Array<B>>) {
+  if (fn === undefined) {
+    const f = itemsOrFn as (item: A, index: number) => Maybe<B>;
+    return (items: Iterable<A>) => traverse(items, f);
+  }
+
+  const values: B[] = [];
+  let index = 0;
+  for (const item of itemsOrFn as Iterable<A>) {
+    const m = fn(item, index++);
+    if (m.isNothing) {
+      return nothing();
+    }
+    values.push(m.value);
+  }
+  return just(values);
+}
+
+/** Combine two `Maybe`s into a `Maybe` of a tuple; `Nothing` if either is. */
+export function zip<A extends {}, B extends {}>(a: Maybe<A>, b: Maybe<B>): Maybe<[A, B]> {
+  return a.isJust && b.isJust ? just<[A, B]>([a.value, b.value]) : nothing();
+}
+
+/** Combine two `Maybe`s with `fn`; `Nothing` if either is `Nothing`. */
+export function zipWith<A extends {}, B extends {}, C extends {}>(
+  a: Maybe<A>,
+  b: Maybe<B>,
+  fn: (a: A, b: B) => C
+): Maybe<C> {
+  return a.isJust && b.isJust ? just(fn(a.value, b.value)) : nothing();
+}
+
+/** Collect the values of all `Just`s, silently dropping any `Nothing`s. */
+export function compact<T extends {}>(maybes: Iterable<Maybe<T>>): Array<T> {
+  const values: T[] = [];
+  for (const m of maybes) {
+    if (m.isJust) {
+      values.push(m.value);
+    }
+  }
+  return values;
+}
+
+/** Map each item with `fn`, keeping only the values of `Just` results. */
+export function filterMap<A, B extends {}>(
+  items: Iterable<A>,
+  fn: (item: A, index: number) => Maybe<B>
+): Array<B>;
+export function filterMap<A, B extends {}>(
+  fn: (item: A, index: number) => Maybe<B>
+): (items: Iterable<A>) => Array<B>;
+export function filterMap<A, B extends {}>(
+  itemsOrFn: Iterable<A> | ((item: A, index: number) => Maybe<B>),
+  fn?: (item: A, index: number) => Maybe<B>
+): Array<B> | ((items: Iterable<A>) => Array<B>) {
+  if (fn === undefined) {
+    const f = itemsOrFn as (item: A, index: number) => Maybe<B>;
+    return (items: Iterable<A>) => filterMap(items, f);
+  }
+
+  const values: B[] = [];
+  let index = 0;
+  for (const item of itemsOrFn as Iterable<A>) {
+    const m = fn(item, index++);
+    if (m.isJust) {
+      values.push(m.value);
+    }
+  }
+  return values;
+}
+
+/** Return the first `Just` in the array, or `Nothing` if there is none. */
+export function firstJust<T extends {}>(maybes: AnyArray<Maybe<T>>): Maybe<T> {
+  for (const m of maybes) {
+    if (m.isJust) {
+      return m;
+    }
+  }
+  return nothing();
+}

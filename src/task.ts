@@ -954,6 +954,14 @@ class TaskImpl<T, E> implements PromiseLike<Result<T, E>> {
   flatten<A, F, G>(this: Task<Task<A, F>, G>): Task<A, F | G> {
     return this.andThen(identity);
   }
+
+  /**
+    Yields exactly one {@linkcode Result}: `Ok` if the task resolves, `Err` if
+    it rejects.
+   */
+  async *[Symbol.asyncIterator](): AsyncIterator<Result<T, E>> {
+    yield await this.#promise;
+  }
 }
 
 /**
@@ -3068,3 +3076,117 @@ export function isRetryFailed(error: unknown): error is RetryFailed<unknown> {
 }
 
 export type { RetryFailed };
+
+/**
+  Convert an array of `Task`s into a `Task` of an array, running them
+  concurrently. Rejects with the first rejection.
+ */
+export function sequence<T, E>(tasks: ReadonlyArray<Task<T, E>>): Task<Array<T>, E> {
+  return all(tasks as AnyTask[]) as unknown as Task<Array<T>, E>;
+}
+
+/** Map each item to a `Task` with `fn` and {@linkcode sequence} them concurrently. */
+export function traverse<A, T, E>(
+  items: Iterable<A>,
+  fn: (item: A, index: number) => Task<T, E>
+): Task<Array<T>, E>;
+export function traverse<A, T, E>(
+  fn: (item: A, index: number) => Task<T, E>
+): (items: Iterable<A>) => Task<Array<T>, E>;
+export function traverse<A, T, E>(
+  itemsOrFn: Iterable<A> | ((item: A, index: number) => Task<T, E>),
+  fn?: (item: A, index: number) => Task<T, E>
+): Task<Array<T>, E> | ((items: Iterable<A>) => Task<Array<T>, E>) {
+  if (fn === undefined) {
+    const f = itemsOrFn as (item: A, index: number) => Task<T, E>;
+    return (items: Iterable<A>) => traverse(items, f);
+  }
+  return sequence(Array.from(itemsOrFn as Iterable<A>, fn));
+}
+
+/**
+  Like {@linkcode traverse}, but runs each `Task` only after the previous one
+  resolves, stopping at the first rejection.
+ */
+export function traverseSerial<A, T, E>(
+  items: Iterable<A>,
+  fn: (item: A, index: number) => Task<T, E>
+): Task<Array<T>, E>;
+export function traverseSerial<A, T, E>(
+  fn: (item: A, index: number) => Task<T, E>
+): (items: Iterable<A>) => Task<Array<T>, E>;
+export function traverseSerial<A, T, E>(
+  itemsOrFn: Iterable<A> | ((item: A, index: number) => Task<T, E>),
+  fn?: (item: A, index: number) => Task<T, E>
+): Task<Array<T>, E> | ((items: Iterable<A>) => Task<Array<T>, E>) {
+  if (fn === undefined) {
+    const f = itemsOrFn as (item: A, index: number) => Task<T, E>;
+    return (items: Iterable<A>) => traverseSerial(items, f);
+  }
+
+  const items = itemsOrFn as Iterable<A>;
+  return fromUnsafePromise(
+    (async (): Promise<Result<Array<T>, E>> => {
+      const values: T[] = [];
+      let index = 0;
+      for (const item of items) {
+        const r = await fn(item, index++);
+        if (r.isErr) {
+          return Result.err(r.error);
+        }
+        values.push(r.value);
+      }
+      return Result.ok(values);
+    })()
+  );
+}
+
+/** Combine two `Task`s into a `Task` of a tuple, running them concurrently. */
+export function zip<A, B, E>(a: Task<A, E>, b: Task<B, E>): Task<[A, B], E> {
+  return all([a, b]) as unknown as Task<[A, B], E>;
+}
+
+/** Combine two `Task`s with `fn`, running them concurrently. */
+export function zipWith<A, B, C, E>(
+  a: Task<A, E>,
+  b: Task<B, E>,
+  fn: (a: A, b: B) => C
+): Task<C, E> {
+  return zip(a, b).map(([x, y]) => fn(x, y));
+}
+
+/** Run `fn` on the resolved value for side effects, passing it through unchanged. */
+export function tap<T, E>(task: Task<T, E>, fn: (value: T) => void): Task<T, E>;
+export function tap<T, E>(fn: (value: T) => void): (task: Task<T, E>) => Task<T, E>;
+export function tap<T, E>(
+  taskOrFn: Task<T, E> | ((value: T) => void),
+  fn?: (value: T) => void
+): Task<T, E> | ((task: Task<T, E>) => Task<T, E>) {
+  if (fn === undefined) {
+    const f = taskOrFn as (value: T) => void;
+    return (task: Task<T, E>) => task.inspect(f);
+  }
+  return (taskOrFn as Task<T, E>).inspect(fn);
+}
+
+/** Run `fn` on the rejection reason for side effects, passing it through unchanged. */
+export function tapRejected<T, E>(task: Task<T, E>, fn: (reason: E) => void): Task<T, E>;
+export function tapRejected<T, E>(fn: (reason: E) => void): (task: Task<T, E>) => Task<T, E>;
+export function tapRejected<T, E>(
+  taskOrFn: Task<T, E> | ((reason: E) => void),
+  fn?: (reason: E) => void
+): Task<T, E> | ((task: Task<T, E>) => Task<T, E>) {
+  if (fn === undefined) {
+    const f = taskOrFn as (reason: E) => void;
+    return (task: Task<T, E>) => task.inspectRejected(f);
+  }
+  return (taskOrFn as Task<T, E>).inspectRejected(fn);
+}
+
+/**
+  Call `fn` to produce a `Task`, retrying up to `n` additional times if it
+  rejects. Rejects with the last rejection if all attempts fail.
+ */
+export function retryN<T, E>(n: number, fn: () => Task<T, E>): Task<T, E> {
+  return fn().orElse((reason) => (n > 0 ? retryN(n - 1, fn) : Task.reject<T, E>(reason)));
+}
