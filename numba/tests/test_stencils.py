@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
 
+import itertools
 import numpy as np
 from contextlib import contextmanager
 
@@ -3217,6 +3218,351 @@ class TestManyStencils(TestStencilBase):
             self.check_against_expected(kernel, expected, a,
                                         options={'neighborhood': nh,
                                                  'cval':cval})
+
+
+_np_pad_modes = {'wrap': 'wrap', 'nearest': 'edge', 'reflect': 'reflect',
+                 'symmetric': 'symmetric'}
+
+
+def modes_reference(a, offsets, weights, modes, cval=0):
+    """
+    Computes ``sum(w * a[idx + off])`` over ``zip(weights, offsets)`` for each
+    index ``idx`` of ``a``, extending ``a`` with ``np.pad`` in the dimensions
+    whose mode is not 'constant'.  In 'constant' dimensions the border is not
+    computed and is set to ``cval`` instead.  The offsets must be small enough
+    that a single reflection brings every access back into ``a``.
+    """
+    if isinstance(modes, str):
+        modes = (modes,) * a.ndim
+    lo = [max(0, -min(off[d] for off in offsets)) for d in range(a.ndim)]
+    hi = [max(0, max(off[d] for off in offsets)) for d in range(a.ndim)]
+    padded = a
+    for d, mode in enumerate(modes):
+        if mode != 'constant':
+            width = [(0, 0)] * a.ndim
+            width[d] = (lo[d], hi[d])
+            padded = np.pad(padded, width, mode=_np_pad_modes[mode])
+    shift = [lo[d] if modes[d] != 'constant' else 0 for d in range(a.ndim)]
+    ranges = [range(0, a.shape[d]) if modes[d] != 'constant'
+              else range(lo[d], a.shape[d] - hi[d]) for d in range(a.ndim)]
+    expected = np.full(a.shape, cval, dtype=np.float64)
+    for idx in itertools.product(*ranges):
+        expected[idx] = sum(
+            w * padded[tuple(idx[d] + off[d] + shift[d]
+                             for d in range(a.ndim))]
+            for off, w in zip(offsets, weights))
+    return expected
+
+
+@skip_unsupported
+class TestStencilModes(TestStencilBase):
+    """
+    Tests the ``mode`` stencil option that controls the handling of
+    out-of-bounds accesses.
+    """
+
+    def _wrap(self, stencil_func, nargs):
+        if nargs == 1:
+            def wrapped(a0):
+                return stencil_func(a0)
+        elif nargs == 2:
+            def wrapped(a0, a1):
+                return stencil_func(a0, a1)
+        else:
+            def wrapped(a0, a1, a2):
+                return stencil_func(a0, a1, a2)
+        return wrapped
+
+    def check_modes(self, stencil_func, expected, *args):
+        """
+        Checks that stencil_func applied to args gives expected when called
+        directly, from an njit function and from an njit(parallel=True)
+        function.
+        """
+        cfunc, cpfunc = self.compile_all(self._wrap(stencil_func, len(args)),
+                                         *args)
+        results = {'@stencil': stencil_func(*args),
+                   'njit': cfunc.entry_point(*args),
+                   'parfors': cpfunc.entry_point(*args)}
+        for impl, got in results.items():
+            with self.subTest(impl=impl):
+                np.testing.assert_allclose(got, expected)
+                self.assertEqual(got.dtype, expected.dtype)
+        self.assertIn('@do_scheduling', cpfunc.library.get_llvm_str())
+
+    def check_modes_exception(self, stencil_func, msg, *args):
+        """
+        Checks that stencil_func applied to args raises NumbaValueError with
+        msg when called directly, from an njit function and from an
+        njit(parallel=True) function.
+        """
+        wrapped = self._wrap(stencil_func, len(args))
+        sig = tuple(numba.typeof(x) for x in args)
+        impls = {'@stencil': lambda: stencil_func(*args),
+                 'njit': lambda: self.compile_njit(wrapped, sig),
+                 'parfors': lambda: self.compile_parallel(wrapped, sig)}
+        for impl, run in impls.items():
+            with self.subTest(impl=impl):
+                with self.assertRaises(NumbaValueError) as raises:
+                    run()
+                self.assertIn(msg, str(raises.exception))
+
+    def test_modes_1d(self):
+        def kernel(a):
+            return a[-2] + 2 * a[-1] + 3 * a[0] + 4 * a[1] + 5 * a[3]
+        offsets = [(-2,), (-1,), (0,), (1,), (3,)]
+        weights = [1, 2, 3, 4, 5]
+        a = np.arange(7.) ** 2
+        for mode in ('constant', 'wrap', 'nearest', 'reflect', 'symmetric'):
+            with self.subTest(mode=mode):
+                expected = modes_reference(a, offsets, weights, mode)
+                self.check_modes(stencil(kernel, mode=mode), expected, a)
+
+    def test_modes_2d(self):
+        def kernel(a):
+            return (a[-1, 0] + 2 * a[0, 2] + 3 * a[1, -2] + 4 * a[0, 0]
+                    + 5 * a[-2, -1])
+        offsets = [(-1, 0), (0, 2), (1, -2), (0, 0), (-2, -1)]
+        weights = [1, 2, 3, 4, 5]
+        a = np.arange(30.).reshape(5, 6) ** 2
+        all_modes = ['constant', 'wrap', 'nearest', 'reflect', 'symmetric',
+                     ('wrap', 'nearest'), ('reflect', 'symmetric'),
+                     ('symmetric', 'wrap'), ('constant', 'reflect'),
+                     ('nearest', 'constant')]
+        for mode in all_modes:
+            with self.subTest(mode=mode):
+                expected = modes_reference(a, offsets, weights, mode)
+                self.check_modes(stencil(kernel, mode=mode), expected, a)
+
+    def test_modes_3d(self):
+        def kernel(a):
+            return a[-1, 1, 0] - a[1, 0, -1] + 2 * a[0, -1, 1]
+        offsets = [(-1, 1, 0), (1, 0, -1), (0, -1, 1)]
+        weights = [1, -1, 2]
+        a = np.arange(60.).reshape(3, 4, 5) ** 2
+        mode = ('wrap', 'constant', 'symmetric')
+        expected = modes_reference(a, offsets, weights, mode)
+        self.check_modes(stencil(kernel, mode=mode), expected, a)
+
+    def test_mode_spellings(self):
+        def kernel(a):
+            return a[-1, 1] + a[1, -1]
+        a = np.arange(12.).reshape(3, 4)
+        expected = modes_reference(a, [(-1, 1), (1, -1)], [1, 1],
+                                   ('wrap', 'nearest'))
+        spellings = [stencil(('wrap', 'nearest'))(kernel),
+                     stencil(['wrap', 'nearest'])(kernel),
+                     stencil(mode=('wrap', 'nearest'))(kernel),
+                     stencil(kernel, mode=('wrap', 'nearest'))]
+        for sf in spellings:
+            np.testing.assert_allclose(sf(a), expected)
+
+        expected = modes_reference(a, [(-1, 1), (1, -1)], [1, 1], 'wrap')
+        spellings = [stencil('wrap')(kernel),
+                     stencil(mode='wrap')(kernel),
+                     stencil(kernel, mode='wrap'),
+                     stencil(kernel, mode=('wrap', 'wrap'))]
+        for sf in spellings:
+            np.testing.assert_allclose(sf(a), expected)
+
+        default = stencil(kernel)(a)
+        np.testing.assert_allclose(stencil('constant')(kernel)(a), default)
+        np.testing.assert_allclose(stencil(kernel, mode='constant')(a),
+                                   default)
+
+    def test_mode_reflected_out_of_bounds_uses_cval(self):
+        def kernel(a):
+            return a[-4] + 10 * a[4]
+        a = np.array([1., 2., 3.])
+        # reflect:   a[-4] -> a[4] (out of bounds), a[4] -> a[0], ...
+        # symmetric: a[-4] -> a[3] (out of bounds), a[4] -> a[1], ...
+        cases = [('reflect', {}, [10., 0., 3.]),
+                 ('reflect', {'cval': 1.}, [11., 11., 13.]),
+                 ('symmetric', {}, [20., 13., 2.]),
+                 ('symmetric', {'cval': 1.}, [21., 13., 12.])]
+        for mode, options, expected in cases:
+            with self.subTest(mode=mode, options=options):
+                self.check_modes(stencil(kernel, mode=mode, **options),
+                                 np.array(expected), a)
+
+        # cval is converted to the element type of the accessed array.
+        a = np.array([1, 2, 3])
+        self.check_modes(stencil(kernel, mode='reflect', cval=1.5),
+                         np.array([11, 11, 13]), a)
+        a = np.array([1., 2., 3.], dtype=np.float32)
+        self.check_modes(stencil(lambda a: a[-4], mode='reflect', cval=0.5),
+                         np.array([0.5, 0.5, 3.], dtype=np.float32), a)
+
+    def test_mode_wrap_nearest_large_offsets(self):
+        def kernel(a):
+            return a[-4] + 10 * a[5]
+        a = np.array([1., 2., 3.])
+        self.check_modes(stencil(kernel, mode='wrap'),
+                         np.array([33., 11., 22.]), a)
+        self.check_modes(stencil(kernel, mode='nearest'),
+                         np.array([31., 31., 31.]), a)
+
+    def test_mode_with_cval(self):
+        def kernel(a):
+            return a[-1, 0] + 2 * a[0, 1] + 3 * a[1, -1]
+        offsets = [(-1, 0), (0, 1), (1, -1)]
+        weights = [1, 2, 3]
+        a = np.arange(20.).reshape(4, 5)
+        for mode in [('constant', 'wrap'), ('nearest', 'constant'),
+                     'constant', 'wrap']:
+            with self.subTest(mode=mode):
+                expected = modes_reference(a, offsets, weights, mode, -7.)
+                self.check_modes(stencil(kernel, mode=mode, cval=-7.),
+                                 expected, a)
+
+    def test_mode_with_neighborhood(self):
+        def kernel(a):
+            acc = 0.
+            for i in range(-2, 3):
+                acc += a[i]
+            return acc
+        a = np.arange(9.) ** 2
+        offsets = [(i,) for i in range(-2, 3)]
+        for mode in ('nearest', 'symmetric', 'constant'):
+            with self.subTest(mode=mode):
+                expected = modes_reference(a, offsets, [1] * 5, mode, 0.5)
+                sf = stencil(kernel, mode=mode, neighborhood=((-2, 2),),
+                             cval=0.5)
+                self.check_modes(sf, expected, a)
+
+        def kernel2d(a):
+            acc = 0.
+            for i in range(-1, 2):
+                for j in range(-1, 1):
+                    acc += a[i, j]
+            return acc
+        a = np.arange(20.).reshape(4, 5) ** 2
+        offsets = [(i, j) for i in range(-1, 2) for j in range(-1, 1)]
+        mode = ('constant', 'reflect')
+        expected = modes_reference(a, offsets, [1] * len(offsets), mode)
+        sf = stencil(kernel2d, mode=mode, neighborhood=((-1, 1), (-1, 0)))
+        self.check_modes(sf, expected, a)
+
+    def test_mode_with_standard_indexing(self):
+        def kernel(a, w):
+            return w[0] * a[-1] + w[1] * a[0] + w[2] * a[2]
+        a = np.arange(6.) ** 2
+        w = np.array([1., 2., 3.])
+        for mode in ('wrap', 'symmetric'):
+            with self.subTest(mode=mode):
+                expected = modes_reference(a, [(-1,), (0,), (2,)], w, mode)
+                sf = stencil(kernel, mode=mode, standard_indexing=('w',))
+                self.check_modes(sf, expected, a, w)
+
+    def test_mode_multiple_inputs(self):
+        def kernel(a, b):
+            return a[-1, 1] - b[1, 0]
+        a = np.arange(12.).reshape(3, 4) ** 2
+        b = np.arange(12.).reshape(3, 4) * 10
+        mode = ('reflect', 'nearest')
+        expected = (modes_reference(a, [(-1, 1)], [1], mode) -
+                    modes_reference(b, [(1, 0)], [1], mode))
+        self.check_modes(stencil(kernel, mode=mode), expected, a, b)
+
+    def test_mode_out_kwarg(self):
+        sf_wrap = stencil(lambda a: a[-1] + a[1], mode='wrap')
+        sf_mixed = stencil(lambda a: a[-1, 0] + a[0, 1],
+                           mode=('constant', 'wrap'), cval=5.)
+
+        def wrap_out(a):
+            out = np.full(a.shape, -1.)
+            sf_wrap(a, out=out)
+            return out
+
+        def mixed_out(a):
+            out = np.full(a.shape, -1.)
+            sf_mixed(a, out=out)
+            return out
+
+        a1 = np.arange(5.)
+        expected1 = np.roll(a1, 1) + np.roll(a1, -1)
+        a2 = np.arange(12.).reshape(3, 4)
+        expected2 = modes_reference(a2, [(-1, 0), (0, 1)], [1, 1],
+                                    ('constant', 'wrap'), 5.)
+        for func, a, expected in [(wrap_out, a1, expected1),
+                                  (mixed_out, a2, expected2)]:
+            for impl in (func, njit(func), njit(parallel=True)(func)):
+                np.testing.assert_allclose(impl(a), expected)
+
+    def test_mode_numba_stencil_call(self):
+        def impl1(a):
+            return numba.stencil(lambda a: a[-1] + 2 * a[1], mode='wrap')(a)
+
+        def impl2(a):
+            mode = ('symmetric', 'constant')
+            return numba.stencil(lambda a: a[-2, 1] + a[0, -1], mode=mode)(a)
+
+        a1 = np.arange(6.) ** 2
+        expected1 = modes_reference(a1, [(-1,), (1,)], [1, 2], 'wrap')
+        a2 = np.arange(20.).reshape(4, 5) ** 2
+        expected2 = modes_reference(a2, [(-2, 1), (0, -1)], [1, 1],
+                                    ('symmetric', 'constant'))
+        for impl, a, expected in [(impl1, a1, expected1),
+                                  (impl2, a2, expected2)]:
+            cfunc, cpfunc = self.compile_all(impl, a)
+            np.testing.assert_allclose(cfunc.entry_point(a), expected)
+            np.testing.assert_allclose(cpfunc.entry_point(a), expected)
+            self.assertIn('@do_scheduling', cpfunc.library.get_llvm_str())
+
+    def test_mode_invalid(self):
+        def kernel(a):
+            return a[-1]
+        msg = "Unsupported mode style"
+        for mode in ('bogus', ('wrap', 'bogus'), 3, ('wrap', None)):
+            with self.subTest(mode=mode):
+                with self.assertRaises(NumbaValueError) as raises:
+                    stencil(kernel, mode=mode)
+                self.assertIn(msg, str(raises.exception))
+        for mode in ('bogus', ('nearest', 'bogus')):
+            with self.subTest(mode=mode):
+                with self.assertRaises(NumbaValueError) as raises:
+                    stencil(mode)
+                self.assertIn(msg, str(raises.exception))
+        with self.assertRaises(NumbaValueError) as raises:
+            stencil('wrap', mode='nearest')
+        self.assertIn("mode specified both positionally", str(raises.exception))
+
+    def test_mode_length_mismatch(self):
+        a = np.arange(12.).reshape(3, 4)
+        for mode in (('wrap',), ('wrap', 'nearest', 'reflect')):
+            with self.subTest(mode=mode):
+                sf = stencil(lambda a: a[-1, 1], mode=mode)
+                msg = ("%d dimensional mode specified for 2 dimensional "
+                       "input array" % len(mode))
+                self.check_modes_exception(sf, msg, a)
+
+    def test_mode_unsupported_slices(self):
+        a = np.arange(12.).reshape(3, 4)
+        sf = stencil(lambda a: np.sum(a[-1:2, 0]), mode=('wrap', 'constant'),
+                     neighborhood=((-1, 1), (0, 0)))
+        self.check_modes_exception(sf, "only supported in dimensions using "
+                                   "mode 'constant', not 'wrap'", a)
+        sf = stencil(lambda a: np.sum(a[-1:2, 1]),
+                     mode=('constant', 'reflect'),
+                     neighborhood=((-1, 1), (1, 1)))
+        self.check_modes_exception(sf, "cannot be combined with modes "
+                                   "'reflect' or 'symmetric'", a)
+
+        # slices in 'constant' dimensions work alongside 'wrap'/'nearest'.
+        sf = stencil(lambda a: np.sum(a[-1:2, 1]), mode=('constant', 'wrap'),
+                     neighborhood=((-1, 1), (1, 1)))
+        expected = modes_reference(a, [(-1, 1), (0, 1), (1, 1)], [1, 1, 1],
+                                   ('constant', 'wrap'))
+        self.check_modes(sf, expected, a)
+
+    def test_mode_cval_type_mismatch(self):
+        a = np.arange(5.)
+        sf = stencil(lambda a: a[-6], mode='reflect', cval=1j)
+        self.check_modes_exception(sf, "cval type does not match stencil "
+                                   "input array type", a)
+        # cval is not used by 'wrap' so its type is not checked.
+        self.check_modes(stencil(lambda a: a[-1], mode='wrap', cval=1j),
+                         np.roll(a, 1), a)
 
 
 if __name__ == "__main__":
