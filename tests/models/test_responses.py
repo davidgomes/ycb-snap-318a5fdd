@@ -1,3 +1,4 @@
+import gzip
 import json
 import pickle
 import typing
@@ -679,6 +680,288 @@ async def test_aiter_lines():
     async for line in response.aiter_lines():
         content.append(line)
     assert content == ["Hello,", "world!"]
+
+
+def byte_by_byte(content: bytes) -> typing.Iterator[bytes]:
+    for i in range(len(content)):
+        yield content[i : i + 1]
+
+
+async def async_byte_by_byte(content: bytes) -> typing.AsyncIterator[bytes]:
+    for i in range(len(content)):
+        yield content[i : i + 1]
+
+
+JSON_CASES = [
+    # A single JSON text, with top-level arrays returned element by element.
+    ("application/json", b'{"a": 1}', [{"a": 1}]),
+    ("application/json", b'[1, "two", {"three": [3]}]', [1, "two", {"three": [3]}]),
+    ("application/json", b"[]", []),
+    ("application/json", b" \r\n\t[ 1 , 2 ] \n", [1, 2]),
+    ("application/json", b'[[1, [2]], {"a": "]}"}, "\\"[{"]', [[1, [2]], {"a": "]}"}, '"[{']),
+    ("application/json", b"[1.5e3, -0, true, false, null]", [1500.0, 0, True, False, None]),
+    ("application/json", b'"text"', ["text"]),
+    ("application/json", b"1", [1]),
+    ("application/json", b"\xef\xbb\xbf[1]", [1]),
+    ("application/json", b" \xef\xbb\xbf {}", [{}]),
+    ("application/json; charset=utf-8", b"\xef\xbb\xbf[1]", [1]),
+    ("Application/JSON; Charset=UTF-8", b"[1]", [1]),
+    ("application/vnd.api+json", b'{"data": []}', [{"data": []}]),
+    ("APPLICATION/GEO+JSON", b'[{"type": "Point"}]', [{"type": "Point"}]),
+    # Newline delimited JSON.
+    ("application/x-ndjson", b'{"a": 1}\n{"b": 2}\n', [{"a": 1}, {"b": 2}]),
+    ("application/ndjson", b'{"a": 1}\r\n\r\n \t\r{"b": 2}\n\n[3]', [{"a": 1}, {"b": 2}, [3]]),
+    ("application/ndjson", b' 1 \n"two"\nnull', [1, "two", None]),
+    ("application/ndjson", b"\xef\xbb\xbf{}\n[]", [{}, []]),
+    ("application/ndjson; charset=utf-8", b"\n \n\xef\xbb\xbf{}\n[]", [{}, []]),
+    ("application/ndjson", b"", []),
+    ("application/ndjson", b"\n \r\n", []),
+    # JSON text sequences.
+    ("application/json-seq", b'\x1e{"a": 1}\n\x1e[2]\n', [{"a": 1}, [2]]),
+    ("application/json-seq", b' \n\x1e1\x1e 2 \n\n\x1e"three"', [1, 2, "three"]),
+    ("application/json-seq", b"\x1e\x1e\n\x1e \n\x1e1\n", [1]),
+    ("application/json-seq", b"", []),
+    ("application/json-seq", b" \r\n\t", []),
+]
+
+
+JSON_DECODING_ERROR_CASES = [
+    ("application/json", b""),
+    ("application/json", b" \n "),
+    ("application/json", b"\xef\xbb\xbf"),
+    ("application/json; charset=utf-8", b"\xef\xbb\xbf\xef\xbb\xbf[1]"),
+    ("application/json", b'{"a": 1} {"b": 2}'),
+    ("application/json", b'{"a": 1'),
+    ("application/json", b"[1, 2] 3"),
+    ("application/json", b"[1, 2]]"),
+    ("application/json", b"[1, 2,]"),
+    ("application/json", b"[,]"),
+    ("application/json", b"[1 2]"),
+    ("application/json", b"[1, 2"),
+    ("application/json", b'[1, "two'),
+    ("application/json", b"[1, tru]"),
+    ("application/json", b"[1, 2x]"),
+    ("application/json", b"[1.]"),
+    ("application/json", b"[1, {]"),
+    ("application/json", b'[1, "\\x"]'),
+    ("application/json", b'["\xff"]'),
+    ("application/ndjson", b'{"a": 1} {"b": 2}\n'),
+    ("application/ndjson", b'{"a":\n1}\n'),
+    ("application/ndjson", b"{}\nnope\n"),
+    ("application/ndjson", b"{}\n\xef\xbb\xbf{}\n"),
+    ("application/ndjson", b" \xef\xbb\xbf{}\n"),
+    ("application/json-seq", b"1\n"),
+    ("application/json-seq", b" 1\x1e2\n"),
+    ("application/json-seq", b"\x1e"),
+    ("application/json-seq", b"\x1e\n"),
+    ("application/json-seq", b"\x1e \n"),
+    ("application/json-seq", b"\x1e1\n\x1e"),
+    ("application/json-seq", b"\x1e1 2\n"),
+    ("application/json-seq", b"\x1enope\n"),
+]
+
+
+@pytest.mark.parametrize("content_type,content,expected", JSON_CASES)
+def test_iter_json(content_type, content, expected):
+    headers = {"Content-Type": content_type}
+    response = httpx.Response(200, headers=headers, content=content)
+    assert list(response.iter_json()) == expected
+
+    response = httpx.Response(200, headers=headers, content=byte_by_byte(content))
+    assert list(response.iter_json()) == expected
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("content_type,content,expected", JSON_CASES)
+async def test_aiter_json(content_type, content, expected):
+    headers = {"Content-Type": content_type}
+    response = httpx.Response(200, headers=headers, content=content)
+    assert [value async for value in response.aiter_json()] == expected
+
+    stream = async_byte_by_byte(content)
+    response = httpx.Response(200, headers=headers, content=stream)
+    assert [value async for value in response.aiter_json()] == expected
+
+
+@pytest.mark.parametrize("content_type,content", JSON_DECODING_ERROR_CASES)
+def test_iter_json_decoding_error(content_type, content):
+    headers = {"Content-Type": content_type}
+    response = httpx.Response(200, headers=headers, content=content)
+    with pytest.raises(httpx.DecodingError):
+        list(response.iter_json())
+
+    response = httpx.Response(200, headers=headers, content=byte_by_byte(content))
+    with pytest.raises(httpx.DecodingError):
+        list(response.iter_json())
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        "text/plain",
+        "text/json",
+        "image/svg+json",
+        "application/x-json",
+        "application/json-patch",
+        "application/octet-stream",
+    ],
+)
+def test_iter_json_unsupported_content_type(content_type):
+    response = httpx.Response(200, headers={"Content-Type": content_type}, content=b"[1]")
+    with pytest.raises(httpx.DecodingError):
+        list(response.iter_json())
+
+
+def test_iter_json_without_content_type():
+    request = httpx.Request("GET", "https://www.example.org")
+    response = httpx.Response(200, content=b"[1]", request=request)
+    with pytest.raises(httpx.DecodingError) as exc_info:
+        list(response.iter_json())
+    assert exc_info.value.request is request
+
+
+@pytest.mark.parametrize("charset", ["unknown", "base64", '""', "ü"])
+def test_iter_json_invalid_charset(charset):
+    content_type = f"application/json; charset={charset}".encode("utf-8")
+    headers = [(b"Content-Type", content_type)]
+    response = httpx.Response(200, headers=headers, content=b"[1]")
+    with pytest.raises(httpx.DecodingError):
+        list(response.iter_json())
+
+
+@pytest.mark.parametrize(
+    "content_type,encoding",
+    [
+        ("application/json; charset=utf-16", "utf-16"),
+        ("application/json; charset=ISO-8859-1", "iso-8859-1"),
+        ("application/json", "utf-16"),
+        ("application/json", "utf-16-le"),
+        ("application/json", "utf-16-be"),
+        ("application/json", "utf-32"),
+        ("application/json", "utf-32-le"),
+        ("application/json", "utf-32-be"),
+    ],
+)
+def test_iter_json_encodings(content_type, encoding):
+    content = '["caf\u00e9", 1]'.encode(encoding)
+    headers = {"Content-Type": content_type}
+    response = httpx.Response(200, headers=headers, content=byte_by_byte(content))
+    assert list(response.iter_json()) == ["caf\u00e9", 1]
+
+
+def test_iter_json_with_content_encoding():
+    content = gzip.compress(b'{"a": 1}\n{"b": 2}\n')
+    headers = {"Content-Type": "application/x-ndjson", "Content-Encoding": "gzip"}
+    response = httpx.Response(200, headers=headers, content=byte_by_byte(content))
+    assert list(response.iter_json()) == [{"a": 1}, {"b": 2}]
+
+
+def test_iter_json_with_json_response():
+    response = httpx.Response(200, json=[{"a": 1}, [2]])
+    assert list(response.iter_json()) == [{"a": 1}, [2]]
+
+
+def test_iter_json_is_incremental():
+    headers = {"Content-Type": "application/json"}
+    response = httpx.Response(200, headers=headers, content=byte_by_byte(b"[1, 2, 3]"))
+    values = response.iter_json()
+
+    assert next(values) == 1
+    assert not response.is_closed
+    assert list(values) == [2, 3]
+    assert response.is_closed
+
+
+def test_iter_json_streaming_response_is_consumed():
+    headers = {"Content-Type": "application/x-ndjson"}
+    response = httpx.Response(200, headers=headers, content=byte_by_byte(b"1\n2\n"))
+    assert list(response.iter_json()) == [1, 2]
+    assert response.is_stream_consumed
+    assert response.is_closed
+
+    with pytest.raises(httpx.StreamConsumed):
+        list(response.iter_json())
+
+
+def test_iter_json_in_memory_response_is_repeatable():
+    headers = {"Content-Type": "application/x-ndjson"}
+    response = httpx.Response(200, headers=headers, content=b"1\n2\n")
+    assert list(response.iter_json()) == [1, 2]
+    assert list(response.iter_json()) == [1, 2]
+
+    response = httpx.Response(200, headers=headers, content=byte_by_byte(b"1\n2\n"))
+    response.read()
+    assert list(response.iter_json()) == [1, 2]
+    assert list(response.iter_json()) == [1, 2]
+
+
+def test_iter_json_decoding_error_closes_response():
+    headers = {"Content-Type": "application/x-ndjson"}
+    content = byte_by_byte(b'{"a": 1}\nnope\n{"b": 2}\n')
+    response = httpx.Response(200, headers=headers, content=content)
+    values = response.iter_json()
+
+    assert next(values) == {"a": 1}
+    with pytest.raises(httpx.DecodingError):
+        next(values)
+    assert response.is_closed
+
+    with pytest.raises(httpx.StreamConsumed):
+        list(response.iter_json())
+
+
+def test_iter_json_unsupported_content_type_does_not_read_response():
+    headers = {"Content-Type": "text/plain"}
+    response = httpx.Response(200, headers=headers, content=byte_by_byte(b"[1]"))
+    with pytest.raises(httpx.DecodingError):
+        list(response.iter_json())
+
+    assert not response.is_stream_consumed
+    assert response.read() == b"[1]"
+
+
+@pytest.mark.anyio
+async def test_aiter_json_streaming_response_is_consumed():
+    headers = {"Content-Type": "application/json-seq"}
+    stream = async_byte_by_byte(b"\x1e1\n\x1e2\n")
+    response = httpx.Response(200, headers=headers, content=stream)
+    assert [value async for value in response.aiter_json()] == [1, 2]
+    assert response.is_stream_consumed
+    assert response.is_closed
+
+    with pytest.raises(httpx.StreamConsumed):
+        [value async for value in response.aiter_json()]
+
+
+@pytest.mark.anyio
+async def test_aiter_json_in_memory_response_is_repeatable():
+    headers = {"Content-Type": "application/json-seq"}
+    response = httpx.Response(200, headers=headers, content=b"\x1e1\n\x1e2\n")
+    assert [value async for value in response.aiter_json()] == [1, 2]
+    assert [value async for value in response.aiter_json()] == [1, 2]
+
+
+@pytest.mark.anyio
+# Trio warns when the partially consumed `aiter_bytes()` generator is collected.
+@pytest.mark.filterwarnings("ignore:Async generator:ResourceWarning")
+async def test_aiter_json_decoding_error_closes_response():
+    headers = {"Content-Type": "application/json"}
+    stream = async_byte_by_byte(b"[1, nope, 3]")
+    response = httpx.Response(200, headers=headers, content=stream)
+    with pytest.raises(httpx.DecodingError):
+        [value async for value in response.aiter_json()]
+    assert response.is_closed
+
+    with pytest.raises(httpx.StreamConsumed):
+        [value async for value in response.aiter_json()]
+
+
+@pytest.mark.anyio
+async def test_aiter_json_unsupported_content_type():
+    headers = {"Content-Type": "image/svg+json"}
+    response = httpx.Response(200, headers=headers, content=b"[1]")
+    with pytest.raises(httpx.DecodingError):
+        [value async for value in response.aiter_json()]
 
 
 def test_sync_streaming_response():
