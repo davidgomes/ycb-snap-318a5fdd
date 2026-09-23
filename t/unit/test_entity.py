@@ -435,6 +435,70 @@ class test_Queue:
         assert 'foo' in repr(b)
         assert 'Queue' in repr(b)
 
+    def test_is_single_active_consumer(self) -> None:
+        assert not Queue('foo', self.exchange).is_single_active_consumer
+        assert Queue('foo', self.exchange, queue_arguments={
+            'x-single-active-consumer': True,
+        }).is_single_active_consumer
+
+    def test_consumer_priority(self) -> None:
+        assert Queue('foo', self.exchange).consumer_priority == 0
+        assert Queue('foo', self.exchange, consumer_arguments={
+            'x-priority': 7,
+        }).consumer_priority == 7
+
+    def test_with_consumer_priority(self) -> None:
+        q = Queue.with_consumer_priority(
+            'foo', self.exchange, priority=5, routing_key='rk',
+            consumer_arguments={'x-other': 1},
+        )
+        assert isinstance(q, Queue)
+        assert q.name == 'foo'
+        assert q.exchange == self.exchange
+        assert q.routing_key == 'rk'
+        assert q.consumer_priority == 5
+        assert q.consumer_arguments == {'x-other': 1, 'x-priority': 5}
+        assert not q.is_single_active_consumer
+        assert Queue.with_consumer_priority(
+            'foo', self.exchange).consumer_priority == 0
+
+    def test_with_single_active_consumer(self) -> None:
+        q = Queue.with_single_active_consumer(
+            'foo', self.exchange, queue_arguments={'x-max-priority': 10},
+        )
+        assert q.is_single_active_consumer
+        assert q.durable
+        assert q.queue_arguments == {
+            'x-max-priority': 10, 'x-single-active-consumer': True,
+        }
+        assert q.consumer_priority == 0
+        assert not Queue.with_single_active_consumer(
+            'foo', self.exchange, durable=False).durable
+
+    def test_with_priority_and_sac(self) -> None:
+        q = Queue.with_priority_and_sac(
+            'foo', self.exchange, priority=3, durable=False, routing_key='rk',
+        )
+        assert q.is_single_active_consumer
+        assert q.consumer_priority == 3
+        assert not q.durable
+        assert q.routing_key == 'rk'
+
+    def test_consume_single_active_consumer_with_priority(self) -> None:
+        conn = Connection(transport='memory')
+        chan = conn.channel()
+        queue = Queue.with_priority_and_sac(
+            'test_entity_sac', self.exchange, priority=4, routing_key='rk',
+        )(chan)
+        queue.declare()
+        queue.consume('low', callback=Mock())
+        queue(conn.channel()).consume('high', callback=Mock())
+        assert chan.is_single_active_consumer('test_entity_sac')
+        assert chan.consumer_priority_map('test_entity_sac') == {
+            'low': 4, 'high': 4,
+        }
+        assert chan.get_active_consumer('test_entity_sac') == 'low'
+
 
 class test_MaybeChannelBound:
 

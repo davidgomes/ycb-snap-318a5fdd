@@ -730,3 +730,78 @@ class test_Consumer:
         p = self.connection.Consumer()
         p.channel = object()
         assert p.connection is None
+
+    def test_cancel_notify_callbacks(self):
+        assert Consumer(self.connection).cancel_notify_callbacks == []
+        on_cancel, other = Mock(name='on_cancel'), Mock(name='other')
+        consumer = Consumer(self.connection, on_cancel=on_cancel)
+        assert consumer.cancel_notify_callbacks == [on_cancel]
+        assert consumer.on_cancel_notify(other) is consumer
+        assert consumer.cancel_notify_callbacks == [on_cancel, other]
+
+        consumer._on_cancel('tag')
+        on_cancel.assert_called_once_with('tag')
+        other.assert_called_once_with('tag')
+
+    def test_consume_passes_on_cancel_only_with_callbacks(self):
+        channel = self.connection.channel()
+        queue = Queue('qname', self.exchange, 'rkey')
+        with patch.object(Queue, 'consume') as consume:
+            Consumer(channel, [queue]).consume()
+            assert 'on_cancel' not in consume.call_args[1]
+
+            consumer = Consumer(channel, [queue], on_cancel=Mock())
+            consumer.consume()
+            assert consume.call_args[1]['on_cancel'] == consumer._on_cancel
+
+    def test_on_cancel_called_on_basic_cancel(self):
+        connection = Connection(transport='memory')
+        on_cancel = Mock(name='on_cancel')
+        queue = Queue('test_messaging_on_cancel', self.exchange, 'rkey')
+        consumer = Consumer(connection.channel(), [queue])
+        consumer.on_cancel_notify(on_cancel).consume()
+        tag = consumer.active_consumer_tags[0]
+
+        consumer.cancel()
+        on_cancel.assert_called_once_with(tag)
+
+    def test_single_active_consumer_helpers(self):
+        connection = Connection(transport='memory')
+        queue = Queue.with_single_active_consumer(
+            'test_messaging_sac', self.exchange, routing_key='rkey')
+        plain = Queue('test_messaging_plain', self.exchange, 'rkey')
+        first = Consumer(connection.channel(), [queue, plain])
+        second = Consumer(connection.channel(), [queue])
+        assert not first.consuming_from_sac(queue)
+        assert not first.is_active_on(queue)
+        assert first.active_consumer_tags == []
+
+        first.consume()
+        second.consume()
+        assert first.consuming_from_sac(queue)
+        assert first.consuming_from_sac('test_messaging_sac')
+        assert not first.consuming_from_sac(plain)
+        assert first.is_active_on(queue)
+        assert first.is_active_on(plain)
+        assert second.consuming_from_sac(queue)
+        assert not second.is_active_on('test_messaging_sac')
+        assert first.active_consumer_tags == [
+            first._active_tags['test_messaging_sac'],
+            first._active_tags['test_messaging_plain'],
+        ]
+
+        first.cancel()
+        assert second.is_active_on(queue)
+
+    def test_single_active_consumer_helpers__untracked_channel(self):
+        channel = self.connection.channel()
+        queue = Queue.with_single_active_consumer('qname', self.exchange)
+        plain = Queue('plain', self.exchange)
+        consumer = Consumer(channel, [queue, plain])
+        assert not consumer.is_active_on(queue)
+
+        consumer.consume()
+        assert consumer.consuming_from_sac(queue)
+        assert not consumer.consuming_from_sac(plain)
+        assert consumer.is_active_on(queue)
+        assert consumer.is_active_on(plain)

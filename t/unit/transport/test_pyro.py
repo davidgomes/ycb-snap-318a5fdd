@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import socket
+from unittest.mock import Mock
 
 import pytest
 
 from kombu import Connection, Consumer, Exchange, Producer, Queue
+from kombu.transport import virtual
 
 
 class test_PyroTransport:
@@ -26,6 +28,16 @@ class test_PyroTransport:
 
     def test_driver_version(self):
         assert self.c.transport.driver_version()
+
+    def test_new_transport_resets_consumer_state(self):
+        state = self.c.transport.state
+        state.register_consumer(
+            virtual.ConsumerRecord('test_transport_pyro', 'a', channel=Mock()))
+        assert state.consumers
+
+        Connection(transport='pyro', virtual_host='kombu.broker').transport
+        assert not state.consumers
+        assert not state.consumer_events
 
     @pytest.mark.skip("requires running Pyro nameserver and Kombu Broker")
     def test_produce_consume_noack(self):

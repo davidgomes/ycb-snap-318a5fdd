@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 from queue import Empty
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 import pytest
 
@@ -55,6 +55,15 @@ class test_FilesystemTransport:
     def _add_channel(self, channel):
         self.channels.add(channel)
         return channel
+
+    def test_new_transport_resets_consumer_state(self):
+        channel = self._add_channel(self.c.channel())
+        channel.basic_consume('test_transport_filesystem', True, Mock(), 'a')
+        assert channel.get_consumer_count() == 1
+
+        other = self._add_channel(Connection(transport='filesystem').channel())
+        assert other.get_consumer_count() == 0
+        assert other.consumer_events() == []
 
     def test_produce_consume_noack(self):
         producer = Producer(self._add_channel(self.p.channel()), self.e)

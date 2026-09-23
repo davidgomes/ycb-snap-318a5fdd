@@ -5,7 +5,7 @@ import socket
 import warnings
 from array import array
 from time import monotonic
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import ANY, MagicMock, Mock, patch
 
 import pytest
 
@@ -32,6 +32,23 @@ def test_BrokerState():
 
     t = virtual.BrokerState(exchanges=16)
     assert t.exchanges == 16
+
+
+def test_BrokerState_clear():
+    s = virtual.BrokerState()
+    s.declare_single_active_consumer('q')
+    s.register_consumer(virtual.ConsumerRecord('q', 'tag', channel=Mock()))
+
+    s.clear_consumers()
+    assert not s.consumers
+    assert not s.active_consumers
+    assert not s.consumer_events
+    assert s.is_single_active_consumer('q')
+
+    s.register_consumer(virtual.ConsumerRecord('q', 'tag', channel=Mock()))
+    s.clear()
+    assert not s.consumers
+    assert not s.is_single_active_consumer('q')
 
 
 class test_QoS:
@@ -641,3 +658,412 @@ class test_Transport:
         with pytest.raises(KeyError):
             self.transport.on_message_ready(
                 Mock(name='channel'), Mock(name='msg'), queue='q1')
+
+
+SAC_ARGUMENTS = {'x-single-active-consumer': True}
+
+
+class test_ConsumerRegistry:
+
+    def setup_method(self):
+        self.connection = client()
+        self.transport = self.connection.transport
+        self.c1 = self.connection.channel()
+        self.c2 = self.connection.channel()
+
+    def teardown_method(self):
+        for channel in (self.c1, self.c2):
+            if channel._qos is not None:
+                channel._qos._on_collect.cancel()
+
+    def consume(self, tag, queue='sac', channel=None, priority=None,
+                callback=None, on_cancel=None, no_ack=True):
+        arguments = None if priority is None else {'x-priority': priority}
+        (channel or self.c1).basic_consume(
+            queue, no_ack, callback or Mock(name=tag), tag,
+            arguments=arguments, on_cancel=on_cancel,
+        )
+
+    def deliver(self, queue):
+        message = self.c1.prepare_message('body')
+        self.c1._inplace_augment_message(message, 'exchange', queue)
+        self.transport._callbacks[queue](message)
+
+    def event_types(self, **kwargs):
+        return [(event['type'], event['consumer_tag'])
+                for event in self.c1.consumer_events(**kwargs)]
+
+    def test_queue_declare_single_active_consumer(self):
+        assert not self.c1.is_single_active_consumer('sac')
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        assert self.c1.is_single_active_consumer('sac')
+        assert self.c2.is_single_active_consumer('sac')
+
+        self.c2.queue_declare('sac')
+        self.c2.queue_declare('sac', arguments={'x-max-priority': 10})
+        assert self.c1.is_single_active_consumer('sac')
+
+    def test_queue_declare_passive_does_not_enable_sac(self):
+        self.c1.queue_declare('sac', passive=True, arguments=SAC_ARGUMENTS)
+        assert not self.c1.is_single_active_consumer('sac')
+
+    def test_consumers_ordered_by_priority(self):
+        self.consume('a', queue='q', priority=1)
+        self.consume('b', queue='q', priority=5)
+        self.consume('c', queue='q', channel=self.c2, priority=1)
+        self.consume('d', queue='q')
+
+        assert self.c2.consumer_info('q') == [
+            {'queue': 'q', 'consumer_tag': 'b', 'priority': 5,
+             'is_active': True},
+            {'queue': 'q', 'consumer_tag': 'a', 'priority': 1,
+             'is_active': False},
+            {'queue': 'q', 'consumer_tag': 'c', 'priority': 1,
+             'is_active': False},
+            {'queue': 'q', 'consumer_tag': 'd', 'priority': 0,
+             'is_active': False},
+        ]
+        assert self.c1.consumer_priority_map('q') == {
+            'b': 5, 'a': 1, 'c': 1, 'd': 0,
+        }
+        assert self.c1.get_active_consumer('q') == 'b'
+        assert self.c1.get_standby_consumers('q') == ['a', 'c', 'd']
+        assert self.c1.get_sac_status('q') is None
+        assert not self.event_types(event_type='activated')
+
+    def test_invalid_consumer_priority_defaults_to_zero(self):
+        self.consume('a', queue='q', priority='high')
+        self.c1.basic_consume('q', True, Mock(), 'b', arguments={})
+        self.c1.basic_consume('q', True, Mock(), 'c')
+        assert self.c1.consumer_priority_map('q') == {'a': 0, 'b': 0, 'c': 0}
+
+    def test_sac_first_consumer_is_active(self):
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        self.consume('a')
+        self.consume('b', channel=self.c2)
+
+        assert self.c2.get_active_consumer('sac') == 'a'
+        assert self.c2.get_standby_consumers('sac') == ['b']
+        assert self.c1.get_sac_status('sac') == {
+            'queue': 'sac', 'active': 'a', 'standby': ['b'],
+            'consumer_count': 2,
+        }
+        assert [i['is_active'] for i in self.c1.consumer_info('sac')] == [
+            True, False,
+        ]
+        assert self.event_types() == [
+            ('registered', 'a'), ('activated', 'a'), ('registered', 'b'),
+        ]
+
+    def test_sac_higher_priority_consumer_demotes_active(self):
+        on_cancel = Mock(name='on_cancel')
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        self.consume('a', priority=1, on_cancel=on_cancel)
+        self.consume('b', channel=self.c2, priority=1)
+        on_cancel.assert_not_called()
+
+        self.consume('c', channel=self.c2, priority=2)
+        on_cancel.assert_called_once_with('a')
+        assert self.c1.get_active_consumer('sac') == 'c'
+        assert self.c1.get_standby_consumers('sac') == ['a', 'b']
+        assert self.c1.get_consumer_count('sac') == 3
+        assert self.event_types()[-3:] == [
+            ('registered', 'c'), ('demoted', 'a'), ('activated', 'c'),
+        ]
+
+    def test_sac_equal_priority_consumer_does_not_demote_active(self):
+        on_cancel = Mock(name='on_cancel')
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        self.consume('a', priority=3, on_cancel=on_cancel)
+        self.consume('b', channel=self.c2, priority=3)
+        on_cancel.assert_not_called()
+        assert self.c1.get_active_consumer('sac') == 'a'
+
+    def test_sac_declared_after_consumers_activates_first(self):
+        self.consume('a', priority=1)
+        self.consume('b', priority=2)
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        assert self.c1.get_active_consumer('sac') == 'b'
+        assert self.c1.get_standby_consumers('sac') == ['a']
+
+    def test_basic_cancel_promotes_highest_priority_standby(self):
+        on_cancel = Mock(name='on_cancel')
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        self.consume('a', priority=5, on_cancel=on_cancel)
+        self.consume('b', channel=self.c2, priority=1)
+        self.consume('c', channel=self.c2, priority=3)
+
+        self.c1.basic_cancel('a')
+        on_cancel.assert_called_once_with('a')
+        assert self.c1.get_sac_status('sac') == {
+            'queue': 'sac', 'active': 'c', 'standby': ['b'],
+            'consumer_count': 2,
+        }
+        assert self.event_types()[-2:] == [
+            ('cancelled', 'a'), ('promoted', 'c'),
+        ]
+
+        self.c2.basic_cancel('b')
+        assert self.c1.get_active_consumer('sac') == 'c'
+        self.c2.basic_cancel('c')
+        assert self.c1.get_sac_status('sac') == {
+            'queue': 'sac', 'active': None, 'standby': [],
+            'consumer_count': 0,
+        }
+        assert self.c1.is_single_active_consumer('sac')
+
+    def test_basic_cancel_without_on_cancel(self):
+        self.consume('a', queue='q')
+        self.c1.basic_cancel('a')
+        assert self.c1.get_consumer_count('q') == 0
+        assert 'q' not in self.transport._callbacks
+
+    def test_basic_cancel_on_cancel_error_does_not_propagate(self):
+        on_cancel = Mock(name='on_cancel', side_effect=KeyError('boom'))
+        self.consume('a', queue='q', on_cancel=on_cancel)
+        self.c1.basic_cancel('a')
+        on_cancel.assert_called_once_with('a')
+        assert self.c1.get_consumer_count('q') == 0
+
+    def test_basic_cancel_unknown_tag_does_not_notify(self):
+        on_cancel = Mock(name='on_cancel')
+        self.consume('a', queue='q', on_cancel=on_cancel)
+        self.c2.basic_cancel('a')
+        on_cancel.assert_not_called()
+        assert self.c1.get_consumer_count('q') == 1
+
+    def test_close_cancels_consumers_and_promotes_standby(self):
+        on_cancel = Mock(name='on_cancel')
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        self.consume('a', priority=5, on_cancel=on_cancel)
+        self.consume('b', priority=4, on_cancel=on_cancel)
+        self.consume('c', channel=self.c2, priority=1, on_cancel=on_cancel)
+        self.consume('d', queue='q', on_cancel=on_cancel)
+
+        self.c1.close()
+        assert sorted(c[0][0] for c in on_cancel.call_args_list) == [
+            'a', 'b', 'd',
+        ]
+        assert self.c2.get_sac_status('sac') == {
+            'queue': 'sac', 'active': 'c', 'standby': [],
+            'consumer_count': 1,
+        }
+        assert self.c2.get_consumer_count() == 1
+        assert self.c2.consumer_events(event_type='promoted') == [{
+            'type': 'promoted', 'queue': 'sac', 'consumer_tag': 'c',
+            'priority': 1, 'timestamp': ANY,
+        }]
+
+    def test_queue_delete_notifies_every_consumer(self):
+        on_cancel = Mock(name='on_cancel')
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        self.consume('a', on_cancel=on_cancel)
+        self.consume('b', channel=self.c2, on_cancel=on_cancel)
+        self.consume('c', queue='other', on_cancel=on_cancel)
+
+        self.c1.queue_delete('sac')
+        assert sorted(c[0][0] for c in on_cancel.call_args_list) == ['a', 'b']
+        assert self.c1.get_consumer_count('sac') == 0
+        assert self.c1.consumer_tags == ['c']
+        assert self.c2.consumer_tags == []
+        assert 'sac' not in self.c2._active_queues
+        assert 'sac' not in self.transport._callbacks
+        assert not self.c1.is_single_active_consumer('sac')
+        assert not self.c1.consumer_events(event_type='promoted')
+        assert self.event_types(event_type='cancelled') == [
+            ('cancelled', 'a'), ('cancelled', 'b'),
+        ]
+
+    def test_queue_delete_if_empty_keeps_consumers(self):
+        on_cancel = Mock(name='on_cancel')
+        self.consume('a', queue='q', on_cancel=on_cancel)
+        self.c1._size = Mock(return_value=3)
+        self.c1.queue_delete('q', if_empty=True)
+        on_cancel.assert_not_called()
+        assert self.c1.get_consumer_count('q') == 1
+
+    def test_promote_consumer(self):
+        on_cancel = Mock(name='on_cancel')
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        self.consume('a', priority=5, on_cancel=on_cancel)
+        self.consume('b', channel=self.c2, priority=1)
+
+        assert self.c1.promote_consumer('sac', 'b')
+        on_cancel.assert_called_once_with('a')
+        assert self.c1.get_active_consumer('sac') == 'b'
+        assert self.c1.get_standby_consumers('sac') == ['a']
+        assert self.event_types()[-2:] == [
+            ('demoted', 'a'), ('promoted', 'b'),
+        ]
+
+        assert not self.c1.promote_consumer('sac', 'b')
+        assert not self.c1.promote_consumer('sac', 'unknown')
+        on_cancel.assert_called_once()
+
+    def test_promote_consumer_non_sac(self):
+        self.consume('a', queue='q', priority=5)
+        self.consume('b', queue='q')
+        assert not self.c1.promote_consumer('q', 'b')
+        assert self.c1.get_active_consumer('q') == 'a'
+
+    def test_state_is_shared_across_channels(self):
+        self.consume('a', queue='q')
+        self.consume('b', queue='q', channel=self.c2, priority=2)
+        for channel in (self.c1, self.c2):
+            assert channel.get_consumer_count('q') == 2
+            assert channel.get_active_consumer('q') == 'b'
+        assert self.c1.list_consumers() == [
+            {'queue': 'q', 'consumer_tag': 'a', 'priority': 0,
+             'is_active': False},
+        ]
+        assert self.c2.list_consumers() == [
+            {'queue': 'q', 'consumer_tag': 'b', 'priority': 2,
+             'is_active': True},
+        ]
+
+    def test_introspection(self):
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        self.consume('z', priority=1)
+        self.consume('m', channel=self.c2, priority=3)
+        self.consume('b', queue='q', priority=2)
+
+        assert self.c1.consumer_tags == ['b', 'z']
+        assert self.c1.get_consumer_count() == 3
+        assert self.c1.get_consumer_count('missing') == 0
+        assert self.c1.get_consumer_priority('m') == 3
+        assert self.c1.get_consumer_priority('b') == 2
+        assert self.c1.get_consumer_priority('missing') is None
+        assert self.c1.get_active_consumer('missing') is None
+        assert self.c1.get_standby_consumers('missing') == []
+        assert [i['consumer_tag'] for i in self.c1.consumer_info()] == [
+            'm', 'b', 'z',
+        ]
+        assert self.c1.list_consumers() == [
+            {'queue': 'q', 'consumer_tag': 'b', 'priority': 2,
+             'is_active': True},
+            {'queue': 'sac', 'consumer_tag': 'z', 'priority': 1,
+             'is_active': False},
+        ]
+        assert self.c2.consumer_registry_snapshot() == {
+            'sac': [
+                {'consumer_tag': 'm', 'priority': 3, 'is_active': True},
+                {'consumer_tag': 'z', 'priority': 1, 'is_active': False},
+            ],
+            'q': [
+                {'consumer_tag': 'b', 'priority': 2, 'is_active': True},
+            ],
+        }
+
+    def test_consumer_events(self):
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        self.consume('a', priority=2)
+        self.consume('b', queue='q')
+        self.c1.basic_cancel('a')
+
+        events = self.c2.consumer_events()
+        assert [e['type'] for e in events] == [
+            'registered', 'activated', 'registered', 'cancelled',
+        ]
+        assert events[0] == {
+            'type': 'registered', 'queue': 'sac', 'consumer_tag': 'a',
+            'priority': 2, 'timestamp': ANY,
+        }
+        assert all(isinstance(e['timestamp'], float) for e in events)
+        assert self.event_types(queue='q') == [('registered', 'b')]
+        assert self.event_types(queue='sac', event_type='cancelled') == [
+            ('cancelled', 'a'),
+        ]
+
+        events[0]['type'] = 'changed'
+        assert self.c1.consumer_events()[0]['type'] == 'registered'
+
+        self.c2.clear_consumer_events()
+        assert self.c1.consumer_events() == []
+
+    def test_consume_same_tag_replaces_registration(self):
+        self.consume('a', queue='q', priority=1)
+        self.consume('a', queue='q', priority=4)
+        assert self.c1.consumer_priority_map('q') == {'a': 4}
+
+    def test_delivery_to_active_sac_consumer(self):
+        a, b = Mock(name='a'), Mock(name='b')
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        self.consume('a', callback=a)
+        self.consume('b', channel=self.c2, callback=b)
+
+        self.deliver('sac')
+        a.assert_called_once()
+        assert a.call_args[0][0].channel is self.c1
+        b.assert_not_called()
+
+        self.c1.basic_cancel('a')
+        self.deliver('sac')
+        b.assert_called_once()
+        assert b.call_args[0][0].channel is self.c2
+
+    def test_delivery_respects_priority_and_prefetch(self):
+        high, low = Mock(name='high'), Mock(name='low')
+        self.consume('low', queue='q', channel=self.c2, callback=low,
+                     no_ack=False)
+        self.consume('high', queue='q', priority=10, callback=high,
+                     no_ack=False)
+        self.c1.basic_qos(prefetch_count=1)
+        self.c2.basic_qos(prefetch_count=1)
+
+        self.deliver('q')
+        assert high.call_count == 1
+        assert low.call_count == 0
+
+        self.deliver('q')
+        assert high.call_count == 1
+        assert low.call_count == 1
+
+        # every channel is full: highest priority consumer gets it.
+        self.deliver('q')
+        assert high.call_count == 2
+
+    def test_cancel_keeps_callback_for_remaining_consumers(self):
+        a, b = Mock(name='a'), Mock(name='b')
+        self.consume('a', queue='q', callback=a)
+        self.consume('b', queue='q', channel=self.c2, callback=b)
+
+        self.c1.basic_cancel('a')
+        assert 'q' in self.transport._callbacks
+        self.deliver('q')
+        b.assert_called_once()
+        a.assert_not_called()
+
+        self.c2.basic_cancel('b')
+        assert 'q' not in self.transport._callbacks
+
+    def test_delivery_without_consumers_requeues(self):
+        self.transport._reject_inbound_message = Mock()
+        self.transport._deliver_to_consumer('q', {'foo': 'bar'})
+        self.transport._reject_inbound_message.assert_called_once_with(
+            {'foo': 'bar'})
+
+    def test_delivery_falls_back_to_transport_channels(self):
+        a = Mock(name='a')
+        self.consume('a', queue='q', callback=a)
+        self.transport.state.clear_consumers()
+        self.deliver('q')
+        a.assert_called_once()
+
+    def test_standby_channel_does_not_poll_sac_queue(self):
+        self.c1.queue_declare('sac', arguments=SAC_ARGUMENTS)
+        self.consume('a')
+        self.consume('b', channel=self.c2)
+        self.c1._get = Mock(name='c1._get')
+        self.c2._get = Mock(name='c2._get')
+
+        with pytest.raises(virtual.Empty):
+            self.c2._get_and_deliver('sac', Mock())
+        self.c2._get.assert_not_called()
+
+        callback = Mock(name='callback')
+        self.c1._get_and_deliver('sac', callback)
+        callback.assert_called_once_with(self.c1._get.return_value, 'sac')
+
+        self.c1.basic_cancel('a')
+        self.c2._get_and_deliver('sac', callback)
+        self.c2._get.assert_called_once_with('sac')

@@ -165,6 +165,72 @@ class test_MemoryTransport:
         assert x
         assert chan._queue_for('foo') is x
 
+    def _drain(self, connection):
+        try:
+            while True:
+                connection.drain_events(timeout=0.05)
+        except socket.timeout:
+            pass
+
+    def test_single_active_consumer(self):
+        queue = Queue.with_single_active_consumer(
+            'test_transport_memory_sac', exchange=self.e,
+            routing_key='test_transport_memory_sac')
+        producer = Producer(self.c.channel(), self.e)
+        received = {'first': [], 'second': []}
+        cancelled = []
+
+        def consumer(name):
+            def callback(body, message):
+                received[name].append(body)
+                message.ack()
+            return Consumer(self.c.channel(), [queue], callbacks=[callback],
+                            on_cancel=cancelled.append)
+
+        first, second = consumer('first'), consumer('second')
+        first.consume()
+        second.consume()
+        assert first.is_active_on(queue)
+        assert not second.is_active_on(queue)
+
+        for i in range(3):
+            producer.publish(i, routing_key='test_transport_memory_sac')
+        self._drain(self.c)
+        assert received == {'first': [0, 1, 2], 'second': []}
+
+        tags = first.active_consumer_tags
+        first.cancel()
+        assert cancelled == tags
+        assert second.is_active_on(queue)
+        for i in range(3, 5):
+            producer.publish(i, routing_key='test_transport_memory_sac')
+        self._drain(self.c)
+        assert received == {'first': [0, 1, 2], 'second': [3, 4]}
+
+    def test_new_transport_resets_consumer_state(self):
+        name = 'test_transport_memory_reset'
+        channel = self.c.channel()
+        channel.queue_declare(name, arguments={
+            'x-single-active-consumer': True,
+        })
+        received = []
+        consumer = Consumer(
+            channel, [Queue(name, self.e, routing_key=name)],
+            callbacks=[lambda body, message: received.append(body)],
+        )
+        consumer.consume()
+        assert channel.get_consumer_count(name) == 1
+
+        other = Connection(transport='memory').channel()
+        assert other.get_consumer_count(name) == 0
+        assert other.get_active_consumer(name) is None
+        assert other.consumer_events() == []
+
+        # consumers of the first connection keep receiving messages.
+        Producer(other, self.e).publish('hello', routing_key=name)
+        self._drain(self.c)
+        assert received == ['hello']
+
     # see the issue
     # https://github.com/celery/kombu/issues/1050
     def test_producer_on_return(self):
