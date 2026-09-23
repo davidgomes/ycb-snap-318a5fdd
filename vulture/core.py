@@ -7,7 +7,7 @@ from fnmatch import fnmatch, fnmatchcase
 from functools import partial
 from pathlib import Path
 
-from vulture import lines, noqa, utils
+from vulture import cache, lines, noqa, utils
 from vulture.config import InputError, make_config
 from vulture.reachability import Reachability
 from vulture.utils import ExitCode
@@ -188,10 +188,23 @@ class Item:
 
 
 class Vulture(ast.NodeVisitor):
-    """Find dead code."""
+    """
+    Find dead code.
+
+    If *cache_dir* is given, scavenge() stores the analysis results of all
+    modules in this directory and reuses them in later runs for modules that
+    didn't change and don't (transitively) import changed modules. Changing
+    *ignore_names*, *ignore_decorators* or the *cache_settings* dictionary
+    invalidates the cache.
+    """
 
     def __init__(
-        self, verbose=False, ignore_names=None, ignore_decorators=None
+        self,
+        verbose=False,
+        ignore_names=None,
+        ignore_decorators=None,
+        cache_dir=None,
+        cache_settings=None,
     ):
         self.verbose = verbose
 
@@ -223,6 +236,20 @@ class Vulture(ast.NodeVisitor):
             confidence=100,
         )
         self.reachability = Reachability(report=report)
+
+        self._cache = None
+        if cache_dir is not None:
+            self._cache = cache.Cache(
+                cache_dir,
+                settings={
+                    "cache_settings": cache_settings or {},
+                    "ignore_decorators": self.ignore_decorators,
+                    "ignore_names": self.ignore_names,
+                },
+            )
+        self._cache_stats = {"scanned": set(), "reused": set()}
+        # Import nodes of the current module, only collected for the cache.
+        self._import_nodes = None
 
     def scan(self, code, filename=""):
         filename = Path(filename)
@@ -277,28 +304,159 @@ class Vulture(ast.NodeVisitor):
 
         paths = [Path(path) for path in paths]
 
+        modules = []
         for module in utils.get_modules(paths):
             if exclude_path(module):
                 self._log("Excluded:", module)
-                continue
-
-            self._log("Scanning:", module)
-            try:
-                module_string = utils.read_file(module)
-            except utils.VultureInputException as err:
-                self._log(
-                    f"Error: Could not read file {module} - {err}\n"
-                    f"Try to change the encoding to UTF-8.",
-                    file=sys.stderr,
-                    force=True,
-                )
-                self.exit_code = ExitCode.InvalidInput
             else:
-                self.scan(module_string, filename=module)
+                modules.append(module)
 
+        if self._cache is None:
+            for module in modules:
+                self._scan_module(module)
+            self._scan_whitelists(exclude_path)
+        else:
+            self._scavenge_with_cache(modules, exclude_path)
+
+    def _scavenge_with_cache(self, modules, exclude_path):
+        assert self._cache is not None
+        self._cache.load()
+        keys = [cache.normalize_path(module) for module in modules]
+        current = {
+            key: (module, cache.hash_file(module))
+            for key, module in zip(keys, modules)
+        }
+        stale = self._cache.get_stale_modules(current)
+        entries = {
+            key: self._cache.modules[key] for key in keys if key not in stale
+        }
+        whitelists = {}
+        try:
+            for module, key in zip(modules, keys):
+                if key in stale:
+                    entry = self._scan_module_for_cache(
+                        module, current[key][1]
+                    )
+                    if entry is not None:
+                        entries[key] = entry
+                    self._cache_stats["scanned"].add(key)
+                else:
+                    self._restore_module(module, entries[key])
+                    self._cache_stats["reused"].add(key)
+            self._scan_whitelists(exclude_path, whitelists)
+        finally:
+            # Also store the results so far if the user aborts the analysis.
+            self._cache.save(entries, whitelists, set(keys))
+
+    def _scan_module(self, module):
+        self._log("Scanning:", module)
+        try:
+            module_string = utils.read_file(module)
+        except utils.VultureInputException as err:
+            self._log(
+                f"Error: Could not read file {module} - {err}\n"
+                f"Try to change the encoding to UTF-8.",
+                file=sys.stderr,
+                force=True,
+            )
+            self.exit_code = ExitCode.InvalidInput
+        else:
+            self.scan(module_string, filename=module)
+
+    def _get_collections(self):
+        return [
+            self.defined_attrs,
+            self.defined_classes,
+            self.defined_funcs,
+            self.defined_imports,
+            self.defined_methods,
+            self.defined_props,
+            self.defined_vars,
+            self.unreachable_code,
+        ]
+
+    def _scan_module_for_cache(self, module, checksum):
+        """
+        Scan the module and return its cache entry, or None if the module
+        can't be cached because it's unreadable or invalid.
+        """
+        collections = self._get_collections()
+        sizes = [len(collection) for collection in collections]
+        used_names = self.used_names
+        exit_code = self.exit_code
+        self.used_names = utils.LoggingSet("name", self.verbose)
+        self.exit_code = ExitCode.NoDeadCode
+        self._import_nodes = []
+        try:
+            self._scan_module(module)
+            module_used_names = self.used_names
+            import_nodes = self._import_nodes
+            failed = self.exit_code != ExitCode.NoDeadCode
+        finally:
+            used_names |= self.used_names
+            self.used_names = used_names
+            if self.exit_code == ExitCode.NoDeadCode:
+                self.exit_code = exit_code
+            self._import_nodes = None
+
+        # Don't cache invalid modules to report their errors in every run.
+        if failed or checksum is None:
+            return None
+        defined = {}
+        for collection, size in zip(collections, sizes):
+            if len(collection) > size:
+                defined[collection.typ] = [
+                    [
+                        item.name,
+                        item.first_lineno,
+                        item.last_lineno,
+                        item.confidence,
+                        ""
+                        if item.message == f"unused {item.typ} '{item.name}'"
+                        else item.message,
+                    ]
+                    for item in collection[size:]
+                ]
+        imports, relative_imports = cache.get_import_targets(
+            import_nodes, module
+        )
+        return {
+            "path": str(module),
+            "sha256": checksum,
+            "defined": defined,
+            "used": sorted(module_used_names),
+            "imports": imports,
+            "relative_imports": relative_imports,
+        }
+
+    def _restore_module(self, module, entry):
+        self._log("Reusing cached results:", module)
+        for collection in self._get_collections():
+            collection.extend(
+                Item(
+                    name,
+                    collection.typ,
+                    module,
+                    first_lineno,
+                    last_lineno,
+                    message=message,
+                    confidence=confidence,
+                )
+                for name, first_lineno, last_lineno, confidence, message in (
+                    entry["defined"].get(collection.typ, [])
+                )
+            )
+        self.used_names.update(entry["used"])
+
+    def _scan_whitelists(self, exclude_path, checksums=None):
+        """
+        Scan the bundled whitelists of imported modules. If *checksums* is
+        given, store the checksums of scanned whitelists under the names of
+        the whitelisted modules.
+        """
         unique_imports = {item.name for item in self.defined_imports}
         for import_name in unique_imports:
-            path = Path("whitelists") / (import_name + "_whitelist.py")
+            path = cache.get_whitelist_path(import_name)
             if exclude_path(path):
                 self._log("Excluded whitelist:", path)
             else:
@@ -309,6 +467,8 @@ class Vulture(ast.NodeVisitor):
                     # Most imported modules don't have a whitelist.
                     continue
                 assert module_data is not None
+                if checksums is not None:
+                    checksums[import_name] = cache.hash_bytes(module_data)
                 module_string = module_data.decode("utf-8")
                 self.scan(module_string, filename=path)
 
@@ -597,10 +757,14 @@ class Vulture(ast.NodeVisitor):
 
     def visit_Import(self, node):
         self._add_aliases(node)
+        if self._import_nodes is not None:
+            self._import_nodes.append(node)
 
     def visit_ImportFrom(self, node):
         if node.module != "__future__":
             self._add_aliases(node)
+        if self._import_nodes is not None:
+            self._import_nodes.append(node)
 
     def visit_Name(self, node):
         if (
@@ -668,10 +832,13 @@ def main():
         print(e, file=sys.stderr)
         sys.exit(ExitCode.InvalidCmdlineArguments)
 
+    if config["cache_clear"]:
+        cache.clear_cache(config["cache_dir"])
     vulture = Vulture(
         verbose=config["verbose"],
         ignore_names=config["ignore_names"],
         ignore_decorators=config["ignore_decorators"],
+        cache_dir=config["cache_dir"] if config["cache"] else None,
     )
     vulture.scavenge(config["paths"], exclude=config["exclude"])
     sys.exit(
