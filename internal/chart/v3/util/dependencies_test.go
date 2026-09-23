@@ -21,9 +21,13 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	chart "helm.sh/helm/v4/internal/chart/v3"
 	"helm.sh/helm/v4/internal/chart/v3/loader"
 	"helm.sh/helm/v4/pkg/chart/common"
+	"helm.sh/helm/v4/pkg/chart/common/util"
 )
 
 func loadChart(t *testing.T, path string) *chart.Chart {
@@ -377,6 +381,74 @@ func TestProcessDependencyImportValuesForEnabledCharts(t *testing.T) {
 	prodDependencyValues := c.Dependencies()[0].Values
 	if prodDependencyValues["nameOverride"] != nameOverride {
 		t.Fatalf("dependency chart name should be %s but got %s", nameOverride, prodDependencyValues["nameOverride"])
+	}
+}
+
+func TestProcessDependenciesDoesNotDuplicateMergeStrategyDefaults(t *testing.T) {
+	newChart := func(parentValues map[string]any) *chart.Chart {
+		sub := &chart.Chart{
+			Metadata: &chart.Metadata{
+				APIVersion:  chart.APIVersionV3,
+				Name:        "sub",
+				Version:     "0.1.0",
+				Annotations: map[string]string{"helm.sh/merge-strategy/items": "append"},
+			},
+			Values: map[string]any{"items": []any{"sub-default"}},
+		}
+		parent := &chart.Chart{
+			Metadata: &chart.Metadata{
+				APIVersion:   chart.APIVersionV3,
+				Name:         "parent",
+				Version:      "0.1.0",
+				Dependencies: []*chart.Dependency{{Name: "sub", Version: "0.1.0"}},
+			},
+			Values: parentValues,
+		}
+		parent.AddDependency(sub)
+		return parent
+	}
+
+	tests := []struct {
+		name         string
+		parentValues map[string]any
+		vals         map[string]any
+		expected     []any
+	}{
+		{
+			name:     "subchart defaults",
+			vals:     map[string]any{},
+			expected: []any{"sub-default"},
+		},
+		{
+			name:     "user values",
+			vals:     map[string]any{"sub": map[string]any{"items": []any{"user"}}},
+			expected: []any{"sub-default", "user"},
+		},
+		{
+			name:         "parent override",
+			parentValues: map[string]any{"sub": map[string]any{"items": []any{"parent"}}},
+			vals:         map[string]any{},
+			expected:     []any{"sub-default", "parent"},
+		},
+		{
+			name:         "user values replace the parent override",
+			parentValues: map[string]any{"sub": map[string]any{"items": []any{"parent"}}},
+			vals:         map[string]any{"sub": map[string]any{"items": []any{"user"}}},
+			expected:     []any{"sub-default", "user"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newChart(tt.parentValues)
+			require.NoError(t, ProcessDependencies(c, tt.vals))
+
+			v, err := util.CoalesceValues(c, tt.vals)
+			require.NoError(t, err)
+			sub, err := v.Table("sub")
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, sub["items"])
+		})
 	}
 }
 
