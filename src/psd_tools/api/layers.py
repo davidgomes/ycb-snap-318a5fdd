@@ -106,6 +106,7 @@ from PIL import Image, ImageChops
 
 import psd_tools.psd.engine_data as engine_data
 from psd_tools.api import pil_io
+from psd_tools.api.blend_range import BlendRanges
 from psd_tools.api.effects import Effects
 from psd_tools.api.mask import Mask
 from psd_tools.api.protocols import GroupMixinProtocol, LayerProtocol, PSDProtocol
@@ -831,6 +832,24 @@ class Layer(LayerProtocol):
             self._psd._mark_updated()
         self._record.clipping = clipping
         self._invalidate_bbox()
+
+    @property
+    def blend_ranges(self) -> BlendRanges:
+        """
+        Blend ranges ("Blend If" sliders) of this layer. Writable.
+
+        Modifying the returned object does not update the layer; assign it
+        back to persist changes.
+
+        :return: :py:class:`~psd_tools.api.blend_range.BlendRanges`
+        """
+        return BlendRanges.from_raw(self._record.blending_ranges)
+
+    @blend_ranges.setter
+    def blend_ranges(self, value: BlendRanges) -> None:
+        if self._psd is not None:
+            self._psd._mark_updated()
+        value.apply_to_raw(self._record.blending_ranges)
 
     @property
     def clipping_layer(self) -> bool:
