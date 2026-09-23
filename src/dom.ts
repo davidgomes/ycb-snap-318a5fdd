@@ -70,6 +70,9 @@ export type DOMElement = {
 	onRender?: () => void;
 	onImmediateRender?: () => void;
 	internal_layoutListeners?: Set<LayoutListener>;
+	internal_gridContainer?: boolean;
+	internal_gridItem?: boolean;
+	internal_gridIntrinsicSize?: {width: number; height: number};
 } & InkNode;
 
 export type TextNode = {

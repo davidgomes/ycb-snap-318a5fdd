@@ -244,9 +244,34 @@ export type Styles = {
 	readonly aspectRatio?: number;
 
 	/**
-	Set this property to `none` to hide the element.
+	Set this property to `none` to hide the element. Set it to `grid` to lay out children in a grid defined by `gridTemplateColumns` and `gridTemplateRows`.
 	*/
-	readonly display?: 'flex' | 'none';
+	readonly display?: 'flex' | 'grid' | 'none';
+
+	/**
+	Space-separated list of column track sizes for a grid container. Each track can be a fixed number, a fractional unit (for example, `1fr`), `auto`, or `minmax(min, max)`, where `min` is a fixed number and `max` is a fixed number or a fractional unit.
+
+	@example
+	```
+	'10 1fr auto minmax(5, 2fr)'
+	```
+	*/
+	readonly gridTemplateColumns?: string;
+
+	/**
+	Space-separated list of row track sizes for a grid container. Accepts the same values as `gridTemplateColumns`. When omitted, rows are created automatically as needed.
+	*/
+	readonly gridTemplateRows?: string;
+
+	/**
+	Column placement of a grid item. Accepts a 1-based column line index (for example, `2`) or a `'start / end'` string (for example, `'1 / 3'`).
+	*/
+	readonly gridColumn?: number | string;
+
+	/**
+	Row placement of a grid item. Accepts a 1-based row line index (for example, `2`) or a `'start / end'` string (for example, `'1 / 3'`).
+	*/
+	readonly gridRow?: number | string;
 
 	/**
 	Add a border with a specified style. If `borderStyle` is `undefined` (the default), no border will be added.
@@ -687,7 +712,9 @@ const applyDimensionStyles = (node: YogaNode, style: Styles): void => {
 const applyDisplayStyles = (node: YogaNode, style: Styles): void => {
 	if ('display' in style) {
 		node.setDisplay(
-			style.display === 'flex' ? Yoga.DISPLAY_FLEX : Yoga.DISPLAY_NONE,
+			style.display === 'flex' || style.display === 'grid'
+				? Yoga.DISPLAY_FLEX
+				: Yoga.DISPLAY_NONE,
 		);
 	}
 };

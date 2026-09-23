@@ -9,9 +9,9 @@ import signalExit from 'signal-exit';
 import patchConsole from 'patch-console';
 import {LegacyRoot, ConcurrentRoot} from 'react-reconciler/constants.js';
 import {type FiberRoot} from 'react-reconciler';
-import Yoga from 'yoga-layout';
 import wrapAnsi from 'wrap-ansi';
 import {getWindowSize} from './utils.js';
+import {calculateLayout} from './grid.js';
 import reconciler from './reconciler.js';
 import render from './renderer.js';
 import * as dom from './dom.js';
@@ -505,11 +505,7 @@ export default class Ink {
 
 		this.rootNode.yogaNode!.setWidth(terminalWidth);
 
-		this.rootNode.yogaNode!.calculateLayout(
-			undefined,
-			undefined,
-			Yoga.DIRECTION_LTR,
-		);
+		calculateLayout(this.rootNode);
 	};
 
 	onRender: () => void = () => {
