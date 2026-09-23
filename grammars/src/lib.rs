@@ -327,7 +327,7 @@ mod tests {
                 "  |                          ^---",
                 "  |",
                 "  = error: parsing error occurred.",
-                r#"    note: expected one of tokens: WHITESPACE, `"`, `-`, `A..Z`, `PRIMARY`, `_`, `a..z`, `А..Я`, `а..я`"#,
+                r#"    note: expected one of tokens: WHITESPACE, `"`, `-`, `A..Z`, `PRIMARY`, `_`, `a..z`, `А..я`"#,
                 "    help: Expected table creation.",
                 "          - Add primary key consisting of non nullable table columns.",
             ]

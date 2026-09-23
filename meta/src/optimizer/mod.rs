@@ -20,6 +20,7 @@ macro_rules! box_tree {
     ($expr:expr) => ($expr);
 }
 
+mod coalescer;
 mod concatenator;
 mod factorizer;
 mod lister;
@@ -46,6 +47,7 @@ pub fn optimize(rules: Vec<Rule>) -> Vec<OptimizedRule> {
     optimized
         .into_iter()
         .map(|rule| restorer::restore_on_err(rule, &optimized_map))
+        .map(|rule| coalescer::coalesce(rule, &optimized_map))
         .collect()
 }
 
@@ -436,10 +438,10 @@ mod tests {
                 ty: RuleType::Normal,
                 expr: box_tree!(Choice(
                     Choice(
-                        Choice(Str(String::from("a")), Str(String::from("b"))),
-                        Str(String::from("c"))
+                        Choice(Ident(String::from("a")), Ident(String::from("b"))),
+                        Ident(String::from("c"))
                     ),
-                    Str(String::from("d"))
+                    Ident(String::from("d"))
                 )),
             }]
         };
@@ -449,10 +451,10 @@ mod tests {
                 name: "rule".to_owned(),
                 ty: RuleType::Normal,
                 expr: box_tree!(Choice(
-                    Str(String::from("a")),
+                    Ident(String::from("a")),
                     Choice(
-                        Str(String::from("b")),
-                        Choice(Str(String::from("c")), Str(String::from("d")))
+                        Ident(String::from("b")),
+                        Choice(Ident(String::from("c")), Ident(String::from("d")))
                     )
                 )),
             }]
