@@ -47,6 +47,7 @@ import { BlobReporter, readBlobs } from './reporters/blob'
 import { HangingProcessReporter } from './reporters/hanging-process'
 import { createBenchmarkReporters, createReporters } from './reporters/utils'
 import { VitestResolver } from './resolver'
+import { recordFileDurations } from './sequencers/duration-history'
 import { VitestSpecifications } from './specifications'
 import { StateManager } from './state'
 import { populateProjectsTags } from './tags'
@@ -940,6 +941,12 @@ export class Vitest {
           }
         }
         finally {
+          if (this.config.sequence.recordFileDurations) {
+            await recordFileDurations(this, specs).catch((error) => {
+              this.logger.error('Failed to record test file durations', error)
+            })
+          }
+
           const coverage = await this.coverageProvider?.generateCoverage({ allTestsRun })
 
           const errors = this.state.getUnhandledErrors()

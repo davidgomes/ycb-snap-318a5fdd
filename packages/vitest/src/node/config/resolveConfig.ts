@@ -11,6 +11,7 @@ import type {
 import type { BaseCoverageOptions, CoverageReporterWithOptions } from '../types/coverage'
 import crypto from 'node:crypto'
 import { pathToFileURL } from 'node:url'
+import { inspect } from 'node:util'
 import { slash, toArray } from '@vitest/utils/helpers'
 import { resolveModule } from 'local-pkg'
 import { normalize, relative, resolve } from 'pathe'
@@ -124,6 +125,71 @@ export function resolveApiServerConfig<Options extends ApiConfig & Omit<UserConf
   }
 
   return api
+}
+
+const shardStrategies = ['hash', 'time', 'round-robin', 'affinity']
+const durationSmoothingStrategies = ['latest', 'average', 'p95', 'median']
+const durationFallbackStrategies = ['hash', 'equal-split']
+
+function validateSequenceOptions(sequence: ResolvedConfig['sequence']): void {
+  const options = sequence as unknown as Record<string, unknown>
+  const assert = (name: string, isValid: (value: any) => boolean, expected: string) => {
+    const value = options[name]
+    if (value != null && !isValid(value)) {
+      throw new Error(`"sequence.${name}" must be ${expected}, received ${inspect(value)}.`)
+    }
+  }
+  const oneOf = (values: string[]) => [
+    (value: unknown) => values.includes(value as string),
+    `one of ${values.map(v => `"${v}"`).join(', ')}`,
+  ] as const
+  const isBoolean = (value: unknown) => typeof value === 'boolean'
+  const isNumber = (value: unknown): value is number => typeof value === 'number' && !Number.isNaN(value)
+  const isNonNegativeInteger = (value: unknown) => Number.isInteger(value) && (value as number) >= 0
+
+  assert('shardStrategy', ...oneOf(shardStrategies))
+  assert('balanceShardsByTime', isBoolean, 'a boolean')
+  assert('recordFileDurations', isBoolean, 'a boolean')
+  assert('durationBasedSorting', isBoolean, 'a boolean')
+  assert(
+    'durationHistoryTTL',
+    value => isNumber(value) && Number.isFinite(value) && value >= 0,
+    'a finite number greater than or equal to 0',
+  )
+  assert(
+    'durationHistoryPath',
+    value => typeof value === 'string' && value.length > 0 && value.trim() === value,
+    'a non-empty string without leading or trailing whitespace',
+  )
+  assert(
+    'durationHistoryMaxRuns',
+    value => Number.isInteger(value) && value >= 1,
+    'an integer greater than or equal to 1',
+  )
+  assert('durationSmoothing', ...oneOf(durationSmoothingStrategies))
+  assert('shardAffinityRules', Array.isArray, 'an array')
+  sequence.shardAffinityRules?.forEach((rule, index) => {
+    if (typeof rule !== 'object' || rule === null) {
+      throw new Error(`"sequence.shardAffinityRules[${index}]" must be an object with "pattern" and "shardIndex" properties, received ${inspect(rule)}.`)
+    }
+    if (typeof rule.pattern !== 'string' || rule.pattern.length === 0) {
+      throw new Error(`"sequence.shardAffinityRules[${index}].pattern" must be a non-empty string, received ${inspect(rule.pattern)}.`)
+    }
+    if (!isNonNegativeInteger(rule.shardIndex)) {
+      throw new Error(`"sequence.shardAffinityRules[${index}].shardIndex" must be an integer greater than or equal to 0, received ${inspect(rule.shardIndex)}.`)
+    }
+  })
+  assert(
+    'rebalanceThreshold',
+    value => isNumber(value) && value >= 0 && value <= 1,
+    'a number between 0 and 1',
+  )
+  assert(
+    'isolateSlowThreshold',
+    value => isNumber(value) && value >= 0,
+    'a number greater than or equal to 0',
+  )
+  assert('durationFallbackStrategy', ...oneOf(durationFallbackStrategies))
 }
 
 function resolveInlineWorkerOption(value: string | number): number {
@@ -774,6 +840,26 @@ export function resolveConfig(
   }
   resolved.sequence.groupOrder ??= 0
   resolved.sequence.hooks ??= 'stack'
+
+  validateSequenceOptions(resolved.sequence)
+  if (resolved.sequence.balanceShardsByTime === true && resolved.sequence.shardStrategy == null) {
+    resolved.sequence.shardStrategy = 'time'
+  }
+  resolved.sequence.shardStrategy ??= 'hash'
+  resolved.sequence.balanceShardsByTime = resolved.sequence.shardStrategy === 'time'
+    ? resolved.sequence.balanceShardsByTime ?? false
+    : false
+  resolved.sequence.recordFileDurations ??= false
+  resolved.sequence.durationBasedSorting ??= false
+  resolved.sequence.durationHistoryTTL ??= 0
+  resolved.sequence.durationHistoryPath ??= 'duration-history.json'
+  resolved.sequence.durationHistoryMaxRuns ??= 1
+  resolved.sequence.durationSmoothing ??= 'latest'
+  resolved.sequence.shardAffinityRules ??= []
+  resolved.sequence.rebalanceThreshold ??= 0
+  resolved.sequence.isolateSlowThreshold ??= 0
+  resolved.sequence.durationFallbackStrategy ??= 'hash'
+
   // Set seed if either files or tests are shuffled
   if (resolved.sequence.sequencer === RandomSequencer || resolved.sequence.shuffle) {
     resolved.sequence.seed ??= Date.now()

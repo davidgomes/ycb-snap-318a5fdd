@@ -79,6 +79,24 @@ export interface ProjectName {
   color?: LabelColor
 }
 
+export type ShardStrategy = 'hash' | 'time' | 'round-robin' | 'affinity'
+
+export type DurationSmoothing = 'latest' | 'average' | 'p95' | 'median'
+
+export type DurationFallbackStrategy = 'hash' | 'equal-split'
+
+export interface ShardAffinityRule {
+  /**
+   * Glob pattern matched against the test file path relative to the root.
+   */
+  pattern: string
+  /**
+   * Zero-based index of the shard that should run matching files.
+   * Clamped to the last shard if it exceeds the shard count.
+   */
+  shardIndex: number
+}
+
 interface SequenceOptions {
   /**
    * Class that handles sorting and sharding algorithm.
@@ -140,6 +158,79 @@ interface SequenceOptions {
    * @default 'stack'
    */
   hooks?: SequenceHooks
+  /**
+   * Algorithm used to distribute test files between shards when `--shard` is used.
+   * - `hash` distributes files by the hash of their path
+   * - `time` assigns the slowest files first to the least loaded shard
+   * - `round-robin` deals files sorted by duration across shards back and forth
+   * - `affinity` pins files to shards using `shardAffinityRules`, the rest is distributed by `time`
+   *
+   * Duration-aware strategies read durations from `durationHistoryPath`.
+   * @default 'hash'
+   */
+  shardStrategy?: ShardStrategy
+  /**
+   * Shorthand for `shardStrategy: 'time'`. Ignored if another `shardStrategy` is set.
+   * @default false
+   */
+  balanceShardsByTime?: boolean
+  /**
+   * Write test file durations to `durationHistoryPath` after the test run.
+   * @default false
+   */
+  recordFileDurations?: boolean
+  /**
+   * Run test files with the longest recorded duration first.
+   * Files without recorded duration run last.
+   * @default false
+   */
+  durationBasedSorting?: boolean
+  /**
+   * Recorded durations older than this amount of milliseconds are ignored.
+   * `0` disables expiration.
+   * @default 0
+   */
+  durationHistoryTTL?: number
+  /**
+   * Path to the duration history file, relative to the root.
+   * @default 'duration-history.json'
+   */
+  durationHistoryPath?: string
+  /**
+   * How many recorded durations to keep for every test file.
+   * @default 1
+   */
+  durationHistoryMaxRuns?: number
+  /**
+   * How to reduce multiple recorded durations of a test file into one value.
+   * @default 'latest'
+   */
+  durationSmoothing?: DurationSmoothing
+  /**
+   * Rules that pin test files to a specific shard when `shardStrategy` is `affinity`.
+   * The first matching rule wins.
+   * @default []
+   */
+  shardAffinityRules?: ShardAffinityRule[]
+  /**
+   * Print a warning if the ratio between the least and the most loaded shard
+   * is below this value. Accepts a number between `0` and `1`, `0` disables the check.
+   * @default 0
+   */
+  rebalanceThreshold?: number
+  /**
+   * Test files with a recorded duration above this amount of milliseconds
+   * run in their own shard. `0` disables isolation.
+   * @default 0
+   */
+  isolateSlowThreshold?: number
+  /**
+   * How to distribute test files if duration history is not available.
+   * - `hash` distributes files by the hash of their path
+   * - `equal-split` distributes files sorted by path one by one
+   * @default 'hash'
+   */
+  durationFallbackStrategy?: DurationFallbackStrategy
 }
 
 export type DepsOptimizationOptions = Omit<
@@ -1189,6 +1280,18 @@ export interface ResolvedConfig
     concurrent?: boolean
     seed: number
     groupOrder: number
+    shardStrategy: ShardStrategy
+    balanceShardsByTime: boolean
+    recordFileDurations: boolean
+    durationBasedSorting: boolean
+    durationHistoryTTL: number
+    durationHistoryPath: string
+    durationHistoryMaxRuns: number
+    durationSmoothing: DurationSmoothing
+    shardAffinityRules: ShardAffinityRule[]
+    rebalanceThreshold: number
+    isolateSlowThreshold: number
+    durationFallbackStrategy: DurationFallbackStrategy
   }
 
   typecheck: Omit<TypecheckConfig, 'enabled'> & {
