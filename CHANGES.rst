@@ -36,6 +36,11 @@ New Features
 - :func:`selectors.has_nulls` now takes a ``proportion`` parameter, which allows
   selecting columns that have a fraction of null values above the given threshold.
   :pr:`1881` by :user:`Gabriela Gómez Jiménez <gabrielapgomezji>`.
+- The new :class:`DurationEncoder` extracts numeric features (total seconds,
+  days, hours, …) from duration (``timedelta64`` / ``Duration``) columns. The
+  :class:`TableVectorizer` has a new ``duration`` parameter and uses a
+  :class:`DurationEncoder` for such columns by default, and a new
+  :func:`selectors.duration` selector has been added.
 
 Changes
 -------
