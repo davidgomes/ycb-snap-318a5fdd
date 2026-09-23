@@ -1,5 +1,5 @@
 psd\_tools\.api\.blend\_range
-============================
+=============================
 
 .. automodule:: psd_tools.api.blend_range
 
