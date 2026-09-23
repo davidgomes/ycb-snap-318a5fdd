@@ -954,6 +954,28 @@ class TaskImpl<T, E> implements PromiseLike<Result<T, E>> {
   flatten<A, F, G>(this: Task<Task<A, F>, G>): Task<A, F | G> {
     return this.andThen(identity);
   }
+
+  /**
+    Asynchronously iterate over the `Task`. Once the task settles, this yields
+    exactly one {@linkcode Result}: {@linkcode "result".Ok Ok} with the value if
+    the task resolved, or {@linkcode "result".Err Err} with the reason if it
+    rejected.
+
+    ```ts
+    import * as task from 'true-myth/task';
+
+    for await (const result of task.resolve(42)) {
+      console.log(result.toString()); // Ok(42)
+    }
+
+    for await (const result of task.reject('oh no')) {
+      console.log(result.toString()); // Err(oh no)
+    }
+    ```
+   */
+  async *[Symbol.asyncIterator](): AsyncGenerator<Result<T, E>, void, undefined> {
+    yield await this.#promise;
+  }
 }
 
 /**
@@ -2688,6 +2710,247 @@ export function flatten<T, E, F>(nestedTask: Task<Task<T, E>, F>): Task<T, E | F
   // Uses `andThen` directly rather than calling `.flatten()` to avoid an extra
   // function dispatch.
   return nestedTask.andThen(identity);
+}
+
+/**
+  Given any iterable of {@linkcode Task}s, produce a `Task` that resolves with
+  an array of all the resolved values once every task resolves, or rejects
+  with the reason of the first task to reject. This is {@linkcode all}
+  generalized to any `Iterable`.
+
+  ```ts
+  import * as task from 'true-myth/task';
+
+  await task.sequence([task.resolve(1), task.resolve(2)]); // Ok([1, 2])
+  await task.sequence([task.resolve(1), task.reject('a')]); // Err('a')
+  ```
+
+  @param tasks The `Task`s to combine.
+ */
+export function sequence(tasks: readonly []): Task<[], never>;
+export function sequence<const A extends readonly AnyTask[]>(tasks: A): All<A>;
+export function sequence<T, E>(tasks: Iterable<Task<T, E>>): Task<Array<T>, E>;
+export function sequence<T, E>(tasks: Iterable<Task<T, E>>): Task<Array<T>, E> {
+  return all(Array.from(tasks));
+}
+
+/**
+  Apply a {@linkcode Task}-producing function to every item in an iterable,
+  running all the resulting tasks concurrently. The resulting `Task` resolves
+  with an array of the resolved values (in input order) once every task
+  resolves, or rejects with the reason of the first task to reject.
+
+  To run the tasks one at a time instead, use {@linkcode traverseSerial}.
+
+  ```ts
+  import * as task from 'true-myth/task';
+
+  const fetchUser = (id: number) => task.fromPromise(api.getUser(id));
+  let users = await task.traverse([1, 2, 3], fetchUser);
+  ```
+
+  @param items The items to transform.
+  @param fn    The function to apply to each item, along with its index.
+ */
+export function traverse<T, U, E>(
+  items: Iterable<T>,
+  fn: (item: T, index: number) => Task<U, E>
+): Task<Array<U>, E>;
+export function traverse<T, U, E>(
+  fn: (item: T, index: number) => Task<U, E>
+): (items: Iterable<T>) => Task<Array<U>, E>;
+export function traverse<T, U, E>(
+  itemsOrFn: Iterable<T> | ((item: T, index: number) => Task<U, E>),
+  fn?: (item: T, index: number) => Task<U, E>
+): Task<Array<U>, E> | ((items: Iterable<T>) => Task<Array<U>, E>) {
+  if (fn === undefined) {
+    const curriedFn = itemsOrFn as (item: T, index: number) => Task<U, E>;
+    return (items: Iterable<T>) => traverse(items, curriedFn);
+  }
+
+  return sequence(Array.from(itemsOrFn as Iterable<T>, fn));
+}
+
+/**
+  Apply a {@linkcode Task}-producing function to every item in an iterable,
+  running the resulting tasks one at a time: `fn` is not called for the next
+  item until the task for the previous item has resolved. The resulting `Task`
+  resolves with an array of the resolved values, or rejects with the reason of
+  the first task to reject, in which case `fn` is not called again and no
+  further items are pulled from the iterable.
+
+  To run the tasks concurrently instead, use {@linkcode traverse}.
+
+  ```ts
+  import * as task from 'true-myth/task';
+
+  const save = (record: Record) => task.fromPromise(db.save(record));
+  let saved = await task.traverseSerial(records, save);
+  ```
+
+  @param items The items to transform.
+  @param fn    The function to apply to each item, along with its index.
+ */
+export function traverseSerial<T, U, E>(
+  items: Iterable<T>,
+  fn: (item: T, index: number) => Task<U, E>
+): Task<Array<U>, E>;
+export function traverseSerial<T, U, E>(
+  fn: (item: T, index: number) => Task<U, E>
+): (items: Iterable<T>) => Task<Array<U>, E>;
+export function traverseSerial<T, U, E>(
+  itemsOrFn: Iterable<T> | ((item: T, index: number) => Task<U, E>),
+  fn?: (item: T, index: number) => Task<U, E>
+): Task<Array<U>, E> | ((items: Iterable<T>) => Task<Array<U>, E>) {
+  if (fn === undefined) {
+    const curriedFn = itemsOrFn as (item: T, index: number) => Task<U, E>;
+    return (items: Iterable<T>) => traverseSerial(items, curriedFn);
+  }
+
+  const items = itemsOrFn as Iterable<T>;
+  const mapFn = fn;
+  const run = async (): Promise<Result<Array<U>, E>> => {
+    const values: U[] = [];
+    let index = 0;
+    for (const item of items) {
+      const r = await mapFn(item, index++);
+      if (r.isErr) {
+        return Result.err(r.error);
+      }
+      values.push(r.value);
+    }
+    return Result.ok(values);
+  };
+
+  return fromUnsafePromise(run());
+}
+
+/**
+  Combine two {@linkcode Task}s, running concurrently, into a `Task` of a
+  tuple. It resolves once both resolve, or rejects with the reason of the first
+  one to reject.
+
+  ```ts
+  import * as task from 'true-myth/task';
+
+  await task.zip(task.resolve(1), task.resolve('a')); // Ok([1, 'a'])
+  ```
+
+  @param a The first `Task`.
+  @param b The second `Task`.
+ */
+export function zip<A, B, E1, E2>(a: Task<A, E1>, b: Task<B, E2>): Task<[A, B], E1 | E2> {
+  return all([a, b]);
+}
+
+/**
+  Combine the resolved values of two {@linkcode Task}s, running concurrently,
+  using `fn`. It resolves once both resolve, or rejects with the reason of the
+  first one to reject.
+
+  ```ts
+  import * as task from 'true-myth/task';
+
+  const add = (x: number, y: number) => x + y;
+  await task.zipWith(task.resolve(1), task.resolve(2), add); // Ok(3)
+  ```
+
+  @param a  The first `Task`.
+  @param b  The second `Task`.
+  @param fn The function to combine the two values with.
+ */
+export function zipWith<A, B, U, E1, E2>(
+  a: Task<A, E1>,
+  b: Task<B, E2>,
+  fn: (a: A, b: B) => U
+): Task<U, E1 | E2> {
+  return zip(a, b).map(([x, y]) => fn(x, y));
+}
+
+/**
+  Run a side effect with the resolved value of a {@linkcode Task}, passing the
+  value through unchanged. `fn` is only called if the task resolves.
+
+  ```ts
+  import * as task from 'true-myth/task';
+
+  const log = (value: unknown) => console.log(value);
+
+  task.tap(task.resolve(42), log); // logs 42; resolves with 42
+  task.tap(log)(task.resolve(42)); // same, curried
+  ```
+
+  @param task The `Task` to tap into.
+  @param fn   The function to call with the resolved value.
+ */
+export function tap<T, E>(task: Task<T, E>, fn: (value: T) => void): Task<T, E>;
+export function tap<T, E>(fn: (value: T) => void): (task: Task<T, E>) => Task<T, E>;
+export function tap<T, E>(
+  taskOrFn: Task<T, E> | ((value: T) => void),
+  fn?: (value: T) => void
+): Task<T, E> | ((task: Task<T, E>) => Task<T, E>) {
+  if (fn === undefined) {
+    const curriedFn = taskOrFn as (value: T) => void;
+    return (task: Task<T, E>) => task.inspect(curriedFn);
+  }
+
+  return (taskOrFn as Task<T, E>).inspect(fn);
+}
+
+/**
+  Run a side effect with the rejection reason of a {@linkcode Task}, passing
+  the rejection through unchanged. `fn` is only called if the task rejects.
+
+  ```ts
+  import * as task from 'true-myth/task';
+
+  const logError = (error: unknown) => console.error(error);
+
+  task.tapRejected(task.reject('oh no'), logError); // logs 'oh no'; rejects with 'oh no'
+  task.tapRejected(logError)(task.reject('oh no')); // same, curried
+  ```
+
+  @param task The `Task` to tap into.
+  @param fn   The function to call with the rejection reason.
+ */
+export function tapRejected<T, E>(task: Task<T, E>, fn: (reason: E) => void): Task<T, E>;
+export function tapRejected<T, E>(fn: (reason: E) => void): (task: Task<T, E>) => Task<T, E>;
+export function tapRejected<T, E>(
+  taskOrFn: Task<T, E> | ((reason: E) => void),
+  fn?: (reason: E) => void
+): Task<T, E> | ((task: Task<T, E>) => Task<T, E>) {
+  if (fn === undefined) {
+    const curriedFn = taskOrFn as (reason: E) => void;
+    return (task: Task<T, E>) => task.inspectRejected(curriedFn);
+  }
+
+  return (taskOrFn as Task<T, E>).inspectRejected(fn);
+}
+
+/**
+  Call a {@linkcode Task}-producing function, and if the task rejects, call it
+  again, up to `n` additional times. The result resolves with the first
+  resolved value, or rejects with the reason of the final attempt if every
+  attempt rejects. `fn` receives the 0-indexed attempt number.
+
+  For delays between attempts, custom retry strategies, or early termination,
+  use {@linkcode withRetries} instead.
+
+  ```ts
+  import * as task from 'true-myth/task';
+
+  // Tries at most 4 times in total.
+  let response = await task.retryN(3, () => task.fromPromise(fetch(url)));
+  ```
+
+  @param n  The maximum number of retries after the first attempt.
+  @param fn The function which produces the `Task` to try.
+ */
+export function retryN<T, E>(n: number, fn: (attempt: number) => Task<T, E>): Task<T, E> {
+  const attempt = (count: number): Task<T, E> =>
+    fn(count).orElse((reason) => (count < n ? attempt(count + 1) : Task.reject<T, E>(reason)));
+
+  return attempt(0);
 }
 
 /**
