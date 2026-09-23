@@ -501,8 +501,6 @@ class StencilFunc(object):
             raise NumbaValueError("%d dimensional neighborhood specified "
                                   "for %d dimensional input array" %
                                   (len(self.neighborhood), argtys[0].ndim))
-        if isinstance(argtys[0], types.npytypes.Array):
-            self.get_modes(argtys[0].ndim)
 
         argtys_extra = argtys
         sig_extra = ""
@@ -908,7 +906,6 @@ class StencilFunc(object):
             raise NumbaValueError("{} dimensional neighborhood specified for "
                                   "{} dimensional input array".format(
                                   len(self.neighborhood), args[0].ndim))
-        self.get_modes(args[0].ndim)
 
         if 'out' in kwargs:
             result = kwargs['out']

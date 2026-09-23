@@ -173,9 +173,10 @@ class StencilPass(object):
             self.typemap[parfor_var.name] = types.intp
             parfor_vars.append(parfor_var)
 
+        modes = stencil_func.get_modes(ndims)
         start_lengths, end_lengths = self._replace_stencil_accesses(
              stencil_ir, parfor_vars, in_args, index_offsets, stencil_func,
-             arg_to_arr_dict)
+             arg_to_arr_dict, modes)
 
         if config.DEBUG_ARRAY_OPT >= 1:
             print("stencil_blocks after replace stencil accesses")
@@ -192,10 +193,16 @@ class StencilPass(object):
         start_inds = []
         last_inds = []
         for i in range(ndims):
+            # Out-of-bounds accesses are remapped in non-constant modes so
+            # the whole dimension is iterated.
+            if modes[i] == 'constant':
+                start_length, end_length = start_lengths[i], end_lengths[i]
+            else:
+                start_length, end_length = 0, 0
             last_ind = self._get_stencil_last_ind(in_arr_dim_sizes[i],
-                                        end_lengths[i], gen_nodes, scope, loc)
+                                        end_length, gen_nodes, scope, loc)
             start_ind = self._get_stencil_start_ind(
-                                        start_lengths[i], gen_nodes, scope, loc)
+                                        start_length, gen_nodes, scope, loc)
             start_inds.append(start_ind)
             last_inds.append(last_ind)
             # start from stencil size to avoid invalid array access
@@ -378,6 +385,8 @@ class StencilPass(object):
 
             # For each dimension, add setitem to set border values.
             for dim in range(in_arr_typ.ndim):
+                if modes[dim] != 'constant':
+                    continue
                 # First, fill all entries with ":".
                 start_tuple_items = [slice_var] * in_arr_typ.ndim
                 last_tuple_items = [slice_var] * in_arr_typ.ndim
@@ -548,11 +557,16 @@ class StencilPass(object):
         return ret_var
 
     def _replace_stencil_accesses(self, stencil_ir, parfor_vars, in_args,
-                                  index_offsets, stencil_func, arg_to_arr_dict):
+                                  index_offsets, stencil_func, arg_to_arr_dict,
+                                  modes):
         """ Convert relative indexing in the stencil kernel to standard indexing
             by adding the loop index variables to the corresponding dimensions
-            of the array index tuples.
+            of the array index tuples. If any of ``modes`` is not 'constant',
+            accesses are made through a function mapping out-of-bounds indices
+            according to ``modes``.
         """
+        from numba.stencils.stencil import _get_mode_accessor
+        remap = any(m != 'constant' for m in modes)
         stencil_blocks = stencil_ir.blocks
         in_arr = in_args[0]
         in_arg_names = [x.name for x in in_args]
@@ -654,6 +668,34 @@ class StencilPass(object):
                     # update access indices
                     index_vars = self._add_index_offsets(parfor_vars,
                                 list(index_list), new_body, scope, loc)
+
+                    if remap:
+                        if any(isinstance(self.typemap[v.name],
+                                          types.misc.SliceType)
+                               for v in index_vars):
+                            raise NumbaValueError("Slice indexing in stencil "
+                                                  "kernels is only supported "
+                                                  "in 'constant' mode.")
+                        arr_typ = self.typemap[stmt.value.value.name]
+                        accessor = _get_mode_accessor(
+                            modes, arr_typ.dtype,
+                            stencil_func.options.get("cval", 0))
+                        accessor_typ = types.functions.Dispatcher(accessor)
+                        acc_var = ir.Var(scope,
+                                         mk_unique_var("stencil_mode_access"),
+                                         loc)
+                        self.typemap[acc_var.name] = accessor_typ
+                        new_body.append(ir.Assign(
+                            ir.Global("stencil_mode_access", accessor, loc),
+                            acc_var, loc))
+                        acc_call = ir.Expr.call(
+                            acc_var, [stmt.value.value] + index_vars, (), loc)
+                        self.calltypes[acc_call] = accessor_typ.get_call_type(
+                            self.typingctx,
+                            [arr_typ] + [types.intp] * ndims, {})
+                        stmt.value = acc_call
+                        new_body.append(stmt)
+                        continue
 
                     # new access index tuple
                     if ndims == 1:

@@ -220,6 +220,14 @@ class InlineClosureCallPass(object):
         kernel_ir = get_ir_of_code(self.func_ir.func_id.func.__globals__,
                                    stencil_def.code)
         options = dict(expr.kws)
+        mode = 'constant'
+        if 'mode' in options:
+            mode = guard(self._get_stencil_mode, options.pop('mode'))
+            if mode is None:
+                raise ValueError(
+                    "stencil mode option should be a constant string"
+                    " or tuple of strings such as ('wrap', 'nearest')"
+                )
         if 'neighborhood' in options:
             fixed = guard(self._fix_stencil_neighborhood, options)
             if not fixed:
@@ -234,12 +242,24 @@ class InlineClosureCallPass(object):
                     "stencil index_offsets option should be a tuple"
                     " with constant structure such as (offset, )"
                 )
-        sf = StencilFunc(kernel_ir, 'constant', options)
-        sf.kws = expr.kws # hack to keep variables live
+        sf = StencilFunc(kernel_ir, mode, options)
+        # hack to keep variables live
+        sf.kws = [kw for kw in expr.kws if kw[0] != 'mode']
         sf_global = ir.Global('stencil', sf, expr.loc)
         self.func_ir._definitions[lhs.name] = [sf_global]
         instr.value = sf_global
         return True
+
+    def _get_stencil_mode(self, mode_var):
+        """
+        Extract the constant stencil mode, a string or a tuple of strings,
+        from the program IR.
+        """
+        mode_def = get_definition(self.func_ir, mode_var)
+        if isinstance(mode_def, ir.Expr) and mode_def.op == 'build_tuple':
+            return tuple(ir_utils.find_const(self.func_ir, v)
+                         for v in mode_def.items)
+        return ir_utils.find_const(self.func_ir, mode_var)
 
     def _fix_stencil_neighborhood(self, options):
         """
