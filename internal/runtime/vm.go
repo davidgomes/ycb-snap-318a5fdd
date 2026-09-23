@@ -461,24 +461,8 @@ func (vm *VM) scriggoMethod(v reflect.Value, name string) (fn *Function, rcvr re
 	if !isScriggoType {
 		return nil, reflect.Value{}, false
 	}
-	ms, hasMethods := st.(ScriggoMethodSet)
-	if !hasMethods {
-		return nil, reflect.Value{}, false
-	}
-	fn, deref := ms.BoundMethod(name)
-	if fn == nil {
-		return nil, reflect.Value{}, false
-	}
 	v, _ = st.Unwrap(v)
-	if deref {
-		if v.IsNil() {
-			panic(errNilPointer)
-		}
-		v = v.Elem()
-	}
-	rcvr = reflect.New(v.Type()).Elem()
-	rcvr.Set(v)
-	return fn, rcvr, true
+	return boundMethod(st, v, name)
 }
 
 // equals reports whether x and y are equal.

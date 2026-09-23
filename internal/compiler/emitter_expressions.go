@@ -941,8 +941,16 @@ func (em *emitter) emitUnaryOp(expr *ast.UnaryOperator, reg int8, regType reflec
 		case *ast.Identifier:
 			if em.fb.declaredInFunc(operand.Name) {
 				r := em.fb.scopeLookup(operand.Name)
-				em.fb.emitNew(em.types.PointerTo(exprType), reg)
-				em.fb.emitMove(false, -r, reg, regType.Kind())
+				if canEmitDirectly(exprKind, regType.Kind()) {
+					em.fb.emitNew(em.types.PointerTo(exprType), reg)
+					em.fb.emitMove(false, -r, reg, regType.Kind())
+					return
+				}
+				em.fb.enterStack()
+				tmp := em.fb.newRegister(reflect.Ptr)
+				em.fb.emitMove(false, -r, tmp, reflect.Ptr)
+				em.changeRegister(false, tmp, reg, exprType, regType)
+				em.fb.exitStack()
 				return
 			}
 			// Address of a non-local variable.

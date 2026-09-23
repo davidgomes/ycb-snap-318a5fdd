@@ -1807,7 +1807,7 @@ func (vm *VM) run() (Addr, bool) {
 			rv := reflect.New(t).Elem()
 			vm.getIntoReflectValue(b, rv, op < 0)
 			if st != nil {
-				rv = st.Wrap(rv)
+				rv = vm.wrap(st, rv)
 			}
 			var v interface{}
 			if rv.IsValid() {
@@ -1962,7 +1962,7 @@ func (vm *VM) run() (Addr, bool) {
 			v := reflect.New(t).Elem()
 			vm.getIntoReflectValue(b, v, op < 0)
 			if st != nil {
-				v = st.Wrap(v)
+				v = vm.wrap(st, v)
 			}
 			vm.setGeneral(c, v)
 

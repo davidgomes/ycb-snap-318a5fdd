@@ -294,8 +294,9 @@ func (types *Types) TypeOf(v reflect.Value) reflect.Type {
 	if !v.IsValid() {
 		return nil
 	}
-	if p, ok := v.Interface().(emptyInterfaceProxy); ok {
-		return p.sign
+	if p, ok := v.Interface().(runtime.Proxy); ok {
+		_, sign := p.ScriggoValue()
+		return sign
 	}
 	return v.Type()
 }
