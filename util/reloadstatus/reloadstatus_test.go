@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/prometheus/common/promslog"
@@ -146,6 +147,31 @@ func TestStoreIsolatesCallers(t *testing.T) {
 	got.AppliedReloaders[0] = "changed"
 	got.ReloaderTimingsMs["changed"] = 1
 	require.Equal(t, failedStatus(), s.Get())
+}
+
+func TestStoreConcurrentAccess(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir, promslog.NewNopLogger())
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			for range 20 {
+				require.NoError(t, s.Set(failedStatus()))
+			}
+		})
+		wg.Go(func() {
+			for range 20 {
+				st := s.Get()
+				st.AppliedReloaders = append(st.AppliedReloaders, "reader")
+				st.ReloaderTimingsMs["reader"] = 0
+			}
+		})
+	}
+	wg.Wait()
+
+	require.Equal(t, failedStatus(), s.Get())
+	require.Equal(t, failedStatus(), NewStore(dir, promslog.NewNopLogger()).Get())
 }
 
 func TestStoreSetKeepsStatusWhenPersistingFails(t *testing.T) {
