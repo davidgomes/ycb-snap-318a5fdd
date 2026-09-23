@@ -176,13 +176,19 @@ class StateDataStore:
 
     Also keeps the data snapshots recorded for history pseudo-states and the log of
     assignments made during the current macrostep.
+
+    Args:
+        enabled: Whether any state of the machine declares data. When ``False``, every
+            view is the same empty view, keeping machines without data overhead-free.
     """
 
-    def __init__(self):
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
         self._active: Dict[str, Dict[str, Any]] = {}
         self._history: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._capture: Dict[str, List[str]] = {}
         self._changes: List[DataChangeInfo] = []
+        self._empty_view = StateDataView(self, None)
 
     def get(self, state_id: str) -> "Dict[str, Any] | None":
         return self._active.get(state_id)
@@ -191,6 +197,8 @@ class StateDataStore:
         return {state_id: dict(data) for state_id, data in self._active.items()}
 
     def view(self, state: "State") -> "StateDataView":
+        if not self.enabled:
+            return self._empty_view
         return StateDataView(self, state)
 
     def activate(self, state: "State", restored: "Dict[str, Any] | None" = None) -> None:
@@ -278,14 +286,14 @@ class StateDataView(MutableMapping):
 
     __slots__ = ("_store", "_state")
 
-    def __init__(self, store: StateDataStore, state: "State"):
+    def __init__(self, store: StateDataStore, state: "State | None"):
         self._store = store
         self._state = state
 
     def _scopes(self) -> "Iterator[Tuple[State, Dict[str, Any]]]":
         """Active ``(state, data)`` pairs from the innermost state outwards."""
         active = self._store._active
-        state: "State | None" = self._state
+        state = self._state
         while state is not None:
             data = active.get(state.id)
             if data is not None:

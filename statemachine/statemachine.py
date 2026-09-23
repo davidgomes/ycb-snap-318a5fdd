@@ -132,6 +132,7 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
     """List of top-level :ref:`State` objects marked as ``final``."""
 
     _abstract: bool
+    _has_state_data: bool = False
     _events: "Dict[Event, None]"
     _protected_attrs: set
     _specs: CallbackSpecList
@@ -150,7 +151,7 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         self.history_values: Dict[
             str, List[State]
         ] = {}  # Mapping of compound states to last active state(s).
-        self._state_data = StateDataStore()
+        self._state_data = StateDataStore(enabled=self._has_state_data)
         self.state_field = state_field
         self.start_configuration_values = (
             [start_value] if start_value is not None else list(self.start_configuration_values)
@@ -172,11 +173,12 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         # after state machine creation.
         self._engine = self._get_engine()
         self._engine.start(**kwargs)
-        # A configuration restored from the model skips state entry.
-        states_map = self.states_map
-        self._state_data.activate_all(
-            states_map[value] for value in self.configuration_values if value in states_map
-        )
+        if self._has_state_data:
+            # A configuration restored from the model skips state entry.
+            states_map = self.states_map
+            self._state_data.activate_all(
+                states_map[value] for value in self.configuration_values if value in states_map
+            )
 
     def _get_engine(self):
         if self._callbacks.has_async_callbacks:

@@ -259,6 +259,8 @@ class StateMachineMetaclass(type):
         for visited in iterate_states_and_transitions(cls.states):
             visited._setup()
 
+        cls._has_state_data = any(state.data for state in cls.states_map.values())
+
         cls._protected_attrs = {
             "_abstract",
             "model",

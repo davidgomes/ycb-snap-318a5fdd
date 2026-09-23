@@ -529,7 +529,10 @@ class BaseEngine:
         Exit callbacks share the kwargs of the transition source, but each exited state
         must see its own data.
         """
-        return {**kwargs, "state_data": self.sm._state_data.view(state)}
+        state_data = self.sm._state_data
+        if not state_data.enabled:
+            return kwargs
+        return {**kwargs, "state_data": state_data.view(state)}
 
     def _execute_transition_content(
         self,
@@ -601,6 +604,8 @@ class BaseEngine:
         Each ``default_history_content`` entry starts with the history pseudo-state that
         was targeted; its snapshot holds the data of the states it will restore.
         """
+        if not default_history_content:
+            return {}
         return self.sm._state_data.history_data(
             entries[0].state.id for entries in default_history_content.values()
         )
