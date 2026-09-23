@@ -8,6 +8,12 @@ import {
   resolveFetchOptions,
   callHooks,
 } from "./utils.ts";
+import {
+  acquireCircuit,
+  getRequestOrigin,
+  resolveCircuitBreakerOptions,
+  type CircuitRegistry,
+} from "./circuit.ts";
 import type {
   CreateFetchOptions,
   FetchResponse,
@@ -16,6 +22,7 @@ import type {
   $Fetch,
   FetchRequest,
   FetchOptions,
+  IFetchError,
 } from "./types.ts";
 
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
@@ -33,8 +40,17 @@ const retryStatusCodes = new Set([
 // https://developer.mozilla.org/en-US/docs/Web/API/Response/body
 const nullBodyResponses = new Set([101, 204, 205, 304]);
 
+// Lets clients derived via `.create()` share circuit state with their parent
+const inheritedCircuits = new WeakMap<CreateFetchOptions, CircuitRegistry>();
+
 export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
   const { fetch = globalThis.fetch } = globalOptions;
+
+  const circuits: CircuitRegistry =
+    inheritedCircuits.get(globalOptions) || new Map();
+
+  // Errors thrown because of a rejected response status (not network, parse, or hook failures)
+  const statusErrors = new WeakSet<object>();
 
   async function onError(context: FetchContext): Promise<FetchResponse<any>> {
     // Is Abort
@@ -69,15 +85,22 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         }
         // Timeout
-        return $fetchRaw(context.request, {
-          ...context.options,
-          retry: retries - 1,
-        });
+        return $fetchRaw(
+          context.request,
+          {
+            ...context.options,
+            retry: retries - 1,
+          },
+          true
+        );
       }
     }
 
     // Throw normalized error
     const error = createFetchError(context);
+    if (context.response && !context.error) {
+      statusErrors.add(error);
+    }
 
     // Only available on V8 based runtimes (https://v8.dev/docs/stack-trace-api)
     if (Error.captureStackTrace) {
@@ -86,10 +109,11 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
     throw error;
   }
 
-  const $fetchRaw: $Fetch["raw"] = async function $fetchRaw<
-    T = any,
-    R extends ResponseType = "json",
-  >(_request: FetchRequest, _options: FetchOptions<R> = {}) {
+  async function $fetchRaw<T = any, R extends ResponseType = "json">(
+    _request: FetchRequest,
+    _options: FetchOptions<R> = {},
+    isRetry = false
+  ): Promise<FetchResponse<any>> {
     const context: FetchContext = {
       request: _request,
       options: resolveFetchOptions<R, T>(
@@ -166,6 +190,56 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
       }
     }
 
+    // Retries belong to the logical request that already holds a circuit ticket
+    const origin =
+      !isRetry && context.options.circuitBreaker
+        ? getRequestOrigin(context.request)
+        : undefined;
+    if (!origin) {
+      return sendRequest(context);
+    }
+
+    const circuitOptions = resolveCircuitBreakerOptions(
+      context.options.circuitBreaker as Exclude<
+        FetchOptions["circuitBreaker"],
+        false | undefined
+      >
+    );
+    const ticket = acquireCircuit(circuits, origin, circuitOptions);
+    if (!ticket) {
+      context.error = new Error(`Circuit breaker is open for ${origin}`);
+      const error = createFetchError(context);
+      if (Error.captureStackTrace) {
+        Error.captureStackTrace(error, $fetchRaw);
+      }
+      throw error;
+    }
+
+    let response: FetchResponse<any>;
+    try {
+      response = await sendRequest(context);
+    } catch (error) {
+      ticket.settle(
+        statusErrors.has(error as object) &&
+          !circuitOptions.failureStatusCodes.includes(
+            (error as IFetchError).status!
+          )
+          ? "neutral"
+          : "failure"
+      );
+      throw error;
+    }
+    ticket.settle(
+      circuitOptions.failureStatusCodes.includes(response.status)
+        ? "failure"
+        : "success"
+    );
+    return response;
+  }
+
+  async function sendRequest(
+    context: FetchContext
+  ): Promise<FetchResponse<any>> {
     let abortTimeout: NodeJS.Timeout | undefined;
 
     if (context.options.timeout) {
@@ -254,19 +328,20 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
     }
 
     return context.response;
-  };
+  }
 
   const $fetch = async function $fetch(request, options) {
     const r = await $fetchRaw(request, options);
     return r._data;
   } as $Fetch;
 
-  $fetch.raw = $fetchRaw;
+  $fetch.raw = ((request, options) =>
+    $fetchRaw(request, options)) as $Fetch["raw"];
 
   $fetch.native = (...args) => fetch(...args);
 
-  $fetch.create = (defaultOptions = {}, customGlobalOptions = {}) =>
-    createFetch({
+  $fetch.create = (defaultOptions = {}, customGlobalOptions = {}) => {
+    const options: CreateFetchOptions = {
       ...globalOptions,
       ...customGlobalOptions,
       defaults: {
@@ -274,7 +349,10 @@ export function createFetch(globalOptions: CreateFetchOptions = {}): $Fetch {
         ...customGlobalOptions.defaults,
         ...defaultOptions,
       },
-    });
+    };
+    inheritedCircuits.set(options, circuits);
+    return createFetch(options);
+  };
 
   return $fetch;
 }
