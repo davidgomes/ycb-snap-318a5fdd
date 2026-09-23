@@ -16,6 +16,9 @@ import {
 } from './is.js';
 import { findArr } from './util.js';
 import SuperJSON from './index.js';
+import { matchesClassFilter } from './error-options.js';
+import { processStackFrames, processStackString } from './error-stack.js';
+import { sanitizeMessage } from './error-sanitizer.js';
 
 export type PrimitiveTypeAnnotation = 'number' | 'undefined' | 'bigint';
 
@@ -26,7 +29,13 @@ type ClassTypeAnnotation = ['class', string];
 type SymbolTypeAnnotation = ['symbol', string];
 type CustomTypeAnnotation = ['custom', string];
 
-type SimpleTypeAnnotation = LeafTypeAnnotation | 'map' | 'set' | 'Error';
+type ErrorTypeAnnotation = 'Error' | 'Error/stack' | 'Error/frames';
+
+type SimpleTypeAnnotation =
+  | LeafTypeAnnotation
+  | 'map'
+  | 'set'
+  | ErrorTypeAnnotation;
 
 type CompositeTypeAnnotation =
   | TypedArrayAnnotation
@@ -35,6 +44,103 @@ type CompositeTypeAnnotation =
   | CustomTypeAnnotation;
 
 export type TypeAnnotation = SimpleTypeAnnotation | CompositeTypeAnnotation;
+
+function errorStackAnnotation(
+  v: Error,
+  superJson: SuperJSON
+): ErrorTypeAnnotation {
+  const opts = superJson.errorStack;
+  if (!opts || opts.mode === 'off' || !matchesClassFilter(opts, v.name)) {
+    return 'Error';
+  }
+  return opts.mode === 'string' ? 'Error/stack' : 'Error/frames';
+}
+
+const RESERVED_ERROR_PROPS = ['stack', 'stackFrames', 'cause', 'errors'];
+
+function serializeErrorNode(
+  v: Error,
+  superJson: SuperJSON,
+  sanitize: boolean,
+  depth: number,
+  seen: Set<Error>
+): any {
+  const opts = superJson.errorStack!;
+  seen.add(v);
+  const matches = matchesClassFilter(opts, v.name);
+  const out: any = {
+    name: v.name,
+    message: sanitize ? sanitizeMessage(v.message) : v.message,
+  };
+
+  const allowed = superJson.allowedErrorProps;
+  if (matches && typeof v.stack === 'string') {
+    if (opts.mode === 'string' && allowed.includes('stack')) {
+      out.stack = processStackString(v.stack, opts);
+    } else if (opts.mode === 'frames' && allowed.includes('stackFrames')) {
+      out.stackFrames = processStackFrames(v.stack, opts);
+    }
+  }
+
+  allowed.forEach(prop => {
+    if (!RESERVED_ERROR_PROPS.includes(prop)) {
+      out[prop] = (v as any)[prop];
+    }
+  });
+
+  if (Array.isArray((v as any).errors) && v.name === 'AggregateError') {
+    out.errors = (v as any).errors;
+  }
+
+  const maxDepth =
+    opts.includeCauses === 'direct'
+      ? 1
+      : opts.includeCauses === 'deep'
+      ? opts.maxCauseDepth
+      : 0;
+  const cause = (v as any).cause;
+  if (depth < maxDepth && isError(cause) && !seen.has(cause)) {
+    out.cause = serializeErrorNode(cause, superJson, sanitize, depth + 1, seen);
+  }
+
+  const processor = superJson.errorClassRegistry.getProcessor(v.name);
+  return processor ? processor(out) : out;
+}
+
+function serializeConfiguredError(v: Error, superJson: SuperJSON) {
+  const opts = superJson.errorStack!;
+  const sanitize = opts.sanitizeMessage && matchesClassFilter(opts, v.name);
+  return serializeErrorNode(v, superJson, sanitize, 0, new Set());
+}
+
+function deserializeConfiguredError(v: any, superJson: SuperJSON): Error {
+  const cause =
+    v.cause && typeof v.cause === 'object'
+      ? deserializeConfiguredError(v.cause, superJson)
+      : undefined;
+  const options = cause ? { cause } : undefined;
+  const e: any =
+    v.name === 'AggregateError' &&
+    Array.isArray(v.errors) &&
+    typeof AggregateError !== 'undefined'
+      ? new AggregateError(v.errors, v.message, options)
+      : new Error(v.message, options);
+  e.name = v.name;
+  if (Array.isArray(v.stackFrames)) {
+    e.stackFrames = v.stackFrames;
+    e.stack = v.stackFrames.map((f: any) => f?.raw).join('\n');
+  } else {
+    e.stack = v.stack;
+  }
+
+  superJson.allowedErrorProps.forEach(prop => {
+    if (!RESERVED_ERROR_PROPS.includes(prop)) {
+      e[prop] = v[prop];
+    }
+  });
+
+  return e;
+}
 
 function simpleTransformation<I, O, A extends SimpleTypeAnnotation>(
   isApplicable: (v: any, superJson: SuperJSON) => v is I,
@@ -79,9 +185,13 @@ const simpleRules = [
   ),
 
   simpleTransformation(
-    isError,
+    (v: any, superJson): v is Error =>
+      isError(v) && errorStackAnnotation(v, superJson) === 'Error',
     'Error',
     (v, superJson) => {
+      if (superJson.errorStack) {
+        return serializeConfiguredError(v, superJson);
+      }
       const baseError: any = {
         name: v.name,
         message: v.message,
@@ -98,6 +208,9 @@ const simpleRules = [
       return baseError;
     },
     (v, superJson) => {
+      if (superJson.errorStack) {
+        return deserializeConfiguredError(v, superJson);
+      }
       const e = new Error(v.message, { cause: v.cause });
       e.name = v.name;
       e.stack = v.stack;
@@ -108,6 +221,22 @@ const simpleRules = [
 
       return e;
     }
+  ),
+
+  simpleTransformation(
+    (v: any, superJson): v is Error =>
+      isError(v) && errorStackAnnotation(v, superJson) === 'Error/stack',
+    'Error/stack',
+    (v, superJson) => serializeConfiguredError(v, superJson),
+    (v, superJson) => deserializeConfiguredError(v, superJson)
+  ),
+
+  simpleTransformation(
+    (v: any, superJson): v is Error =>
+      isError(v) && errorStackAnnotation(v, superJson) === 'Error/frames',
+    'Error/frames',
+    (v, superJson) => serializeConfiguredError(v, superJson),
+    (v, superJson) => deserializeConfiguredError(v, superJson)
   ),
 
   simpleTransformation(
