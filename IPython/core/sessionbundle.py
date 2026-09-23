@@ -33,10 +33,11 @@ import re
 import sys
 import tempfile
 import zipfile
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Optional
+from typing import TYPE_CHECKING, Any
 
 from IPython.core import release
 
@@ -72,7 +73,7 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 class SessionBundleValidationError(ValueError):
     """Raised when a session bundle does not follow the bundle format."""
 
-    def __init__(self, bundle_path: "str | os.PathLike[str]", errors: list[str]):
+    def __init__(self, bundle_path: str | os.PathLike[str], errors: list[str]):
         self.bundle_path = Path(bundle_path)
         self.errors = list(errors)
         summary = "; ".join(self.errors) if self.errors else "unknown error"
@@ -80,10 +81,10 @@ class SessionBundleValidationError(ValueError):
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def _bundle_path(path: "str | os.PathLike[str]") -> Path:
+def _bundle_path(path: str | os.PathLike[str]) -> Path:
     return Path(os.fspath(path)).expanduser().absolute()
 
 
@@ -116,7 +117,7 @@ class _Redactor:
         )
 
     @staticmethod
-    def _compile(patterns: Iterable[str]) -> Optional[re.Pattern[str]]:
+    def _compile(patterns: Iterable[str]) -> re.Pattern[str] | None:
         unique = sorted(set(patterns), key=len, reverse=True)
         if not unique:
             return None
@@ -146,7 +147,7 @@ class _Redactor:
         return obj
 
 
-def _normalize_redact(redact: "Iterable[str] | str | None") -> list[str]:
+def _normalize_redact(redact: Iterable[str] | str | None) -> list[str]:
     if redact is None:
         return []
     if isinstance(redact, str):
@@ -190,7 +191,7 @@ def _format_error(shell: InteractiveShell, exc: BaseException) -> dict[str, Any]
 
 def _patch_attribute(
     obj: Any, name: str, make_replacement: Callable[[Any], Any]
-) -> Optional[Callable[[], None]]:
+) -> Callable[[], None] | None:
     """Replace ``obj.name`` on the instance and return a function undoing it.
 
     Returns ``None`` (and leaves ``obj`` untouched) if the attribute cannot be
@@ -315,7 +316,7 @@ class _CellCapture:
         while self._restorers:
             self._restorers.pop()()
 
-    def to_event(self, seq: int, result: Optional[ExecutionResult]) -> dict[str, Any]:
+    def to_event(self, seq: int, result: ExecutionResult | None) -> dict[str, Any]:
         execute_result = _jsonable(self.execute_result) if self.execute_result else {}
         if execute_result and not isinstance(execute_result.get("text/plain"), str):
             text = execute_result.get("text/plain")
@@ -346,7 +347,9 @@ class _CellCapture:
                 event["error"] = {
                     "ename": "UnknownError",
                     "evalue": "cell execution did not produce a result",
-                    "traceback": ["UnknownError: cell execution did not produce a result"],
+                    "traceback": [
+                        "UnknownError: cell execution did not produce a result"
+                    ],
                 }
         return event
 
@@ -364,10 +367,10 @@ class SessionBundleRecorder:
     def __init__(
         self,
         shell: InteractiveShell,
-        path: "str | os.PathLike[str]",
+        path: str | os.PathLike[str],
         *,
         overwrite: bool = False,
-        redact: "Iterable[str] | str | None" = None,
+        redact: Iterable[str] | str | None = None,
     ):
         self.shell = shell
         self.path = _bundle_path(path)
@@ -377,7 +380,7 @@ class SessionBundleRecorder:
         self.metadata: dict[str, Any] = {}
         self.events: list[dict[str, Any]] = []
         self.recording = False
-        self._capture: Optional[_CellCapture] = None
+        self._capture: _CellCapture | None = None
         self._nesting = 0
 
     def start(self) -> Path:
@@ -429,7 +432,7 @@ class SessionBundleRecorder:
         capture.install()
         self._capture = capture
 
-    def _post_run_cell(self, result: Optional[ExecutionResult]) -> None:
+    def _post_run_cell(self, result: ExecutionResult | None) -> None:
         capture = self._capture
         if capture is None:
             # The cell started before recording began (e.g. the cell running
@@ -453,7 +456,7 @@ class SessionBundleRecorder:
 
 
 def save_session_bundle(
-    path: "str | os.PathLike[str]",
+    path: str | os.PathLike[str],
     meta: dict[str, Any],
     events: Iterable[dict[str, Any]],
     *,
@@ -508,8 +511,8 @@ def save_session_bundle(
 
 
 def _read_bundle(
-    path: "str | os.PathLike[str]",
-) -> tuple[Optional[Any], Optional[str], list[Any], list[str]]:
+    path: str | os.PathLike[str],
+) -> tuple[Any | None, str | None, list[Any], list[str]]:
     """Read a bundle without interpreting it.
 
     Returns ``(metadata, events_text, events, errors)`` where ``errors`` lists
@@ -561,7 +564,7 @@ def _read_bundle(
 
 
 def load_session_bundle(
-    path: "str | os.PathLike[str]",
+    path: str | os.PathLike[str],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Read a session bundle without executing anything.
 
@@ -609,7 +612,9 @@ def _validate_metadata(metadata: Any, event_total: int) -> list[str]:
         )
     version = metadata.get("format_version")
     if not _is_int(version) or version < 1:
-        errors.append(f"{where}: 'format_version' must be an integer >= 1, got {version!r}")
+        errors.append(
+            f"{where}: 'format_version' must be an integer >= 1, got {version!r}"
+        )
     if not _is_iso_timestamp(metadata.get("created_at")):
         errors.append(
             f"{where}: 'created_at' must be an ISO-8601 timestamp, "
@@ -617,12 +622,16 @@ def _validate_metadata(metadata: Any, event_total: int) -> list[str]:
         )
     for key in ("ipython_version", "python_version", "platform"):
         if not isinstance(metadata.get(key), str):
-            errors.append(f"{where}: {key!r} must be a string, got {metadata.get(key)!r}")
+            errors.append(
+                f"{where}: {key!r} must be a string, got {metadata.get(key)!r}"
+            )
     redactions = metadata.get("redactions")
     if not isinstance(redactions, list) or not all(
         isinstance(r, str) for r in redactions
     ):
-        errors.append(f"{where}: 'redactions' must be a list of strings, got {redactions!r}")
+        errors.append(
+            f"{where}: 'redactions' must be a list of strings, got {redactions!r}"
+        )
     if "event_count" in metadata:
         count = metadata["event_count"]
         if not _is_int(count):
@@ -697,7 +706,7 @@ def _validate_event(event: Any, index: int, expected_seq: int) -> list[str]:
 
 
 def validate_session_bundle(
-    path: "str | os.PathLike[str]", *, strict: bool = True
+    path: str | os.PathLike[str], *, strict: bool = True
 ) -> list[str]:
     """Check that the bundle at ``path`` follows the session bundle format.
 
@@ -735,7 +744,7 @@ def validate_session_bundle(
 
 def replay_session_bundle(
     shell: InteractiveShell,
-    path: "str | os.PathLike[str]",
+    path: str | os.PathLike[str],
     *,
     stop_on_error: bool = True,
     store_history: bool = True,
@@ -777,10 +786,10 @@ def replay_session_bundle(
 @contextmanager
 def session_bundle_recorder(
     shell: InteractiveShell,
-    path: "str | os.PathLike[str]",
+    path: str | os.PathLike[str],
     *,
     overwrite: bool = False,
-    redact: "Iterable[str] | str | None" = None,
+    redact: Iterable[str] | str | None = None,
 ) -> Iterator[str]:
     """Record the cells run in ``shell`` within a ``with`` block.
 
