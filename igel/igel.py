@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import warnings
+from pathlib import Path
 
 import joblib
 import numpy as np
@@ -12,6 +13,11 @@ import pandas as pd
 try:
     from igel.configs import configs
     from igel.data import evaluate_model, metrics_dict, models_dict
+    from igel.feature_schema import (
+        FeatureSchemaError,
+        apply_feature_schema,
+        build_feature_schema,
+    )
     from igel.hyperparams import hyperparameter_search
     from igel.preprocessing import (
         encode,
@@ -38,6 +44,11 @@ except ImportError:
     from data import evaluate_model
     from configs import configs
     from data import models_dict, metrics_dict
+    from feature_schema import (
+        FeatureSchemaError,
+        apply_feature_schema,
+        build_feature_schema,
+    )
     from preprocessing import update_dataset_props
     from preprocessing import (
         handle_missing_values,
@@ -75,6 +86,9 @@ class Igel:
     description_file = configs.get(
         "description_file"
     )  # path to the description.json file
+    feature_schema_file = configs.get(
+        "feature_schema_file"
+    )  # path to the feature_schema.joblib file
     evaluation_file = configs.get(
         "evaluation_file"
     )  # path to the evaluation.json file
@@ -89,6 +103,7 @@ class Igel:
     )  # model props that can be changed from the yaml file
     model = None
     predictions = None  # store predictions as pandas df
+    feature_schema = None  # selected raw input features (dataset.features)
 
     def __init__(self, **cli_args):
         logger.info(f"Entered CLI args: {cli_args}")
@@ -186,7 +201,31 @@ class Igel:
                 self.dataset_props: dict = dic.get(
                     "dataset_props"
                 )  # dataset props entered while fitting
+                self.feature_schema = self._load_feature_schema(
+                    dic.get("feature_schema_path")
+                )
         getattr(self, self.command)()
+
+    def _load_feature_schema(self, recorded_path):
+        """
+        load the feature schema persisted at fit time, preferring the copy next to the description file
+        @param recorded_path: feature_schema_path recorded in description.json
+        @return: feature schema or None if the model was fitted without dataset.features
+        """
+        if not recorded_path:
+            return None
+        sibling_path = (
+            Path(self.description_file).parent / Path(recorded_path).name
+        )
+        schema_path = (
+            sibling_path if sibling_path.exists() else Path(recorded_path)
+        )
+        if not schema_path.exists():
+            raise FileNotFoundError(
+                f"feature schema recorded in {self.description_file} was not found: {recorded_path}"
+            )
+        logger.info(f"loading feature schema from {schema_path}")
+        return joblib.load(schema_path)
 
     def _create_model(self, **kwargs):
         """
@@ -296,6 +335,35 @@ class Igel:
     def _prepare_eval_data(self):
         return self._process_data(target="evaluate")
 
+    def _select_features(self, dataset, stage):
+        """
+        restrict raw data to the selected input features, followed by the targets when the stage needs them.
+        At fit, the feature schema is derived from dataset.features; otherwise the persisted schema is applied.
+        @param dataset: raw data
+        @param stage: same as the target argument of _process_data
+        @return: dataframe
+        """
+        targets = (
+            [] if stage in ("predict", "fit_cluster") else list(self.target)
+        )
+        present_targets = [col for col in targets if col in dataset.columns]
+        if self.command == "fit":
+            features_props = self.dataset_props.get("features")
+            if features_props is None:
+                return dataset
+            self.feature_schema = build_feature_schema(
+                dataset, features_props, targets=targets
+            )
+            logger.info(f"selected feature schema: {self.feature_schema}")
+            return dataset[
+                self.feature_schema["input_features"] + present_targets
+            ]
+
+        if self.feature_schema is None:
+            return dataset
+        features = apply_feature_schema(dataset, self.feature_schema)
+        return pd.concat([features, dataset[present_targets]], axis=1)
+
     def _process_data(self, target="fit"):
         """
         read and return data as x and y
@@ -316,6 +384,7 @@ class Igel:
                 data_path=self.data_path, **read_data_options
             )
             logger.info(f"dataset shape: {dataset.shape}")
+            dataset = self._select_features(dataset, stage=target)
             attributes = list(dataset.columns)
             logger.info(f"dataset attributes: {attributes}")
 
@@ -408,6 +477,8 @@ class Igel:
 
             return x_train, y_train, x_test, y_test
 
+        except FeatureSchemaError:
+            raise
         except Exception as e:
             logger.exception(f"error occured while preparing the data: {e}")
 
@@ -528,6 +599,9 @@ class Igel:
             logger.info(
                 f"model saved successfully and can be found in the {self.results_path} folder"
             )
+        if self.feature_schema is not None:
+            logger.info(f"saving feature schema to {self.feature_schema_file}")
+            joblib.dump(self.feature_schema, self.feature_schema_file)
 
         if self.model_type == "clustering":
             eval_results = self.model.score(x_train)
@@ -570,6 +644,15 @@ class Igel:
             "results_on_test_data": eval_results,
             "hyperparameter_search_results": hp_search_results,
         }
+        if self.feature_schema is not None:
+            fit_description.update(
+                feature_schema_path=str(self.feature_schema_file),
+                input_features=self.feature_schema["input_features"],
+                dropped_features=self.feature_schema["dropped_features"],
+                duplicate_feature_aliases=self.feature_schema[
+                    "duplicate_feature_aliases"
+                ],
+            )
         if self.model_type == "clustering":
             clustering_res = {
                 "cluster_centers": self.model.cluster_centers_.tolist(),
@@ -625,6 +708,8 @@ class Igel:
             with open(self.evaluation_file, "w", encoding="utf-8") as f:
                 json.dump(eval_results, f, ensure_ascii=False, indent=4)
 
+        except FeatureSchemaError:
+            raise
         except Exception as e:
             logger.exception(f"error occured during evaluation: {e}")
 
@@ -656,6 +741,8 @@ class Igel:
             )
             return df_pred
 
+        except FeatureSchemaError:
+            raise
         except Exception as e:
             logger.exception(f"Error while preparing predictions: {e}")
 
