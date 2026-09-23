@@ -104,6 +104,7 @@ if TYPE_CHECKING:
         CallbackManagerForChainRun,
     )
     from langchain_core.prompts.base import BasePromptTemplate
+    from langchain_core.runnables.coalesce import CoalesceBackend
     from langchain_core.runnables.fallbacks import (
         RunnableWithFallbacks as RunnableWithFallbacksT,
     )
@@ -1919,6 +1920,40 @@ class Runnable(ABC, Generic[Input, Output]):
             wait_exponential_jitter=wait_exponential_jitter,
             max_attempt_number=stop_after_attempt,
             exponential_jitter_params=exponential_jitter_params,
+        )
+
+    def with_coalesce(
+        self,
+        *,
+        backend: CoalesceBackend | None = None,
+    ) -> Runnable[Input, Output]:
+        """Return a `Runnable` that coalesces identical concurrent calls.
+
+        While a call is in flight, other `invoke`, `stream`, `batch`, and
+        `batch_as_completed` calls (including async variants) with the same input
+        share that execution and receive its result. The coalescing key is the
+        input value only: `config`, extra kwargs, and dictionary key order do not
+        affect it. After the shared execution finishes, the next call runs again.
+
+        `transform`, `atransform`, and event streaming are not coalesced.
+
+        Args:
+            backend: Store for in-flight calls. A new in-memory backend is created
+                when omitted. Wrappers that share a backend coalesce with each
+                other; wrappers with distinct backends do not.
+
+        Returns:
+            A `Runnable` that coalesces concurrent calls for the same input.
+        """
+        # Import locally to prevent circular import
+        from langchain_core.runnables.coalesce import (  # noqa: PLC0415
+            InMemoryCoalesceBackend,
+            RunnableCoalesce,
+        )
+
+        return RunnableCoalesce(
+            bound=self,
+            backend=backend if backend is not None else InMemoryCoalesceBackend(),
         )
 
     def map(self) -> Runnable[list[Input], list[Output]]:
