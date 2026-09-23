@@ -213,7 +213,11 @@ func (w *Worktree) threeWayMerge(base, ours, theirs *object.Commit) error {
 
 	for _, name := range names {
 		if merged[name].conflict {
-			return w.writeMergeHead(theirs.Hash)
+			if err := w.writeMergeHead(theirs.Hash); err != nil {
+				return err
+			}
+
+			return ErrMergeConflicts
 		}
 	}
 
@@ -406,7 +410,7 @@ func (w *Worktree) applyMerge(names []string, merged map[string]*mergePath, ours
 			continue
 		}
 
-		if err := rmFileAndDirsIfEmpty(w.Filesystem, name); err != nil {
+		if err := w.removeMergedFile(name); err != nil {
 			return err
 		}
 	}
@@ -478,6 +482,27 @@ func (w *Worktree) applyMerge(names []string, merged map[string]*mergePath, ours
 	idx.Cache = nil
 
 	return w.r.Storer.SetIndex(idx)
+}
+
+// removeMergedFile removes a file and its parent directories left empty,
+// without ever removing the worktree root.
+func (w *Worktree) removeMergedFile(name string) error {
+	if err := util.RemoveAll(w.Filesystem, name); err != nil {
+		return err
+	}
+
+	for dir := path.Dir(name); dir != "."; dir = path.Dir(dir) {
+		removed, err := removeDirIfEmpty(w.Filesystem, dir)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+
+		if !removed {
+			break
+		}
+	}
+
+	return nil
 }
 
 func (w *Worktree) writeMergedFile(mp *mergePath) error {
@@ -675,9 +700,43 @@ func splitLines(content []byte) []string {
 	return lines
 }
 
-// diffLines returns the hunks needed to turn a into b, computed with the
-// Myers algorithm.
+// diffLines returns the hunks needed to turn a into b. Changes are computed
+// with the Myers algorithm and then shifted like git does, so that ambiguous
+// changes among repeated lines are placed consistently.
 func diffLines(a, b []string) []diffHunk {
+	changedA, changedB := myersChanges(a, b)
+	compactChanges(a, changedA, changedB)
+	compactChanges(b, changedB, changedA)
+
+	var hunks []diffHunk
+	i, j := 0, 0
+	for i < len(a) || j < len(b) {
+		if i < len(a) && j < len(b) && !changedA[i] && !changedB[j] {
+			i++
+			j++
+			continue
+		}
+
+		h := diffHunk{baseStart: i, sideStart: j}
+		for i < len(a) && changedA[i] {
+			i++
+		}
+		for j < len(b) && changedB[j] {
+			j++
+		}
+		h.baseEnd, h.sideEnd = i, j
+		hunks = append(hunks, h)
+	}
+
+	return hunks
+}
+
+// myersChanges reports, for each line of a and b, whether it is removed from
+// a or added in b.
+func myersChanges(a, b []string) (changedA, changedB []bool) {
+	changedA = make([]bool, len(a))
+	changedB = make([]bool, len(b))
+
 	prefix := 0
 	for prefix < len(a) && prefix < len(b) && a[prefix] == b[prefix] {
 		prefix++
@@ -688,11 +747,16 @@ func diffLines(a, b []string) []diffHunk {
 		suffix++
 	}
 
-	a = a[prefix : len(a)-suffix]
-	b = b[prefix : len(b)-suffix]
-	n, m := len(a), len(b)
-	if n == 0 && m == 0 {
-		return nil
+	ta, tb := a[prefix:len(a)-suffix], b[prefix:len(b)-suffix]
+	n, m := len(ta), len(tb)
+	if n == 0 || m == 0 {
+		for i := range n {
+			changedA[prefix+i] = true
+		}
+		for j := range m {
+			changedB[prefix+j] = true
+		}
+		return changedA, changedB
 	}
 
 	// v[k+offset] holds the furthest x reached on diagonal k; trace keeps
@@ -702,19 +766,19 @@ func diffLines(a, b []string) []diffHunk {
 	v := make([]int, 2*maxD+3)
 	var trace [][]int
 
-	x, y := 0, 0
 search:
 	for d := 0; d <= maxD; d++ {
 		trace = append(trace, slices.Clone(v[offset-d:offset+d+1]))
 		for k := -d; k <= d; k += 2 {
+			var x int
 			if k == -d || (k != d && v[offset+k-1] < v[offset+k+1]) {
 				x = v[offset+k+1]
 			} else {
 				x = v[offset+k-1] + 1
 			}
 
-			y = x - k
-			for x < n && y < m && a[x] == b[y] {
+			y := x - k
+			for x < n && y < m && ta[x] == tb[y] {
 				x++
 				y++
 			}
@@ -726,20 +790,25 @@ search:
 		}
 	}
 
-	keptA := make([]bool, n)
-	keptB := make([]bool, m)
-	x, y = n, m
+	for i := range n {
+		changedA[prefix+i] = true
+	}
+	for j := range m {
+		changedB[prefix+j] = true
+	}
+
+	x, y := n, m
 	for d := len(trace) - 1; d >= 0 && (x > 0 || y > 0); d-- {
 		prev := trace[d]
 		at := func(k int) int { return prev[k+d] }
 		k := x - y
 
-		var prevK int
-		if d == 0 {
-			prevK = 0
-		} else if k == -d || (k != d && at(k-1) < at(k+1)) {
+		prevK := 0
+		switch {
+		case d == 0:
+		case k == -d || (k != d && at(k-1) < at(k+1)):
 			prevK = k + 1
-		} else {
+		default:
 			prevK = k - 1
 		}
 
@@ -752,39 +821,123 @@ search:
 		for x > prevX && y > prevY {
 			x--
 			y--
-			keptA[x] = true
-			keptB[y] = true
+			changedA[prefix+x] = false
+			changedB[prefix+y] = false
 		}
 
 		x, y = prevX, prevY
 	}
 
-	var hunks []diffHunk
-	i, j := 0, 0
-	for i < n || j < m {
-		if i < n && j < m && keptA[i] && keptB[j] {
-			i++
-			j++
-			continue
-		}
+	return changedA, changedB
+}
 
-		h := diffHunk{baseStart: i, sideStart: j}
-		for i < n && !keptA[i] {
-			i++
-		}
-		for j < m && !keptB[j] {
-			j++
-		}
-		h.baseEnd, h.sideEnd = i, j
+// changeGroup is a run of changed lines, possibly empty.
+type changeGroup struct {
+	start, end int
+}
 
-		h.baseStart += prefix
-		h.baseEnd += prefix
-		h.sideStart += prefix
-		h.sideEnd += prefix
-		hunks = append(hunks, h)
+// compactChanges slides groups of changed lines in lines as far down as
+// possible, unless they can be aligned with a change in the other file. This
+// mirrors xdl_change_compact from git without the indent heuristic.
+func compactChanges(lines []string, changed, otherChanged []bool) {
+	at := func(c []bool, i int) bool { return i >= 0 && i < len(c) && c[i] }
+
+	initGroup := func(c []bool) changeGroup {
+		g := changeGroup{}
+		for at(c, g.end) {
+			g.end++
+		}
+		return g
+	}
+	nextGroup := func(c []bool, g *changeGroup) bool {
+		if g.end == len(c) {
+			return false
+		}
+		g.start = g.end + 1
+		for g.end = g.start; at(c, g.end); g.end++ {
+		}
+		return true
+	}
+	previousGroup := func(c []bool, g *changeGroup) bool {
+		if g.start == 0 {
+			return false
+		}
+		g.end = g.start - 1
+		for g.start = g.end; at(c, g.start-1); g.start-- {
+		}
+		return true
+	}
+	slideDown := func(g *changeGroup) bool {
+		if g.end < len(lines) && lines[g.start] == lines[g.end] {
+			changed[g.start] = false
+			changed[g.end] = true
+			g.start++
+			g.end++
+			for at(changed, g.end) {
+				g.end++
+			}
+			return true
+		}
+		return false
+	}
+	slideUp := func(g *changeGroup) bool {
+		if g.start > 0 && lines[g.start-1] == lines[g.end-1] {
+			g.start--
+			g.end--
+			changed[g.start] = true
+			changed[g.end] = false
+			for at(changed, g.start-1) {
+				g.start--
+			}
+			return true
+		}
+		return false
 	}
 
-	return hunks
+	g := initGroup(changed)
+	og := initGroup(otherChanged)
+	for {
+		if g.end != g.start {
+			var earliestEnd int
+			endMatchingOther := -1
+			for {
+				size := g.end - g.start
+
+				for slideUp(&g) {
+					previousGroup(otherChanged, &og)
+				}
+
+				earliestEnd = g.end
+				endMatchingOther = -1
+				if og.end > og.start {
+					endMatchingOther = g.end
+				}
+
+				for slideDown(&g) {
+					nextGroup(otherChanged, &og)
+					if og.end > og.start {
+						endMatchingOther = g.end
+					}
+				}
+
+				if size == g.end-g.start {
+					break
+				}
+			}
+
+			if g.end != earliestEnd && endMatchingOther != -1 {
+				for og.end == og.start {
+					slideUp(&g)
+					previousGroup(otherChanged, &og)
+				}
+			}
+		}
+
+		if !nextGroup(changed, &g) {
+			break
+		}
+		nextGroup(otherChanged, &og)
+	}
 }
 
 // mergeText performs a line based 3-way merge. Changes from both sides that
