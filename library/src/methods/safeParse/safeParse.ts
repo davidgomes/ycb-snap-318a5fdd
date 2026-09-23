@@ -5,6 +5,7 @@ import type {
   Config,
   InferIssue,
 } from '../../types/index.ts';
+import type { WithoutRecur } from '../recursive/index.ts';
 import type { SafeParseResult } from './types.ts';
 
 /**
@@ -20,7 +21,7 @@ import type { SafeParseResult } from './types.ts';
 export function safeParse<
   const TSchema extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
 >(
-  schema: TSchema,
+  schema: TSchema & WithoutRecur<TSchema>,
   input: unknown,
   config?: Config<InferIssue<TSchema>>
 ): SafeParseResult<TSchema> {
