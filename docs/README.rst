@@ -522,6 +522,12 @@ Here is an overview of all supported configurations (for now):
             shuffle: true   # [bool] -> whether to shuffle the data before/while splitting
             stratify: None  # [list, None] -> If not None, data is split in a stratified fashion, using this as the class labels.
 
+        features: # raw input feature selection. The selected schema is saved to model_results/feature_schema.joblib and enforced by evaluate, predict and serve
+            include:    # [str, list of str] -> raw columns to use as features, in this order (default: every non-target column)
+            exclude:    # [str, list of str] -> raw columns to remove from the features
+            drop_constant: false    # [bool] -> drop columns that hold a single value
+            drop_duplicate: false   # [bool] -> keep only the first of identical columns; the others are recorded as aliases that may supply it
+
         preprocess: # preprocessing options
             missing_values: mean    # [str] -> other possible values: [drop, median, most_frequent, constant] check the docs for more
             encoding:
