@@ -16,6 +16,90 @@ export type OptionName =
   | `+${string}`;
 
 /**
+ * A single condition of an option dependency.  The condition refers to
+ * another option (the *dependee*) either by its key in the enclosing
+ * `object()` parser or by one of its command-line names.
+ *
+ * When {@link OptionDependencyCondition.value} is given, the condition holds
+ * only if the dependee's value is strictly equal to it.  Otherwise,
+ * the condition holds only if the dependee's value is truthy (an empty array
+ * is considered falsy).
+ * @since 0.10.0
+ */
+export interface OptionDependencyCondition {
+  /**
+   * The key of the dependee in the enclosing `object()` parser, or one of
+   * its option names (e.g., `"--verbose"`).
+   */
+  readonly option: string;
+
+  /**
+   * The value the dependee must have for the condition to hold.
+   * If omitted, the dependee only needs to have a truthy value.
+   */
+  readonly value?: unknown;
+}
+
+/**
+ * A compound option dependency that combines multiple conditions.
+ * When both {@link OptionDependencyGroup.anyOf} and
+ * {@link OptionDependencyGroup.allOf} are given, both must hold.
+ * @since 0.10.0
+ */
+export interface OptionDependencyGroup {
+  /**
+   * Conditions of which at least one must hold.  An empty array can never
+   * be satisfied.
+   */
+  readonly anyOf?: readonly OptionDependencyConditionLike[];
+
+  /**
+   * Conditions which all must hold.  An empty array is always satisfied.
+   */
+  readonly allOf?: readonly OptionDependencyConditionLike[];
+}
+
+/**
+ * Any form of an option dependency condition: an option key or name as
+ * a shorthand for `{ option }`, a single condition, or a compound condition.
+ * @since 0.10.0
+ */
+export type OptionDependencyConditionLike =
+  | string
+  | OptionDependencyCondition
+  | OptionDependencyGroup;
+
+/**
+ * Describes when an option is applicable, based on the presence or values of
+ * other options in the same `object()` parser.
+ *
+ * - When the dependency is not satisfied and
+ *   {@link OptionDependencyOptions.required} is `true`, providing
+ *   the dependent option is a parse error.
+ * - When the dependency is not satisfied and it is not required,
+ *   the dependent option is hidden from help and completion suggestions.
+ *   It is still accepted unless the dependee was explicitly given
+ *   a value that contradicts the dependency.
+ * @since 0.10.0
+ */
+export type OptionDependency =
+  & (OptionDependencyCondition | OptionDependencyGroup)
+  & OptionDependencyOptions;
+
+/**
+ * Options shared by all forms of {@link OptionDependency}.
+ * @since 0.10.0
+ */
+export interface OptionDependencyOptions {
+  /**
+   * When `true`, providing the dependent option while the dependency is not
+   * satisfied is a parse error.
+   * @default `false`
+   */
+  readonly required?: boolean;
+}
+
+/**
  * Represents a single term in a command-line usage description.
  */
 export type UsageTerm =
@@ -65,6 +149,13 @@ export type UsageTerm =
      * @since 0.9.0
      */
     readonly hidden?: boolean;
+    /**
+     * The dependency of this option on other options.  It is kept on
+     * the usage term so that it is still available when the option parser
+     * is wrapped by modifiers such as `withDefault()`.
+     * @since 0.10.0
+     */
+    readonly dependsOn?: OptionDependency;
   }
   /**
    * A command term, which represents a subcommand in the command-line

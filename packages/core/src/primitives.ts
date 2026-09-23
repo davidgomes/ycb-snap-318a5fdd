@@ -76,7 +76,7 @@ import {
   DEFAULT_FIND_SIMILAR_OPTIONS,
   findSimilar,
 } from "./suggestion.ts";
-import type { OptionName, UsageTerm } from "./usage.ts";
+import type { OptionDependency, OptionName, UsageTerm } from "./usage.ts";
 import { extractCommandNames, extractOptionNames } from "./usage.ts";
 import {
   isValueParser,
@@ -128,6 +128,14 @@ export interface OptionOptions {
    * @since 0.9.0
    */
   readonly hidden?: boolean;
+
+  /**
+   * Makes this option depend on the presence or value of other options in
+   * the enclosing {@link object} parser.  The dependency is evaluated by
+   * `object()`; see {@link OptionDependency} for the semantics.
+   * @since 0.10.0
+   */
+  readonly dependsOn?: OptionDependency;
 
   /**
    * Error message customization options.
@@ -650,6 +658,7 @@ export function option<M extends Mode, T>(
             type: "option",
             names: optionNames,
             ...(options.hidden && { hidden: true }),
+            ...(options.dependsOn != null && { dependsOn: options.dependsOn }),
           }],
         }
         : {
@@ -657,6 +666,7 @@ export function option<M extends Mode, T>(
           names: optionNames,
           metavar: valueParser.metavar,
           ...(options.hidden && { hidden: true }),
+          ...(options.dependsOn != null && { dependsOn: options.dependsOn }),
         },
     ],
     initialState: valueParser == null
@@ -1058,6 +1068,228 @@ export function option<M extends Mode, T>(
     T | boolean,
     ValueParserResult<T | boolean> | undefined
   >;
+}
+
+/**
+ * Options for {@link requiredWhen}, {@link optionalWhen}, and
+ * {@link conditionalOption}.  These are the same as {@link OptionOptions},
+ * except that the dependency is given as a separate argument.
+ * @since 0.10.0
+ */
+export type ConditionalOptionOptions = Omit<OptionOptions, "dependsOn">;
+
+function createConditionalOption<M extends Mode, T>(
+  condition: string | OptionDependency,
+  required: boolean | undefined,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParserOrOptions?: ValueParser<M, T> | ConditionalOptionOptions,
+  options?: ConditionalOptionOptions,
+): Parser<M, T | boolean, ValueParserResult<T | boolean> | undefined> {
+  const dependency: OptionDependency = typeof condition === "string"
+    ? { option: condition }
+    : condition;
+  const dependsOn: OptionDependency = required == null
+    ? dependency
+    : { ...dependency, required };
+  const names: readonly OptionName[] = typeof flagSpec === "string"
+    ? [flagSpec]
+    : flagSpec;
+  if (isValueParser<M, T>(valueParserOrOptions)) {
+    return option(...names, valueParserOrOptions, { ...options, dependsOn });
+  }
+  return option(...names, { ...valueParserOrOptions, dependsOn }) as Parser<
+    M,
+    T | boolean,
+    ValueParserResult<T | boolean> | undefined
+  >;
+}
+
+/**
+ * Creates an option that can only be used when the given condition holds.
+ * Providing the option while the condition does not hold is a parse error
+ * whose message states which option (and value) it requires.
+ *
+ * This is equivalent to
+ * `option(...names, valueParser, { dependsOn: { ...condition, required: true } })`.
+ * The dependency is evaluated by the enclosing {@link object} parser.
+ *
+ * @example
+ * ```typescript
+ * const parser = object({
+ *   mode: optional(option("--mode", choice(["dev", "prod"]))),
+ *   key: optional(requiredWhen({ option: "mode", value: "prod" }, "--key", string())),
+ * });
+ * // --mode prod --key secret → { mode: "prod", key: "secret" }
+ * // --key secret             → Error: Option --key requires option --mode to be "prod".
+ * ```
+ * @template M The execution mode of the parser.
+ * @template T The type of value this parser produces.
+ * @param condition The condition: an option key or name, a single condition,
+ *                  a compound condition, or a full {@link OptionDependency}.
+ * @param flagSpec The option name or names to parse.
+ * @param valueParser The {@link ValueParser} for the option value.
+ * @param options Other options for the option parser.
+ * @returns A {@link Parser} equivalent to {@link option} with a required
+ *          dependency.
+ * @since 0.10.0
+ */
+export function requiredWhen<M extends Mode, T>(
+  condition: string | OptionDependency,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParser: ValueParser<M, T>,
+  options?: ConditionalOptionOptions,
+): Parser<M, T, ValueParserResult<T> | undefined>;
+
+/**
+ * Creates a Boolean flag option that can only be used when the given
+ * condition holds.  Providing the flag while the condition does not hold is
+ * a parse error.
+ * @param condition The condition: an option key or name, a single condition,
+ *                  a compound condition, or a full {@link OptionDependency}.
+ * @param flagSpec The option name or names to parse.
+ * @param options Other options for the option parser.
+ * @returns A {@link Parser} equivalent to {@link option} with a required
+ *          dependency, producing `true` if the flag is present.
+ * @since 0.10.0
+ */
+export function requiredWhen(
+  condition: string | OptionDependency,
+  flagSpec: OptionName | readonly OptionName[],
+  options?: ConditionalOptionOptions,
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+
+export function requiredWhen<M extends Mode, T>(
+  condition: string | OptionDependency,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParserOrOptions?: ValueParser<M, T> | ConditionalOptionOptions,
+  options?: ConditionalOptionOptions,
+): Parser<M, T | boolean, ValueParserResult<T | boolean> | undefined> {
+  return createConditionalOption(
+    condition,
+    true,
+    flagSpec,
+    valueParserOrOptions,
+    options,
+  );
+}
+
+/**
+ * Creates an option that is only offered when the given condition holds.
+ * While the condition does not hold, the option is hidden from help and
+ * completion suggestions, but it is still accepted unless the referenced
+ * option was explicitly given a value that contradicts the condition.
+ *
+ * This is equivalent to
+ * `option(...names, valueParser, { dependsOn: { ...condition, required: false } })`.
+ * The dependency is evaluated by the enclosing {@link object} parser.
+ *
+ * @template M The execution mode of the parser.
+ * @template T The type of value this parser produces.
+ * @param condition The condition: an option key or name, a single condition,
+ *                  a compound condition, or a full {@link OptionDependency}.
+ * @param flagSpec The option name or names to parse.
+ * @param valueParser The {@link ValueParser} for the option value.
+ * @param options Other options for the option parser.
+ * @returns A {@link Parser} equivalent to {@link option} with a non-required
+ *          dependency.
+ * @since 0.10.0
+ */
+export function optionalWhen<M extends Mode, T>(
+  condition: string | OptionDependency,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParser: ValueParser<M, T>,
+  options?: ConditionalOptionOptions,
+): Parser<M, T, ValueParserResult<T> | undefined>;
+
+/**
+ * Creates a Boolean flag option that is only offered when the given
+ * condition holds.
+ * @param condition The condition: an option key or name, a single condition,
+ *                  a compound condition, or a full {@link OptionDependency}.
+ * @param flagSpec The option name or names to parse.
+ * @param options Other options for the option parser.
+ * @returns A {@link Parser} equivalent to {@link option} with a non-required
+ *          dependency, producing `true` if the flag is present.
+ * @since 0.10.0
+ */
+export function optionalWhen(
+  condition: string | OptionDependency,
+  flagSpec: OptionName | readonly OptionName[],
+  options?: ConditionalOptionOptions,
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+
+export function optionalWhen<M extends Mode, T>(
+  condition: string | OptionDependency,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParserOrOptions?: ValueParser<M, T> | ConditionalOptionOptions,
+  options?: ConditionalOptionOptions,
+): Parser<M, T | boolean, ValueParserResult<T | boolean> | undefined> {
+  return createConditionalOption(
+    condition,
+    false,
+    flagSpec,
+    valueParserOrOptions,
+    options,
+  );
+}
+
+/**
+ * Creates an option that depends on other options.  Unlike
+ * {@link requiredWhen} and {@link optionalWhen}, whether the dependency is
+ * required is taken from the condition itself (`required` defaults to
+ * `false`).
+ *
+ * This is equivalent to
+ * `option(...names, valueParser, { dependsOn: condition })`.
+ * The dependency is evaluated by the enclosing {@link object} parser.
+ *
+ * @template M The execution mode of the parser.
+ * @template T The type of value this parser produces.
+ * @param condition The condition: an option key or name, a single condition,
+ *                  a compound condition, or a full {@link OptionDependency}.
+ * @param flagSpec The option name or names to parse.
+ * @param valueParser The {@link ValueParser} for the option value.
+ * @param options Other options for the option parser.
+ * @returns A {@link Parser} equivalent to {@link option} with the given
+ *          dependency.
+ * @since 0.10.0
+ */
+export function conditionalOption<M extends Mode, T>(
+  condition: string | OptionDependency,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParser: ValueParser<M, T>,
+  options?: ConditionalOptionOptions,
+): Parser<M, T, ValueParserResult<T> | undefined>;
+
+/**
+ * Creates a Boolean flag option that depends on other options.
+ * @param condition The condition: an option key or name, a single condition,
+ *                  a compound condition, or a full {@link OptionDependency}.
+ * @param flagSpec The option name or names to parse.
+ * @param options Other options for the option parser.
+ * @returns A {@link Parser} equivalent to {@link option} with the given
+ *          dependency, producing `true` if the flag is present.
+ * @since 0.10.0
+ */
+export function conditionalOption(
+  condition: string | OptionDependency,
+  flagSpec: OptionName | readonly OptionName[],
+  options?: ConditionalOptionOptions,
+): Parser<"sync", boolean, ValueParserResult<boolean> | undefined>;
+
+export function conditionalOption<M extends Mode, T>(
+  condition: string | OptionDependency,
+  flagSpec: OptionName | readonly OptionName[],
+  valueParserOrOptions?: ValueParser<M, T> | ConditionalOptionOptions,
+  options?: ConditionalOptionOptions,
+): Parser<M, T | boolean, ValueParserResult<T | boolean> | undefined> {
+  return createConditionalOption(
+    condition,
+    undefined,
+    flagSpec,
+    valueParserOrOptions,
+    options,
+  );
 }
 
 /**

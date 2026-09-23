@@ -18,11 +18,15 @@ import { map, multiple, optional, withDefault } from "@optique/core/modifiers";
 import {
   argument,
   command,
+  conditionalOption,
   constant,
   flag,
   option,
+  optionalWhen,
   passThrough,
+  requiredWhen,
 } from "@optique/core/primitives";
+import type { UsageTerm } from "@optique/core/usage";
 import { choice, integer, string } from "@optique/core/valueparser";
 import { type InferValue, parseSync } from "@optique/core/parser";
 import assert from "node:assert/strict";
@@ -3778,5 +3782,194 @@ describe("hidden option", () => {
       assert.equal(term.type, "passthrough");
       assert.equal("hidden" in term && term.hidden, true);
     });
+  });
+});
+
+function findOptionTerm(
+  usage: readonly UsageTerm[],
+): Extract<UsageTerm, { type: "option" }> | undefined {
+  for (const term of usage) {
+    if (term.type === "option") return term;
+    if (term.type === "optional" || term.type === "multiple") {
+      const found = findOptionTerm(term.terms);
+      if (found != null) return found;
+    }
+  }
+  return undefined;
+}
+
+describe("option() dependsOn", () => {
+  it("should keep dependsOn on the usage term of a value option", () => {
+    const parser = option("--level", integer(), {
+      dependsOn: { option: "verbose" },
+    });
+    const term = findOptionTerm(parser.usage);
+    assert.deepEqual(term?.dependsOn, { option: "verbose" });
+  });
+
+  it("should keep dependsOn on the usage term of a Boolean flag option", () => {
+    const parser = option("--debug", {
+      dependsOn: { anyOf: ["verbose", "--trace"], required: true },
+    });
+    const term = findOptionTerm(parser.usage);
+    assert.deepEqual(term?.dependsOn, {
+      anyOf: ["verbose", "--trace"],
+      required: true,
+    });
+  });
+
+  it("should not add dependsOn to the usage term when not given", () => {
+    const parser = option("--level", integer());
+    const term = findOptionTerm(parser.usage);
+    assert.ok(term != null);
+    assert.ok(!("dependsOn" in term));
+  });
+
+  it("should not change parsing of the option itself", () => {
+    const parser = option("--level", integer(), {
+      dependsOn: { option: "verbose", required: true },
+    });
+    const result = parseSync(parser, ["--level", "3"]);
+    assert.ok(result.success);
+    assert.equal(result.value, 3);
+  });
+});
+
+describe("requiredWhen()", () => {
+  it("should create an option with a required dependency", () => {
+    const parser = requiredWhen("verbose", "--level", integer());
+    const term = findOptionTerm(parser.usage);
+    assert.deepEqual(term?.names, ["--level"]);
+    assert.equal(term?.metavar, "INTEGER");
+    assert.deepEqual(term?.dependsOn, { option: "verbose", required: true });
+    const result = parseSync(parser, ["--level", "5"]);
+    assert.ok(result.success);
+    assert.equal(result.value, 5);
+  });
+
+  it("should accept an object condition", () => {
+    const parser = requiredWhen(
+      { option: "mode", value: "prod" },
+      "--key",
+      string(),
+    );
+    const term = findOptionTerm(parser.usage);
+    assert.deepEqual(term?.dependsOn, {
+      option: "mode",
+      value: "prod",
+      required: true,
+    });
+  });
+
+  it("should accept a compound condition", () => {
+    const parser = requiredWhen(
+      { anyOf: ["a", { option: "b", value: 1 }], allOf: ["c"] },
+      "--key",
+      string(),
+    );
+    const term = findOptionTerm(parser.usage);
+    assert.deepEqual(term?.dependsOn, {
+      anyOf: ["a", { option: "b", value: 1 }],
+      allOf: ["c"],
+      required: true,
+    });
+  });
+
+  it("should accept multiple option names", () => {
+    const parser = requiredWhen("verbose", ["-l", "--level"], integer());
+    const term = findOptionTerm(parser.usage);
+    assert.deepEqual(term?.names, ["-l", "--level"]);
+    const result = parseSync(parser, ["-l", "2"]);
+    assert.ok(result.success);
+    assert.equal(result.value, 2);
+  });
+
+  it("should create a Boolean flag when no value parser is given", () => {
+    const parser = requiredWhen("verbose", "--debug");
+    const term = findOptionTerm(parser.usage);
+    assert.deepEqual(term?.names, ["--debug"]);
+    assert.equal(term?.metavar, undefined);
+    assert.deepEqual(term?.dependsOn, { option: "verbose", required: true });
+    const present = parseSync(parser, ["--debug"]);
+    assert.ok(present.success);
+    assert.equal(present.value, true);
+  });
+
+  it("should pass other option options through", () => {
+    const description = message`The logging level.`;
+    const parser = requiredWhen("verbose", "--level", integer(), {
+      description,
+    });
+    const fragments = parser.getDocFragments({ kind: "unavailable" });
+    assert.deepEqual(fragments.description, description);
+  });
+
+  it("should accept options for Boolean flags", () => {
+    const description = message`Enable debugging.`;
+    const parser = requiredWhen("verbose", "--debug", { description });
+    const term = findOptionTerm(parser.usage);
+    assert.equal(term?.metavar, undefined);
+    assert.deepEqual(term?.dependsOn, { option: "verbose", required: true });
+    const fragments = parser.getDocFragments({ kind: "unavailable" });
+    assert.deepEqual(fragments.description, description);
+  });
+
+  it("should always be required", () => {
+    const parser = requiredWhen(
+      { option: "verbose", required: false },
+      "--level",
+      integer(),
+    );
+    const term = findOptionTerm(parser.usage);
+    assert.equal(term?.dependsOn?.required, true);
+  });
+});
+
+describe("optionalWhen()", () => {
+  it("should create an option with a non-required dependency", () => {
+    const parser = optionalWhen("--verbose", "--level", integer());
+    const term = findOptionTerm(parser.usage);
+    assert.deepEqual(term?.dependsOn, {
+      option: "--verbose",
+      required: false,
+    });
+  });
+
+  it("should accept a compound condition", () => {
+    const parser = optionalWhen({ allOf: ["a", "b"] }, "--key");
+    const term = findOptionTerm(parser.usage);
+    assert.deepEqual(term?.dependsOn, { allOf: ["a", "b"], required: false });
+  });
+});
+
+describe("conditionalOption()", () => {
+  it("should create an option with the given dependency", () => {
+    const parser = conditionalOption(
+      { option: "mode", value: "prod" },
+      "--key",
+      string(),
+    );
+    const term = findOptionTerm(parser.usage);
+    assert.deepEqual(term?.dependsOn, { option: "mode", value: "prod" });
+  });
+
+  it("should accept a full dependsOn configuration with required", () => {
+    const parser = conditionalOption(
+      { option: "mode", value: "prod", required: true },
+      "--key",
+      string(),
+    );
+    const term = findOptionTerm(parser.usage);
+    assert.deepEqual(term?.dependsOn, {
+      option: "mode",
+      value: "prod",
+      required: true,
+    });
+  });
+
+  it("should accept a string condition", () => {
+    const parser = conditionalOption("verbose", "--debug");
+    const term = findOptionTerm(parser.usage);
+    assert.deepEqual(term?.dependsOn, { option: "verbose" });
   });
 });
