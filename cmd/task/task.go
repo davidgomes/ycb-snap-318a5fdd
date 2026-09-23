@@ -189,6 +189,11 @@ func run() error {
 	specialVars.Set("CLI_OFFLINE", ast.Var{Value: flags.Offline})
 	specialVars.Set("CLI_ASSUME_YES", ast.Var{Value: flags.AssumeYes})
 	e.Taskfile.Vars.ReverseMerge(specialVars, nil)
+
+	if flags.Graph {
+		return e.Graph(calls...)
+	}
+
 	if !flags.Watch {
 		e.InterceptInterruptSignals()
 	}
