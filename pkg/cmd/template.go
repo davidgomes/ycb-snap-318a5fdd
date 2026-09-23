@@ -116,7 +116,7 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 				var manifests []manifestDocument
 				if client.OutputDir == "" {
 					manifests = releaseManifestStream(rel, func(h *release.Hook) bool {
-						return !client.DisableHooks && !(skipTests && isTestHook(h))
+						return !client.DisableHooks && (!skipTests || !isTestHook(h))
 					})
 				} else if !client.DisableHooks {
 					fileWritten := make(map[string]bool)
