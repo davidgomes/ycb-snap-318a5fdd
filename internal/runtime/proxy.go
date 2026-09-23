@@ -27,8 +27,17 @@ var (
 	errorType         = reflect.TypeOf((*error)(nil)).Elem()
 	stringerType      = reflect.TypeOf((*fmt.Stringer)(nil)).Elem()
 	sortInterfaceType = reflect.TypeOf((*sort.Interface)(nil)).Elem()
+	methodProxyType   = reflect.TypeOf((*MethodProxy)(nil)).Elem()
 	scriggoValueType  = reflect.TypeOf((*scriggoValue)(nil))
 )
+
+// asMethodProxy returns v as a MethodProxy, if it is one.
+func asMethodProxy(v reflect.Value) (MethodProxy, bool) {
+	if v.Kind() != reflect.Struct || !v.Type().Implements(methodProxyType) || !v.CanInterface() {
+		return nil, false
+	}
+	return v.Interface().(MethodProxy), true
+}
 
 // scriggoValue is a value with a Scriggo type wrapped by an interface proxy.
 type scriggoValue struct {
@@ -114,10 +123,7 @@ func interfaceProxyType(iface reflect.Type) reflect.Type {
 // If t is the empty interface, v is wrapped only if it implements error or
 // fmt.Stringer, so that gc compiled code can call these methods.
 func (vm *VM) exportValue(v reflect.Value, t reflect.Type) reflect.Value {
-	if v.Kind() != reflect.Struct || !v.CanInterface() {
-		return v
-	}
-	if _, ok := v.Interface().(MethodProxy); !ok {
+	if _, ok := asMethodProxy(v); !ok {
 		return v
 	}
 	iface := t

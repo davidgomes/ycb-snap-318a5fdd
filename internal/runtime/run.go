@@ -1106,15 +1106,13 @@ func (vm *VM) run() (Addr, bool) {
 				panic(errNilPointer)
 			}
 			method := vm.stringk(b, true)
-			if receiver.Kind() == reflect.Struct && receiver.CanInterface() {
-				if p, ok := receiver.Interface().(MethodProxy); ok {
-					if fn, rcvr, ok := p.ScriggoMethod(method); ok {
-						if !rcvr.IsValid() {
-							panic(errNilPointer)
-						}
-						vm.setGeneral(c, reflect.ValueOf(&callable{fn: fn, vars: []reflect.Value{rcvr}}))
-						break
+			if p, ok := asMethodProxy(receiver); ok {
+				if fn, rcvr, ok := p.ScriggoMethod(method); ok {
+					if !rcvr.IsValid() {
+						panic(errNilPointer)
 					}
+					vm.setGeneral(c, reflect.ValueOf(&callable{fn: fn, vars: []reflect.Value{rcvr}}))
+					break
 				}
 			}
 			vm.setGeneral(c, reflect.ValueOf(&callable{value: receiver.MethodByName(method)}))
@@ -1325,7 +1323,7 @@ func (vm *VM) run() (Addr, bool) {
 						vm.setInt(b, int64(i))
 					}
 					if c != 0 {
-						vm.setGeneral(c, reflect.ValueOf(v))
+						vm.setGeneral(c, importValue(reflect.ValueOf(v)))
 					}
 					vm.pc = bodyAddress
 					addr, breakOut := vm.run()
@@ -1393,7 +1391,7 @@ func (vm *VM) run() (Addr, bool) {
 						vm.setString(b, i)
 					}
 					if c != 0 {
-						vm.setGeneral(c, reflect.ValueOf(v))
+						vm.setGeneral(c, importValue(reflect.ValueOf(v)))
 					}
 					vm.pc = bodyAddress
 					addr, breakOut := vm.run()
@@ -1716,7 +1714,7 @@ func (vm *VM) run() (Addr, bool) {
 				k := vm.string(c)
 				rv := vm.generalk(a, op < 0)
 				if rv.IsValid() {
-					m[k] = rv.Interface()
+					m[k] = vm.exportValue(rv, emptyInterfaceType).Interface()
 				} else {
 					m[k] = nil
 				}
@@ -1761,7 +1759,7 @@ func (vm *VM) run() (Addr, bool) {
 			case []interface{}:
 				rv := vm.generalk(a, op < 0)
 				if rv.IsValid() {
-					s[i] = rv.Interface()
+					s[i] = vm.exportValue(rv, emptyInterfaceType).Interface()
 				} else {
 					s[i] = nil
 				}
