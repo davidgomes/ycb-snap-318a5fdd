@@ -63,6 +63,7 @@ type Query struct {
 	tracingOpts                 tracing.Options
 	virtualCache                VirtualCache
 	baseCache                   BaseCache
+	ruleProfile                 func(path string, success bool)
 }
 
 // Builtin represents a built-in function that queries can call.
@@ -415,6 +416,7 @@ func (q *Query) PartialRun(ctx context.Context) (partials []ast.Body, support []
 		printHook:     q.printHook,
 		strictObjects: q.strictObjects,
 	}
+	e.setRuleProfile(q.ruleProfile)
 
 	if len(q.disableInlining) > 0 {
 		e.inliningControl.PushDisable(q.disableInlining, false)
@@ -603,6 +605,7 @@ func (q *Query) Iter(ctx context.Context, iter func(QueryResult) error) error {
 		strictObjects:               q.strictObjects,
 		roundTripper:                q.roundTripper,
 	}
+	e.setRuleProfile(q.ruleProfile)
 	e.caller = e
 	q.metrics.Timer(metrics.RegoQueryEval).Start()
 	err := e.Run(func(e *eval) error {

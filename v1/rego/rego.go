@@ -125,6 +125,7 @@ type EvalContext struct {
 	baseCache                   topdown.BaseCache
 	tracing                     tracing.Options
 	externalCancel              topdown.Cancel // Note(philip): If non-nil, the cancellation is handled outside of this package.
+	ruleProfile                 bool
 }
 
 func (e *EvalContext) RawInput() *any {
@@ -448,6 +449,7 @@ func (pq preparedQuery) newEvalContext(ctx context.Context, options []EvalOption
 		capabilities:             pq.r.capabilities,
 		strictBuiltinErrors:      pq.r.strictBuiltinErrors,
 		tracing:                  pq.r.distributedTracingOpts,
+		ruleProfile:              pq.r.ruleProfile,
 	}
 
 	for _, o := range options {
@@ -667,6 +669,7 @@ type Rego struct {
 	compilerHook                func(*ast.Compiler)
 	evalMode                    *ast.CompilerEvalMode
 	filter                      filter.LoaderFilter
+	ruleProfile                 bool
 }
 
 func (r *Rego) RegoVersion() ast.RegoVersion {
@@ -2273,6 +2276,12 @@ func (r *Rego) eval(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
 		WithVirtualCache(ectx.virtualCache).
 		WithBaseCache(ectx.baseCache)
 
+	var prof *EvalProfile
+	if ectx.ruleProfile {
+		prof = &EvalProfile{}
+		q = q.WithRuleProfile(prof.observe)
+	}
+
 	if !ectx.time.IsZero() {
 		q = q.WithTime(ectx.time)
 	}
@@ -2318,6 +2327,7 @@ func (r *Rego) eval(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
 		if err != nil {
 			return err
 		}
+		result.Profile = prof
 		rs = append(rs, result)
 		return nil
 	})

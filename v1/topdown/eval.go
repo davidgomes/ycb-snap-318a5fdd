@@ -112,6 +112,7 @@ type eval struct {
 	query                       ast.Body
 	tracers                     []QueryTracer
 	tracingOpts                 tracing.Options
+	ruleProfile                 func(path string, success bool)
 	queryID                     uint64
 	timeStart                   int64
 	index                       int
@@ -124,6 +125,7 @@ type eval struct {
 	findOne                     bool
 	strictObjects               bool
 	defined                     bool
+	profileRuleSucceeded        bool
 }
 
 type (
@@ -274,10 +276,12 @@ func (e *eval) unknownRef(ref ast.Ref, b *bindings) bool {
 }
 
 func (e *eval) traceEnter(x ast.Node) {
+	e.profileEnter(x)
 	e.traceEvent(EnterOp, x, "", nil)
 }
 
 func (e *eval) traceExit(x ast.Node) {
+	e.profileExit(x)
 	var msg string
 	if e.findOne {
 		msg = "early"
