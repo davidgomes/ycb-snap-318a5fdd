@@ -4,6 +4,7 @@ import Quill from '../core/quill.js';
 import logger from '../core/logger.js';
 import Module from '../core/module.js';
 import type { Range } from '../core/selection.js';
+import { syncPicker } from '../ui/picker.js';
 
 const debug = logger('quill:toolbar');
 
@@ -20,12 +21,509 @@ export interface ToolbarProps {
   theme?: boolean;
 }
 
+type ControlListener = {
+  eventName: string;
+  listener: EventListener;
+  format: string;
+};
+
+class ToolbarSession {
+  static sessions = new Set<ToolbarSession>();
+
+  static pruning = false;
+
+  controls: [string, HTMLElement][] = [];
+
+  members = new Set<Toolbar>();
+
+  active: Toolbar | null = null;
+
+  shared = false;
+
+  private listeners = new Map<HTMLElement, ControlListener>();
+
+  private warned = new WeakSet<HTMLElement>();
+
+  private connectedMembers = new WeakSet<Toolbar>();
+
+  private observer: MutationObserver;
+
+  private cleanups = new Map<Toolbar, () => void>();
+
+  constructor(public container: HTMLElement) {
+    ToolbarSession.sessions.add(this);
+    installRemovalHook();
+    this.observer = new MutationObserver(() => {
+      this.syncControls();
+    });
+    this.observer.observe(this.container, {
+      childList: true,
+      subtree: true,
+    });
+    this.container.addEventListener('mousedown', this.onMouseDown);
+  }
+
+  add(toolbar: Toolbar) {
+    this.members.add(toolbar);
+    if (this.members.size > 1) {
+      this.shared = true;
+    }
+    this.watchEditor(toolbar);
+    this.syncControls();
+    if (this.target() === toolbar) {
+      const [range] = toolbar.quill.selection.getRange();
+      toolbar.update(range);
+    } else {
+      this.syncChrome();
+    }
+  }
+
+  activate(toolbar: Toolbar) {
+    if (!this.members.has(toolbar) || !toolbar.isConnected()) return;
+    this.active = toolbar;
+    const [range] = toolbar.quill.selection.getRange();
+    toolbar.update(range);
+    this.syncChrome();
+  }
+
+  target(): Toolbar | null {
+    this.pruneDisconnected();
+    if (
+      this.active &&
+      this.members.has(this.active) &&
+      this.active.isConnected()
+    ) {
+      return this.active;
+    }
+    if (!this.shared) {
+      const [only] = this.members;
+      if (only?.isConnected()) return only;
+    }
+    return null;
+  }
+
+  supports(format: string) {
+    return Array.from(this.members).some((toolbar) => {
+      return (
+        toolbar.handlers[format] != null ||
+        toolbar.quill.scroll.query(format) != null
+      );
+    });
+  }
+
+  addCleanup(toolbar: Toolbar, cleanup: () => void) {
+    const previous = this.cleanups.get(toolbar);
+    this.cleanups.set(toolbar, () => {
+      previous?.();
+      cleanup();
+    });
+  }
+
+  unregister(toolbar: Toolbar) {
+    if (!this.members.has(toolbar)) return;
+    const wasActive = this.active === toolbar;
+    this.members.delete(toolbar);
+    if (wasActive) this.active = null;
+    this.cleanups.get(toolbar)?.();
+    this.cleanups.delete(toolbar);
+    if (wasActive) {
+      this.clearActiveState();
+      this.removeManagedFileInputs();
+    }
+    if (this.members.size === 0) {
+      this.destroy();
+    }
+  }
+
+  pruneDisconnected() {
+    if (ToolbarSession.pruning) return;
+    ToolbarSession.pruning = true;
+    try {
+      Array.from(this.members).forEach((toolbar) => {
+        if (toolbar.isConnected()) {
+          this.connectedMembers.add(toolbar);
+          return;
+        }
+        if (this.connectedMembers.has(toolbar)) {
+          this.unregister(toolbar);
+        }
+      });
+    } finally {
+      ToolbarSession.pruning = false;
+    }
+  }
+
+  static pruneAll() {
+    if (ToolbarSession.pruning) return;
+    Array.from(ToolbarSession.sessions).forEach((session) => {
+      session.pruneDisconnected();
+    });
+  }
+
+  syncChrome() {
+    const current = this.target();
+    const disabled = current ? !current.quill.isEnabled() : false;
+    this.controls.forEach(([, input]) => {
+      if (
+        input instanceof HTMLButtonElement ||
+        input instanceof HTMLSelectElement
+      ) {
+        input.disabled = disabled;
+      }
+      if (input instanceof HTMLSelectElement) {
+        syncPicker(input);
+      }
+    });
+    this.syncManagedFileInput();
+  }
+
+  syncManagedFileInput() {
+    const inputs = Array.from(
+      this.container.querySelectorAll<HTMLInputElement>(
+        'input.ql-image[type=file]',
+      ),
+    );
+    const quill = this.target()?.quill;
+    if (quill == null) {
+      if (this.shared) {
+        inputs.forEach((input) => input.remove());
+      }
+      return;
+    }
+    const types = quill.uploader?.options?.mimetypes;
+    inputs.forEach((input) => {
+      if (Array.isArray(types)) {
+        input.setAttribute('accept', types.join(', '));
+      }
+      input.disabled = !quill.isEnabled();
+    });
+  }
+
+  private clearActiveState() {
+    this.controls.forEach(([, input]) => {
+      if (input instanceof HTMLSelectElement) {
+        input.disabled = false;
+        input.value = '';
+        input.selectedIndex = -1;
+        syncPicker(input);
+      } else if (input instanceof HTMLButtonElement) {
+        input.disabled = false;
+        input.classList.remove('ql-active');
+        input.setAttribute('aria-pressed', 'false');
+      }
+    });
+  }
+
+  private removeManagedFileInputs() {
+    this.container
+      .querySelectorAll('input.ql-image[type=file]')
+      .forEach((input) => input.remove());
+  }
+
+  private destroy() {
+    this.observer.disconnect();
+    this.container.removeEventListener('mousedown', this.onMouseDown);
+    this.listeners.forEach(({ eventName, listener }, input) => {
+      input.removeEventListener(eventName, listener);
+    });
+    this.listeners.clear();
+    this.controls.splice(0, this.controls.length);
+    ToolbarSession.sessions.delete(this);
+    sessionByContainer.delete(this.container);
+  }
+
+  private watchEditor(toolbar: Toolbar) {
+    const { quill } = toolbar;
+    const onEditorChange = (
+      type: string,
+      range: Range | null,
+      _oldRange: Range | null,
+      source: string,
+    ) => {
+      if (!toolbar.isConnected()) {
+        this.unregister(toolbar);
+        return;
+      }
+      if (
+        type === Quill.events.SELECTION_CHANGE &&
+        source === Quill.sources.USER &&
+        range != null
+      ) {
+        this.activate(toolbar);
+        return;
+      }
+      if (this.target() === toolbar) {
+        const [current] = quill.selection.getRange();
+        toolbar.update(current);
+      }
+    };
+    const onFocus = () => {
+      if (!toolbar.isConnected()) return;
+      this.activate(toolbar);
+    };
+    quill.on(Quill.events.EDITOR_CHANGE, onEditorChange);
+    quill.root.addEventListener('focusin', onFocus);
+    const originalEnable = quill.enable.bind(quill);
+    quill.enable = (enabled = true) => {
+      originalEnable(enabled);
+      if (!this.members.has(toolbar)) return;
+      if (this.target() === toolbar) {
+        const [range] = quill.selection.getRange();
+        toolbar.update(range);
+        this.syncChrome();
+      }
+    };
+    this.addCleanup(toolbar, () => {
+      quill.off(Quill.events.EDITOR_CHANGE, onEditorChange);
+      quill.root.removeEventListener('focusin', onFocus);
+      quill.enable = originalEnable;
+    });
+  }
+
+  private onMouseDown = (event: MouseEvent) => {
+    if (!this.shared) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const control = target.closest('button, select, .ql-picker');
+    if (control && this.container.contains(control)) {
+      event.preventDefault();
+    }
+  };
+
+  rescan(input?: HTMLElement) {
+    if (input) this.bindControl(input);
+    else this.syncControls();
+  }
+
+  private syncControls() {
+    for (let i = this.controls.length - 1; i >= 0; i -= 1) {
+      if (!this.container.contains(this.controls[i][1])) {
+        this.controls.splice(i, 1);
+      }
+    }
+    Array.from(this.container.querySelectorAll('button, select')).forEach(
+      (input) => {
+        this.bindControl(input as HTMLElement);
+      },
+    );
+    if (this.target()) this.syncChrome();
+  }
+
+  private bindControl(input: HTMLElement) {
+    const existing = this.listeners.get(input);
+    const format = existing?.format ?? formatName(input);
+    if (!format) return;
+    if (input.tagName === 'BUTTON') {
+      input.setAttribute('type', 'button');
+    }
+    if (!existing) {
+      if (!this.supports(format)) {
+        if (!this.warned.has(input)) {
+          debug.warn('ignoring attaching to nonexistent format', format, input);
+          this.warned.add(input);
+        }
+        return;
+      }
+      const eventName = input.tagName === 'SELECT' ? 'change' : 'click';
+      const listener: EventListener = (event) => {
+        this.handleControl(input, format, event);
+      };
+      input.addEventListener(eventName, listener);
+      this.listeners.set(input, { eventName, listener, format });
+    }
+    if (!this.controls.some(([, control]) => control === input)) {
+      this.controls.push([format, input]);
+    }
+  }
+
+  private handleControl(input: HTMLElement, format: string, event: Event) {
+    const focused = Array.from(this.members).find((toolbar) => {
+      return toolbar.isConnected() && toolbar.quill.hasFocus();
+    });
+    if (focused) this.activate(focused);
+    const toolbar = this.target();
+    if (input.tagName !== 'SELECT') {
+      event.preventDefault();
+    }
+    if (toolbar == null || !toolbar.quill.isEnabled()) {
+      if (toolbar) {
+        const [range] = toolbar.quill.selection.getRange();
+        toolbar.update(range);
+      }
+      return;
+    }
+    let value: unknown;
+    if (input.tagName === 'SELECT') {
+      const select = input as HTMLSelectElement;
+      if (select.selectedIndex < 0) return;
+      const selected = select.options[select.selectedIndex];
+      if (selected.hasAttribute('selected')) {
+        value = false;
+      } else {
+        value = selected.value || false;
+      }
+    } else if (input.classList.contains('ql-active')) {
+      value = false;
+    } else {
+      value =
+        (input as HTMLButtonElement).value || !input.hasAttribute('value');
+    }
+    const { quill } = toolbar;
+    quill.focus();
+    const [range] = quill.selection.getRange();
+    const blot = quill.scroll.query(format);
+    if (toolbar.handlers[format] != null) {
+      toolbar.handlers[format].call(toolbar, value);
+    } else if (
+      blot != null &&
+      // @ts-expect-error
+      blot.prototype instanceof EmbedBlot
+    ) {
+      value = prompt(`Enter ${format}`); // eslint-disable-line no-alert
+      if (!value) return;
+      quill.updateContents(
+        new Delta()
+          // @ts-expect-error Fix me later
+          .retain(range.index)
+          // @ts-expect-error Fix me later
+          .delete(range.length)
+          .insert({ [format]: value }),
+        Quill.sources.USER,
+      );
+    } else {
+      quill.format(format, value, Quill.sources.USER);
+    }
+    toolbar.update(range);
+  }
+}
+
+const sessionByContainer = new WeakMap<HTMLElement, ToolbarSession>();
+
+function sessionFor(container: HTMLElement) {
+  let session = sessionByContainer.get(container);
+  if (session == null || !ToolbarSession.sessions.has(session)) {
+    session = new ToolbarSession(container);
+    sessionByContainer.set(container, session);
+  }
+  return session;
+}
+
+function formatName(input: HTMLElement) {
+  const className = Array.from(input.classList).find((name) => {
+    return name.indexOf('ql-') === 0 && name !== 'ql-active';
+  });
+  return className ? className.slice('ql-'.length) : null;
+}
+
+let removalHookInstalled = false;
+let refreshingToolbars = false;
+
+function refreshToolbarsContaining(node: Node | null) {
+  if (node == null || refreshingToolbars || ToolbarSession.pruning) {
+    return;
+  }
+  refreshingToolbars = true;
+  try {
+    ToolbarSession.sessions.forEach((session) => {
+      if (session.container === node || session.container.contains(node)) {
+        session.rescan();
+      }
+    });
+  } finally {
+    refreshingToolbars = false;
+  }
+}
+
+function installRemovalHook() {
+  if (removalHookInstalled) return;
+  removalHookInstalled = true;
+  const nativeRemoveChild = Node.prototype.removeChild;
+  const nativeAppendChild = Node.prototype.appendChild;
+  const nativeInsertBefore = Node.prototype.insertBefore;
+  const nativeRemove = Element.prototype.remove;
+  Node.prototype.removeChild = function removeChild<T extends Node>(
+    this: Node,
+    child: T,
+  ): T {
+    const removed = nativeRemoveChild.call(this, child) as T;
+    ToolbarSession.pruneAll();
+    refreshToolbarsContaining(this);
+    return removed;
+  };
+  // element.remove() detaches in the DOM engine without calling the JS
+  // removeChild override, so editor removal has to be observed here too.
+  Element.prototype.remove = function remove(this: Element) {
+    nativeRemove.call(this);
+    ToolbarSession.pruneAll();
+  };
+  Node.prototype.appendChild = function appendChild<T extends Node>(
+    this: Node,
+    child: T,
+  ): T {
+    const appended = nativeAppendChild.call(this, child) as T;
+    refreshToolbarsContaining(this);
+    return appended;
+  };
+  Node.prototype.insertBefore = function insertBefore<T extends Node>(
+    this: Node,
+    child: T,
+    ref: Node | null,
+  ): T {
+    const inserted = nativeInsertBefore.call(this, child, ref) as T;
+    refreshToolbarsContaining(this);
+    return inserted;
+  };
+  const removalObserver = new MutationObserver(() => {
+    ToolbarSession.pruneAll();
+  });
+  removalObserver.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
+}
+
+export function ensureImageFileInput(
+  container: HTMLElement,
+  fallback: Quill,
+): HTMLInputElement | null {
+  const session = sessionByContainer.get(container);
+  const quill = session ? session.target()?.quill : fallback;
+  if (quill == null || !quill.isEnabled()) return null;
+  let fileInput = container.querySelector<HTMLInputElement>(
+    'input.ql-image[type=file]',
+  );
+  if (fileInput == null) {
+    fileInput = document.createElement('input');
+    fileInput.setAttribute('type', 'file');
+    fileInput.classList.add('ql-image');
+    fileInput.addEventListener('change', () => {
+      const active = sessionByContainer.get(container)?.target()?.quill ?? null;
+      if (active == null || !active.isEnabled()) {
+        if (fileInput) fileInput.value = '';
+        return;
+      }
+      const range = active.getSelection(true);
+      active.uploader.upload(range, fileInput?.files);
+      if (fileInput) fileInput.value = '';
+    });
+    container.appendChild(fileInput);
+  }
+  const types = quill.uploader?.options?.mimetypes;
+  if (Array.isArray(types)) {
+    fileInput.setAttribute('accept', types.join(', '));
+  }
+  fileInput.disabled = false;
+  return fileInput;
+}
+
 class Toolbar extends Module<ToolbarProps> {
   static DEFAULTS: ToolbarProps;
 
   container?: HTMLElement | null;
   controls: [string, HTMLElement][];
   handlers: Record<string, Handler>;
+
+  private session?: ToolbarSession;
 
   constructor(quill: Quill, options: Partial<ToolbarProps>) {
     super(quill, options);
@@ -45,7 +543,6 @@ class Toolbar extends Module<ToolbarProps> {
       return;
     }
     this.container.classList.add('ql-toolbar');
-    this.controls = [];
     this.handlers = {};
     if (this.options.handlers) {
       Object.keys(this.options.handlers).forEach((format) => {
@@ -55,85 +552,35 @@ class Toolbar extends Module<ToolbarProps> {
         }
       });
     }
-    Array.from(this.container.querySelectorAll('button, select')).forEach(
-      (input) => {
-        // @ts-expect-error
-        this.attach(input);
-      },
-    );
-    this.quill.on(Quill.events.EDITOR_CHANGE, () => {
-      const [range] = this.quill.selection.getRange(); // quill.getSelection triggers update
-      this.update(range);
-    });
+    this.session = sessionFor(this.container);
+    this.controls = this.session.controls;
+    this.session.add(this);
+  }
+
+  addCleanup(cleanup: () => void) {
+    this.session?.addCleanup(this, cleanup);
   }
 
   addHandler(format: string, handler: Handler) {
     this.handlers[format] = handler;
+    this.session?.rescan();
   }
 
   attach(input: HTMLElement) {
-    let format = Array.from(input.classList).find((className) => {
-      return className.indexOf('ql-') === 0;
-    });
-    if (!format) return;
-    format = format.slice('ql-'.length);
-    if (input.tagName === 'BUTTON') {
-      input.setAttribute('type', 'button');
-    }
-    if (
-      this.handlers[format] == null &&
-      this.quill.scroll.query(format) == null
-    ) {
-      debug.warn('ignoring attaching to nonexistent format', format, input);
-      return;
-    }
-    const eventName = input.tagName === 'SELECT' ? 'change' : 'click';
-    input.addEventListener(eventName, (e) => {
-      let value;
-      if (input.tagName === 'SELECT') {
-        // @ts-expect-error
-        if (input.selectedIndex < 0) return;
-        // @ts-expect-error
-        const selected = input.options[input.selectedIndex];
-        if (selected.hasAttribute('selected')) {
-          value = false;
-        } else {
-          value = selected.value || false;
-        }
-      } else {
-        if (input.classList.contains('ql-active')) {
-          value = false;
-        } else {
-          // @ts-expect-error
-          value = input.value || !input.hasAttribute('value');
-        }
-        e.preventDefault();
-      }
-      this.quill.focus();
-      const [range] = this.quill.selection.getRange();
-      if (this.handlers[format] != null) {
-        this.handlers[format].call(this, value);
-      } else if (
-        // @ts-expect-error
-        this.quill.scroll.query(format).prototype instanceof EmbedBlot
-      ) {
-        value = prompt(`Enter ${format}`); // eslint-disable-line no-alert
-        if (!value) return;
-        this.quill.updateContents(
-          new Delta()
-            // @ts-expect-error Fix me later
-            .retain(range.index)
-            // @ts-expect-error Fix me later
-            .delete(range.length)
-            .insert({ [format]: value }),
-          Quill.sources.USER,
-        );
-      } else {
-        this.quill.format(format, value, Quill.sources.USER);
-      }
-      this.update(range);
-    });
-    this.controls.push([format, input]);
+    this.session?.rescan(input);
+  }
+
+  isConnected() {
+    return (
+      this.quill != null &&
+      this.quill.container?.isConnected === true &&
+      this.quill.root?.isConnected === true
+    );
+  }
+
+  isToolbarActive() {
+    if (this.session == null) return true;
+    return this.session.target() === this;
   }
 
   update(range: Range | null) {
@@ -179,7 +626,11 @@ class Toolbar extends Module<ToolbarProps> {
         input.classList.toggle('ql-active', isActive);
         input.setAttribute('aria-pressed', isActive.toString());
       }
+      if (input instanceof HTMLSelectElement) {
+        syncPicker(input);
+      }
     });
+    this.session?.syncChrome();
   }
 }
 Toolbar.DEFAULTS = {};

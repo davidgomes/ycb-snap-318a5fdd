@@ -2,6 +2,16 @@ import DropdownIcon from '../assets/icons/dropdown.svg';
 
 let optionsCounter = 0;
 
+const pickerBySelect = new WeakMap<HTMLSelectElement, Picker>();
+
+export function getPicker(select: HTMLSelectElement): Picker | undefined {
+  return pickerBySelect.get(select);
+}
+
+export function syncPicker(select: HTMLSelectElement) {
+  pickerBySelect.get(select)?.update();
+}
+
 function toggleAriaAttribute(element: HTMLElement, attribute: string) {
   element.setAttribute(
     attribute,
@@ -16,6 +26,7 @@ class Picker {
 
   constructor(select: HTMLSelectElement) {
     this.select = select;
+    pickerBySelect.set(select, this);
     this.container = document.createElement('span');
     this.buildPicker();
     this.select.style.display = 'none';
@@ -41,6 +52,7 @@ class Picker {
   }
 
   togglePicker() {
+    if (this.select.disabled) return;
     this.container.classList.toggle('ql-expanded');
     // Toggle aria-expanded and aria-hidden to make the picker accessible
     toggleAriaAttribute(this.label, 'aria-expanded');
@@ -145,6 +157,7 @@ class Picker {
   }
 
   selectItem(item: HTMLElement | null, trigger = false) {
+    if (trigger && this.select.disabled) return;
     const selected = this.container.querySelector('.ql-selected');
     if (item === selected) return;
     if (selected != null) {
@@ -192,6 +205,17 @@ class Picker {
       option != null &&
       option !== this.select.querySelector('option[selected]');
     this.label.classList.toggle('ql-active', isActive);
+    this.container.classList.toggle('ql-disabled', this.select.disabled);
+    if (this.select.disabled) {
+      this.container.setAttribute('aria-disabled', 'true');
+      this.container.setAttribute('disabled', '');
+      this.label.setAttribute('aria-disabled', 'true');
+      this.close();
+    } else {
+      this.container.removeAttribute('aria-disabled');
+      this.container.removeAttribute('disabled');
+      this.label.removeAttribute('aria-disabled');
+    }
   }
 }
 

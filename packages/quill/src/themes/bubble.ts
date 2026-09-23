@@ -123,7 +123,10 @@ class BubbleTheme extends BaseTheme {
     // @ts-expect-error
     this.tooltip = new BubbleTooltip(this.quill, this.options.bounds);
     if (toolbar.container != null) {
-      this.tooltip.root.appendChild<HTMLElement>(toolbar.container);
+      const ownerTooltip = toolbar.container.closest('.ql-tooltip');
+      if (ownerTooltip == null) {
+        this.tooltip.root.appendChild<HTMLElement>(toolbar.container);
+      }
       this.buildButtons(toolbar.container.querySelectorAll('button'), icons);
       this.buildPickers(toolbar.container.querySelectorAll('select'), icons);
     }

@@ -245,4 +245,218 @@ describe('Toolbar', () => {
       expect(boldButton?.classList.contains('ql-active')).toBe(true);
     });
   });
+
+  describe('shared container', () => {
+    const register = () => {
+      Quill.register(
+        {
+          'themes/snow': SnowTheme,
+          'modules/toolbar': Toolbar,
+          'modules/clipboard': Clipboard,
+          'modules/keyboard': Keyboard,
+          'modules/history': History,
+          'modules/uploader': Uploader,
+          'modules/input': Input,
+          'modules/uiNode': UINode,
+        },
+        true,
+      );
+    };
+
+    const createEditor = (
+      html: string,
+      toolbar: HTMLElement,
+      extra: Record<string, unknown> = {},
+    ) => {
+      const container = createContainer(html);
+      const quill = new Quill(container, {
+        theme: 'snow',
+        registry: createRegistry([SizeClass, Bold]),
+        modules: {
+          toolbar: { container: toolbar },
+          ...extra,
+        },
+      });
+      return quill;
+    };
+
+    test('formats the editor that most recently had focus', () => {
+      register();
+      const toolbar = createContainer(
+        '<span class="ql-formats"><button class="ql-bold"></button><select class="ql-size"></select></span>',
+      );
+      const first = createEditor('<p>aaaa</p>', toolbar);
+      const second = createEditor('<p>bbbb</p>', toolbar);
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLButtonElement;
+      expect(toolbar.querySelectorAll('.ql-picker')).toHaveLength(1);
+
+      first.setSelection(0, 2, 'user');
+      bold.click();
+      expect(first.getFormat(0, 2).bold).toBe(true);
+      expect(second.getFormat(0, 2).bold).toBeUndefined();
+      expect(first.hasFocus()).toBe(true);
+      expect(second.hasFocus()).toBe(false);
+
+      second.setSelection(1, 2, 'user');
+      expect(bold.classList.contains('ql-active')).toBe(false);
+      bold.click();
+      expect(second.getFormat(1, 2).bold).toBe(true);
+      expect(first.getFormat(0, 2).bold).toBe(true);
+      expect(second.hasFocus()).toBe(true);
+      expect(first.hasFocus()).toBe(false);
+      expect(first.getSelection()).toBe(null);
+    });
+
+    test('updates picker state for the active editor', () => {
+      register();
+      const toolbar = createContainer(
+        '<span class="ql-formats"><select class="ql-size"></select></span>',
+      );
+      const first = createEditor(
+        '<p><span class="ql-size-small">aa</span></p>',
+        toolbar,
+      );
+      const second = createEditor(
+        '<p><span class="ql-size-huge">bb</span></p>',
+        toolbar,
+      );
+      const picker = toolbar.querySelector('.ql-picker') as HTMLElement;
+      first.setSelection(0, 1, 'user');
+      expect(
+        picker.querySelector('.ql-picker-label')?.getAttribute('data-value'),
+      ).toBe('small');
+      second.setSelection(0, 1, 'user');
+      expect(
+        picker.querySelector('.ql-picker-label')?.getAttribute('data-value'),
+      ).toBe('huge');
+      expect(toolbar.querySelectorAll('.ql-picker')).toHaveLength(1);
+    });
+
+    test('keeps one image input pointed at the active editor', () => {
+      register();
+      const toolbar = createContainer(
+        '<span class="ql-formats"><button class="ql-image"></button></span>',
+      );
+      const first = createEditor('<p>aa</p>', toolbar, {
+        uploader: { mimetypes: ['image/gif'] },
+      });
+      const second = createEditor('<p>bb</p>', toolbar, {
+        uploader: { mimetypes: ['image/webp'] },
+      });
+      const image = toolbar.querySelector(
+        'button.ql-image',
+      ) as HTMLButtonElement;
+      first.setSelection(0, 0, 'user');
+      image.click();
+      const created = toolbar.querySelector(
+        'input.ql-image[type=file]',
+      ) as HTMLInputElement;
+      const firstAccept = created.getAttribute('accept');
+      second.setSelection(0, 0, 'user');
+      image.click();
+      const inputs = toolbar.querySelectorAll('input.ql-image[type=file]');
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0].getAttribute('accept')).not.toBe(firstAccept);
+      expect(inputs[0].getAttribute('accept')).toContain('image/webp');
+      const uploaded: Quill[] = [];
+      first.uploader.upload = () => {
+        uploaded.push(first);
+      };
+      second.uploader.upload = () => {
+        uploaded.push(second);
+      };
+      inputs[0].dispatchEvent(new Event('change'));
+      expect(uploaded).toEqual([second]);
+    });
+
+    test('drops the active editor without leaving toolbar actions behind', () => {
+      register();
+      const toolbar = createContainer(
+        '<span class="ql-formats"><button class="ql-bold"></button><button class="ql-image"></button></span>',
+      );
+      const first = createEditor('<p>aaaa</p>', toolbar);
+      const second = createEditor('<p>bbbb</p>', toolbar);
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLButtonElement;
+      const image = toolbar.querySelector(
+        'button.ql-image',
+      ) as HTMLButtonElement;
+      first.setSelection(0, 2, 'user');
+      image.click();
+      expect(toolbar.querySelectorAll('input.ql-image')).toHaveLength(1);
+      first.container.remove();
+      expect(bold.classList.contains('ql-active')).toBe(false);
+      expect(toolbar.querySelectorAll('input.ql-image')).toHaveLength(0);
+      bold.click();
+      expect(second.getFormat(0, 2).bold).toBeUndefined();
+      second.setSelection(0, 2, 'user');
+      bold.click();
+      expect(second.getFormat(0, 2).bold).toBe(true);
+    });
+
+    test('disables shared controls while the active editor is read-only', () => {
+      register();
+      const toolbar = createContainer(
+        '<span class="ql-formats"><button class="ql-bold"></button><select class="ql-size"></select><button class="ql-image"></button></span>',
+      );
+      const first = createEditor('<p>aaaa</p>', toolbar, {});
+      const second = createEditor('<p>bbbb</p>', toolbar);
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLButtonElement;
+      const select = toolbar.querySelector(
+        'select.ql-size',
+      ) as HTMLSelectElement;
+      const picker = toolbar.querySelector('.ql-picker') as HTMLElement;
+      first.setSelection(0, 2, 'user');
+      first.disable();
+      expect(bold.disabled).toBe(true);
+      expect(select.disabled).toBe(true);
+      expect(picker.classList.contains('ql-disabled')).toBe(true);
+      expect(picker.getAttribute('aria-disabled')).toBe('true');
+      expect(picker.hasAttribute('disabled')).toBe(true);
+      bold.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(first.getFormat(0, 2).bold).toBeUndefined();
+      picker
+        .querySelector('.ql-picker-label')
+        ?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      expect(picker.classList.contains('ql-expanded')).toBe(false);
+      second.setSelection(0, 2, 'user');
+      expect(bold.disabled).toBe(false);
+      expect(select.disabled).toBe(false);
+      expect(picker.classList.contains('ql-disabled')).toBe(false);
+      bold.click();
+      expect(second.getFormat(0, 2).bold).toBe(true);
+      expect(bold.classList.contains('ql-active')).toBe(true);
+    });
+
+    test('binds toolbar buttons added later exactly once', () => {
+      register();
+      const toolbar = createContainer('<span class="ql-formats"></span>');
+      const first = createEditor('<p>aaaa</p>', toolbar);
+      const second = createEditor('<p>bbbb</p>', toolbar);
+      const group = toolbar.querySelector('.ql-formats') as HTMLElement;
+      let firstCalls = 0;
+      let secondCalls = 0;
+      (first.getModule('toolbar') as Toolbar).addHandler('marker', () => {
+        firstCalls += 1;
+      });
+      (second.getModule('toolbar') as Toolbar).addHandler('marker', () => {
+        secondCalls += 1;
+      });
+      const button = document.createElement('button');
+      button.className = 'ql-marker';
+      group.appendChild(button);
+      first.setSelection(0, 2, 'user');
+      button.click();
+      button.remove();
+      group.appendChild(button);
+      button.click();
+      expect(firstCalls).toBe(2);
+      expect(secondCalls).toBe(0);
+      button.remove();
+      second.setSelection(0, 2, 'user');
+      group.appendChild(button);
+      button.click();
+      expect(firstCalls).toBe(2);
+      expect(secondCalls).toBe(1);
+    });
+  });
 });

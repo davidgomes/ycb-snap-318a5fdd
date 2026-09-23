@@ -5,7 +5,8 @@ import Theme from '../core/theme.js';
 import type { ThemeOptions } from '../core/theme.js';
 import ColorPicker from '../ui/color-picker.js';
 import IconPicker from '../ui/icon-picker.js';
-import Picker from '../ui/picker.js';
+import Picker, { getPicker } from '../ui/picker.js';
+import { ensureImageFileInput } from '../modules/toolbar.js';
 import Tooltip from '../ui/tooltip.js';
 import type { Range } from '../core/selection.js';
 import type Clipboard from '../modules/clipboard.js';
@@ -142,6 +143,8 @@ class BaseTheme extends Theme {
     icons: Record<string, string | Record<string, string>>,
   ) {
     this.pickers = Array.from(selects).map((select) => {
+      const existing = getPicker(select);
+      if (existing) return existing;
       if (select.classList.contains('ql-align')) {
         if (select.querySelector('option') == null) {
           fillSelect(select, ALIGNS);
@@ -178,11 +181,21 @@ class BaseTheme extends Theme {
       return new Picker(select);
     });
     const update = () => {
+      const toolbar = this.quill.getModule('toolbar') as {
+        isToolbarActive?: () => boolean;
+      };
+      if (toolbar?.isToolbarActive && !toolbar.isToolbarActive()) return;
       this.pickers.forEach((picker) => {
         picker.update();
       });
     };
     this.quill.on(Emitter.events.EDITOR_CHANGE, update);
+    const toolbar = this.quill.getModule('toolbar') as {
+      addCleanup?: (cleanup: () => void) => void;
+    };
+    toolbar?.addCleanup?.(() => {
+      this.quill.off(Emitter.events.EDITOR_CHANGE, update);
+    });
   }
 }
 BaseTheme.DEFAULTS = merge({}, Theme.DEFAULTS, {
@@ -193,25 +206,9 @@ BaseTheme.DEFAULTS = merge({}, Theme.DEFAULTS, {
           this.quill.theme.tooltip.edit('formula');
         },
         image() {
-          let fileInput = this.container.querySelector(
-            'input.ql-image[type=file]',
-          );
-          if (fileInput == null) {
-            fileInput = document.createElement('input');
-            fileInput.setAttribute('type', 'file');
-            fileInput.setAttribute(
-              'accept',
-              this.quill.uploader.options.mimetypes.join(', '),
-            );
-            fileInput.classList.add('ql-image');
-            fileInput.addEventListener('change', () => {
-              const range = this.quill.getSelection(true);
-              this.quill.uploader.upload(range, fileInput.files);
-              fileInput.value = '';
-            });
-            this.container.appendChild(fileInput);
-          }
-          fileInput.click();
+          if (!(this.container instanceof HTMLElement)) return;
+          const fileInput = ensureImageFileInput(this.container, this.quill);
+          fileInput?.click();
         },
         video() {
           this.quill.theme.tooltip.edit('video');
