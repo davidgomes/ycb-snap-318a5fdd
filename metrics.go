@@ -379,6 +379,15 @@ type Metrics struct {
 
 	SecondaryCacheMetrics SecondaryCacheMetrics
 
+	// DurableCommitCount is the number of sync commits whose WAL sync
+	// succeeded. It is accumulated only when EventListener.BatchDurable is
+	// configured.
+	DurableCommitCount uint64
+	// DurableCommitDuration is the cumulative time spent in the WAL sync phase
+	// of successful sync commits (not total commit time). It is accumulated
+	// only when EventListener.BatchDurable is configured.
+	DurableCommitDuration time.Duration
+
 	private struct {
 		optionsFileSize  uint64
 		manifestFileSize uint64

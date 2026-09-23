@@ -915,6 +915,47 @@ func (k APIMisuseKind) String() string {
 	}
 }
 
+// BatchDurableInfo describes a sync commit whose WAL sync has finished.
+//
+// The callback runs after the WAL sync attempt completes, including when that
+// attempt fails. It does not run for non-sync commits or when the WAL is
+// disabled.
+type BatchDurableInfo struct {
+	// JobID identifies this durable commit. It is the identifier accepted by
+	// DB.WaitForJobDurability.
+	JobID int
+	// SeqNum is the sequence number of the first record in the batch.
+	SeqNum base.SeqNum
+	// Err is the WAL sync error, or nil when the sync succeeded.
+	Err error
+	// ApplyDuration is the wall-clock time spent applying the batch.
+	ApplyDuration time.Duration
+	// SyncDuration is the wall-clock time spent in the WAL sync phase, not the
+	// total commit time.
+	SyncDuration time.Duration
+	// CorrelationID is copied from WriteOptions.CommitCorrelationID.
+	CorrelationID uint64
+	// BatchSize is the encoded batch size in bytes.
+	BatchSize int
+	// KeyCount is the number of memtable-modifying operations in the batch.
+	KeyCount uint32
+}
+
+func (i BatchDurableInfo) String() string {
+	return redact.StringWithoutMarkers(i)
+}
+
+// SafeFormat implements redact.SafeFormatter.
+func (i BatchDurableInfo) SafeFormat(w redact.SafePrinter, _ rune) {
+	if i.Err != nil {
+		w.Printf("[JOB %d] batch durable error seq=%d: %s",
+			redact.Safe(i.JobID), redact.Safe(i.SeqNum), i.Err)
+		return
+	}
+	w.Printf("[JOB %d] batch durable seq=%d keys=%d bytes=%d",
+		redact.Safe(i.JobID), redact.Safe(i.SeqNum), redact.Safe(i.KeyCount), redact.Safe(i.BatchSize))
+}
+
 // EventListener contains a set of functions that will be invoked when various
 // significant DB events occur. Note that the functions should not run for an
 // excessive amount of time as they are invoked synchronously by the DB and may
@@ -1020,6 +1061,11 @@ type EventListener struct {
 
 	// PossibleAPIMisuse is invoked when a possible API misuse is detected.
 	PossibleAPIMisuse func(PossibleAPIMisuseInfo)
+
+	// BatchDurable is invoked exactly once per sync commit after the WAL sync
+	// attempt completes, including when the sync fails. It is not invoked for
+	// non-sync commits or when Options.DisableWAL is set.
+	BatchDurable func(BatchDurableInfo)
 }
 
 // EnsureDefaults ensures that background error events are logged to the
@@ -1120,6 +1166,9 @@ func (l *EventListener) EnsureDefaults(logger Logger) {
 	if l.PossibleAPIMisuse == nil {
 		l.PossibleAPIMisuse = func(info PossibleAPIMisuseInfo) {}
 	}
+	if l.BatchDurable == nil {
+		l.BatchDurable = func(BatchDurableInfo) {}
+	}
 }
 
 // MakeLoggingEventListener creates an EventListener that logs all events to the
@@ -1209,6 +1258,9 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 			logger.Infof("%s", info)
 		},
 		PossibleAPIMisuse: func(info PossibleAPIMisuseInfo) {
+			logger.Infof("%s", info)
+		},
+		BatchDurable: func(info BatchDurableInfo) {
 			logger.Infof("%s", info)
 		},
 	}
@@ -1326,6 +1378,10 @@ func TeeEventListener(a, b EventListener) EventListener {
 		PossibleAPIMisuse: func(info PossibleAPIMisuseInfo) {
 			a.PossibleAPIMisuse(info)
 			b.PossibleAPIMisuse(info)
+		},
+		BatchDurable: func(info BatchDurableInfo) {
+			a.BatchDurable(info)
+			b.BatchDurable(info)
 		},
 	}
 }

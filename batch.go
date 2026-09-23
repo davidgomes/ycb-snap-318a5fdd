@@ -373,6 +373,15 @@ type batchInternal struct {
 
 	// Position bools together to reduce the sizeof the struct.
 
+	// trackDurability is set for sync commits that should publish durability
+	// after the WAL sync. It is ignored when the WAL is disabled.
+	trackDurability bool
+	// correlationID is copied from WriteOptions.CommitCorrelationID.
+	correlationID uint64
+	// durable tracks an in-flight sync commit. It is set once the commit has
+	// been queued for a WAL sync.
+	durable *durableCommit
+
 	// ingestedSSTBatch indicates that the batch contains one or more key kinds
 	// of InternalKeyKindIngestSST, InternalKeyKindIngestSSTWithBlobs, or
 	// InternalKeyKindExcise. If the batch contains key kinds of IngestSST*/Excise

@@ -301,6 +301,10 @@ type DB struct {
 
 	commit *commitPipeline
 
+	// durability tracks WAL sync completion for sync commits and serves the
+	// WaitForDurability family of APIs.
+	durability durabilityCoordinator
+
 	// readState provides access to the state needed for reading without needing
 	// to acquire DB.mu.
 	readState struct {
@@ -805,6 +809,13 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 	if sync && d.opts.DisableWAL {
 		return errors.New("pebble: WAL disabled")
 	}
+	if opts != nil {
+		batch.correlationID = opts.CommitCorrelationID
+	}
+	// Sync commits record durability once the WAL sync finishes. DisableWAL
+	// rejects sync commits above, so reaching here with sync means the WAL is
+	// enabled.
+	batch.trackDurability = sync
 
 	if fmv := d.FormatMajorVersion(); fmv < batch.minimumFormatMajorVersion {
 		panic(errors.AssertionFailedf(
@@ -903,7 +914,8 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 		b.flushable.setSeqNum(b.SeqNum())
 		if !d.opts.DisableWAL {
 			var err error
-			size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr}, b)
+			onSync := d.maybeArmDurable(b, syncWG, repr)
+			size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr, OnSync: onSync}, b)
 			if err != nil {
 				panic(err)
 			}
@@ -945,7 +957,8 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 	d.logBytesIn.Add(uint64(len(repr)))
 
 	if b.flushable == nil {
-		size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr}, b)
+		onSync := d.maybeArmDurable(b, syncWG, repr)
+		size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr, OnSync: onSync}, b)
 		if err != nil {
 			panic(err)
 		}
@@ -1568,6 +1581,9 @@ func (d *DB) Close() error {
 	invariants.SetFinalizer(d.closed, nil)
 
 	d.closed.Store(errors.WithStack(ErrClosed))
+	// Unblock durability waiters before tearing down the WAL. In-flight sync
+	// callbacks may still complete successfully after this point.
+	d.durability.shutdown()
 	close(d.closedCh)
 	d.bgCtxCancel()
 
@@ -2079,6 +2095,7 @@ func (d *DB) Metrics() *Metrics {
 	metrics.SecondaryCacheMetrics = d.objProvider.Metrics()
 
 	metrics.Uptime = d.opts.private.timeNow().Sub(d.openedAt)
+	metrics.DurableCommitCount, metrics.DurableCommitDuration = d.durability.commitMetrics()
 
 	metrics.manualMemory = manual.GetMetrics()
 

@@ -134,6 +134,7 @@ get-disk-usage: db
 flush
 ----
 sync-data: wal/000003.log
+[JOB 1] batch durable seq=10 keys=1 bytes=16
 sync-data: wal/000003.log
 close: wal/000003.log
 create: wal/000004.log
@@ -160,6 +161,7 @@ sync: db
 compact
 ----
 sync-data: wal/000004.log
+[JOB 2] batch durable seq=11 keys=1 bytes=16
 sync-data: wal/000004.log
 close: wal/000004.log
 reuseForWrite: wal/000003.log -> wal/000007.log
@@ -232,6 +234,7 @@ disable-file-deletions
 flush
 ----
 sync-data: wal/000007.log
+[JOB 3] batch durable seq=12 keys=1 bytes=16
 sync-data: wal/000007.log
 close: wal/000007.log
 reuseForWrite: wal/000004.log -> wal/000012.log
@@ -391,6 +394,7 @@ DELETE PACER   |   in queue   |   deleted
 ingest-flushable
 ----
 sync-data: wal/000012.log
+[JOB 4] batch durable seq=14 keys=1 bytes=16
 open: ext/a
 read-at(591, 61): ext/a
 read-at(541, 50): ext/a

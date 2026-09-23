@@ -62,7 +62,7 @@ func TestSyncQueue(t *testing.T) {
 				// syncQueue is a single-producer, single-consumer queue. We need to
 				// provide mutual exclusion on the producer side.
 				commitMu.Lock()
-				q.push(wg, new(error))
+				q.push(wg, new(error), nil)
 				commitMu.Unlock()
 				wg.Wait()
 			}
@@ -118,7 +118,7 @@ func TestFlusherCond(t *testing.T) {
 				// syncQueue is a single-producer, single-consumer queue. We need to
 				// provide mutual exclusion on the producer side.
 				commitMu.Lock()
-				q.push(wg, new(error))
+				q.push(wg, new(error), nil)
 				commitMu.Unlock()
 				c.Signal()
 				wg.Wait()

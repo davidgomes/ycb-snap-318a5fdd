@@ -274,8 +274,15 @@ func (q *recordQueue) pop(index uint32, err error) (numSyncsPopped int) {
 		}
 		if b[i].opts.Done != nil {
 			numSyncsPopped++
-			if err != nil {
+			var syncErr error
+			if err != nil && b[i].opts.Err != nil {
 				*b[i].opts.Err = err
+				syncErr = err
+			}
+			if b[i].opts.OnSync != nil {
+				// Invoke before Done so durability observers run before
+				// commit waiters are released.
+				b[i].opts.OnSync(syncErr)
 			}
 			b[i].opts.Done.Done()
 			latency := now.Sub(b[i].writeStart)

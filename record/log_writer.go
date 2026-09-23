@@ -50,8 +50,9 @@ const (
 )
 
 type syncSlot struct {
-	wg  *sync.WaitGroup
-	err *error
+	wg     *sync.WaitGroup
+	err    *error
+	onSync func(error)
 }
 
 // syncQueue is a lock-free fixed-size single-producer, single-consumer
@@ -93,7 +94,7 @@ func (q *syncQueue) unpack(ptrs uint64) (head, tail uint32) {
 	return head, tail
 }
 
-func (q *syncQueue) push(wg *sync.WaitGroup, err *error) {
+func (q *syncQueue) push(wg *sync.WaitGroup, err *error, onSync func(error)) {
 	ptrs := q.headTail.Load()
 	head, tail := q.unpack(ptrs)
 	if (tail+uint32(len(q.slots)))&(1<<dequeueBits-1) == head {
@@ -103,6 +104,7 @@ func (q *syncQueue) push(wg *sync.WaitGroup, err *error) {
 	slot := &q.slots[head&uint32(len(q.slots)-1)]
 	slot.wg = wg
 	slot.err = err
+	slot.onSync = onSync
 
 	// Increment head. This passes ownership of slot to dequeue and acts as a
 	// store barrier for writing the slot.
@@ -150,13 +152,20 @@ func (q *syncQueue) pop(head, tail uint32, err error, queueSemChan chan struct{}
 			return errors.Errorf("nil waiter at %d", errors.Safe(tail&uint32(len(q.slots)-1)))
 		}
 		*slot.err = err
+		onSync := slot.onSync
 		slot.wg = nil
 		slot.err = nil
+		slot.onSync = nil
 		// We need to bump the tail count before releasing the queueSemChan
 		// semaphore as releasing the semaphore can cause a blocked goroutine to
 		// acquire the semaphore and enqueue before we've "freed" space in the
 		// queue.
 		q.headTail.Add(1)
+		// Invoke onSync before Done so durability observers run before
+		// commit waiters are released.
+		if onSync != nil {
+			onSync(err)
+		}
 		wg.Done()
 		// Is always non-nil in production, unless using wal package for WAL
 		// failover.
@@ -215,7 +224,7 @@ var _ pendingSyncs = &pendingSyncsWithSyncQueue{}
 
 func (q *pendingSyncsWithSyncQueue) push(ps PendingSync) {
 	ps2 := ps.(*pendingSyncForSyncQueue)
-	q.syncQueue.push(ps2.wg, ps2.err)
+	q.syncQueue.push(ps2.wg, ps2.err, ps2.onSync)
 }
 
 func (q *pendingSyncsWithSyncQueue) snapshotForPop() pendingSyncsSnapshot {
@@ -244,8 +253,9 @@ func (s *syncQueueSnapshot) empty() bool {
 
 // The implementation of pendingSync in standalone mode.
 type pendingSyncForSyncQueue struct {
-	wg  *sync.WaitGroup
-	err *error
+	wg     *sync.WaitGroup
+	err    *error
+	onSync func(error)
 }
 
 func (ps *pendingSyncForSyncQueue) syncRequested() bool {
@@ -962,9 +972,19 @@ func (w *LogWriter) WriteRecord(p []byte) (int64, error) {
 func (w *LogWriter) SyncRecord(
 	p []byte, wg *sync.WaitGroup, err *error,
 ) (logSize int64, err2 error) {
+	return w.SyncRecordWithCallback(p, wg, err, nil)
+}
+
+// SyncRecordWithCallback is like SyncRecord. When a sync is requested, onSync
+// is invoked after the sync attempt completes (including failure) and before
+// wg is signaled.
+func (w *LogWriter) SyncRecordWithCallback(
+	p []byte, wg *sync.WaitGroup, err *error, onSync func(error),
+) (logSize int64, err2 error) {
 	w.pendingSyncForSyncQueueBacking = pendingSyncForSyncQueue{
-		wg:  wg,
-		err: err,
+		wg:     wg,
+		err:    err,
+		onSync: onSync,
 	}
 	return w.SyncRecordGeneralized(p, &w.pendingSyncForSyncQueueBacking)
 }

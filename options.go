@@ -405,6 +405,11 @@ type WriteOptions struct {
 	//
 	// The default value is true.
 	Sync bool
+
+	// CommitCorrelationID is an opaque identifier copied into
+	// BatchDurableInfo.CorrelationID when a sync commit becomes durable. Pebble
+	// does not interpret the value.
+	CommitCorrelationID uint64
 }
 
 // Sync specifies the default write options for writes which synchronize to

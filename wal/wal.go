@@ -399,6 +399,10 @@ type DeletableLog struct {
 type SyncOptions struct {
 	Done *sync.WaitGroup
 	Err  *error
+	// OnSync, if non-nil, is invoked after Err has been set and before Done is
+	// signaled. It runs on the WAL sync goroutine and is called even when the
+	// sync fails. The callback must not block on commit-pipeline progress.
+	OnSync func(error)
 }
 
 // Writer writes to a virtual WAL. A Writer in standalone mode maps to a
