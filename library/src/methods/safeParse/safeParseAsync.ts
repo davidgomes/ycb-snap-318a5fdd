@@ -6,6 +6,7 @@ import type {
   Config,
   InferIssue,
 } from '../../types/index.ts';
+import type { EnsureRecurResolved } from '../recursive/types.ts';
 import type { SafeParseResult } from './types.ts';
 
 /**
@@ -17,16 +18,29 @@ import type { SafeParseResult } from './types.ts';
  *
  * @returns The parse result.
  */
-// @__NO_SIDE_EFFECTS__
 export async function safeParseAsync<
   const TSchema extends
     | BaseSchema<unknown, unknown, BaseIssue<unknown>>
     | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>,
 >(
-  schema: TSchema,
+  schema: EnsureRecurResolved<TSchema>,
   input: unknown,
   config?: Config<InferIssue<TSchema>>
-): Promise<SafeParseResult<TSchema>> {
+): Promise<SafeParseResult<TSchema>>;
+
+// @__NO_SIDE_EFFECTS__
+export async function safeParseAsync(
+  schema:
+    | BaseSchema<unknown, unknown, BaseIssue<unknown>>
+    | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>,
+  input: unknown,
+  config?: Config<BaseIssue<unknown>>
+): Promise<
+  SafeParseResult<
+    | BaseSchema<unknown, unknown, BaseIssue<unknown>>
+    | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>
+  >
+> {
   const dataset = await schema['~run'](
     { value: input },
     getGlobalConfig(config)
@@ -36,5 +50,8 @@ export async function safeParseAsync<
     success: !dataset.issues,
     output: dataset.value,
     issues: dataset.issues,
-  } as SafeParseResult<TSchema>;
+  } as SafeParseResult<
+    | BaseSchema<unknown, unknown, BaseIssue<unknown>>
+    | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>
+  >;
 }
