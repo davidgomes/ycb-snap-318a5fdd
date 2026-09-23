@@ -19,8 +19,10 @@ package rules // import "helm.sh/helm/v4/internal/chart/v3/lint/rules"
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/asaskevich/govalidator"
@@ -29,6 +31,8 @@ import (
 	chart "helm.sh/helm/v4/internal/chart/v3"
 	"helm.sh/helm/v4/internal/chart/v3/lint/support"
 	chartutil "helm.sh/helm/v4/internal/chart/v3/util"
+	"helm.sh/helm/v4/pkg/chart/common"
+	"helm.sh/helm/v4/pkg/chart/common/util"
 )
 
 // Chartfile runs a set of linter rules related to Chart.yaml file
@@ -67,6 +71,9 @@ func Chartfile(linter *support.Linter) {
 	linter.RunLinterRule(support.ErrorSev, chartFileName, validateChartIconURL(chartFile))
 	linter.RunLinterRule(support.ErrorSev, chartFileName, validateChartType(chartFile))
 	linter.RunLinterRule(support.ErrorSev, chartFileName, validateChartDependencies(chartFile))
+	for _, err := range validateChartMergeStrategies(linter.ChartDir, chartFile) {
+		linter.RunLinterRule(support.WarningSev, chartFileName, err)
+	}
 }
 
 func validateChartVersionType(data map[string]any) error {
@@ -209,6 +216,32 @@ func validateChartType(cf *chart.Metadata) error {
 		return fmt.Errorf("chart type is not valid in apiVersion '%s'. It is valid in apiVersion '%s'", cf.APIVersion, chart.APIVersionV3)
 	}
 	return nil
+}
+
+// validateChartMergeStrategies checks the merge strategy and merge key
+// annotations, including the strategy paths against the chart's values.yaml.
+func validateChartMergeStrategies(chartDir string, cf *chart.Metadata) []error {
+	if !hasMergeStrategyAnnotations(cf.Annotations) {
+		return nil
+	}
+	values, err := common.ReadValuesFile(filepath.Join(chartDir, "values.yaml"))
+	if errors.Is(err, fs.ErrNotExist) {
+		values = common.Values{}
+	} else if err != nil {
+		// The values rule reports unparsable values, so only the annotations
+		// themselves can be checked.
+		values = nil
+	}
+	return util.ValidateMergeStrategyAnnotations(cf.Annotations, values)
+}
+
+func hasMergeStrategyAnnotations(annotations map[string]string) bool {
+	for name := range annotations {
+		if strings.HasPrefix(name, util.MergeStrategyAnnotationPrefix) || strings.HasPrefix(name, util.MergeKeyAnnotationPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // loadChartFileForTypeCheck loads the Chart.yaml
