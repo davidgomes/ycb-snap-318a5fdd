@@ -32,6 +32,9 @@ enum ReceiverMode {
 
     /// Receiver is directly printing results to the output.
     Streaming,
+
+    /// Receiver is collecting all results, to sort them once the search has finished.
+    Sorting,
 }
 
 /// The Worker threads can result in a valid entry having PathBuf or an error.
@@ -156,6 +159,11 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
         let interrupt_flag = state.interrupt_flag.as_ref();
         let max_buffer_time = config.max_buffer_time.unwrap_or(DEFAULT_MAX_BUFFER_TIME);
         let deadline = Instant::now() + max_buffer_time;
+        let mode = if config.sort.is_some() {
+            ReceiverMode::Sorting
+        } else {
+            ReceiverMode::Buffering
+        };
 
         Self {
             config,
@@ -163,7 +171,7 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
             interrupt_flag,
             rx,
             stdout,
-            mode: ReceiverMode::Buffering,
+            mode,
             deadline,
             buffer: Vec::with_capacity(MAX_BUFFER_LENGTH),
             num_results: 0,
@@ -187,7 +195,7 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                 // Wait at most until we should switch to streaming
                 self.rx.recv_deadline(self.deadline)
             }
-            ReceiverMode::Streaming => {
+            ReceiverMode::Streaming | ReceiverMode::Sorting => {
                 // Wait however long it takes for a result
                 Ok(self.rx.recv()?)
             }
@@ -215,10 +223,15 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                                 ReceiverMode::Streaming => {
                                     self.print(&dir_entry)?;
                                 }
+                                ReceiverMode::Sorting => {
+                                    self.buffer.push(dir_entry);
+                                }
                             }
 
                             self.num_results += 1;
+                            // When sorting, the limit is applied after all results are sorted
                             if let Some(max_results) = self.config.max_results
+                                && self.mode != ReceiverMode::Sorting
                                 && self.num_results >= max_results
                             {
                                 return self.stop();
@@ -280,9 +293,24 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
 
     /// Stop looping.
     fn stop(&mut self) -> Result<(), ExitCode> {
-        if self.mode == ReceiverMode::Buffering {
-            self.buffer.sort();
-            self.stream()?;
+        match self.mode {
+            ReceiverMode::Buffering => {
+                self.buffer.sort();
+                self.stream()?;
+            }
+            ReceiverMode::Sorting => {
+                if self.interrupt_flag.load(Ordering::Relaxed) {
+                    return Err(ExitCode::KilledBySigint);
+                }
+                if let Some(sort) = &self.config.sort {
+                    self.buffer = sort.sort(mem::take(&mut self.buffer), self.config);
+                }
+                if let Some(max_results) = self.config.max_results {
+                    self.buffer.truncate(max_results);
+                }
+                self.stream()?;
+            }
+            ReceiverMode::Streaming => {}
         }
 
         if self.config.quiet {
@@ -618,6 +646,15 @@ impl WorkerState {
                 {
                     // Compute colors in parallel
                     entry.style(ls_colors);
+                }
+
+                if config
+                    .sort
+                    .as_ref()
+                    .is_some_and(|sort| sort.needs_metadata())
+                {
+                    // Fetch the metadata needed for sorting in parallel
+                    entry.metadata();
                 }
 
                 let send_result = tx.send(WorkerResult::Entry(entry));
