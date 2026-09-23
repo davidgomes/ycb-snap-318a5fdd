@@ -111,11 +111,9 @@ fn format_output_error(args: &[&str], expected: &str, actual: &str) -> String {
     )
 }
 
-/// Normalize the output for comparison.
-fn normalize_output(s: &str, trim_start: bool, normalize_line: bool) -> String {
-    // Split into lines and normalize separators.
-    let mut lines = s
-        .replace('\0', "NULL\n")
+/// Split the output into lines and normalize separators, keeping the order of the lines.
+fn normalize_lines(s: &str, trim_start: bool, normalize_line: bool) -> Vec<String> {
+    s.replace('\0', "NULL\n")
         .lines()
         .map(|line| {
             let line = if trim_start { line.trim_start() } else { line };
@@ -127,8 +125,12 @@ fn normalize_output(s: &str, trim_start: bool, normalize_line: bool) -> String {
             }
             line
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
 
+/// Normalize the output for comparison.
+fn normalize_output(s: &str, trim_start: bool, normalize_line: bool) -> String {
+    let mut lines = normalize_lines(s, trim_start, normalize_line);
     lines.sort();
     lines.join("\n")
 }
@@ -247,6 +249,22 @@ impl TestEnv {
     /// Assert that calling *fd* with the specified arguments produces the expected output.
     pub fn assert_output(&self, args: &[&str], expected: &str) {
         self.assert_output_subdirectory(".", args, expected)
+    }
+
+    /// Similar to assert_output, but also checks that the lines appear in the expected order.
+    pub fn assert_output_ordered(&self, args: &[&str], expected: &str) {
+        let expected = normalize_lines(expected, true, self.normalize_line).join("\n");
+        let output = self.assert_success_and_get_output(".", args);
+        let actual = normalize_lines(
+            &String::from_utf8_lossy(&output.stdout),
+            false,
+            self.normalize_line,
+        )
+        .join("\n");
+
+        if expected != actual {
+            panic!("{}", format_output_error(args, &expected, &actual));
+        }
     }
 
     /// Similar to assert_output, but able to handle non-utf8 output
