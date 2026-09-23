@@ -3,6 +3,7 @@ from __future__ import annotations
 import codecs
 import datetime
 import email.message
+import email.utils
 import json as jsonlib
 import re
 import typing
@@ -16,13 +17,19 @@ from ._decoders import (
     ByteChunker,
     ContentDecoder,
     IdentityDecoder,
+    JSONDocumentDecoder,
+    JSONSequenceDecoder,
+    JSONStreamDecoder,
+    JSONTextDecoder,
     LineDecoder,
     MultiDecoder,
+    NDJSONDecoder,
     TextChunker,
     TextDecoder,
 )
 from ._exceptions import (
     CookieConflict,
+    DecodingError,
     HTTPStatusError,
     RequestNotRead,
     ResponseNotRead,
@@ -88,6 +95,42 @@ def _parse_content_type_charset(content_type: str) -> str | None:
     msg = email.message.Message()
     msg["content-type"] = content_type
     return msg.get_content_charset(failobj=None)
+
+
+def _get_json_stream_decoders(
+    content_type: str | None,
+) -> tuple[JSONTextDecoder, JSONStreamDecoder]:
+    if content_type is None:
+        raise DecodingError("Cannot decode JSON: response has no Content-Type")
+
+    msg = email.message.Message()
+    msg["content-type"] = content_type
+    main_type, _, sub_type = msg.get_content_type().partition("/")
+
+    json_decoder: JSONStreamDecoder
+    if main_type != "application":
+        raise DecodingError(f"Cannot decode JSON from Content-Type {content_type!r}")
+    elif sub_type in ("ndjson", "x-ndjson"):
+        json_decoder = NDJSONDecoder()
+    elif sub_type == "json-seq":
+        json_decoder = JSONSequenceDecoder()
+    elif sub_type == "json" or (sub_type.endswith("+json") and sub_type != "+json"):
+        json_decoder = JSONDocumentDecoder()
+    else:
+        raise DecodingError(f"Cannot decode JSON from Content-Type {content_type!r}")
+
+    charset = msg.get_param("charset")
+    if charset is None:
+        return JSONTextDecoder(), json_decoder
+
+    charset = email.utils.collapse_rfc2231_value(charset)
+    try:
+        codec = codecs.lookup(charset)
+    except LookupError:
+        codec = None
+    if codec is None or not getattr(codec, "_is_text_encoding", True):
+        raise DecodingError(f"Cannot decode JSON: unknown charset {charset!r}")
+    return JSONTextDecoder(codec.name), json_decoder
 
 
 def _parse_header_links(value: str) -> list[dict[str, str]]:
@@ -932,6 +975,27 @@ class Response:
             for line in decoder.flush():
                 yield line
 
+    def iter_json(self) -> typing.Iterator[typing.Any]:
+        """
+        An iterator over the JSON values in the response content.
+
+        Supports `application/json` (and `application/*+json`), where the
+        elements of a top-level array are yielded individually, as well as
+        `application/ndjson`, `application/x-ndjson`, and `application/json-seq`.
+        """
+        with request_context(request=self._request):
+            text_decoder, json_decoder = _get_json_stream_decoders(
+                self.headers.get("content-type")
+            )
+            try:
+                for byte_content in self.iter_bytes():
+                    yield from json_decoder.decode(text_decoder.decode(byte_content))
+                yield from json_decoder.decode(text_decoder.flush())
+                yield from json_decoder.flush()
+            finally:
+                if not self.is_closed and isinstance(self.stream, SyncByteStream):
+                    self.close()
+
     def iter_raw(self, chunk_size: int | None = None) -> typing.Iterator[bytes]:
         """
         A byte-iterator over the raw response content.
@@ -1033,6 +1097,32 @@ class Response:
                     yield line
             for line in decoder.flush():
                 yield line
+
+    async def aiter_json(self) -> typing.AsyncIterator[typing.Any]:
+        """
+        An async iterator over the JSON values in the response content.
+
+        Supports `application/json` (and `application/*+json`), where the
+        elements of a top-level array are yielded individually, as well as
+        `application/ndjson`, `application/x-ndjson`, and `application/json-seq`.
+        """
+        with request_context(request=self._request):
+            text_decoder, json_decoder = _get_json_stream_decoders(
+                self.headers.get("content-type")
+            )
+            byte_stream = self.aiter_bytes()
+            try:
+                async for byte_content in byte_stream:
+                    for value in json_decoder.decode(text_decoder.decode(byte_content)):
+                        yield value
+                for value in json_decoder.decode(text_decoder.flush()):
+                    yield value
+                for value in json_decoder.flush():
+                    yield value
+            finally:
+                await byte_stream.aclose()  # type: ignore[attr-defined]
+                if not self.is_closed and isinstance(self.stream, AsyncByteStream):
+                    await self.aclose()
 
     async def aiter_raw(
         self, chunk_size: int | None = None
