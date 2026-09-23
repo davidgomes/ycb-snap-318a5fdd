@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         IntoDType,
         ModeKeepStrategy,
         RankMethod,
+        RollingInterpolationMethod,
     )
 
 __all__ = ["CompliantColumn"]
@@ -119,8 +120,26 @@ class CompliantColumn(Protocol):
         *,
         return_dtype: IntoDType | None,
     ) -> Self: ...
+    def rolling_max(
+        self, window_size: int, *, min_samples: int, center: bool
+    ) -> Self: ...
     def rolling_mean(
         self, window_size: int, *, min_samples: int, center: bool
+    ) -> Self: ...
+    def rolling_median(
+        self, window_size: int, *, min_samples: int, center: bool
+    ) -> Self: ...
+    def rolling_min(
+        self, window_size: int, *, min_samples: int, center: bool
+    ) -> Self: ...
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
     ) -> Self: ...
     def rolling_std(
         self, window_size: int, *, min_samples: int, center: bool, ddof: int

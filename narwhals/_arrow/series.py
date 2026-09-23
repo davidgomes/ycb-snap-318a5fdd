@@ -1007,6 +1007,104 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
             ** 0.5
         )
 
+    def _rolling_min_max(
+        self,
+        func: Callable[..., ChunkedArrayAny],
+        window_size: int,
+        *,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        padded_series, offset = pad_series(self, window_size=window_size, center=center)
+        n_shifts = min(window_size, len(padded_series))
+        shifted = [
+            padded_series.shift(n).native.combine_chunks() for n in range(n_shifts)
+        ]
+        rolling_agg = func(*shifted, skip_nulls=True)
+
+        valid_count = padded_series.cum_count(reverse=False)
+        count_in_window = (
+            valid_count
+            - valid_count.shift(window_size).fill_null(value=0, strategy=None, limit=None)
+            if window_size < len(padded_series)
+            else valid_count
+        )
+        result = self._with_native(
+            pa.chunked_array(
+                [pc.if_else((count_in_window >= min_samples).native, rolling_agg, None)]
+            )
+        )
+        return result._gather_slice(slice(offset, None))
+
+    def rolling_min(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._rolling_min_max(
+            pc.min_element_wise, window_size, min_samples=min_samples, center=center
+        )
+
+    def rolling_max(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._rolling_min_max(
+            pc.max_element_wise, window_size, min_samples=min_samples, center=center
+        )
+
+    def rolling_median(
+        self, window_size: int, *, min_samples: int, center: bool
+    ) -> Self:
+        return self.rolling_quantile(
+            window_size,
+            quantile=0.5,
+            interpolation="linear",
+            min_samples=min_samples,
+            center=center,
+        )
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        import numpy as np  # ignore-banned-import
+
+        padded_series, offset = pad_series(self, window_size=window_size, center=center)
+        values = padded_series.native.cast(pa.float64()).to_numpy()
+        values = np.concatenate([np.full(window_size - 1, np.nan), values])
+        # Windows are sorted with NaN (i.e. null) values placed last.
+        windows = np.sort(
+            np.lib.stride_tricks.sliding_window_view(values, window_size), axis=1
+        )
+        count = np.count_nonzero(~np.isnan(windows), axis=1)
+        position = quantile * np.maximum(count - 1, 0)
+
+        def take(index: Any) -> Any:
+            return np.take_along_axis(windows, index.astype(np.intp)[:, None], axis=1)[
+                :, 0
+            ]
+
+        lower_index, higher_index = np.floor(position), np.ceil(position)
+        lower, higher = take(lower_index), take(higher_index)
+        if interpolation == "linear":
+            result = np.where(
+                lower_index == higher_index,
+                lower,
+                lower + (higher - lower) * (position - lower_index),
+            )
+        elif interpolation == "lower":
+            result = lower
+        elif interpolation == "higher":
+            result = higher
+        elif interpolation == "midpoint":
+            result = np.where(lower_index == higher_index, lower, (lower + higher) / 2)
+        else:
+            result = take(np.round(position))
+
+        native = pa.array(result, mask=count < min_samples, type=pa.float64())
+        return self._with_native(pa.chunked_array([native]))._gather_slice(
+            slice(offset, None)
+        )
+
     def rank(self, method: RankMethod, *, descending: bool) -> Self:
         if method == "average":
             msg = (
