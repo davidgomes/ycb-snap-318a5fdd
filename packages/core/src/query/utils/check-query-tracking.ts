@@ -61,50 +61,50 @@ export function checkQueryTracking(
         if (or !== 0 && (entityMask & or) === 0) return false;
     }
 
-    // 2. Process tracking groups - update trackers and check cross-event invalidation
-    // Also track OR group state to avoid second loop when possible
+    // 2. Record the event in every tracking group it affects before checking any of them,
+    // so the result doesn't depend on the order of the groups.
+    for (let i = 0; i < trackingGroupsLen; i++) {
+        const group = trackingGroups[i];
+        const groupType = group.type;
+        const groupBitmask = group.bitmasks[eventGenerationId];
+
+        // Check if this event affects this group's traits
+        if (!groupBitmask || !(groupBitmask & eventBitflag)) continue;
+
+        // PERF: Cache tracker array reference before mutation
+        const groupTrackers = group.trackers;
+        let trackerArr = groupTrackers[eventGenerationId];
+
+        if (groupType === eventType) {
+            // For change events, verify entity still has the trait
+            if (eventType === 'change') {
+                const genMasks = entityMasks[eventGenerationId];
+                const entityMask = genMasks ? (genMasks[eid] | 0) : 0;
+                if (!(entityMask & eventBitflag)) continue;
+            }
+
+            if (!trackerArr) {
+                trackerArr = [];
+                groupTrackers[eventGenerationId] = trackerArr;
+            }
+            trackerArr[eid] = (trackerArr[eid] | 0) | eventBitflag;
+        } else if (eventType !== 'change' && trackerArr) {
+            // Cross-event invalidation:
+            // - Remove event invalidates Added/Changed tracking
+            // - Add event invalidates Removed/Changed tracking
+            trackerArr[eid] = (trackerArr[eid] | 0) & ~eventBitflag;
+        }
+    }
+
+    // 3. Verify tracking group satisfaction
     let hasOrGroup = false;
     let anyOrMatched = false;
 
     for (let i = 0; i < trackingGroupsLen; i++) {
         const group = trackingGroups[i];
-        const groupType = group.type;
         const groupLogic = group.logic;
         const groupBitmasks = group.bitmasks;
-        const groupBitmask = groupBitmasks[eventGenerationId];
 
-        // Check if this event affects this group's traits
-        if (groupBitmask && (groupBitmask & eventBitflag)) {
-            // Cross-event invalidation:
-            // - Remove event invalidates Added/Changed tracking
-            // - Add event invalidates Removed/Changed tracking
-            if (eventType === 'remove') {
-                if (groupType === 'add' || groupType === 'change') return false;
-            } else if (eventType === 'add') {
-                if (groupType === 'remove' || groupType === 'change') return false;
-            }
-
-            // Update tracker if event type matches group type
-            if (groupType === eventType) {
-                // For change events, verify entity still has the trait
-                if (eventType === 'change') {
-                    const genMasks = entityMasks[eventGenerationId];
-                    const entityMask = genMasks ? (genMasks[eid] | 0) : 0;
-                    if (!(entityMask & eventBitflag)) return false;
-                }
-
-                // PERF: Cache tracker array reference before mutation
-                const groupTrackers = group.trackers;
-                let trackerArr = groupTrackers[eventGenerationId];
-                if (!trackerArr) {
-                    trackerArr = [];
-                    groupTrackers[eventGenerationId] = trackerArr;
-                }
-                trackerArr[eid] = (trackerArr[eid] | 0) | eventBitflag;
-            }
-        }
-
-        // 3. Verify tracking group satisfaction (merged into same loop)
         if (groupLogic === 'or') {
             hasOrGroup = true;
             if (!anyOrMatched) {
