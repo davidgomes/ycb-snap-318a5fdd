@@ -495,33 +495,48 @@ func toOpenMetricsFiles(input chan *FileJob) string {
 	return sb.String()
 }
 
+var csvStreamQuoteRegex = regexp.MustCompile("\"")
+
+func formatCSVStreamJob(result *FileJob) string {
+	// Escape quotes in location and filename then surround with quotes.
+	location := "\"" + csvStreamQuoteRegex.ReplaceAllString(result.Location, "\"\"") + "\""
+	filename := "\"" + csvStreamQuoteRegex.ReplaceAllString(result.Filename, "\"\"") + "\""
+	return fmt.Sprintf("%s,%s,%s,%d,%d,%d,%d,%d,%d,%d",
+		result.Language,
+		location,
+		filename,
+		result.Lines,
+		result.Code,
+		result.Comment,
+		result.Blank,
+		result.Complexity,
+		result.Bytes,
+		result.Uloc,
+	)
+}
+
 // For very large repositories CSV stream can be used which prints results out as they come in
 // with the express idea of lowering memory usage, see https://github.com/boyter/scc/issues/210 for
-// the background on why this might be needed
+// the background on why this might be needed.
+// When a sort column is requested, rows are emitted in that order.
 func toCSVStream(input chan *FileJob) string {
-	fmt.Println("Language,Provider,Filename,Lines,Code,Comments,Blanks,Complexity,Bytes,Uloc")
-
-	var quoteRegex = regexp.MustCompile("\"")
-
-	for result := range input {
-		// Escape quotes in location and filename then surround with quotes.
-		var location = "\"" + quoteRegex.ReplaceAllString(result.Location, "\"\"") + "\""
-		var filename = "\"" + quoteRegex.ReplaceAllString(result.Filename, "\"\"") + "\""
-
-		fmt.Printf("%s,%s,%s,%d,%d,%d,%d,%d,%d,%d\n",
-			result.Language,
-			location,
-			filename,
-			result.Lines,
-			result.Code,
-			result.Comment,
-			result.Blank,
-			result.Complexity,
-			result.Bytes,
-			result.Uloc,
-		)
+	if SortBy == "" {
+		fmt.Println(csvStreamHeader)
+		for result := range input {
+			fmt.Println(formatCSVStreamJob(result))
+		}
+		return ""
 	}
 
+	jobs := make([]*FileJob, 0)
+	for result := range input {
+		jobs = append(jobs, result)
+	}
+	slices.SortFunc(jobs, compareCSVStreamJobs)
+	fmt.Println(csvStreamHeader)
+	for _, result := range jobs {
+		fmt.Println(formatCSVStreamJob(result))
+	}
 	return ""
 }
 
@@ -547,8 +562,7 @@ func toHtmlTable(input chan *FileJob) string {
 		_, ok := languages[res.Language]
 
 		if !ok {
-			files := []*FileJob{}
-			files = append(files, res)
+			files := rememberFileJob(nil, res)
 
 			languages[res.Language] = LanguageSummary{
 				Name:       res.Language,
@@ -563,7 +577,7 @@ func toHtmlTable(input chan *FileJob) string {
 			}
 		} else {
 			tmp := languages[res.Language]
-			files := append(tmp.Files, res)
+			files := rememberFileJob(tmp.Files, res)
 
 			languages[res.Language] = LanguageSummary{
 				Name:       res.Language,
@@ -613,7 +627,7 @@ func toHtmlTable(input chan *FileJob) string {
 		<th>%d</th>
 		<th>%d</th>
 		<th>%d</th>
-	</tr>`, r.Name, len(r.Files), r.Lines, r.Blank, r.Comment, r.Code, r.Complexity, r.Bytes, len(ulocLanguageCount[r.Name]))
+	</tr>`, r.Name, r.Count, r.Lines, r.Blank, r.Comment, r.Code, r.Complexity, r.Bytes, len(ulocLanguageCount[r.Name]))
 
 		if Files {
 			sortSummaryFiles(&r)
@@ -824,14 +838,79 @@ func fileSummarize(input chan *FileJob) string {
 	return fileSummarizeShort(input)
 }
 
+// rememberFileJob appends job unless bounded-memory summary mode is on.
+// Summary formatters only need language totals in that mode, so the file
+// record itself does not have to stay reachable.
+func rememberFileJob(dst []*FileJob, job *FileJob) []*FileJob {
+	if BoundedMemory && !Files {
+		if dst == nil {
+			return []*FileJob{}
+		}
+		return dst
+	}
+	return append(dst, job)
+}
+
+func jobsForMultiFormat(results []*FileJob, store *boundedFileStore, format string) chan *FileJob {
+	if store != nil {
+		if !multiFormatReadsJobs(format) {
+			ch := make(chan *FileJob)
+			close(ch)
+			return ch
+		}
+		return store.replay()
+	}
+	ch := make(chan *FileJob, len(results))
+	for _, r := range results {
+		ch <- r
+	}
+	close(ch)
+	return ch
+}
+
+func writeBoundedCSVStream(store *boundedFileStore, destination string) {
+	if destination == "stdout" {
+		store.writeCSVStream(os.Stdout)
+		return
+	}
+	f, err := os.OpenFile(destination, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		fmt.Printf("%s unable to be written to for format %s: %s", destination, "csv-stream", err)
+		return
+	}
+	defer f.Close()
+	store.writeCSVStream(f)
+}
+
 // Deals with the case of CI/CD where you might want to run with multiple outputs
 // both to files and to stdout. Not the most efficient way to do it in terms of memory
-// but seeing as the files are just summaries by this point it shouldn't be too bad
+// but seeing as the files are just summaries by this point it shouldn't be too bad.
+// Per-file results are accumulated here before each formatter runs. Bounded-memory
+// mode spills that list so only BoundedMemoryMaxInMemoryFiles records stay resident.
 func fileSummarizeMulti(input chan *FileJob) string {
-	// collect all the results
 	var results []*FileJob
-	for res := range input {
-		results = append(results, res)
+	var store *boundedFileStore
+	if BoundedMemory {
+		if err := configureBoundedMemory(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err.Error())
+			os.Exit(1)
+		}
+		store = newBoundedFileStore(boundedMemoryAbsDir, BoundedMemoryMaxInMemoryFiles)
+		for res := range input {
+			if err := store.add(res); err != nil {
+				fmt.Fprintf(os.Stderr, "%s\n", err.Error())
+				os.Exit(1)
+			}
+		}
+		if err := store.finish(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err.Error())
+			os.Exit(1)
+		}
+	} else {
+		// collect all the results
+		for res := range input {
+			results = append(results, res)
+		}
 	}
 
 	var str strings.Builder
@@ -840,16 +919,18 @@ func fileSummarizeMulti(input chan *FileJob) string {
 	for s := range strings.SplitSeq(FormatMulti, ",") {
 		t := strings.Split(s, ":")
 		if len(t) == 2 {
-			i := make(chan *FileJob, len(results))
-
-			for _, r := range results {
-				i <- r
+			format := strings.ToLower(t[0])
+			if store != nil && format == "csv-stream" {
+				// Honor file destinations. Unbounded csv-stream always writes stdout.
+				writeBoundedCSVStream(store, t[1])
+				continue
 			}
-			close(i)
+
+			i := jobsForMultiFormat(results, store, format)
 
 			var val string
 
-			switch strings.ToLower(t[0]) {
+			switch format {
 			case "tabular":
 				val = fileSummarizeShort(i)
 			case "wide":
@@ -892,6 +973,10 @@ func fileSummarizeMulti(input chan *FileJob) string {
 		}
 	}
 
+	if store != nil {
+		emitBoundedMemoryStats(store.spills, store.peak)
+	}
+
 	return str.String()
 }
 
@@ -928,8 +1013,7 @@ func fileSummarizeLong(input chan *FileJob) string {
 		_, ok := langs[res.Language]
 
 		if !ok {
-			files := []*FileJob{}
-			files = append(files, res)
+			files := rememberFileJob(nil, res)
 
 			langs[res.Language] = LanguageSummary{
 				Name:               res.Language,
@@ -945,7 +1029,7 @@ func fileSummarizeLong(input chan *FileJob) string {
 			}
 		} else {
 			tmp := langs[res.Language]
-			files := append(tmp.Files, res)
+			files := rememberFileJob(tmp.Files, res)
 			lineLength := append(tmp.LineLength, res.LineLength...)
 
 			langs[res.Language] = LanguageSummary{
@@ -986,7 +1070,7 @@ func fileSummarizeLong(input chan *FileJob) string {
 		if Percent {
 			_, _ = fmt.Fprintf(str,
 				tabularWideFormatBodyPercent,
-				float64(len(summary.Files))/float64(sumFiles)*100,
+				float64(summary.Count)/float64(sumFiles)*100,
 				float64(summary.Lines)/float64(sumLines)*100,
 				float64(summary.Blank)/float64(sumBlank)*100,
 				float64(summary.Comment)/float64(sumComment)*100,
@@ -1115,8 +1199,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 		_, ok := lang[res.Language]
 
 		if !ok {
-			files := []*FileJob{}
-			files = append(files, res)
+			files := rememberFileJob(nil, res)
 
 			lang[res.Language] = LanguageSummary{
 				Name:       res.Language,
@@ -1131,7 +1214,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 			}
 		} else {
 			tmp := lang[res.Language]
-			files := append(tmp.Files, res)
+			files := rememberFileJob(tmp.Files, res)
 			lineLength := append(tmp.LineLength, res.LineLength...)
 
 			lang[res.Language] = LanguageSummary{
@@ -1175,7 +1258,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 			if !Complexity {
 				_, _ = p.Fprintf(str,
 					tabularShortPercentLanguageFormatBody,
-					float64(len(summary.Files))/float64(sumFiles)*100,
+					float64(summary.Count)/float64(sumFiles)*100,
 					float64(summary.Lines)/float64(sumLines)*100,
 					float64(summary.Blank)/float64(sumBlank)*100,
 					float64(summary.Comment)/float64(sumComment)*100,
@@ -1185,7 +1268,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 			} else {
 				_, _ = p.Fprintf(str,
 					tabularShortPercentLanguageFormatBodyNoComplexity,
-					float64(len(summary.Files))/float64(sumFiles)*100,
+					float64(summary.Count)/float64(sumFiles)*100,
 					float64(summary.Lines)/float64(sumLines)*100,
 					float64(summary.Blank)/float64(sumBlank)*100,
 					float64(summary.Comment)/float64(sumComment)*100,

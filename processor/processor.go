@@ -587,6 +587,12 @@ func Process() {
 		DirFilePaths = append(DirFilePaths, ".")
 	}
 
+	boundedMemoryStatsEmitted = false
+	if err := configureBoundedMemory(); err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", err.Error())
+		os.Exit(1)
+	}
+
 	filePaths := []string{}
 	dirPaths := []string{}
 
@@ -608,6 +614,7 @@ func Process() {
 	}
 
 	SortBy = strings.ToLower(SortBy)
+	PathDenyList = append(PathDenyList, boundedMemoryDirectoryExclusions(dirPaths)...)
 
 	printDebugF("NumCPU: %d", runtime.NumCPU())
 	printDebugF("SortBy: %s", SortBy)
@@ -654,6 +661,9 @@ func Process() {
 
 	go func() {
 		for _, f := range filePaths {
+			if skipBoundedMemoryPath(f) {
+				continue
+			}
 			fileInfo, err := os.Lstat(f)
 			if err != nil {
 				continue
@@ -673,7 +683,7 @@ func Process() {
 					break
 				}
 			}
-			if shouldExclude {
+			if shouldExclude || skipBoundedMemoryPath(fi.Location) {
 				continue
 			}
 
@@ -695,6 +705,9 @@ func Process() {
 	go fileProcessorWorker(fileListQueue, fileSummaryJobQueue)
 
 	result := fileSummarize(fileSummaryJobQueue)
+	if BoundedMemory && BoundedMemoryStats && !boundedMemoryStatsEmitted {
+		emitBoundedMemoryStats(0, 0)
+	}
 	if FileOutput == "" {
 		fmt.Print(result)
 	} else {

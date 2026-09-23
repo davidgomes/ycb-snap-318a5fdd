@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -31,6 +33,16 @@ func runSCC(args ...string) (string, error) {
 	cmd := exec.Command(sccBinPath, args...)
 	res, err := cmd.CombinedOutput()
 	return string(res), err
+}
+
+func runSCCSeparate(args ...string) (string, string, error) {
+	args = slices.Insert(args, 0, sccTestFlag)
+	cmd := exec.Command(sccBinPath, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.String(), stderr.String(), err
 }
 
 func TestNoGitIgnore(t *testing.T) {
@@ -689,4 +701,178 @@ func TestSpecificLanguages(t *testing.T) {
 			t.Errorf("language not found in output: %v", language)
 		}
 	}
+}
+
+func writeGoFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func boundedStats(stderr string) (spills, peak int, line string) {
+	var matched string
+	count := 0
+	for _, row := range strings.Split(strings.TrimSuffix(stderr, "\n"), "\n") {
+		if strings.HasPrefix(row, "bounded-memory:") {
+			count++
+			matched = row
+		}
+	}
+	if count != 1 {
+		return -1, -1, stderr
+	}
+	for _, field := range strings.Fields(matched) {
+		if value, ok := strings.CutPrefix(field, "spills="); ok {
+			spills, _ = strconv.Atoi(value)
+		}
+		if value, ok := strings.CutPrefix(field, "peak_in_memory_files="); ok {
+			peak, _ = strconv.Atoi(value)
+		}
+	}
+	return spills, peak, matched
+}
+
+func TestBoundedMemoryMatchesUnbounded(t *testing.T) {
+	root := t.TempDir()
+	writeGoFile(t, filepath.Join(root, "a.go"), "package a\n\nfunc A() {}\n")
+	writeGoFile(t, filepath.Join(root, "b.go"), "package b\n\nfunc B() {\n}\n\nfunc C() {\n}\n")
+	writeGoFile(t, filepath.Join(root, "c.py"), "def c():\n    return 1\n")
+	spill := filepath.Join(root, "scc-spill")
+	if err := os.MkdirAll(spill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGoFile(t, filepath.Join(spill, "hidden.go"), "package hidden\n\nfunc Hidden() {}\nfunc Extra() {}\n")
+
+	formats := []string{"json:stdout", "json2:stdout", "csv:stdout", "csv-stream:stdout", "tabular:stdout", "wide:stdout"}
+	for _, format := range formats {
+		unbounded, unboundedErr, err := runSCCSeparate("--format-multi", format, "--sort", "lines", "--exclude-dir", spill, root)
+		if err != nil {
+			t.Fatalf("unbounded %s: %v\n%s", format, err, unboundedErr)
+		}
+		bounded, stderr, err := runSCCSeparate(
+			"--format-multi", format,
+			"--sort", "lines",
+			"--bounded-memory",
+			"--bounded-memory-dir", spill,
+			"--bounded-memory-max-in-memory-files", "1",
+			root,
+		)
+		if err != nil {
+			t.Fatalf("bounded %s: %v\n%s", format, err, stderr)
+		}
+		if format == "tabular:stdout" || format == "wide:stdout" {
+			if tabularTotal(unbounded) == "" || tabularTotal(unbounded) != tabularTotal(bounded) {
+				t.Fatalf("totals mismatch for %s\nunbounded:\n%s\nbounded:\n%s", format, unbounded, bounded)
+			}
+			continue
+		}
+		if unbounded != bounded {
+			t.Fatalf("output mismatch for %s\nunbounded:\n%s\nbounded:\n%s", format, unbounded, bounded)
+		}
+	}
+
+	streamFile := filepath.Join(t.TempDir(), "out.csv")
+	unboundedStream, _, err := runSCCSeparate("--format-multi", "csv-stream:stdout", "--sort", "lines", "--exclude-dir", spill, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runSCCSeparate(
+		"--format-multi", "csv-stream:"+streamFile,
+		"--sort", "lines",
+		"--bounded-memory",
+		"--bounded-memory-dir", spill,
+		"--bounded-memory-max-in-memory-files", "1",
+		"--bounded-memory-stats",
+		root,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout != "" {
+		t.Fatalf("csv-stream file destination wrote stdout: %q", stdout)
+	}
+	fileBytes, err := os.ReadFile(streamFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(fileBytes) != unboundedStream {
+		t.Fatalf("csv-stream file mismatch\nfile:\n%s\nstdout:\n%s", fileBytes, unboundedStream)
+	}
+	if !strings.Contains(unboundedStream, "b.go") || strings.Index(unboundedStream, "b.go") > strings.Index(unboundedStream, "a.go") {
+		t.Fatalf("csv-stream not sorted by lines:\n%s", unboundedStream)
+	}
+
+	spills, peak, stats := boundedStats(stderr)
+	if stats == stderr && spills < 0 {
+		t.Fatalf("expected one stats line, stderr:\n%s", stderr)
+	}
+	if spills <= 0 {
+		t.Fatalf("expected spills > 0, line %q", stats)
+	}
+	if peak <= 0 || peak > 1 {
+		t.Fatalf("expected peak_in_memory_files in (0, 1], line %q", stats)
+	}
+
+	foundSpill := false
+	entries, err := os.ReadDir(spill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			t.Fatal(infoErr)
+		}
+		if !entry.IsDir() && info.Mode().IsRegular() && info.Size() > 0 && strings.HasPrefix(entry.Name(), "spill-") {
+			if filepath.Dir(filepath.Join(spill, entry.Name())) != spill {
+				t.Fatalf("spill file not directly in spill dir: %s", entry.Name())
+			}
+			foundSpill = true
+		}
+	}
+	if !foundSpill {
+		t.Fatal("spill directory is missing a non-empty spill file after exit")
+	}
+}
+
+func TestBoundedMemoryRequiresFlagsAndCreatesDir(t *testing.T) {
+	root := t.TempDir()
+	writeGoFile(t, filepath.Join(root, "a.go"), "package a\nfunc A() {}\n")
+	if _, _, err := runSCCSeparate("--bounded-memory", "--format-multi", "json:stdout", root); err == nil {
+		t.Fatal("expected missing bounded-memory-dir to fail")
+	}
+	spill := filepath.Join(t.TempDir(), "nested", "spill")
+	if _, _, err := runSCCSeparate(
+		"--bounded-memory",
+		"--bounded-memory-dir", spill,
+		"--bounded-memory-max-in-memory-files", "0",
+		"--format-multi", "json:stdout",
+		root,
+	); err == nil {
+		t.Fatal("expected max <= 0 to fail")
+	}
+	if _, _, err := runSCCSeparate(
+		"--bounded-memory",
+		"--bounded-memory-dir", spill,
+		"--bounded-memory-max-in-memory-files", "1",
+		"--format-multi", "json:stdout",
+		root,
+	); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(spill)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("expected spill directory to be created: %v", err)
+	}
+}
+
+func tabularTotal(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Total") && !strings.HasPrefix(trimmed, "Total Estimated") && !strings.HasPrefix(trimmed, "Total Physical") {
+			return trimmed
+		}
+	}
+	return ""
 }
