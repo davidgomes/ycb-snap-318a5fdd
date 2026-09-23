@@ -2,6 +2,24 @@ import DropdownIcon from '../assets/icons/dropdown.svg';
 
 let optionsCounter = 0;
 
+const pickersBySelect = new WeakMap<HTMLSelectElement, Picker>();
+
+export function getPicker(select: HTMLSelectElement): Picker | undefined {
+  const picker = pickersBySelect.get(select);
+  if (picker == null) return undefined;
+  // A detached toolbar still owns its picker. Only drop the mapping when the
+  // select is on the page and the wrapper has been removed.
+  if (select.isConnected && !picker.container.isConnected) {
+    pickersBySelect.delete(select);
+    return undefined;
+  }
+  return picker;
+}
+
+export function forgetPicker(select: HTMLSelectElement) {
+  pickersBySelect.delete(select);
+}
+
 function toggleAriaAttribute(element: HTMLElement, attribute: string) {
   element.setAttribute(
     attribute,
@@ -22,10 +40,17 @@ class Picker {
     // @ts-expect-error Fix me later
     this.select.parentNode.insertBefore(this.container, this.select);
 
-    this.label.addEventListener('mousedown', () => {
+    this.label.addEventListener('mousedown', (event) => {
+      // Keep the editor selection in place while the menu is used.
+      event.preventDefault();
+      if (this.isDisabled()) return;
       this.togglePicker();
     });
     this.label.addEventListener('keydown', (event) => {
+      if (this.isDisabled()) {
+        event.preventDefault();
+        return;
+      }
       switch (event.key) {
         case 'Enter':
           this.togglePicker();
@@ -38,9 +63,28 @@ class Picker {
       }
     });
     this.select.addEventListener('change', this.update.bind(this));
+    pickersBySelect.set(this.select, this);
+    this.reflectDisabled();
+  }
+
+  isDisabled() {
+    return this.select.disabled;
+  }
+
+  reflectDisabled() {
+    const disabled = this.isDisabled();
+    this.container.classList.toggle('ql-disabled', disabled);
+    this.container.toggleAttribute('disabled', disabled);
+    this.label.classList.toggle('ql-disabled', disabled);
+    this.label.toggleAttribute('disabled', disabled);
+    this.label.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    if (disabled && this.container.classList.contains('ql-expanded')) {
+      this.close();
+    }
   }
 
   togglePicker() {
+    if (this.isDisabled()) return;
     this.container.classList.toggle('ql-expanded');
     // Toggle aria-expanded and aria-hidden to make the picker accessible
     toggleAriaAttribute(this.label, 'aria-expanded');
@@ -61,6 +105,9 @@ class Picker {
     if (option.textContent) {
       item.setAttribute('data-label', option.textContent);
     }
+    item.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+    });
     item.addEventListener('click', () => {
       this.selectItem(item, true);
     });
@@ -145,6 +192,7 @@ class Picker {
   }
 
   selectItem(item: HTMLElement | null, trigger = false) {
+    if (trigger && this.isDisabled()) return;
     const selected = this.container.querySelector('.ql-selected');
     if (item === selected) return;
     if (selected != null) {
@@ -175,6 +223,7 @@ class Picker {
   }
 
   update() {
+    this.reflectDisabled();
     let option;
     if (this.select.selectedIndex > -1) {
       const item =

@@ -335,6 +335,10 @@ class Quill {
   enable(enabled = true) {
     this.scroll.enable(enabled);
     this.container.classList.toggle('ql-disabled', !enabled);
+    const toolbar = this.theme?.modules?.toolbar as
+      | { onEnabledChange?: () => void }
+      | undefined;
+    toolbar?.onEnabledChange?.();
   }
 
   focus(options: { preventScroll?: boolean } = {}) {
@@ -342,6 +346,10 @@ class Quill {
     if (!options.preventScroll) {
       this.scrollSelectionIntoView();
     }
+    const toolbar = this.theme?.modules?.toolbar as
+      | { activate?: () => void }
+      | undefined;
+    toolbar?.activate?.();
   }
 
   format(

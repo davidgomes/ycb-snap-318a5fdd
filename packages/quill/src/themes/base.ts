@@ -5,7 +5,7 @@ import Theme from '../core/theme.js';
 import type { ThemeOptions } from '../core/theme.js';
 import ColorPicker from '../ui/color-picker.js';
 import IconPicker from '../ui/icon-picker.js';
-import Picker from '../ui/picker.js';
+import Picker, { getPicker } from '../ui/picker.js';
 import Tooltip from '../ui/tooltip.js';
 import type { Range } from '../core/selection.js';
 import type Clipboard from '../modules/clipboard.js';
@@ -13,6 +13,7 @@ import type History from '../modules/history.js';
 import type Keyboard from '../modules/keyboard.js';
 import type Uploader from '../modules/uploader.js';
 import type Selection from '../core/selection.js';
+import { bindSharedImageInput, getActiveToolbar } from '../modules/toolbar.js';
 
 const ALIGNS = [false, 'center', 'right', 'justify'];
 
@@ -142,6 +143,8 @@ class BaseTheme extends Theme {
     icons: Record<string, string | Record<string, string>>,
   ) {
     this.pickers = Array.from(selects).map((select) => {
+      const existing = getPicker(select);
+      if (existing) return existing;
       if (select.classList.contains('ql-align')) {
         if (select.querySelector('option') == null) {
           fillSelect(select, ALIGNS);
@@ -178,6 +181,10 @@ class BaseTheme extends Theme {
       return new Picker(select);
     });
     const update = () => {
+      const toolbar = this.quill.getModule('toolbar') as {
+        shouldRefreshUi?: () => boolean;
+      } | null;
+      if (toolbar?.shouldRefreshUi && !toolbar.shouldRefreshUi()) return;
       this.pickers.forEach((picker) => {
         picker.update();
       });
@@ -193,24 +200,35 @@ BaseTheme.DEFAULTS = merge({}, Theme.DEFAULTS, {
           this.quill.theme.tooltip.edit('formula');
         },
         image() {
-          let fileInput = this.container.querySelector(
+          const container = this.container as HTMLElement | null | undefined;
+          if (container == null) return;
+          const active = getActiveToolbar(container);
+          if (active == null || active !== this || !this.quill.isEnabled()) {
+            return;
+          }
+          let fileInput = container.querySelector(
             'input.ql-image[type=file]',
-          );
+          ) as HTMLInputElement | null;
           if (fileInput == null) {
             fileInput = document.createElement('input');
             fileInput.setAttribute('type', 'file');
-            fileInput.setAttribute(
-              'accept',
-              this.quill.uploader.options.mimetypes.join(', '),
-            );
             fileInput.classList.add('ql-image');
-            fileInput.addEventListener('change', () => {
-              const range = this.quill.getSelection(true);
-              this.quill.uploader.upload(range, fileInput.files);
-              fileInput.value = '';
-            });
-            this.container.appendChild(fileInput);
+            container.appendChild(fileInput);
           }
+          container
+            .querySelectorAll('input.ql-image[type=file]')
+            .forEach((node: Element, index: number) => {
+              if (index > 0) node.remove();
+            });
+          const selected = container.querySelector(
+            'input.ql-image[type=file]',
+          ) as HTMLInputElement | null;
+          if (selected != null) fileInput = selected;
+          fileInput.setAttribute(
+            'accept',
+            this.quill.uploader.options.mimetypes.join(', '),
+          );
+          bindSharedImageInput(container, fileInput);
           fileInput.click();
         },
         video() {

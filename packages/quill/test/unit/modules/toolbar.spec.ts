@@ -11,6 +11,7 @@ import { createRegistry } from '../__helpers__/factory.js';
 import Input from '../../../src/modules/input.js';
 import { SizeClass } from '../../../src/formats/size.js';
 import Bold from '../../../src/formats/bold.js';
+import Italic from '../../../src/formats/italic.js';
 import Link from '../../../src/formats/link.js';
 import { AlignClass } from '../../../src/formats/align.js';
 import UINode from '../../../src/modules/uiNode.js';
@@ -243,6 +244,210 @@ describe('Toolbar', () => {
       expect(boldButton?.classList.contains('ql-active')).toBe(false);
       quill.format('bold', true, 'user');
       expect(boldButton?.classList.contains('ql-active')).toBe(true);
+    });
+  });
+
+  describe('shared container', () => {
+    const register = () => {
+      Quill.register(
+        {
+          'themes/snow': SnowTheme,
+          'modules/toolbar': Toolbar,
+          'modules/clipboard': Clipboard,
+          'modules/keyboard': Keyboard,
+          'modules/history': History,
+          'modules/uploader': Uploader,
+          'modules/input': Input,
+          'modules/uiNode': UINode,
+        },
+        true,
+      );
+    };
+
+    const createEditor = (
+      html: string,
+      toolbar: HTMLElement,
+      mimetypes: string[],
+    ) => {
+      const container = createContainer(html);
+      const quill = new Quill(container, {
+        theme: 'snow',
+        registry: createRegistry([SizeClass, Bold, Italic]),
+        modules: {
+          toolbar: { container: toolbar },
+          uploader: { mimetypes },
+        },
+      });
+      return quill;
+    };
+
+    test('routes actions to the editor that was focused last', () => {
+      register();
+      const toolbar = document.body.appendChild(document.createElement('div'));
+      addControls(toolbar, [
+        ['bold', 'italic', 'image'],
+        [{ size: ['small', false, 'large'] }],
+      ]);
+      const quillA = createEditor('<p>Hello A</p>', toolbar, ['image/png']);
+      const quillB = createEditor('<p>Hello B</p>', toolbar, ['image/gif']);
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLButtonElement;
+
+      expect(toolbar.querySelectorAll('.ql-picker').length).toBe(1);
+      expect(toolbar.querySelectorAll('select.ql-size').length).toBe(1);
+
+      quillA.setSelection(0, 5);
+      bold.click();
+      expect(quillA.getFormat(0, 5).bold).toBe(true);
+      expect(quillB.getFormat(0, 5).bold).toBeUndefined();
+      expect(quillA.hasFocus()).toBe(true);
+      expect(quillB.hasFocus()).toBe(false);
+      expect(quillA.getSelection()).toMatchObject({ index: 0, length: 5 });
+
+      quillB.setSelection(0, 5);
+      expect(bold.classList.contains('ql-active')).toBe(false);
+      bold.click();
+      expect(quillB.getFormat(0, 5).bold).toBe(true);
+      expect(quillA.getFormat(0, 5).bold).toBe(true);
+      expect(quillB.hasFocus()).toBe(true);
+      expect(quillA.hasFocus()).toBe(false);
+      expect(quillB.getSelection()).toMatchObject({ index: 0, length: 5 });
+    });
+
+    test('reuses one image input and follows the active editor', () => {
+      register();
+      const toolbar = document.body.appendChild(document.createElement('div'));
+      addControls(toolbar, [['image']]);
+      const quillA = createEditor('<p>Hello A</p>', toolbar, [
+        'image/png',
+        'image/png',
+      ]);
+      const quillB = createEditor('<p>Hello B</p>', toolbar, [
+        'image/gif',
+        'image/gif',
+      ]);
+      const image = toolbar.querySelector(
+        'button.ql-image',
+      ) as HTMLButtonElement;
+      const originalClick = HTMLInputElement.prototype.click;
+      HTMLInputElement.prototype.click = function click() {
+        if (this.type === 'file') return undefined;
+        return originalClick.apply(this);
+      };
+      try {
+        quillA.setSelection(0, 1);
+        image.click();
+        image.click();
+        const inputs = toolbar.querySelectorAll('input.ql-image[type=file]');
+        expect(inputs.length).toBe(1);
+        expect(inputs[0].getAttribute('accept')).toBe('image/png, image/png');
+        quillB.setSelection(0, 1);
+        expect(inputs[0].getAttribute('accept')).toBe('image/gif, image/gif');
+        image.click();
+        expect(
+          toolbar.querySelectorAll('input.ql-image[type=file]').length,
+        ).toBe(1);
+      } finally {
+        HTMLInputElement.prototype.click = originalClick;
+      }
+    });
+
+    test('clears the active editor when it is removed', () => {
+      register();
+      const toolbar = document.body.appendChild(document.createElement('div'));
+      addControls(toolbar, [['bold']]);
+      const quillA = createEditor('<p>Hello A</p>', toolbar, ['image/png']);
+      const quillB = createEditor('<p>Hello B</p>', toolbar, ['image/png']);
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLButtonElement;
+      quillA.setSelection(0, 5);
+      quillA.container.remove();
+      const htmlB = quillB.root.innerHTML;
+      bold.click();
+      expect(quillB.root.innerHTML).toBe(htmlB);
+      expect(bold.classList.contains('ql-active')).toBe(false);
+      quillB.setSelection(0, 5);
+      bold.click();
+      expect(quillB.getFormat(0, 5).bold).toBe(true);
+    });
+
+    test('disables controls while the active editor is read-only', () => {
+      register();
+      const toolbar = document.body.appendChild(document.createElement('div'));
+      addControls(toolbar, [['bold'], [{ size: ['small', false, 'large'] }]]);
+      const quillA = createEditor('<p>Hello A</p>', toolbar, ['image/png']);
+      const quillB = createEditor('<p>Hello B</p>', toolbar, ['image/png']);
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLButtonElement;
+      const select = toolbar.querySelector(
+        'select.ql-size',
+      ) as HTMLSelectElement;
+      const picker = toolbar.querySelector('.ql-picker') as HTMLElement;
+      quillA.setSelection(0, 5);
+      quillA.disable();
+      expect(bold.disabled).toBe(true);
+      expect(select.disabled).toBe(true);
+      expect(picker.classList.contains('ql-disabled')).toBe(true);
+      expect(
+        picker.querySelector('.ql-picker-label')?.getAttribute('aria-disabled'),
+      ).toBe('true');
+      bold.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true }),
+      );
+      picker
+        .querySelector('.ql-picker-label')
+        ?.dispatchEvent(
+          new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
+        );
+      expect(quillA.getFormat(0, 5).bold).toBeUndefined();
+      expect(picker.classList.contains('ql-expanded')).toBe(false);
+
+      quillB.setSelection(0, 5);
+      expect(bold.disabled).toBe(false);
+      expect(select.disabled).toBe(false);
+      expect(picker.classList.contains('ql-disabled')).toBe(false);
+      bold.click();
+      expect(quillB.getFormat(0, 5).bold).toBe(true);
+      expect(quillA.getFormat(0, 5).bold).toBeUndefined();
+
+      quillA.enable();
+      quillA.setSelection(0, 5);
+      expect(bold.disabled).toBe(false);
+      expect(bold.classList.contains('ql-active')).toBe(false);
+    });
+
+    test('binds toolbar buttons added later exactly once', () => {
+      register();
+      const toolbar = document.body.appendChild(document.createElement('div'));
+      addControls(toolbar, [['italic']]);
+      const quillA = createEditor('<p>Hello A</p>', toolbar, ['image/png']);
+      const quillB = createEditor('<p>Hello B</p>', toolbar, ['image/png']);
+      const button = document.createElement('button');
+      button.classList.add('ql-bold');
+      let bindings = 0;
+      const original = button.addEventListener.bind(button);
+      button.addEventListener = ((
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | AddEventListenerOptions,
+      ) => {
+        if (type === 'click') bindings += 1;
+        return original(type, listener, options);
+      }) as typeof button.addEventListener;
+
+      toolbar.appendChild(button);
+      expect(bindings).toBe(1);
+      quillB.setSelection(0, 5);
+      button.click();
+      expect(quillB.getFormat(0, 5).bold).toBe(true);
+      expect(quillA.getFormat(0, 5).bold).toBeUndefined();
+
+      button.remove();
+      const htmlB = quillB.root.innerHTML;
+      button.click();
+      expect(quillB.root.innerHTML).toBe(htmlB);
+
+      toolbar.appendChild(button);
+      expect(bindings).toBe(2);
+      button.click();
+      expect(quillB.getFormat(0, 5).bold).toBeUndefined();
     });
   });
 });
