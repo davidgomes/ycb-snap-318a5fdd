@@ -233,8 +233,8 @@ func (e *Encoder) encodeFooter() error {
 
 type byName []*Entry
 
-func (l byName) Len() int           { return len(l) }
-func (l byName) Swap(i, j int)      { l[i], l[j] = l[j], l[i] }
+func (l byName) Len() int      { return len(l) }
+func (l byName) Swap(i, j int) { l[i], l[j] = l[j], l[i] }
 func (l byName) Less(i, j int) bool {
 	if l[i].Name == l[j].Name {
 		return l[i].Stage < l[j].Stage
