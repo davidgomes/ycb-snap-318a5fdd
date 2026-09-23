@@ -1,5 +1,6 @@
 import { ActionInstance } from '../actions/types';
 import type { $internal } from '../common';
+import type { Deferred, DeferredInternal } from '../deferred/types';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
 import type {
@@ -43,6 +44,7 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    deferred: DeferredInternal;
 };
 
 export type World = {
@@ -50,6 +52,8 @@ export type World = {
     readonly isInitialized: boolean;
     readonly entities: Entity[];
     readonly traits: Set<Trait>;
+    /** Commands that are batched and executed later, such as when `updateEach` exits. */
+    readonly deferred: Deferred;
     [$internal]: WorldInternal;
     init(...traits: ConfigurableTrait[]): void;
     spawn(...traits: ConfigurableTrait[]): Entity;

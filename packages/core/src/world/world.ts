@@ -1,4 +1,13 @@
 import { $internal } from '../common';
+import {
+    beforeMutation,
+    createDeferred,
+    createDeferredInternal,
+    deferredGet,
+    deferredHas,
+    getDeferredView,
+    resetDeferred,
+} from '../deferred/deferred';
 import { createEntity, destroyEntity } from '../entity/entity';
 import type { Entity } from '../entity/types';
 import { createEntityIndex, getAliveEntities, isEntityAlive } from '../entity/utils/entity-index';
@@ -54,6 +63,7 @@ export function createWorld(
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
+            deferred: createDeferredInternal(),
         } as WorldInternal,
 
         traits: new Set<Trait>(),
@@ -85,32 +95,44 @@ export function createWorld(
         },
 
         spawn(...spawnTraits: ConfigurableTrait[]): Entity {
+            beforeMutation(world, undefined, 'structure');
             return createEntity(world, ...spawnTraits);
         },
 
         has(target: Entity | Trait): boolean {
-            return typeof target === 'number'
-                ? isEntityAlive(world[$internal].entityIndex, target)
-                : hasTrait(world, world[$internal].worldEntity, target);
+            if (typeof target === 'number') return isEntityAlive(world[$internal].entityIndex, target);
+
+            const worldEntity = world[$internal].worldEntity;
+            const view = getDeferredView(world, worldEntity);
+            return view ? deferredHas(world, view, target) : hasTrait(world, worldEntity, target);
         },
 
         add(...addTraits: ConfigurableTrait[]) {
+            beforeMutation(world, world[$internal].worldEntity, 'structure');
             addTrait(world, world[$internal].worldEntity, ...addTraits);
         },
 
         remove(...removeTraits: Trait[]) {
+            beforeMutation(world, world[$internal].worldEntity, 'structure');
             removeTrait(world, world[$internal].worldEntity, ...removeTraits);
         },
 
         get<T extends Trait>(trait: T): TraitRecord<ExtractSchema<T>> | undefined {
-            return getTrait(world, world[$internal].worldEntity, trait);
+            const worldEntity = world[$internal].worldEntity;
+            const view = getDeferredView(world, worldEntity);
+            if (view) return deferredGet(world, view, trait) as TraitRecord<ExtractSchema<T>>;
+            return getTrait(world, worldEntity, trait);
         },
 
         set<T extends Trait>(trait: T, value: TraitValue<ExtractSchema<T>> | SetTraitCallback<T>) {
+            beforeMutation(world, world[$internal].worldEntity, 'value');
             setTrait(world, world[$internal].worldEntity, trait, value, true);
         },
 
         destroy() {
+            // Pending commands are discarded rather than executed during teardown.
+            resetDeferred(world);
+
             // Destroy world entity.
             destroyEntity(world, world[$internal].worldEntity);
             world[$internal].worldEntity = null!;
@@ -125,6 +147,8 @@ export function createWorld(
         reset() {
             lazyTraits = undefined;
             const ctx = world[$internal];
+
+            resetDeferred(world);
 
             // Destroy all entities so any cleanup is done.
             world.entities.forEach((entity) => {
@@ -201,7 +225,7 @@ export function createWorld(
                             relation as Relation<Trait>,
                             target as Entity
                         );
-                        return createRelationOnlyQueryResult(entities.slice() as Entity[]);
+                        return createRelationOnlyQueryResult(world, entities.slice() as Entity[]);
                     }
                 }
 
@@ -364,6 +388,10 @@ export function createWorld(
     });
     Object.defineProperty(world, 'entities', {
         get: () => getAliveEntities(world[$internal].entityIndex),
+        enumerable: true,
+    });
+    Object.defineProperty(world, 'deferred', {
+        value: createDeferred(world),
         enumerable: true,
     });
 
