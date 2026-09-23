@@ -1,9 +1,10 @@
 import abc
-from typing import Any, AsyncGenerator, List
+from typing import Any, AsyncGenerator, Dict, List
 
 from graphql import ExecutionResult
 
 from ..graphql_request import GraphQLRequest
+from ..incremental import IncrementalExecutionResult, execution_result_from_payload
 
 
 class AsyncTransport(abc.ABC):
@@ -48,6 +49,33 @@ class AsyncTransport(abc.ABC):
         raise NotImplementedError(
             "This Transport has not implemented the execute_batch method"
         )  # pragma: no cover
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalExecutionResult, None]:
+        """Execute a request and yield incremental results.
+
+        Transports that cannot stream incremental payloads yield the single
+        result of :meth:`execute` with ``has_next`` set to False.
+        """
+
+        result = await self.execute(request, *args, **kwargs)
+        if isinstance(result, IncrementalExecutionResult):
+            yield result
+            return
+
+        payload: Dict[str, Any] = {
+            "data": result.data,
+            "hasNext": False,
+        }
+        if result.errors is not None:
+            payload["errors"] = result.errors
+        if result.extensions is not None:
+            payload["extensions"] = result.extensions
+        yield execution_result_from_payload(payload)
 
     @abc.abstractmethod
     def subscribe(

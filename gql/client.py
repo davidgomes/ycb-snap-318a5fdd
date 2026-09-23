@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 import time
 import warnings
@@ -39,6 +40,14 @@ from tenacity import (
 )
 
 from .graphql_request import GraphQLRequest, support_deprecated_request
+from .incremental import (
+    IncrementalExecutionResult,
+    apply_incremental_payload,
+    errors_from_payload,
+    extensions_from_payload,
+    has_next_from_payload,
+    payload_from_result,
+)
 from .transport.async_transport import AsyncTransport
 from .transport.exceptions import TransportConnectionFailed, TransportQueryError
 from .transport.local_schema import LocalSchemaTransport
@@ -1594,6 +1603,98 @@ class AsyncClientSession:
             return result
 
         return result.data
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        parse_result: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalExecutionResult, None]:
+        """Execute a query and yield accumulated incremental results.
+
+        Each result has ``data``, ``has_next``, ``errors`` and ``extensions``.
+        ``data`` is the document merged so far (initial payload plus every
+        ``@defer`` / ``@stream`` patch). ``extensions`` and ``errors`` are taken
+        from the payload that produced this result, not from earlier payloads.
+
+        Deferred patches merge ``data`` into the object at ``path``. Stream
+        patches insert ``items`` into the parent list; the last integer of
+        ``path`` is the start index. A missing ``path`` merges at the root.
+
+        GraphQL errors are reported on the result and do not stop later
+        payloads or later incremental items. A non-incremental JSON response is
+        yielded once with ``has_next`` False. Empty ``incremental`` arrays and
+        payloads that only contain ``hasNext`` are still yielded.
+
+        :param request: GraphQL query as :class:`GraphQLRequest <gql.GraphQLRequest>`.
+        :param serialize_variables: whether the variable values should be
+            serialized. Used for custom scalars and/or enums.
+            By default use the serialize_variables argument of the client.
+        :param parse_result: Whether gql will deserialize the accumulated result.
+            By default use the parse_results argument of the client.
+
+        The extra arguments are passed to the transport ``execute_incremental``
+        method.
+        """
+
+        request = support_deprecated_request(request, kwargs)
+
+        if self.client.schema:
+            self.client.validate(request)
+
+            if request.variable_values is not None:
+                if serialize_variables or (
+                    serialize_variables is None and self.client.serialize_variables
+                ):
+                    request = request.serialize_variable_values(self.client.schema)
+
+        should_parse = False
+        schema = self.client.schema
+        if schema is not None:
+            should_parse = bool(
+                parse_result or (parse_result is None and self.client.parse_results)
+            )
+
+        accumulated: Any = None
+        transport = cast(AsyncTransport, self.transport)
+        inner = transport.execute_incremental(request, **kwargs)
+
+        try:
+            async for raw in inner:
+                payload = payload_from_result(raw)
+                try:
+                    accumulated = apply_incremental_payload(accumulated, payload)
+                except Exception:
+                    log.debug("Failed to apply incremental payload", exc_info=True)
+
+                data: Any
+                if accumulated is None:
+                    data = None
+                else:
+                    data = copy.deepcopy(accumulated)
+
+                if should_parse and data is not None and schema is not None:
+                    data = parse_result_fn(
+                        schema,
+                        request.document,
+                        data,
+                        operation_name=request.operation_name,
+                    )
+
+                yield IncrementalExecutionResult(
+                    data=data,
+                    errors=errors_from_payload(payload),
+                    extensions=extensions_from_payload(payload),
+                    has_next=has_next_from_payload(payload),
+                )
+        except TransportConnectionFailed:
+            if hasattr(self, "_reconnect_request_event"):
+                self._reconnect_request_event.set()
+            raise
+        finally:
+            await inner.aclose()
 
     async def _execute_batch(
         self,

@@ -8,6 +8,7 @@ from typing import Any, AsyncGenerator, Dict, Optional, Tuple, Union
 from graphql import ExecutionResult
 
 from ...graphql_request import GraphQLRequest
+from ...incremental import IncrementalExecutionResult
 from ..async_transport import AsyncTransport
 from ..exceptions import (
     TransportAlreadyConnected,
@@ -354,6 +355,41 @@ class SubscriptionTransportBase(AsyncTransport):
             )
 
         return first_result
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalExecutionResult, None]:
+        """Yield every payload for *request* until the operation completes.
+
+        Incremental ``@defer`` and ``@stream`` payloads are forwarded through
+        the same websocket protocol messages as ordinary results (``next`` /
+        ``data``). Each yielded result keeps that payload's ``hasNext``,
+        ``incremental`` and ``extensions`` fields.
+        """
+
+        generator = self.subscribe(
+            request,
+            send_stop=False,
+        )
+
+        try:
+            async for result in generator:
+                if isinstance(result, IncrementalExecutionResult):
+                    yield result
+                else:
+                    yield IncrementalExecutionResult(
+                        data=result.data,
+                        errors=result.errors,
+                        extensions=result.extensions,
+                        has_next=bool(getattr(result, "has_next", False)),
+                        incremental=getattr(result, "incremental", None),
+                        payload=getattr(result, "payload", None),
+                    )
+        finally:
+            await generator.aclose()
 
     async def connect(self) -> None:
         """Coroutine which will:

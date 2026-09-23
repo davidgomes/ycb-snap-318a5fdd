@@ -449,6 +449,51 @@ class DSLDirective:
         return f"<DSLDirective @{self.name}({args_str})>"
 
 
+def _directive_argument(name: str, value: ValueNode) -> ArgumentNode:
+    return ArgumentNode(name=NameNode(value=name), value=value)
+
+
+def _defer_or_stream_directive(
+    name: str,
+    *,
+    label: Optional[str] = None,
+    if_: Optional[bool] = None,
+    initial_count: Optional[int] = None,
+) -> DirectiveNode:
+    """Build a @defer or @stream directive node.
+
+    Arguments follow the incremental-delivery spec order: ``if``, ``label``,
+    ``initialCount``. Omitted arguments are left to the server defaults.
+    """
+
+    if label is not None and not isinstance(label, str):
+        raise TypeError(f"{name} label must be a string.")
+    if if_ is not None and not isinstance(if_, bool):
+        raise TypeError(f"{name} if_ must be a boolean.")
+    if initial_count is not None and (
+        isinstance(initial_count, bool) or not isinstance(initial_count, int)
+    ):
+        raise TypeError(f"{name} initial_count must be an integer.")
+    if initial_count is not None and initial_count < 0:
+        raise GraphQLError(f"{name} initial_count must be greater than or equal to 0.")
+
+    arguments = []
+    if if_ is not None:
+        arguments.append(_directive_argument("if", BooleanValueNode(value=if_)))
+    if label is not None:
+        arguments.append(_directive_argument("label", StringValueNode(value=label)))
+    if initial_count is not None:
+        arguments.append(
+            _directive_argument("initialCount", IntValueNode(value=str(initial_count)))
+        )
+    return DirectiveNode(name=NameNode(value=name), arguments=tuple(arguments))
+
+
+def _append_ast_directive(node: Any, directive: DirectiveNode) -> None:
+    existing = node.directives or ()
+    node.directives = tuple(existing) + (directive,)
+
+
 class DSLDirectable(ABC):
     """Mixin class for DSL elements that can have directives.
 
@@ -1190,6 +1235,45 @@ class DSLField(DSLSelectableWithAlias, DSLFieldSelector):
         """Check if directive is valid for Field locations."""
         return DirectiveLocation.FIELD in directive.directive_def.locations
 
+    def _is_list_field(self) -> bool:
+        field_type = self.field.type
+        if is_non_null_type(field_type):
+            field_type = cast(GraphQLNonNull, field_type).of_type
+        return is_list_type(field_type)
+
+    def stream(
+        self,
+        label: Optional[str] = None,
+        initial_count: Optional[int] = None,
+        *,
+        if_: Optional[bool] = None,
+    ) -> Self:
+        """Add a ``@stream`` directive to this list field.
+
+        :param label: Optional label used to tell streamed payloads apart.
+        :param initial_count: Number of list items included in the initial
+            payload. Maps to the ``initialCount`` argument.
+        :param if_: When False, the field is not streamed.
+        :return: itself
+        :raises graphql.error.GraphQLError: if this field is not a list.
+        """
+
+        if not self._is_list_field():
+            raise GraphQLError(
+                f"@stream can only be used on list fields. Received: {self!r}"
+            )
+
+        _append_ast_directive(
+            self.ast_field,
+            _defer_or_stream_directive(
+                "stream",
+                label=label,
+                if_=if_,
+                initial_count=initial_count,
+            ),
+        )
+        return self
+
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} {self.parent_type.name}" f"::{self.name}>"
 
@@ -1302,6 +1386,25 @@ class DSLInlineFragment(DSLSelectable, DSLFragmentSelector):
         """Check if directive is valid for Inline Fragment locations."""
         return DirectiveLocation.INLINE_FRAGMENT in directive.directive_def.locations
 
+    def defer(
+        self,
+        label: Optional[str] = None,
+        *,
+        if_: Optional[bool] = None,
+    ) -> Self:
+        """Add a ``@defer`` directive to this inline fragment.
+
+        :param label: Optional label used to tell deferred payloads apart.
+        :param if_: When False, the fragment is not deferred.
+        :return: itself
+        """
+
+        _append_ast_directive(
+            self.ast_field,
+            _defer_or_stream_directive("defer", label=label, if_=if_),
+        )
+        return self
+
 
 class DSLFragmentSpread(DSLSelectable):
     """Represents a fragment spread (usage) with its own directives.
@@ -1344,6 +1447,25 @@ class DSLFragmentSpread(DSLSelectable):
     def is_valid_directive(self, directive: DSLDirective) -> bool:
         """Check if directive is valid for Fragment Spread locations."""
         return DirectiveLocation.FRAGMENT_SPREAD in directive.directive_def.locations
+
+    def defer(
+        self,
+        label: Optional[str] = None,
+        *,
+        if_: Optional[bool] = None,
+    ) -> Self:
+        """Add a ``@defer`` directive to this fragment spread.
+
+        :param label: Optional label used to tell deferred payloads apart.
+        :param if_: When False, the fragment is not deferred.
+        :return: itself
+        """
+
+        _append_ast_directive(
+            self.ast_field,
+            _defer_or_stream_directive("defer", label=label, if_=if_),
+        )
+        return self
 
     def __repr__(self) -> str:
         return f"<DSLFragmentSpread {self.name}>"
@@ -1462,6 +1584,29 @@ class DSLFragment(DSLSelectable, DSLFragmentSelector, DSLExecutable):
         return (
             DirectiveLocation.FRAGMENT_DEFINITION in directive.directive_def.locations
         )
+
+    def defer(
+        self,
+        label: Optional[str] = None,
+        *,
+        if_: Optional[bool] = None,
+    ) -> Self:
+        """Add a ``@defer`` directive to uses of this fragment.
+
+        ``@defer`` is valid on fragment spreads, so the directive is attached to
+        the spread node inserted when this fragment is selected. The fragment
+        definition itself is unchanged.
+
+        :param label: Optional label used to tell deferred payloads apart.
+        :param if_: When False, the fragment is not deferred.
+        :return: itself
+        """
+
+        _append_ast_directive(
+            self.ast_field,
+            _defer_or_stream_directive("defer", label=label, if_=if_),
+        )
+        return self
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} {self.name!s}>"
