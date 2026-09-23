@@ -3,6 +3,7 @@ from typing import TypeVar, overload
 
 from returns.context import NoDeps
 from returns.interfaces.failable import DiverseFailableN, SingleFailableN
+from returns.interfaces.specific.validated import ValidatedLikeN
 from returns.methods.cond import internal_cond
 from returns.primitives.hkt import Kinded, KindN
 
@@ -11,6 +12,7 @@ _ErrorType = TypeVar('_ErrorType')
 
 _DiverseFailableKind = TypeVar('_DiverseFailableKind', bound=DiverseFailableN)
 _SingleFailableKind = TypeVar('_SingleFailableKind', bound=SingleFailableN)
+_ValidatedLikeKind = TypeVar('_ValidatedLikeKind', bound=ValidatedLikeN)
 
 
 @overload
@@ -38,8 +40,25 @@ def cond(
 ]: ...
 
 
+@overload
 def cond(
-    container_type: (type[_SingleFailableKind] | type[_DiverseFailableKind]),
+    container_type: type[_ValidatedLikeKind],
+    success_value: _ValueType,
+    error_value: _ErrorType,
+) -> Kinded[
+    Callable[
+        [bool],
+        KindN[_ValidatedLikeKind, _ValueType, _ErrorType, NoDeps],
+    ]
+]: ...
+
+
+def cond(
+    container_type: (
+        type[_SingleFailableKind]
+        | type[_DiverseFailableKind]
+        | type[_ValidatedLikeKind]
+    ),
     success_value: _ValueType,
     error_value: _ErrorType | None = None,
 ):
@@ -67,6 +86,15 @@ def cond(
 
       >>> assert cond(Maybe, 10.0)(True) == Some(10.0)
       >>> assert cond(Maybe, 10.0)(False) == Nothing
+
+    Example using ``cond`` with the ``Validated`` container:
+
+    .. code:: python
+
+      >>> from returns.validated import Invalid, Valid, Validated
+
+      >>> assert cond(Validated, 'ok', 'err')(True) == Valid('ok')
+      >>> assert cond(Validated, 'ok', 'err')(False) == Invalid(('err',))
 
     """
 

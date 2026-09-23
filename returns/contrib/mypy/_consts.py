@@ -31,6 +31,7 @@ DO_NOTATION_METHODS: Final = (
     'returns.future.Future.do',
     # Also infer error types:
     'returns.result.Result.do',
+    'returns.validated.Validated.do',
     'returns.io.IOResult.do',
     'returns.future.FutureResult.do',
 )

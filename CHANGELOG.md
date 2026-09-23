@@ -10,6 +10,7 @@ See [0Ver](https://0ver.org/).
 
 ### Features
 
+- Added `Validated` container (`Valid` / `Invalid`) that accumulates errors
 - Added `mypy>=1.16,<1.18` support
 - Added `__bool__` to `Maybe`, only `Nothing` ever returns `False`
 

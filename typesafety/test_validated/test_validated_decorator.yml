@@ -1,0 +1,22 @@
+- case: validated_decorator_no_params
+  disable_cache: false
+  main: |
+    from returns.validated import validated
+
+    @validated
+    def test() -> int:
+        return 1
+
+    reveal_type(test)  # N: Revealed type is "def () -> returns.validated.Validated[builtins.int, builtins.Exception]"
+
+
+- case: validated_decorator_passing_exceptions
+  disable_cache: false
+  main: |
+    from returns.validated import validated
+
+    @validated(exceptions=(ValueError,))
+    def test() -> int:
+        return 1
+
+    reveal_type(test)  # N: Revealed type is "def () -> returns.validated.Validated[builtins.int, builtins.ValueError]"

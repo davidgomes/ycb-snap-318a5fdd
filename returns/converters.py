@@ -6,6 +6,7 @@ from returns.maybe import Maybe, Nothing, Some
 from returns.pipeline import is_successful
 from returns.primitives.hkt import KindN, kinded
 from returns.result import Failure, Result, Success
+from returns.validated import Validated
 
 _FirstType = TypeVar('_FirstType')
 _SecondType = TypeVar('_SecondType')
@@ -108,3 +109,49 @@ def maybe_to_result(
     if is_successful(maybe_container):
         return Success(maybe_container.unwrap())
     return Failure(default_error)
+
+
+def result_to_validated(
+    result_container: Result[_FirstType, _SecondType],
+) -> Validated[_FirstType, _SecondType]:
+    """
+    Converts a ``Result`` container into a ``Validated`` container.
+
+    ``Success`` becomes ``Valid``.
+    ``Failure`` becomes ``Invalid`` and the error is wrapped in a tuple.
+
+    .. code:: python
+
+      >>> from returns.converters import result_to_validated
+      >>> from returns.result import Failure, Success
+      >>> from returns.validated import Invalid, Valid
+
+      >>> assert result_to_validated(Success(1)) == Valid(1)
+      >>> assert result_to_validated(Failure('a')) == Invalid(('a',))
+
+    """
+    return Validated.from_result(result_container)
+
+
+def validated_to_result(
+    validated_container: Validated[_FirstType, _SecondType],
+) -> Result[_FirstType, tuple[_SecondType, ...]]:
+    """
+    Converts a ``Validated`` container into a ``Result`` container.
+
+    ``Valid`` becomes ``Success``.
+    ``Invalid`` becomes ``Failure`` holding the error tuple.
+
+    .. code:: python
+
+      >>> from returns.converters import validated_to_result
+      >>> from returns.result import Failure, Success
+      >>> from returns.validated import Invalid, Valid
+
+      >>> assert validated_to_result(Valid(1)) == Success(1)
+      >>> assert validated_to_result(Invalid(('a', 'b'))) == Failure(('a', 'b'))
+
+    """
+    if is_successful(validated_container):
+        return Success(validated_container.unwrap())
+    return Failure(validated_container.failure())

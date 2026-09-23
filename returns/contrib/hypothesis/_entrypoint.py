@@ -32,6 +32,7 @@ def _setup_hook() -> None:
     from returns.io import IO, IOResult  # noqa: PLC0415
     from returns.maybe import Maybe  # noqa: PLC0415
     from returns.result import Result  # noqa: PLC0415
+    from returns.validated import Validated  # noqa: PLC0415
 
     def factory(
         container_type: type[_Inst],
@@ -50,6 +51,7 @@ def _setup_hook() -> None:
     registered_types: Sequence[type[Lawful]] = (
         Result,
         Maybe,
+        Validated,
         IO,
         IOResult,
         Future,

@@ -1,0 +1,36 @@
+- case: validated_constructors
+  disable_cache: false
+  main: |
+    from returns.validated import Invalid, Valid, Validated
+
+    reveal_type(Valid(1))  # N: Revealed type is "returns.validated.Valid[builtins.int]"
+    reveal_type(Invalid(('a',)))  # N: Revealed type is "returns.validated.Invalid[builtins.str]"
+    reveal_type(Validated.from_failure('a'))  # N: Revealed type is "returns.validated.Validated[Any, builtins.str]"
+    reveal_type(Validated.from_value(1))  # N: Revealed type is "returns.validated.Validated[builtins.int, Any]"
+
+
+- case: validated_do_mixed
+  disable_cache: false
+  main: |
+    from returns.validated import Invalid, Valid, Validated
+
+    reveal_type(Validated.do(  # N: Revealed type is "returns.validated.Validated[Any, builtins.str]"
+        x + y
+        for x in Valid(1)
+        for y in Invalid(('a',))
+    ))
+
+
+- case: validated_do_annotated
+  disable_cache: false
+  main: |
+    from returns.validated import Validated
+
+    a: Validated[int, str]
+    b: Validated[float, bytes]
+
+    reveal_type(Validated.do(  # N: Revealed type is "returns.validated.Validated[builtins.float, builtins.str | builtins.bytes]"
+        x + y
+        for x in a
+        for y in b
+    ))

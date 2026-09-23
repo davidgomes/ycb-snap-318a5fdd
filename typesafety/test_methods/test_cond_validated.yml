@@ -1,0 +1,7 @@
+- case: cond_validated
+  disable_cache: false
+  main: |
+    from returns.methods import cond
+    from returns.validated import Validated
+
+    reveal_type(cond(Validated, True, 42, '42'))  # N: Revealed type is "returns.validated.Validated[builtins.int, builtins.str]"

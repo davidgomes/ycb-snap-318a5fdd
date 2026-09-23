@@ -39,6 +39,25 @@ Take a note, that type changes.
 Also, take a note that ``Success(None)`` will be converted to ``Nothing``.
 
 
+Result and Validated
+--------------------
+
+:func:`~.result_to_validated` turns ``Success`` into ``Valid`` and wraps a
+``Failure`` error in a one-element tuple.
+:func:`~.validated_to_result` turns ``Valid`` into ``Success`` and ``Invalid``
+into ``Failure`` holding that error tuple.
+
+.. code:: python
+
+  >>> from returns.converters import result_to_validated, validated_to_result
+  >>> from returns.result import Failure, Success
+  >>> from returns.validated import Invalid, Valid
+
+  >>> assert result_to_validated(Success(1)) == Valid(1)
+  >>> assert result_to_validated(Failure('a')) == Invalid(('a',))
+  >>> assert validated_to_result(Invalid(('a', 'b'))) == Failure(('a', 'b'))
+
+
 flatten
 -------
 

@@ -1,0 +1,11 @@
+- case: bind_validated_on_validated
+  disable_cache: false
+  main: |
+    from returns.pointfree import bind_validated
+    from returns.validated import Validated
+
+    def test(arg: float) -> Validated[int, str]:
+        ...
+
+    x: Validated[float, str]
+    reveal_type(bind_validated(test)(x))  # N: Revealed type is "returns.validated.Validated[builtins.int, builtins.str]"
