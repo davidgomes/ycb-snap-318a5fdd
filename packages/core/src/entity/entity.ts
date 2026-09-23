@@ -1,4 +1,5 @@
 import { $internal } from '../common';
+import { forgetPairEvents } from '../query/utils/pair-tracking';
 import { getEntitiesWithRelationTo, getRelationTargets } from '../relation/relation';
 import { addTrait, cleanupRelationTarget, removeTrait } from '../trait/trait';
 import type { ConfigurableTrait } from '../trait/types';
@@ -13,7 +14,14 @@ import './entity-methods-patch';
 
 export function createEntity(world: World, ...traits: ConfigurableTrait[]): Entity {
     const ctx = world[$internal];
-    const entity = allocateEntity(ctx.entityIndex);
+    const entityIndex = ctx.entityIndex;
+
+    // The entity being recycled is gone for good, so its pair history can be dropped.
+    if (entityIndex.aliveCount < entityIndex.dense.length) {
+        forgetPairEvents(world, entityIndex.dense[entityIndex.aliveCount]);
+    }
+
+    const entity = allocateEntity(entityIndex);
 
     for (const query of ctx.notQueries) {
         const match = query.check(world, entity);

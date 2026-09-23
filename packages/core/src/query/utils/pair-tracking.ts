@@ -1,78 +1,16 @@
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
-import { isEntityAlive } from '../../entity/utils/entity-index';
-import { getEntityId } from '../../entity/utils/pack-entity';
 import type { Relation } from '../../relation/types';
 import { getTraitInstance } from '../../trait/trait-instance';
 import type { Trait } from '../../trait/types';
 import type { World } from '../../world';
-import type { EventType, PairTracker, QueryInstance, TrackingPair } from '../types';
+import type { EventType, PairEventRecord, PairTracker, QueryInstance, TrackingPair } from '../types';
 import { checkQueryTrackingWithRelations } from './check-query-tracking-with-relations';
-
-const EMPTY_TARGETS: readonly Entity[] = Object.freeze([]);
-
-/**
- * Get the current targets of a relation on an entity without allocating.
- * The returned array must not be mutated or retained.
- */
-export function getCurrentPairTargets(
-    world: World,
-    relationTrait: Trait,
-    entity: Entity
-): readonly Entity[] {
-    const ctx = world[$internal];
-    const instance = getTraitInstance(ctx.traitInstances, relationTrait);
-    if (!instance || !instance.relationTargets) return EMPTY_TARGETS;
-    if (!isEntityAlive(ctx.entityIndex, entity)) return EMPTY_TARGETS;
-
-    const eid = getEntityId(entity);
-
-    if (relationTrait[$internal].relation![$internal].exclusive) {
-        const target = (instance.relationTargets as Array<Entity | undefined>)[eid];
-        return target === undefined ? EMPTY_TARGETS : [target];
-    }
-
-    return (instance.relationTargets as Entity[][])[eid] ?? EMPTY_TARGETS;
-}
-
-/**
- * Snapshot the targets of every relation for all alive entities.
- * Keyed by relation trait ID, then by source entity.
- */
-export function snapshotPairTargets(world: World): Map<number, Map<Entity, readonly Entity[]>> {
-    const ctx = world[$internal];
-    const { dense, sparse, aliveCount } = ctx.entityIndex;
-    const snapshot = new Map<number, Map<Entity, readonly Entity[]>>();
-
-    for (const relation of ctx.relations) {
-        const relationCtx = relation[$internal];
-        const instance = getTraitInstance(ctx.traitInstances, relationCtx.trait);
-        const relationTargets = instance?.relationTargets;
-        if (!relationTargets) continue;
-
-        const targets = new Map<Entity, readonly Entity[]>();
-
-        for (let eid = 0; eid < relationTargets.length; eid++) {
-            const value = relationTargets[eid] as Entity | Entity[] | undefined;
-            if (value === undefined) continue;
-            if (!relationCtx.exclusive && (value as Entity[]).length === 0) continue;
-
-            const denseIndex = sparse[eid];
-            if (denseIndex === undefined || denseIndex >= aliveCount) continue;
-
-            const entity = dense[denseIndex];
-            targets.set(entity, relationCtx.exclusive ? [value as Entity] : (value as Entity[]).slice());
-        }
-
-        if (targets.size > 0) snapshot.set(relationCtx.trait.id, targets);
-    }
-
-    return snapshot;
-}
+import { hasTrackingModifiers } from './tracking-cursor';
 
 /**
  * Get or create the pair tracker for a tracking modifier and relation on a query.
- * The tracker is seeded from the world state recorded when the modifier was created.
+ * The tracker is seeded with pair events that happened since the modifier started tracking.
  */
 export function getPairTracker(
     world: World,
@@ -91,20 +29,21 @@ export function getPairTracker(
         type,
         relation: relationTrait[$internal].relation as Relation<Trait>,
         relationTrait,
-        baseline: new Map(),
-        changed: new Map(),
+        pending: new Map(),
     };
 
-    if (type === 'change') {
-        const log = ctx.changedPairs.get(id)?.get(relationTrait.id);
-        if (log) {
-            for (const [entity, targets] of log) {
-                if (targets.size > 0) tracker.changed.set(entity, new Set(targets));
+    const since = ctx.trackingPairSeqs.get(id) ?? 0;
+    const events = ctx.pairEvents.get(relationTrait.id);
+
+    if (events) {
+        for (const [entity, records] of events) {
+            let pending: Set<Entity> | undefined;
+            for (const [target, record] of records) {
+                if (!isPendingEvent(record, type, since)) continue;
+                if (!pending) tracker.pending.set(entity, (pending = new Set()));
+                pending.add(target);
             }
         }
-    } else {
-        const snapshot = ctx.trackingPairSnapshots.get(id)?.get(relationTrait.id);
-        if (snapshot) tracker.baseline = new Map(snapshot);
     }
 
     query.pairTrackers.push(tracker);
@@ -112,54 +51,42 @@ export function getPairTracker(
     return tracker;
 }
 
-/**
- * Check whether a tracked pair has an event for the entity in the current observation window.
- */
-export function checkTrackingPair(world: World, pair: TrackingPair, entity: Entity): boolean {
-    const { tracker, target } = pair;
-    const current = getCurrentPairTargets(world, tracker.relationTrait, entity);
-
-    if (tracker.type === 'change') {
-        const changed = tracker.changed.get(entity);
-        if (!changed) return false;
-        if (target !== '*') return changed.has(target) && current.includes(target);
-        for (const t of changed) {
-            if (current.includes(t)) return true;
-        }
-        return false;
+function isPendingEvent(
+    record: PairEventRecord,
+    type: EventType,
+    since: number
+): boolean {
+    switch (type) {
+        case 'add':
+            return record.added > since && record.added > record.removed;
+        case 'remove':
+            return record.removed > since && record.removed > record.added;
+        case 'change':
+            return record.changed > since && record.changed > record.removed;
     }
-
-    const baseline = tracker.baseline.get(entity) ?? EMPTY_TARGETS;
-    // Added looks for targets present now but not in the baseline, Removed the reverse.
-    return tracker.type === 'add'
-        ? hasTargetNotIn(current, baseline, target)
-        : hasTargetNotIn(baseline, current, target);
 }
 
-function hasTargetNotIn(
-    targets: readonly Entity[],
-    exclude: readonly Entity[],
-    target: Entity | '*'
-): boolean {
-    if (target !== '*') return targets.includes(target) && !exclude.includes(target);
-    for (let i = 0; i < targets.length; i++) {
-        if (!exclude.includes(targets[i])) return true;
-    }
-    return false;
+/** Check whether a tracked pair has a pending event for the entity. */
+export function checkTrackingPair(pair: TrackingPair, entity: Entity): boolean {
+    const pending = pair.tracker.pending.get(entity);
+    if (!pending) return false;
+    return pair.target === '*' ? pending.size > 0 : pending.has(pair.target);
 }
 
 /** Start a new observation window for the entity on all pair trackers of the query. */
-export function resetPairTrackers(world: World, query: QueryInstance, entity: Entity) {
+export function resetPairTrackers(query: QueryInstance, entity: Entity) {
     const trackers = query.pairTrackers;
     for (let i = 0; i < trackers.length; i++) {
-        const tracker = trackers[i];
-        if (tracker.type === 'change') {
-            tracker.changed.delete(entity);
-            continue;
-        }
-        const current = getCurrentPairTargets(world, tracker.relationTrait, entity);
-        if (current.length > 0) tracker.baseline.set(entity, current.slice());
-        else tracker.baseline.delete(entity);
+        trackers[i].pending.delete(entity);
+    }
+}
+
+/** Drop the recorded pair events of an entity whose ID is about to be recycled. */
+export function forgetPairEvents(world: World, entity: Entity) {
+    const ctx = world[$internal];
+    if (ctx.pairEvents.size === 0) return;
+    for (const events of ctx.pairEvents.values()) {
+        events.delete(entity);
     }
 }
 
@@ -174,38 +101,40 @@ export function notifyPairEvent(
     type: EventType
 ) {
     const ctx = world[$internal];
-    const traitId = relationTrait.id;
 
-    // World-level changed log, used to seed queries created after the change happened.
-    if (type === 'change') {
-        for (const log of ctx.changedPairs.values()) {
-            let byEntity = log.get(traitId);
-            if (!byEntity) log.set(traitId, (byEntity = new Map()));
-            let targets = byEntity.get(entity);
-            if (!targets) byEntity.set(entity, (targets = new Set()));
-            targets.add(target);
-        }
-    } else if (type === 'remove') {
-        for (const log of ctx.changedPairs.values()) {
-            log.get(traitId)?.get(entity)?.delete(target);
-        }
+    // Record the event so queries created later can be seeded with it.
+    if (hasTrackingModifiers()) {
+        let events = ctx.pairEvents.get(relationTrait.id);
+        if (!events) ctx.pairEvents.set(relationTrait.id, (events = new Map()));
+        let records = events.get(entity);
+        if (!records) events.set(entity, (records = new Map()));
+        let record = records.get(target);
+        if (!record) records.set(target, (record = { added: 0, removed: 0, changed: 0 }));
+
+        const seq = ++ctx.pairEventSeq;
+        if (type === 'add') record.added = seq;
+        else if (type === 'remove') record.removed = seq;
+        else record.changed = seq;
     }
 
     const instance = getTraitInstance(ctx.traitInstances, relationTrait);
     if (!instance || instance.pairTrackingQueries.size === 0) return;
 
     for (const query of instance.pairTrackingQueries) {
-        if (type !== 'add') {
-            const trackers = query.pairTrackers;
-            for (let i = 0; i < trackers.length; i++) {
-                const tracker = trackers[i];
-                if (tracker.type !== 'change' || tracker.relationTrait !== relationTrait) continue;
-                if (type === 'change') {
-                    let targets = tracker.changed.get(entity);
-                    if (!targets) tracker.changed.set(entity, (targets = new Set()));
-                    targets.add(target);
-                } else {
-                    tracker.changed.get(entity)?.delete(target);
+        const trackers = query.pairTrackers;
+        for (let i = 0; i < trackers.length; i++) {
+            const tracker = trackers[i];
+            if (tracker.relationTrait !== relationTrait) continue;
+
+            if (tracker.type === type) {
+                let pending = tracker.pending.get(entity);
+                if (!pending) tracker.pending.set(entity, (pending = new Set()));
+                pending.add(target);
+            } else if (cancelsPendingEvent(type, tracker.type)) {
+                const pending = tracker.pending.get(entity);
+                if (pending) {
+                    pending.delete(target);
+                    if (pending.size === 0) tracker.pending.delete(entity);
                 }
             }
         }
@@ -218,4 +147,9 @@ export function notifyPairEvent(
             query.remove(world, entity);
         }
     }
+}
+
+function cancelsPendingEvent(event: EventType, pending: EventType): boolean {
+    // A removal cancels a pending addition or change, an addition cancels a pending removal.
+    return event === 'remove' ? pending !== 'remove' : event === 'add' && pending === 'remove';
 }

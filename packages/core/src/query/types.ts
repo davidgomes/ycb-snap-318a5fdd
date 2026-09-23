@@ -143,8 +143,9 @@ export type TrackingGroup = {
 
 /**
  * Per-query state for tracking relation pairs of one relation with one tracking modifier.
- * Added and Removed compare current targets against a baseline, so opposite events on
- * the same target cancel. Changed keeps the set of targets signaled since the baseline.
+ * Holds the targets with a pending event of the tracker's type. An opposite event on the
+ * same target cancels the pending one: a removal cancels an addition or change, and an
+ * addition cancels a removal.
  */
 export type PairTracker = {
     /** Tracking modifier ID */
@@ -152,10 +153,15 @@ export type PairTracker = {
     type: EventType;
     relation: Relation<Trait>;
     relationTrait: Trait;
-    /** Targets per entity at the start of the observation window (absent means none) */
-    baseline: Map<Entity, readonly Entity[]>;
-    /** Targets changed per entity during the observation window */
-    changed: Map<Entity, Set<Entity>>;
+    /** Targets with a pending event per entity in the current observation window */
+    pending: Map<Entity, Set<Entity>>;
+};
+
+/** Sequence numbers of the last events of a relation pair, 0 if it never happened */
+export type PairEventRecord = {
+    added: number;
+    removed: number;
+    changed: number;
 };
 
 export type TrackingPair = {

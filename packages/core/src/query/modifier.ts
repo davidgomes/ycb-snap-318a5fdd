@@ -37,7 +37,7 @@ export function createTrackingModifier<TTrait extends Trait[], TType extends str
 
         if (isRelationPair(input)) {
             const pairCtx = input[$internal];
-            pairTargets ??= new Array(i).fill(undefined);
+            pairTargets ??= Array.from<RelationTarget | undefined>({ length: i });
             pairTargets.push(pairCtx.target);
             traits.push(pairCtx.relation[$internal].trait);
             continue;

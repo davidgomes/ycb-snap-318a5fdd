@@ -127,7 +127,7 @@ export function checkQueryTracking(
             }
             if (!anyOrMatched) {
                 for (let j = 0; j < groupPairsLen; j++) {
-                    if (checkTrackingPair(world, groupPairs[j], entity)) {
+                    if (checkTrackingPair(groupPairs[j], entity)) {
                         anyOrMatched = true;
                         break;
                     }
@@ -147,7 +147,7 @@ export function checkQueryTracking(
                 }
             }
             for (let j = 0; j < groupPairsLen; j++) {
-                if (!checkTrackingPair(world, groupPairs[j], entity)) return false;
+                if (!checkTrackingPair(groupPairs[j], entity)) return false;
             }
         }
     }

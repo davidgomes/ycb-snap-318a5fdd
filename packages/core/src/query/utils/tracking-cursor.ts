@@ -1,12 +1,12 @@
 import { $internal } from '../../common';
 import type { World } from '../../world';
-import { snapshotPairTargets } from './pair-tracking';
 
 // Some values are reserved.
 // 0 - has
 // 1 - not
 // 2 - or
-let cursor = 3;
+const FIRST_TRACKING_ID = 3;
+let cursor = FIRST_TRACKING_ID;
 
 export function createTrackingId() {
     return cursor++;
@@ -32,6 +32,10 @@ export function setTrackingMasks(world: World, id: number) {
         snapshot.map((mask) => mask.map(() => 0))
     );
 
-    ctx.trackingPairSnapshots.set(id, snapshotPairTargets(world));
-    ctx.changedPairs.set(id, new Map());
+    ctx.trackingPairSeqs.set(id, ctx.pairEventSeq);
+}
+
+/** Whether any tracking modifier has been created, excluding the reserved IDs. */
+export function hasTrackingModifiers() {
+    return cursor > FIRST_TRACKING_ID;
 }

@@ -51,7 +51,7 @@ export function runQuery<T extends QueryParameter[]>(
         for (let i = 0; i < len; i++) {
             const entity = entities[i];
             query.resetTrackingBitmasks(getEntityId(entity));
-            if (hasPairTrackers) resetPairTrackers(world, query, entity);
+            if (hasPairTrackers) resetPairTrackers(query, entity);
         }
     }
 
