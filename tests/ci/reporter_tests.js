@@ -158,6 +158,42 @@ describe('test reporters', function() {
       });
     });
 
+    context('with launcher summary', function() {
+      it('appends per-launcher counts to the summary', function() {
+        config = new Config('ci', { tap_show_launcher_summary: true });
+        var reporter = new TapReporter(false, stream, config);
+        reporter.report('Chrome', { name: 'passes', passed: true, runDuration: 1 });
+        reporter.report('Chrome', { name: 'fails', passed: false, runDuration: 1 });
+        reporter.report('Firefox', { name: 'is skipped', skipped: true, runDuration: 0 });
+        reporter.report('Firefox', { name: 'is todo', passed: false, todo: true, runDuration: 0 });
+        reporter.finish();
+
+        var lines = stream.read().toString().split('\n');
+        assert.deepEqual(lines.slice(lines.indexOf('1..4')), [
+          '1..4',
+          '# tests 4',
+          '# pass  1',
+          '# skip  1',
+          '# todo  1',
+          '# fail  1',
+          '',
+          '# Per-launcher summary',
+          '# Chrome: 2 tests, 1 pass, 1 fail, 0 skip',
+          '# Firefox: 2 tests, 0 pass, 0 fail, 1 skip',
+          ''
+        ]);
+      });
+
+      it('omits the per-launcher summary by default', function() {
+        config = new Config('ci', {});
+        var reporter = new TapReporter(false, stream, config);
+        reporter.report('Chrome', { name: 'passes', passed: true, runDuration: 1 });
+        reporter.finish();
+
+        assert.notInclude(stream.read().toString(), 'Per-launcher summary');
+      });
+    });
+
     context('with quiet logs', function() {
       beforeEach(function() {
         config = new Config('ci', { tap_quiet_logs: true });
@@ -1107,6 +1143,67 @@ describe('test reporters', function() {
       var output = stream.read().toString();
 
       assertXmlIsValid(output);
+    });
+
+    context('launcher metadata', function() {
+      function reportMixedResults(reporter) {
+        reporter.report('Chrome', { name: 'passes', passed: true });
+        reporter.report('Chrome', { name: 'fails', passed: false });
+        reporter.report('Chrome', { name: 'is skipped', skipped: true });
+        reporter.report('Firefox', { name: 'passes', passed: true });
+      }
+
+      it('tracks pass and fail counts per launcher', function() {
+        var reporter = new XUnitReporter(false, stream, config);
+        reportMixedResults(reporter);
+
+        assert.deepEqual(reporter.getLauncherStats(), {
+          Chrome: { total: 3, pass: 1, fail: 1 },
+          Firefox: { total: 1, pass: 1, fail: 0 }
+        });
+      });
+
+      it('omits launcher properties by default', function() {
+        var reporter = new XUnitReporter(false, stream, config);
+        reporter.setLauncherName('Chrome');
+        reportMixedResults(reporter);
+        reporter.finish();
+        var output = stream.read().toString();
+
+        assert.notMatch(output, /<properties>/);
+      });
+
+      it('includes launcher properties when xunit_include_launcher_properties is set', function() {
+        var reporter = new XUnitReporter(false, stream, new Config('ci', {
+          xunit_include_launcher_properties: true
+        }));
+        reportMixedResults(reporter);
+        reporter.finish();
+        var output = stream.read().toString();
+
+        assert.include(output, '<properties>' +
+          '<property name="launchers" value="Chrome,Firefox"/>' +
+          '<property name="Chrome_pass" value="1"/>' +
+          '<property name="Chrome_fail" value="1"/>' +
+          '<property name="Firefox_pass" value="1"/>' +
+          '<property name="Firefox_fail" value="0"/>' +
+          '</properties>');
+        assert.notMatch(output, /name="launcher"/);
+        assertXmlIsValid(output);
+      });
+
+      it('includes the launcher name set by setLauncherName', function() {
+        var reporter = new XUnitReporter(false, stream, new Config('ci', {
+          xunit_include_launcher_properties: true
+        }));
+        reporter.setLauncherName('Headless Chrome');
+        reporter.report('Headless Chrome', { name: 'passes', passed: true });
+        reporter.finish();
+        var output = stream.read().toString();
+
+        assert.include(output, '<properties><property name="launcher" value="Headless Chrome"/>');
+        assertXmlIsValid(output);
+      });
     });
   });
 
