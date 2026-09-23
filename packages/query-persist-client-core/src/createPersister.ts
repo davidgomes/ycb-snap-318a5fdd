@@ -1,4 +1,5 @@
 import {
+  createPersisterRestoreResult,
   hashKey,
   matchQuery,
   notifyManager,
@@ -77,6 +78,28 @@ export interface StoragePersisterOptions<TStorageValue = string> {
 
 export const PERSISTER_KEY_PREFIX = 'tanstack-query'
 
+function hasRestorableSnapshot(persistedQuery: PersistedQuery) {
+  const { data, error, status } = persistedQuery.state
+  return data !== undefined || error != null || status === 'error'
+}
+
+function wasSnapshotAlreadyApplied(
+  query: Query,
+  persistedQuery: PersistedQuery,
+) {
+  const persistedState = persistedQuery.state
+  const timestampsMatch =
+    query.state.dataUpdatedAt === persistedState.dataUpdatedAt &&
+    query.state.errorUpdatedAt === persistedState.errorUpdatedAt
+
+  return (
+    timestampsMatch &&
+    (query.state.data !== undefined ||
+      query.state.error != null ||
+      query.state.status === 'error')
+  )
+}
+
 /**
  * Warning: experimental feature.
  * This utility function enables fine-grained query persistence.
@@ -107,25 +130,26 @@ export function experimental_createQueryPersister<TStorageValue = string>({
   filters,
 }: StoragePersisterOptions<TStorageValue>) {
   function isExpiredOrBusted(persistedQuery: PersistedQuery) {
-    if (persistedQuery.state.dataUpdatedAt) {
-      const queryAge = Date.now() - persistedQuery.state.dataUpdatedAt
+    const updatedAt = Math.max(
+      persistedQuery.state.dataUpdatedAt || 0,
+      persistedQuery.state.errorUpdatedAt || 0,
+    )
+
+    if (updatedAt) {
+      const queryAge = Date.now() - updatedAt
       const expired = queryAge > maxAge
       const busted = persistedQuery.buster !== buster
 
-      if (expired || busted) {
-        return true
-      }
-
-      return false
+      return expired || busted
     }
 
     return true
   }
 
-  async function retrieveQuery<T>(
+  async function readPersistedQuery(
     queryHash: string,
     afterRestoreMacroTask?: (persistedQuery: PersistedQuery) => void,
-  ) {
+  ): Promise<PersistedQuery | undefined> {
     if (storage != null) {
       const storageKey = `${prefix}-${queryHash}`
       try {
@@ -148,8 +172,7 @@ export function experimental_createQueryPersister<TStorageValue = string>({
                 afterRestoreMacroTask(persistedQuery),
               )
             }
-            // We must resolve the promise here, as otherwise we will have `loading` state in the app until `queryFn` resolves
-            return persistedQuery.state.data as T
+            return persistedQuery
           }
         }
       } catch (err) {
@@ -164,6 +187,18 @@ export function experimental_createQueryPersister<TStorageValue = string>({
     }
 
     return
+  }
+
+  async function retrieveQuery<T>(
+    queryHash: string,
+    afterRestoreMacroTask?: (persistedQuery: PersistedQuery) => void,
+  ) {
+    const persistedQuery = await readPersistedQuery(
+      queryHash,
+      afterRestoreMacroTask,
+    )
+    // We must resolve the promise here, as otherwise we will have `loading` state in the app until `queryFn` resolves
+    return persistedQuery?.state.data as T | undefined
   }
 
   async function persistQueryByKey(
@@ -209,13 +244,21 @@ export function experimental_createQueryPersister<TStorageValue = string>({
 
     // Try to restore only if we do not have any data in the cache and we have persister defined
     if (matchesFilter && query.state.data === undefined && storage != null) {
-      const restoredData = await retrieveQuery(
-        query.queryHash,
-        (persistedQuery: PersistedQuery) => {
-          // Set proper updatedAt, since resolving in the first pass overrides those values
+      const persistedQuery = await readPersistedQuery(query.queryHash)
+
+      if (
+        persistedQuery &&
+        hasRestorableSnapshot(persistedQuery) &&
+        !wasSnapshotAlreadyApplied(query, persistedQuery)
+      ) {
+        notifyManager.schedule(() => {
+          const { dataUpdatedAt, errorUpdatedAt } = persistedQuery.state
+          // Callers that only invoke the persister still need the persisted
+          // timestamps. Skip missing fields so a partial snapshot cannot wipe
+          // values the active fetch already adopted.
           query.setState({
-            dataUpdatedAt: persistedQuery.state.dataUpdatedAt,
-            errorUpdatedAt: persistedQuery.state.errorUpdatedAt,
+            ...(typeof dataUpdatedAt === 'number' ? { dataUpdatedAt } : null),
+            ...(typeof errorUpdatedAt === 'number' ? { errorUpdatedAt } : null),
           })
 
           if (
@@ -224,11 +267,14 @@ export function experimental_createQueryPersister<TStorageValue = string>({
           ) {
             query.fetch()
           }
-        },
-      )
+        })
 
-      if (restoredData !== undefined) {
-        return Promise.resolve(restoredData as T)
+        // Return the whole snapshot so query-core can adopt it instead of
+        // recording a brand new successful fetch.
+        return createPersisterRestoreResult({
+          data: persistedQuery.state.data as T,
+          state: persistedQuery.state,
+        })
       }
     }
 
@@ -303,13 +349,11 @@ export function experimental_createQueryPersister<TStorageValue = string>({
             }
           }
 
-          queryClient.setQueryData(
-            persistedQuery.queryKey,
-            persistedQuery.state.data,
-            {
-              updatedAt: persistedQuery.state.dataUpdatedAt,
-            },
-          )
+          const query = queryClient.getQueryCache().build(queryClient, {
+            queryKey: persistedQuery.queryKey,
+            queryHash: persistedQuery.queryHash,
+          })
+          query.restorePersistedState(persistedQuery.state)
         }
       }
     } else if (process.env.NODE_ENV === 'development') {
