@@ -503,6 +503,98 @@ __Test bold__
 ``````
 </details>
 
+## Link Style
+
+Alias: `link-style`
+
+Converts links and embeds between the Obsidian wiki style (<code>[[target|display]]</code>) and the markdown style (<code>[display](target)</code>). External links (targets containing <code>://</code>) and markdown links with titles are never converted to wiki style.
+
+### Options
+
+| Name | Description | List Items | Default Value |
+| ---- | ----------- | ---------- | ------------- |
+| `Link Style` | The style to use for links | `no-change`: Leaves links as they are<br/><br/>`markdown`: Converts wiki links to markdown links<br/><br/>`wiki`: Converts markdown links to wiki links | `no-change` |
+| `Image Style` | The style to use for images and other embeds | `no-change`: Leaves images and embeds as they are<br/><br/>`markdown`: Converts wiki embeds to markdown images<br/><br/>`wiki`: Converts markdown images to wiki embeds | `no-change` |
+
+
+
+### Examples
+
+<details><summary>Converting wiki links and embeds to markdown links and images</summary>
+
+Before:
+
+`````` markdown
+[[Page]]
+[[Page|Display Text]]
+[[Page#Heading]]
+[[#Heading]]
+[[My Page]]
+![[image.png]]
+![[image.png|300]]
+![[image.png|Alt Text]]
+`[[Code]]`
+``````
+
+After:
+
+`````` markdown
+[Page](Page)
+[Display Text](Page)
+[Page > Heading](Page#Heading)
+[Heading](#Heading)
+[My Page](<My Page>)
+![image.png](image.png)
+![image.png](image.png)
+![Alt Text](image.png)
+`[[Code]]`
+``````
+</details>
+<details><summary>Converting markdown links and images to wiki links and embeds</summary>
+
+Before:
+
+`````` markdown
+[Page](Page)
+[Display Text](Page)
+[Page > Heading](Page#Heading)
+[My Page](<My Page>)
+![image.png](image.png)
+![Alt Text](image.png)
+[External](https://example.com)
+[Titled](Page "Title")
+`[Code](Code)`
+``````
+
+After:
+
+`````` markdown
+[[Page]]
+[[Page|Display Text]]
+[[Page#Heading]]
+[[My Page]]
+![[image.png]]
+![[image.png|Alt Text]]
+[External](https://example.com)
+[Titled](Page "Title")
+`[Code](Code)`
+``````
+</details>
+<details><summary>Links and images can be converted independently of each other</summary>
+
+Before:
+
+`````` markdown
+[[Page]] and ![[image.png]]
+``````
+
+After:
+
+`````` markdown
+[Page](Page) and ![[image.png]]
+``````
+</details>
+
 ## No Bare URLs
 
 Alias: `no-bare-urls`
