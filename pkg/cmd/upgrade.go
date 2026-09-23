@@ -187,6 +187,9 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 				return err
 			}
 
+			client.MergeStrategies = valueOpts.MergeStrategies
+			client.MergeKeys = valueOpts.MergeKeys
+
 			p := getter.All(settings)
 			vals, err := valueOpts.MergeValues(p)
 			if err != nil {

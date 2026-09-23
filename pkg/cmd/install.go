@@ -251,6 +251,9 @@ func runInstall(args []string, client *action.Install, valueOpts *values.Options
 
 	slog.Debug("Chart path", "path", cp)
 
+	client.MergeStrategies = valueOpts.MergeStrategies
+	client.MergeKeys = valueOpts.MergeKeys
+
 	p := getter.All(settings)
 	vals, err := valueOpts.MergeValues(p)
 	if err != nil {

@@ -317,3 +317,48 @@ func TestChartfile(t *testing.T) {
 		}
 	})
 }
+
+func TestChartfileMergeStrategyWarnings(t *testing.T) {
+	dir := t.TempDir()
+	chartYAML := []byte(`apiVersion: v2
+name: mergey
+version: 0.1.0
+annotations:
+  helm.sh/merge-strategy/missing: concat
+  helm.sh/merge-strategy/ports: merge
+  helm.sh/merge-key/orphan: name
+`)
+	valuesYAML := []byte("ports: 1\n")
+	if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), chartYAML, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "values.yaml"), valuesYAML, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	linter := support.Linter{ChartDir: dir}
+	Chartfile(&linter)
+
+	var unsupported, notFound, nonArray, needsKey, orphan bool
+	for _, msg := range linter.Messages {
+		if msg.Path != "Chart.yaml" || msg.Severity != support.WarningSev {
+			continue
+		}
+		text := msg.Err.Error()
+		switch {
+		case strings.Contains(text, "unsupported") && strings.Contains(text, "missing"):
+			unsupported = true
+		case strings.Contains(text, "not found"):
+			notFound = true
+		case strings.Contains(text, "non-array") && strings.Contains(text, "ports"):
+			nonArray = true
+		case strings.Contains(text, "ports") && strings.Contains(text, "merge-key"):
+			needsKey = true
+		case strings.Contains(text, "orphan"):
+			orphan = true
+		}
+	}
+	if !unsupported || !notFound || !nonArray || !needsKey || !orphan {
+		t.Fatalf("missing merge-strategy warnings: %#v", linter.Messages)
+	}
+}

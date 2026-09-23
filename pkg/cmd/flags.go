@@ -54,6 +54,8 @@ func addValueOptionsFlags(f *pflag.FlagSet, v *values.Options) {
 	f.StringArrayVar(&v.FileValues, "set-file", []string{}, "set values from respective files specified via the command line (can specify multiple or separate values with commas: key1=path1,key2=path2)")
 	f.StringArrayVar(&v.JSONValues, "set-json", []string{}, "set JSON values on the command line (can specify multiple or separate values with commas: key1=jsonval1,key2=jsonval2 or using json format: {\"key1\": jsonval1, \"key2\": \"jsonval2\"})")
 	f.StringArrayVar(&v.LiteralValues, "set-literal", []string{}, "set a literal STRING value on the command line")
+	f.StringArrayVar(&v.MergeStrategies, "merge-strategy", []string{}, "set a chart array merge strategy for a values path (path=append|merge). Overrides Chart.yaml annotations for the same path")
+	f.StringArrayVar(&v.MergeKeys, "merge-key", []string{}, "set the identity key for a merge strategy (path=field). The field may be a dotted path. Overrides Chart.yaml annotations for the same path")
 }
 
 func AddWaitFlag(cmd *cobra.Command, wait *kube.WaitStrategy) {
