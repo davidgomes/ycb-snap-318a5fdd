@@ -97,9 +97,15 @@ export function setupPredicate(world: World, predicateTrait: PredicateTrait): vo
     }
 
     const entities = getAliveEntities(ctx.entityIndex);
+    // An in-progress updateEach can still overwrite the values evaluated here.
+    const deferred = ctx.predicateDeferDepth > 0;
+
     for (let i = 0; i < entities.length; i++) {
         evaluatePredicate(world, instance, entities[i]);
+        if (deferred) instance.pending.add(entities[i]);
     }
+
+    if (deferred) ctx.pendingPredicates.add(instance);
 }
 
 /**
@@ -124,10 +130,10 @@ function evaluatePredicate(world: World, instance: PredicateInstance, entity: En
     }
 
     if (matches) {
-        const values = new Array(dependencies.length);
+        const values: unknown[] = [];
         for (let i = 0; i < dependencies.length; i++) {
             const dependency = dependencies[i];
-            values[i] = dependency.trait[$internal].get(eid, dependency.store);
+            values.push(dependency.trait[$internal].get(eid, dependency.store));
         }
         matches = !!instance.predicate[$internal].fn(values);
     }
