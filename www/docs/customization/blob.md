@@ -127,6 +127,22 @@ blobs:
 
     # Upload only the files defined in extra_files.
     extra_files_only: true
+
+    # Retry opening the bucket and uploading each artifact (including extra
+    # files) on transient (timeout or temporary) errors.
+    # Every upload attempt is recorded in the artifact's extra
+    # `publish_attempts`.
+    retry:
+      # Total number of attempts.
+      #
+      # Default: 1.
+      attempts: 5
+
+      # Initial delay between attempts, doubled after each failed attempt.
+      delay: 1s
+
+      # Maximum delay between attempts.
+      max_delay: 1m
 ```
 
 <!-- md:templates -->

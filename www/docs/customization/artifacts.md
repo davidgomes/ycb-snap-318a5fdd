@@ -86,6 +86,13 @@ The most common fields are:
 | `Replaces`          | `bool`     | Whether a universal binary replaces single-arch ones       |
 | `Files`             | `[]string` | Any extra files an archive might have                      |
 | `DynamicallyLinked` | `bool`     | Whether or not the binary is dynamically linked            |
+| `publish_attempts`  | `[]object` | Upload, Artifactory and blob publish attempts (see below)  |
+
+Each `publish_attempts` entry has `publisher` (`upload`, `artifactory` or
+`blob`), `instance` (the configured name, or `provider://bucket` for blobs),
+`target` (the destination URL, or the object path for blobs), `attempt`
+(1-based), `status` (`success` or `failure`), and `error` (only on failures).
+Entries are sorted by `publisher`, `instance`, `target`, and `attempt`.
 
 !!! note
 

@@ -281,6 +281,22 @@ uploads:
     #
     # <!-- md:inline_version v2.1 -->.
     extra_files_only: true
+
+    # Retry uploading each artifact (including extra files) on transport
+    # errors and on HTTP status 408, 429, 500, 502, 503 and 504.
+    # For 429 and 503, a valid Retry-After header is honored.
+    # Every attempt is recorded in the artifact's extra `publish_attempts`.
+    retry:
+      # Total number of attempts.
+      #
+      # Default: 1.
+      attempts: 5
+
+      # Initial delay between attempts, doubled after each failed attempt.
+      delay: 1s
+
+      # Maximum delay between attempts.
+      max_delay: 1m
 ```
 
 <!-- md:pro -->
