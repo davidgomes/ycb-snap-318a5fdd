@@ -5,6 +5,7 @@ pub use self::{
         CellsReader,
         CellsWriter,
         ExecutionOutcome,
+        FrameView,
         Inst,
         LiftFromCells,
         LiftFromCellsByValue,
@@ -26,6 +27,7 @@ use crate::{
     Store,
     StoreContextMut,
     engine::{
+        CoreDump,
         EngineInner,
         ResumableCallBase,
         ResumableCallHostTrap,
@@ -33,6 +35,7 @@ use crate::{
         executor::handler::{init_host_func_call, init_wasm_func_call},
     },
     ir::SlotSpan,
+    store::StoreInner,
 };
 
 mod handler;
@@ -58,9 +61,17 @@ impl EngineInner {
         Results: LiftFromCells,
     {
         let mut stack = self.stacks.lock().reuse_or_new();
-        let value = EngineExecutor::new(&self.code_map, &mut stack)
-            .execute_root_func(ctx.store, func, params, results)
-            .map_err(ExecutionOutcome::into_non_resumable)?;
+        let outcome = EngineExecutor::new(&self.code_map, &mut stack)
+            .execute_root_func(ctx.store, func, params, results);
+        let value = match outcome {
+            Ok(value) => value,
+            Err(outcome) => {
+                let is_wasm_error = !matches!(outcome, ExecutionOutcome::Host(_));
+                let mut error = outcome.into_non_resumable();
+                self.attach_coredump(&ctx.store.inner, &stack, &mut error, is_wasm_error);
+                return Err(error);
+            }
+        };
         self.stacks.lock().recycle(stack);
         Ok(value)
     }
@@ -92,7 +103,8 @@ impl EngineInner {
             Err(ExecutionOutcome::Host(error)) => {
                 let host_func = *error.host_func();
                 let caller_results = *error.caller_results();
-                let host_error = error.into_error();
+                let mut host_error = error.into_error();
+                self.attach_coredump(&store.inner, &stack, &mut host_error, false);
                 return Ok(ResumableCallBase::HostTrap(ResumableCallHostTrap::new(
                     store.engine().clone(),
                     stack,
@@ -111,7 +123,8 @@ impl EngineInner {
                     required_fuel,
                 )));
             }
-            Err(ExecutionOutcome::Error(error)) => {
+            Err(ExecutionOutcome::Error(mut error)) => {
+                self.attach_coredump(&store.inner, &stack, &mut error, true);
                 self.stacks.lock().recycle(stack);
                 return Err(error);
             }
@@ -146,7 +159,10 @@ impl EngineInner {
             Err(ExecutionOutcome::Host(error)) => {
                 let host_func = *error.host_func();
                 let caller_results = *error.caller_results();
-                invocation.update(host_func, error.into_error(), caller_results);
+                let mut host_error = error.into_error();
+                let stack = invocation.common.stack_mut();
+                self.attach_coredump(&ctx.store.inner, stack, &mut host_error, false);
+                invocation.update(host_func, host_error, caller_results);
                 return Ok(ResumableCallBase::HostTrap(invocation));
             }
             Err(ExecutionOutcome::OutOfFuel(error)) => {
@@ -154,8 +170,10 @@ impl EngineInner {
                 let invocation = invocation.update_to_out_of_fuel(required_fuel);
                 return Ok(ResumableCallBase::OutOfFuel(invocation));
             }
-            Err(ExecutionOutcome::Error(error)) => {
-                self.stacks.lock().recycle(invocation.common.take_stack());
+            Err(ExecutionOutcome::Error(mut error)) => {
+                let stack = invocation.common.take_stack();
+                self.attach_coredump(&ctx.store.inner, &stack, &mut error, true);
+                self.stacks.lock().recycle(stack);
                 return Err(error);
             }
         };
@@ -186,21 +204,57 @@ impl EngineInner {
             Err(ExecutionOutcome::Host(error)) => {
                 let host_func = *error.host_func();
                 let caller_results = *error.caller_results();
+                let mut host_error = error.into_error();
+                let stack = invocation.common.stack_mut();
+                self.attach_coredump(&ctx.store.inner, stack, &mut host_error, false);
                 let invocation =
-                    invocation.update_to_host_trap(host_func, error.into_error(), caller_results);
+                    invocation.update_to_host_trap(host_func, host_error, caller_results);
                 return Ok(ResumableCallBase::HostTrap(invocation));
             }
             Err(ExecutionOutcome::OutOfFuel(error)) => {
                 invocation.update(error.required_fuel());
                 return Ok(ResumableCallBase::OutOfFuel(invocation));
             }
-            Err(ExecutionOutcome::Error(error)) => {
-                self.stacks.lock().recycle(invocation.common.take_stack());
+            Err(ExecutionOutcome::Error(mut error)) => {
+                let stack = invocation.common.take_stack();
+                self.attach_coredump(&ctx.store.inner, &stack, &mut error, true);
+                self.stacks.lock().recycle(stack);
                 return Err(error);
             }
         };
         self.stacks.lock().recycle(invocation.common.take_stack());
         Ok(ResumableCallBase::Finished(results))
+    }
+
+    /// Attaches a coredump of the Wasm frames of `stack` to `error` if enabled by the [`Config`].
+    ///
+    /// - Generates a new coredump if `error` is a trap raised by the Wasm execution of `stack`.
+    ///   This is the case if `is_wasm_error` is `true` and `error` is a trap.
+    /// - Extends the existing coredump of `error` by the older frames of `stack`.
+    ///   This happens if a Wasm trap is propagated through a host function called by `stack`.
+    ///
+    /// [`Config`]: crate::Config
+    #[cold]
+    fn attach_coredump(
+        &self,
+        store: &StoreInner,
+        stack: &Stack,
+        error: &mut Error,
+        is_wasm_error: bool,
+    ) {
+        if !self.config.get_generate_coredump() {
+            return;
+        }
+        if let Some(coredump) = error.coredump_mut() {
+            coredump.extend(store, stack, &self.code_map);
+            return;
+        }
+        if !is_wasm_error || error.as_trap_code().is_none() {
+            return;
+        }
+        if let Some(coredump) = CoreDump::new(&self.config, store, stack, &self.code_map) {
+            error.set_coredump(coredump);
+        }
     }
 }
 

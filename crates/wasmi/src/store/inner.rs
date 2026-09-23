@@ -131,6 +131,13 @@ impl StoreInner {
         self.instances.len()
     }
 
+    /// Returns an iterator over all instances allocated to the [`StoreInner`] in allocation order.
+    pub fn instances(&self) -> impl Iterator<Item = (Instance, &InstanceEntity)> {
+        self.instances
+            .iter()
+            .map(|(key, entity)| (Instance::from_raw(self.id.wrap(key)), entity))
+    }
+
     /// Returns the number of tables allocated to the [`StoreInner`].
     pub fn len_tables(&self) -> usize {
         self.tables.len()

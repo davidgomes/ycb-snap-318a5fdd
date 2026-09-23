@@ -129,7 +129,6 @@ impl ModuleHeader {
     }
 
     /// Returns the [`FuncIdx`] for the given [`EngineFunc`].
-    #[expect(unused)]
     pub fn get_func_index(&self, func: EngineFunc) -> Option<FuncIdx> {
         let position = self.inner.engine_funcs.position(func)?;
         let len_imports = self.inner.imports.len_funcs as u32;
@@ -258,9 +257,24 @@ impl Module {
         &self.inner.engine
     }
 
+    /// Returns `true` if both [`Module`] references `a` and `b` refer to the same [`Module`].
+    pub(crate) fn same(a: &Module, b: &Module) -> bool {
+        Arc::ptr_eq(&a.inner, &b.inner)
+    }
+
     /// Returns a shared reference to the [`ModuleHeaderInner`].
     fn module_header(&self) -> &ModuleHeaderInner {
         &self.inner.header.inner
+    }
+
+    /// Returns the [`EngineFuncSpan`] of the internally defined functions of the [`Module`].
+    pub(crate) fn engine_funcs(&self) -> EngineFuncSpan {
+        self.module_header().engine_funcs
+    }
+
+    /// Returns the [`FuncIdx`] of the internally defined function `func` if any.
+    pub(crate) fn get_func_index(&self, func: EngineFunc) -> Option<FuncIdx> {
+        self.inner.header.get_func_index(func)
     }
 
     /// Validates `wasm` as a WebAssembly binary given the configuration (via [`Config`]) in `engine`.

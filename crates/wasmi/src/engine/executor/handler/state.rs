@@ -364,6 +364,11 @@ impl Ip {
         Self { value }
     }
 
+    /// Returns the address of the instruction pointed to by [`Ip`].
+    pub fn addr(self) -> usize {
+        self.value.addr()
+    }
+
     /// Returns a new [`Ip`] advanced by `delta` bytes.
     ///
     /// # Note
@@ -569,6 +574,17 @@ impl Stack {
         self.frames.sync_ip(ip);
     }
 
+    /// Returns an iterator over the function frames of `self` from top-most to bottom-most.
+    pub fn frames(&self) -> impl Iterator<Item = FrameView<'_>> {
+        self.frames
+            .frames()
+            .map(|(ip, start, instance)| FrameView {
+                ip,
+                instance,
+                cells: self.values.cells_at(start),
+            })
+    }
+
     /// Restores the top-most function frame and its [`Ip`], [`Sp`] and [`Inst`].
     ///
     /// # Note
@@ -653,6 +669,39 @@ impl Stack {
     ) -> Result<Sp, TrapCode> {
         let start = self.frames.replace(callee_ip, callee_instance)?;
         self.values.replace(start, callee_size, callee_params)
+    }
+}
+
+/// A read-only view of a function frame on the [`Stack`].
+#[derive(Debug, Copy, Clone)]
+pub struct FrameView<'a> {
+    /// The [`Ip`] of the frame.
+    ///
+    /// # Note
+    ///
+    /// This points into the compiled function of the frame but not
+    /// necessarily to the currently executed instruction of the frame.
+    ip: Ip,
+    /// The [`Inst`] of the function of the frame if known.
+    instance: Option<Inst>,
+    /// The cells of the value stack starting at the first cell of the frame.
+    cells: &'a [Cell],
+}
+
+impl<'a> FrameView<'a> {
+    /// Returns the address of the [`Ip`] of the frame.
+    pub fn ip_addr(&self) -> usize {
+        self.ip.addr()
+    }
+
+    /// Returns the [`Inst`] of the function of the frame if known.
+    pub fn instance(&self) -> Option<Inst> {
+        self.instance
+    }
+
+    /// Returns the cells of the value stack starting at the first cell of the frame.
+    pub fn cells(&self) -> &'a [Cell] {
+        self.cells
     }
 }
 
@@ -894,6 +943,13 @@ impl ValueStack {
     }
 
     /// Returns cells as slice: `cells[start..]`
+    ///
+    /// Returns an empty slice if `start` is out of bounds.
+    fn cells_at(&self, start: SpOffset) -> &[Cell] {
+        self.cells.get(start.into_inner()..).unwrap_or_default()
+    }
+
+    /// Returns cells as slice: `cells[start..]`
     fn cells_from(&mut self, start: SpOffset) -> Option<&mut [Cell]> {
         let start = start.into_inner();
         self.cells.get_mut(start..)
@@ -985,6 +1041,21 @@ impl CallStack {
     /// Returns `None` if `self` is empty.
     fn top(&self) -> Option<&Frame> {
         self.frames.last()
+    }
+
+    /// Returns an iterator over the function frames of `self` from top-most to bottom-most.
+    ///
+    /// Yields the [`Ip`], the `start` index and the [`Inst`] of each function frame.
+    fn frames(&self) -> impl Iterator<Item = (Ip, SpOffset, Option<Inst>)> + '_ {
+        (0..self.frames.len()).rev().map(|index| {
+            let frame = &self.frames[index];
+            // Note: each frame stores the instance of its caller.
+            let instance = match self.frames.get(index + 1) {
+                Some(callee) => callee.instance,
+                None => self.instance,
+            };
+            (frame.ip, frame.start, instance)
+        })
     }
 
     /// Synchronizes the [`Ip`] of the top-most function frame.

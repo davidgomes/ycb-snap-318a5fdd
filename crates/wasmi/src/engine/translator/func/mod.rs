@@ -74,7 +74,7 @@ use crate::{
     },
     module::{FuncIdx, FuncTypeIdx, MemoryIdx, ModuleHeader, WasmiValueType},
 };
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use core::{convert::identity, mem};
 use wasmparser::{MemArg, WasmFeatures};
 
@@ -193,6 +193,7 @@ impl WasmTranslator<'_> for FuncTranslator {
         finalize(CompiledFuncEntity::new(
             frame_size,
             self.instrs.encoded_ops(),
+            self.local_types(),
         ));
         Ok(self.into_allocations())
     }
@@ -282,6 +283,18 @@ impl FuncTranslator {
         self.stack
             .push_func_block(block_ty, end_label, consume_fuel)?;
         Ok(())
+    }
+
+    /// Returns the types of the function parameters followed by the function locals.
+    ///
+    /// Returns an empty slice if coredump generation is disabled since they are not needed otherwise.
+    fn local_types(&self) -> Box<[ValType]> {
+        if !self.engine.config().get_generate_coredump() {
+            return Box::default();
+        }
+        (0..self.locals.len())
+            .map(|index| self.locals.ty(LocalIdx::from(index as u32)))
+            .collect()
     }
 
     /// Returns the frame size of the to-be-compiled function.

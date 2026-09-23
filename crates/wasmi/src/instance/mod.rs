@@ -32,6 +32,12 @@ mod tests;
 #[derive(Debug)]
 pub struct InstanceEntity {
     initialized: bool,
+    /// The instantiated [`Module`].
+    ///
+    /// # Note
+    ///
+    /// This is only `Some` if coredump generation is enabled since it is not needed otherwise.
+    module: Option<Module>,
     func_types: Arc<[DedupFuncType]>,
     tables: Box<[Table]>,
     funcs: Box<[Func]>,
@@ -47,6 +53,7 @@ impl InstanceEntity {
     pub fn uninitialized() -> InstanceEntity {
         Self {
             initialized: false,
+            module: None,
             func_types: Arc::new([]),
             tables: [].into(),
             funcs: [].into(),
@@ -66,6 +73,25 @@ impl InstanceEntity {
     /// Returns `true` if the [`InstanceEntity`] has been fully initialized.
     pub fn is_initialized(&self) -> bool {
         self.initialized
+    }
+
+    /// Returns the instantiated [`Module`] if it has been recorded.
+    ///
+    /// # Note
+    ///
+    /// The [`Module`] is only recorded if coredump generation is enabled.
+    pub fn module(&self) -> Option<&Module> {
+        self.module.as_ref()
+    }
+
+    /// Returns the linear memories of the [`InstanceEntity`] in index order.
+    pub fn memories(&self) -> &[Memory] {
+        &self.memories
+    }
+
+    /// Returns the global variables of the [`InstanceEntity`] in index order.
+    pub fn globals(&self) -> &[Global] {
+        &self.globals
     }
 
     /// Returns the linear memory at the `index` if any.

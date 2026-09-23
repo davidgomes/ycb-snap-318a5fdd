@@ -10,6 +10,7 @@ use crate::{
     Config,
     Error,
     TrapCode,
+    ValType,
     collections::arena::{Arena, ArenaKey},
     core::{Fuel, FuelCostsProvider},
     engine::{ResumableOutOfFuelError, utils::unreachable_unchecked},
@@ -17,7 +18,7 @@ use crate::{
     ir::index::InternalFunc,
     module::{FuncIdx, ModuleHeader},
 };
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 use core::{
     fmt,
     mem::{self, MaybeUninit},
@@ -397,6 +398,35 @@ impl CodeMap {
                 entity.set_failed_to_compile();
                 Err(error)
             }
+        }
+    }
+
+    /// Returns the address ranges of the encoded [`Op`]s of all compiled [`EngineFunc`]s in `funcs`.
+    ///
+    /// The returned ranges are sorted by their start address.
+    pub fn compiled_ops_ranges(&self, funcs: EngineFuncSpan) -> Vec<(Range<usize>, EngineFunc)> {
+        let entities = self.funcs.lock();
+        let mut ranges: Vec<_> = funcs
+            .iter()
+            .filter_map(|func| match entities.get(func) {
+                Ok(FuncEntity::Compiled(entity)) => {
+                    let ops = entity.ops.as_ptr_range();
+                    Some((ops.start.addr()..ops.end.addr(), func))
+                }
+                _ => None,
+            })
+            .collect();
+        ranges.sort_unstable_by_key(|(ops, _)| ops.start);
+        ranges
+    }
+
+    /// Returns the types of the parameters and locals of the compiled `func`.
+    ///
+    /// Returns `None` if `func` has not been compiled.
+    pub fn local_types(&self, func: EngineFunc) -> Option<Box<[ValType]>> {
+        match self.funcs.lock().get(func) {
+            Ok(FuncEntity::Compiled(entity)) => Some(entity.local_types.clone()),
+            _ => None,
         }
     }
 
@@ -802,6 +832,12 @@ pub struct CompiledFuncEntity {
     /// This includes stack slots to store the function local constant values,
     /// function parameters, function locals and dynamically used stack slots.
     len_stack_slots: u16,
+    /// The types of the function parameters followed by the function locals.
+    ///
+    /// # Note
+    ///
+    /// This is only recorded if coredump generation is enabled and empty otherwise.
+    local_types: Box<[ValType]>,
 }
 
 impl CompiledFuncEntity {
@@ -811,7 +847,7 @@ impl CompiledFuncEntity {
     ///
     /// - If `ops` is empty.
     /// - If `ops` contains more than `i32::MAX` encoded bytes.
-    pub fn new(len_stack_slots: u16, ops: &[u8]) -> Self {
+    pub fn new(len_stack_slots: u16, ops: &[u8], local_types: Box<[ValType]>) -> Self {
         let ops: Pin<Box<[u8]>> = Pin::new(ops.into());
         assert!(
             !ops.is_empty(),
@@ -829,6 +865,7 @@ impl CompiledFuncEntity {
         Self {
             ops,
             len_stack_slots,
+            local_types,
         }
     }
 }
