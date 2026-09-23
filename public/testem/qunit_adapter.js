@@ -14,7 +14,8 @@ Testem's QUnit adapter. Works by using QUnit's hooks:
 
 */
 
-/* globals QUnit, emit */
+/* globals QUnit, emit, Testem */
+/* globals module */
 /* exported qunitAdapter */
 'use strict';
 
@@ -30,6 +31,25 @@ function qunitAdapter() {
   };
   var currentTest;
   var id = 1;
+  var abortSignaled = false;
+
+  function clearQueue() {
+    if (typeof QUnit !== 'undefined' && QUnit.config && QUnit.config.queue && typeof QUnit.config.queue.length === 'number') {
+      QUnit.config.queue.length = 0;
+    }
+  }
+
+  function suppressBecauseAborted() {
+    if (typeof Testem !== 'undefined' && Testem.aborted) {
+      clearQueue();
+      if (!abortSignaled) {
+        abortSignaled = true;
+        emit('all-test-results');
+      }
+      return true;
+    }
+    return false;
+  }
 
   function lineNumber(e) {
     return e.line || e.lineNumber;
@@ -52,6 +72,9 @@ function qunitAdapter() {
   }
 
   QUnit.log(function(params, e) {
+    if (suppressBecauseAborted()) {
+      return;
+    }
     if (e) {
       currentTest.items.push({
         passed: params.result,
@@ -81,14 +104,23 @@ function qunitAdapter() {
 
   });
   QUnit.testStart(function(params) {
+    if (suppressBecauseAborted()) {
+      return;
+    }
     currentTest = {
       id: id++,
       name: (params.module ? params.module + ': ' : '') + params.name,
       items: []
     };
+    if (suppressBecauseAborted()) {
+      return;
+    }
     emit('tests-start', currentTest);
   });
   QUnit.testDone(function(params) {
+    if (suppressBecauseAborted()) {
+      return;
+    }
     currentTest.failed = params.failed;
     currentTest.passed = params.passed;
     currentTest.skipped = params.skipped;
@@ -109,11 +141,25 @@ function qunitAdapter() {
 
     results.tests.push(currentTest);
 
+    if (suppressBecauseAborted()) {
+      return;
+    }
     emit('test-result', currentTest);
   });
   QUnit.done(function(params) {
+    if (suppressBecauseAborted()) {
+      return;
+    }
     results.runDuration = params.runtime;
+    if (suppressBecauseAborted()) {
+      return;
+    }
     emit('all-test-results');
   });
 
+}
+
+// Exporting this as a module so that it can be unit tested in Node.
+if (typeof module !== 'undefined') {
+  module.exports = qunitAdapter;
 }

@@ -121,6 +121,7 @@ if (typeof TestemConfig === 'undefined') {
 }
 
 var Testem = {
+  aborted: false,
   emitMessageQueue: [],
   afterTestsQueue: [],
   console: {},
@@ -143,6 +144,9 @@ var Testem = {
   },
   emitMessage: function() {
     if (this._noConnectionRequired) {
+      return;
+    }
+    if (this.aborted && !this._allowEmitWhileAborted) {
       return;
     }
     var args = new Array(arguments.length);
@@ -183,6 +187,13 @@ var Testem = {
       this.evtHandlers[evt] = [];
     }
     this.evtHandlers[evt].push(callback);
+  },
+  handleAbortTests: function() {
+    this.aborted = true;
+    this._allowEmitWhileAborted = true;
+    this.emit('abort-tests');
+    this.emit('after-tests-complete');
+    this._allowEmitWhileAborted = false;
   },
   handleConsoleMessage: null,
   noConnectionRequired: function() {
@@ -263,6 +274,9 @@ var Testem = {
           break;
         case 'stop-run':
           self.emit('after-tests-complete');
+          break;
+        case 'abort-tests':
+          self.handleAbortTests();
           break;
         default:
           if (type && type.indexOf('testem:') === 0) {
