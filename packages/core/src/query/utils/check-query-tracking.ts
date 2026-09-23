@@ -3,6 +3,7 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import { pairGroupMatches } from './pair-tracking';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -100,6 +101,17 @@ export function checkQueryTracking(
                     groupTrackers[eventGenerationId] = trackerArr;
                 }
                 trackerArr[eid] = (trackerArr[eid] | 0) | eventBitflag;
+            }
+        }
+
+        // Pair filters are satisfied from pending pair events, not trait bitmasks.
+        if (group.pairFilters && group.pairFilters.length > 0) {
+            const pairsMatch = pairGroupMatches(group, eid);
+            if (groupLogic === 'or') {
+                hasOrGroup = true;
+                if (pairsMatch) anyOrMatched = true;
+            } else if (!pairsMatch) {
+                return false;
             }
         }
 

@@ -1,4 +1,5 @@
 import type { Entity } from '../entity/types';
+import type { TrackedRelationPair } from '../relation/tracked-pair';
 import type { RelationPair } from '../relation/types';
 import { AoSFactory } from '../storage';
 import type {
@@ -93,6 +94,8 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /** Relation pairs tracked at pair granularity. Target `'*'` is a wildcard. */
+    pairs?: TrackedRelationPair[];
 };
 
 /** Parameter types that can be passed to Or modifier */
@@ -132,6 +135,19 @@ export type TrackingGroup = {
     bitmasks: (number | undefined)[];
     /** Per-entity tracker state indexed by [generationId][entityId] */
     trackers: (number[] | undefined)[];
+    /** Pair filters for this group. Present when the modifier was built from relation pairs. */
+    pairFilters?: TrackedRelationPair[];
+    /**
+     * Pending pair events since this query was last read.
+     * entity id → relation trait id → add/remove/change target ids.
+     */
+    pairState?: Map<number, Map<number, PairBucket>>;
+};
+
+export type PairBucket = {
+    add: Set<number>;
+    remove: Set<number>;
+    change: Set<number>;
 };
 
 export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {

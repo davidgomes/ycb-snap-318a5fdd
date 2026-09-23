@@ -314,6 +314,29 @@ Ordered relations add bookkeeping overhead:
 - Can sort at query time
 - Performance-critical hot paths
 
+## Tracking pairs
+
+`createAdded`, `createRemoved`, and `createChanged` accept a relation pair. The target `'*'` matches any target.
+
+```typescript
+const Added = createAdded()
+const Removed = createRemoved()
+const Changed = createChanged()
+
+// A second target still reports an addition for that pair
+world.query(Added(Contains(gold)))
+
+// Removing one target while others remain
+world.query(Removed(Contains(gold)))
+
+// Any target
+world.query(Changed(Contains('*')))
+
+entity.changed(Contains(gold))
+```
+
+Pair modifiers compose with `Or` and with other query parameters. Each target is its own cached query. Within one read of the query, an add and a remove of the same target cancel. Destroying an entity reports a removal for every active pair. `readEach` / `updateEach` yield that target's relation data.
+
 ## Removing Relations
 
 ### Remove specific relation

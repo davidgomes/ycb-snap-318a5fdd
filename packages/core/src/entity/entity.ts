@@ -1,4 +1,5 @@
 import { $internal } from '../common';
+import { clearPairEventsForEntity } from '../query/utils/pair-tracking';
 import { getEntitiesWithRelationTo, getRelationTargets } from '../relation/relation';
 import { addTrait, cleanupRelationTarget, removeTrait } from '../trait/trait';
 import type { ConfigurableTrait } from '../trait/types';
@@ -14,6 +15,7 @@ import './entity-methods-patch';
 export function createEntity(world: World, ...traits: ConfigurableTrait[]): Entity {
     const ctx = world[$internal];
     const entity = allocateEntity(ctx.entityIndex);
+    clearPairEventsForEntity(world, getEntityId(entity));
 
     for (const query of ctx.notQueries) {
         const match = query.check(world, entity);

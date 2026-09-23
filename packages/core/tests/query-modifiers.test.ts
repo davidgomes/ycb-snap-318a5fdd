@@ -790,4 +790,122 @@ describe('Query modifiers', () => {
             testWorld.query(Changed(NewTrait));
         }).not.toThrow();
     });
+
+    it('tracks relation pairs on added, removed, and changed modifiers', () => {
+        const Added = createAdded();
+        const Removed = createRemoved();
+        const Changed = createChanged();
+        const Likes = relation({ store: { amount: 0 } });
+        const IsEnemy = trait();
+
+        const subject = world.spawn(IsEnemy);
+        const alice = world.spawn();
+        const bob = world.spawn();
+
+        subject.add(Likes(alice, { amount: 1 }));
+        expect(world.query(Added(Likes(alice)))).toContain(subject);
+        expect(world.query(Added(Likes(bob)))).toHaveLength(0);
+
+        // A later target is still an addition for that pair.
+        subject.add(Likes(bob, { amount: 2 }));
+        expect(world.query(Added(Likes(bob)))).toContain(subject);
+        expect(world.query(Added(Likes('*')))).toContain(subject);
+        expect(world.query(Added(Likes(alice)))).toHaveLength(0);
+
+        // Different targets are different cached queries.
+        world.query(Added(Likes(alice)));
+        world.query(Added(Likes(bob)));
+        const hashes = [...world[$internal].queriesHashMap.keys()];
+        expect(new Set(hashes).size).toBe(hashes.length);
+
+        // Other traits in the same query are required together.
+        const other = world.spawn();
+        other.add(Likes(alice));
+        const withEnemy = world.query(Added(Likes(alice)), IsEnemy);
+        expect(withEnemy).toContain(subject);
+        expect(withEnemy).not.toContain(other);
+
+        expect(world.query(Removed(Likes(alice)))).toHaveLength(0);
+        subject.remove(Likes(alice));
+        expect(subject.has(Likes(bob))).toBe(true);
+        expect(world.query(Removed(Likes(alice)))).toContain(subject);
+        expect(world.query(Removed(Likes(bob)))).toHaveLength(0);
+
+        subject.changed(Likes(bob));
+        const changedBob = world.query(Changed(Likes(bob)));
+        expect(changedBob).toContain(subject);
+        const seen: number[] = [];
+        changedBob.readEach(([data]) => {
+            seen.push(data.amount);
+        });
+        expect(seen).toEqual([2]);
+
+        subject.changed(Likes(bob));
+        expect(world.query(Changed(Likes(alice)))).toHaveLength(0);
+        expect(world.query(Changed(Likes('*')))).toContain(subject);
+    });
+
+    it('cancels opposite pair events in one observation window', () => {
+        const Added = createAdded();
+        const Removed = createRemoved();
+        const Likes = relation();
+        const subject = world.spawn();
+        const alice = world.spawn();
+
+        subject.add(Likes(alice));
+        subject.remove(Likes(alice));
+        expect(world.query(Added(Likes(alice)))).toHaveLength(0);
+        expect(world.query(Removed(Likes(alice)))).toHaveLength(0);
+
+        subject.add(Likes(alice));
+        world.query(Added(Likes(alice)));
+        subject.remove(Likes(alice));
+        subject.add(Likes(alice));
+        expect(world.query(Removed(Likes(alice)))).toHaveLength(0);
+        expect(world.query(Added(Likes(alice)))).toHaveLength(0);
+    });
+
+    it('reports both sides of an exclusive retarget and removals on destroy', () => {
+        const Added = createAdded();
+        const Removed = createRemoved();
+        const Targeting = relation({ exclusive: true });
+        const subject = world.spawn();
+        const alice = world.spawn();
+        const bob = world.spawn();
+
+        subject.add(Targeting(alice));
+        world.query(Added(Targeting(alice)));
+
+        subject.add(Targeting(bob));
+        expect(world.query(Removed(Targeting(alice)))).toContain(subject);
+        expect(world.query(Added(Targeting(bob)))).toContain(subject);
+
+        const Likes = relation();
+        const carol = world.spawn();
+        subject.add(Likes(carol));
+        subject.add(Likes(alice));
+        world.query(Added(Likes('*')));
+        world.query(Removed(Likes('*')));
+        subject.destroy();
+        const removed = world.query(Removed(Likes('*')));
+        expect(removed).toContain(subject);
+    });
+
+    it('composes pair modifiers with Or and survives world reset', () => {
+        const Added = createAdded();
+        const Likes = relation();
+        const Hates = relation();
+        const subject = world.spawn();
+        const alice = world.spawn();
+        const bob = world.spawn();
+
+        subject.add(Hates(bob));
+        expect(world.query(Or(Added(Likes(alice)), Added(Hates(bob))))).toContain(subject);
+
+        world.reset();
+        const next = world.spawn();
+        const target = world.spawn();
+        next.add(Likes(target));
+        expect(world.query(Added(Likes(target)))).toContain(next);
+    });
 });

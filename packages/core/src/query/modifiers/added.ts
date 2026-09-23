@@ -1,10 +1,12 @@
-import { $internal } from '../../common';
-import { isRelation } from '../../relation/utils/is-relation';
-import type { ExtractTraits, TraitOrRelation } from '../../trait/types';
+import type { RelationPair } from '../../relation/types';
+import type { ExtractTrait, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
+import { resolveTrackingInputs, type TrackingInput } from '../utils/resolve-tracking-inputs';
+
+type ExtractTracking<T> = T extends RelationPair<infer R> ? R : ExtractTrait<T>;
 
 export function createAdded() {
     const id = createTrackingId();
@@ -14,12 +16,15 @@ export function createAdded() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends TrackingInput[]>(
         ...inputs: T
-    ): Modifier<ExtractTraits<T>, `added-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`added-${id}`, id, traits);
+    ): Modifier<{ [K in keyof T]: ExtractTracking<T[K]> }, `added-${number}`> => {
+        const { traits, pairs } = resolveTrackingInputs(inputs);
+        return createModifier(
+            `added-${id}`,
+            id,
+            traits as { [K in keyof T]: ExtractTracking<T[K]> },
+            pairs
+        );
     };
 }

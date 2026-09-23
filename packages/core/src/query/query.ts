@@ -25,6 +25,7 @@ import {
 } from './types';
 import { checkQuery } from './utils/check-query';
 import { checkQueryTracking } from './utils/check-query-tracking';
+import { pairGroupMatches, seedQueryPairState } from './utils/pair-tracking';
 import { checkQueryWithRelations } from './utils/check-query-with-relations';
 import { createQueryHash } from './utils/create-query-hash';
 
@@ -41,6 +42,8 @@ export function runQuery<T extends QueryParameter[]>(
     // with both trait and relation filters applied. Just return the pre-filtered entities.
     const entities = query.entities.dense.slice() as Entity[];
 
+    const wildcardTargets = query.isTracking ? captureWildcardTargets(query) : undefined;
+
     // Clear so it can accumulate again.
     if (query.isTracking) {
         query.entities.clear();
@@ -51,7 +54,61 @@ export function runQuery<T extends QueryParameter[]>(
         }
     }
 
-    return createQueryResult(world, entities, query, params);
+    return createQueryResult(world, entities, query, params, wildcardTargets);
+}
+
+function staticConstraintsMatch(world: World, query: QueryInstance, eid: number): boolean {
+    const entityMasks = world[$internal].entityMasks;
+    const generations = query.generations;
+    const staticBitmasks = query.staticBitmasks;
+
+    for (let i = 0; i < generations.length; i++) {
+        const bitmask = staticBitmasks[i];
+        if (!bitmask) continue;
+
+        const generationMasks = entityMasks[generations[i]];
+        const entityMask = generationMasks ? generationMasks[eid] | 0 : 0;
+        if (bitmask.forbidden && (entityMask & bitmask.forbidden) !== 0) return false;
+        if (bitmask.required && (entityMask & bitmask.required) !== bitmask.required) return false;
+        if (bitmask.or !== 0 && (entityMask & bitmask.or) === 0) return false;
+    }
+
+    return true;
+}
+
+function captureWildcardTargets(query: QueryInstance): Map<number, Map<number, number>> {
+    const captured = new Map<number, Map<number, number>>();
+    const groups = query.trackingGroups;
+    for (let i = 0; i < groups.length; i++) {
+        const group = groups[i];
+        const filters = group.pairFilters;
+        const state = group.pairState;
+        if (!filters || !state) continue;
+
+        for (const [eid, byTrait] of state) {
+            for (let j = 0; j < filters.length; j++) {
+                const filter = filters[j];
+                if (filter.target !== '*') continue;
+                const bucket = byTrait.get(filter.trait.id);
+                if (!bucket) continue;
+                const set =
+                    group.type === 'add'
+                        ? bucket.add
+                        : group.type === 'remove'
+                          ? bucket.remove
+                          : bucket.change;
+                const next = set.values().next();
+                if (next.done) continue;
+                let byTraitCaptured = captured.get(eid);
+                if (!byTraitCaptured) {
+                    byTraitCaptured = new Map();
+                    captured.set(eid, byTraitCaptured);
+                }
+                if (!byTraitCaptured.has(filter.trait.id)) byTraitCaptured.set(filter.trait.id, next.value);
+            }
+        }
+    }
+    return captured;
 }
 
 export function addEntityToQuery(query: QueryInstance, entity: Entity) {
@@ -99,17 +156,19 @@ export function commitQueryRemovals(world: World) {
 
 /** Reset tracking state for an entity across all tracking groups */
 export function resetQueryTrackingBitmasks(query: QueryInstance, eid: number) {
-    const groups = query.trackingGroups;
-    const len = groups.length;
-    for (let i = 0; i < len; i++) {
-        const trackers = groups[i].trackers;
-        const trackersLen = trackers.length;
-        for (let j = 0; j < trackersLen; j++) {
-            const tracker = trackers[j];
-            if (tracker) tracker[eid] = 0;
+        const groups = query.trackingGroups;
+        const len = groups.length;
+        for (let i = 0; i < len; i++) {
+            const group = groups[i];
+            const trackers = group.trackers;
+            const trackersLen = trackers.length;
+            for (let j = 0; j < trackersLen; j++) {
+                const tracker = trackers[j];
+                if (tracker) tracker[eid] = 0;
+            }
+            group.pairState?.delete(eid);
         }
     }
-}
 
 /**
  * Unified function to process tracking modifiers with explicit AND/OR logic.
@@ -144,7 +203,16 @@ function processTrackingModifier(
         query.trackingGroups.push(group);
     }
 
-    // Register traits and build bitmasks
+    const pairedTraitIds = new Set<number>();
+    if (modifier.pairs && modifier.pairs.length > 0) {
+        group.pairFilters = modifier.pairs;
+        if (!group.pairState) group.pairState = new Map();
+        for (let i = 0; i < modifier.pairs.length; i++) {
+            pairedTraitIds.add(modifier.pairs[i].trait.id);
+        }
+    }
+
+    // Register traits and build bitmasks. Pair-tracked traits are matched from pair events.
     for (const trait of modifier.traits) {
         if (!hasTraitInstance(ctx.traitInstances, trait)) registerTrait(world, trait);
         const instance = getTraitInstance(ctx.traitInstances, trait)!;
@@ -152,6 +220,14 @@ function processTrackingModifier(
 
         // Add to traitInstances.all for query registration
         query.traitInstances.all.push(instance);
+
+        if (pairedTraitIds.has(trait.id)) {
+            if (trackingType === 'change') {
+                query.changedTraits.add(trait);
+                query.hasChangedModifiers = true;
+            }
+            continue;
+        }
 
         // Build bitmasks by generation
         const genId = instance.generationId;
@@ -343,6 +419,9 @@ export function createQueryInstance<T extends QueryParameter[]>(
         }
     }
 
+    // Copy pair events that happened before this query was created.
+    seedQueryPairState(world, query);
+
     // Populate query with initial matching entities
     if (query.trackingGroups.length > 0) {
         // For tracking queries, check each entity against tracking groups
@@ -407,6 +486,13 @@ export function createQueryInstance<T extends QueryParameter[]>(
                     // Early exit for AND that failed or OR that succeeded
                     if (logic === 'and' && !matches) break;
                     if (logic === 'or' && matches) break;
+                }
+
+                if (group.pairFilters && group.pairFilters.length > 0) {
+                    const pairsMatch = pairGroupMatches(group, eid);
+                    if (logic === 'and') matches = matches && pairsMatch;
+                    else matches = matches || pairsMatch;
+                    if (matches && !staticConstraintsMatch(world, query, eid)) matches = false;
                 }
 
                 if (matches) {

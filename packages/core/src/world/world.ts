@@ -70,6 +70,7 @@ export function createWorld(
             dirtyMasks: new Map(),
             trackingSnapshots: new Map(),
             changedMasks: new Map(),
+            pairEvents: new Map(),
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
@@ -172,7 +173,14 @@ export function createWorld(
             ctx.trackingSnapshots.clear();
             ctx.dirtyMasks.clear();
             ctx.changedMasks.clear();
+            ctx.pairEvents.clear();
             ctx.trackedTraits.clear();
+
+            // Modifier factories outlive reset; rebuild their masks before new entities spawn.
+            const trackingCursor = getTrackingCursor();
+            for (let i = 0; i < trackingCursor; i++) {
+                setTrackingMasks(world, i);
+            }
 
             // Create new world entity.
             ctx.worldEntity = createEntity(world, IsExcluded);

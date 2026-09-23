@@ -4,8 +4,13 @@
 // that the methods are only called on entities.
 
 import { $internal } from '../common';
-import { setChanged } from '../query/modifiers/changed';
-import { getFirstRelationTarget, getRelationTargets, hasRelationPair } from '../relation/relation';
+import { setChanged, setPairChanged } from '../query/modifiers/changed';
+import {
+    getFirstRelationTarget,
+    getRelationTargets,
+    hasRelationPair,
+    hasRelationToTarget,
+} from '../relation/relation';
 import type { Relation, RelationPair } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
 import { addTrait, getTrait, hasTrait, removeTrait, setTrait } from '../trait/trait';
@@ -38,8 +43,29 @@ Number.prototype.destroy = function (this: Entity) {
 };
 
 // @ts-expect-error
-Number.prototype.changed = function (this: Entity, trait: Trait) {
-    return setChanged(getEntityWorld(this), this, trait);
+Number.prototype.changed = function (this: Entity, trait: Trait | RelationPair) {
+    const world = getEntityWorld(this);
+    if (isRelationPair(trait)) {
+        const pairCtx = trait[$internal];
+        const relation = pairCtx.relation;
+        const relationTrait = relation[$internal].trait;
+        const target = pairCtx.target;
+
+        if (target === '*') {
+            const targets = getRelationTargets(world, relation, this);
+            for (let i = 0; i < targets.length; i++) {
+                setPairChanged(world, this, relationTrait, targets[i]);
+            }
+            return;
+        }
+
+        if (typeof target === 'number' && hasRelationToTarget(world, relation, this, target)) {
+            setPairChanged(world, this, relationTrait, target);
+        }
+        return;
+    }
+
+    return setChanged(world, this, trait);
 };
 
 // @ts-expect-error

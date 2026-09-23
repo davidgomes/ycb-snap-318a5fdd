@@ -1,16 +1,20 @@
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
-import { isRelation } from '../../relation/utils/is-relation';
+import type { RelationPair } from '../../relation/types';
 import { hasTrait, registerTrait } from '../../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../../trait/trait-instance';
-import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
+import type { ExtractTrait, Trait } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
 import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { checkQueryTrackingWithRelations } from '../utils/check-query-tracking-with-relations';
+import { recordPairEvent } from '../utils/pair-tracking';
+import { resolveTrackingInputs, type TrackingInput } from '../utils/resolve-tracking-inputs';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
+
+type ExtractTracking<T> = T extends RelationPair<infer R> ? R : ExtractTrait<T>;
 
 export function createChanged() {
     const id = createTrackingId();
@@ -20,13 +24,16 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends TrackingInput[]>(
         ...inputs: T
-    ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`changed-${id}`, id, traits);
+    ): Modifier<{ [K in keyof T]: ExtractTracking<T[K]> }, `changed-${number}`> => {
+        const { traits, pairs } = resolveTrackingInputs(inputs);
+        return createModifier(
+            `changed-${id}`,
+            id,
+            traits as { [K in keyof T]: ExtractTracking<T[K]> },
+            pairs
+        );
     };
 }
 
@@ -83,5 +90,6 @@ export function setChanged(world: World, entity: Entity, trait: Trait) {
 export function setPairChanged(world: World, entity: Entity, trait: Trait, target: Entity) {
     const data = markChanged(world, entity, trait);
     if (!data) return;
+    recordPairEvent(world, entity, trait, target, 'change');
     for (const sub of data.changeSubscriptions) sub(entity, target);
 }
