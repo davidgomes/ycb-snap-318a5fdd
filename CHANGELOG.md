@@ -1,5 +1,6 @@
 # next (unreleased)
 * Use `ty` instead of `pytype` for testing type annotations (Jendrik Seipp).
+* Add `--cache`, `--cache-dir`, and `--cache-clear` to re-analyze only changed files and modules that import them.
 
 # 2.15 (2026-03-04)
 

@@ -7,7 +7,7 @@ from fnmatch import fnmatch, fnmatchcase
 from functools import partial
 from pathlib import Path
 
-from vulture import lines, noqa, utils
+from vulture import cache, lines, noqa, utils
 from vulture.config import InputError, make_config
 from vulture.reachability import Reachability
 from vulture.utils import ExitCode
@@ -38,6 +38,18 @@ ERROR_CODES = {
     "variable": "V107",
     "unreachable_code": "V201",
 }
+
+_ANALYSIS_FIELDS = (
+    "defined_attrs",
+    "defined_classes",
+    "defined_funcs",
+    "defined_imports",
+    "defined_methods",
+    "defined_props",
+    "defined_vars",
+    "unreachable_code",
+    "used_names",
+)
 
 
 def _get_unused_items(defined_items, used_names):
@@ -191,9 +203,21 @@ class Vulture(ast.NodeVisitor):
     """Find dead code."""
 
     def __init__(
-        self, verbose=False, ignore_names=None, ignore_decorators=None
+        self,
+        verbose=False,
+        ignore_names=None,
+        ignore_decorators=None,
+        cache_dir=None,
+        cache_settings=None,
     ):
         self.verbose = verbose
+        self.cache_dir = cache_dir
+        self.cache_settings = {} if cache_settings is None else cache_settings
+        # Normalized paths analyzed in the last scavenge, when caching is on.
+        self._cache_stats = {"scanned": set(), "reused": set()}
+        self._last_scan_invalid = False
+        self._modules_for_cache = {}
+        self._drop_keys = set()
 
         def get_list(typ):
             return utils.LoggingList(typ, self.verbose)
@@ -229,8 +253,10 @@ class Vulture(ast.NodeVisitor):
         self.code = code.splitlines()
         self.noqa_lines = noqa.parse_noqa(self.code)
         self.filename = filename
+        self._last_scan_invalid = False
 
         def handle_syntax_error(e):
+            self._last_scan_invalid = True
             text = f' at "{e.text.strip()}"' if e.text else ""
             self._log(
                 f"{utils.format_path(filename)}:{e.lineno}: {e.msg}{text}",
@@ -247,6 +273,7 @@ class Vulture(ast.NodeVisitor):
             handle_syntax_error(err)
         except ValueError as err:
             # ValueError is raised if source contains null bytes.
+            self._last_scan_invalid = True
             self._log(
                 f'{utils.format_path(filename)}: invalid source code "{err}"',
                 file=sys.stderr,
@@ -276,26 +303,48 @@ class Vulture(ast.NodeVisitor):
             return _match(path, exclude, case=False)
 
         paths = [Path(path) for path in paths]
-
+        modules = []
         for module in utils.get_modules(paths):
             if exclude_path(module):
                 self._log("Excluded:", module)
                 continue
+            modules.append(module)
 
-            self._log("Scanning:", module)
-            try:
-                module_string = utils.read_file(module)
-            except utils.VultureInputException as err:
-                self._log(
-                    f"Error: Could not read file {module} - {err}\n"
-                    f"Try to change the encoding to UTF-8.",
-                    file=sys.stderr,
-                    force=True,
-                )
-                self.exit_code = ExitCode.InvalidInput
-            else:
-                self.scan(module_string, filename=module)
+        self._cache_stats = {"scanned": set(), "reused": set()}
+        if self.cache_dir is None:
+            for module in modules:
+                self._scan_module_uncached(module)
+            self._scan_whitelists(exclude_path)
+            return
 
+        self._modules_for_cache = {}
+        self._drop_keys = set()
+        try:
+            self._scavenge_cached(modules, paths, exclude_path)
+        except KeyboardInterrupt:
+            self._persist_cache()
+            raise
+        self._persist_cache()
+
+    def _scan_module_uncached(self, module):
+        self._log("Scanning:", module)
+        try:
+            module_string = utils.read_file(module)
+        except utils.VultureInputException as err:
+            self._report_read_error(module, err)
+        else:
+            self.scan(module_string, filename=module)
+
+    def _report_read_error(self, module, err):
+        self._log(
+            f"Error: Could not read file {module} - {err}\n"
+            f"Try to change the encoding to UTF-8.",
+            file=sys.stderr,
+            force=True,
+        )
+        self.exit_code = ExitCode.InvalidInput
+
+    def _scan_whitelists(self, exclude_path):
         unique_imports = {item.name for item in self.defined_imports}
         for import_name in unique_imports:
             path = Path("whitelists") / (import_name + "_whitelist.py")
@@ -311,6 +360,200 @@ class Vulture(ast.NodeVisitor):
                 assert module_data is not None
                 module_string = module_data.decode("utf-8")
                 self.scan(module_string, filename=path)
+
+    def _scavenge_cached(self, modules, paths, exclude_path):
+        loaded = cache.load_cache(
+            self.cache_dir,
+            self.cache_settings,
+            ignore_names=self.ignore_names,
+            ignore_decorators=self.ignore_decorators,
+        )
+        roots = cache.analysis_roots(paths)
+        index = cache.build_module_index(modules, roots)
+        prepared = []
+        fingerprints = {}
+        dependency_map = {}
+        known_files = {cache.normalize_path(module) for module in modules}
+        for module in modules:
+            key = cache.normalize_path(module)
+            record = {
+                "error": None,
+                "fingerprint": None,
+                "key": key,
+                "module": module,
+                "text": None,
+            }
+            record["fingerprint"] = cache.fingerprint_file(module)
+            try:
+                record["text"] = utils.read_file(module)
+            except utils.VultureInputException as err:
+                record["error"] = err
+            prepared.append(record)
+            if record["error"] is not None or record["text"] is None:
+                fingerprints[key] = None
+                dependency_map[key] = []
+            else:
+                fingerprints[key] = record["fingerprint"]
+                dependency_map[key] = cache.imported_modules(
+                    module, record["text"], index, roots, known_files
+                )
+
+        to_scan, to_reuse = cache.partition_modules(
+            known_files, loaded, fingerprints, dependency_map
+        )
+        for record in prepared:
+            key = record["key"]
+            module = record["module"]
+            if key in to_reuse:
+                try:
+                    self._restore_module_entry(loaded[key])
+                except (KeyError, TypeError, ValueError):
+                    to_scan.add(key)
+                else:
+                    stored = dict(loaded[key])
+                    stored["dependencies"] = dependency_map.get(key, [])
+                    stored["fingerprint"] = fingerprints[key]
+                    stored["whitelist_deps"] = cache.whitelist_digests(
+                        stored.get("import_names", [])
+                    )
+                    self._modules_for_cache[key] = stored
+                    self._cache_stats["reused"].add(key)
+                    self._log("Reusing cached:", module)
+                    continue
+
+            self._cache_stats["scanned"].add(key)
+            self._log("Scanning:", module)
+            if record["error"] is not None:
+                self._report_read_error(module, record["error"])
+                self._drop_keys.add(key)
+                continue
+            entry = self._scan_module_isolated(record["text"], module)
+            if self._last_scan_invalid:
+                self._drop_keys.add(key)
+                continue
+            entry["dependencies"] = dependency_map.get(key, [])
+            entry["fingerprint"] = record["fingerprint"]
+            entry["whitelist_deps"] = cache.whitelist_digests(
+                entry["import_names"]
+            )
+            self._modules_for_cache[key] = entry
+
+        self._scan_whitelists(exclude_path)
+
+    def _persist_cache(self):
+        if self.cache_dir is None:
+            return
+        cache.save_cache(
+            self.cache_dir,
+            self._modules_for_cache,
+            self.cache_settings,
+            ignore_names=self.ignore_names,
+            ignore_decorators=self.ignore_decorators,
+            drop_keys=self._drop_keys,
+        )
+
+    def _fresh_analysis_state(self):
+        def get_list(typ):
+            return utils.LoggingList(typ, self.verbose)
+
+        return {
+            "defined_attrs": get_list("attribute"),
+            "defined_classes": get_list("class"),
+            "defined_funcs": get_list("function"),
+            "defined_imports": get_list("import"),
+            "defined_methods": get_list("method"),
+            "defined_props": get_list("property"),
+            "defined_vars": get_list("variable"),
+            "unreachable_code": get_list("unreachable_code"),
+            "used_names": utils.LoggingSet("name", self.verbose),
+        }
+
+    def _install_analysis_state(self, collections, reachability):
+        for name, value in collections.items():
+            setattr(self, name, value)
+        self.reachability = reachability
+
+    def _scan_module_isolated(self, code, filename):
+        """Scan one module and return a JSON-ready cache entry.
+
+        Defined items and used names are collected separately, then merged
+        into this :class:`Vulture`, so each file's used names are stored
+        even when another file already used the same name.
+        """
+        saved = {name: getattr(self, name) for name in _ANALYSIS_FIELDS}
+        saved_reachability = self.reachability
+        fresh = self._fresh_analysis_state()
+        for name, value in fresh.items():
+            setattr(self, name, value)
+        self.reachability = Reachability(
+            report=partial(
+                self._define,
+                collection=self.unreachable_code,
+                confidence=100,
+            )
+        )
+        try:
+            self.scan(code, filename=filename)
+            entry = self._export_analysis()
+        except BaseException:
+            self._install_analysis_state(saved, saved_reachability)
+            raise
+        else:
+            for name in _ANALYSIS_FIELDS:
+                current = getattr(self, name)
+                previous = saved[name]
+                if name == "used_names":
+                    previous.update(current)
+                else:
+                    previous.extend(current)
+            self._install_analysis_state(saved, saved_reachability)
+            return entry
+
+    def _export_analysis(self):
+        items = {}
+        for name in _ANALYSIS_FIELDS:
+            if name == "used_names":
+                continue
+            items[name] = [
+                {
+                    "confidence": item.confidence,
+                    "filename": str(item.filename),
+                    "first_lineno": item.first_lineno,
+                    "last_lineno": item.last_lineno,
+                    "message": item.message,
+                    "name": item.name,
+                    "typ": item.typ,
+                }
+                for item in getattr(self, name)
+            ]
+        return {
+            "import_names": sorted(
+                {item.name for item in self.defined_imports}
+            ),
+            "items": items,
+            "used_names": sorted(self.used_names),
+        }
+
+    def _restore_module_entry(self, entry):
+        items = entry["items"]
+        for name in _ANALYSIS_FIELDS:
+            if name == "used_names":
+                continue
+            collection = getattr(self, name)
+            for data in items.get(name, []):
+                list.append(
+                    collection,
+                    Item(
+                        data["name"],
+                        data["typ"],
+                        Path(data["filename"]),
+                        data["first_lineno"],
+                        data["last_lineno"],
+                        message=data["message"],
+                        confidence=data["confidence"],
+                    ),
+                )
+        set.update(self.used_names, entry["used_names"])
 
     def get_unused_code(
         self, min_confidence=0, sort_by_size=False
@@ -668,10 +911,23 @@ def main():
         print(e, file=sys.stderr)
         sys.exit(ExitCode.InvalidCmdlineArguments)
 
+    if config["cache_clear"]:
+        cache.clear_cache(config["cache_dir"])
+
+    cache_dir = config["cache_dir"] if config["cache"] else None
+    cache_settings = None
+    if cache_dir is not None:
+        cache_settings = {
+            "ignore_decorators": sorted(config["ignore_decorators"]),
+            "ignore_names": sorted(config["ignore_names"]),
+        }
+
     vulture = Vulture(
         verbose=config["verbose"],
         ignore_names=config["ignore_names"],
         ignore_decorators=config["ignore_decorators"],
+        cache_dir=cache_dir,
+        cache_settings=cache_settings,
     )
     vulture.scavenge(config["paths"], exclude=config["exclude"])
     sys.exit(

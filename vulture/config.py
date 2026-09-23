@@ -16,6 +16,9 @@ from .version import __version__
 #: Possible configuration options and their respective defaults
 DEFAULTS = {
     "config": "pyproject.toml",
+    "cache": False,
+    "cache_clear": False,
+    "cache_dir": ".vulture-cache/",
     "min_confidence": 0,
     "paths": [],
     "exclude": [],
@@ -79,6 +82,8 @@ def _parse_toml(infile):
         min_confidence = 10
         sort_by_size = true
         verbose = true
+        cache = true
+        cache_dir = ".vulture-cache/"
         paths = ["path1", "path2"]
     """
     data = tomllib.load(infile)
@@ -165,6 +170,25 @@ def _parse_args(args=None):
         type=str,
         default="pyproject.toml",
         help="Path to pyproject.toml config file.",
+    )
+    parser.add_argument(
+        "--cache",
+        action="store_true",
+        default=missing,
+        help="Re-analyze only changed files and files that import them,"
+        " using an on-disk cache.",
+    )
+    parser.add_argument(
+        "--cache-clear",
+        action="store_true",
+        default=missing,
+        help="Remove all contents of the cache directory before running.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        metavar="PATH",
+        default=missing,
+        help="Directory for the analysis cache (default: .vulture-cache/).",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", default=missing

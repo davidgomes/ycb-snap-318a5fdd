@@ -31,6 +31,7 @@ tool for higher code quality.
     $ python3 -m vulture myscript.py
     $ vulture myscript.py mypackage/
     $ vulture myscript.py --min-confidence 100  # Only report 100% dead code.
+    $ vulture mypackage/ --cache               # Reuse results next time.
 
 The provided arguments may be Python files or directories. For each
 directory Vulture analyzes all contained
@@ -180,12 +181,29 @@ Example Config:
 exclude = ["*file*.py", "dir/"]
 ignore_decorators = ["@app.route", "@require_*"]
 ignore_names = ["visit_*", "do_*"]
+cache = true
+cache_dir = ".vulture-cache/"
 make_whitelist = true
 min_confidence = 80
 paths = ["myscript.py", "mydir", "whitelist.py"]
 sort_by_size = true
 verbose = true
 ```
+
+### Cache
+
+Pass `--cache` to reuse analysis between runs. Vulture then re-analyzes
+only files that changed and files that import those files (directly or
+through other modules). Results are stored in `.vulture-cache/` unless
+you set `--cache-dir=PATH`. `--cache-clear` deletes everything in that
+directory before the run.
+
+    $ vulture mypackage/ --cache
+    $ vulture mypackage/ --cache --cache-dir=/tmp/vulture-cache
+    $ vulture mypackage/ --cache --cache-clear
+
+The cache is ignored when the Python version, the Vulture version, or
+settings that affect analysis (such as `--ignore-names`) change.
 
 Vulture will automatically look for a `pyproject.toml` in the current working directory.
 
