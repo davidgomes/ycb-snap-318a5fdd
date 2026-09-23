@@ -16,6 +16,68 @@ export type OptionName =
   | `+${string}`;
 
 /**
+ * A single option that another option depends on.
+ *
+ * `option` may be the object key produced by `object({...})` or a CLI flag
+ * string such as `"--mode"`. Flag strings are resolved to the owning field
+ * key from usage terms, including options wrapped by `withDefault`.
+ *
+ * @since 0.10.0
+ */
+export interface OptionDependency {
+  /**
+   * Object key or CLI flag that this dependency refers to.
+   */
+  readonly option: string;
+
+  /**
+   * When set, the referenced option must equal this value. When omitted,
+   * the referenced option must be truthy.
+   */
+  readonly value?: unknown;
+}
+
+/**
+ * Conditional dependency of an option on one or more other options.
+ *
+ * A single dependency sets {@link option}. Compound dependencies set
+ * {@link anyOf}, {@link allOf}, or both. Empty `allOf` lists are satisfied.
+ * Empty `anyOf` lists are not.
+ *
+ * @since 0.10.0
+ */
+export interface DependsOn {
+  /**
+   * Object key or CLI flag that must be present.
+   */
+  readonly option?: string;
+
+  /**
+   * Expected value of {@link option}. Omitted means the option must be
+   * truthy.
+   */
+  readonly value?: unknown;
+
+  /**
+   * Satisfied when every listed dependency is satisfied.
+   * An empty list is satisfied.
+   */
+  readonly allOf?: readonly OptionDependency[];
+
+  /**
+   * Satisfied when at least one listed dependency is satisfied.
+   * An empty list is not satisfied.
+   */
+  readonly anyOf?: readonly OptionDependency[];
+
+  /**
+   * When `true`, a dependency that is not satisfied is a validation error
+   * once this option is explicitly provided.
+   */
+  readonly required?: boolean;
+}
+
+/**
  * Represents a single term in a command-line usage description.
  */
 export type UsageTerm =
@@ -65,6 +127,21 @@ export type UsageTerm =
      * @since 0.9.0
      */
     readonly hidden?: boolean;
+
+    /**
+     * Other options this option depends on. Visibility and validation read
+     * this metadata from the usage term so wrappers such as `withDefault`
+     * keep the dependency.
+     * @since 0.10.0
+     */
+    readonly dependsOn?: DependsOn;
+
+    /**
+     * Object field that owns this option. Set by `object()` so help text
+     * can evaluate {@link dependsOn} against parser state.
+     * @internal
+     */
+    readonly fieldKey?: string;
   }
   /**
    * A command term, which represents a subcommand in the command-line

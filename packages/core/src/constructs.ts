@@ -60,6 +60,12 @@ import {
   deduplicateSuggestions,
 } from "./suggestion.ts";
 import {
+  annotateUsageField,
+  catalogFromFields,
+  objectDependencyError,
+  optionHiddenByDependency,
+} from "./option-dependency.ts";
+import {
   extractArgumentMetavars,
   extractCommandNames,
   extractOptionNames,
@@ -2098,6 +2104,7 @@ function* suggestObjectSync<
 
   // Create context with dependency registry for child parsers
   const contextWithRegistry = { ...context, dependencyRegistry: registry };
+  const optionCatalog = catalogFromFields(parserPairs, context.state);
 
   // Check if the last token in the buffer is an option that requires a value.
   // If so, only suggest values for that specific option parser, not all parsers.
@@ -2108,6 +2115,7 @@ function* suggestObjectSync<
 
     // Find if any parser has this token as an option requiring a value
     for (const [field, parser] of parserPairs) {
+      if (parser == null || parser.usage == null) continue;
       if (isOptionRequiringValue(parser.usage, lastToken)) {
         // Only get suggestions from the parser that owns this option
         const fieldState =
@@ -2128,6 +2136,8 @@ function* suggestObjectSync<
   // Default behavior: try getting suggestions from each parser
   const suggestions: Suggestion[] = [];
   for (const [field, parser] of parserPairs) {
+    if (parser == null) continue;
+    if (optionHiddenByDependency(parser.usage, optionCatalog)) continue;
     const fieldState = (context.state && typeof context.state === "object" &&
         field in context.state)
       ? (context.state as Record<string | symbol, unknown>)[field]
@@ -2167,6 +2177,7 @@ async function* suggestObjectAsync<
 
   // Create context with dependency registry for child parsers
   const contextWithRegistry = { ...context, dependencyRegistry: registry };
+  const optionCatalog = catalogFromFields(parserPairs, context.state);
 
   // Check if the last token in the buffer is an option that requires a value.
   if (context.buffer.length > 0) {
@@ -2174,6 +2185,7 @@ async function* suggestObjectAsync<
 
     // Find if any parser has this token as an option requiring a value
     for (const [field, parser] of parserPairs) {
+      if (parser == null || parser.usage == null) continue;
       if (isOptionRequiringValue(parser.usage, lastToken)) {
         // Only get suggestions from the parser that owns this option
         const fieldState =
@@ -2197,6 +2209,8 @@ async function* suggestObjectAsync<
   // Default behavior: try getting suggestions from each parser
   const suggestions: Suggestion[] = [];
   for (const [field, parser] of parserPairs) {
+    if (parser == null) continue;
+    if (optionHiddenByDependency(parser.usage, optionCatalog)) continue;
     const fieldState = (context.state && typeof context.state === "object" &&
         field in context.state)
       ? (context.state as Record<string | symbol, unknown>)[field]
@@ -2879,7 +2893,12 @@ export function object<
     $valueType: [],
     $stateType: [],
     priority: Math.max(...parserKeys.map((k) => parsers[k].priority)),
-    usage: parserPairs.flatMap(([_, p]) => p.usage),
+    usage: parserPairs.flatMap(([field, parser]) => {
+      if (parser == null || parser.usage == null) return [];
+      return typeof field === "string"
+        ? annotateUsageField(parser.usage, field)
+        : parser.usage;
+    }),
     initialState: initialState as {
       readonly [K in keyof T]: T[K]["$stateType"][number] extends (infer U3)
         ? U3
@@ -2895,6 +2914,12 @@ export function object<
       );
     },
     complete(state: { readonly [K in keyof T]: unknown }) {
+      const dependencyError = objectDependencyError(parserPairs, state);
+      if (dependencyError != null) {
+        const failure = { success: false as const, error: dependencyError };
+        if (combinedMode === "async") return Promise.resolve(failure);
+        return failure;
+      }
       return dispatchByMode(
         combinedMode,
         () => {
@@ -3134,7 +3159,13 @@ export function object<
       state: DocState<{ readonly [K in keyof T]: unknown }>,
       defaultValue?: { readonly [K in keyof T]: unknown },
     ) {
+      const optionCatalog = catalogFromFields(
+        parserPairs,
+        state.kind === "available" ? state.state : undefined,
+      );
       const fragments = parserPairs.flatMap(([field, p]) => {
+        if (p == null) return [];
+        if (optionHiddenByDependency(p.usage, optionCatalog)) return [];
         const fieldState: DocState<unknown> = state.kind === "unavailable"
           ? { kind: "unavailable" }
           : { kind: "available", state: state.state[field] };
