@@ -3,8 +3,9 @@ import {getAllCustomIgnoreSectionsInText, getAllTablesInText, getPositions, MDAs
 import type {Position} from 'unist';
 import {replaceTextBetweenStartAndEndWithNewValue} from './strings';
 
-export type IgnoreFunction = ((text: string, placeholder: string) => [string[], string]);
-export type IgnoreType = {replaceAction: MDAstTypes | RegExp | IgnoreFunction, placeholder: string};
+export type IgnoreFunction = ((text: string, placeholder: string, ruleAlias?: string) => [string[], string]);
+// replacesWholeLines indicates that each replaced value spans entire lines, so anything added to the placeholder's line is discarded when restoring it
+export type IgnoreType = {replaceAction: MDAstTypes | RegExp | IgnoreFunction, placeholder: string, replacesWholeLines?: boolean};
 
 export const IgnoreTypes: Record<string, IgnoreType> = {
   // mdast node types
@@ -33,11 +34,19 @@ export const IgnoreTypes: Record<string, IgnoreType> = {
   link: {replaceAction: replaceMarkdownLinks, placeholder: '{REGULAR_LINK_PLACEHOLDER}'},
   tag: {replaceAction: replaceTags, placeholder: '#tag-placeholder'},
   table: {replaceAction: replaceTables, placeholder: '{TABLE_PLACEHOLDER}'},
-  customIgnore: {replaceAction: replaceCustomIgnore, placeholder: '{CUSTOM_IGNORE_PLACEHOLDER}'},
+  customIgnore: {replaceAction: replaceCustomIgnore, placeholder: '{CUSTOM_IGNORE_PLACEHOLDER}', replacesWholeLines: true},
 } as const;
 
-export function ignoreListOfTypes(ignoreTypes: IgnoreType[], text: string, func: ((text: string) => string)): string {
-  let setOfPlaceholders: {placeholder: string, replacedValues: string[]}[] = [];
+/**
+ * Replaces the provided ignore types with placeholders, runs the provided function, and then puts the ignored values back.
+ * @param {IgnoreType[]} ignoreTypes The types of elements to ignore
+ * @param {string} text The text to run the function on
+ * @param {function(string): string} func The function to run once the ignore types have been replaced
+ * @param {string} [ruleAlias] The alias of the rule being run which is used to determine which linter ignore markers apply
+ * @return {string} The text after the function has run with the ignored values put back
+ */
+export function ignoreListOfTypes(ignoreTypes: IgnoreType[], text: string, func: ((text: string) => string), ruleAlias?: string): string {
+  let setOfPlaceholders: {placeholder: string, replacedValues: string[], replacesWholeLines: boolean}[] = [];
 
   // replace ignore blocks with their placeholders
   let replaceValues: string[] = [];
@@ -48,10 +57,10 @@ export function ignoreListOfTypes(ignoreTypes: IgnoreType[], text: string, func:
       [replaceValues, text] = replaceRegex(text, ignoreType.placeholder, ignoreType.replaceAction);
     } else if (typeof ignoreType.replaceAction === 'function') {
       const ignoreFunc: IgnoreFunction = ignoreType.replaceAction;
-      [replaceValues, text] = ignoreFunc(text, ignoreType.placeholder);
+      [replaceValues, text] = ignoreFunc(text, ignoreType.placeholder, ruleAlias);
     }
 
-    setOfPlaceholders.push({replacedValues: replaceValues, placeholder: ignoreType.placeholder});
+    setOfPlaceholders.push({replacedValues: replaceValues, placeholder: ignoreType.placeholder, replacesWholeLines: ignoreType.replacesWholeLines ?? false});
   }
 
   text = func(text);
@@ -59,8 +68,13 @@ export function ignoreListOfTypes(ignoreTypes: IgnoreType[], text: string, func:
   setOfPlaceholders = setOfPlaceholders.reverse();
   // add back values that were replaced with their placeholders
   if (setOfPlaceholders != null && setOfPlaceholders.length > 0) {
-    setOfPlaceholders.forEach((replacedInfo: {placeholder: string, replacedValues: string[], replaceDollarSigns: boolean}) => {
+    setOfPlaceholders.forEach((replacedInfo: {placeholder: string, replacedValues: string[], replacesWholeLines: boolean}) => {
       replacedInfo.replacedValues.forEach((replacedValue: string) => {
+        if (replacedInfo.replacesWholeLines) {
+          text = restoreWholeLinePlaceholder(text, replacedInfo.placeholder, replacedValue);
+          return;
+        }
+
         // Regex was added to fix capitalization issue  where another rule made the text not match the original place holder's case
         // see https://github.com/platers/obsidian-linter/issues/201
         text = text.replace(new RegExp(replacedInfo.placeholder, 'i'), escapeDollarSigns(replacedValue));
@@ -69,6 +83,40 @@ export function ignoreListOfTypes(ignoreTypes: IgnoreType[], text: string, func:
   }
 
   return text;
+}
+
+/**
+ * Puts back the first instance of a placeholder that originally took up entire lines.
+ * Whitespace or line break indicators that a rule added to the placeholder's line are removed
+ * so that the original lines are restored exactly as they were.
+ * @param {string} text The text to restore the placeholder in
+ * @param {string} placeholder The placeholder to restore
+ * @param {string} replacedValue The original value of the placeholder
+ * @return {string} The text with the first instance of the placeholder restored
+ */
+function restoreWholeLinePlaceholder(text: string, placeholder: string, replacedValue: string): string {
+  const placeholderMatch = new RegExp(placeholder, 'i').exec(text);
+  if (!placeholderMatch) {
+    return text;
+  }
+
+  let startIndex = placeholderMatch.index;
+  let endIndex = startIndex + placeholderMatch[0].length;
+  const lineStart = text.lastIndexOf('\n', startIndex - 1) + 1;
+  let lineEnd = text.indexOf('\n', endIndex);
+  if (lineEnd === -1) {
+    lineEnd = text.length;
+  }
+
+  if (/^[ \t]*$/.test(text.substring(lineStart, startIndex))) {
+    startIndex = lineStart;
+  }
+
+  if (/^(?:[ \t]|\\|<br\/?>)*$/.test(text.substring(endIndex, lineEnd))) {
+    endIndex = lineEnd;
+  }
+
+  return replaceTextBetweenStartAndEndWithNewValue(text, startIndex, endIndex, replacedValue);
 }
 
 /**
@@ -199,8 +247,8 @@ function replaceTables(text: string, tablePlaceholder: string): [string[], strin
 }
 
 
-function replaceCustomIgnore(text: string, customIgnorePlaceholder: string): [string[], string] {
-  const customIgnorePositions = getAllCustomIgnoreSectionsInText(text);
+function replaceCustomIgnore(text: string, customIgnorePlaceholder: string, ruleAlias?: string): [string[], string] {
+  const customIgnorePositions = getAllCustomIgnoreSectionsInText(text, ruleAlias);
 
   const replacedSections: string[] = new Array(customIgnorePositions.length);
   let index = 0;

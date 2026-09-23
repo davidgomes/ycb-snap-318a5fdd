@@ -2,7 +2,7 @@ import {visit} from 'unist-util-visit';
 import type {Position} from 'unist';
 import type {Root} from 'mdast';
 import {hashString53Bit, makeSureContentHasEmptyLinesAddedBeforeAndAfter, replaceTextBetweenStartAndEndWithNewValue, getStartOfLineIndex, replaceAt, getStartOfLineWhitespaceOrBlockquoteLevel} from './strings';
-import {genericLinkRegex, tableRow, tableSeparator, tableStartingPipe, customIgnoreAllStartIndicator, customIgnoreAllEndIndicator, checklistBoxStartsTextRegex, footnoteDefinitionIndicatorAtStartOfLine, emptyLineMathBlockquoteRegex, startsWithBlockquote, startsWithListMarkerRegex} from './regex';
+import {genericLinkRegex, tableRow, tableSeparator, tableStartingPipe, linterIgnoreMarkerLineRegex, linterIgnoreMarkerContentRegex, checklistBoxStartsTextRegex, footnoteDefinitionIndicatorAtStartOfLine, emptyLineMathBlockquoteRegex, startsWithBlockquote, startsWithListMarkerRegex, yamlRegex} from './regex';
 import {gfmFootnote} from 'micromark-extension-gfm-footnote';
 import {gfmTaskListItem} from 'micromark-extension-gfm-task-list-item';
 import {frontmatter} from 'micromark-extension-frontmatter';
@@ -16,6 +16,7 @@ import {gfmTaskListItemFromMarkdown} from 'mdast-util-gfm-task-list-item';
 import QuickLRU from 'quick-lru';
 import {countInstances} from './strings';
 import {getTextInLanguage} from '../lang/helpers';
+import en from '../lang/locale/en';
 
 const LRU = new QuickLRU({maxSize: 200});
 
@@ -1150,43 +1151,237 @@ function countTableDelimiters(line: string): number {
   return numDelimiters;
 }
 
-export function getAllCustomIgnoreSectionsInText(text: string): {startIndex: number, endIndex: number}[] {
-  let iteratorIndex = 0;
+type LinterIgnoreMarkerType = 'disable' | 'enable' | 'disable-next-line' | 'disable-next-n-lines';
 
+type LinterIgnoreMarker = {
+  type: LinterIgnoreMarkerType,
+  // null means that no rule list was provided which means all rules
+  rules: string[] | null,
+  lineCount: number,
+  hasEffect: boolean,
+};
+
+type RuleDisableScope = {
+  allRules: boolean,
+  rules: Set<string>,
+  reenabledRules: Set<string>,
+};
+
+type LineRuleDisableScope = RuleDisableScope & {
+  startLineIndex: number,
+  endLineIndex: number,
+};
+
+let knownRuleAliases: Set<string> = null;
+
+// rule aliases are derived from the rule name keys in the English locale, so it is the full list of rule aliases
+function getKnownRuleAliases(): Set<string> {
+  if (knownRuleAliases === null) {
+    knownRuleAliases = new Set(Object.keys(en.rules));
+  }
+
+  return knownRuleAliases;
+}
+
+function parseLinterIgnoreMarker(markerContent: string): LinterIgnoreMarker | null {
+  const markerMatch = markerContent.match(linterIgnoreMarkerContentRegex);
+  if (!markerMatch) {
+    return null;
+  }
+
+  const marker: LinterIgnoreMarker = {
+    type: markerMatch[1] as LinterIgnoreMarkerType,
+    rules: null,
+    lineCount: 1,
+    hasEffect: true,
+  };
+
+  let ruleList = markerMatch[2].trim();
+  if (marker.type === 'disable-next-n-lines') {
+    const lineCountMatch = ruleList.match(/^:[ \t]*([^\s,]*)(.*)$/);
+    if (!lineCountMatch || !/^\d+$/.test(lineCountMatch[1]) || parseInt(lineCountMatch[1], 10) < 1) {
+      marker.hasEffect = false;
+      return marker;
+    }
+
+    marker.lineCount = parseInt(lineCountMatch[1], 10);
+    ruleList = lineCountMatch[2].trim();
+  }
+
+  if (ruleList === '') {
+    return marker;
+  }
+
+  const ruleAliases = getKnownRuleAliases();
+  marker.rules = [...new Set(ruleList.split(',').map((rule) => rule.trim().toLowerCase()))].filter((rule) => ruleAliases.has(rule));
+  marker.hasEffect = marker.rules.length > 0;
+
+  return marker;
+}
+
+function scopeDisablesRule(scope: RuleDisableScope, ruleAlias?: string): boolean {
+  if (scope.allRules) {
+    return ruleAlias == undefined || !scope.reenabledRules.has(ruleAlias);
+  }
+
+  return ruleAlias != undefined && scope.rules.has(ruleAlias);
+}
+
+function createRuleDisableScope(marker: LinterIgnoreMarker): RuleDisableScope {
+  return {
+    allRules: marker.rules === null,
+    rules: new Set(marker.rules ?? []),
+    reenabledRules: new Set(),
+  };
+}
+
+function getRangesWhereLinterIgnoreMarkersAreNotRecognized(text: string): {startIndex: number, endIndex: number}[] {
+  const ranges: {startIndex: number, endIndex: number}[] = [];
+  const yamlMatch = text.match(yamlRegex);
+  if (yamlMatch) {
+    ranges.push({startIndex: 0, endIndex: yamlMatch[0].length});
+  }
+
+  for (const type of [MDAstTypes.Code, MDAstTypes.InlineCode, MDAstTypes.Math]) {
+    for (const position of getPositions(type, text)) {
+      ranges.push({startIndex: position.start.offset, endIndex: position.end.offset});
+    }
+  }
+
+  return ranges;
+}
+
+function getLinterIgnoreMarkersByLineIndex(text: string, lines: string[], lineStartIndices: number[]): Map<number, LinterIgnoreMarker> {
+  const markers = new Map<number, LinterIgnoreMarker>();
+  for (let i = 0; i < lines.length; i++) {
+    const markerLineMatch = lines[i].match(linterIgnoreMarkerLineRegex);
+    if (!markerLineMatch) {
+      continue;
+    }
+
+    const marker = parseLinterIgnoreMarker(markerLineMatch[1] ?? markerLineMatch[2]);
+    if (marker) {
+      markers.set(i, marker);
+    }
+  }
+
+  if (markers.size === 0) {
+    return markers;
+  }
+
+  const rangesToSkip = getRangesWhereLinterIgnoreMarkersAreNotRecognized(text);
+  for (const lineIndex of markers.keys()) {
+    const lineStart = lineStartIndices[lineIndex];
+    const lineEnd = lineStart + lines[lineIndex].length;
+    if (rangesToSkip.some((range) => lineStart < range.endIndex && lineEnd > range.startIndex)) {
+      markers.delete(lineIndex);
+    }
+  }
+
+  return markers;
+}
+
+function applyLinterIgnoreMarker(marker: LinterIgnoreMarker, lineIndex: number, lastLineIndex: number, scopes: RuleDisableScope[], lineScopes: LineRuleDisableScope[]) {
+  if (!marker.hasEffect) {
+    return;
+  }
+
+  switch (marker.type) {
+    case 'disable':
+      scopes.push(createRuleDisableScope(marker));
+      break;
+    case 'enable':
+      if (marker.rules === null) {
+        scopes.pop();
+        break;
+      }
+
+      for (const rule of marker.rules) {
+        for (let i = scopes.length - 1; i >= 0; i--) {
+          const scope = scopes[i];
+          if (!scopeDisablesRule(scope, rule)) {
+            continue;
+          }
+
+          if (scope.allRules) {
+            scope.reenabledRules.add(rule);
+          } else {
+            scope.rules.delete(rule);
+            if (scope.rules.size === 0) {
+              scopes.splice(i, 1);
+            }
+          }
+
+          break;
+        }
+      }
+      break;
+    case 'disable-next-line':
+    case 'disable-next-n-lines':
+      if (lineIndex >= lastLineIndex) {
+        break;
+      }
+
+      lineScopes.push({
+        ...createRuleDisableScope(marker),
+        startLineIndex: lineIndex + 1,
+        endLineIndex: Math.min(lineIndex + marker.lineCount, lastLineIndex),
+      });
+      break;
+  }
+}
+
+/**
+ * Gets the sections of the text that the Linter should not modify for the specified rule.
+ * This includes the linter ignore marker lines themselves and any lines that have been disabled for the rule.
+ * @param {string} text The text to get the custom ignore sections of
+ * @param {string} [ruleAlias] The alias of the rule being run. When not provided, only markers that disable all rules apply.
+ * @return {{startIndex: number, endIndex: number}[]} The sections to ignore in reverse order of their appearance in the text
+ */
+export function getAllCustomIgnoreSectionsInText(text: string, ruleAlias?: string): {startIndex: number, endIndex: number}[] {
   const positions: {startIndex: number, endIndex: number}[] = [];
-  const startMatches = [...text.matchAll(customIgnoreAllStartIndicator)];
-  if (!startMatches || startMatches.length === 0) {
+  if (!text.includes('linter-')) {
     return positions;
   }
 
-  const endMatches = [...text.matchAll(customIgnoreAllEndIndicator)];
+  const lines = text.split('\n');
+  const lineStartIndices: number[] = [];
+  let lineStartIndex = 0;
+  for (const line of lines) {
+    lineStartIndices.push(lineStartIndex);
+    lineStartIndex += line.length + 1;
+  }
 
-  startMatches.forEach((startMatch) => {
-    iteratorIndex = startMatch.index;
+  const markers = getLinterIgnoreMarkersByLineIndex(text, lines, lineStartIndices);
+  if (markers.size === 0) {
+    return positions;
+  }
 
-    let foundEndingIndicator = false;
-    let endingPosition = text.length - 1;
-    // eslint-disable-next-line no-unmodified-loop-condition -- endMatches does not need to be modified with regards to being undefined or null
-    while (endMatches && endMatches.length !== 0 && !foundEndingIndicator) {
-      if (endMatches[0].index <= iteratorIndex) {
-        endMatches.shift();
-      } else {
-        foundEndingIndicator = true;
-
-        const endingIndicator = endMatches[0];
-        endingPosition = endingIndicator.index + endingIndicator[0].length;
-      }
+  ruleAlias = ruleAlias?.toLowerCase();
+  const lastLineIndex = lines.length - 1;
+  const scopes: RuleDisableScope[] = [];
+  const lineScopes: LineRuleDisableScope[] = [];
+  let sectionStartLineIndex = -1;
+  for (let i = 0; i <= lastLineIndex; i++) {
+    let shouldIgnoreLine = true;
+    if (markers.has(i)) {
+      applyLinterIgnoreMarker(markers.get(i), i, lastLineIndex, scopes, lineScopes);
+    } else {
+      shouldIgnoreLine = scopes.some((scope) => scopeDisablesRule(scope, ruleAlias)) ||
+        lineScopes.some((scope) => scope.startLineIndex <= i && i <= scope.endLineIndex && scopeDisablesRule(scope, ruleAlias));
     }
 
-    positions.push({
-      startIndex: iteratorIndex,
-      endIndex: endingPosition,
-    });
-
-    if (!endMatches || endMatches.length === 0) {
-      return;
+    if (shouldIgnoreLine && sectionStartLineIndex === -1) {
+      sectionStartLineIndex = i;
+    } else if (!shouldIgnoreLine && sectionStartLineIndex !== -1) {
+      positions.push({startIndex: lineStartIndices[sectionStartLineIndex], endIndex: lineStartIndices[i - 1] + lines[i - 1].length});
+      sectionStartLineIndex = -1;
     }
-  });
+  }
+
+  if (sectionStartLineIndex !== -1) {
+    positions.push({startIndex: lineStartIndices[sectionStartLineIndex], endIndex: text.length});
+  }
 
   return positions.reverse();
 }

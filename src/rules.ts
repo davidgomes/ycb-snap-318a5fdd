@@ -112,7 +112,7 @@ export class Rule {
   public apply(text: string, options?: Options): string {
     return ignoreListOfTypes(this.ignoreTypes, text, (textAfterIgnore: string) => {
       return this.applyAfterIgnore(textAfterIgnore, options);
-    });
+    }, this.alias);
   }
 }
 

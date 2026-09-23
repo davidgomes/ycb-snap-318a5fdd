@@ -34,8 +34,9 @@ export const wordRegex = /[\p{L}\p{N}\p{Pc}\p{M}\-'’`]+/gu;
 // regex from https://stackoverflow.com/a/26128757/8353749
 export const htmlEntitiesRegex = /&[^\s]+;$/mi;
 
-export const customIgnoreAllStartIndicator = generateHTMLLinterCommentWithSpecificTextAndWhitespaceRegexMatch(true);
-export const customIgnoreAllEndIndicator = generateHTMLLinterCommentWithSpecificTextAndWhitespaceRegexMatch(false);
+// group 1 is the contents of an HTML comment and group 2 is the contents of an Obsidian comment
+export const linterIgnoreMarkerLineRegex = /^[ \t]*(?:<!-{2,}[ \t]*((?:(?!-{2,}>)[^\n])*?)[ \t]*-{2,}>|%%[ \t]*([^%\n]*?)[ \t]*%%)[ \t]*$/;
+export const linterIgnoreMarkerContentRegex = /^linter-(disable-next-n-lines|disable-next-line|disable|enable)(?![\w-])(.*)$/;
 
 export const smartDoubleQuoteRegex = /[“”„«»]/g;
 export const smartSingleQuoteRegex = /[‘’‚‹›]/g;
@@ -132,17 +133,4 @@ export function getFirstHeaderOneText(text: string): string {
 
 export function matchTagRegex(text: string): string[] {
   return [...text.matchAll(tagWithLeadingWhitespaceRegex)].map((match) => match[2]);
-}
-
-export function generateHTMLLinterCommentWithSpecificTextAndWhitespaceRegexMatch(isStart: boolean): RegExp {
-  const regexTemplate = '(?:<!-{2,}|%%) *linter-{ENDING_TEXT} *(?:-{2,}>|%%)';
-  let endingText = '';
-
-  if (isStart) {
-    endingText += 'disable';
-  } else {
-    endingText += 'enable';
-  }
-
-  return new RegExp(regexTemplate.replace('{ENDING_TEXT}', endingText), 'g');
 }
