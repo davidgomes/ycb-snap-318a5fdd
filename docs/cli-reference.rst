@@ -65,6 +65,12 @@ This page lists the ``--help`` for every ``sqlite-utils`` CLI sub-command.
         "create-spatial-index": "cli_spatialite_indexes",
         "install": "cli_install",
         "uninstall": "cli_uninstall",
+        "enable-safe-import": "cli_safe_import",
+        "disable-safe-import": "cli_safe_import",
+        "add-import-invariant": "cli_safe_import",
+        "remove-import-invariant": "cli_safe_import",
+        "list-import-invariants": "cli_safe_import",
+        "validate-import-invariants": "cli_safe_import",
     }
     commands.sort(key = lambda command: go_first.index(command) if command in go_first else 999)
     cog.out("\n")
@@ -291,6 +297,9 @@ See :ref:`cli_inserting_data`, :ref:`cli_insert_csv_tsv`, :ref:`cli_insert_unstr
       --load-extension TEXT     Path to SQLite extension, with optional :entrypoint
       --silent                  Do not show progress bar
       --strict                  Apply STRICT mode to created table
+      --safe-mode               Roll back unless the import succeeds and import
+                                invariants pass. CSV/TSV/JSON is inferred if no
+                                format flag is given
       --ignore                  Ignore records if pk already exists
       --replace                 Replace records if pk already exists
       --truncate                Truncate table before inserting records, if table
@@ -349,6 +358,9 @@ See :ref:`cli_upsert`.
       --load-extension TEXT     Path to SQLite extension, with optional :entrypoint
       --silent                  Do not show progress bar
       --strict                  Apply STRICT mode to created table
+      --safe-mode               Roll back unless the import succeeds and import
+                                invariants pass. CSV/TSV/JSON is inferred if no
+                                format flag is given
       -h, --help                Show this message and exit.
 
 
@@ -376,6 +388,9 @@ See :ref:`cli_bulk`.
 
     Options:
       --batch-size INTEGER   Commit every X records
+      --safe-mode            Roll back unless the SQL succeeds and import invariants
+                             pass. CSV/TSV/JSON is inferred if no format flag is
+                             given. Supports UPDATE
       --functions TEXT       Python code or file path defining custom SQL functions
       --flatten              Flatten nested JSON objects, so {"a": {"b": 1}} becomes
                              {"a_b": 1}
@@ -1513,6 +1528,156 @@ See :ref:`cli_spatialite_indexes`.
 
       By default, this command will try to load the SpatiaLite extension from usual
       paths. To load it from a specific path, use --load-extension.
+
+    Options:
+      --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      -h, --help             Show this message and exit.
+
+
+.. _cli_ref_enable_safe_import:
+
+enable-safe-import
+==================
+
+See :ref:`cli_safe_import`.
+
+::
+
+    Usage: sqlite-utils enable-safe-import [OPTIONS] PATH
+
+      Enable safe import mode for a database.
+
+      Safe import mode lets imports roll back to a checkpoint, including schema
+      changes, unless table invariants pass.
+
+      Example:
+
+          sqlite-utils enable-safe-import data.db
+
+    Options:
+      --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      -h, --help             Show this message and exit.
+
+
+.. _cli_ref_disable_safe_import:
+
+disable-safe-import
+===================
+
+See :ref:`cli_safe_import`.
+
+::
+
+    Usage: sqlite-utils disable-safe-import [OPTIONS] PATH
+
+      Disable safe import mode.
+
+      Active checkpoints are rolled back first. Changes already committed with a
+      checkpoint are kept.
+
+      Example:
+
+          sqlite-utils disable-safe-import data.db
+
+    Options:
+      --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      -h, --help             Show this message and exit.
+
+
+.. _cli_ref_add_import_invariant:
+
+add-import-invariant
+====================
+
+See :ref:`cli_safe_import`.
+
+::
+
+    Usage: sqlite-utils add-import-invariant [OPTIONS] PATH TABLE SQL
+
+      Register a persistent import invariant for a table.
+
+      SQL that starts with SELECT is executed and the first column of the first row
+      is treated as truthy or falsy. Any other SQL is an expression: aggregates such
+      as COUNT, SUM, AVG, MIN and MAX are evaluated once, and other expressions must
+      be true for every row.
+
+      Example:
+
+          sqlite-utils add-import-invariant data.db dogs "count(*) > 0"
+
+      Prints the new invariant id.
+
+    Options:
+      --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      -h, --help             Show this message and exit.
+
+
+.. _cli_ref_remove_import_invariant:
+
+remove-import-invariant
+=======================
+
+See :ref:`cli_safe_import`.
+
+::
+
+    Usage: sqlite-utils remove-import-invariant [OPTIONS] PATH TABLE INVARIANT_ID
+
+      Remove an import invariant.
+
+      Example:
+
+          sqlite-utils remove-import-invariant data.db dogs inv_abc
+
+    Options:
+      --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      -h, --help             Show this message and exit.
+
+
+.. _cli_ref_list_import_invariants:
+
+list-import-invariants
+======================
+
+See :ref:`cli_safe_import`.
+
+::
+
+    Usage: sqlite-utils list-import-invariants [OPTIONS] PATH TABLE
+
+      List import invariants for a table.
+
+      Prints each invariant id followed by its SQL.
+
+      Example:
+
+          sqlite-utils list-import-invariants data.db dogs
+
+    Options:
+      --load-extension TEXT  Path to SQLite extension, with optional :entrypoint
+      -h, --help             Show this message and exit.
+
+
+.. _cli_ref_validate_import_invariants:
+
+validate-import-invariants
+==========================
+
+See :ref:`cli_safe_import`.
+
+::
+
+    Usage: sqlite-utils validate-import-invariants [OPTIONS] PATH TABLE
+
+      Validate import invariants for a table.
+
+      Always exits 0. Prints "pass" when every invariant holds, otherwise "fail" and
+      the id of each failing invariant.
+
+      Example:
+
+          sqlite-utils validate-import-invariants data.db dogs
 
     Options:
       --load-extension TEXT  Path to SQLite extension, with optional :entrypoint

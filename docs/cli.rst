@@ -1525,6 +1525,8 @@ The command will fail if you reference columns that do not exist on the table. T
 .. note::
     ``upsert`` in sqlite-utils 1.x worked like ``insert ... --replace`` does in 2.x. See `issue #66 <https://github.com/simonw/sqlite-utils/issues/66>`__ for details of this change.
 
+``insert``, ``upsert`` and ``bulk`` accept ``--safe-mode``. See :ref:`cli_safe_import`.
+
 
 .. _cli_bulk:
 
@@ -2686,6 +2688,62 @@ To optimize specific tables rather than every FTS table, pass those tables as ex
 .. code-block:: bash
 
     sqlite-utils optimize mydb.db table_1 table_2
+
+.. _cli_safe_import:
+
+Safe imports
+============
+
+Bulk imports can stop halfway through and leave a database half-written. Safe import mode rolls the database back to the state from before the import unless the write succeeds and every import invariant for the affected tables passes. Schema changes made by the import — new tables, columns, indexes and triggers — are rolled back too.
+
+Enable the mode on a database file:
+
+.. code-block:: bash
+
+    sqlite-utils enable-safe-import data.db
+
+Disable it again with ``disable-safe-import``. Checkpoints that are still open are rolled back. Changes that already committed are kept.
+
+.. code-block:: bash
+
+    sqlite-utils disable-safe-import data.db
+
+Register an invariant with ``add-import-invariant``. The command prints an id. SQL that starts with ``SELECT`` is executed, and the first column of the first row is treated as truthy or falsy. Any other SQL is an expression. Aggregate expressions such as ``COUNT``, ``SUM``, ``AVG``, ``MIN`` and ``MAX`` are evaluated once for the table. Other expressions must be true for every row.
+
+.. code-block:: bash
+
+    sqlite-utils add-import-invariant data.db dogs "age >= 0"
+    sqlite-utils add-import-invariant data.db dogs \
+        "SELECT count(*) > 0 FROM dogs"
+
+List them:
+
+.. code-block:: bash
+
+    sqlite-utils list-import-invariants data.db dogs
+
+That prints each id followed by its SQL. ``validate-import-invariants`` always exits 0. It prints ``pass`` when every invariant holds, otherwise ``fail`` and the id of each failing invariant.
+
+.. code-block:: bash
+
+    sqlite-utils validate-import-invariants data.db dogs
+
+``insert``, ``upsert`` and ``bulk`` take ``--safe-mode``. The import is committed only when it succeeds and invariants pass. The process exits 0 only in that case. A failed safe-mode import exits non-zero and leaves the database as it was before the command, including schema. Format flags are optional: CSV, TSV and JSON (including newline-delimited JSON) are inferred from the file. ``bulk --safe-mode`` runs the SQL you provide, including ``UPDATE`` statements.
+
+.. code-block:: bash
+
+    sqlite-utils insert data.db dogs dogs.csv --safe-mode --pk id
+    sqlite-utils upsert data.db dogs dogs.json --safe-mode --pk id
+    sqlite-utils bulk data.db \
+        "update dogs set name = :name where id = :id" dogs.csv --safe-mode
+
+Remove an invariant with ``remove-import-invariant``:
+
+.. code-block:: bash
+
+    sqlite-utils remove-import-invariant data.db dogs inv_abc123
+
+The same behavior is available from Python on a ``Database`` object: ``enable_safe_import()``, ``disable_safe_import()``, ``create_import_checkpoint()``, ``rollback_to_checkpoint()``, ``commit_checkpoint()``, ``cleanup_checkpoint()``, ``add_import_invariant()``, ``safe_bulk_insert()``, ``safe_bulk_upsert()``, ``import_csv()`` and ``import_json()``.
 
 .. _cli_wal:
 

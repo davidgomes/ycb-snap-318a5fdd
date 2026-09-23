@@ -2676,6 +2676,28 @@ You can check the current journal mode for a database using the ``journal_mode``
 
 This will usually be ``wal`` or ``delete`` (meaning WAL is disabled), but can have other values - see the `PRAGMA journal_mode <https://www.sqlite.org/pragma.html#pragma_journal_mode>`__ documentation.
 
+.. _python_api_safe_import:
+
+Safe imports
+============
+
+``enable_safe_import()`` turns on safe import mode and stores that setting in the database. While it is on, ``create_import_checkpoint()`` returns a checkpoint id. ``rollback_to_checkpoint(id)`` restores rows and schema (tables, columns, indexes and triggers) to that checkpoint. ``commit_checkpoint(id)`` keeps the changes. Both calls finalize the id: using it again raises ``CheckpointNotActiveError``. An unknown or cleaned id raises ``CheckpointNotFoundError``. ``cleanup_checkpoint(id)`` drops the id. Checkpoints can be nested. ``create_import_checkpoint()`` raises ``SafeImportNotEnabledError`` when the mode is off. ``disable_safe_import()`` turns the mode off and rolls back checkpoints that are still active.
+
+Import invariants are stored in the database:
+
+.. code-block:: python
+
+    invariant_id = db.add_import_invariant("dogs", "age >= 0")
+    db.list_import_invariants("dogs")
+    db.validate_import_invariants("dogs")
+    db.remove_import_invariant("dogs", invariant_id)
+
+``list_import_invariants()`` returns ``[{"id", "expression"}, ...]``. ``validate_import_invariants()`` returns ``{"valid": bool, "failures": [{"id", "expression", "error"}, ...]}``. SQL that starts with ``SELECT`` is executed and the first column of the first row is treated as truthy or falsy. Any other SQL is an expression. Aggregates such as ``COUNT``, ``SUM``, ``AVG``, ``MIN`` and ``MAX`` are evaluated once. Other expressions must be true for every row.
+
+``safe_bulk_insert()``, ``safe_bulk_upsert()``, ``import_csv()`` and ``import_json()`` write inside a checkpoint and commit only when the write and the invariants succeed. With ``strict=False`` (the default) a failure returns ``{"success": False, "checkpoint_id", "failures", "error_report"}`` after rolling back. ``failures`` is empty when the error is not an invariant failure. With ``strict=True`` the same rollback happens and then an exception is raised. Invariant failures mention validation. ``import_csv()`` accepts a path or a text file-like object. ``import_json()`` accepts records, a JSON string, a path or a file-like object. Pass ``safe_mode=True`` to those two methods to enable the checkpoint.
+
+The :ref:`cli_safe_import` commands expose the same behavior.
+
 .. _python_api_suggest_column_types:
 
 Suggesting column types
