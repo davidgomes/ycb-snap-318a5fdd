@@ -2,6 +2,7 @@ package astwalk
 
 import (
 	"go/ast"
+	"go/doc/comment"
 )
 
 // DocCommentVisitor visits every doc-comment.
@@ -9,6 +10,17 @@ import (
 // Also does not visit package doc-comment (file-level doc-comments).
 type DocCommentVisitor interface {
 	VisitDocComment(*ast.CommentGroup)
+}
+
+// DocLinkVisitor visits every doc link (a bracketed symbol or package reference)
+// inside the doc-comments that DocCommentVisitor visits.
+// decl is the documented node (a declaration, spec or field).
+//
+// Links are visited whether or not their targets exist.
+// For qualified links, ImportPath is the package part as written:
+// either a package name or a full import path.
+type DocLinkVisitor interface {
+	VisitDocLink(decl ast.Node, link *comment.DocLink)
 }
 
 // FuncDeclVisitor visits every top-level function declaration.
