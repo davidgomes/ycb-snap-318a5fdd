@@ -1,4 +1,5 @@
 # next (unreleased)
+* Add `--cache`, `--cache-dir`, and `--cache-clear` so unchanged modules can be skipped on later runs.
 * Use `ty` instead of `pytype` for testing type annotations (Jendrik Seipp).
 
 # 2.15 (2026-03-04)

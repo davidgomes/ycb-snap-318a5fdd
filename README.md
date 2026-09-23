@@ -164,6 +164,20 @@ def foo(arg: Sequence):
 ```
 
 
+## Caching
+
+Pass `--cache` to reuse analysis results between runs. Vulture writes them
+to `.vulture-cache/` (override the location with `--cache-dir PATH`). The
+next run analyzes a file again only when its contents changed, or when it
+imports — directly or through another module — a file that changed.
+`--cache-clear` deletes the contents of the cache directory before scanning.
+
+```bash
+$ vulture mypackage/ --cache
+$ vulture mypackage/ --cache --cache-dir /tmp/vulture-cache
+$ vulture mypackage/ --cache --cache-clear
+```
+
 ## Configuration
 
 You can also store command line arguments in `pyproject.toml` under the

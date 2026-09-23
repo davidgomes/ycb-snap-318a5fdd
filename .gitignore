@@ -8,6 +8,7 @@ vulture.egg-info/
 .cache/
 .coverage
 .pytest_cache/
+.vulture-cache/
 .tox/
 .venv/
 .vscode/

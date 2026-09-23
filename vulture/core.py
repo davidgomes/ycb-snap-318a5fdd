@@ -7,7 +7,7 @@ from fnmatch import fnmatch, fnmatchcase
 from functools import partial
 from pathlib import Path
 
-from vulture import lines, noqa, utils
+from vulture import cache, lines, noqa, utils
 from vulture.config import InputError, make_config
 from vulture.reachability import Reachability
 from vulture.utils import ExitCode
@@ -38,6 +38,17 @@ ERROR_CODES = {
     "variable": "V107",
     "unreachable_code": "V201",
 }
+
+_CACHE_COLLECTIONS = (
+    "defined_attrs",
+    "defined_classes",
+    "defined_funcs",
+    "defined_imports",
+    "defined_methods",
+    "defined_props",
+    "defined_vars",
+    "unreachable_code",
+)
 
 
 def _get_unused_items(defined_items, used_names):
@@ -187,11 +198,40 @@ class Item:
         return hash(self._tuple())
 
 
+def _item_to_dict(item):
+    return {
+        "name": item.name,
+        "typ": item.typ,
+        "filename": str(item.filename),
+        "first_lineno": item.first_lineno,
+        "last_lineno": item.last_lineno,
+        "message": item.message,
+        "confidence": item.confidence,
+    }
+
+
+def _item_from_dict(data):
+    return Item(
+        data["name"],
+        data["typ"],
+        Path(data["filename"]),
+        data["first_lineno"],
+        data["last_lineno"],
+        message=data["message"],
+        confidence=data["confidence"],
+    )
+
+
 class Vulture(ast.NodeVisitor):
     """Find dead code."""
 
     def __init__(
-        self, verbose=False, ignore_names=None, ignore_decorators=None
+        self,
+        verbose=False,
+        ignore_names=None,
+        ignore_decorators=None,
+        cache_dir=None,
+        cache_settings=None,
     ):
         self.verbose = verbose
 
@@ -211,6 +251,9 @@ class Vulture(ast.NodeVisitor):
 
         self.ignore_names = ignore_names or []
         self.ignore_decorators = ignore_decorators or []
+        self.cache_dir = cache_dir
+        self.cache_settings = cache_settings
+        self._cache_stats = {"scanned": set(), "reused": set()}
 
         self.filename = Path()
         self.code = []
@@ -276,26 +319,38 @@ class Vulture(ast.NodeVisitor):
             return _match(path, exclude, case=False)
 
         paths = [Path(path) for path in paths]
-
+        modules = []
         for module in utils.get_modules(paths):
             if exclude_path(module):
                 self._log("Excluded:", module)
                 continue
+            modules.append(module)
 
-            self._log("Scanning:", module)
-            try:
-                module_string = utils.read_file(module)
-            except utils.VultureInputException as err:
-                self._log(
-                    f"Error: Could not read file {module} - {err}\n"
-                    f"Try to change the encoding to UTF-8.",
-                    file=sys.stderr,
-                    force=True,
-                )
-                self.exit_code = ExitCode.InvalidInput
-            else:
-                self.scan(module_string, filename=module)
+        if self.cache_dir:
+            self._scavenge_cached(modules, exclude_path)
+            return
 
+        for module in modules:
+            self._scan_module(module)
+        self._scan_whitelists(exclude_path)
+
+    def _scan_module(self, module):
+        self._log("Scanning:", module)
+        try:
+            module_string = utils.read_file(module)
+        except utils.VultureInputException as err:
+            self._log(
+                f"Error: Could not read file {module} - {err}\n"
+                f"Try to change the encoding to UTF-8.",
+                file=sys.stderr,
+                force=True,
+            )
+            self.exit_code = ExitCode.InvalidInput
+            return None
+        self.scan(module_string, filename=module)
+        return module_string
+
+    def _scan_whitelists(self, exclude_path):
         unique_imports = {item.name for item in self.defined_imports}
         for import_name in unique_imports:
             path = Path("whitelists") / (import_name + "_whitelist.py")
@@ -311,6 +366,140 @@ class Vulture(ast.NodeVisitor):
                 assert module_data is not None
                 module_string = module_data.decode("utf-8")
                 self.scan(module_string, filename=path)
+
+    def _capture_scan(self, code, filename):
+        """Scan *code* and return the definitions and names it contributed."""
+        saved_names = self.used_names
+        local_names = utils.LoggingSet("name", self.verbose)
+        self.used_names = local_names
+        saved_exit = self.exit_code
+        self.exit_code = ExitCode.NoDeadCode
+        before = {
+            name: len(getattr(self, name)) for name in _CACHE_COLLECTIONS
+        }
+        invalid = False
+        try:
+            self.scan(code, filename=filename)
+            invalid = self.exit_code == ExitCode.InvalidInput
+        finally:
+            self.used_names = saved_names
+            if invalid or saved_exit == ExitCode.InvalidInput:
+                self.exit_code = ExitCode.InvalidInput
+            else:
+                self.exit_code = saved_exit
+        items = {}
+        for name in _CACHE_COLLECTIONS:
+            start = before[name]
+            items[name] = [
+                _item_to_dict(item) for item in getattr(self, name)[start:]
+            ]
+        self.used_names |= local_names
+        return {
+            "items": items,
+            "used_names": sorted(local_names),
+            "invalid": invalid,
+            "import_names": sorted(
+                {item["name"] for item in items["defined_imports"]}
+            ),
+        }
+
+    def _restore_cache_entry(self, entry):
+        for name in _CACHE_COLLECTIONS:
+            collection = getattr(self, name)
+            for data in entry.get("items", {}).get(name, []):
+                collection.append(_item_from_dict(data))
+        for used in entry.get("used_names", []):
+            self.used_names.add(used)
+        if entry.get("invalid"):
+            self.exit_code = ExitCode.InvalidInput
+
+    def _analyze_module(self, module, digest):
+        self._log("Scanning:", module)
+        try:
+            module_string = utils.read_file(module)
+        except utils.VultureInputException as err:
+            self._log(
+                f"Error: Could not read file {module} - {err}\n"
+                f"Try to change the encoding to UTF-8.",
+                file=sys.stderr,
+                force=True,
+            )
+            self.exit_code = ExitCode.InvalidInput
+            return {
+                "sha256": digest,
+                "imports": [],
+                "import_names": [],
+                "used_names": [],
+                "invalid": True,
+                "items": {name: [] for name in _CACHE_COLLECTIONS},
+            }
+        entry = self._capture_scan(module_string, module)
+        entry["sha256"] = digest
+        entry["imports"] = cache.extract_imports(module_string, module)
+        return entry
+
+    def _scan_whitelists_cached(self, store, exclude_path):
+        unique_imports = {item.name for item in self.defined_imports}
+        results = store.data.setdefault("whitelist_results", {})
+        for import_name in sorted(unique_imports):
+            path = Path("whitelists") / (import_name + "_whitelist.py")
+            if exclude_path(path):
+                self._log("Excluded whitelist:", path)
+                continue
+            payload = cache.read_whitelist(import_name)
+            if payload is None:
+                continue
+            digest = cache.sha256_bytes(payload)
+            cached_whitelist = results.get(import_name)
+            if (
+                isinstance(cached_whitelist, dict)
+                and cached_whitelist.get("sha256") == digest
+                and not cached_whitelist.get("invalid")
+            ):
+                self._log("Included whitelist:", path)
+                self._restore_cache_entry(cached_whitelist)
+                continue
+            self._log("Included whitelist:", path)
+            entry = self._capture_scan(payload.decode("utf-8"), path)
+            entry["sha256"] = digest
+            entry["imports"] = []
+            results[import_name] = entry
+
+    def _scavenge_cached(self, modules, exclude_path):
+        self._cache_stats = {"scanned": set(), "reused": set()}
+        store = cache.AnalysisCache(
+            self.cache_dir,
+            self.cache_settings,
+            self.ignore_names,
+            self.ignore_decorators,
+        )
+        with cache.exclusive_lock(self.cache_dir):
+            store.load()
+            try:
+                to_scan, to_reuse = store.partition(modules)
+                for module in to_reuse:
+                    self._restore_cache_entry(store.get(module))
+                    self._log("Reusing cached:", module)
+                    self._cache_stats["reused"].add(
+                        cache.normalize_path(module)
+                    )
+                for module in to_scan:
+                    try:
+                        digest = cache.sha256_file(module)
+                    except OSError:
+                        digest = None
+                    entry = self._analyze_module(module, digest)
+                    store.record(module, entry)
+                    self._cache_stats["scanned"].add(
+                        cache.normalize_path(module)
+                    )
+                self._scan_whitelists_cached(store, exclude_path)
+                store.finish_whitelists()
+            except KeyboardInterrupt:
+                store.save()
+                raise
+            else:
+                store.save()
 
     def get_unused_code(
         self, min_confidence=0, sort_by_size=False
@@ -668,10 +857,20 @@ def main():
         print(e, file=sys.stderr)
         sys.exit(ExitCode.InvalidCmdlineArguments)
 
+    if config["cache_clear"]:
+        cache.clear_cache(config["cache_dir"])
+
     vulture = Vulture(
         verbose=config["verbose"],
         ignore_names=config["ignore_names"],
         ignore_decorators=config["ignore_decorators"],
+        cache_dir=config["cache_dir"] if config["cache"] else None,
+        cache_settings={
+            "ignore_names": list(config["ignore_names"]),
+            "ignore_decorators": list(config["ignore_decorators"]),
+        }
+        if config["cache"]
+        else None,
     )
     vulture.scavenge(config["paths"], exclude=config["exclude"])
     sys.exit(
