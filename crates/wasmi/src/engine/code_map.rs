@@ -5,7 +5,13 @@
 //! This is the data structure specialized to handle compiled
 //! register machine based bytecode functions.
 
-use super::{FuncTranslationDriver, FuncTranslator, TranslationError, ValidatingFuncTranslator};
+use super::{
+    FuncTranslationDriver,
+    FuncTranslator,
+    TranslationError,
+    ValidatingFuncTranslator,
+    func_debug::FuncDebugInfo,
+};
 use crate::{
     Config,
     Error,
@@ -217,6 +223,32 @@ impl CodeMap {
             funcs: Mutex::new(Arena::default()),
             features: config.wasm_features(),
         }
+    }
+
+    /// Invokes `f` with the Wasmi bytecode offset and coredump metadata of the
+    /// function that contains `ip`.
+    ///
+    /// Returns `None` when `ip` does not point into a compiled function.
+    pub fn with_debug_at<R>(
+        &self,
+        ip: *const u8,
+        f: impl FnOnce(u32, Option<&FuncDebugInfo>) -> R,
+    ) -> Option<R> {
+        let funcs = self.funcs.lock();
+        for (_key, entity) in funcs.iter() {
+            let FuncEntity::Compiled(compiled) = entity else {
+                continue;
+            };
+            let ops = compiled.ops_bytes();
+            let start = ops.as_ptr();
+            let end = unsafe { start.add(ops.len()) };
+            if ip < start || ip >= end {
+                continue;
+            }
+            let offset = unsafe { ip.offset_from(start) } as u32;
+            return Some(f(offset, compiled.debug()));
+        }
+        None
     }
 
     /// Allocates `amount` new uninitialized [`EngineFunc`] to the [`CodeMap`].
@@ -802,6 +834,8 @@ pub struct CompiledFuncEntity {
     /// This includes stack slots to store the function local constant values,
     /// function parameters, function locals and dynamically used stack slots.
     len_stack_slots: u16,
+    /// Optional coredump metadata. Absent when coredump generation is disabled.
+    debug: Option<Box<FuncDebugInfo>>,
 }
 
 impl CompiledFuncEntity {
@@ -811,7 +845,7 @@ impl CompiledFuncEntity {
     ///
     /// - If `ops` is empty.
     /// - If `ops` contains more than `i32::MAX` encoded bytes.
-    pub fn new(len_stack_slots: u16, ops: &[u8]) -> Self {
+    pub fn new(len_stack_slots: u16, ops: &[u8], debug: Option<FuncDebugInfo>) -> Self {
         let ops: Pin<Box<[u8]>> = Pin::new(ops.into());
         assert!(
             !ops.is_empty(),
@@ -829,7 +863,20 @@ impl CompiledFuncEntity {
         Self {
             ops,
             len_stack_slots,
+            debug: debug.map(Box::new),
         }
+    }
+
+    /// Returns the encoded Wasmi bytecode.
+    #[inline]
+    fn ops_bytes(&self) -> &[u8] {
+        self.ops.as_ref().get_ref()
+    }
+
+    /// Returns coredump metadata when it was recorded for this function.
+    #[inline]
+    fn debug(&self) -> Option<&FuncDebugInfo> {
+        self.debug.as_deref()
     }
 }
 

@@ -97,7 +97,17 @@ impl<'a, T, State: state::Execute> WasmFuncCall<'a, T, State> {
         self.store.invoke_call_hook(CallHook::CallingWasm)?;
         let outcome = self.execute_until_done();
         self.store.invoke_call_hook(CallHook::ReturningFromWasm)?;
-        let sp = outcome?;
+        let sp = match outcome {
+            Ok(sp) => sp,
+            Err(outcome) => {
+                return Err(super::super::coredump::enrich(
+                    self.store,
+                    self.stack,
+                    self.code,
+                    outcome,
+                ));
+            }
+        };
         Ok(self.new_state(state::Done { sp }))
     }
 

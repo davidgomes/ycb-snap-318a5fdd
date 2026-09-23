@@ -20,7 +20,7 @@ use crate::{
     memory::DataSegment,
     store::Stored,
 };
-use alloc::{boxed::Box, sync::Arc};
+use alloc::{boxed::Box, string::String, sync::Arc};
 
 mod builder;
 mod exports;
@@ -40,6 +40,10 @@ pub struct InstanceEntity {
     exports: Map<Box<str>, Extern>,
     data_segments: Box<[DataSegment]>,
     elem_segments: Box<[ElementSegment]>,
+    /// Module name from the Wasm `name` section, used by coredumps.
+    module_name: Box<str>,
+    /// Stable identity of the [`Module`] this instance was created from.
+    module_id: usize,
 }
 
 impl InstanceEntity {
@@ -55,6 +59,8 @@ impl InstanceEntity {
             exports: Map::new(),
             data_segments: [].into(),
             elem_segments: [].into(),
+            module_name: String::new().into_boxed_str(),
+            module_id: 0,
         }
     }
 
@@ -113,6 +119,26 @@ impl InstanceEntity {
     /// The order of the yielded exports is not specified.
     pub fn exports(&self) -> ExportsIter<'_> {
         ExportsIter::new(self.exports.iter())
+    }
+
+    /// Returns the module name recorded for coredump generation.
+    pub(crate) fn module_name(&self) -> &str {
+        &self.module_name
+    }
+
+    /// Returns the module identity recorded for coredump generation.
+    pub(crate) fn module_id(&self) -> usize {
+        self.module_id
+    }
+
+    /// Returns the linear memories of this instance, in module index order.
+    pub(crate) fn memories(&self) -> &[Memory] {
+        &self.memories
+    }
+
+    /// Returns the global variables of this instance, in module index order.
+    pub(crate) fn globals(&self) -> &[Global] {
+        &self.globals
     }
 }
 

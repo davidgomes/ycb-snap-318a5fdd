@@ -40,15 +40,20 @@ pub struct VmState<'vm> {
     pub store: &'vm mut PrunedStore,
     pub stack: &'vm mut Stack,
     pub code: &'vm CodeMap,
+    /// When `true`, handlers keep the top frame's instruction pointer current
+    /// so a trap can be turned into a coredump.
+    pub coredump: bool,
     done_reason: Option<DoneReason>,
 }
 
 impl<'vm> VmState<'vm> {
     pub fn new(store: &'vm mut PrunedStore, stack: &'vm mut Stack, code: &'vm CodeMap) -> Self {
+        let coredump = store.inner().engine().config().get_generate_coredump();
         Self {
             store,
             stack,
             code,
+            coredump,
             done_reason: None,
         }
     }
@@ -280,6 +285,11 @@ impl<'a> From<&'a [u8]> for Ip {
 }
 
 impl Ip {
+    /// Returns the raw instruction pointer.
+    pub(crate) fn as_ptr(self) -> *const u8 {
+        self.value
+    }
+
     /// Decodes a value of type `T` from the instruction stream at the [`Ip`].
     ///
     /// # Returns
@@ -567,6 +577,27 @@ impl Stack {
     ///   at that point later.
     pub fn sync_ip(&mut self, ip: Ip) {
         self.frames.sync_ip(ip);
+    }
+
+    /// Synchronizes the top frame instruction pointer when a frame exists.
+    ///
+    /// Used by the coredump instrumentation, which runs on every instruction
+    /// and must not assume a frame is present.
+    #[cold]
+    pub fn sync_ip_if_present(&mut self, ip: Ip) {
+        if !self.frames.frames.is_empty() {
+            self.frames.sync_ip(ip);
+        }
+    }
+
+    /// Returns the value-stack cell at `index`, if it has been allocated.
+    pub(crate) fn cell(&self, index: usize) -> Option<Cell> {
+        self.values.cells.get(index).copied()
+    }
+
+    /// Returns Wasm frames from youngest (trap site) to oldest (entry).
+    pub(crate) fn coredump_frames(&self) -> Vec<CoredumpFrame> {
+        self.frames.coredump_frames()
     }
 
     /// Restores the top-most function frame and its [`Ip`], [`Sp`] and [`Inst`].
@@ -995,6 +1026,26 @@ impl CallStack {
     /// - Synchronization is required when calling another function or when
     ///   finishing a resumable call in order to be able to resume execution
     ///   at that point later.
+    /// Wasm frames from youngest to oldest, with each frame's instance resolved.
+    fn coredump_frames(&self) -> Vec<CoredumpFrame> {
+        let mut current = self.instance;
+        let mut frames = Vec::with_capacity(self.frames.len());
+        for frame in self.frames.iter().rev() {
+            let Some(instance) = current else {
+                break;
+            };
+            frames.push(CoredumpFrame {
+                ip: frame.ip,
+                start: frame.start.into_inner(),
+                instance,
+            });
+            if let Some(caller) = frame.instance {
+                current = Some(caller);
+            }
+        }
+        frames
+    }
+
     fn sync_ip(&mut self, ip: Ip) {
         let Some(top) = self.frames.last_mut() else {
             panic!("must have top call frame")
@@ -1105,6 +1156,16 @@ impl CallStack {
         };
         Ok(start)
     }
+}
+
+/// One Wasm frame captured for coredump generation.
+pub(crate) struct CoredumpFrame {
+    /// Instruction pointer of this frame.
+    pub ip: Ip,
+    /// Value-stack index of the frame base.
+    pub start: usize,
+    /// Instance that owns the frame.
+    pub instance: Inst,
 }
 
 /// The state of a single function frame.

@@ -133,6 +133,12 @@ pub trait WasmTranslator<'parser>:
     /// This information is mainly required for properly locating translation errors.
     fn update_pos(&mut self, pos: usize);
 
+    /// Sets the Wasm binary offset of the function body being translated.
+    ///
+    /// The default implementation ignores the base. Translators that record
+    /// coredump code offsets override this.
+    fn set_code_base(&mut self, _base: usize) {}
+
     /// Finishes constructing the Wasm function translation.
     ///
     /// # Note
@@ -208,6 +214,11 @@ where
 
     fn update_pos(&mut self, pos: usize) {
         self.pos = pos;
+        self.translator.update_pos(pos);
+    }
+
+    fn set_code_base(&mut self, base: usize) {
+        self.translator.set_code_base(base);
     }
 
     fn finish(

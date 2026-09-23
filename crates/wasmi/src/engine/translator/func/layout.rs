@@ -86,6 +86,11 @@ impl StackLayout {
         self.local_offsets.len()
     }
 
+    /// Returns the value-stack cell offset of the local at `index`.
+    pub fn local_offset(&self, index: usize) -> u16 {
+        self.local_offsets[index]
+    }
+
     /// Slot `amount` local variables of common type `ty`.
     ///
     /// # Errors

@@ -27,6 +27,8 @@ pub struct InstanceEntityBuilder {
     exports: Map<Box<str>, Extern>,
     data_segments: Vec<DataSegment>,
     elem_segments: Vec<ElementSegment>,
+    module_name: Box<str>,
+    module_id: usize,
 }
 
 impl InstanceEntityBuilder {
@@ -67,6 +69,8 @@ impl InstanceEntityBuilder {
             exports: Map::default(),
             data_segments: Vec::new(),
             elem_segments: Vec::new(),
+            module_name: module.debug_name().into_boxed_str(),
+            module_id: module.debug_id(),
         }
     }
 
@@ -194,6 +198,8 @@ impl InstanceEntityBuilder {
             exports: self.exports,
             data_segments: self.data_segments.into(),
             elem_segments: self.elem_segments.into(),
+            module_name: self.module_name,
+            module_id: self.module_id,
         }
     }
 }

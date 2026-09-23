@@ -25,6 +25,7 @@ pub use self::{
     func::{init_host_func_call, init_wasm_func_call, resume_wasm_func_call},
     state::{Inst, Stack},
 };
+pub(crate) use self::state::CoredumpFrame;
 use self::{
     dispatch::{Break, Control, Done},
     state::DoneReason,

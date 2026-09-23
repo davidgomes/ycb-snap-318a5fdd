@@ -115,6 +115,12 @@ impl Stack {
         self.operands.height()
     }
 
+    /// Returns the operand at `index`, counting from the bottom of the stack.
+    pub fn operand_at(&self, index: usize) -> Operand {
+        let operand = self.operands.get_operand(index);
+        Operand::new(StackPos::from(index), operand)
+    }
+
     /// Returns the maximum stack offset of the [`Stack`].
     ///
     /// # Note

@@ -1,4 +1,5 @@
 mod call_hook;
+mod coredump;
 mod call_host_via_engine;
 mod fuel_consumption;
 mod fuel_metering;

@@ -181,6 +181,11 @@ impl OperandStack {
         self.operands.len()
     }
 
+    /// Returns the operand at `index`, counting from the bottom of the stack.
+    pub(super) fn get_operand(&self, index: usize) -> StackOperand {
+        self.operands[index]
+    }
+
     /// Returns the temporary [`Slot`] allocated for the next pushed operand.
     pub fn next_temp_slots(&self) -> SlotSpan {
         SlotSpan::new(Slot::from(self.temp_offset))

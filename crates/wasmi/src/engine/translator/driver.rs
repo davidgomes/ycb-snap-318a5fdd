@@ -25,6 +25,8 @@ where
         translator: T,
     ) -> Result<Self, Error> {
         let offset = offset.into().unwrap_or(0);
+        let mut translator = translator;
+        translator.set_code_base(offset);
         let features = translator.features();
         let reader = BinaryReader::new_features(bytes, offset, features);
         let func_body = FunctionBody::new(reader);

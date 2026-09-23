@@ -4,6 +4,7 @@ mod block_type;
 mod code_map;
 mod config;
 mod executor;
+mod func_debug;
 mod func_types;
 mod limits;
 mod resumable;

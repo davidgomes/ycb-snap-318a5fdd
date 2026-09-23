@@ -65,6 +65,22 @@ impl ResumableHostTrapError {
         self.host_error
     }
 
+    /// Rebuilds `self` after transforming the host [`Error`].
+    ///
+    /// Used to append outer Wasm frames to a coredump captured by a nested call.
+    pub(crate) fn map_error(self, map: impl FnOnce(Error) -> Error) -> Self {
+        let Self {
+            host_error,
+            host_func,
+            caller_results,
+        } = self;
+        Self {
+            host_error: map(host_error),
+            host_func,
+            caller_results,
+        }
+    }
+
     /// Returns the [`Func`] of the [`ResumableHostTrapError`].
     pub(crate) fn host_func(&self) -> &Func {
         &self.host_func

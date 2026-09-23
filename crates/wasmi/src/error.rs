@@ -88,6 +88,35 @@ impl Error {
         self.kind().as_i32_exit_status()
     }
 
+    /// Returns the coredump bytes attached to this error, if any.
+    ///
+    /// Coredumps are produced only for Wasm traps when
+    /// [`Config::generate_coredump`](crate::Config::generate_coredump) is enabled.
+    pub fn coredump(&self) -> Option<&[u8]> {
+        match self.kind() {
+            ErrorKind::CoreDump(_, bytes) => Some(bytes),
+            _ => None,
+        }
+    }
+
+    /// Creates a Wasm trap error that carries a coredump.
+    pub(crate) fn from_trap_with_coredump(code: TrapCode, bytes: alloc::vec::Vec<u8>) -> Self {
+        Self::from_kind(ErrorKind::CoreDump(code, bytes.into_boxed_slice()))
+    }
+
+    /// Replaces coredump bytes on a trap error.
+    ///
+    /// Returns `self` unchanged when it is not a trap that can carry a coredump.
+    pub(crate) fn with_coredump_bytes(self, bytes: alloc::vec::Vec<u8>) -> Self {
+        let bytes = bytes.into_boxed_slice();
+        match *self.kind {
+            ErrorKind::CoreDump(code, _) | ErrorKind::TrapCode(code) => {
+                Self::from_kind(ErrorKind::CoreDump(code, bytes))
+            }
+            other => Self::from_kind(other),
+        }
+    }
+
     /// Downcasts the [`Error`] into the `T: HostError` if possible.
     ///
     /// Returns `None` otherwise.
@@ -134,6 +163,7 @@ impl Error {
         matches!(
             self.kind(),
             ErrorKind::TrapCode(TrapCode::OutOfFuel)
+                | ErrorKind::CoreDump(TrapCode::OutOfFuel, _)
                 | ErrorKind::ResumableOutOfFuel(_)
                 | ErrorKind::Memory(MemoryError::OutOfFuel { .. })
                 | ErrorKind::Table(TableError::OutOfFuel { .. })
@@ -156,6 +186,8 @@ impl Display for Error {
 pub enum ErrorKind {
     /// A trap code as defined by the WebAssembly specification.
     TrapCode(TrapCode),
+    /// A Wasm trap together with a coredump image.
+    CoreDump(TrapCode, Box<[u8]>),
     /// A message usually provided by Wasmi users of host function calls.
     Message(Box<str>),
     /// An `i32` exit status usually used by WASI applications.
@@ -213,7 +245,7 @@ impl ErrorKind {
     /// Returns a reference to [`TrapCode`] if [`ErrorKind`] is a [`TrapCode`].
     pub fn as_trap_code(&self) -> Option<TrapCode> {
         let trap_code = match self {
-            | Self::TrapCode(trap_code) => *trap_code,
+            | Self::TrapCode(trap_code) | Self::CoreDump(trap_code, _) => *trap_code,
             | Self::ResumableOutOfFuel(_)
             | Self::Fuel(FuelError::OutOfFuel { .. })
             | Self::Table(TableError::OutOfFuel { .. })
@@ -268,7 +300,7 @@ impl core::error::Error for ErrorKind {}
 impl Display for ErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::TrapCode(error) => Display::fmt(error, f),
+            Self::TrapCode(error) | Self::CoreDump(error, _) => Display::fmt(error, f),
             Self::I32ExitStatus(status) => writeln!(f, "Exited with i32 exit status {status}"),
             Self::Message(message) => Display::fmt(message, f),
             Self::Host(error) => Display::fmt(error, f),

@@ -1,5 +1,6 @@
 use super::{EnforcedLimits, StackConfig};
 use crate::core::FuelCostsProvider;
+use alloc::string::String;
 use wasmparser::WasmFeatures;
 
 /// Configuration for an [`Engine`].
@@ -21,6 +22,12 @@ pub struct Config {
     compilation_mode: CompilationMode,
     /// Enforced limits for Wasm module parsing and compilation.
     limits: EnforcedLimits,
+    /// Is `true` if Wasm traps shall capture a coredump.
+    generate_coredump: bool,
+    /// Executable name stored in a generated coredump.
+    ///
+    /// Empty when the embedder did not set one.
+    coredump_executable_name: String,
 }
 
 /// The chosen mode of Wasm to Wasmi bytecode compilation.
@@ -50,6 +57,8 @@ impl Default for Config {
             fuel_costs: FuelCostsProvider::default(),
             compilation_mode: CompilationMode::default(),
             limits: EnforcedLimits::default(),
+            generate_coredump: false,
+            coredump_executable_name: String::new(),
         }
     }
 }
@@ -398,5 +407,35 @@ impl Config {
     /// Returns the [`WasmFeatures`] represented by the [`Config`].
     pub(crate) fn wasm_features(&self) -> WasmFeatures {
         self.features
+    }
+
+    /// Enable or disable coredump generation for Wasm traps.
+    ///
+    /// Disabled by default. When enabled, a Wasm trap's [`Error`] carries a
+    /// coredump that [`Error::coredump`] can read.
+    ///
+    /// [`Error`]: crate::Error
+    /// [`Error::coredump`]: crate::Error::coredump
+    pub fn generate_coredump(&mut self, enable: bool) -> &mut Self {
+        self.generate_coredump = enable;
+        self
+    }
+
+    /// Returns `true` if Wasm traps shall capture a coredump.
+    pub(crate) fn get_generate_coredump(&self) -> bool {
+        self.generate_coredump
+    }
+
+    /// Sets the executable name stored in generated coredumps.
+    ///
+    /// The default name is an empty string.
+    pub fn coredump_executable_name(&mut self, name: impl Into<String>) -> &mut Self {
+        self.coredump_executable_name = name.into();
+        self
+    }
+
+    /// Returns the executable name stored in generated coredumps.
+    pub(crate) fn get_coredump_executable_name(&self) -> &str {
+        &self.coredump_executable_name
     }
 }

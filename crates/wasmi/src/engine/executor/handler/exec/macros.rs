@@ -19,7 +19,12 @@ macro_rules! execution_handler {
             $mem0_ptr: $mem0_ptr_ty,
             $mem0_len: $mem0_len_ty,
             $instance: $instance_ty,
-        ) -> $done $body
+        ) -> $done {
+            if $state.coredump {
+                $state.stack.sync_ip_if_present($ip);
+            }
+            $body
+        }
     };
 }
 
@@ -44,7 +49,12 @@ macro_rules! execution_handler {
             $mem0_ptr: $mem0_ptr_ty,
             $mem0_len: $mem0_len_ty,
             $instance: $instance_ty,
-        ) -> $done $body
+        ) -> $done {
+            if $state.coredump {
+                $state.stack.sync_ip_if_present($ip);
+            }
+            $body
+        }
     };
 }
 

@@ -90,6 +90,11 @@ impl StoreInner {
         &self.engine
     }
 
+    /// Returns every instantiated module, in allocation order.
+    pub(crate) fn instance_entities(&self) -> impl Iterator<Item = &InstanceEntity> {
+        self.instances.iter().map(|(_key, entity)| entity)
+    }
+
     /// Returns the [`StoreId`] of `self`.
     pub(crate) fn id(&self) -> StoreId {
         self.id

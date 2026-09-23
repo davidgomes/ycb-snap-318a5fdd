@@ -41,12 +41,13 @@ use crate::{
     FuncType,
     TrapCode,
     ValType,
-    core::{FuelCostsProvider, IndexType, RawRef, Typed, TypedRawVal},
+    core::{FuelCostsProvider, IndexType, RawRef, RawVal, ReadAs, Typed, TypedRawVal},
     engine::{
         BlockType,
         Cell,
         CompiledFuncEntity,
         TranslationError,
+        func_debug::{DebugOperand, DebugSite, FuncDebugInfo},
         translator::{
             WasmTranslator,
             comparator::{
@@ -115,6 +116,19 @@ pub struct FuncTranslator {
     operands: Vec<Operand>,
     /// Temporary buffer for immediate values.
     immediates: Vec<TypedRawVal>,
+    /// Is `true` when coredump debug sites should be recorded.
+    ///
+    /// This becomes `true` only after locals have been registered and only if
+    /// the engine was configured to generate coredumps.
+    record_sites: bool,
+    /// Wasm byte offset of the function body within the translated binary.
+    ///
+    /// Lazy compilation translates a function body in isolation, so this is zero.
+    code_base: usize,
+    /// Coredump sites collected while translating reachable operators.
+    debug_sites: Vec<DebugSite>,
+    /// Types of parameters and locals, populated when coredumps are enabled.
+    local_types: Vec<ValType>,
 }
 
 /// Heap allocated data structured used by the [`FuncTranslator`].
@@ -132,6 +146,10 @@ pub struct FuncTranslatorAllocations {
     operands: Vec<Operand>,
     /// Temporary buffer for immediate values.
     immediates: Vec<TypedRawVal>,
+    /// Coredump sites collected while translating reachable operators.
+    debug_sites: Vec<DebugSite>,
+    /// Types of parameters and locals, populated when coredumps are enabled.
+    local_types: Vec<ValType>,
 }
 
 impl Reset for FuncTranslatorAllocations {
@@ -142,6 +160,8 @@ impl Reset for FuncTranslatorAllocations {
         self.instrs.reset();
         self.operands.clear();
         self.immediates.clear();
+        self.debug_sites.clear();
+        self.local_types.clear();
     }
 }
 
@@ -171,10 +191,34 @@ impl WasmTranslator<'_> for FuncTranslator {
         //       function parameters and locals so that the function `block`
         //       has proper knowledge of its position within the operands stack.
         self.init_func_body_block()?;
+        self.record_sites = self.engine.config().get_generate_coredump();
         Ok(())
     }
 
-    fn update_pos(&mut self, _pos: usize) {}
+    fn set_code_base(&mut self, base: usize) {
+        self.code_base = base;
+    }
+
+    fn update_pos(&mut self, pos: usize) {
+        if !self.record_sites || !self.reachable {
+            return;
+        }
+        // Flush a staged instruction so the recorded offset is the start of
+        // the upcoming operator rather than the tail of the previous one.
+        let _ = self.instrs.try_encode_staged();
+        let ir_offset = u32::try_from(self.instrs.byte_len()).unwrap_or(u32::MAX);
+        let wasm_offset = u32::try_from(pos.saturating_sub(self.code_base)).unwrap_or(u32::MAX);
+        let height = self.stack.height();
+        let mut operands = Vec::with_capacity(height);
+        for index in 0..height {
+            operands.push(self.debug_operand(index));
+        }
+        self.debug_sites.push(DebugSite {
+            ir_offset,
+            wasm_offset,
+            operands: operands.into(),
+        });
+    }
 
     fn finish(
         mut self,
@@ -190,9 +234,11 @@ impl WasmTranslator<'_> for FuncTranslator {
         let Some(frame_size) = self.frame_size() else {
             return Err(Error::from(TranslationError::AllocatedTooManySlots));
         };
+        let debug = self.take_debug_info();
         finalize(CompiledFuncEntity::new(
             frame_size,
             self.instrs.encoded_ops(),
+            debug,
         ));
         Ok(self.into_allocations())
     }
@@ -209,6 +255,8 @@ impl ReusableAllocations for FuncTranslator {
             instrs: self.instrs.into_allocations(),
             operands: self.operands,
             immediates: self.immediates,
+            debug_sites: self.debug_sites,
+            local_types: self.local_types,
         }
     }
 }
@@ -233,6 +281,8 @@ impl FuncTranslator {
             instrs,
             operands,
             immediates,
+            debug_sites,
+            local_types,
         } = alloc.into_reset();
         let stack = Stack::new(&engine, stack);
         let instrs = OpEncoder::new(&engine, instrs);
@@ -247,6 +297,10 @@ impl FuncTranslator {
             instrs,
             operands,
             immediates,
+            record_sites: false,
+            code_base: 0,
+            debug_sites,
+            local_types,
         };
         translator.init_func_params()?;
         Ok(translator)
@@ -270,7 +324,60 @@ impl FuncTranslator {
         self.locals.register(amount, ty)?;
         self.stack.register_locals(amount, ty)?;
         self.layout.register_locals(amount, ty)?;
+        if self.engine.config().get_generate_coredump() {
+            self.local_types
+                .extend(core::iter::repeat_n(ty, amount));
+        }
         Ok(())
+    }
+
+    /// Copies coredump metadata out of the translator, keeping allocation capacity.
+    fn take_debug_info(&mut self) -> Option<FuncDebugInfo> {
+        if !self.engine.config().get_generate_coredump() {
+            self.debug_sites.clear();
+            self.local_types.clear();
+            return None;
+        }
+        let mut local_offsets = Vec::with_capacity(self.local_types.len());
+        for index in 0..self.local_types.len() {
+            local_offsets.push(self.layout.local_offset(index));
+        }
+        Some(FuncDebugInfo {
+            func_index: self.func.into_u32(),
+            local_types: self.local_types.split_off(0).into(),
+            local_offsets: local_offsets.into(),
+            sites: self.debug_sites.split_off(0).into(),
+        })
+    }
+
+    /// Encodes the logical Wasm operand at `index` for a coredump site.
+    fn debug_operand(&self, index: usize) -> DebugOperand {
+        match self.stack.operand_at(index) {
+            Operand::Local(local) => {
+                let local_index = usize::try_from(u32::from(local.local_index())).unwrap_or(0);
+                DebugOperand::Slot {
+                    offset: self.layout.local_offset(local_index),
+                    ty: local.ty(),
+                }
+            }
+            Operand::Temp(temp) => DebugOperand::Slot {
+                offset: u16::from(temp.temp_slots().head()),
+                ty: temp.ty(),
+            },
+            Operand::Immediate(immediate) => match immediate.ty() {
+                ValType::I32 => DebugOperand::ImmI32(RawVal::from(immediate.val()).read_as()),
+                ValType::I64 => DebugOperand::ImmI64(RawVal::from(immediate.val()).read_as()),
+                ValType::F32 => {
+                    let value: f32 = RawVal::from(immediate.val()).read_as();
+                    DebugOperand::ImmF32(value.to_bits())
+                }
+                ValType::F64 => {
+                    let value: f64 = RawVal::from(immediate.val()).read_as();
+                    DebugOperand::ImmF64(value.to_bits())
+                }
+                _ => DebugOperand::Missing,
+            },
+        }
     }
 
     /// Initializes the function body enclosing control block.

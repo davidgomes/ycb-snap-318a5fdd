@@ -449,6 +449,23 @@ impl Module {
     pub fn custom_sections(&self) -> CustomSectionsIter<'_> {
         self.inner.custom_sections.iter()
     }
+
+    /// Module name from the Wasm `name` custom section, or an empty string.
+    pub(crate) fn debug_name(&self) -> alloc::string::String {
+        for section in self.custom_sections() {
+            if section.name() == "name" {
+                if let Some(name) = module_name_from_name_section(section.data()) {
+                    return name;
+                }
+            }
+        }
+        alloc::string::String::new()
+    }
+
+    /// Identity of this module, stable across clones of the same [`Module`].
+    pub(crate) fn debug_id(&self) -> usize {
+        alloc::sync::Arc::as_ptr(&self.inner) as usize
+    }
 }
 
 /// An iterator over the imports of a [`Module`].
@@ -603,5 +620,47 @@ impl<'a> Iterator for InternalGlobalsIter<'a> {
 impl ExactSizeIterator for InternalGlobalsIter<'_> {
     fn len(&self) -> usize {
         ExactSizeIterator::len(&self.iter)
+    }
+}
+
+/// Reads subsection 0 (module name) from a Wasm `name` custom section payload.
+fn module_name_from_name_section(data: &[u8]) -> Option<alloc::string::String> {
+    let mut index = 0;
+    while index < data.len() {
+        let id = *data.get(index)?;
+        index += 1;
+        let (size, next) = read_uleb128(data, index)?;
+        index = next;
+        let size = usize::try_from(size).ok()?;
+        let payload = data.get(index..index.checked_add(size)?)?;
+        index += size;
+        if id != 0 {
+            continue;
+        }
+        let (len, next) = read_uleb128(payload, 0)?;
+        let len = usize::try_from(len).ok()?;
+        let bytes = payload.get(next..next.checked_add(len)?)?;
+        return alloc::string::String::from_utf8(bytes.to_vec()).ok();
+    }
+    Some(alloc::string::String::new())
+}
+
+/// Reads an unsigned LEB128 integer.
+///
+/// Returns the value and the index of the first unread byte.
+fn read_uleb128(data: &[u8], mut index: usize) -> Option<(u64, usize)> {
+    let mut result = 0u64;
+    let mut shift = 0;
+    loop {
+        let byte = *data.get(index)?;
+        index += 1;
+        result |= u64::from(byte & 0x7F) << shift;
+        if byte & 0x80 == 0 {
+            return Some((result, index));
+        }
+        shift += 7;
+        if shift > 63 {
+            return None;
+        }
     }
 }

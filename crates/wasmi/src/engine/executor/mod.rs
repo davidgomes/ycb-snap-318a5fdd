@@ -35,6 +35,7 @@ use crate::{
     ir::SlotSpan,
 };
 
+mod coredump;
 mod handler;
 mod inout;
 
@@ -58,9 +59,26 @@ impl EngineInner {
         Results: LiftFromCells,
     {
         let mut stack = self.stacks.lock().reuse_or_new();
-        let value = EngineExecutor::new(&self.code_map, &mut stack)
-            .execute_root_func(ctx.store, func, params, results)
-            .map_err(ExecutionOutcome::into_non_resumable)?;
+        let outcome = EngineExecutor::new(&self.code_map, &mut stack).execute_root_func(
+            ctx.store,
+            func,
+            params,
+            results,
+        );
+        let value = match outcome {
+            Ok(value) => value,
+            Err(error) => {
+                // Non-resumable calls turn an out-of-fuel suspension into a trap.
+                // Wasm traps raised inside `execute` already carry a coredump.
+                let error = coredump::finalize_non_resumable(
+                    ctx.store,
+                    &stack,
+                    &self.code_map,
+                    error,
+                );
+                return Err(error);
+            }
+        };
         self.stacks.lock().recycle(stack);
         Ok(value)
     }

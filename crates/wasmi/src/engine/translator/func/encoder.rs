@@ -531,6 +531,13 @@ impl OpEncoder {
         Ok(())
     }
 
+    /// Returns the number of bytes encoded so far.
+    ///
+    /// Does not include a currently staged [`Op`].
+    pub fn byte_len(&self) -> usize {
+        self.ops.buffer.len()
+    }
+
     /// Returns an iterator yielding all encoded [`Op`]s of the [`OpEncoder`] as bytes.
     pub fn encoded_ops(&self) -> &[u8] {
         debug_assert!(self.staged.is_none());
