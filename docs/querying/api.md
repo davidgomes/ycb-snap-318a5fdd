@@ -1562,6 +1562,58 @@ NOTE: This endpoint is available before the server has been marked ready and is 
 
 *New in v2.28*
 
+### Reload Status
+
+**NOTE**: This endpoint is **experimental** and might change in the future.
+
+The following endpoint returns the outcome of the most recent configuration reload attempt, as recorded by the [`transactional-reload-config`](../feature_flags.md#transactional-reload-config) feature flag. The outcome is persisted in the storage directory and survives restarts.
+
+```
+GET /api/v1/status/reload
+```
+
+- **last_reload_id**: Start time of the reload attempt in RFC3339 format. Empty if no reload has been attempted yet.
+- **last_reload_successful**: Whether the reload attempt succeeded.
+- **error_category**: One of:
+  - **none**: The reload succeeded, or no reload has been attempted yet.
+  - **load_error**: The configuration could not be loaded or parsed. Nothing was applied.
+  - **apply_error**: A component failed to apply the configuration. The components that had already applied it, if any, were rolled back to the last known-good configuration.
+  - **rollback_error**: A component failed to apply the configuration and the rollback to the last known-good configuration failed too. Components might be running different configurations.
+- **error_message**: The error of the reload attempt. Empty if it succeeded.
+- **applied_reloaders**: The components that applied the new configuration, in order.
+- **rollback_attempted**: Whether a rollback to the last known-good configuration was attempted.
+- **rollback_successful**: Whether that rollback succeeded.
+- **failed_reloader**: The component that failed to apply the new configuration. Empty if none failed.
+- **reloader_timings_ms**: How long each component that ran took to apply the new configuration, in milliseconds.
+
+Before the first reload attempt, or when the feature flag is disabled, `last_reload_id` is empty, `last_reload_successful` is `false`, `error_category` is `none`, `applied_reloaders` is `[]` and `reloader_timings_ms` is `{}`.
+
+```bash
+curl http://localhost:9090/api/v1/status/reload
+```
+
+```json
+{
+  "status": "success",
+  "data": {
+    "last_reload_id": "2026-01-02T13:37:00.123456789Z",
+    "last_reload_successful": false,
+    "error_category": "apply_error",
+    "error_message": "reloader \"query_engine\" failed to apply the new configuration (--config.file=\"/etc/prometheus/prometheus.yml\"): open /var/log/prometheus/query.log: permission denied",
+    "applied_reloaders": ["db_storage", "remote_storage", "web_handler"],
+    "rollback_attempted": true,
+    "rollback_successful": true,
+    "failed_reloader": "query_engine",
+    "reloader_timings_ms": {
+      "db_storage": 0,
+      "remote_storage": 1,
+      "web_handler": 0,
+      "query_engine": 0
+    }
+  }
+}
+```
+
 ## TSDB Admin APIs
 These are APIs that expose database functionalities for the advanced user. These APIs are not enabled unless the `--web.enable-admin-api` is set.
 

@@ -153,6 +153,31 @@ main configuration file or any referenced files, such as rule and scrape
 configurations. To ensure consistency and avoid issues during reloads, it's
 recommended to update these files atomically.
 
+## Transactional Reload Config
+
+`--enable-feature=transactional-reload-config`
+
+By default, a configuration reload applies the new configuration to every
+component (storage, scrape manager, rule manager, …) even if some of them fail,
+which can leave components running different configurations.
+
+When enabled, a configuration reload is handled as a single unit:
+
+- If the configuration file can't be loaded or parsed, nothing is applied.
+- Otherwise the components apply the new configuration one at a time and the
+  reload stops at the first component that fails. If other components had
+  already applied it, the last known-good configuration (initially the one
+  loaded at startup) is applied again to every component that ran, including
+  the failed one. Note that files referenced by the configuration, such as rule
+  files, are read from disk again during this rollback.
+
+The outcome of the most recent reload attempt is exposed by the
+[`/api/v1/status/reload`](querying/api.md#reload-status) endpoint and persisted
+as `reload_status.json` in the storage directory (`--storage.tsdb.path`, or
+`--storage.agent.path` in agent mode), so that it is still available after a
+restart. Loading the configuration at startup is not considered a reload
+attempt. A missing or corrupted `reload_status.json` file is ignored.
+
 ## OTLP Delta Conversion
 
 `--enable-feature=otlp-deltatocumulative`
