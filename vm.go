@@ -73,25 +73,57 @@ func (v *VM) Run() (err error) {
 	v.framesIndex = 1
 	v.ip = -1
 	v.allocs = v.maxAllocs + 1
+	v.err = nil
 
 	v.run()
 	atomic.StoreInt64(&v.aborting, 0)
-	err = v.err
-	if err != nil {
-		filePos := v.fileSet.Position(
-			v.curFrame.fn.SourcePos(v.ip - 1))
-		err = fmt.Errorf("Runtime Error: %w\n\tat %s",
-			err, filePos)
-		for v.framesIndex > 1 {
-			v.framesIndex--
-			v.curFrame = &v.frames[v.framesIndex-1]
-			filePos = v.fileSet.Position(
-				v.curFrame.fn.SourcePos(v.curFrame.ip - 1))
-			err = fmt.Errorf("%w\n\tat %s", err, filePos)
-		}
-		return err
+	return v.runtimeError()
+}
+
+// runtimeError formats v.err the same way Run does.
+func (v *VM) runtimeError() error {
+	err := v.err
+	if err == nil {
+		return nil
 	}
-	return nil
+	if v.curFrame == nil || v.curFrame.fn == nil {
+		return fmt.Errorf("Runtime Error: %w", err)
+	}
+	fileSet := frameFileSet(v.curFrame.fn, v.fileSet)
+	if fileSet == nil {
+		return fmt.Errorf("Runtime Error: %w", err)
+	}
+	filePos := fileSet.Position(v.curFrame.fn.SourcePos(v.ip - 1))
+	err = fmt.Errorf("Runtime Error: %w\n\tat %s", err, filePos)
+	for v.framesIndex > 1 {
+		v.framesIndex--
+		v.curFrame = &v.frames[v.framesIndex-1]
+		fileSet = frameFileSet(v.curFrame.fn, v.fileSet)
+		if fileSet == nil {
+			return err
+		}
+		filePos = fileSet.Position(
+			v.curFrame.fn.SourcePos(v.curFrame.ip - 1))
+		err = fmt.Errorf("%w\n\tat %s", err, filePos)
+	}
+	return err
+}
+
+// frameConstants is the constant pool the current function was compiled
+// against. Transferred functions keep their original pool; everything else
+// uses the VM pool.
+func (v *VM) frameConstants() []Object {
+	if v.curFrame != nil && v.curFrame.fn != nil && v.curFrame.fn.constants != nil {
+		return v.curFrame.fn.constants
+	}
+	return v.constants
+}
+
+func frameFileSet(fn *CompiledFunction, fallback *parser.SourceFileSet) *parser.SourceFileSet {
+	if fn != nil && fn.fileSet != nil {
+		return fn.fileSet
+	}
+	return fallback
 }
 
 func (v *VM) run() {
@@ -103,7 +135,15 @@ func (v *VM) run() {
 			v.ip += 2
 			cidx := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
 
-			v.stack[v.sp] = v.constants[cidx]
+			obj := v.frameConstants()[cidx]
+			// Constant functions are shared across every compiled instance
+			// that shares this bytecode. Bind a fresh object to this VM so
+			// a later Go-side call uses these globals, constants, and
+			// imports, and so clones do not alias the prototype.
+			if cf, ok := obj.(*CompiledFunction); ok {
+				obj = cf.bindRuntime(v)
+			}
+			v.stack[v.sp] = obj
 			v.sp++
 		case parser.OpNull:
 			v.stack[v.sp] = UndefinedValue
@@ -675,6 +715,14 @@ func (v *VM) run() {
 			} else {
 				retVal = UndefinedValue
 			}
+			// Go-side CompiledFunction.Call runs the callee as the root
+			// frame. Main scripts never emit OpReturn at frame 0.
+			if v.framesIndex == 1 {
+				v.sp = v.curFrame.basePointer
+				v.stack[v.sp] = retVal
+				v.sp++
+				return
+			}
 			//v.sp--
 			v.framesIndex--
 			v.curFrame = &v.frames[v.framesIndex-1]
@@ -748,7 +796,7 @@ func (v *VM) run() {
 			v.ip += 3
 			constIndex := int(v.curInsts[v.ip-1]) | int(v.curInsts[v.ip-2])<<8
 			numFree := int(v.curInsts[v.ip])
-			fn, ok := v.constants[constIndex].(*CompiledFunction)
+			fn, ok := v.frameConstants()[constIndex].(*CompiledFunction)
 			if !ok {
 				v.err = fmt.Errorf("not function: %s", fn.TypeName())
 				return
@@ -765,14 +813,8 @@ func (v *VM) run() {
 				}
 			}
 			v.sp -= numFree
-			cl := &CompiledFunction{
-				Instructions:  fn.Instructions,
-				NumLocals:     fn.NumLocals,
-				NumParameters: fn.NumParameters,
-				VarArgs:       fn.VarArgs,
-				SourceMap:     fn.SourceMap,
-				Free:          free,
-			}
+			cl := fn.bindRuntime(v)
+			cl.Free = free
 			v.allocs--
 			if v.allocs == 0 {
 				v.err = ErrObjectAllocLimit

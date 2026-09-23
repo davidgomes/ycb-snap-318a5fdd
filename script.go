@@ -133,12 +133,20 @@ func (s *Script) Compile() (*Compiled, error) {
 			return nil, fmt.Errorf("exceeding constant objects limit: %d", cnt)
 		}
 	}
-	return &Compiled{
+	compiled := &Compiled{
 		globalIndexes: globalIndexes,
 		bytecode:      bytecode,
 		globals:       globals,
 		maxAllocs:     s.maxAllocs,
-	}, nil
+	}
+	// Values supplied with Script.Add may carry callables from another
+	// compiled instance. Rebind them onto this instance's globals.
+	for i, g := range compiled.globals {
+		if g != nil {
+			compiled.globals[i] = transferToGlobals(g, compiled.globals, compiled.maxAllocs)
+		}
+	}
+	return compiled, nil
 }
 
 // Run compiles and runs the scripts. Use returned compiled object to access
@@ -271,6 +279,13 @@ func (c *Compiled) Clone() *Compiled {
 			clone.globals[idx] = g.Copy()
 		}
 	}
+	// Copied functions still point at the source globals and free-variable
+	// cells. Rebind them so the clone is fully isolated.
+	for idx, g := range clone.globals {
+		if g != nil {
+			clone.globals[idx] = retargetCopied(g, clone.globals, clone.maxAllocs)
+		}
+	}
 	return clone
 }
 
@@ -342,6 +357,6 @@ func (c *Compiled) Set(name string, value interface{}) error {
 	if !ok {
 		return fmt.Errorf("'%s' is not defined", name)
 	}
-	c.globals[idx] = obj
+	c.globals[idx] = transferToGlobals(obj, c.globals, c.maxAllocs)
 	return nil
 }
