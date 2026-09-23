@@ -72,9 +72,9 @@ func (l *LaxLoop) ReferencePoint() ReferencePoint { return referencePointForShap
 func (l *LaxLoop) NumChains() int                 { return min(1, l.numVertices) }
 func (l *LaxLoop) Chain(i int) Chain              { return Chain{0, l.numVertices} }
 func (l *LaxLoop) ChainEdge(i, j int) Edge {
-	var k int
-	if j+1 == l.numVertices {
-		k = j + 1
+	k := j + 1
+	if k == l.numVertices {
+		k = 0
 	}
 	return Edge{l.vertices[j], l.vertices[k]}
 }
