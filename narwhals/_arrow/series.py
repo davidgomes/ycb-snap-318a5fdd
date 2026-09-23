@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Callable, Literal, cast, overload
 
 import pyarrow as pa
@@ -1005,6 +1006,83 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
                 window_size=window_size, min_samples=min_samples, center=center, ddof=ddof
             )
             ** 0.5
+        )
+
+    def _rolling_map(
+        self,
+        window_size: int,
+        *,
+        min_samples: int,
+        center: bool,
+        function: Callable[[list[Any]], Any],
+        result_type: pa.DataType,
+    ) -> Self:
+        padded_series, offset = pad_series(self, window_size=window_size, center=center)
+        values = padded_series.native.to_pylist()
+        result: list[Any] = []
+        for i in range(len(values)):
+            start = i - window_size + 1
+            window = values[start : i + 1] if start > 0 else values[: i + 1]
+            valid = [
+                value
+                for value in window
+                if value is not None
+                and not (isinstance(value, float) and math.isnan(value))
+            ]
+            result.append(function(valid) if len(valid) >= min_samples else None)
+        return self._with_native(
+            chunked_array([pa.array(result, type=result_type)])
+        )._gather_slice(slice(offset, None))
+
+    def rolling_min(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._rolling_map(
+            window_size,
+            min_samples=min_samples,
+            center=center,
+            function=min,
+            result_type=self.native.type,
+        )
+
+    def rolling_max(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self._rolling_map(
+            window_size,
+            min_samples=min_samples,
+            center=center,
+            function=max,
+            result_type=self.native.type,
+        )
+
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
+        return self.rolling_quantile(
+            window_size,
+            quantile=0.5,
+            interpolation="linear",
+            min_samples=min_samples,
+            center=center,
+        )
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        def _quantile(values: list[Any]) -> Any:
+            return pc.quantile(
+                pa.array(values, type=self.native.type),
+                q=quantile,
+                interpolation=interpolation,
+            )[0].as_py()
+
+        return self._rolling_map(
+            window_size,
+            min_samples=min_samples,
+            center=center,
+            function=_quantile,
+            result_type=pa.float64(),
         )
 
     def rank(self, method: RankMethod, *, descending: bool) -> Self:

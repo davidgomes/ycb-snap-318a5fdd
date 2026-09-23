@@ -269,6 +269,55 @@ class SparkLikeExpr(SQLExpr["SparkLikeLazyFrame", "Column"]):
             implementation=self._implementation,
         )
 
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: str,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        if interpolation != "linear":
+            msg = (
+                "Only linear interpolation is supported for rolling_quantile "
+                "on SQL backends."
+            )
+            raise NotImplementedError(msg)
+        if center:
+            half = (window_size - 1) // 2
+            remainder = (window_size - 1) % 2
+            start = -(half + remainder)
+            end = half
+        else:
+            start = -(window_size - 1)
+            end = 0
+
+        def func(
+            df: SparkLikeLazyFrame, inputs: SparkWindowInputs
+        ) -> Sequence[Column]:
+            window_kwargs: Any = {
+                "partition_by": inputs.partition_by,
+                "order_by": inputs.order_by,
+                "rows_start": start,
+                "rows_end": end,
+            }
+            return [
+                self._when(
+                    self._window_expression(
+                        self._function("count", expr), **window_kwargs
+                    )
+                    >= self._lit(min_samples),
+                    self._window_expression(
+                        self._function("percentile", expr, self._lit(quantile)),
+                        **window_kwargs,
+                    ),
+                )
+                for expr in self(df)
+            ]
+
+        return self._with_window_function(func)
+
     def median(self) -> Self:
         def _median(expr: Column) -> Column:
             if self._implementation in {
