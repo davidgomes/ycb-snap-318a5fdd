@@ -191,7 +191,7 @@ export function createPersisterRestoreResult<
   }
 }
 
-export function isPersisterRestoreResult(
+function isPersisterRestoreResult(
   value: unknown,
 ): value is PersisterRestoreResult {
   return (

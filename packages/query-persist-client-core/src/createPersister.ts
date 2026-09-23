@@ -290,15 +290,14 @@ export function experimental_createQueryPersister<TStorageValue = string>({
 
     // Try to restore only if we do not have any data in the cache and we have persister defined
     if (matchesFilter && query.state.data === undefined && storage != null) {
-      const persistedQuery = await retrievePersistedQuery(
+      const restoredQuery = await retrievePersistedQuery(
         query.queryHash,
         (persistedQuery: PersistedQuery) => {
           // `query.fetch` already adopts the restored state, but the persister
           // can also be invoked directly, so keep the timestamps in sync here
-          const { dataUpdatedAt, errorUpdatedAt } = persistedQuery.state
           query.setState({
-            dataUpdatedAt,
-            ...(errorUpdatedAt !== undefined && { errorUpdatedAt }),
+            dataUpdatedAt: persistedQuery.state.dataUpdatedAt,
+            errorUpdatedAt: persistedQuery.state.errorUpdatedAt,
           })
 
           if (
@@ -310,10 +309,10 @@ export function experimental_createQueryPersister<TStorageValue = string>({
         },
       )
 
-      if (persistedQuery && persistedQuery.state.data !== undefined) {
+      if (restoredQuery && restoredQuery.state.data !== undefined) {
         return createPersisterRestoreResult({
-          data: persistedQuery.state.data as T,
-          state: persistedQuery.state as QueryState<T>,
+          data: restoredQuery.state.data as T,
+          state: restoredQuery.state as QueryState<T>,
         })
       }
     }
