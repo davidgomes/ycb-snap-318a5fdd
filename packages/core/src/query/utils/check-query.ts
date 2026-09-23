@@ -3,6 +3,7 @@ import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import type { World } from '../../world';
 import type { QueryInstance } from '../types';
+import { checkStaticWithGroups } from './aspect-filters';
 
 /**
  * Check if an entity matches a non-tracking query.
@@ -15,6 +16,10 @@ export function checkQuery(world: World, query: QueryInstance, entity: Entity): 
     const eid = getEntityId(entity);
 
     if (query.traitInstances.all.length === 0) return false;
+
+    if (query.notAllMasks.length > 0 || query.orAllMasks.length > 0) {
+        return checkStaticWithGroups(world, query, entity);
+    }
 
     for (let i = 0; i < generations.length; i++) {
         const generationId = generations[i];

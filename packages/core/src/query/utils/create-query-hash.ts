@@ -1,3 +1,4 @@
+import { isAspect } from '../../aspect/aspect';
 import { $internal } from '../../common';
 import { isRelationPair } from '../../relation/utils/is-relation';
 import type { Relation } from '../../relation/types';
@@ -34,6 +35,20 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
                 const traitId = traitIds[i];
                 sortedIDs[cursor++] = modifierId * 100000 + traitId;
             }
+
+            const aspectGroups = param.aspectGroups;
+            if (aspectGroups) {
+                for (let i = 0; i < aspectGroups.length; i++) {
+                    const group = aspectGroups[i];
+                    sortedIDs[cursor++] = modifierId * 100000 + 50_000_000 + group.aspectId;
+                    const groupIds = group.traitIds;
+                    for (let j = 0; j < groupIds.length; j++) {
+                        sortedIDs[cursor++] = modifierId * 100000 + groupIds[j] + 25_000_000;
+                    }
+                }
+            }
+        } else if (isAspect(param)) {
+            sortedIDs[cursor++] = 9_000_000_000 + param.id;
         } else {
             const traitId = (param as Trait).id;
             sortedIDs[cursor++] = traitId;

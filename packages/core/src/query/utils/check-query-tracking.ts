@@ -3,6 +3,8 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import { checkStaticWithGroups } from './aspect-filters';
+import { applyAspectEvent, aspectGroupMatches } from './aspect-tracking';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -36,8 +38,10 @@ export function checkQueryTracking(
     // Early exit: no traits to check
     if (traitInstancesAll.length === 0) return false;
 
-    // 1. Check static constraints (required/forbidden/or)
-    for (let i = 0; i < generationsLen; i++) {
+    // 1. Check static constraints (required/forbidden/or), or aspect Not/Or groups.
+    if (query.notAllMasks.length > 0 || query.orAllMasks.length > 0) {
+        if (!checkStaticWithGroups(world, query, entity)) return false;
+    } else for (let i = 0; i < generationsLen; i++) {
         const generationId = generations[i];
         const bitmask = staticBitmasks[i];
         if (!bitmask) continue;
@@ -60,6 +64,8 @@ export function checkQueryTracking(
         if (or !== 0 && (entityMask & or) === 0) return false;
     }
 
+    // `else for` above binds the static loop. Aspect groups are handled below.
+
     // 2. Process tracking groups - update trackers and check cross-event invalidation
     // Also track OR group state to avoid second loop when possible
     let hasOrGroup = false;
@@ -71,6 +77,16 @@ export function checkQueryTracking(
         const groupLogic = group.logic;
         const groupBitmasks = group.bitmasks;
         const groupBitmask = groupBitmasks[eventGenerationId];
+
+        if (group.aspect) {
+            applyAspectEvent(group, eid, entityMasks, eventType, eventGenerationId, eventBitflag);
+            const matched = aspectGroupMatches(group, eid, entityMasks);
+            if (groupLogic === 'or') {
+                hasOrGroup = true;
+                if (matched) anyOrMatched = true;
+            } else if (!matched) return false;
+            continue;
+        }
 
         // Check if this event affects this group's traits
         if (groupBitmask && (groupBitmask & eventBitflag)) {

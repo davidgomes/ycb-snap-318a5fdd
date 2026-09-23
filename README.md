@@ -33,6 +33,28 @@ const Mesh = trait(() => new THREE.Mesh())
 const IsActive = trait()
 ```
 
+### Group traits with aspects
+
+`createAspect` bundles two or more traits so entity operations and queries treat them as one unit. Nested aspects flatten. Overlapping field names and relation constituents throw when the aspect is created. Tag traits are allowed.
+
+```js
+import { createAspect } from 'koota'
+
+const Health = trait({ hp: 100 })
+const Actor = createAspect(Position, Health, IsActive)
+const actor = world.spawn(Actor({ x: 1, hp: 50 }))
+
+actor.has(Actor) // true when every constituent is present
+actor.get(Actor) // { x, y, hp }
+actor.set(Actor, { x: 4 }) // writes x onto Position only
+
+world.query(Actor).updateEach(([body]) => {
+  body.hp -= 1
+})
+```
+
+`Not(Actor)` matches entities missing at least one constituent. `Added` and `Removed` follow the transition into or out of having every constituent. `Changed` matches when any constituent's data changes while all of them are present. `onAdd`, `onRemove`, and `onChange` use the same rules.
+
 ### Spawn entities
 
 Entities are spawned in a world. By adding traits to an entity they gain content.

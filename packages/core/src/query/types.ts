@@ -1,3 +1,4 @@
+import type { Aspect, MergeTraits } from '../aspect/types';
 import type { Entity } from '../entity/types';
 import type { RelationPair } from '../relation/types';
 import { AoSFactory } from '../storage';
@@ -15,7 +16,17 @@ import { $modifier } from './modifier';
 import { $parameters, $queryRef } from './symbols';
 
 export type QueryModifier = (...components: Trait[]) => Modifier;
-export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier>;
+export type QueryParameter = Trait | RelationPair | Aspect | ReturnType<QueryModifier>;
+
+export type ModifierPart =
+    | { kind: 'trait'; trait: Trait }
+    | { kind: 'aspect'; aspectId: number; traits: readonly Trait[] };
+
+export type AspectGroup = {
+    aspectId: number;
+    traits: readonly Trait[];
+    traitIds: number[];
+};
 export type QuerySubscriber = (entity: Entity) => void;
 export type QueryUnsubscriber = () => void;
 
@@ -51,22 +62,41 @@ export type StoresFromParameters<T extends QueryParameter[]> = T extends [infer 
       ]
     : [];
 
+type ModifierPartsInstances<P> = P extends readonly [infer Head, ...infer Tail]
+    ? [
+          ...(Head extends { kind: 'trait'; trait: infer T extends Trait }
+              ? IsTag<T> extends false
+                  ? ExtractSchema<T> extends AoSFactory
+                      ? [ReturnType<ExtractSchema<T>>]
+                      : [TraitRecord<T>]
+                  : []
+              : Head extends { kind: 'aspect'; traits: infer Traits extends readonly Trait[] }
+                ? [MergeTraits<Traits>]
+                : []),
+          ...(Tail extends readonly ModifierPart[] ? ModifierPartsInstances<Tail> : []),
+      ]
+    : [];
+
 export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
     infer First,
     ...infer Rest,
 ]
     ? [
-          ...(First extends Trait
-              ? IsTag<First> extends false
-                  ? ExtractSchema<First> extends AoSFactory
-                      ? [ReturnType<ExtractSchema<First>>]
-                      : [TraitRecord<First>]
-                  : []
-              : First extends Modifier
-                ? IsNotModifier<First> extends true
-                    ? []
-                    : InstancesFromParameters<UnwrapModifierData<First>>
-                : []),
+          ...(First extends Aspect<infer Traits>
+              ? [MergeTraits<Traits>]
+              : First extends Trait
+                ? IsTag<First> extends false
+                    ? ExtractSchema<First> extends AoSFactory
+                        ? [ReturnType<ExtractSchema<First>>]
+                        : [TraitRecord<First>]
+                    : []
+                : First extends Modifier
+                  ? IsNotModifier<First> extends true
+                      ? []
+                      : First extends { parts: infer P extends readonly ModifierPart[] }
+                        ? ModifierPartsInstances<P>
+                        : InstancesFromParameters<UnwrapModifierData<First>>
+                  : []),
           ...(Rest extends QueryParameter[] ? InstancesFromParameters<Rest> : []),
       ]
     : [];
@@ -93,13 +123,17 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /** Present when the modifier was built with one or more aspects. */
+    aspectGroups?: readonly AspectGroup[];
+    /** Argument order, including aspects, for query data emission. */
+    parts?: readonly ModifierPart[];
 };
 
 /** Parameter types that can be passed to Or modifier */
-export type OrParameter = Trait | Modifier;
+export type OrParameter = Trait | Modifier | Aspect;
 
 /** Or modifier that can contain both traits and nested modifiers */
-export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
+export type OrModifier<T extends readonly OrParameter[] = OrParameter[]> = Modifier<
     ExtractTraitsFromOrParams<T>,
     'or'
 > & {
@@ -107,12 +141,15 @@ export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
 };
 
 /** Extract traits from Or parameters (filters out modifiers) */
-type ExtractTraitsFromOrParams<T extends OrParameter[]> = T extends [infer First, ...infer Rest]
+type ExtractTraitsFromOrParams<T extends readonly OrParameter[]> = T extends readonly [
+    infer First,
+    ...infer Rest,
+]
     ? First extends Trait
-        ? Rest extends OrParameter[]
+        ? Rest extends readonly OrParameter[]
             ? [First, ...ExtractTraitsFromOrParams<Rest>]
             : [First]
-        : Rest extends OrParameter[]
+        : Rest extends readonly OrParameter[]
           ? ExtractTraitsFromOrParams<Rest>
           : []
     : [];
@@ -126,12 +163,21 @@ export type TrackingGroup = {
     logic: 'and' | 'or';
     /** The type of tracking event */
     type: 'add' | 'remove' | 'change';
+    /**
+     * Set when this group tracks an aspect rather than individual traits.
+     * Add means the transition to all constituents, remove means the transition
+     * away from all constituents, and change means any constituent data changed
+     * while every constituent is present.
+     */
+    aspect?: 'add' | 'remove' | 'change';
     /** Tracking modifier ID for snapshot/mask lookups */
     id: number;
     /** Bitmasks indexed by generationId */
     bitmasks: (number | undefined)[];
     /** Per-entity tracker state indexed by [generationId][entityId] */
     trackers: (number[] | undefined)[];
+    /** Per-entity flag for aspect removal transitions. 1 means the transition happened. */
+    qualified?: number[];
 };
 
 export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
@@ -165,6 +211,16 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     removeSubscriptions: Set<QuerySubscriber>;
     /** Relation pairs for target-specific queries */
     relationFilters?: RelationPair[];
+    /**
+     * Not(aspect) groups. Each entry is a bitmask per generation.
+     * The entity matches when it is missing at least one bit of every group.
+     */
+    notAllMasks: number[][];
+    /**
+     * Or(aspect) groups. Each entry is a bitmask per generation.
+     * A complete group satisfies the Or clause.
+     */
+    orAllMasks: number[][];
     run: (world: World, params: QueryParameter[]) => QueryResult<T>;
     add: (entity: Entity) => void;
     remove: (world: World, entity: Entity) => void;

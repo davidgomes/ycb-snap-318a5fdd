@@ -11,16 +11,19 @@ import { getTrackingCursor, setTrackingMasks } from '../query/utils/tracking-cur
 import { getEntitiesWithRelationTo } from '../relation/relation';
 import type { Relation, RelationPair } from '../relation/types';
 import { isRelation, isRelationPair } from '../relation/utils/is-relation';
-import { addTrait, getTrait, hasTrait, registerTrait, removeTrait, setTrait } from '../trait/trait';
+import {
+    applyAdd,
+    applyRemove,
+    getAspect,
+    hasAspect,
+    isAspect,
+    setAspect,
+    subscribeAspect,
+} from '../aspect/aspect';
+import type { Aspect } from '../aspect/types';
+import { getTrait, hasTrait, registerTrait, setTrait } from '../trait/trait';
 import { clearTraitInstance, getTraitInstance, hasTraitInstance } from '../trait/trait-instance';
-import type {
-    ConfigurableTrait,
-    ExtractSchema,
-    SetTraitCallback,
-    Trait,
-    TraitRecord,
-    TraitValue,
-} from '../trait/types';
+import type { ConfigurableTrait, Trait } from '../trait/types';
 import { universe } from '../universe/universe';
 import type { World, WorldInternal, WorldOptions } from './types';
 import { allocateWorldId, releaseWorldId } from './utils/world-index';
@@ -34,16 +37,16 @@ export function createWorld(
     const id = allocateWorldId(universe.worldIndex);
     let isInitialized = false;
     let lazyTraits: ConfigurableTrait[] | undefined;
-    type HookInput = Trait | Relation<Trait> | RelationPair<Trait>;
+    type HookInput = Trait | Relation<Trait> | RelationPair<Trait> | Aspect;
     type HookCallback = (entity: Entity, target?: Entity) => void;
 
-    function resolveHookTrait(input: HookInput): Trait {
+    function resolveHookTrait(input: Exclude<HookInput, Aspect>): Trait {
         if (isRelationPair(input)) return input[$internal].relation[$internal].trait;
         if (isRelation(input)) return input[$internal].trait;
         return input;
     }
 
-    function resolveHookCallback(input: HookInput, callback: HookCallback): HookCallback {
+    function resolveHookCallback(input: Exclude<HookInput, Aspect>, callback: HookCallback): HookCallback {
         if (isRelationPair(input)) {
             const pairTarget = input[$internal].target;
             if (pairTarget === '*') return callback;
@@ -103,29 +106,33 @@ export function createWorld(
             ctx.worldEntity = createEntity(world, IsExcluded, ...initTraits);
         },
 
-        spawn(...spawnTraits: ConfigurableTrait[]): Entity {
+        spawn(
+            ...spawnTraits: Array<ConfigurableTrait | Aspect | [Aspect, Record<string, unknown>]>
+        ): Entity {
             return createEntity(world, ...spawnTraits);
         },
 
-        has(target: Entity | Trait): boolean {
-            return typeof target === 'number'
-                ? isEntityAlive(world[$internal].entityIndex, target)
-                : hasTrait(world, world[$internal].worldEntity, target);
+        has(target: Entity | Trait | Aspect): boolean {
+            if (typeof target === 'number') return isEntityAlive(world[$internal].entityIndex, target);
+            if (isAspect(target)) return hasAspect(world, world[$internal].worldEntity, target);
+            return hasTrait(world, world[$internal].worldEntity, target);
         },
 
-        add(...addTraits: ConfigurableTrait[]) {
-            addTrait(world, world[$internal].worldEntity, ...addTraits);
+        add(...addTraits: Array<ConfigurableTrait | Aspect | [Aspect, Record<string, unknown>]>) {
+            applyAdd(world, world[$internal].worldEntity, addTraits);
         },
 
-        remove(...removeTraits: Trait[]) {
-            removeTrait(world, world[$internal].worldEntity, ...removeTraits);
+        remove(...removeTraits: Array<Trait | Aspect>) {
+            applyRemove(world, world[$internal].worldEntity, removeTraits);
         },
 
-        get<T extends Trait>(trait: T): TraitRecord<ExtractSchema<T>> | undefined {
+        get(trait: Trait | Aspect) {
+            if (isAspect(trait)) return getAspect(world, world[$internal].worldEntity, trait);
             return getTrait(world, world[$internal].worldEntity, trait);
         },
 
-        set<T extends Trait>(trait: T, value: TraitValue<ExtractSchema<T>> | SetTraitCallback<T>) {
+        set(trait: Trait | Aspect, value: any) {
+            if (isAspect(trait)) return setAspect(world, world[$internal].worldEntity, trait, value);
             setTrait(world, world[$internal].worldEntity, trait, value, true);
         },
 
@@ -311,13 +318,11 @@ export function createWorld(
             return () => query.removeSubscriptions.delete(callback);
         },
 
-        onAdd<T extends Trait>(
-            trait: T | Relation<T> | RelationPair<T>,
-            callback: (entity: Entity, target?: Entity) => void
-        ): QueryUnsubscriber {
+        onAdd(input: HookInput, callback: (entity: Entity, target?: Entity) => void): QueryUnsubscriber {
+            if (isAspect(input)) return subscribeAspect(world, 'add', input, callback);
             const ctx = world[$internal];
-            const resolvedTrait = resolveHookTrait(trait);
-            const resolvedCallback = resolveHookCallback(trait, callback);
+            const resolvedTrait = resolveHookTrait(input);
+            const resolvedCallback = resolveHookCallback(input, callback);
 
             let data = getTraitInstance(ctx.traitInstances, resolvedTrait);
 
@@ -331,13 +336,14 @@ export function createWorld(
             return () => data.addSubscriptions.delete(resolvedCallback);
         },
 
-        onRemove<T extends Trait>(
-            trait: T | Relation<T> | RelationPair<T>,
+        onRemove(
+            input: HookInput,
             callback: (entity: Entity, target?: Entity) => void
         ): QueryUnsubscriber {
+            if (isAspect(input)) return subscribeAspect(world, 'remove', input, callback);
             const ctx = world[$internal];
-            const resolvedTrait = resolveHookTrait(trait);
-            const resolvedCallback = resolveHookCallback(trait, callback);
+            const resolvedTrait = resolveHookTrait(input);
+            const resolvedCallback = resolveHookCallback(input, callback);
 
             let data = getTraitInstance(ctx.traitInstances, resolvedTrait);
 
@@ -351,13 +357,11 @@ export function createWorld(
             return () => data.removeSubscriptions.delete(resolvedCallback);
         },
 
-        onChange(
-            trait: Trait | Relation<Trait> | RelationPair<Trait>,
-            callback: (entity: Entity, target?: Entity) => void
-        ) {
+        onChange(input: HookInput, callback: (entity: Entity, target?: Entity) => void) {
+            if (isAspect(input)) return subscribeAspect(world, 'change', input, callback);
             const ctx = world[$internal];
-            const resolvedTrait = resolveHookTrait(trait);
-            const resolvedCallback = resolveHookCallback(trait, callback);
+            const resolvedTrait = resolveHookTrait(input);
+            const resolvedCallback = resolveHookCallback(input, callback);
 
             if (!hasTraitInstance(ctx.traitInstances, resolvedTrait))
                 registerTrait(world, resolvedTrait);

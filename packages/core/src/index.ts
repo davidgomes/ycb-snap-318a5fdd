@@ -40,6 +40,8 @@ export type {
     RelationTarget,
 } from './relation/types';
 export { getStore, trait } from './trait/trait';
+export { createAspect } from './aspect/aspect';
+export type { Aspect } from './aspect/types';
 export type {
     ConfigurableTrait,
     ExtractIsTag,

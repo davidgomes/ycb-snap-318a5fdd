@@ -11,6 +11,7 @@ Koota manages state using entities with composable traits.
 
 - **Entity** - A unique identifier pointing to data defined by traits. Spawned from a world.
 - **Trait** - A reusable data definition. Can be schema-based (SoA), callback-based (AoS), or a tag.
+- **Aspect** - A named group of two or more traits operated on and queried as one unit. See [references/aspects.md](references/aspects.md).
 - **Relation** - A directional connection between entities to build graphs.
 - **World** - The context for all entities and their data (traits).
 - **Archetype** - A unique combination of traits that entities share.

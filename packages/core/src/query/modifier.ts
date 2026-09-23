@@ -7,15 +7,21 @@ export const $modifier = Symbol('modifier');
 export function createModifier<TTrait extends Trait[] = Trait[], TType extends string = string>(
     type: TType,
     id: number,
-    traits: TTrait
+    traits: TTrait,
+    extras?: Pick<Modifier, 'aspectGroups' | 'parts'>
 ): Modifier<TTrait, TType> {
-    return {
+    const modifier = {
         [$modifier]: true,
         type,
         id,
         traits,
         traitIds: traits.map((trait) => trait.id),
-    } as const;
+    } as Modifier<TTrait, TType>;
+
+    if (extras?.aspectGroups?.length) modifier.aspectGroups = extras.aspectGroups;
+    if (extras?.parts) modifier.parts = extras.parts;
+
+    return modifier;
 }
 
 export /* @inline @pure */ function isModifier(param: QueryParameter): param is Modifier {
