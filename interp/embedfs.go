@@ -97,15 +97,16 @@ func (f embedFS) Open(name string) (fs.File, error) {
 
 // ReadDir reads the named directory and returns its entries sorted by name.
 func (f embedFS) ReadDir(name string) ([]fs.DirEntry, error) {
-	file := f.lookup(name)
-	if file == nil {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+	file, err := f.Open(name)
+	if err != nil {
+		return nil, err
 	}
-	if !file.dir {
-		return nil, &fs.PathError{Op: "read", Path: name, Err: errors.New("not a directory")}
+	dir, ok := file.(*embedOpenDir)
+	if !ok {
+		return nil, embedReadError(name, errors.New("not a directory"))
 	}
-	list := make([]fs.DirEntry, len(file.entries))
-	for i, e := range file.entries {
+	list := make([]fs.DirEntry, len(dir.file.entries))
+	for i, e := range dir.file.entries {
 		list[i] = e
 	}
 	return list, nil
@@ -114,14 +115,21 @@ func (f embedFS) ReadDir(name string) ([]fs.DirEntry, error) {
 // ReadFile reads and returns the content of the named file.
 // The returned slice is a copy which can be modified by the caller.
 func (f embedFS) ReadFile(name string) ([]byte, error) {
-	file := f.lookup(name)
-	if file == nil {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+	file, err := f.Open(name)
+	if err != nil {
+		return nil, err
 	}
-	if file.dir {
-		return nil, &fs.PathError{Op: "read", Path: name, Err: errors.New("is a directory")}
+	ofile, ok := file.(*embedOpenFile)
+	if !ok {
+		return nil, embedReadError(name, errEmbedIsDir)
 	}
-	return []byte(file.data), nil
+	return []byte(ofile.file.data), nil
+}
+
+var errEmbedIsDir = errors.New("is a directory")
+
+func embedReadError(path string, err error) error {
+	return &fs.PathError{Op: "read", Path: path, Err: err}
 }
 
 func (f *embedFile) Name() string               { return f.name }
@@ -160,7 +168,7 @@ func (f *embedOpenFile) Read(b []byte) (int, error) {
 		return 0, io.EOF
 	}
 	if f.offset < 0 {
-		return 0, &fs.PathError{Op: "read", Path: f.path, Err: fs.ErrInvalid}
+		return 0, embedReadError(f.path, fs.ErrInvalid)
 	}
 	n := copy(b, f.file.data[f.offset:])
 	f.offset += int64(n)
@@ -183,7 +191,7 @@ func (f *embedOpenFile) Seek(offset int64, whence int) (int64, error) {
 
 func (f *embedOpenFile) ReadAt(b []byte, offset int64) (int, error) {
 	if offset < 0 || offset > int64(len(f.file.data)) {
-		return 0, &fs.PathError{Op: "read", Path: f.path, Err: fs.ErrInvalid}
+		return 0, embedReadError(f.path, fs.ErrInvalid)
 	}
 	n := copy(b, f.file.data[offset:])
 	if n < len(b) {
@@ -205,7 +213,7 @@ func (d *embedOpenDir) Close() error               { return nil }
 func (d *embedOpenDir) Stat() (fs.FileInfo, error) { return d.file, nil }
 
 func (d *embedOpenDir) Read([]byte) (int, error) {
-	return 0, &fs.PathError{Op: "read", Path: d.path, Err: errors.New("is a directory")}
+	return 0, embedReadError(d.path, errEmbedIsDir)
 }
 
 func (d *embedOpenDir) ReadDir(count int) ([]fs.DirEntry, error) {

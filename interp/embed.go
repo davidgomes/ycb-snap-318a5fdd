@@ -14,7 +14,10 @@ import (
 	"unicode"
 )
 
-const embedPrefix = "//go:embed"
+const (
+	embedPkg    = "embed" // import path and name of the embed package
+	embedPrefix = "//go:embed"
+)
 
 var embedFSType = reflect.TypeOf(embedFS{})
 
@@ -144,7 +147,7 @@ func parseEmbedPatterns(args string) ([]string, error) {
 		patterns = append(patterns, pattern)
 	}
 	if len(patterns) == 0 {
-		return nil, errors.New("usage: //go:embed pattern...")
+		return nil, errors.New("missing pattern in //go:embed directive")
 	}
 	return patterns, nil
 }

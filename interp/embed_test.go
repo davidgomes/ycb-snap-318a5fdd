@@ -505,7 +505,7 @@ var s string
 
 func main() {}
 `,
-			err: "usage: //go:embed pattern...",
+			err: "missing pattern in //go:embed directive",
 		},
 	}
 
