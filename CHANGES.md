@@ -541,6 +541,42 @@ To be released.
     }))
     ~~~~
 
+ -  Added conditional option dependencies. The new `dependsOn` field of
+    `OptionOptions` makes an option depend on the presence or value of other
+    options in the enclosing `object()` parser. Options are referenced by
+    either their object key or one of their CLI flags, and conditions can be
+    combined with `anyOf` and `allOf`. While its dependency is unsatisfied,
+    the dependent option is hidden from help text and shell completion.
+    With `required: true`, giving the dependent option anyway is a parse
+    error that names the required option.
+
+    ~~~~ typescript
+    import { object } from "@optique/core/constructs";
+    import { option, requiredWhen } from "@optique/core/primitives";
+    import { choice, integer, string } from "@optique/core/valueparser";
+
+    const parser = object({
+      auth: option("--auth"),
+      token: option("--token", string(), { dependsOn: { option: "auth" } }),
+      mode: option("--mode", choice(["basic", "advanced"])),
+      level: requiredWhen(
+        { option: "--mode", value: "advanced" },
+        "--level",
+        integer(),
+      ),
+    });
+    ~~~~
+
+    New exports from `@optique/core/primitives`:
+
+     -  `requiredWhen()`, `optionalWhen()`, and `conditionalOption()`:
+        Shorthands for `option()` with `dependsOn`.
+     -  `OptionDependsOn`, `OptionDependencyCondition`,
+        `OptionDependencyCompound`, and `OptionDependencyConditionLike` types.
+     -  `ConditionalOptionCondition` and `ConditionalOptionOptions` types.
+
+    The option usage term also gained a `dependsOn` field.
+
  -  Removed deprecated `run` export. Use `runParser()` instead. The old name
     was deprecated in v0.9.0 due to naming conflicts with `@optique/run`'s
     `run()` function. [[#65]]
