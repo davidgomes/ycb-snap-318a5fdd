@@ -128,6 +128,17 @@ class BubbleTheme extends BaseTheme {
       this.buildPickers(toolbar.container.querySelectorAll('select'), icons);
     }
   }
+
+  syncToolbar(toolbar: Toolbar) {
+    super.syncToolbar(toolbar);
+    if (
+      toolbar.container != null &&
+      toolbar.isActive() &&
+      toolbar.container.parentNode !== this.tooltip.root
+    ) {
+      this.tooltip.root.appendChild(toolbar.container);
+    }
+  }
 }
 BubbleTheme.DEFAULTS = merge({}, BaseTheme.DEFAULTS, {
   modules: {
