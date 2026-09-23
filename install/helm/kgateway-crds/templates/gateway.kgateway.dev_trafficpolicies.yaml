@@ -355,6 +355,190 @@ spec:
                     must be set
                   rule: '[has(self.responseCompression),has(self.requestDecompression)].filter(x,x==true).size()
                     >= 1'
+              consistentHash:
+                description: |-
+                  ConsistentHash configures the hash policies used by hashing load balancers
+                  (e.g. RingHash, Maglev) to compute the hash key for a request.
+                  Setting this field, even as an empty object, enables consistent hashing on the route.
+                  If no hash sources are specified, the source IP of the request is used.
+                  Hash policies are evaluated in the following order: headers, cookies, queryParameters,
+                  filterState, sourceIp.
+                properties:
+                  cookies:
+                    description: |-
+                      Cookies specifies cookies whose values are used as components of the hash key.
+                      Entries are deduplicated by name, keeping the first occurrence.
+                    items:
+                      description: ConsistentHashCookie uses the value of a cookie
+                        as a component of the hash key.
+                      properties:
+                        attributes:
+                          description: Attributes are additional attributes (e.g.
+                            SameSite, Secure) set on the generated cookie.
+                          items:
+                            description: ConsistentHashCookieAttribute is an attribute
+                              of a generated cookie.
+                            properties:
+                              name:
+                                description: Name is the name of the cookie attribute.
+                                maxLength: 256
+                                minLength: 1
+                                type: string
+                              value:
+                                description: Value is the value of the cookie attribute.
+                                maxLength: 1024
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          maxItems: 16
+                          type: array
+                        name:
+                          description: Name is the name of the cookie to hash.
+                          maxLength: 256
+                          minLength: 1
+                          type: string
+                        path:
+                          description: Path is the path of the generated cookie.
+                          minLength: 1
+                          type: string
+                        terminal:
+                          description: |-
+                            Terminal, if true and a hash key is available after evaluating this entry, causes
+                            the remaining hash policies to be skipped.
+                          type: boolean
+                        ttl:
+                          description: |-
+                            TTL is the time to live of the cookie. If set, a cookie with this TTL is generated
+                            when the cookie is not present in the request. A TTL of zero generates a session cookie.
+                            Accepts a duration string (e.g. "1h30m") or an integer number of seconds (e.g. "3600").
+                          type: string
+                          x-kubernetes-validations:
+                          - message: ttl must be a duration (e.g. 1h30m) or an integer
+                              number of seconds
+                            rule: self.matches('^([0-9]+|([0-9]+([.][0-9]+)?(ns|us|ms|s|m|h))+)$')
+                      required:
+                      - name
+                      type: object
+                    maxItems: 16
+                    type: array
+                  disable:
+                    description: |-
+                      Disable suppresses consistent hashing on the route, including any hash policies
+                      inherited from policies attached at a broader scope.
+                      When true, no other fields may be set.
+                    type: boolean
+                  filterState:
+                    description: |-
+                      FilterState specifies filter state objects whose values are used as components of the hash key.
+                      Entries are deduplicated by key, keeping the first occurrence.
+                    items:
+                      description: ConsistentHashFilterState uses the value of a filter
+                        state object as a component of the hash key.
+                      properties:
+                        key:
+                          description: |-
+                            Key is the name of the filter state object to hash.
+                            The object must implement hashing for it to be used as a hash key.
+                          maxLength: 256
+                          minLength: 1
+                          type: string
+                        terminal:
+                          description: |-
+                            Terminal, if true and a hash key is available after evaluating this entry, causes
+                            the remaining hash policies to be skipped.
+                          type: boolean
+                      required:
+                      - key
+                      type: object
+                    maxItems: 16
+                    type: array
+                  headers:
+                    description: |-
+                      Headers specifies request headers whose values are used as components of the hash key.
+                      Entries are deduplicated by headerName (case-insensitive), keeping the first occurrence.
+                    items:
+                      description: ConsistentHashHeader uses the value of a request
+                        header as a component of the hash key.
+                      properties:
+                        headerName:
+                          description: HeaderName is the name of the request header
+                            to hash.
+                          maxLength: 256
+                          minLength: 1
+                          type: string
+                        regexRewrite:
+                          description: RegexRewrite rewrites the header value using
+                            a regular expression before it is hashed.
+                          properties:
+                            pattern:
+                              description: |-
+                                Pattern is the regex pattern that matches the value.
+                                The pattern must be a valid RE2 regular expression.
+                              maxLength: 1024
+                              minLength: 1
+                              type: string
+                            substitution:
+                              description: |-
+                                Substitution is the replacement string for the matched pattern.
+                                It can include backreferences to captured groups from the pattern (e.g., \1, \2).
+                              maxLength: 1024
+                              minLength: 1
+                              type: string
+                          required:
+                          - pattern
+                          - substitution
+                          type: object
+                        terminal:
+                          description: |-
+                            Terminal, if true and a hash key is available after evaluating this entry, causes
+                            the remaining hash policies to be skipped.
+                          type: boolean
+                      required:
+                      - headerName
+                      type: object
+                    maxItems: 16
+                    type: array
+                  queryParameters:
+                    description: |-
+                      QueryParameters specifies URL query parameters whose values are used as components of the hash key.
+                      Entries are deduplicated by name, keeping the first occurrence.
+                    items:
+                      description: ConsistentHashQueryParameter uses the value of
+                        a URL query parameter as a component of the hash key.
+                      properties:
+                        name:
+                          description: Name is the name of the URL query parameter
+                            to hash.
+                          maxLength: 256
+                          minLength: 1
+                          type: string
+                        terminal:
+                          description: |-
+                            Terminal, if true and a hash key is available after evaluating this entry, causes
+                            the remaining hash policies to be skipped.
+                          type: boolean
+                      required:
+                      - name
+                      type: object
+                    maxItems: 16
+                    type: array
+                  sourceIp:
+                    description: SourceIP uses the source IP address of the request
+                      as a component of the hash key.
+                    properties:
+                      terminal:
+                        description: |-
+                          Terminal, if true and a hash key is available after evaluating this entry, causes
+                          the remaining hash policies to be skipped.
+                        type: boolean
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: no other fields may be set when disable is true
+                  rule: '!has(self.disable) || !self.disable || (!has(self.headers)
+                    && !has(self.cookies) && !has(self.queryParameters) && !has(self.filterState)
+                    && !has(self.sourceIp))'
               cors:
                 description: Cors specifies the CORS configuration for the policy.
                 properties:
