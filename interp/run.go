@@ -3562,7 +3562,14 @@ func reset(n *node) {
 		typ := n.child[0].typ.frameType()
 		i := n.child[0].findex
 		n.exec = func(f *frame) bltn {
-			f.data[i] = reflect.New(typ).Elem()
+			// Standard initialization replaces the frame slot with a zero value.
+			// Install //go:embed contents in that same step so the zero value
+			// does not overwrite them before the first interpreted statement.
+			v := reflect.New(typ).Elem()
+			if n.embedVal.IsValid() {
+				v.Set(n.embedVal)
+			}
+			f.data[i] = v
 			return next
 		}
 	case 2:

@@ -53,6 +53,12 @@ type node struct {
 	ident      string         // set if node is a var or func
 	redeclared bool           // set if node is a redeclared variable (CFG)
 	meta       interface{}    // meta stores meta information between gta runs, like errors
+
+	// embedPatterns are //go:embed patterns attached to a package-level variable.
+	// embedVal is the value those patterns resolve to. Variable initialization
+	// installs embedVal so the usual zeroing of the frame slot does not discard it.
+	embedPatterns []string
+	embedVal      reflect.Value
 }
 
 func (n *node) shouldBreak() bool {
@@ -374,6 +380,10 @@ func New(options Options) *Interpreter {
 	if len(options.BuildTags) > 0 {
 		i.opt.context.BuildTags = options.BuildTags
 	}
+
+	// embed is always available so //go:embed can name embed.FS without an
+	// extra Use() registration. Use() merges the same type when stdlib is loaded.
+	i.registerEmbed()
 
 	// astDot activates AST graph display for the interpreter
 	i.opt.astDot, _ = strconv.ParseBool(os.Getenv("YAEGI_AST_DOT"))

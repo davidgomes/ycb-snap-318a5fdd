@@ -366,7 +366,9 @@ func wrapInMain(src string) string {
 }
 
 func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err error) {
-	mode := parser.DeclarationErrors
+	// ParseComments keeps lead comments so //go:embed directives can be read.
+	// Build-constraint and yaegi:tags handling also reads those comments.
+	mode := parser.DeclarationErrors | parser.ParseComments
 
 	// Allow incremental parsing of declarations or statements, by inserting
 	// them in a pseudo file package or function. Those statements or
@@ -384,8 +386,6 @@ func (interp *Interpreter) parse(src, name string, inc bool) (node ast.Node, err
 			inFunc = true
 			src = wrapInMain(src)
 		}
-		// Parse comments in REPL mode, to allow tag setting.
-		mode |= parser.ParseComments
 	}
 
 	if ok, err := interp.buildOk(&interp.context, name, src); !ok || err != nil {
@@ -434,6 +434,14 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 	var anc astNode
 	var st nodestack
 	pkgName := "main"
+
+	var embedBySpec map[*ast.ValueSpec][]string
+	if file, ok := f.(*ast.File); ok {
+		embedBySpec, err = interp.embedSpecs(file)
+		if err != nil {
+			return "", nil, err
+		}
+	}
 
 	addChild := func(root **node, anc astNode, pos token.Pos, kind nkind, act action) *node {
 		var i interface{}
@@ -926,6 +934,9 @@ func (interp *Interpreter) ast(f ast.Node) (string, *node, error) {
 			n := addChild(&root, anc, pos, kind, act)
 			n.nleft = len(a.Names)
 			n.nright = len(a.Values)
+			if pats := embedBySpec[a]; len(pats) > 0 {
+				n.embedPatterns = pats
+			}
 			st.push(n, nod)
 
 		default:

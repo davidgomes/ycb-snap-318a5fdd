@@ -108,6 +108,12 @@ func (interp *Interpreter) CompileAST(n ast.Node) (*Program, error) {
 		return nil, err
 	}
 
+	// Resolve //go:embed before execution so variable initialization can
+	// install the contents instead of leaving the zero value in the frame.
+	if err = interp.resolveEmbeds(root); err != nil {
+		return nil, err
+	}
+
 	if root.kind != fileStmt {
 		// REPL may skip package statement.
 		setExec(root.start)

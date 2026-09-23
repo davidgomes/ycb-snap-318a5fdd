@@ -129,6 +129,13 @@ func (interp *Interpreter) importSrc(rPath, importPath string, skipTest bool) (s
 		initNodes = append(initNodes, nodes...)
 	}
 
+	// Resolve //go:embed before global variable initialization runs.
+	for _, root := range rootNodes {
+		if err = interp.resolveEmbeds(root); err != nil {
+			return "", err
+		}
+	}
+
 	// Register source package in the interpreter. The package contains only
 	// the global symbols in the package scope.
 	interp.mutex.Lock()
