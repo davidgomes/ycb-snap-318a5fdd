@@ -809,25 +809,27 @@ fn generate_expr_atomic(expr: OptimizedExpr) -> TokenStream {
 }
 
 fn generate_char_class(ranges: Vec<(String, String)>, negated: bool) -> TokenStream {
-    let checks: Vec<TokenStream> = ranges
+    let conditions = ranges
         .into_iter()
         .map(|(start, end)| {
-            let start = start.chars().next().expect("empty char literal");
-            let end = end.chars().next().expect("empty char literal");
-            quote! { (#start <= c && c <= #end) }
+            let start = start.chars().next().unwrap();
+            let end = end.chars().next().unwrap();
+            quote! { (#start <= character && character <= #end) }
         })
-        .collect();
-
-    if checks.is_empty() {
-        if negated {
-            quote! { state.match_char_by(|_c| true) }
-        } else {
-            quote! { state.match_char_by(|_c| false) }
-        }
-    } else if negated {
-        quote! { state.match_char_by(|c| !(#(#checks)||*)) }
+        .collect::<Vec<_>>();
+    let matches = if conditions.is_empty() {
+        quote! { false }
     } else {
-        quote! { state.match_char_by(|c| #(#checks)||*) }
+        quote! { #(#conditions)||* }
+    };
+    let matches = if negated {
+        quote! { !(#matches) }
+    } else {
+        matches
+    };
+
+    quote! {
+        state.match_char_by(|character| #matches)
     }
 }
 

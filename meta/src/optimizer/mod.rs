@@ -20,7 +20,7 @@ macro_rules! box_tree {
     ($expr:expr) => ($expr);
 }
 
-mod char_class;
+mod coalescer;
 mod concatenator;
 mod factorizer;
 mod lister;
@@ -47,7 +47,7 @@ pub fn optimize(rules: Vec<Rule>) -> Vec<OptimizedRule> {
     optimized
         .into_iter()
         .map(|rule| restorer::restore_on_err(rule, &optimized_map))
-        .map(char_class::coalesce)
+        .map(coalescer::coalesce)
         .collect()
 }
 
@@ -132,9 +132,9 @@ pub enum OptimizedExpr {
     Insens(String),
     /// Matches one character in the range, e.g. `'a'..'z'`
     Range(String, String),
-    /// Matches one character in any of the inclusive ranges.
+    /// Matches one character in any of the given ranges.
     CharClass(Vec<(String, String)>),
-    /// Matches one character outside the inclusive ranges.
+    /// Matches one character not in any of the given ranges.
     NegCharClass(Vec<(String, String)>),
     /// Matches the rule with the given name, e.g. `a`
     Ident(String),
@@ -217,6 +217,20 @@ impl OptimizedExpr {
                     let mapped = Box::new(map_internal(*expr, f));
                     OptimizedExpr::Push(mapped)
                 }
+                #[cfg(feature = "grammar-extras")]
+                OptimizedExpr::RepOnce(expr) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::RepOnce(mapped)
+                }
+                #[cfg(feature = "grammar-extras")]
+                OptimizedExpr::NodeTag(expr, tag) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::NodeTag(mapped, tag)
+                }
+                OptimizedExpr::RestoreOnErr(expr) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::RestoreOnErr(mapped)
+                }
                 expr => expr,
             }
         }
@@ -264,6 +278,20 @@ impl OptimizedExpr {
                     let mapped = Box::new(map_internal(*expr, f));
                     OptimizedExpr::Push(mapped)
                 }
+                #[cfg(feature = "grammar-extras")]
+                OptimizedExpr::RepOnce(expr) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::RepOnce(mapped)
+                }
+                #[cfg(feature = "grammar-extras")]
+                OptimizedExpr::NodeTag(expr, tag) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::NodeTag(mapped, tag)
+                }
+                OptimizedExpr::RestoreOnErr(expr) => {
+                    let mapped = Box::new(map_internal(*expr, f));
+                    OptimizedExpr::RestoreOnErr(mapped)
+                }
                 expr => expr,
             };
 
@@ -284,8 +312,30 @@ impl core::fmt::Display for OptimizedExpr {
                 let end = end.chars().next().expect("Empty range end.");
                 write!(f, "({:?}..{:?})", start, end)
             }
-            OptimizedExpr::CharClass(ranges) => write!(f, "[{}]", format_ranges(ranges)),
-            OptimizedExpr::NegCharClass(ranges) => write!(f, "![{}]", format_ranges(ranges)),
+            OptimizedExpr::CharClass(ranges) => {
+                let ranges = ranges
+                    .iter()
+                    .map(|(start, end)| {
+                        let start = start.chars().next().expect("Empty range start.");
+                        let end = end.chars().next().expect("Empty range end.");
+                        format!("{:?}..{:?}", start, end)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                write!(f, "[{}]", ranges)
+            }
+            OptimizedExpr::NegCharClass(ranges) => {
+                let ranges = ranges
+                    .iter()
+                    .map(|(start, end)| {
+                        let start = start.chars().next().expect("Empty range start.");
+                        let end = end.chars().next().expect("Empty range end.");
+                        format!("{:?}..{:?}", start, end)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                write!(f, "[^{}]", ranges)
+            }
             OptimizedExpr::Ident(id) => write!(f, "{}", id),
             OptimizedExpr::PeekSlice(start, end) => match end {
                 Some(end) => write!(f, "PEEK[{}..{}]", start, end),
@@ -349,22 +399,6 @@ impl core::fmt::Display for OptimizedExpr {
     }
 }
 
-fn format_ranges(ranges: &[(String, String)]) -> String {
-    ranges
-        .iter()
-        .map(|(start, end)| {
-            let start = start.chars().next().expect("Empty range start.");
-            let end = end.chars().next().expect("Empty range end.");
-            if start == end {
-                format!("{:?}", start)
-            } else {
-                format!("({:?}..{:?})", start, end)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" | ")
-}
-
 /// A top-down iterator over an `OptimizedExpr`.
 pub struct OptimizedExprTopDownIterator {
     current: Option<OptimizedExpr>,
@@ -399,7 +433,12 @@ impl OptimizedExprTopDownIterator {
             | OptimizedExpr::NegPred(expr)
             | OptimizedExpr::Rep(expr)
             | OptimizedExpr::Opt(expr)
-            | OptimizedExpr::Push(expr) => {
+            | OptimizedExpr::Push(expr)
+            | OptimizedExpr::RestoreOnErr(expr) => {
+                self.next = Some(*expr);
+            }
+            #[cfg(feature = "grammar-extras")]
+            OptimizedExpr::RepOnce(expr) | OptimizedExpr::NodeTag(expr, _) => {
                 self.next = Some(*expr);
             }
             _ => {
@@ -449,8 +488,7 @@ mod tests {
             vec![OptimizedRule {
                 name: "rule".to_owned(),
                 ty: RuleType::Normal,
-                // Rotated choice chain of adjacent characters coalesces to one range.
-                expr: OptimizedExpr::Range(String::from("a"), String::from("d")),
+                expr: OptimizedExpr::Range("a".to_owned(), "d".to_owned()),
             }]
         };
 
