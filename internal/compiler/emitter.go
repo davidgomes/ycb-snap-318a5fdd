@@ -175,6 +175,11 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
 						fn = newFunction("main", fun.Ident.Name, fun.Type.Reflect, path, fun.Pos())
 					}
 				}
+				if ti := em.ti(fun); ti != nil {
+					if m, ok := ti.value.(*types.Method); ok {
+						m.Fn = fn
+					}
+				}
 				if fun.Ident.Name == "init" {
 					inits = append(inits, fn)
 					continue
@@ -532,7 +537,7 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
 		if out.Ident != nil && em.varStore.mustBeDeclaredAsIndirect(out.Ident) {
 			dst := em.fb.scopeLookup(out.Ident.Name)
 			reg := em.fb.newIndirectRegister()
-			em.fb.emitNew(em.typ(out.Type), -reg)
+			em.fb.emitNewIndirect(em.typ(out.Type), -reg)
 			em.fb.bindVarReg(out.Ident.Name, reg)
 			em.fb.fn.FinalRegs = append(em.fb.fn.FinalRegs, [2]int8{-reg, dst})
 		}
@@ -548,7 +553,7 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
 			reg := em.fb.scopeLookup(param.Ident.Name)
 			indirect := em.fb.newIndirectRegister()
 			typ := em.typ(param.Type)
-			em.fb.emitNew(typ, -indirect)
+			em.fb.emitNewIndirect(typ, -indirect)
 			em.changeRegister(false, reg, indirect, typ, typ)
 			em.fb.bindVarReg(param.Ident.Name, indirect)
 		}

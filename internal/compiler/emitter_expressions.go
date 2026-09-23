@@ -713,6 +713,12 @@ func (em *emitter) emitSelector(v *ast.Selector, reg int8, dstType reflect.Type)
 
 	ti := em.ti(v)
 
+	// Method expression of a method declared in Scriggo.
+	if ident, ok := ti.replacement.(*ast.Identifier); ok {
+		em.emitExprR(ident, dstType, reg)
+		return
+	}
+
 	// Map selector expression.
 	if ti.IsMapSelector() {
 		// Key selector on the empty interface type.

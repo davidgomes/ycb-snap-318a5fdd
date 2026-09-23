@@ -604,11 +604,17 @@ func checkPackage(compilation *compilation, pkg *ast.Package, path string, impor
 			// Function type must be checked for every function, including
 			// 'init's functions.
 			funcType := tc.checkType(f.Type).Type
+			if f.Recv != nil {
+				tc.declareMethod(f, funcType)
+			}
 			if f.Ident.Name == "init" || isBlankIdentifier(f.Ident) {
 				// Do not add 'init' and '_' functions to the file/package block.
 				continue
 			}
 			if _, ok := tc.scopes.FilePackage(f.Ident.Name); ok {
+				if f.Recv != nil {
+					return tc.errorf(f.Ident, "method %s already declared", f.Ident.Name)
+				}
 				return tc.errorf(f.Ident, "%s redeclared in this block", f.Ident.Name)
 			}
 			ti := &typeInfo{Type: funcType}

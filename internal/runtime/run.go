@@ -171,7 +171,11 @@ func (vm *VM) run() (Addr, bool) {
 					v, ok = w.Unwrap(v)
 				} else {
 					if t.Kind() == reflect.Interface {
-						ok = v.Type().Implements(t)
+						if p, isProxy := v.Interface().(ScriggoMethodProxy); isProxy {
+							ok = p.ScriggoImplements(t)
+						} else {
+							ok = v.Type().Implements(t)
+						}
 					} else {
 						ok = v.Type() == t
 					}
@@ -221,6 +225,12 @@ func (vm *VM) run() (Addr, bool) {
 				default:
 					if w, ok := t.(ScriggoType); ok {
 						t = w.GoType()
+					}
+					if ok && t.Kind() == reflect.Interface {
+						if _, isProxy := v.Interface().(ScriggoMethodProxy); isProxy {
+							vm.setGeneral(c, v)
+							break
+						}
 					}
 					rv := reflect.New(t).Elem()
 					if ok {
@@ -1092,6 +1102,15 @@ func (vm *VM) run() (Addr, bool) {
 				panic(errNilPointer)
 			}
 			method := vm.stringk(b, true)
+			if p, ok := receiver.Interface().(ScriggoMethodProxy); ok {
+				if fn, rcv, ok := p.ScriggoMethod(method); ok {
+					if !rcv.IsValid() {
+						panic(errNilPointer)
+					}
+					vm.setGeneral(c, reflect.ValueOf(&callable{value: vm.scriggoMethodValue(fn, rcv)}))
+					break
+				}
+			}
 			vm.setGeneral(c, reflect.ValueOf(&callable{value: receiver.MethodByName(method)}))
 
 		// Move
@@ -1948,6 +1967,13 @@ func (vm *VM) run() (Addr, bool) {
 			st, ok := t.(ScriggoType)
 			if ok {
 				t = st.GoType()
+			} else if op > 0 && t.Kind() == reflect.Interface {
+				if g := vm.general(b); g.IsValid() {
+					if _, isProxy := g.Interface().(ScriggoMethodProxy); isProxy {
+						vm.setGeneral(c, g)
+						break
+					}
+				}
 			}
 			v := reflect.New(t).Elem()
 			vm.getIntoReflectValue(b, v, op < 0)

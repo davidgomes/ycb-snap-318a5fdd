@@ -1072,7 +1072,7 @@ func (em *emitter) emitForRange(node *ast.ForRange) {
 			index = em.fb.newRegister(reflect.Int)
 			if em.varStore.mustBeDeclaredAsIndirect(vars[0].(*ast.Identifier)) {
 				indirectIndex = em.fb.newIndirectRegister()
-				em.fb.emitNew(indexType, -indirectIndex)
+				em.fb.emitNewIndirect(indexType, -indirectIndex)
 				em.fb.bindVarReg(name, indirectIndex)
 			} else {
 				em.fb.bindVarReg(name, index)
@@ -1089,7 +1089,7 @@ func (em *emitter) emitForRange(node *ast.ForRange) {
 			elem = em.fb.newRegister(elemType.Kind())
 			if em.varStore.mustBeDeclaredAsIndirect(vars[1].(*ast.Identifier)) {
 				indirectElem = em.fb.newIndirectRegister()
-				em.fb.emitNew(elemType, -indirectElem)
+				em.fb.emitNewIndirect(elemType, -indirectElem)
 				em.fb.bindVarReg(name, indirectElem)
 			} else {
 				em.fb.bindVarReg(name, elem)

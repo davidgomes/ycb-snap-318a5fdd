@@ -24,7 +24,29 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 	pos := tok.pos
 	// Parses the function name if present.
 	var ident *ast.Identifier
+	var recv *ast.Parameter
+	var recvTypeName string
 	tok = p.next()
+	if kind == parseFuncDecl && !isMacro && tok.typ == tokenLeftParenthesis {
+		var params []*ast.Parameter
+		var isVariadic bool
+		recvPos := tok.pos
+		params, isVariadic, _, tok = p.parseFuncParameters(tok, false, false)
+		if len(params) != 1 || isVariadic {
+			if len(params) == 0 {
+				panic(syntaxError(recvPos, "method has no receiver"))
+			}
+			panic(syntaxError(recvPos, "method has multiple receivers"))
+		}
+		recv = params[0]
+		recvTypeName = receiverTypeName(recv.Type)
+		if recvTypeName == "" {
+			panic(syntaxError(recv.Type.Pos(), "invalid receiver type %s", recv.Type))
+		}
+		if tok.typ != tokenIdentifier {
+			panic(syntaxError(tok.pos, "unexpected %s, expecting name", tok.txt))
+		}
+	}
 	if tok.typ == tokenIdentifier {
 		if kind&parseFuncDecl == 0 {
 			panic(syntaxError(tok.pos, "unexpected %s, expecting (", tok))
@@ -34,9 +56,6 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 	} else if kind == parseFuncDecl {
 		// This check could be avoided (the code panics anyway) but improves the
 		// readability of the error message.
-		if !isMacro && tok.typ == tokenLeftParenthesis {
-			panic(syntaxError(tok.pos, "method declarations are not supported in this release of Scriggo"))
-		}
 		// Node to parse must be a function declaration.
 		panic(syntaxError(tok.pos, "unexpected %s, expecting name", tok.txt))
 	}
@@ -59,6 +78,22 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 		panic(syntaxError(tok.pos, "unexpected %s, expecting string, html, css, js, json or markdown", tok))
 	}
 
+	// A method declaration is transformed into a function declaration named
+	// "T.M" with the receiver as first parameter.
+	if recv != nil {
+		if len(parameters) > 0 && (recv.Ident == nil) != (parameters[len(parameters)-1].Ident == nil) {
+			if recv.Ident == nil {
+				recv = ast.NewParameter(ast.NewIdentifier(recv.Type.Pos(), "_"), recv.Type)
+			} else {
+				for i, param := range parameters {
+					parameters[i] = ast.NewParameter(ast.NewIdentifier(param.Type.Pos(), "_"), param.Type)
+				}
+			}
+		}
+		parameters = append([]*ast.Parameter{recv}, parameters...)
+		ident = ast.NewIdentifier(ident.Position, recvTypeName+"."+ident.Name)
+	}
+
 	// Make the nodes.
 	typ := ast.NewFuncType(pos, isMacro, parameters, result, isVariadic)
 	if kind == parseFuncType || kind&parseFuncType != 0 && tok.typ != tokenLeftBrace {
@@ -66,6 +101,7 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
 		return typ, tok
 	}
 	node := ast.NewFunc(pos, ident, typ, nil, false, ast.Format(tok.ctx))
+	node.Recv = recv
 	if !isMacro && tok.typ != tokenLeftBrace {
 		return node, tok
 	}
@@ -230,4 +266,17 @@ func (p *parsing) parseFuncParameters(tok token, isMacro, isResult bool) ([]*ast
 	}
 
 	return parameters, ellipses.param != nil, tok.pos, p.next()
+}
+
+// receiverTypeName returns the name of the base type of a receiver type
+// expression T or *T. It returns an empty string if expr is not a valid
+// receiver type expression.
+func receiverTypeName(expr ast.Expression) string {
+	if op, ok := expr.(*ast.UnaryOperator); ok && (op.Op == ast.OperatorPointer || op.Op == ast.OperatorMultiplication) {
+		expr = op.Expr
+	}
+	if ident, ok := expr.(*ast.Identifier); ok && ident.Name != "_" {
+		return ident.Name
+	}
+	return ""
 }

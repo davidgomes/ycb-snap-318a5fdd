@@ -817,11 +817,12 @@ type Func struct {
 	DistFree bool        // reports whether it is distraction free.
 	Upvars   []Upvar     // Upvars of func.
 	Format   Format      // macro format.
+	Recv     *Parameter  // receiver, if it is a method declaration.
 }
 
 // NewFunc returns a new [Func] node.
 func NewFunc(pos *Position, name *Identifier, typ *FuncType, body *Block, distFree bool, format Format) *Func {
-	return &Func{expression{}, pos, name, typ, body, distFree, nil, format}
+	return &Func{expression{}, pos, name, typ, body, distFree, nil, format, nil}
 }
 
 // String returns the string representation of n.

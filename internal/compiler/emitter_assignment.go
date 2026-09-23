@@ -238,7 +238,7 @@ func (a address) assign(k bool, value int8, valueType reflect.Type) {
 	case assignLocalVar:
 		a.em.changeRegister(k, value, a.op1, a.targetType(), a.addressedType)
 	case assignNewIndirectVar:
-		a.em.fb.emitNew(a.addressedType, -a.op1)
+		a.em.fb.emitNewIndirect(a.addressedType, -a.op1)
 		a.em.changeRegister(k, value, a.op1, a.targetType(), a.addressedType)
 	case assignPtrIndirection:
 		a.em.changeRegister(k, value, -a.op1, a.targetType(), a.addressedType)

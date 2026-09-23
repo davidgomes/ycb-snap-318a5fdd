@@ -42,3 +42,28 @@ type emptyInterfaceProxy struct {
 	value reflect.Value
 	sign  runtime.ScriggoType
 }
+
+// ScriggoMethod implements the runtime.ScriggoMethodProxy interface.
+func (p emptyInterfaceProxy) ScriggoMethod(name string) (*runtime.Function, reflect.Value, bool) {
+	m := scriggoMethod(p.sign, name)
+	if m == nil || m.Fn == nil {
+		return nil, reflect.Value{}, false
+	}
+	_, isPtr := p.sign.(ptrType)
+	if m.Pointer && !isPtr {
+		return nil, reflect.Value{}, false
+	}
+	rcv := p.value
+	if isPtr && !m.Pointer {
+		if rcv.IsNil() {
+			return m.Fn, reflect.Value{}, true
+		}
+		rcv = rcv.Elem()
+	}
+	return m.Fn, rcv, true
+}
+
+// ScriggoImplements implements the runtime.ScriggoMethodProxy interface.
+func (p emptyInterfaceProxy) ScriggoImplements(t reflect.Type) bool {
+	return Implements(p.sign, t)
+}

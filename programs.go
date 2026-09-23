@@ -159,7 +159,13 @@ func initPackageLevelVariables(globals []compiler.Global) []reflect.Value {
 		if global.Value.IsValid() {
 			values[i] = global.Value
 		} else {
-			values[i] = reflect.New(global.Type).Elem()
+			t := global.Type
+			// Variables with a non-empty interface type are stored as empty
+			// interfaces so they can hold values of Scriggo types with methods.
+			if t.Kind() == reflect.Interface && t.NumMethod() > 0 {
+				t = reflect.TypeOf((*interface{})(nil)).Elem()
+			}
+			values[i] = reflect.New(t).Elem()
 		}
 	}
 	return values

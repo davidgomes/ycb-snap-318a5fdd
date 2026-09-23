@@ -27,6 +27,55 @@ type definedType struct {
 	// represents are identical (every defined type, in Go, is different from
 	// every other type).
 	sign *byte
+
+	// methods holds the methods declared in Scriggo with this type (or a
+	// pointer to it) as receiver.
+	methods *methodSet
+}
+
+// Method represents a method declared in Scriggo.
+type Method struct {
+	Name    string            // method name.
+	Type    reflect.Type      // method type, without the receiver.
+	Pointer bool              // reports whether it has a pointer receiver.
+	Func    string            // name of the function that implements the method.
+	Fn      *runtime.Function // compiled function, with the receiver as first parameter.
+}
+
+type methodSet struct {
+	methods map[string]*Method
+}
+
+// AddMethod adds the method m to the defined type t. It returns false if t is
+// not a type defined in Scriggo.
+func (types *Types) AddMethod(t reflect.Type, m *Method) bool {
+	dt, ok := t.(definedType)
+	if !ok {
+		return false
+	}
+	if dt.methods.methods == nil {
+		dt.methods.methods = map[string]*Method{}
+	}
+	dt.methods.methods[m.Name] = m
+	return true
+}
+
+// Method returns the method with the given name declared in Scriggo for the
+// defined type t or, if t is a pointer, for its element type. The returned
+// method can have both a value and a pointer receiver. It returns nil if there
+// is no such method.
+func (types *Types) Method(t reflect.Type, name string) *Method {
+	return scriggoMethod(t, name)
+}
+
+func scriggoMethod(t reflect.Type, name string) *Method {
+	if p, ok := t.(ptrType); ok {
+		t = p.elem
+	}
+	if dt, ok := t.(definedType); ok {
+		return dt.methods.methods[name]
+	}
+	return nil
 }
 
 // DefinedOf returns the defined type with the given name and underlying type.
@@ -36,7 +85,7 @@ func (types *Types) DefinedOf(name string, underlyingType reflect.Type) reflect.
 	if name == "" {
 		panic(internalError("name cannot be empty"))
 	}
-	return definedType{Type: underlyingType, name: name, sign: new(byte)}
+	return definedType{Type: underlyingType, name: name, sign: new(byte), methods: &methodSet{}}
 }
 
 func (x definedType) Name() string {

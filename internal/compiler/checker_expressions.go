@@ -740,10 +740,16 @@ func (tc *typechecker) typeof(expr ast.Expression, typeExpected bool) *typeInfo 
 		}
 		if t.IsType() {
 			// Method expression.
+			if m := tc.types.Method(t.Type, expr.Ident); m != nil {
+				return tc.checkScriggoMethodExpression(t, expr, m)
+			}
 			return tc.checkMethodExpression(t, expr)
 		}
 		if expr.Ident == "_" {
 			panic(tc.errorf(expr, "cannot refer to blank field or method"))
+		}
+		if tc.types.Method(t.Type, expr.Ident) != nil {
+			panic(tc.errorf(expr, "method value %s is not supported in this release of Scriggo", expr))
 		}
 		// Method value.
 		if mv, ok := tc.checkMethodValue(t, expr); ok {
@@ -1598,7 +1604,15 @@ func (tc *typechecker) checkCallExpression(expr *ast.Call) []*typeInfo {
 		}
 	}
 
+	if sel, ok := expr.Func.(*ast.Selector); ok {
+		tc.rewriteMethodCall(expr, sel)
+	}
+
 	t := tc.checkExprOrType(expr.Func)
+	if ident, ok := t.replacement.(*ast.Identifier); ok {
+		expr.Func = ident
+		t = tc.compilation.typeInfos[ident]
+	}
 
 	switch t.MethodType {
 	case methodValueConcrete:

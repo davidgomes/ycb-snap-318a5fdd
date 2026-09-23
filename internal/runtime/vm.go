@@ -57,6 +57,21 @@ type ScriggoType interface {
 	GoType() reflect.Type
 }
 
+// A ScriggoMethodProxy is a proxy for a value with a Scriggo type that can
+// have methods declared in Scriggo.
+type ScriggoMethodProxy interface {
+
+	// ScriggoMethod returns the function that implements the method with the
+	// given name and the receiver to pass as its first argument. If the
+	// receiver would be the dereference of a nil pointer, the returned
+	// receiver is not valid.
+	ScriggoMethod(name string) (*Function, reflect.Value, bool)
+
+	// ScriggoImplements reports whether the proxied value implements the
+	// interface type t.
+	ScriggoImplements(t reflect.Type) bool
+}
+
 type StackShift [4]int8
 
 type Instruction struct {
@@ -913,7 +928,11 @@ func (c *callable) Value(env *env) reflect.Value {
 	// It is a Scriggo function.
 	fn := c.fn
 	vars := c.vars
-	c.value = reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
+	typ := fn.Type
+	if st, ok := typ.(ScriggoType); ok {
+		typ = st.GoType()
+	}
+	c.value = reflect.MakeFunc(typ, func(args []reflect.Value) []reflect.Value {
 		nvm := create(env)
 		if fn.Macro {
 			nvm.renderer = newRenderer(&strings.Builder{})
@@ -1213,3 +1232,26 @@ const (
 
 	OpZero
 )
+
+// scriggoMethodValue returns a function value that calls the Scriggo function
+// fn with rcv as first argument.
+func (vm *VM) scriggoMethodValue(fn *Function, rcv reflect.Value) reflect.Value {
+	f := (&callable{fn: fn, vars: vm.env.globals}).Value(vm.env)
+	ft := f.Type()
+	in := make([]reflect.Type, ft.NumIn()-1)
+	for i := range in {
+		in[i] = ft.In(i + 1)
+	}
+	out := make([]reflect.Type, ft.NumOut())
+	for i := range out {
+		out[i] = ft.Out(i)
+	}
+	variadic := ft.IsVariadic()
+	return reflect.MakeFunc(reflect.FuncOf(in, out, variadic), func(args []reflect.Value) []reflect.Value {
+		args = append([]reflect.Value{rcv}, args...)
+		if variadic {
+			return f.CallSlice(args)
+		}
+		return f.Call(args)
+	})
+}

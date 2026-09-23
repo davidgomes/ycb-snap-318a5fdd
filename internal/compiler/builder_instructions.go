@@ -580,6 +580,17 @@ func (fb *functionBuilder) emitNeg(y, z int8, kind reflect.Kind) {
 	fb.fn.Body = append(fb.fn.Body, runtime.Instruction{Op: runtime.OpNeg, A: x, B: y, C: z})
 }
 
+// emitNewIndirect appends a new "New" instruction to the function body that
+// allocates an indirect variable with type typ.
+func (fb *functionBuilder) emitNewIndirect(typ reflect.Type, z int8) {
+	// Indirect variables with a non-empty interface type are stored as empty
+	// interfaces so they can hold values of Scriggo types with methods.
+	if typ.Kind() == reflect.Interface && typ.NumMethod() > 0 {
+		typ = emptyInterfaceType
+	}
+	fb.emitNew(typ, z)
+}
+
 // emitNew appends a new "new" instruction to the function body.
 //
 //	z = new(t)

@@ -42,7 +42,7 @@ func (em *emitter) _changeRegister(k bool, src, dst int8, srcType reflect.Type, 
 	// the struct fields. This is not possible with Scriggo defined types,
 	// because the gc compiled code cannot reference to them.
 	if dst < 0 {
-		if st, ok := srcType.(runtime.ScriggoType); ok {
+		if st, ok := srcType.(runtime.ScriggoType); ok && !(dstType.Kind() == reflect.Interface && dstType.NumMethod() > 0) {
 			srcType = st.GoType()
 		}
 		em.fb.emitTypify(k, srcType, src, dst)
