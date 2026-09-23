@@ -278,9 +278,34 @@ type StateSlot = number | { aspect: Aspect; start: number };
 }
 
 /**
+ * Expand an aspect into its data traits and record the slot that merges them.
+ * Slots are only created once an aspect is present, since before that the state
+ * maps one to one to the traits.
+ */
+function pushAspectSlot(
+    aspect: Aspect,
+    slots: StateSlot[] | null,
+    traits: Trait[],
+    stores: Store<any>[],
+    world: World
+): StateSlot[] | null {
+    const dataTraits = aspect[$internal].dataTraits;
+    if (dataTraits.length === 0) return slots; // Skip tag-only aspects
+
+    slots ??= traits.map((_, index) => index);
+    slots.push({ aspect, start: traits.length });
+    for (const trait of dataTraits) {
+        traits.push(trait);
+        stores.push(getStore(world, trait));
+    }
+
+    return slots;
+}
+
+/**
  * Collect the traits and stores for query params. Aspects are expanded into their data traits so
  * reads, writes and change detection stay per trait. Returns the callback state layout when
- * aspects are present, otherwise null since the state maps one to one to the traits.
+ * aspects are present, otherwise null.
  */
 /* @inline */ export function getQueryStores<T extends QueryParameter[]>(
     params: T,
@@ -288,26 +313,7 @@ type StateSlot = number | { aspect: Aspect; start: number };
     stores: Store<any>[],
     world: World
 ): StateSlot[] | null {
-    const slots: StateSlot[] = [];
-    let hasAspects = false;
-
-    const pushTrait = (trait: Trait) => {
-        if (trait[$internal].type === 'tag') return; // Skip tags
-        slots.push(traits.length);
-        traits.push(trait);
-        stores.push(getStore(world, trait));
-    };
-
-    const pushAspect = (aspect: Aspect) => {
-        const dataTraits = aspect[$internal].dataTraits;
-        if (dataTraits.length === 0) return; // Skip tag-only aspects
-        hasAspects = true;
-        slots.push({ aspect, start: traits.length });
-        for (const trait of dataTraits) {
-            traits.push(trait);
-            stores.push(getStore(world, trait));
-        }
-    };
+    let slots: StateSlot[] | null = null;
 
     for (let i = 0; i < params.length; i++) {
         const param = params[i];
@@ -316,7 +322,12 @@ type StateSlot = number | { aspect: Aspect; start: number };
         if (isRelationPair(param)) {
             const pairCtx = param[$internal];
             const relation = pairCtx.relation as Relation<Trait>;
-            pushTrait(relation[$internal].trait);
+            const baseTrait = relation[$internal].trait;
+            if (baseTrait[$internal].type !== 'tag') {
+                slots?.push(traits.length);
+                traits.push(baseTrait);
+                stores.push(getStore(world, baseTrait));
+            }
             continue;
         }
 
@@ -326,17 +337,27 @@ type StateSlot = number | { aspect: Aspect; start: number };
 
             const modifierTraits = param.traits;
             for (const trait of modifierTraits) {
-                if (isAspect(trait)) pushAspect(trait);
-                else pushTrait(trait);
+                if (isAspect(trait)) {
+                    slots = pushAspectSlot(trait, slots, traits, stores, world);
+                    continue;
+                }
+                if (trait[$internal].type === 'tag') continue; // Skip tags
+                slots?.push(traits.length);
+                traits.push(trait);
+                stores.push(getStore(world, trait));
             }
         } else if (isAspect(param)) {
-            pushAspect(param);
+            slots = pushAspectSlot(param, slots, traits, stores, world);
         } else {
-            pushTrait(param as Trait);
+            const trait = param as Trait;
+            if (trait[$internal].type === 'tag') continue; // Skip tags
+            slots?.push(traits.length);
+            traits.push(trait);
+            stores.push(getStore(world, trait));
         }
     }
 
-    return hasAspects ? slots : null;
+    return slots;
 }
 
 export function createEmptyQueryResult(): QueryResult<QueryParameter[]> {
