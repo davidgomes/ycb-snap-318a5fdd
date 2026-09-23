@@ -676,6 +676,27 @@ var goContextTreeTests = []struct {
 			},
 		),
 	}, ast.FormatText)},
+	{"func (t T) m() {}", ast.NewTree("", []ast.Node{
+		methodDecl(ast.NewParameter(ast.NewIdentifier(p(1, 7, 6, 6), "t"), ast.NewIdentifier(p(1, 9, 8, 8), "T")),
+			ast.NewFunc(p(1, 1, 0, 16), ast.NewIdentifier(p(1, 12, 11, 11), "m"), ast.NewFuncType(p(1, 1, 0, 16), false, []*ast.Parameter{}, nil, false),
+				ast.NewBlock(p(1, 16, 15, 16), nil), false, ast.FormatText))}, ast.FormatText)},
+	{"func (t *T) m(a int) int { return a }", ast.NewTree("", []ast.Node{
+		methodDecl(ast.NewParameter(ast.NewIdentifier(p(1, 7, 6, 6), "t"), ast.NewUnaryOperator(p(1, 9, 8, 9), ast.OperatorPointer, ast.NewIdentifier(p(1, 10, 9, 9), "T"))),
+			ast.NewFunc(p(1, 1, 0, 36), ast.NewIdentifier(p(1, 13, 12, 12), "m"), ast.NewFuncType(p(1, 1, 0, 36), false, []*ast.Parameter{
+				ast.NewParameter(ast.NewIdentifier(p(1, 15, 14, 14), "a"), ast.NewIdentifier(p(1, 17, 16, 18), "int")),
+			}, []*ast.Parameter{
+				ast.NewParameter(nil, ast.NewIdentifier(p(1, 22, 21, 23), "int")),
+			}, false), ast.NewBlock(p(1, 26, 25, 36), []ast.Node{
+				ast.NewReturn(p(1, 28, 27, 34), []ast.Expression{ast.NewIdentifier(p(1, 35, 34, 34), "a")}),
+			}), false, ast.FormatText))}, ast.FormatText)},
+	{"func (T) m() {}", ast.NewTree("", []ast.Node{
+		methodDecl(ast.NewParameter(nil, ast.NewIdentifier(p(1, 7, 6, 6), "T")),
+			ast.NewFunc(p(1, 1, 0, 14), ast.NewIdentifier(p(1, 10, 9, 9), "m"), ast.NewFuncType(p(1, 1, 0, 14), false, []*ast.Parameter{}, nil, false),
+				ast.NewBlock(p(1, 14, 13, 14), nil), false, ast.FormatText))}, ast.FormatText)},
+	{"func (*T) m() {}", ast.NewTree("", []ast.Node{
+		methodDecl(ast.NewParameter(nil, ast.NewUnaryOperator(p(1, 7, 6, 7), ast.OperatorPointer, ast.NewIdentifier(p(1, 8, 7, 7), "T"))),
+			ast.NewFunc(p(1, 1, 0, 15), ast.NewIdentifier(p(1, 11, 10, 10), "m"), ast.NewFuncType(p(1, 1, 0, 15), false, []*ast.Parameter{}, nil, false),
+				ast.NewBlock(p(1, 15, 14, 15), nil), false, ast.FormatText))}, ast.FormatText)},
 	{"import \"p\"", ast.NewTree("", []ast.Node{
 		ast.NewImport(p(1, 8, 7, 9), nil, "p", nil)}, ast.FormatText)},
 	{"import _ \"foo\"", ast.NewTree("", []ast.Node{
@@ -1445,6 +1466,12 @@ func fileTests() map[string]struct {
 			nil,
 		},
 	}
+}
+
+// methodDecl sets the receiver of the method declaration fn and returns fn.
+func methodDecl(recv *ast.Parameter, fn *ast.Func) *ast.Func {
+	fn.Recv = recv
+	return fn
 }
 
 func TestGoContextTrees(t *testing.T) {
@@ -2448,6 +2475,19 @@ func equals(n1, n2 ast.Node, p int) error {
 		nn2, ok := n2.(*ast.Func)
 		if !ok {
 			return fmt.Errorf("unexpected %#v, expecting %#v", n1, n2)
+		}
+		if (nn1.Recv == nil) != (nn2.Recv == nil) {
+			return fmt.Errorf("unexpected receiver %v, expecting %v", nn1.Recv, nn2.Recv)
+		}
+		if nn1.Recv != nil {
+			err := equals(nn1.Recv.Ident, nn2.Recv.Ident, p)
+			if err != nil {
+				return err
+			}
+			err = equals(nn1.Recv.Type, nn2.Recv.Type, p)
+			if err != nil {
+				return err
+			}
 		}
 		err := equals(nn1.Ident, nn2.Ident, p)
 		if err != nil {
