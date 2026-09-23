@@ -7,11 +7,11 @@ import type { FindSelected } from './FindSelected';
 
 export type PickReturnValue<a, b> = a extends symbols.unset ? b : a;
 
-interface NonExhaustiveError<i> {
+export interface NonExhaustiveError<i> {
   __nonExhaustive: never;
 }
 
-interface TSPatternError<i> {
+export interface TSPatternError<i> {
   __nonExhaustive: never;
 }
 
@@ -242,13 +242,13 @@ export type Match<
  *   of the returned tuple.
  * - For the second part though I'm not aware a cheap way of sorting a tuple.
  */
-type DeepExcludeAll<a, tupleList extends any[]> = [a] extends [never]
+export type DeepExcludeAll<a, tupleList extends any[]> = [a] extends [never]
   ? never
   : tupleList extends [infer excluded, ...infer tail]
   ? DeepExcludeAll<DeepExclude<a, excluded>, tail>
   : a;
 
-type MakeTuples<ps extends readonly any[], value> = {
+export type MakeTuples<ps extends readonly any[], value> = {
   -readonly [index in keyof ps]: InvertPatternForExclude<ps[index], value>;
 };
 
