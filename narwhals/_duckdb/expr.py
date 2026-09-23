@@ -202,6 +202,24 @@ class DuckDBExpr(SQLExpr["DuckDBLazyFrame", "Expression"]):
     def kurtosis(self) -> Self:
         return self._with_callable(lambda expr: F("kurtosis_pop", expr))
 
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        # `quantile_cont` can be windowed, but `percentile_cont` cannot. Narwhals
+        # does not expose rolling quantiles on DuckDB for that reason.
+        msg = (
+            "`Expr.rolling_quantile` is not supported for the DuckDB backend, "
+            "because DuckDB does not support `percentile_cont` as a windowed "
+            "aggregate function."
+        )
+        raise NotImplementedError(msg)
+
     def quantile(
         self, quantile: float, interpolation: RollingInterpolationMethod
     ) -> Self:

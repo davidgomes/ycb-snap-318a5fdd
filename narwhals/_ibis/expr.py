@@ -206,6 +206,28 @@ class IbisExpr(SQLExpr["IbisLazyFrame", "ir.Value"]):
         invert = cast("Callable[..., ir.Value]", operator.invert)
         return self._with_callable(invert)
 
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        if interpolation != "linear":
+            msg = "Only linear interpolation methods are supported for Ibis rolling_quantile."
+            raise NotImplementedError(msg)
+        return self._with_window_function(
+            self._rolling_window_func(
+                "quantile",
+                window_size,
+                min_samples,
+                center=center,
+                extra_args=(quantile,),
+            )
+        )
+
     def quantile(
         self, quantile: float, interpolation: RollingInterpolationMethod
     ) -> Self:

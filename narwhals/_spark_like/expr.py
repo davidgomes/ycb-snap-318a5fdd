@@ -42,7 +42,12 @@ if TYPE_CHECKING:
     from narwhals._spark_like.namespace import SparkLikeNamespace
     from narwhals._typing import NoDefault
     from narwhals._utils import _LimitedContext
-    from narwhals.typing import FillNullStrategy, IntoDType, RankMethod
+    from narwhals.typing import (
+        FillNullStrategy,
+        IntoDType,
+        RankMethod,
+        RollingInterpolationMethod,
+    )
 
     NativeRankMethod: TypeAlias = Literal["rank", "dense_rank", "row_number"]
     SparkWindowFunction = WindowFunction[SparkLikeLazyFrame, Column]
@@ -424,5 +429,30 @@ class SparkLikeExpr(SQLExpr["SparkLikeLazyFrame", "Column"]):
     @property
     def struct(self) -> SparkLikeExprStructNamespace:
         return SparkLikeExprStructNamespace(self)
+
+    def rolling_quantile(
+        self,
+        window_size: int,
+        *,
+        quantile: float,
+        interpolation: RollingInterpolationMethod,
+        min_samples: int,
+        center: bool,
+    ) -> Self:
+        if interpolation != "linear":
+            msg = (
+                "Only linear interpolation methods are supported for "
+                "Spark-like rolling_quantile."
+            )
+            raise NotImplementedError(msg)
+        return self._with_window_function(
+            self._rolling_window_func(
+                "percentile",
+                window_size,
+                min_samples,
+                center=center,
+                extra_args=(quantile,),
+            )
+        )
 
     quantile = not_implemented()

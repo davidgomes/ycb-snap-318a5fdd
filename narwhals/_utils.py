@@ -124,6 +124,7 @@ if TYPE_CHECKING:
         IntoSeriesT,
         MultiIndexSelector,
         NestedLiteral,
+        RollingInterpolationMethod,
         SingleIndexSelector,
         SizedMultiBoolSelector,
         SizedMultiIndexSelector,
@@ -1464,6 +1465,24 @@ def _validate_rolling_arguments(
         min_samples = window_size
 
     return window_size, min_samples
+
+
+def _validate_rolling_quantile_arguments(
+    quantile: float, interpolation: RollingInterpolationMethod
+) -> tuple[float, RollingInterpolationMethod]:
+    ensure_type(quantile, int, float, param_name="quantile")
+    ensure_type(interpolation, str, param_name="interpolation")
+    if quantile > 1 or quantile < 0:
+        msg = f"Quantile must be between 0.0 and 1.0, got: {quantile}"
+        raise ValueError(msg)
+    if interpolation not in {"linear", "lower", "higher", "nearest", "midpoint"}:
+        msg = (
+            "Interpolation must be one of "
+            "{'linear', 'lower', 'higher', 'nearest', 'midpoint'}, "
+            f"got: {interpolation!r}"
+        )
+        raise ValueError(msg)
+    return quantile, interpolation
 
 
 def generate_repr(header: str, native_repr: str) -> str:
