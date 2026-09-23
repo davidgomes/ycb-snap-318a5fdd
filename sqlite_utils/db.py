@@ -981,7 +981,11 @@ class Database:
                 "Cannot create a checkpoint while a transaction is open on this connection"
             )
         main_file = next(
-            (row[2] for row in self.execute("PRAGMA database_list") if row[1] == "main"),
+            (
+                row[2]
+                for row in self.execute("PRAGMA database_list")
+                if row[1] == "main"
+            ),
             "",
         )
         snapshot_path = None
@@ -1235,7 +1239,9 @@ class Database:
             }
         failures = []
         report_lines = []
-        for table in self._tables_with_import_invariants() if tables is None else tables:
+        for table in (
+            self._tables_with_import_invariants() if tables is None else tables
+        ):
             for failure in self.validate_import_invariants(table)["failures"]:
                 failures.append(failure)
                 report_lines.append(
@@ -1392,7 +1398,9 @@ class Database:
                     records = json.loads(records)
                 except ValueError:
                     records = [
-                        json.loads(line) for line in records.splitlines() if line.strip()
+                        json.loads(line)
+                        for line in records.splitlines()
+                        if line.strip()
                     ]
             if isinstance(records, dict):
                 records = [records]
