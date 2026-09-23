@@ -6,6 +6,7 @@ import type {
   Config,
   InferIssue,
 } from '../../types/index.ts';
+import type { RejectUnresolvedRecur } from '../recursive/types.ts';
 import type { SafeParseResult } from './types.ts';
 
 /**
@@ -23,7 +24,7 @@ export async function safeParseAsync<
     | BaseSchema<unknown, unknown, BaseIssue<unknown>>
     | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>,
 >(
-  schema: TSchema,
+  schema: RejectUnresolvedRecur<TSchema>,
   input: unknown,
   config?: Config<InferIssue<TSchema>>
 ): Promise<SafeParseResult<TSchema>> {
