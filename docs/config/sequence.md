@@ -5,7 +5,7 @@ outline: deep
 
 # sequence
 
-- **Type**: `{ sequencer?, shuffle?, seed?, hooks?, setupFiles?, groupOrder }`
+- **Type**: `{ sequencer?, shuffle?, seed?, hooks?, setupFiles?, groupOrder?, shardStrategy?, balanceShardsByTime?, recordFileDurations?, durationBasedSorting?, durationHistoryTTL?, durationHistoryPath?, durationHistoryMaxRuns?, durationSmoothing?, shardAffinityRules?, rebalanceThreshold?, isolateSlowThreshold?, durationFallbackStrategy? }`
 
 Options for how tests should be sorted.
 
@@ -161,3 +161,108 @@ Changes the order in which setup files are executed.
 
 - `list` will run setup files in the order they are defined
 - `parallel` will run setup files in parallel
+
+## sequence.shardStrategy
+
+- **Type**: `'hash' | 'time' | 'round-robin' | 'affinity'`
+- **Default**: `'hash'`
+
+Algorithm used to divide test files when [`--shard`](/guide/improving-performance#sharding) is set.
+
+- `hash` keeps Vitest's historical hash distribution
+- `time` packs files onto the shard with the lowest recorded duration (longest file first)
+- `round-robin` sorts by duration and assigns files with a bouncing shard pointer
+- `affinity` pins files that match [`sequence.shardAffinityRules`](#sequence-shardaffinityrules); other files use the `time` algorithm
+
+Duration-based strategies read [`sequence.durationHistoryPath`](#sequence-durationhistorypath). When that file is missing or corrupt, Vitest uses [`sequence.durationFallbackStrategy`](#sequence-durationfallbackstrategy) instead.
+
+If [`sequence.balanceShardsByTime`](#sequence-balanceshardsbytime) is `true` and `shardStrategy` is not set, the resolved strategy is `time`.
+
+## sequence.balanceShardsByTime
+
+- **Type**: `boolean`
+- **Default**: `false`
+
+When `true` and `shardStrategy` is unset, Vitest resolves `shardStrategy` to `time`. If the resolved strategy is not `time`, this option is forced to `false`.
+
+## sequence.recordFileDurations
+
+- **Type**: `boolean`
+- **Default**: `false`
+
+After the run finishes, write each test file's duration into the duration history file. Durations are stored as integer milliseconds. Entries for files that did not run are preserved.
+
+## sequence.durationBasedSorting
+
+- **Type**: `boolean`
+- **Default**: `false`
+
+Sort files by recorded duration, longest first. Files that are absent from duration history are ordered after files that have history. `groupOrder`, project name, and `isolate` still take priority.
+
+## sequence.durationHistoryPath
+
+- **Type**: `string`
+- **Default**: `'duration-history.json'`
+
+History file location, relative to the project root. The value must be a non-empty string with no leading or trailing whitespace.
+
+Keys are slash-normalized paths relative to the project root, for example `test/a.test.ts`.
+
+## sequence.durationHistoryTTL
+
+- **Type**: `number`
+- **Default**: `0`
+
+Drop observations whose `recordedAt` is older than `Date.now() - durationHistoryTTL`. `0` disables expiration. Observations with `recordedAt: 0` never expire. The value must be a finite number greater than or equal to `0`.
+
+## sequence.durationHistoryMaxRuns
+
+- **Type**: `number`
+- **Default**: `1`
+
+Maximum number of observations written per file (the most recent by `recordedAt`). `1` stores `{ duration, recordedAt }`. Larger integers store `{ observations }`. Every non-expired observation is still used when smoothing durations. The value must be an integer greater than or equal to `1`.
+
+## sequence.durationSmoothing
+
+- **Type**: `'latest' | 'average' | 'p95' | 'median'`
+- **Default**: `'latest'`
+
+How multiple stored observations are reduced to one duration:
+
+- `latest`: observation with the highest `recordedAt`
+- `average`: `Math.round(sum / count)`
+- `p95`: ascending sort, index `Math.ceil(0.95 * n) - 1`
+- `median`: ascending sort; even counts use `Math.floor((a + b) / 2)`
+
+Files missing from history use duration `0`.
+
+## sequence.shardAffinityRules
+
+- **Type**: `Array<{ pattern: string, shardIndex: number }>`
+- **Default**: `[]`
+
+Glob rules used by `shardStrategy: 'affinity'`. `pattern` is matched with picomatch against the slash-normalized path relative to the project root. The first match wins. `shardIndex` is zero-based and is clamped to `shard.count - 1`. If no rule matches any file, Vitest falls back to the `time` strategy.
+
+## sequence.rebalanceThreshold
+
+- **Type**: `number`
+- **Default**: `0`
+
+After sharding, warn when `minLoad / maxLoad` is lower than this threshold. The value is a ratio from `0` to `1`. `0` disables the warning.
+
+## sequence.isolateSlowThreshold
+
+- **Type**: `number`
+- **Default**: `0`
+
+When greater than `0`, files whose recorded duration is strictly above the threshold are isolated onto their own shards. Each shard receives one slow file. If there are at least as many slow files as shards, the last shard also receives the extra slow files and every remaining file. `0` disables isolation. The value must be a finite number greater than or equal to `0`.
+
+## sequence.durationFallbackStrategy
+
+- **Type**: `'hash' | 'equal-split'`
+- **Default**: `'hash'`
+
+Used when a duration-based shard strategy is selected but the history file is missing or corrupt.
+
+- `hash` uses the historical hash distribution
+- `equal-split` sorts by path and assigns index `i` to shard `(i % count) + 1`

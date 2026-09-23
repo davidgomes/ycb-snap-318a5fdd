@@ -47,6 +47,7 @@ import { BlobReporter, readBlobs } from './reporters/blob'
 import { HangingProcessReporter } from './reporters/hanging-process'
 import { createBenchmarkReporters, createReporters } from './reporters/utils'
 import { VitestResolver } from './resolver'
+import { recordFileDurations } from './sequencers/duration-history'
 import { VitestSpecifications } from './specifications'
 import { StateManager } from './state'
 import { populateProjectsTags } from './tags'
@@ -946,6 +947,7 @@ export class Vitest {
           this._checkUnhandledErrors(errors)
           await this._testRun.end(specs, errors, coverage)
           await this.reportCoverage(coverage, allTestsRun)
+          await recordFileDurations(this)
         }
       })()
         .finally(() => {

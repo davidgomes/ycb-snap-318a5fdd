@@ -79,7 +79,23 @@ export interface ProjectName {
   color?: LabelColor
 }
 
-interface SequenceOptions {
+export type ShardStrategy = 'hash' | 'time' | 'round-robin' | 'affinity'
+export type DurationSmoothing = 'latest' | 'average' | 'p95' | 'median'
+export type DurationFallbackStrategy = 'hash' | 'equal-split'
+
+export interface ShardAffinityRule {
+  /**
+   * Glob pattern (picomatch) matched against the test file path relative to the project root.
+   * The first matching rule wins.
+   */
+  pattern: string
+  /**
+   * Zero-based shard index. Values greater than `shard.count - 1` are clamped.
+   */
+  shardIndex: number
+}
+
+export interface SequenceOptions {
   /**
    * Class that handles sorting and sharding algorithm.
    * If you only need to change sorting, you can extend
@@ -140,6 +156,80 @@ interface SequenceOptions {
    * @default 'stack'
    */
   hooks?: SequenceHooks
+  /**
+   * How test files are divided across `--shard` indexes.
+   *
+   * - `hash` keeps the historical hash distribution
+   * - `time` uses longest-processing-time bin packing from duration history
+   * - `round-robin` walks shards in a bouncing order after sorting by duration
+   * - `affinity` pins files to shards with `shardAffinityRules`
+   *
+   * When `balanceShardsByTime` is true and this option is unset, it resolves to `time`.
+   * @default 'hash'
+   */
+  shardStrategy?: ShardStrategy
+  /**
+   * Balance shards by recorded test duration.
+   * When true and `shardStrategy` is unset, `shardStrategy` resolves to `time`.
+   * Forced to false when the resolved strategy is not `time`.
+   * @default false
+   */
+  balanceShardsByTime?: boolean
+  /**
+   * Write per-file durations to `durationHistoryPath` after the test run finishes.
+   * @default false
+   */
+  recordFileDurations?: boolean
+  /**
+   * Sort test files by recorded duration, longest first.
+   * Files absent from duration history are ordered last.
+   * @default false
+   */
+  durationBasedSorting?: boolean
+  /**
+   * Drop duration observations older than this many milliseconds.
+   * `recordedAt: 0` never expires. `0` disables expiration.
+   * @default 0
+   */
+  durationHistoryTTL?: number
+  /**
+   * Duration history file, relative to the project root.
+   * @default 'duration-history.json'
+   */
+  durationHistoryPath?: string
+  /**
+   * Maximum number of duration observations stored per file.
+   * `1` writes `{ duration, recordedAt }`. Larger values write `{ observations }`.
+   * @default 1
+   */
+  durationHistoryMaxRuns?: number
+  /**
+   * How multiple duration observations are reduced to a single value.
+   * @default 'latest'
+   */
+  durationSmoothing?: DurationSmoothing
+  /**
+   * Glob rules that pin matching files to a shard when `shardStrategy` is `affinity`.
+   * @default []
+   */
+  shardAffinityRules?: ShardAffinityRule[]
+  /**
+   * Warn when `minShardLoad / maxShardLoad` is below this ratio after sharding.
+   * `0` disables the warning. Valid range is `0` through `1`.
+   * @default 0
+   */
+  rebalanceThreshold?: number
+  /**
+   * Durations strictly above this threshold are placed on their own shards when possible.
+   * `0` disables isolation.
+   * @default 0
+   */
+  isolateSlowThreshold?: number
+  /**
+   * Sharding algorithm used when a duration-based strategy is selected but history is missing or corrupt.
+   * @default 'hash'
+   */
+  durationFallbackStrategy?: DurationFallbackStrategy
 }
 
 export type DepsOptimizationOptions = Omit<
@@ -1189,6 +1279,18 @@ export interface ResolvedConfig
     concurrent?: boolean
     seed: number
     groupOrder: number
+    shardStrategy: ShardStrategy
+    balanceShardsByTime: boolean
+    recordFileDurations: boolean
+    durationBasedSorting: boolean
+    durationHistoryTTL: number
+    durationHistoryPath: string
+    durationHistoryMaxRuns: number
+    durationSmoothing: DurationSmoothing
+    shardAffinityRules: ShardAffinityRule[]
+    rebalanceThreshold: number
+    isolateSlowThreshold: number
+    durationFallbackStrategy: DurationFallbackStrategy
   }
 
   typecheck: Omit<TypecheckConfig, 'enabled'> & {
