@@ -2,6 +2,9 @@ from langchain_core.runnables import __all__
 
 EXPECTED_ALL = [
     "chain",
+    "CoalesceBackend",
+    "CoalesceStats",
+    "InMemoryCoalesceBackend",
     "AddableDict",
     "ConfigurableField",
     "ConfigurableFieldSingleOption",

@@ -1921,6 +1921,38 @@ class Runnable(ABC, Generic[Input, Output]):
             exponential_jitter_params=exponential_jitter_params,
         )
 
+    def with_coalesce(
+        self,
+        *,
+        backend: Any | None = None,
+    ) -> Runnable[Input, Output]:
+        """Wrap this `Runnable` so identical concurrent calls share one execution.
+
+        Callers that arrive while the same input is already in flight wait for that
+        execution and receive its result. The coalescing key is the input value only:
+        config, kwargs, and dictionary key order are ignored. After the shared
+        execution finishes, the next call with that input runs again.
+
+        Sync and async `invoke`, `stream`, `batch`, and `batch_as_completed` share
+        one backend. `transform`, `atransform`, and event streaming are unchanged.
+
+        Args:
+            backend: Store for in-flight calls. A new in-memory backend is created
+                when omitted. Wrappers that share a backend coalesce with each other.
+
+        Returns:
+            A `Runnable` that coalesces concurrent calls to this `Runnable`.
+        """
+        from langchain_core.runnables.coalesce import (  # noqa: PLC0415
+            InMemoryCoalesceBackend,
+            RunnableWithCoalesce,
+        )
+
+        coalesce_backend = (
+            InMemoryCoalesceBackend() if backend is None else backend
+        )
+        return RunnableWithCoalesce(bound=self, backend=coalesce_backend)
+
     def map(self) -> Runnable[list[Input], list[Output]]:
         """Return a new `Runnable` that maps a list of inputs to a list of outputs.
 
