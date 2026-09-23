@@ -3,6 +3,7 @@ import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import type { World } from '../../world';
 import type { QueryInstance } from '../types';
+import { checkAspectConstraints } from './aspect-masks';
 
 /**
  * Check if an entity matches a non-tracking query.
@@ -30,6 +31,13 @@ export function checkQuery(world: World, query: QueryInstance, entity: Entity): 
         if (forbidden && (entityMask & forbidden) !== 0) return false;
         if (required && (entityMask & required) !== required) return false;
         if (or !== 0 && (entityMask & or) === 0) return false;
+    }
+
+    if (
+        query.aspectConstraints.length > 0 &&
+        !checkAspectConstraints(query.aspectConstraints, ctx.entityMasks, eid)
+    ) {
+        return false;
     }
 
     return true;

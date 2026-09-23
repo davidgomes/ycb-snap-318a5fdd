@@ -1,4 +1,5 @@
 import { ActionInstance } from '../actions/types';
+import type { Aspect, AspectRecord, AspectValue, SetAspectCallback } from '../aspect/types';
 import type { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
@@ -55,11 +56,14 @@ export type World = {
     spawn(...traits: ConfigurableTrait[]): Entity;
     has(entity: Entity): boolean;
     has(trait: Trait): boolean;
-    has(target: Entity | Trait): boolean;
+    has(aspect: Aspect<any>): boolean;
+    has(target: Entity | Trait | Aspect<any>): boolean;
     add(...traits: ConfigurableTrait[]): void;
-    remove(...traits: Trait[]): void;
+    remove(...traits: (Trait | Aspect<any>)[]): void;
     get<T extends Trait>(trait: T): TraitRecord<ExtractSchema<T>> | undefined;
+    get<A extends Aspect<any>>(aspect: A): AspectRecord<A> | undefined;
     set<T extends Trait>(trait: T, value: TraitValue<ExtractSchema<T>> | SetTraitCallback<T>): void;
+    set<A extends Aspect<any>>(aspect: A, value: AspectValue<A> | SetAspectCallback<A>): void;
     destroy(): void;
     reset(): void;
     query<T extends QueryParameter[]>(key: Query<T>): QueryResult<T>;
@@ -91,6 +95,8 @@ export type World = {
         pair: RelationPair<T>,
         callback: (entity: Entity, target: Entity) => void
     ): QueryUnsubscriber;
+    /** Fires when an entity transitions from missing to having every constituent of the aspect. */
+    onAdd(aspect: Aspect<any>, callback: (entity: Entity) => void): QueryUnsubscriber;
     onAdd(
         input: Trait | Relation<Trait> | RelationPair,
         callback: (entity: Entity, target?: Entity) => void
@@ -104,6 +110,8 @@ export type World = {
         pair: RelationPair<T>,
         callback: (entity: Entity, target: Entity) => void
     ): QueryUnsubscriber;
+    /** Fires when an entity transitions from having every constituent of the aspect to missing one. */
+    onRemove(aspect: Aspect<any>, callback: (entity: Entity) => void): QueryUnsubscriber;
     onRemove(
         input: Trait | Relation<Trait> | RelationPair,
         callback: (entity: Entity, target?: Entity) => void
@@ -117,6 +125,8 @@ export type World = {
         pair: RelationPair<T>,
         callback: (entity: Entity, target: Entity) => void
     ): QueryUnsubscriber;
+    /** Fires when any constituent of the aspect changes while the entity has all of them. */
+    onChange(aspect: Aspect<any>, callback: (entity: Entity) => void): QueryUnsubscriber;
     onChange(
         input: Trait | Relation<Trait> | RelationPair,
         callback: (entity: Entity, target?: Entity) => void

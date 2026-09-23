@@ -1,3 +1,4 @@
+import { isAspect } from '../../aspect/utils/is-aspect';
 import { $internal } from '../../common';
 import { isRelationPair } from '../../relation/utils/is-relation';
 import type { Relation } from '../../relation/types';
@@ -6,6 +7,12 @@ import { isModifier } from '../modifier';
 import type { QueryHash, QueryParameter } from '../types';
 
 const sortedIDs = new Float64Array(1024); // Use Float64 for larger IDs with relation encoding
+
+// Aspects are negative so they never collide with trait, modifier or pair encodings.
+// Modifier ID 0 is reserved for "has", which is how top-level aspects are encoded.
+/* @inline @pure */ function encodeAspect(modifierId: number, aspectId: number) {
+    return -(modifierId * 100000 + aspectId + 1);
+}
 
 export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
     sortedIDs.fill(0);
@@ -28,12 +35,16 @@ export const createQueryHash = (parameters: QueryParameter[]): QueryHash => {
             sortedIDs[cursor++] = relationId * 10000000 + targetId + 5000000;
         } else if (isModifier(param)) {
             const modifierId = param.id;
-            const traitIds = param.traitIds;
+            const traits = param.traits;
 
-            for (let i = 0; i < traitIds.length; i++) {
-                const traitId = traitIds[i];
-                sortedIDs[cursor++] = modifierId * 100000 + traitId;
+            for (let i = 0; i < traits.length; i++) {
+                const trait = traits[i];
+                sortedIDs[cursor++] = isAspect(trait)
+                    ? encodeAspect(modifierId, trait.id)
+                    : modifierId * 100000 + trait.id;
             }
+        } else if (isAspect(param)) {
+            sortedIDs[cursor++] = encodeAspect(0, param.id);
         } else {
             const traitId = (param as Trait).id;
             sortedIDs[cursor++] = traitId;

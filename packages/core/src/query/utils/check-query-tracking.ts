@@ -3,6 +3,7 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import { checkAspectConstraints, hasAllBits, hasAnyBits } from './aspect-masks';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -60,6 +61,13 @@ export function checkQueryTracking(
         if (or !== 0 && (entityMask & or) === 0) return false;
     }
 
+    if (
+        query.aspectConstraints.length > 0 &&
+        !checkAspectConstraints(query.aspectConstraints, entityMasks, eid)
+    ) {
+        return false;
+    }
+
     // 2. Process tracking groups - update trackers and check cross-event invalidation
     // Also track OR group state to avoid second loop when possible
     let hasOrGroup = false;
@@ -71,6 +79,57 @@ export function checkQueryTracking(
         const groupLogic = group.logic;
         const groupBitmasks = group.bitmasks;
         const groupBitmask = groupBitmasks[eventGenerationId];
+
+        if (group.aspect) {
+            if (groupBitmask && groupBitmask & eventBitflag) {
+                // Leaving completeness invalidates Added/Changed and becoming complete invalidates
+                // Changed. Removed stays valid until the aspect is complete again, checked below.
+                if (eventType === 'remove') {
+                    if (groupType !== 'remove') return false;
+                } else if (eventType === 'add') {
+                    if (groupType === 'change') return false;
+                }
+
+                if (groupType === eventType) {
+                    // Only record aspect-level events. For removals the entity must have been
+                    // complete right before this trait was removed.
+                    const isAspectEvent =
+                        eventType === 'remove'
+                            ? hasAllBits(
+                                  entityMasks,
+                                  eid,
+                                  groupBitmasks,
+                                  eventGenerationId,
+                                  eventBitflag
+                              )
+                            : hasAllBits(entityMasks, eid, groupBitmasks);
+
+                    if (isAspectEvent) {
+                        const groupTrackers = group.trackers;
+                        let trackerArr = groupTrackers[eventGenerationId];
+                        if (!trackerArr) {
+                            trackerArr = [];
+                            groupTrackers[eventGenerationId] = trackerArr;
+                        }
+                        trackerArr[eid] = (trackerArr[eid] | 0) | eventBitflag;
+                    }
+                }
+            }
+
+            const isComplete = hasAllBits(entityMasks, eid, groupBitmasks);
+            const satisfied =
+                hasAnyBits(group.trackers, eid, groupBitmasks) &&
+                (groupType === 'remove' ? !isComplete : isComplete);
+
+            if (groupLogic === 'or') {
+                hasOrGroup = true;
+                if (satisfied) anyOrMatched = true;
+            } else if (!satisfied) {
+                return false;
+            }
+
+            continue;
+        }
 
         // Check if this event affects this group's traits
         if (groupBitmask && (groupBitmask & eventBitflag)) {

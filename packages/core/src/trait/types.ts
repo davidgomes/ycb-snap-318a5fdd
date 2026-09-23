@@ -1,3 +1,4 @@
+import type { Aspect, ConfigurableAspect } from '../aspect/types';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { QueryInstance } from '../query/types';
@@ -43,7 +44,11 @@ export type TraitTuple<T extends Trait = Trait> = [
         : never,
 ];
 
-export type ConfigurableTrait<T extends Trait = Trait> = T | TraitTuple<T> | RelationPair<T>;
+export type ConfigurableTrait<T extends Trait = Trait> =
+    | T
+    | TraitTuple<T>
+    | RelationPair<T>
+    | ConfigurableAspect<Aspect<any>>;
 
 export type SetTraitCallback<T extends Trait | RelationPair> = (
     prev: TraitRecord<ExtractSchema<T>>
@@ -110,7 +115,7 @@ export type TraitOrRelation = Trait | Relation<Trait>;
 /** Extracts the underlying Trait from a TraitOrRelation (Relations contain a Trait) */
 export type ExtractTrait<T> = T extends Relation<infer TTrait> ? TTrait : T;
 
-/** Maps a tuple of TraitOrRelation to their underlying Traits */
-export type ExtractTraits<T extends TraitOrRelation[]> = {
+/** Maps a tuple of TraitOrRelation to their underlying Traits. Aspects are kept as is. */
+export type ExtractTraits<T extends (TraitOrRelation | Aspect<any>)[]> = {
     [K in keyof T]: ExtractTrait<T[K]>;
 };

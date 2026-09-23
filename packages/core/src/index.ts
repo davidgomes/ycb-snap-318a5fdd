@@ -1,5 +1,16 @@
 export { createActions } from './actions/create-actions';
 export type { Actions, ActionsInitializer, ActionRecord } from './actions/types';
+export { createAspect } from './aspect/aspect';
+export { $aspect } from './aspect/symbols';
+export type {
+    Aspect,
+    AspectRecord,
+    AspectSchema,
+    AspectTuple,
+    AspectValue,
+    ConfigurableAspect,
+    SetAspectCallback,
+} from './aspect/types';
 export { $internal } from './common';
 export type { Entity } from './entity/types';
 export { unpackEntity } from './entity/utils/pack-entity';
@@ -15,6 +26,7 @@ export type {
     InstancesFromParameters,
     IsNotModifier,
     Modifier,
+    ModifierTrait,
     Query,
     QueryModifier,
     QueryParameter,

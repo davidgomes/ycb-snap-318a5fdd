@@ -1,17 +1,16 @@
-import type { Trait } from '../../trait/types';
-import type { Modifier, OrModifier, OrParameter } from '../types';
+import type { Modifier, ModifierTrait, OrModifier, OrParameter } from '../types';
 import { $modifier, createModifier } from '../modifier';
 
 export const Or = <T extends OrParameter[]>(...params: T): OrModifier<T> => {
-    // Separate traits from nested modifiers
-    const traits: Trait[] = [];
+    // Separate traits and aspects from nested modifiers
+    const traits: ModifierTrait[] = [];
     const modifiers: Modifier[] = [];
 
     for (const param of params) {
         if ((param as Modifier)[$modifier]) {
             modifiers.push(param as Modifier);
         } else {
-            traits.push(param as Trait);
+            traits.push(param as ModifierTrait);
         }
     }
 

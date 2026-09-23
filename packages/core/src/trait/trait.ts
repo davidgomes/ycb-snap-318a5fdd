@@ -1,3 +1,6 @@
+import { addAspect, getAspect, setAspect } from '../aspect/aspect';
+import type { Aspect } from '../aspect/types';
+import { isAspect } from '../aspect/utils/is-aspect';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -140,13 +143,18 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
         }
 
         // Get trait and params for regular traits
-        let trait: Trait;
+        let trait: Trait | Aspect;
         let params: Record<string, any> | undefined;
 
         if (Array.isArray(config)) {
-            [trait, params] = config as [Trait, Record<string, any>];
+            [trait, params] = config as [Trait | Aspect, Record<string, any>];
         } else {
-            trait = config as Trait;
+            trait = config as Trait | Aspect;
+        }
+
+        if (isAspect(trait)) {
+            addAspect(world, entity, trait, params);
+            continue;
         }
 
         // Add the trait to the entity
@@ -224,12 +232,21 @@ export function addTrait(world: World, entity: Entity, ...traits: ConfigurableTr
     for (const sub of instance.addSubscriptions) sub(entity, target);
 }
 
-export function removeTrait(world: World, entity: Entity, ...traits: (Trait | RelationPair)[]) {
+export function removeTrait(
+    world: World,
+    entity: Entity,
+    ...traits: (Trait | RelationPair | Aspect)[]
+) {
     for (let i = 0; i < traits.length; i++) {
         const trait = traits[i];
 
         if (isRelationPair(trait)) {
             removeRelationPair(world, entity, trait);
+            continue;
+        }
+
+        if (isAspect(trait)) {
+            removeTrait(world, entity, ...trait.traits);
             continue;
         }
 
@@ -340,16 +357,18 @@ export /* @inline @pure */ function getStore<C extends Trait = Trait>(
 export function setTrait(
     world: World,
     entity: Entity,
-    trait: Trait | RelationPair,
+    trait: Trait | RelationPair | Aspect,
     value: any,
     triggerChanged = true
 ) {
     if (isRelationPair(trait)) return setTraitForPair(world, entity, trait, value, triggerChanged);
+    if (isAspect(trait)) return setAspect(world, entity, trait, value, triggerChanged);
     return setTraitForTrait(world, entity, trait, value, triggerChanged);
 }
 
-export function getTrait(world: World, entity: Entity, trait: Trait | RelationPair) {
+export function getTrait(world: World, entity: Entity, trait: Trait | RelationPair | Aspect) {
     if (isRelationPair(trait)) return getTraitForPair(world, entity, trait);
+    if (isAspect(trait)) return getAspect(world, entity, trait);
     return getTraitForTrait(world, entity, trait);
 }
 

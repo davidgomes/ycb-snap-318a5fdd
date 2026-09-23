@@ -1,3 +1,6 @@
+import { mergeAspectRecords, splitAspectRecord } from '../aspect/aspect';
+import type { Aspect } from '../aspect/types';
+import { isAspect } from '../aspect/utils/is-aspect';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -27,14 +30,14 @@ export function createQueryResult<T extends QueryParameter[]>(
 ): QueryResult<T> {
     const traits: Trait[] = [];
     const stores: Store<any>[] = [];
-
-    getQueryStores(params, traits, stores, world);
+    let slots = getQueryStores(params, traits, stores, world);
 
     const results = Object.assign(entities, {
         readEach(
             callback: (state: InstancesFromParameters<T>, entity: Entity, index: number) => void
         ) {
             const state = Array.from({ length: traits.length }) as InstancesFromParameters<T>;
+            const view = slots ? Array.from({ length: slots.length }) : state;
 
             for (let i = 0; i < entities.length; i++) {
                 const entity = entities[i];
@@ -42,8 +45,9 @@ export function createQueryResult<T extends QueryParameter[]>(
 
                 // Create snapshots without atomic tracking
                 createSnapshots(eid, traits, stores, state);
+                if (slots) mergeSlots(slots, state, view);
 
-                callback(state, entity, i);
+                callback(view as InstancesFromParameters<T>, entity, i);
             }
 
             return results;
@@ -54,6 +58,7 @@ export function createQueryResult<T extends QueryParameter[]>(
             options: QueryResultOptions = { changeDetection: 'auto' }
         ) {
             const state = Array.from({ length: traits.length });
+            const view = slots ? Array.from({ length: slots.length }) : state;
 
             // Inline all three permutations of updateEach for performance.
             if (options.changeDetection === 'auto') {
@@ -69,10 +74,12 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const eid = getEntityId(entity);
 
                     createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    if (slots) mergeSlots(slots, state, view);
+                    callback(view as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
                     if (!world.has(entity)) continue;
+                    if (slots) splitSlots(slots, view, state);
 
                     // Commit all changes back to the stores for tracked traits.
                     for (let j = 0; j < trackedIndices.length; j++) {
@@ -120,10 +127,12 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const eid = getEntityId(entity);
 
                     createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    if (slots) mergeSlots(slots, state, view);
+                    callback(view as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
                     if (!world.has(entity)) continue;
+                    if (slots) splitSlots(slots, view, state);
 
                     // Commit all changes back to the stores.
                     for (let j = 0; j < traits.length; j++) {
@@ -156,10 +165,12 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const entity = entities[i];
                     const eid = getEntityId(entity);
                     createSnapshots(eid, traits, stores, state);
-                    callback(state as unknown as InstancesFromParameters<T>, entity, i);
+                    if (slots) mergeSlots(slots, state, view);
+                    callback(view as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
                     if (!world.has(entity)) continue;
+                    if (slots) splitSlots(slots, view, state);
 
                     // Commit all changes back to the stores.
                     for (let j = 0; j < traits.length; j++) {
@@ -181,7 +192,7 @@ export function createQueryResult<T extends QueryParameter[]>(
         select<U extends QueryParameter[]>(...params: U): QueryResult<U> {
             traits.length = 0;
             stores.length = 0;
-            getQueryStores(params, traits, stores, world);
+            slots = getQueryStores(params, traits, stores, world);
             return results as unknown as QueryResult<U>;
         },
 
@@ -243,12 +254,61 @@ export function createQueryResult<T extends QueryParameter[]>(
     }
 }
 
+/**
+ * A callback state slot. A number points at a single trait record, an aspect slot
+ * merges the records of the aspect's data traits, which are laid out consecutively from `start`.
+ */
+type StateSlot = number | { aspect: Aspect; start: number };
+
+/* @inline */ function mergeSlots(slots: StateSlot[], state: any[], view: any[]) {
+    for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+        view[i] =
+            typeof slot === 'number'
+                ? state[slot]
+                : mergeAspectRecords(slot.aspect, state, slot.start);
+    }
+}
+
+/* @inline */ function splitSlots(slots: StateSlot[], view: any[], state: any[]) {
+    for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+        if (typeof slot !== 'number') splitAspectRecord(slot.aspect, view[i], state, slot.start);
+    }
+}
+
+/**
+ * Collect the traits and stores for query params. Aspects are expanded into their data traits so
+ * reads, writes and change detection stay per trait. Returns the callback state layout when
+ * aspects are present, otherwise null since the state maps one to one to the traits.
+ */
 /* @inline */ export function getQueryStores<T extends QueryParameter[]>(
     params: T,
     traits: Trait[],
     stores: Store<any>[],
     world: World
-) {
+): StateSlot[] | null {
+    const slots: StateSlot[] = [];
+    let hasAspects = false;
+
+    const pushTrait = (trait: Trait) => {
+        if (trait[$internal].type === 'tag') return; // Skip tags
+        slots.push(traits.length);
+        traits.push(trait);
+        stores.push(getStore(world, trait));
+    };
+
+    const pushAspect = (aspect: Aspect) => {
+        const dataTraits = aspect[$internal].dataTraits;
+        if (dataTraits.length === 0) return; // Skip tag-only aspects
+        hasAspects = true;
+        slots.push({ aspect, start: traits.length });
+        for (const trait of dataTraits) {
+            traits.push(trait);
+            stores.push(getStore(world, trait));
+        }
+    };
+
     for (let i = 0; i < params.length; i++) {
         const param = params[i];
 
@@ -256,11 +316,7 @@ export function createQueryResult<T extends QueryParameter[]>(
         if (isRelationPair(param)) {
             const pairCtx = param[$internal];
             const relation = pairCtx.relation as Relation<Trait>;
-            const baseTrait = relation[$internal].trait;
-            if (baseTrait[$internal].type !== 'tag') {
-                traits.push(baseTrait);
-                stores.push(getStore(world, baseTrait));
-            }
+            pushTrait(relation[$internal].trait);
             continue;
         }
 
@@ -270,17 +326,17 @@ export function createQueryResult<T extends QueryParameter[]>(
 
             const modifierTraits = param.traits;
             for (const trait of modifierTraits) {
-                if (trait[$internal].type === 'tag') continue; // Skip tags
-                traits.push(trait);
-                stores.push(getStore(world, trait));
+                if (isAspect(trait)) pushAspect(trait);
+                else pushTrait(trait);
             }
+        } else if (isAspect(param)) {
+            pushAspect(param);
         } else {
-            const trait = param as Trait;
-            if (trait[$internal].type === 'tag') continue; // Skip tags
-            traits.push(trait);
-            stores.push(getStore(world, trait));
+            pushTrait(param as Trait);
         }
     }
+
+    return hasAspects ? slots : null;
 }
 
 export function createEmptyQueryResult(): QueryResult<QueryParameter[]> {
