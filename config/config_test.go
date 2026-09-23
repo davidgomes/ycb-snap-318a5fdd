@@ -277,3 +277,55 @@ func TestContainsTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestAlertPolicyInheritance(t *testing.T) {
+	configContent := `
+[global.alert_policy]
+consecutive_failures = 3
+consecutive_recoveries = 2
+cooldown_seconds = 30
+latency_threshold_ms = 500
+latency_breach_count = 4
+ssl_expiry_threshold_days = 10
+
+[[targets]]
+url = "https://inherited.example"
+name = "Inherited"
+
+[[targets]]
+url = "https://override.example"
+name = "Override"
+
+[targets.alert_policy]
+consecutive_failures = 5
+latency_threshold_ms = 800
+`
+	tmpFile, err := os.CreateTemp("", "test-alert-policy-*.toml")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer func() {
+		if err := os.Remove(tmpFile.Name()); err != nil {
+			t.Logf("Failed to remove temp file: %v", err)
+		}
+	}()
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatalf("Failed to close temp file: %v", err)
+	}
+
+	cfg, err := LoadConfig(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	inherited := cfg.Targets[0].AlertPolicy
+	if inherited.ConsecutiveFailures != 3 || inherited.CooldownSeconds != 30 || inherited.SSLExpiryThresholdDays != 10 {
+		t.Fatalf("inherited policy: %+v", inherited)
+	}
+	over := cfg.Targets[1].AlertPolicy
+	if over.ConsecutiveFailures != 5 || over.ConsecutiveRecoveries != 1 || over.LatencyThresholdMs != 800 || over.LatencyBreachCount != 1 {
+		t.Fatalf("override policy: %+v", over)
+	}
+}
