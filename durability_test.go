@@ -178,6 +178,27 @@ func TestBatchDurable(t *testing.T) {
 	require.LessOrEqual(t, stats.MaxSyncDuration, stats.CumulativeSyncDuration)
 }
 
+func TestBatchDurableCallbackQueriesDB(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	var d *DB
+	var callbackErrs []error
+	d, err := Open("", &Options{
+		FS: vfs.NewMem(),
+		EventListener: &EventListener{BatchDurable: func(info BatchDurableInfo) {
+			// The outcome is recorded before the callback is invoked.
+			callbackErrs = append(callbackErrs,
+				d.WaitForJobDurability(info.JobID),
+				d.WaitForDurability(info.SeqNum),
+				requireResolved(t, d.DurabilityNotify(info.SeqNum)))
+		}},
+	})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, d.Close()) }()
+
+	require.NoError(t, d.Set([]byte("a"), nil, Sync))
+	require.Equal(t, []error{nil, nil, nil}, callbackErrs)
+}
+
 func TestBatchDurableLargeBatch(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	var rec batchDurableRecorder
