@@ -1614,3 +1614,214 @@ describe('`Result` method tests', () => {
     });
   });
 });
+
+describe('`Result` iteration', () => {
+  test('`Ok` yields its value exactly once', () => {
+    const theOk = result.ok<number, string>(42);
+    expect([...theOk]).toEqual([42]);
+    expect(Array.from(theOk)).toEqual([42]);
+    expectTypeOf([...theOk]).toEqualTypeOf<number[]>();
+  });
+
+  test('`Err` yields nothing', () => {
+    expect([...result.err<number, string>('nope')]).toEqual([]);
+  });
+
+  test('works with `for...of`', () => {
+    const seen: string[] = [];
+    for (const value of result.ok<string, number>('hello')) {
+      seen.push(value);
+    }
+    for (const value of result.err<string, number>(1)) {
+      seen.push(value);
+    }
+    expect(seen).toEqual(['hello']);
+  });
+
+  test('`Err`s with different errors are still not equal', () => {
+    expect(result.err('a')).not.toEqual(result.err('b'));
+    expect(result.err('a')).toEqual(result.err('a'));
+  });
+});
+
+describe('`Result` collection helpers', () => {
+  const parse = (s: string): Result<number, string> => {
+    const n = Number.parseInt(s, 10);
+    return Number.isNaN(n) ? result.err(`not a number: ${s}`) : result.ok(n);
+  };
+
+  /** Wrap `items` in a generator which records every item pulled from it. */
+  function tracked<T>(items: readonly T[]): { iterable: Iterable<T>; pulled: T[] } {
+    const pulled: T[] = [];
+    function* generate() {
+      for (const item of items) {
+        pulled.push(item);
+        yield item;
+      }
+    }
+    return { iterable: generate(), pulled };
+  }
+
+  describe('`sequence`', () => {
+    test('with all `Ok`s', () => {
+      const sequenced = result.sequence([
+        result.ok<number, string>(1),
+        result.ok<number, string>(2),
+      ]);
+      expect(sequenced).toEqual(result.ok([1, 2]));
+      expectTypeOf(sequenced).toEqualTypeOf<Result<number[], string>>();
+    });
+
+    test('with `Err`s produces the first one', () => {
+      const sequenced = result.sequence([result.ok(1), result.err('a'), result.err('b')]);
+      expect(sequenced).toEqual(result.err('a'));
+      expectTypeOf(sequenced).toEqualTypeOf<Result<number[], string>>();
+    });
+
+    test('with an empty iterable', () => {
+      expect(result.sequence<number, string>([])).toEqual(result.ok([]));
+    });
+
+    test('with a non-array iterable', () => {
+      const results = new Set([result.ok<string, string>('a'), result.ok<string, string>('b')]);
+      expect(result.sequence(results)).toEqual(result.ok(['a', 'b']));
+    });
+
+    test('stops advancing the iterator after the first `Err`', () => {
+      const first = result.ok<number, string>(1);
+      const bad = result.err<number, string>('bad');
+      const { iterable, pulled } = tracked([first, bad, result.ok(3), result.err('worse')]);
+
+      expect(result.sequence(iterable)).toEqual(result.err('bad'));
+      expect(pulled).toEqual([first, bad]);
+    });
+  });
+
+  describe('`traverse`', () => {
+    test('when every call produces `Ok`', () => {
+      const traversed = result.traverse(['1', '2', '3'], parse);
+      expect(traversed).toEqual(result.ok([1, 2, 3]));
+      expectTypeOf(traversed).toEqualTypeOf<Result<number[], string>>();
+    });
+
+    test('when calls produce `Err`s', () => {
+      expect(result.traverse(['1', 'two', 'three'], parse)).toEqual(
+        result.err('not a number: two')
+      );
+    });
+
+    test('with an empty iterable', () => {
+      expect(result.traverse([], parse)).toEqual(result.ok([]));
+    });
+
+    test('calls `fn` with only the item', () => {
+      const calls: unknown[][] = [];
+      result.traverse(['a', 'b'], (...args: [string]) => {
+        calls.push(args);
+        return result.ok(args[0]);
+      });
+      expect(calls).toEqual([['a'], ['b']]);
+    });
+
+    test('stops calling `fn` and advancing the iterator after the first `Err`', () => {
+      const { iterable, pulled } = tracked(['1', 'two', '3', 'four']);
+      const seen: string[] = [];
+
+      const traversed = result.traverse(iterable, (s) => {
+        seen.push(s);
+        return parse(s);
+      });
+
+      expect(traversed).toEqual(result.err('not a number: two'));
+      expect(seen).toEqual(['1', 'two']);
+      expect(pulled).toEqual(['1', 'two']);
+    });
+
+    test('curried form', () => {
+      const parseAll = result.traverse(parse);
+      expectTypeOf(parseAll).toEqualTypeOf<(items: Iterable<string>) => Result<number[], string>>();
+      expect(parseAll(['4', '5'])).toEqual(result.ok([4, 5]));
+      expect(parseAll(new Set(['4', 'five']))).toEqual(result.err('not a number: five'));
+    });
+  });
+
+  describe('`zip`', () => {
+    test('with two `Ok`s', () => {
+      const zipped = result.zip(result.ok<number, string>(1), result.ok<string, string>('a'));
+      expect(zipped).toEqual(result.ok([1, 'a']));
+      expectTypeOf(zipped).toEqualTypeOf<Result<[number, string], string>>();
+    });
+
+    test('with `Err`s produces the first one', () => {
+      expect(result.zip(result.err('a'), result.ok(2))).toEqual(result.err('a'));
+      expect(result.zip(result.ok(1), result.err('b'))).toEqual(result.err('b'));
+      expect(result.zip(result.err('a'), result.err('b'))).toEqual(result.err('a'));
+    });
+
+    test('with different error types', () => {
+      const zipped = result.zip(result.ok<number, string>(1), result.err<boolean, number>(404));
+      expect(zipped).toEqual(result.err(404));
+      expectTypeOf(zipped).toEqualTypeOf<Result<[number, boolean], string | number>>();
+    });
+  });
+
+  describe('`zipWith`', () => {
+    const add = (a: number, b: number) => a + b;
+
+    test('with two `Ok`s', () => {
+      const zipped = result.zipWith(
+        result.ok<number, string>(1),
+        result.ok<number, string>(2),
+        add
+      );
+      expect(zipped).toEqual(result.ok(3));
+      expectTypeOf(zipped).toEqualTypeOf<Result<number, string>>();
+    });
+
+    test('with an `Err` does not call `fn`', () => {
+      let called = false;
+      const spy = (a: number, b: number) => {
+        called = true;
+        return add(a, b);
+      };
+
+      expect(result.zipWith(result.err<number, string>('a'), result.ok(2), spy)).toEqual(
+        result.err('a')
+      );
+      expect(result.zipWith(result.ok(1), result.err<number, string>('b'), spy)).toEqual(
+        result.err('b')
+      );
+      expect(called).toBe(false);
+    });
+  });
+
+  describe('`partition`', () => {
+    test('splits values and errors, preserving order', () => {
+      const partitioned = result.partition([
+        result.ok<number, string>(1),
+        result.err<number, string>('a'),
+        result.ok<number, string>(2),
+        result.err<number, string>('b'),
+      ]);
+      expect(partitioned).toEqual([
+        [1, 2],
+        ['a', 'b'],
+      ]);
+      expectTypeOf(partitioned).toEqualTypeOf<[number[], string[]]>();
+    });
+
+    test('with only one variant or no items', () => {
+      expect(result.partition([result.ok(1), result.ok(2)])).toEqual([[1, 2], []]);
+      expect(result.partition([result.err('a')])).toEqual([[], ['a']]);
+      expect(result.partition([])).toEqual([[], []]);
+    });
+
+    test('with a non-array iterable', () => {
+      function* generate() {
+        yield result.ok<string, number>('a');
+        yield result.err<string, number>(1);
+      }
+      expect(result.partition(generate())).toEqual([['a'], [1]]);
+    });
+  });
+});
