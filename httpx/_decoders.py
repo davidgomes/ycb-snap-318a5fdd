@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import codecs
 import io
+import json
+import re
 import typing
 import zlib
 
@@ -376,6 +378,323 @@ class LineDecoder:
         self.buffer = []
         self.trailing_cr = False
         return lines
+
+
+# JSON only treats these four characters as insignificant whitespace.
+JSON_WHITESPACE = " \t\n\r"
+_JSON_WHITESPACE_RE = re.compile(r"[ \t\n\r]*")
+_JSON_ARRAY_TOKEN_RE = re.compile(r'[\[\]{},"]')
+_JSON_STRING_TOKEN_RE = re.compile(r'["\\]')
+_NEWLINE_RE = re.compile(r"[\r\n]")
+_json_decoder = json.JSONDecoder()
+
+
+def _skip_json_whitespace(text: str, pos: int) -> int:
+    match = _JSON_WHITESPACE_RE.match(text, pos)
+    assert match is not None
+    return match.end()
+
+
+def parse_json_text(text: str) -> typing.Any:
+    """
+    Parse exactly one JSON text, allowing only surrounding whitespace.
+    """
+    start = _skip_json_whitespace(text, 0)
+    if start == len(text):
+        raise DecodingError("Expected a JSON value, but found no data.")
+    try:
+        value, end = _json_decoder.raw_decode(text, start)
+    except json.JSONDecodeError as exc:
+        raise DecodingError(f"Invalid JSON: {exc}") from exc
+    if _skip_json_whitespace(text, end) != len(text):
+        raise DecodingError("Unexpected data after JSON value.")
+    return value
+
+
+class JSONTextDecoder:
+    """
+    Handles incrementally decoding bytes into JSON text.
+
+    If no encoding is given, it is detected from the leading bytes, as
+    UTF-8, UTF-16, or UTF-32. A UTF-8 BOM is passed through as text, so that
+    each JSON format can apply its own rules for where a BOM is allowed.
+    """
+
+    def __init__(self, encoding: str | None = None) -> None:
+        self._buffer = b""
+        self._decoder: codecs.IncrementalDecoder | None = None
+        if encoding is not None:
+            self._decoder = codecs.getincrementaldecoder(encoding)(errors="strict")
+
+    def _detect(self, data: bytes) -> codecs.IncrementalDecoder:
+        encoding = json.detect_encoding(data)
+        if encoding == "utf-8-sig":
+            encoding = "utf-8"
+        return codecs.getincrementaldecoder(encoding)(errors="strict")
+
+    def _decode(self, data: bytes, final: bool) -> str:
+        if self._decoder is None:
+            self._buffer += data
+            if len(self._buffer) < 4 and not final:
+                return ""
+            data, self._buffer = self._buffer, b""
+            self._decoder = self._detect(data)
+        try:
+            return self._decoder.decode(data, final)
+        except UnicodeDecodeError as exc:
+            raise DecodingError(str(exc)) from exc
+
+    def decode(self, data: bytes) -> str:
+        return self._decode(data, final=False)
+
+    def flush(self) -> str:
+        return self._decode(b"", final=True)
+
+
+class JSONStreamDecoder:
+    def decode(self, text: str) -> list[typing.Any]:
+        raise NotImplementedError()  # pragma: no cover
+
+    def flush(self) -> list[typing.Any]:
+        raise NotImplementedError()  # pragma: no cover
+
+
+class JSONDocumentDecoder(JSONStreamDecoder):
+    """
+    Handles incrementally parsing an `application/json` document.
+
+    A top-level array yields each of its elements as soon as the element is
+    complete. Any other top-level value is yielded once the document ends.
+    """
+
+    def __init__(self) -> None:
+        self._state = "start"  # "start", "value", "array", or "end".
+        self._bom_allowed = True
+        self._fragments: list[str] = []
+        self._depth = 0
+        self._in_string = False
+        self._escape = False
+        self._after_comma = False
+        self._element_complete = False
+
+    def decode(self, text: str) -> list[typing.Any]:
+        values: list[typing.Any] = []
+        pos = 0
+        while pos < len(text):
+            if self._state == "start":
+                pos = _skip_json_whitespace(text, pos)
+                if pos == len(text):
+                    break
+                if text[pos] == "\ufeff" and self._bom_allowed:
+                    self._bom_allowed = False
+                    pos += 1
+                elif text[pos] == "[":
+                    self._state = "array"
+                    pos += 1
+                else:
+                    self._state = "value"
+            elif self._state == "value":
+                self._fragments.append(text[pos:])
+                pos = len(text)
+            elif self._state == "array":
+                pos = self._decode_array(text, pos, values)
+            else:
+                if _skip_json_whitespace(text, pos) != len(text):
+                    raise DecodingError("Unexpected data after JSON value.")
+                pos = len(text)
+        return values
+
+    def _parse_element(self, tail: str, values: list[typing.Any]) -> None:
+        self._fragments.append(tail)
+        element = "".join(self._fragments)
+        self._fragments = []
+        values.append(parse_json_text(element))
+
+    def _decode_array(self, text: str, pos: int, values: list[typing.Any]) -> int:
+        """
+        Scan array content for element boundaries, tracking strings and nested
+        containers. Each complete element is then parsed, which also validates
+        the scanned structure.
+
+        Strings, objects, and arrays are complete as soon as they are closed.
+        Numbers and literals are only complete once a `,` or `]` follows them.
+        """
+        segment_start = pos
+        while pos < len(text):
+            if self._element_complete:
+                pos = _skip_json_whitespace(text, pos)
+                if pos == len(text):
+                    return pos
+                token = text[pos]
+                pos += 1
+                if token not in ",]":
+                    raise DecodingError("Expected ',' or ']' after array element.")
+                self._element_complete = False
+                self._after_comma = token == ","
+                segment_start = pos
+                if token == "]":
+                    self._state = "end"
+                    return pos
+                continue
+
+            if self._in_string:
+                if self._escape:
+                    self._escape = False
+                    pos += 1
+                    continue
+                match = _JSON_STRING_TOKEN_RE.search(text, pos)
+                if match is None:
+                    pos = len(text)
+                    break
+                pos = match.end()
+                if match.group() == "\\":
+                    self._escape = True
+                else:
+                    self._in_string = False
+                    if not self._depth:
+                        self._parse_element(text[segment_start:pos], values)
+                        self._element_complete = True
+                        segment_start = pos
+                continue
+
+            match = _JSON_ARRAY_TOKEN_RE.search(text, pos)
+            if match is None:
+                pos = len(text)
+                break
+            pos = match.end()
+            token = match.group()
+            if token == '"':
+                self._in_string = True
+            elif token in "[{":
+                self._depth += 1
+            elif token in "]}" and self._depth:
+                self._depth -= 1
+                if not self._depth:
+                    self._parse_element(text[segment_start:pos], values)
+                    self._element_complete = True
+                    segment_start = pos
+            elif token in ",]" and not self._depth:
+                self._fragments.append(text[segment_start : pos - 1])
+                element = "".join(self._fragments)
+                self._fragments = []
+                segment_start = pos
+                closing = token == "]"
+                if element.strip(JSON_WHITESPACE):
+                    values.append(parse_json_text(element))
+                elif self._after_comma or not closing:
+                    raise DecodingError("Expected a JSON value in array.")
+                self._after_comma = not closing
+                if closing:
+                    self._state = "end"
+                    return pos
+        if segment_start < pos:
+            self._fragments.append(text[segment_start:pos])
+        return pos
+
+    def flush(self) -> list[typing.Any]:
+        if self._state == "start":
+            raise DecodingError("Expected a JSON value, but found no data.")
+        if self._state == "array":
+            raise DecodingError("Unterminated JSON array.")
+        if self._state == "value":
+            text = "".join(self._fragments)
+            self._fragments = []
+            self._state = "end"
+            return [parse_json_text(text)]
+        return []
+
+
+class NDJSONDecoder(JSONStreamDecoder):
+    """
+    Handles incrementally parsing newline delimited JSON.
+
+    Lines may be separated by LF, CR, or CRLF. Blank lines are ignored.
+    """
+
+    def __init__(self) -> None:
+        self._buffer: list[str] = []
+        self._seen_value = False
+
+    def _parse_line(self, line: str, values: list[typing.Any]) -> None:
+        if not line.strip(JSON_WHITESPACE):
+            return
+        if not self._seen_value:
+            self._seen_value = True
+            if line.startswith("\ufeff"):
+                line = line[1:]
+        values.append(parse_json_text(line))
+
+    def decode(self, text: str) -> list[typing.Any]:
+        values: list[typing.Any] = []
+        lines = _NEWLINE_RE.split(text)
+        if len(lines) == 1:
+            if text:
+                self._buffer.append(text)
+            return values
+
+        lines[0] = "".join(self._buffer) + lines[0]
+        self._buffer = [lines.pop()]
+        for line in lines:
+            self._parse_line(line, values)
+        return values
+
+    def flush(self) -> list[typing.Any]:
+        values: list[typing.Any] = []
+        line = "".join(self._buffer)
+        self._buffer = []
+        self._parse_line(line, values)
+        return values
+
+
+class JSONSeqDecoder(JSONStreamDecoder):
+    """
+    Handles incrementally parsing JSON text sequences, as described in RFC 7464.
+
+    Each record begins with an RS character, and is terminated by the next RS
+    character or by the end of the payload.
+    """
+
+    RS = "\x1e"
+
+    def __init__(self) -> None:
+        self._started = False
+        self._record: list[str] = []
+
+    def _end_record(self, values: list[typing.Any], final: bool) -> None:
+        record = "".join(self._record)
+        self._record = []
+        if record.endswith("\n"):
+            record = record[:-1]
+        if not record.strip(JSON_WHITESPACE):
+            if final:
+                raise DecodingError("Incomplete JSON text sequence record.")
+            return
+        values.append(parse_json_text(record))
+
+    def decode(self, text: str) -> list[typing.Any]:
+        values: list[typing.Any] = []
+        parts = text.split(self.RS)
+        if not self._started:
+            if parts[0].strip(JSON_WHITESPACE):
+                raise DecodingError(
+                    "JSON text sequence must begin with a record separator."
+                )
+            if len(parts) == 1:
+                return values
+            self._started = True
+            parts = parts[1:]
+
+        self._record.append(parts[0])
+        for part in parts[1:]:
+            self._end_record(values, final=False)
+            self._record = [part]
+        return values
+
+    def flush(self) -> list[typing.Any]:
+        values: list[typing.Any] = []
+        if self._started:
+            self._end_record(values, final=True)
+        return values
 
 
 SUPPORTED_DECODERS = {
