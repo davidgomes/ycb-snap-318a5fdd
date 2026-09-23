@@ -270,6 +270,12 @@ type DB struct {
 	// envelopes.
 	logBytesIn atomic.Uint64
 
+	durability durabilityTracker
+	// batchDurableEnabled is true if EventListener.BatchDurable is configured.
+	batchDurableEnabled   bool
+	durableCommitCount    atomic.Uint64
+	durableCommitDuration atomic.Int64
+
 	// The number of bytes available on disk.
 	diskAvailBytes       atomic.Uint64
 	lowDiskSpaceReporter lowDiskSpaceReporter
@@ -832,7 +838,23 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 			return err
 		}
 	}
-	if err := d.commit.Commit(batch, sync, noSyncWait); err != nil {
+	if sync {
+		batch.durable = batchDurableState{}
+		if opts != nil {
+			batch.durable.correlationID = opts.CommitCorrelationID
+		}
+	}
+	err := d.commit.Commit(batch, sync, noSyncWait)
+	// The batch is marked applied only once it reaches publication, which (in
+	// the sync-wait case) also waits for the WAL sync to complete.
+	if sync && batch.applied.Load() {
+		if noSyncWait {
+			batch.durable.db = d
+		} else {
+			d.reportBatchDurable(batch, batch.commitErr)
+		}
+	}
+	if err != nil {
 		// There isn't much we can do on an error here. The commit pipeline will be
 		// horked at this point.
 		d.opts.Logger.Fatalf("pebble: fatal commit error: %v", err)
@@ -1570,6 +1592,7 @@ func (d *DB) Close() error {
 	d.closed.Store(errors.WithStack(ErrClosed))
 	close(d.closedCh)
 	d.bgCtxCancel()
+	d.durability.close(ErrClosed)
 
 	defer d.cacheHandle.Close()
 
@@ -1987,6 +2010,8 @@ func (d *DB) Metrics() *Metrics {
 	}
 	metrics.WAL.BytesWritten = metrics.Levels[0].TableBytesIn + metrics.WAL.Size
 	metrics.WAL.Failover = walStats.Failover
+	metrics.DurableCommitCount = d.durableCommitCount.Load()
+	metrics.DurableCommitDuration = time.Duration(d.durableCommitDuration.Load())
 
 	if p := d.mu.versions.picker; p != nil {
 		compactions := d.getInProgressCompactionInfoLocked(nil)

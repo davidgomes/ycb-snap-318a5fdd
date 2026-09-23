@@ -6,6 +6,7 @@ package pebble
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -727,6 +728,44 @@ func (i WALDeleteInfo) SafeFormat(w redact.SafePrinter, _ rune) {
 	w.Printf("[JOB %d] WAL deleted %s", redact.Safe(i.JobID), i.FileNum)
 }
 
+// BatchDurableInfo contains the info for a BatchDurable event.
+type BatchDurableInfo struct {
+	// JobID identifies the event; see DB.WaitForJobDurability.
+	JobID int
+	// SeqNum is the sequence number of the batch.
+	SeqNum base.SeqNum
+	// Err is the WAL sync error, if any. The batch is durable iff Err is nil.
+	Err error
+	// ApplyDuration is the time spent applying the batch to the memtable.
+	ApplyDuration time.Duration
+	// SyncDuration is the time from the batch being written to the WAL until
+	// its WAL sync completed.
+	SyncDuration time.Duration
+	// CorrelationID is WriteOptions.CommitCorrelationID of the commit.
+	CorrelationID uint64
+	// BatchSize is the size of the encoded batch in bytes.
+	BatchSize int
+	// KeyCount is the number of entries in the batch.
+	KeyCount uint32
+}
+
+func (i BatchDurableInfo) String() string {
+	return redact.StringWithoutMarkers(i)
+}
+
+// SafeFormat implements redact.SafeFormatter.
+func (i BatchDurableInfo) SafeFormat(w redact.SafePrinter, _ rune) {
+	if i.Err != nil {
+		w.Printf("[JOB %d] batch #%d sync error: %s",
+			redact.Safe(i.JobID), redact.Safe(i.SeqNum), i.Err)
+		return
+	}
+	w.Printf("[JOB %d] batch #%d durable (%d keys, %d bytes); apply %.3fs, sync %.3fs",
+		redact.Safe(i.JobID), redact.Safe(i.SeqNum), redact.Safe(i.KeyCount),
+		redact.Safe(i.BatchSize), redact.Safe(i.ApplyDuration.Seconds()),
+		redact.Safe(i.SyncDuration.Seconds()))
+}
+
 // WriteStallBeginInfo contains the info for a write stall begin event.
 type WriteStallBeginInfo struct {
 	Reason string
@@ -1020,6 +1059,21 @@ type EventListener struct {
 
 	// PossibleAPIMisuse is invoked when a possible API misuse is detected.
 	PossibleAPIMisuse func(PossibleAPIMisuseInfo)
+
+	// BatchDurable is invoked exactly once per Sync commit, after the WAL sync
+	// for the batch has completed (successfully or not). It is never invoked
+	// for non-Sync commits or when the WAL is disabled. For commits using
+	// DB.ApplyNoSyncWait, it is invoked from Batch.SyncWait. It is invoked
+	// synchronously on the committing goroutine and should return quickly.
+	BatchDurable func(BatchDurableInfo)
+}
+
+// noopBatchDurable is the default BatchDurable handler. The DB uses its
+// identity to determine whether BatchDurable has been configured.
+func noopBatchDurable(BatchDurableInfo) {}
+
+func isNoopBatchDurable(f func(BatchDurableInfo)) bool {
+	return f == nil || reflect.ValueOf(f).Pointer() == reflect.ValueOf(noopBatchDurable).Pointer()
 }
 
 // EnsureDefaults ensures that background error events are logged to the
@@ -1120,6 +1174,9 @@ func (l *EventListener) EnsureDefaults(logger Logger) {
 	if l.PossibleAPIMisuse == nil {
 		l.PossibleAPIMisuse = func(info PossibleAPIMisuseInfo) {}
 	}
+	if l.BatchDurable == nil {
+		l.BatchDurable = noopBatchDurable
+	}
 }
 
 // MakeLoggingEventListener creates an EventListener that logs all events to the
@@ -1211,6 +1268,8 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 		PossibleAPIMisuse: func(info PossibleAPIMisuseInfo) {
 			logger.Infof("%s", info)
 		},
+		// Logging every Sync commit would be far too noisy.
+		BatchDurable: noopBatchDurable,
 	}
 }
 
@@ -1218,6 +1277,13 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 func TeeEventListener(a, b EventListener) EventListener {
 	a.EnsureDefaults(nil)
 	b.EnsureDefaults(nil)
+	batchDurable := noopBatchDurable
+	if !isNoopBatchDurable(a.BatchDurable) || !isNoopBatchDurable(b.BatchDurable) {
+		batchDurable = func(info BatchDurableInfo) {
+			a.BatchDurable(info)
+			b.BatchDurable(info)
+		}
+	}
 	return EventListener{
 		BackgroundError: func(err error) {
 			a.BackgroundError(err)
@@ -1327,6 +1393,7 @@ func TeeEventListener(a, b EventListener) EventListener {
 			a.PossibleAPIMisuse(info)
 			b.PossibleAPIMisuse(info)
 		},
+		BatchDurable: batchDurable,
 	}
 }
 

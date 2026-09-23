@@ -322,6 +322,11 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 		// removing the batch from the pending queue.
 		return err
 	}
+	if syncWAL {
+		b.durable.walWritten = crtime.NowMono()
+		b.durable.batchSize = len(b.data)
+		b.durable.keyCount = b.Count()
+	}
 
 	// Apply the batch to the memtable.
 	if err := p.env.apply(b, mem); err != nil {
@@ -330,6 +335,9 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 		// sitting in the pending queue. We should consider fixing this by also
 		// removing the batch from the pending queue.
 		return err
+	}
+	if syncWAL {
+		b.durable.applyDuration = b.durable.walWritten.Elapsed()
 	}
 
 	// Publish the batch sequence number.

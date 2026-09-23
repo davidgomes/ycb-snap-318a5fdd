@@ -371,6 +371,9 @@ type batchInternal struct {
 
 	commitErr error
 
+	// durable is only populated for Sync commits.
+	durable batchDurableState
+
 	// Position bools together to reduce the sizeof the struct.
 
 	// ingestedSSTBatch indicates that the batch contains one or more key kinds
@@ -1710,6 +1713,10 @@ func (b *Batch) SyncWait() error {
 	waitDuration := now.Elapsed()
 	b.commitStats.CommitWaitDuration += waitDuration
 	b.commitStats.TotalDuration += waitDuration
+	if d := b.durable.db; d != nil {
+		b.durable.db = nil
+		d.reportBatchDurable(b, b.commitErr)
+	}
 	return b.commitErr
 }
 
