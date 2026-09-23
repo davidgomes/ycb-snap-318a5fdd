@@ -154,6 +154,7 @@ We also have a long list of other ``bind_*`` functions, like:
 
 - ``bind_io`` to bind functions returning ``IO`` container
 - ``bind_result`` to bind functions returning ``Result`` container
+- ``bind_validated`` to bind functions returning ``Validated`` container
 - ``bind_ioresult`` to bind functions returning ``IOResult`` container
 - ``bind_future`` to bind functions returning ``Future`` container
 - ``bind_async_future`` to bind async functions returning ``Future`` container
@@ -405,6 +406,8 @@ API Reference
 .. autofunction:: returns.pointfree.bind
 
 .. autofunction:: returns.pointfree.bind_result
+
+.. autofunction:: returns.pointfree.bind_validated
 
 .. autofunction:: returns.pointfree.bind_io
 

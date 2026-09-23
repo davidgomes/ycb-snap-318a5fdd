@@ -43,6 +43,15 @@
     reveal_type(cond(ReaderFutureResult, 1, 1.0)(True))  # N: Revealed type is "returns.context.requires_context_future_result.RequiresContextFutureResult[builtins.int, builtins.float, Any]"
 
 
+- case: cond_validated
+  disable_cache: false
+  main: |
+    from returns.pointfree import cond
+    from returns.validated import Validated
+
+    reveal_type(cond(Validated, 1, 'e')(False))  # N: Revealed type is "returns.validated.Validated[builtins.int, builtins.str]"
+
+
 - case: cond_maybe
   disable_cache: false
   main: |
