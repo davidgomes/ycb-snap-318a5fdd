@@ -384,7 +384,7 @@ const reparented = world.query(Added(ChildOf('*')))
 
 Pairs are tracked by their net change since the query last ran, so adding and then removing the same pair cancels out. Replacing the target of an exclusive relation is reported as a removal of the old target and an addition of the new one. Pair modifiers combine with other parameters and `Or` like any other modifier.
 
-When iterating with `readEach` or `updateEach`, a pair with a specific target gives the data for that target. A removed pair has no data.
+When iterating with `readEach` or `updateEach`, a pair gives the data for its target, or for the first matching target when using `*`. A removed pair gives its data from when it was removed, and changes to it are not written back.
 
 ```js
 const Contains = relation({ store: { amount: 0 } })

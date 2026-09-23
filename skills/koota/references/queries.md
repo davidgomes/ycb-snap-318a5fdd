@@ -107,10 +107,13 @@ world.query(Removed(ChildOf(parent))) // lost parent, or was destroyed
 world.query(Changed(Contains(gold))) // gold data changed
 world.query(Added(ChildOf('*'))) // gained any parent, even with one already
 
-// readEach/updateEach give the data for that target
+// readEach/updateEach give the data for that target ('*' gives the first matching target)
 world.query(Changed(Contains(gold))).readEach(([contains]) => {
   contains.amount // gold's amount only
 })
+
+// Removed pairs give their data from when they were removed (read-only)
+world.query(Removed(Contains(gold))).readEach(([contains]) => {})
 
 // Manually flag a pair (or all pairs with '*') as changed
 inventory.changed(Contains(gold))
