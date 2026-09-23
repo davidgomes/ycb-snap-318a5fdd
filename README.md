@@ -509,6 +509,66 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 // After running the query, the Changed modifier is reset
 ```
 
+### Predicates
+
+Traits filter entities by what they have, predicates filter them by their data. `createPredicate` takes the traits it depends on and a function that receives the data of each dependency, in order, as a single array. Every call creates a unique predicate.
+
+```js
+import { createPredicate } from 'koota'
+
+const IsLowHealth = createPredicate([Health], ([health]) => health.value < 20)
+const IsFast = createPredicate(
+  [Velocity, MaxSpeed],
+  ([vel, max]) => Math.hypot(vel.x, vel.y) > max.value
+)
+
+// Entities with less than 20 health
+const dying = world.query(IsLowHealth)
+
+// Predicates add no data to the callback tuple
+world.query(Position, IsLowHealth).updateEach(([position]) => {})
+```
+
+A predicate is re-evaluated whenever one of its dependencies is added, set or removed, or flagged with `entity.changed()`. Entities missing any dependency never match. Dependencies need data, so passing a tag or a relation throws.
+
+Predicates can be used with every query modifier and alongside relation pairs.
+
+```js
+const Added = createAdded()
+const Removed = createRemoved()
+const Changed = createChanged()
+
+// Entities missing Health or with 20 or more health
+world.query(Not(IsLowHealth))
+
+// Entities matching either predicate
+world.query(Or(IsLowHealth, IsFast))
+
+// Entities that started matching since the last run
+world.query(Added(IsLowHealth))
+
+// Entities that stopped matching since the last run
+world.query(Removed(IsLowHealth))
+
+// Entities that started or stopped matching since the last run
+world.query(Changed(IsLowHealth))
+
+// Children of parent with low health
+world.query(IsLowHealth, ChildOf(parent))
+```
+
+Changes made inside `updateEach` are committed as each callback returns, so predicates are re-evaluated once iteration ends. Writes made directly to stores, such as with `useStores`, are not detected and need to be flagged with `entity.changed()`.
+
+```js
+world.query(Health).updateEach(([health]) => {
+  health.value -= 50
+  // IsLowHealth does not reflect this change yet
+})
+
+// Now it does
+world.query(IsLowHealth)
+```
+
 ### Add, remove and change events
 
 Koota allows you to subscribe to add, remove, and change events for specific traits.

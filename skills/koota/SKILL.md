@@ -200,11 +200,15 @@ const player = world.queryFirst(IsPlayer, Position)
 // Filter with modifiers
 world.query(Position, Not(Velocity)) // Has Position but not Velocity
 world.query(Or(IsPlayer, IsEnemy)) // Has either trait
+
+// Filter by trait data with predicates
+const IsLowHealth = createPredicate([Health], ([health]) => health.value < 20)
+world.query(IsLowHealth, Position)
 ```
 
 Prefer `updateEach`/`readEach` over `for...of` + `entity.get()` for data-bearing queries. `readEach` still gives you the entity as the second argument.
 
-**Note:** `updateEach`/`readEach` only return data-bearing traits (SoA/AoS). Tags, `Not()`, and relation filters are **excluded**:
+**Note:** `updateEach`/`readEach` only return data-bearing traits (SoA/AoS). Tags, `Not()`, predicates, and relation filters are **excluded**:
 
 ```typescript
 world.query(IsPlayer, Position, Velocity).updateEach(([pos, vel]) => {
@@ -212,7 +216,7 @@ world.query(IsPlayer, Position, Velocity).updateEach(([pos, vel]) => {
 })
 ```
 
-For tracking changes, caching queries, and advanced patterns, see [references/queries.md](references/queries.md).
+For predicates, tracking changes, caching queries, and advanced patterns, see [references/queries.md](references/queries.md).
 
 ## React integration
 

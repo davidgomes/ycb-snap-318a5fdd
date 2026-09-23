@@ -7,6 +7,7 @@ Complete guide to querying entities in Koota.
 - [Basic queries](#basic-queries)
 - [Query modifiers](#query-modifiers) - Not, Or
 - [Tracking modifiers](#tracking-modifiers) - Added, Removed, Changed
+- [Predicates](#predicates) - Filter by trait data with createPredicate
 - [Caching queries](#caching-queries) - createQuery for performance
 - [Change detection](#change-detection) - updateEach options
 - [Query + select](#query--select) - Select subset of traits for updates
@@ -132,6 +133,45 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 - Create instances at module scope, not inside functions
 - Tracking resets after each query execution
 - Changed only tracks `set()` calls and `entity.changed()` signals
+
+## Predicates
+
+Filter entities by trait data rather than trait presence. The function receives the data of each dependency trait, in order, as one array.
+
+```typescript
+import { createPredicate } from 'koota'
+
+// Create at module scope. Every call creates a unique predicate.
+const IsLowHealth = createPredicate([Health], ([health]) => health.value < 20)
+const IsFast = createPredicate(
+  [Velocity, MaxSpeed],
+  ([vel, max]) => Math.hypot(vel.x, vel.y) > max.value
+)
+
+world.query(IsLowHealth)
+
+// Predicates add no data to the callback tuple
+world.query(Position, IsLowHealth).updateEach(([pos]) => {})
+```
+
+**With modifiers and relations:**
+
+```typescript
+world.query(Not(IsLowHealth)) // Missing Health, or predicate is false
+world.query(Or(IsLowHealth, IsFast)) // Either predicate holds
+world.query(Added(IsLowHealth)) // Started matching since last run
+world.query(Removed(IsLowHealth)) // Stopped matching since last run
+world.query(Changed(IsLowHealth)) // Started or stopped matching since last run
+world.query(IsLowHealth, ChildOf(parent)) // Combine with relation pairs
+```
+
+**Key points:**
+
+- Re-evaluated when a dependency is added, set, removed, or flagged with `entity.changed()`
+- Entities missing any dependency never match
+- Tags and relations cannot be dependencies (throws)
+- Inside `updateEach`, re-evaluation waits until iteration ends so predicates see committed values
+- Direct store writes via `useStores` are not detected; flag them with `entity.changed()`
 
 ## Caching queries
 
