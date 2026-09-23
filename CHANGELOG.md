@@ -1,3 +1,11 @@
+# Upcoming release
+
+## Features
+- Add a repeatable `--sort <field>` option to print search results in a deterministic order, sorted by
+  `path`, `name`, `extension`, `size`, `modified`, `created`, `accessed`, `depth`, `type`, `name-length`,
+  `path-length` or `random`. The order can be tuned with `--reverse`, `--dirs-first`, `--files-first`,
+  `--sort-case-sensitive`, `--sort-missing-last`, `--sort-natural` and `--sort-seed`.
+
 # 10.4.2
 
 ## Bugfixes
