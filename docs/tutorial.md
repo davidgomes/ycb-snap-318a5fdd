@@ -265,6 +265,51 @@ a = "123"       // re-assigned 'string'
 a = [1, 2, 3]   // re-assigned 'array'
 ```
 
+### Destructuring
+
+The `:=` operator can also define multiple variables at once by destructuring
+an array or a map. Array patterns bind elements by position, and map patterns
+bind values by key.
+
+```golang
+[a, b] := [1, 2]              // a == 1, b == 2
+[x, y] := [1]                 // x == 1, y == undefined
+[first, ...rest] := [1, 2, 3] // first == 1, rest == [2, 3]
+[_, second] := [1, 2]         // '_' discards a value
+
+{name, age} := {name: "Tengo", age: 5} // name == "Tengo", age == 5
+{name: n} := {name: "Tengo"}           // n == "Tengo"
+{"full name": f} := {"full name": "d5/tengo"}
+
+[p, {q: [r, s]}] := [1, {q: [2, 3]}]   // patterns can be nested
+[] := [1, 2]                           // empty patterns are valid
+```
+
+Array positions beyond the array's length and absent map keys bind
+`undefined`. A default value (`name = expr`) is used instead, but only when the
+position or key does not exist: an existing `undefined` value is kept. Default
+values are evaluated only when they are used, and they can refer to variables
+defined earlier in the same pattern.
+
+```golang
+[a, b = a * 2] := [5]       // a == 5, b == 10
+{x = 1, y: z = 2} := {x: 3} // x == 3, z == 2
+{u = 1} := {u: undefined}   // u == undefined
+```
+
+A rest element (`...name`) collects the remaining array elements into a new
+array and must be the last element of its pattern. Map patterns do not support
+rest elements.
+
+Function parameters can be destructured with the same patterns:
+
+```golang
+f := func([a, b], {c, d = 4}) { return a + b + c + d }
+f([1, 2], {c: 3}) // == 10
+```
+
+Only `:=` destructures; `[a, b] = [1, 2]` is a compile error.
+
 ## Type Conversions
 
 Although the type is not directly specified in Tengo, one can use type
