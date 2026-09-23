@@ -120,6 +120,28 @@ const target = entity.targetFor(Targeting) // Entity | undefined
 
 For detailed patterns, traversal, ordered relations, and anti-patterns, see [references/relations.md](references/relations.md).
 
+## Aspects
+
+Aspects group two or more traits into one unit with merged data. Field names must not overlap, relations are not allowed, tags are, and nested aspects flatten.
+
+```typescript
+import { createAspect } from 'koota'
+
+const Movable = createAspect(Position, Velocity) // Position { x, y }, Velocity { vx, vy }
+
+const entity = world.spawn(Movable({ x: 1, vx: 2 })) // Adds missing traits, values routed by field
+entity.has(Movable) // Has every trait
+entity.get(Movable) // { x, y, vx, vy } or undefined if any trait is missing
+entity.set(Movable, { x: 5 }) // Only Position is written and flagged as changed
+entity.remove(Movable) // Removes all traits
+
+world.query(Movable).updateEach(([movable]) => {
+  movable.x += movable.vx // Writes go back to the owning trait
+})
+```
+
+With modifiers: `Not(Movable)` means missing at least one trait, `Changed(Movable)` means any trait changed, `Added`/`Removed` match the transition into/out of having all traits. `world.onAdd`/`onRemove` fire on those transitions and `world.onChange` fires when any trait changes while all are present.
+
 ## Basic usage
 
 ```typescript

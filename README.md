@@ -407,6 +407,39 @@ world.onAdd(ChildOf(parent), (entity, target) => {})
 world.onAdd(ChildOf('*'), (entity, target) => {})
 ```
 
+### Aspects
+
+An aspect groups two or more traits so they can be used as a single unit. Its data is the merged fields of all its traits, so field names must be unique across them. Tags are allowed, relations are not, and nested aspects flatten to their traits. Each `createAspect` call returns a distinct aspect with `id`, `traits` and `schema`.
+
+```js
+import { createAspect } from 'koota'
+
+const Position = trait({ x: 0, y: 0 })
+const Velocity = trait({ vx: 0, vy: 0 })
+const Movable = createAspect(Position, Velocity)
+
+// Adds only the missing traits, initial values go to the trait that owns each field
+const entity = world.spawn(Movable({ x: 10, vx: 1 }))
+
+entity.has(Movable) // True when the entity has every trait
+entity.get(Movable) // { x: 10, y: 0, vx: 1, vy: 0 }, or undefined if any trait is missing
+entity.set(Movable, { y: 5 }) // Writes to Position and only flags Position as changed
+entity.remove(Movable) // Removes all traits
+
+// In queries an aspect requires all of its traits and its data is merged
+world.query(Movable).updateEach(([movable]) => {
+  movable.x += movable.vx
+  movable.y += movable.vy
+})
+```
+
+Aspects work with all query modifiers. `Not(Movable)` matches entities missing at least one trait. `Changed(Movable)` matches when any trait changed. `Added(Movable)` matches when an entity gains the last missing trait and `Removed(Movable)` matches when it loses the first one. Events follow the same rules: `onAdd` fires when the aspect becomes complete, `onRemove` when it stops being complete and `onChange` when any trait changes while all are present.
+
+```js
+world.onAdd(Movable, (entity) => {})
+world.onChange(Movable, (entity) => {})
+```
+
 ### Query modifiers
 
 Modifiers are used to filter query results enabling powerful patterns. All modifiers can be mixed together.
