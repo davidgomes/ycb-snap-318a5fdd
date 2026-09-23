@@ -1,17 +1,19 @@
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
+import { getFirstRelationTarget, getRelationData, setRelationData } from '../relation/relation';
+import type { Relation, RelationPair, RelationTarget } from '../relation/types';
 import { isRelationPair } from '../relation/utils/is-relation';
-import type { Relation } from '../relation/types';
 import { Store } from '../storage';
 import { getStore } from '../trait/trait';
 import type { Trait } from '../trait/types';
 import { shallowEqual } from '../utils/shallow-equal';
 import type { World } from '../world';
-import { isModifier } from './modifier';
-import { setChanged } from './modifiers/changed';
+import { isModifier, isOrWithModifiers } from './modifier';
+import { setChanged, setPairChanged } from './modifiers/changed';
 import type {
     InstancesFromParameters,
+    Modifier,
     QueryInstance,
     QueryParameter,
     QueryResult,
@@ -23,12 +25,15 @@ export function createQueryResult<T extends QueryParameter[]>(
     world: World,
     entities: Entity[],
     query: QueryInstance,
-    params: QueryParameter[]
+    params: QueryParameter[],
+    wildcardTargets: Map<Entity, Map<number, Entity>> | null = null
 ): QueryResult<T> {
     const traits: Trait[] = [];
     const stores: Store<any>[] = [];
+    const relations: (Relation<Trait> | undefined)[] = [];
+    const targets: (RelationTarget | undefined)[] = [];
 
-    getQueryStores(params, traits, stores, world);
+    getQueryStores(params, traits, stores, world, relations, targets);
 
     const results = Object.assign(entities, {
         readEach(
@@ -41,7 +46,17 @@ export function createQueryResult<T extends QueryParameter[]>(
                 const eid = getEntityId(entity);
 
                 // Create snapshots without atomic tracking
-                createSnapshots(eid, traits, stores, state);
+                createSnapshots(
+                    world,
+                    entity,
+                    eid,
+                    traits,
+                    stores,
+                    relations,
+                    targets,
+                    wildcardTargets,
+                    state
+                );
 
                 callback(state, entity, i);
             }
@@ -57,7 +72,7 @@ export function createQueryResult<T extends QueryParameter[]>(
 
             // Inline all three permutations of updateEach for performance.
             if (options.changeDetection === 'auto') {
-                const changedPairs: [Entity, Trait][] = [];
+                const changedPairs: [Entity, Trait, Entity | undefined][] = [];
                 const atomicSnapshots: any[] = [];
                 const trackedIndices: number[] = [];
                 const untrackedIndices: number[] = [];
@@ -68,7 +83,18 @@ export function createQueryResult<T extends QueryParameter[]>(
                     const entity = entities[i];
                     const eid = getEntityId(entity);
 
-                    createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
+                    createSnapshotsWithAtomic(
+                        world,
+                        entity,
+                        eid,
+                        traits,
+                        stores,
+                        relations,
+                        targets,
+                        wildcardTargets,
+                        state,
+                        atomicSnapshots
+                    );
                     callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
@@ -78,8 +104,28 @@ export function createQueryResult<T extends QueryParameter[]>(
                     for (let j = 0; j < trackedIndices.length; j++) {
                         const index = trackedIndices[j];
                         const trait = traits[index];
-                        const ctx = trait[$internal];
                         const newValue = state[index];
+
+                        if (relations[index]) {
+                            const target = resolvePairTarget(
+                                world,
+                                entity,
+                                trait,
+                                relations[index]!,
+                                targets[index],
+                                wildcardTargets
+                            );
+                            if (
+                                target !== undefined &&
+                                !shallowEqual(newValue, atomicSnapshots[index])
+                            ) {
+                                setRelationData(world, entity, relations[index]!, target, newValue);
+                                changedPairs.push([entity, trait, target]);
+                            }
+                            continue;
+                        }
+
+                        const ctx = trait[$internal];
                         const store = stores[index];
 
                         let changed = false;
@@ -93,13 +139,30 @@ export function createQueryResult<T extends QueryParameter[]>(
                         }
 
                         // Collect changed traits.
-                        if (changed) changedPairs.push([entity, trait] as const);
+                        if (changed) changedPairs.push([entity, trait, undefined]);
                     }
 
                     // Commit all changes back to the stores for untracked traits.
                     for (let j = 0; j < untrackedIndices.length; j++) {
                         const index = untrackedIndices[j];
                         const trait = traits[index];
+                        if (relations[index]) {
+                            const target = resolvePairTarget(
+                                world,
+                                entity,
+                                trait,
+                                relations[index]!,
+                                targets[index],
+                                wildcardTargets
+                            );
+                            if (
+                                target !== undefined &&
+                                !shallowEqual(state[index], atomicSnapshots[index])
+                            ) {
+                                setRelationData(world, entity, relations[index]!, target, state[index]);
+                            }
+                            continue;
+                        }
                         const ctx = trait[$internal];
                         const store = stores[index];
                         ctx.fastSet(eid, store, state[index]);
@@ -108,18 +171,30 @@ export function createQueryResult<T extends QueryParameter[]>(
 
                 // Trigger change events for each entity that was modified.
                 for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
+                    const [entity, trait, target] = changedPairs[i];
+                    if (target !== undefined) setPairChanged(world, entity, trait, target);
+                    else setChanged(world, entity, trait);
                 }
             } else if (options.changeDetection === 'always') {
-                const changedPairs: [Entity, Trait][] = [];
+                const changedPairs: [Entity, Trait, Entity | undefined][] = [];
                 const atomicSnapshots: any[] = [];
 
                 for (let i = 0; i < entities.length; i++) {
                     const entity = entities[i];
                     const eid = getEntityId(entity);
 
-                    createSnapshotsWithAtomic(eid, traits, stores, state, atomicSnapshots);
+                    createSnapshotsWithAtomic(
+                        world,
+                        entity,
+                        eid,
+                        traits,
+                        stores,
+                        relations,
+                        targets,
+                        wildcardTargets,
+                        state,
+                        atomicSnapshots
+                    );
                     callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
@@ -128,8 +203,28 @@ export function createQueryResult<T extends QueryParameter[]>(
                     // Commit all changes back to the stores.
                     for (let j = 0; j < traits.length; j++) {
                         const trait = traits[j];
-                        const ctx = trait[$internal];
                         const newValue = state[j];
+
+                        if (relations[j]) {
+                            const target = resolvePairTarget(
+                                world,
+                                entity,
+                                trait,
+                                relations[j]!,
+                                targets[j],
+                                wildcardTargets
+                            );
+                            if (
+                                target !== undefined &&
+                                !shallowEqual(newValue, atomicSnapshots[j])
+                            ) {
+                                setRelationData(world, entity, relations[j]!, target, newValue);
+                                changedPairs.push([entity, trait, target]);
+                            }
+                            continue;
+                        }
+
+                        const ctx = trait[$internal];
 
                         let changed = false;
                         if (ctx.type === 'aos') {
@@ -142,20 +237,31 @@ export function createQueryResult<T extends QueryParameter[]>(
                         }
 
                         // Collect changed traits.
-                        if (changed) changedPairs.push([entity, trait] as const);
+                        if (changed) changedPairs.push([entity, trait, undefined]);
                     }
                 }
 
                 // Trigger change events for each entity that was modified.
                 for (let i = 0; i < changedPairs.length; i++) {
-                    const [entity, trait] = changedPairs[i];
-                    setChanged(world, entity, trait);
+                    const [entity, trait, target] = changedPairs[i];
+                    if (target !== undefined) setPairChanged(world, entity, trait, target);
+                    else setChanged(world, entity, trait);
                 }
             } else if (options.changeDetection === 'never') {
                 for (let i = 0; i < entities.length; i++) {
                     const entity = entities[i];
                     const eid = getEntityId(entity);
-                    createSnapshots(eid, traits, stores, state);
+                    createSnapshots(
+                        world,
+                        entity,
+                        eid,
+                        traits,
+                        stores,
+                        relations,
+                        targets,
+                        wildcardTargets,
+                        state
+                    );
                     callback(state as unknown as InstancesFromParameters<T>, entity, i);
 
                     // Skip if the entity has been destroyed.
@@ -164,6 +270,20 @@ export function createQueryResult<T extends QueryParameter[]>(
                     // Commit all changes back to the stores.
                     for (let j = 0; j < traits.length; j++) {
                         const trait = traits[j];
+                        if (relations[j]) {
+                            const target = resolvePairTarget(
+                                world,
+                                entity,
+                                trait,
+                                relations[j]!,
+                                targets[j],
+                                wildcardTargets
+                            );
+                            if (target !== undefined) {
+                                setRelationData(world, entity, relations[j]!, target, state[j]);
+                            }
+                            continue;
+                        }
                         const ctx = trait[$internal];
                         ctx.fastSet(eid, stores[j], state[j]);
                     }
@@ -181,7 +301,9 @@ export function createQueryResult<T extends QueryParameter[]>(
         select<U extends QueryParameter[]>(...params: U): QueryResult<U> {
             traits.length = 0;
             stores.length = 0;
-            getQueryStores(params, traits, stores, world);
+            relations.length = 0;
+            targets.length = 0;
+            getQueryStores(params, traits, stores, world, relations, targets);
             return results as unknown as QueryResult<U>;
         },
 
@@ -213,33 +335,181 @@ export function createQueryResult<T extends QueryParameter[]>(
     }
 }
 
+function resolvePairTarget(
+    world: World,
+    entity: Entity,
+    trait: Trait,
+    relation: Relation<Trait>,
+    target: RelationTarget | undefined,
+    wildcardTargets: Map<Entity, Map<number, Entity>> | null
+): Entity | undefined {
+    if (target === undefined) return undefined;
+    if (target !== '*') return target;
+    const captured = wildcardTargets?.get(entity)?.get(trait.id);
+    if (captured !== undefined) return captured;
+    return getFirstRelationTarget(world, relation, entity);
+}
+
+function readColumn(
+    world: World,
+    entity: Entity,
+    entityId: number,
+    index: number,
+    traits: Trait[],
+    stores: Store<any>[],
+    relations: (Relation<Trait> | undefined)[],
+    targets: (RelationTarget | undefined)[],
+    wildcardTargets: Map<Entity, Map<number, Entity>> | null
+) {
+    const relation = relations[index];
+    if (relation) {
+        const target = resolvePairTarget(
+            world,
+            entity,
+            traits[index],
+            relation,
+            targets[index],
+            wildcardTargets
+        );
+        if (target === undefined) return undefined;
+        return getRelationData(world, entity, relation, target);
+    }
+
+    return traits[index][$internal].get(entityId, stores[index]);
+}
+
 /* @inline */ function createSnapshots(
+    world: World,
+    entity: Entity,
     entityId: number,
     traits: Trait[],
     stores: Store<any>[],
+    relations: (Relation<Trait> | undefined)[],
+    targets: (RelationTarget | undefined)[],
+    wildcardTargets: Map<Entity, Map<number, Entity>> | null,
     state: any[]
 ) {
     for (let i = 0; i < traits.length; i++) {
-        const trait = traits[i];
-        const ctx = trait[$internal];
-        const value = ctx.get(entityId, stores[i]);
-        state[i] = value;
+        state[i] = readColumn(
+            world,
+            entity,
+            entityId,
+            i,
+            traits,
+            stores,
+            relations,
+            targets,
+            wildcardTargets
+        );
     }
 }
 
 /* @inline */ function createSnapshotsWithAtomic(
+    world: World,
+    entity: Entity,
     entityId: number,
     traits: Trait[],
     stores: Store<any>[],
+    relations: (Relation<Trait> | undefined)[],
+    targets: (RelationTarget | undefined)[],
+    wildcardTargets: Map<Entity, Map<number, Entity>> | null,
     state: any[],
     atomicSnapshots: any[]
 ) {
     for (let j = 0; j < traits.length; j++) {
-        const trait = traits[j];
-        const ctx = trait[$internal];
-        const value = ctx.get(entityId, stores[j]);
+        const value = readColumn(
+            world,
+            entity,
+            entityId,
+            j,
+            traits,
+            stores,
+            relations,
+            targets,
+            wildcardTargets
+        );
         state[j] = value;
-        atomicSnapshots[j] = ctx.type === 'aos' ? { ...value } : null;
+        const ctx = traits[j][$internal];
+        atomicSnapshots[j] =
+            relations[j] || ctx.type === 'aos'
+                ? value && typeof value === 'object'
+                    ? { ...value }
+                    : value
+                : null;
+    }
+}
+
+function pushTraitColumn(
+    world: World,
+    trait: Trait,
+    traits: Trait[],
+    stores: Store<any>[],
+    relations: (Relation<Trait> | undefined)[],
+    targets: (RelationTarget | undefined)[],
+    relation?: Relation<Trait>,
+    target?: RelationTarget
+) {
+    if (trait[$internal].type === 'tag') return;
+    traits.push(trait);
+    stores.push(getStore(world, trait));
+    relations.push(relation);
+    targets.push(target);
+}
+
+function pushModifierColumns(
+    world: World,
+    modifier: Modifier,
+    traits: Trait[],
+    stores: Store<any>[],
+    relations: (Relation<Trait> | undefined)[],
+    targets: (RelationTarget | undefined)[],
+    includePlainTraits: boolean
+) {
+    if (modifier.type === 'not') return;
+
+    const pairs = modifier.pairs;
+    const pairQueue: RelationPair[] = pairs ? pairs.slice() : [];
+
+    if (includePlainTraits || pairQueue.length > 0) {
+        const modifierTraits = modifier.traits as Trait[];
+        for (let i = 0; i < modifierTraits.length; i++) {
+            const trait = modifierTraits[i];
+            const pairIndex = pairQueue.findIndex(
+                (pair) => pair[$internal].relation[$internal].trait === trait
+            );
+            if (pairIndex !== -1) {
+                const pair = pairQueue.splice(pairIndex, 1)[0];
+                const relation = pair[$internal].relation as Relation<Trait>;
+                pushTraitColumn(
+                    world,
+                    trait,
+                    traits,
+                    stores,
+                    relations,
+                    targets,
+                    relation,
+                    pair[$internal].target
+                );
+                continue;
+            }
+            if (!includePlainTraits) continue;
+            pushTraitColumn(world, trait, traits, stores, relations, targets);
+        }
+    }
+
+    if (isOrWithModifiers(modifier)) {
+        for (let i = 0; i < modifier.modifiers.length; i++) {
+            // Nested modifiers contribute pair columns only, matching prior trait iteration.
+            pushModifierColumns(
+                world,
+                modifier.modifiers[i],
+                traits,
+                stores,
+                relations,
+                targets,
+                false
+            );
+        }
     }
 }
 
@@ -247,7 +517,9 @@ export function createQueryResult<T extends QueryParameter[]>(
     params: T,
     traits: Trait[],
     stores: Store<any>[],
-    world: World
+    world: World,
+    relations: (Relation<Trait> | undefined)[],
+    targets: (RelationTarget | undefined)[]
 ) {
     for (let i = 0; i < params.length; i++) {
         const param = params[i];
@@ -257,28 +529,23 @@ export function createQueryResult<T extends QueryParameter[]>(
             const pairCtx = param[$internal];
             const relation = pairCtx.relation as Relation<Trait>;
             const baseTrait = relation[$internal].trait;
-            if (baseTrait[$internal].type !== 'tag') {
-                traits.push(baseTrait);
-                stores.push(getStore(world, baseTrait));
-            }
+            pushTraitColumn(
+                world,
+                baseTrait,
+                traits,
+                stores,
+                relations,
+                targets,
+                relation,
+                pairCtx.target
+            );
             continue;
         }
 
         if (isModifier(param)) {
-            // Skip not modifier.
-            if (param.type === 'not') continue;
-
-            const modifierTraits = param.traits;
-            for (const trait of modifierTraits) {
-                if (trait[$internal].type === 'tag') continue; // Skip tags
-                traits.push(trait);
-                stores.push(getStore(world, trait));
-            }
+            pushModifierColumns(world, param, traits, stores, relations, targets, true);
         } else {
-            const trait = param as Trait;
-            if (trait[$internal].type === 'tag') continue; // Skip tags
-            traits.push(trait);
-            stores.push(getStore(world, trait));
+            pushTraitColumn(world, param as Trait, traits, stores, relations, targets);
         }
     }
 }

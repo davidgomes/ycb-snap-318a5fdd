@@ -30,4 +30,7 @@ export function setTrackingMasks(world: World, id: number) {
         id,
         snapshot.map((mask) => mask.map(() => 0))
     );
+
+    // Pair history before this point is outside the modifier's observation window.
+    ctx.pairEventCursors.set(id, ctx.pairEvents.length);
 }

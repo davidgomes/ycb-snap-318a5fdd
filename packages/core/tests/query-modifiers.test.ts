@@ -3,6 +3,7 @@ import {
     $internal,
     createAdded,
     createChanged,
+    createQuery,
     createRemoved,
     createWorld,
     getStore,
@@ -755,6 +756,202 @@ describe('Query modifiers', () => {
             // And its target
             expect(entity.targetFor(Contains)).toBe(gold);
         });
+    });
+
+    it('should track relation pairs on Added, including later targets and wildcards', () => {
+        const Likes = relation();
+        const Added = createAdded();
+
+        const apple = world.spawn();
+        const banana = world.spawn();
+        const person = world.spawn();
+
+        expect(world.query(Added(Likes(apple)))).toHaveLength(0);
+
+        person.add(Likes(banana));
+        expect(world.query(Added(Likes(apple)))).toHaveLength(0);
+        expect(world.query(Added(Likes(banana)))).toContain(person);
+
+        // The first target was already observed. A second target is still an add.
+        person.add(Likes(apple));
+        const addedApple = world.query(Added(Likes(apple)));
+        expect(addedApple).toContain(person);
+        expect(addedApple).toHaveLength(1);
+        expect(world.query(Added(Likes(banana)))).toHaveLength(0);
+
+        world.query(Added(Likes('*')));
+        const other = world.spawn();
+        other.add(Likes(banana));
+        const wildcard = world.query(Added(Likes('*')));
+        expect(wildcard).toContain(other);
+        expect(wildcard).not.toContain(person);
+    });
+
+    it('should keep pair targets in distinct cached queries', () => {
+        const Likes = relation();
+        const Added = createAdded();
+        const apple = world.spawn();
+        const banana = world.spawn();
+        const personA = world.spawn();
+        const personB = world.spawn();
+
+        personA.add(Likes(apple));
+        personB.add(Likes(banana));
+
+        expect(createQuery(Added(Likes(apple))).hash).not.toBe(createQuery(Added(Likes(banana))).hash);
+
+        const apples = world.query(Added(Likes(apple)));
+        expect(apples).toContain(personA);
+        expect(apples).not.toContain(personB);
+
+        const bananas = world.query(Added(Likes(banana)));
+        expect(bananas).toContain(personB);
+        expect(bananas).not.toContain(personA);
+    });
+
+    it('should detect non-last pair removals and cancel opposite events on the same target', () => {
+        const Likes = relation();
+        const Added = createAdded();
+        const Removed = createRemoved();
+        const apple = world.spawn();
+        const banana = world.spawn();
+        const person = world.spawn();
+
+        person.add(Likes(apple), Likes(banana));
+        expect(world.query(Removed(Likes(apple)))).toHaveLength(0);
+
+        person.remove(Likes(apple));
+        expect(person.has(Likes(banana))).toBe(true);
+        expect(world.query(Removed(Likes(apple)))).toContain(person);
+        expect(world.query(Removed(Likes(banana)))).toHaveLength(0);
+
+        const other = world.spawn();
+        other.add(Likes(apple));
+        other.remove(Likes(apple));
+        expect(world.query(Added(Likes(apple)))).toHaveLength(0);
+        expect(world.query(Removed(Likes(apple)))).toHaveLength(0);
+
+        other.add(Likes(banana));
+        world.query(Added(Likes(banana)));
+        other.remove(Likes(banana));
+        other.add(Likes(banana));
+        expect(world.query(Added(Likes(banana)))).toHaveLength(0);
+        expect(world.query(Removed(Likes(banana)))).toHaveLength(0);
+    });
+
+    it('should emit a removal and an addition when an exclusive relation replaces its target', () => {
+        const Targeting = relation({ exclusive: true });
+        const Added = createAdded();
+        const Removed = createRemoved();
+        const player = world.spawn();
+        const other = world.spawn();
+        const enemy = world.spawn();
+
+        enemy.add(Targeting(player));
+        world.query(Added(Targeting(player)));
+        world.query(Removed(Targeting(player)));
+
+        enemy.add(Targeting(other));
+        expect(enemy.has(Targeting(player))).toBe(false);
+        expect(enemy.has(Targeting(other))).toBe(true);
+        expect(world.query(Removed(Targeting(player)))).toContain(enemy);
+        expect(world.query(Added(Targeting(other)))).toContain(enemy);
+        expect(world.query(Added(Targeting(player)))).toHaveLength(0);
+    });
+
+    it('should emit a pair removal for every active pair when an entity is destroyed', () => {
+        const Likes = relation();
+        const Removed = createRemoved();
+        const apple = world.spawn();
+        const banana = world.spawn();
+        const person = world.spawn();
+
+        person.add(Likes(apple), Likes(banana));
+        expect(world.query(Removed(Likes(apple)))).toHaveLength(0);
+        expect(world.query(Removed(Likes(banana)))).toHaveLength(0);
+        expect(world.query(Removed(Likes('*')))).toHaveLength(0);
+
+        person.destroy();
+        expect(world.query(Removed(Likes(apple)))).toContain(person);
+        expect(world.query(Removed(Likes(banana)))).toContain(person);
+        expect(world.query(Removed(Likes('*')))).toContain(person);
+    });
+
+    it('should compose pair modifiers with Or and with required traits', () => {
+        const Likes = relation();
+        const Added = createAdded();
+        const apple = world.spawn();
+        const banana = world.spawn();
+        const personA = world.spawn();
+        const personB = world.spawn();
+
+        personA.add(Likes(apple));
+        personB.add(Likes(banana));
+
+        const either = world.query(Or(Added(Likes(apple)), Added(Likes(banana))));
+        expect(either).toContain(personA);
+        expect(either).toContain(personB);
+        expect(either).toHaveLength(2);
+
+        const positioned = world.spawn();
+        positioned.add(Likes(apple));
+        expect(world.query(Added(Likes(apple)), Position)).toHaveLength(0);
+        positioned.add(Position);
+        expect(world.query(Added(Likes(apple)), Position)).toContain(positioned);
+        expect(world.query(Added(Likes(apple)), Position)).not.toContain(personA);
+    });
+
+    it('should signal and read pair-level changes for a specific target', () => {
+        const Contains = relation({ store: { amount: 0 } });
+        const Changed = createChanged();
+        const inventory = world.spawn();
+        const gold = world.spawn();
+        const sword = world.spawn();
+
+        inventory.add(Contains(gold, { amount: 1 }), Contains(sword, { amount: 2 }));
+        expect(world.query(Changed(Contains(gold)))).toHaveLength(0);
+
+        inventory.changed(Contains(gold));
+        expect(world.query(Changed(Contains(gold)))).toContain(inventory);
+        expect(world.query(Changed(Contains(sword)))).toHaveLength(0);
+
+        inventory.set(Contains(gold), { amount: 9 });
+        world.query(Changed(Contains(gold))).readEach(([data]) => {
+            expect(data).toEqual({ amount: 9 });
+        });
+
+        inventory.set(Contains(sword), { amount: 4 });
+        world.query(Changed(Contains('*'))).readEach(([data]) => {
+            expect(data).toEqual({ amount: 4 });
+        });
+
+        inventory.set(Contains(gold), { amount: 1 });
+        world.query(Changed(Contains(gold))).updateEach(([data]) => {
+            data.amount = 7;
+        });
+        expect(inventory.get(Contains(gold))!.amount).toBe(7);
+        expect(inventory.get(Contains(sword))!.amount).toBe(4);
+    });
+
+    it('should keep tracking pair modifiers across world reset', () => {
+        const Added = createAdded();
+        const local = createWorld();
+        local.init();
+        const Likes = relation();
+
+        const apple = local.spawn();
+        const person = local.spawn();
+        person.add(Likes(apple));
+
+        local.reset();
+
+        const banana = local.spawn();
+        const next = local.spawn();
+        next.add(Likes(banana));
+        const added = local.query(Added(Likes(banana)));
+        expect(added).toHaveLength(1);
+        expect(added[0].has(Likes(banana))).toBe(true);
+        expect(added[0]).toBe(next);
     });
 
     // @internal Tests internal implementation edge case with generation overflow

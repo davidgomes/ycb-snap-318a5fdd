@@ -2,6 +2,7 @@ import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { checkQueryWithRelations } from '../query/utils/check-query-with-relations';
+import { recordPairEvent } from '../query/utils/pair-tracking';
 import { Schema } from '../storage';
 import { hasTrait, trait } from '../trait/trait';
 import { getTraitInstance } from '../trait/trait-instance';
@@ -243,6 +244,7 @@ export function addRelationTarget(
     }
 
     updateQueriesForRelationChange(world, relation, entity);
+    recordPairEvent(world, entity, baseTrait, target, 'add');
 
     return targetIndex;
 }
@@ -297,6 +299,7 @@ export function removeRelationTarget(
 
     if (removedIndex !== -1) {
         updateQueriesForRelationChange(world, relation, entity);
+        recordPairEvent(world, entity, relationTrait, target, 'remove');
     }
 
     const wasLastTarget = removedIndex !== -1 && !hasRemainingTargets;

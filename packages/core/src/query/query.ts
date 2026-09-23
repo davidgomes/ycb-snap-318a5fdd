@@ -27,6 +27,13 @@ import { checkQuery } from './utils/check-query';
 import { checkQueryTracking } from './utils/check-query-tracking';
 import { checkQueryWithRelations } from './utils/check-query-with-relations';
 import { createQueryHash } from './utils/create-query-hash';
+import {
+    captureWildcardTargets,
+    clearPairSlots,
+    populatePairTrackingQuery,
+    queryTracksPairs,
+    replayPairHistory,
+} from './utils/pair-tracking';
 
 export const IsExcluded: TagTrait = trait();
 
@@ -40,6 +47,7 @@ export function runQuery<T extends QueryParameter[]>(
     // With hybrid bitmask strategy, query.entities is already incrementally maintained
     // with both trait and relation filters applied. Just return the pre-filtered entities.
     const entities = query.entities.dense.slice() as Entity[];
+    const wildcardTargets = captureWildcardTargets(query, entities);
 
     // Clear so it can accumulate again.
     if (query.isTracking) {
@@ -51,7 +59,7 @@ export function runQuery<T extends QueryParameter[]>(
         }
     }
 
-    return createQueryResult(world, entities, query, params);
+    return createQueryResult(world, entities, query, params, wildcardTargets);
 }
 
 export function addEntityToQuery(query: QueryInstance, entity: Entity) {
@@ -109,6 +117,7 @@ export function resetQueryTrackingBitmasks(query: QueryInstance, eid: number) {
             if (tracker) tracker[eid] = 0;
         }
     }
+    clearPairSlots(query, eid as Entity);
 }
 
 /**
@@ -139,9 +148,31 @@ function processTrackingModifier(
             id,
             bitmasks: [],
             trackers: [],
+            pairs: [],
+            pairSlots: new Map(),
         };
         groupsMap.set(key, group);
         query.trackingGroups.push(group);
+    }
+
+    // Pair arguments are tracked per target and must not also flip the trait bitmask,
+    // otherwise the first target of a relation would match every pair filter.
+    const pairTraitUses = new Map<number, number>();
+    const pairs = modifier.pairs;
+    if (pairs) {
+        for (let i = 0; i < pairs.length; i++) {
+            const pair = pairs[i];
+            const trait = pair[$internal].relation[$internal].trait;
+            const target = pair[$internal].target;
+            pairTraitUses.set(trait.id, (pairTraitUses.get(trait.id) ?? 0) + 1);
+            group.pairs.push({ traitId: trait.id, target });
+        }
+    }
+
+    const bitmaskTraits = new Set<number>();
+    const traitUses = new Map<number, number>();
+    for (const trait of modifier.traits) {
+        traitUses.set(trait.id, (traitUses.get(trait.id) ?? 0) + 1);
     }
 
     // Register traits and build bitmasks
@@ -153,9 +184,12 @@ function processTrackingModifier(
         // Add to traitInstances.all for query registration
         query.traitInstances.all.push(instance);
 
-        // Build bitmasks by generation
-        const genId = instance.generationId;
-        group.bitmasks[genId] = (group.bitmasks[genId] || 0) | instance.bitflag;
+        const plainUses = (traitUses.get(trait.id) ?? 0) - (pairTraitUses.get(trait.id) ?? 0);
+        if (plainUses > 0 && !bitmaskTraits.has(trait.id)) {
+            bitmaskTraits.add(trait.id);
+            const genId = instance.generationId;
+            group.bitmasks[genId] = (group.bitmasks[genId] || 0) | instance.bitflag;
+        }
 
         // Track changed traits for change detection in query-result
         if (trackingType === 'change') {
@@ -344,7 +378,10 @@ export function createQueryInstance<T extends QueryParameter[]>(
     }
 
     // Populate query with initial matching entities
-    if (query.trackingGroups.length > 0) {
+    if (queryTracksPairs(query)) {
+        replayPairHistory(world, query);
+        populatePairTrackingQuery(world, query);
+    } else if (query.trackingGroups.length > 0) {
         // For tracking queries, check each entity against tracking groups
         for (const group of query.trackingGroups) {
             const { type, id, logic, bitmasks } = group;

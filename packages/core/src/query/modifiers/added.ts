@@ -1,10 +1,12 @@
-import { $internal } from '../../common';
-import { isRelation } from '../../relation/utils/is-relation';
-import type { ExtractTraits, TraitOrRelation } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
 import { createTrackingId, setTrackingMasks } from '../utils/tracking-cursor';
+import {
+    type ExtractTrackingTraits,
+    type TrackingParameter,
+    resolveTrackingInputs,
+} from './tracking-inputs';
 
 export function createAdded() {
     const id = createTrackingId();
@@ -14,12 +16,10 @@ export function createAdded() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <T extends TrackingParameter[]>(
         ...inputs: T
-    ): Modifier<ExtractTraits<T>, `added-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`added-${id}`, id, traits);
+    ): Modifier<ExtractTrackingTraits<T>, `added-${number}`> => {
+        const { traits, pairs } = resolveTrackingInputs(inputs);
+        return createModifier(`added-${id}`, id, traits, pairs);
     };
 }

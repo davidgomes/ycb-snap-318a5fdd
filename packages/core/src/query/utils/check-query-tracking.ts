@@ -3,6 +3,7 @@ import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
 import { EventType, QueryInstance } from '../types';
+import { pairGroupSatisfied } from './pair-tracking';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -104,6 +105,8 @@ export function checkQueryTracking(
         }
 
         // 3. Verify tracking group satisfaction (merged into same loop)
+        const pairOk = pairGroupSatisfied(group, entity);
+
         if (groupLogic === 'or') {
             hasOrGroup = true;
             if (!anyOrMatched) {
@@ -121,6 +124,7 @@ export function checkQueryTracking(
                     }
                 }
             }
+            if (pairOk === true) anyOrMatched = true;
         } else {
             // AND group: all traits must be tracked
             const groupTrackers = group.trackers;
@@ -134,6 +138,7 @@ export function checkQueryTracking(
                     return false;
                 }
             }
+            if (pairOk === false) return false;
         }
     }
 

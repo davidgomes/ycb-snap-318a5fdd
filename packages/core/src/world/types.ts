@@ -3,6 +3,7 @@ import type { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { createEntityIndex } from '../entity/utils/entity-index';
 import type {
+    EventType,
     Query,
     QueryInstance,
     QueryParameter,
@@ -19,6 +20,13 @@ import type {
     TraitRecord,
     TraitValue,
 } from '../trait/types';
+
+export type PairEvent = {
+    entity: Entity;
+    traitId: number;
+    target: Entity;
+    type: EventType;
+};
 
 export type WorldOptions = {
     traits?: ConfigurableTrait[];
@@ -40,6 +48,10 @@ export type WorldInternal = {
     dirtyMasks: Map<number, number[][]>;
     trackingSnapshots: Map<number, number[][]>;
     changedMasks: Map<number, number[][]>;
+    /** Pair add/remove/change events since the world was created or reset */
+    pairEvents: PairEvent[];
+    /** Index into pairEvents at which each tracking modifier started observing */
+    pairEventCursors: Map<number, number>;
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;

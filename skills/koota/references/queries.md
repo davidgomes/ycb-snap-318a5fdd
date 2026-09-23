@@ -73,8 +73,10 @@ const Changed = createChanged()
 ```typescript
 const newPositions = world.query(Added(Position))
 
-// Track relation additions
+// Track relation additions, including one specific target
 const newChildren = world.query(Added(ChildOf))
+const linked = world.query(Added(ChildOf(parent)))
+const anyTarget = world.query(Added(ChildOf('*')))
 ```
 
 **Removed** - Entities that removed a trait since last query (includes destroyed entities):
@@ -91,8 +93,9 @@ const orphaned = world.query(Removed(ChildOf))
 ```typescript
 const movedEntities = world.query(Changed(Position))
 
-// Track relation data changes
+// Track relation data changes for every target, or one pair
 const updatedChildren = world.query(Changed(ChildOf))
+const updatedChild = world.query(Changed(ChildOf(parent)))
 ```
 
 **Logical AND (default):**
@@ -129,9 +132,10 @@ const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 
 **Key points:**
 
-- Create instances at module scope, not inside functions
+- Create instances at module scope, not inside functions. Factories are reused across world resets.
 - Tracking resets after each query execution
-- Changed only tracks `set()` calls and `entity.changed()` signals
+- Changed tracks `set()` calls and `entity.changed()` signals. `entity.changed(ChildOf(parent))` signals that pair.
+- Pair modifiers distinguish targets. `'*'` is a wildcard. A non-first add and a non-last remove are visible. Exclusive replacement emits a removal and an addition. Add and remove of the same target cancel inside one observation window. Destroying an entity removes each active pair. `Or(Added(ChildOf(a)), Added(ChildOf(b)))` matches either pair. Different targets are different cached queries, and a pair modifier plus other parameters must all match. Iteration yields that target's relation data.
 
 ## Caching queries
 

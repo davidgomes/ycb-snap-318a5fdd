@@ -93,6 +93,8 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /** Relation pairs accepted by a tracking modifier, in argument order */
+    pairs?: RelationPair[];
 };
 
 /** Parameter types that can be passed to Or modifier */
@@ -121,6 +123,28 @@ type ExtractTraitsFromOrParams<T extends OrParameter[]> = T extends [infer First
  * Unified tracking group that supports both AND and OR logic.
  * Replaces the old separate tracking arrays and OrTrackingGroup.
  */
+/** A relation pair tracked by a modifier. `'*'` matches any target. */
+export type PairFilter = {
+    traitId: number;
+    target: Entity | '*';
+};
+
+/**
+ * Net pair activity for one entity + target inside an observation window.
+ * Opposite add/remove counts cancel; a change sticks unless a removal wins.
+ */
+export type PairSlot = {
+    traitId: number;
+    target: Entity;
+    /** In-window result frozen when the query was created. Later events do not use these to cancel. */
+    pendingAdd: boolean;
+    pendingRemove: boolean;
+    pendingChange: boolean;
+    adds: number;
+    removes: number;
+    changes: number;
+};
+
 export type TrackingGroup = {
     /** Whether all traits must match (and) or any trait can match (or) */
     logic: 'and' | 'or';
@@ -132,6 +156,10 @@ export type TrackingGroup = {
     bitmasks: (number | undefined)[];
     /** Per-entity tracker state indexed by [generationId][entityId] */
     trackers: (number[] | undefined)[];
+    /** Relation pairs tracked by this group */
+    pairs: PairFilter[];
+    /** Net pair events keyed by packed entity */
+    pairSlots: Map<number, PairSlot[]>;
 };
 
 export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
