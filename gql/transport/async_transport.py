@@ -4,6 +4,7 @@ from typing import Any, AsyncGenerator, List
 from graphql import ExecutionResult
 
 from ..graphql_request import GraphQLRequest
+from ..incremental import IncrementalExecutionResult
 
 
 class AsyncTransport(abc.ABC):
@@ -48,6 +49,22 @@ class AsyncTransport(abc.ABC):
         raise NotImplementedError(
             "This Transport has not implemented the execute_batch method"
         )  # pragma: no cover
+
+    def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalExecutionResult, None]:
+        """Execute a request which may contain @defer or @stream directives
+        and receive the raw payloads of the response using an async generator.
+
+        The payloads are sent as IncrementalExecutionResult objects,
+        without merging the incremental items.
+        """
+        raise NotImplementedError(
+            "This Transport has not implemented the execute_incremental method"
+        )
 
     @abc.abstractmethod
     def subscribe(

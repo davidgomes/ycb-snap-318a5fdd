@@ -39,6 +39,7 @@ from tenacity import (
 )
 
 from .graphql_request import GraphQLRequest, support_deprecated_request
+from .incremental import IncrementalDataMerger, IncrementalExecutionResult
 from .transport.async_transport import AsyncTransport
 from .transport.exceptions import TransportConnectionFailed, TransportQueryError
 from .transport.local_schema import LocalSchemaTransport
@@ -1738,6 +1739,89 @@ class AsyncClientSession:
 
         return cast(List[Dict[str, Any]], [result.data for result in results])
 
+    async def _execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalExecutionResult, None]:
+        """Async generator executing the provided request using the async
+        transport and producing the raw IncrementalExecutionResult payloads.
+
+        * Validate the query with the schema if provided.
+        * Serialize the variable_values if requested.
+
+        The extra arguments are passed to the transport execute_incremental method.
+        """
+
+        # Still supporting for now old method of providing
+        # variable_values and operation_name
+        request = support_deprecated_request(request, kwargs)
+
+        # Validate document
+        if self.client.schema:
+            self.client.validate(request)
+
+            # Parse variable values for custom scalars if requested
+            if request.variable_values is not None:
+                if serialize_variables or (
+                    serialize_variables is None and self.client.serialize_variables
+                ):
+                    request = request.serialize_variable_values(self.client.schema)
+
+        inner_generator: AsyncGenerator[IncrementalExecutionResult, None] = (
+            self.transport.execute_incremental(request, **kwargs)
+        )
+
+        try:
+            async for result in inner_generator:
+                yield result
+        finally:
+            await inner_generator.aclose()
+
+    async def execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalExecutionResult, None]:
+        """Execute a request which may contain @defer or @stream directives,
+        yielding a result for each payload received from the server.
+
+        The :code:`data` attribute of each yielded result contains the data
+        accumulated from the initial payload and all the incremental payloads
+        received so far. The :code:`errors` and :code:`extensions` attributes
+        only concern the latest payload. The :code:`has_next` attribute
+        indicates if more payloads are expected.
+
+        GraphQL errors are not raised, they are provided in the :code:`errors`
+        attribute of the results.
+
+        :param request: GraphQL query as :class:`GraphQLRequest <gql.GraphQLRequest>`.
+        :param serialize_variables: whether the variable values should be
+            serialized. Used for custom scalars and/or enums.
+            By default use the serialize_variables argument of the client.
+
+        The extra arguments are passed to the transport execute_incremental method."""
+
+        merger = IncrementalDataMerger()
+
+        inner_generator: AsyncGenerator[IncrementalExecutionResult, None] = (
+            self._execute_incremental(
+                request,
+                serialize_variables=serialize_variables,
+                **kwargs,
+            )
+        )
+
+        try:
+            async for payload in inner_generator:
+                yield merger.merge(payload)
+        finally:
+            await inner_generator.aclose()
+
     async def _batch_loop(self) -> None:
         """Main loop of the task used to wait for requests
         to execute them in a batch"""
@@ -2070,6 +2154,36 @@ class ReconnectingAsyncClientSession(AsyncClientSession):
             request,
             serialize_variables=serialize_variables,
             parse_result=parse_result,
+            **kwargs,
+        )
+
+        try:
+            async for result in inner_generator:
+                yield result
+
+        except TransportConnectionFailed:
+            self._reconnect_request_event.set()
+            raise
+
+        finally:
+            await inner_generator.aclose()
+
+    async def _execute_incremental(
+        self,
+        request: GraphQLRequest,
+        *,
+        serialize_variables: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[IncrementalExecutionResult, None]:
+        """Same Async generator as parent method _execute_incremental but
+        requesting a reconnection if we receive a TransportConnectionFailed exception.
+        """
+
+        inner_generator: AsyncGenerator[
+            IncrementalExecutionResult, None
+        ] = super()._execute_incremental(
+            request,
+            serialize_variables=serialize_variables,
             **kwargs,
         )
 
