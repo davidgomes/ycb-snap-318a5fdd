@@ -16,6 +16,62 @@ export type OptionName =
   | `+${string}`;
 
 /**
+ * A single dependency condition on another option.  The `option` may be
+ * either the key of the field in the enclosing `object()` or one of the
+ * CLI flag names of that field.
+ * @since 0.10.0
+ */
+export interface OptionDependencyCondition {
+  /**
+   * The object key or CLI flag name of the option being depended on.
+   */
+  readonly option: string;
+  /**
+   * When present, the dependency is satisfied only if the referenced option
+   * equals this value.  Otherwise it is satisfied when the referenced
+   * option's value is truthy.
+   */
+  readonly value?: unknown;
+}
+
+/**
+ * A compound dependency condition.  All of `allOf` (an empty array is
+ * satisfied) and at least one of `anyOf` (an empty array is unsatisfied)
+ * must hold.
+ * @since 0.10.0
+ */
+export interface OptionDependencyCompound {
+  /**
+   * Conditions of which at least one must be satisfied.
+   */
+  readonly anyOf?: readonly OptionDependencyConditionLike[];
+  /**
+   * Conditions which must all be satisfied.
+   */
+  readonly allOf?: readonly OptionDependencyConditionLike[];
+}
+
+/**
+ * Either a single or a compound dependency condition.
+ * @since 0.10.0
+ */
+export type OptionDependencyConditionLike =
+  | OptionDependencyCondition
+  | OptionDependencyCompound;
+
+/**
+ * Dependency configuration of an option.
+ * @since 0.10.0
+ */
+export type OptionDependsOn = OptionDependencyConditionLike & {
+  /**
+   * When `true`, using the dependent option while the dependency is not
+   * satisfied is a validation error.
+   */
+  readonly required?: boolean;
+};
+
+/**
  * Represents a single term in a command-line usage description.
  */
 export type UsageTerm =
@@ -65,6 +121,11 @@ export type UsageTerm =
      * @since 0.9.0
      */
     readonly hidden?: boolean;
+    /**
+     * Conditional dependency on other options in the same object.
+     * @since 0.10.0
+     */
+    readonly dependsOn?: OptionDependsOn;
   }
   /**
    * A command term, which represents a subcommand in the command-line
