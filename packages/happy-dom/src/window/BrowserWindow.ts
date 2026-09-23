@@ -1,3 +1,4 @@
+import type AsyncTaskManager from '../async-task-manager/AsyncTaskManager.js';
 import { Buffer } from 'buffer';
 import { webcrypto } from 'crypto';
 import { TextEncoder, TextDecoder } from 'util';
@@ -854,6 +855,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 
 	// Private properties
 	#browserFrame: IBrowserFrame;
+	#asyncTaskManager: AsyncTaskManager;
 	#innerWidth: number | null = null;
 	#innerHeight: number | null = null;
 	#outerWidth: number | null = null;
@@ -862,6 +864,15 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 	#zeroDelayTimeout: { timeouts: Array<Timeout> | null } = { timeouts: null };
 	#timerLoopStacks: string[] = [];
 	#timerLoopLimits: ITimerLoopsLimit[] = [];
+
+	/**
+	 * Returns the async task manager bound to this window.
+	 *
+	 * @returns Async task manager.
+	 */
+	public get [PropertySymbol.asyncTaskManager](): AsyncTaskManager {
+		return this.#asyncTaskManager;
+	}
 
 	/**
 	 * Constructor.
@@ -874,6 +885,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 		super();
 
 		this.#browserFrame = browserFrame;
+		this.#asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
 
 		this[PropertySymbol.validateJavaScriptExecutionEnvironment]();
 
@@ -900,11 +912,11 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 		this.document[PropertySymbol.defaultView] = this;
 
 		// Ready state manager
-		const taskID = browserFrame[PropertySymbol.asyncTaskManager].startTask(() =>
+		const taskID = this.#asyncTaskManager.startTask(() =>
 			this[PropertySymbol.readyStateManager].destroy()
 		);
 		this[PropertySymbol.readyStateManager].waitUntilComplete().then(() => {
-			browserFrame[PropertySymbol.asyncTaskManager].endTask(taskID);
+			this.#asyncTaskManager.endTask(taskID);
 
 			this.document[PropertySymbol.readyState] = DocumentReadyStateEnum.complete;
 			this.document.dispatchEvent(new Event('readystatechange'));
@@ -1420,7 +1432,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 
 				const id = TIMER.setTimeout(() => {
 					// We need to call endTimer() before the callback as the callback might throw an error.
-					this.#browserFrame[PropertySymbol.asyncTaskManager].endTimer(id);
+					this.#asyncTaskManager.endTimer(id);
 					const timeouts = zeroDelayTimeout.timeouts!;
 					zeroDelayTimeout.timeouts = null;
 					for (const timeout of timeouts) {
@@ -1441,7 +1453,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 				}, 0);
 
 				zeroDelayTimeout.timeouts = [];
-				this.#browserFrame[PropertySymbol.asyncTaskManager].startTimer(id);
+				this.#asyncTaskManager.startTimer(id);
 			}
 
 			const timeout = new Timeout(() => callback(...args));
@@ -1459,7 +1471,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 		const id = TIMER.setTimeout(
 			() => {
 				// We need to call endTimer() before the callback as the callback might throw an error.
-				this.#browserFrame[PropertySymbol.asyncTaskManager].endTimer(id);
+				this.#asyncTaskManager.endTimer(id);
 				if (useTryCatch) {
 					let result: any;
 					try {
@@ -1478,7 +1490,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 				? settings?.timer.maxTimeout
 				: delay
 		);
-		this.#browserFrame[PropertySymbol.asyncTaskManager].startTimer(id);
+		this.#asyncTaskManager.startTimer(id);
 		return id;
 	}
 
@@ -1505,7 +1517,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 			return;
 		}
 		TIMER.clearTimeout(id);
-		this.#browserFrame[PropertySymbol.asyncTaskManager].endTimer(id);
+		this.#asyncTaskManager.endTimer(id);
 	}
 
 	/**
@@ -1556,7 +1568,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 				? settings?.timer.maxIntervalTime
 				: delay
 		);
-		this.#browserFrame[PropertySymbol.asyncTaskManager].startTimer(id);
+		this.#asyncTaskManager.startTimer(id);
 		return id;
 	}
 
@@ -1572,7 +1584,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 			return;
 		}
 		TIMER.clearInterval(id);
-		this.#browserFrame[PropertySymbol.asyncTaskManager].endTimer(id);
+		this.#asyncTaskManager.endTimer(id);
 	}
 
 	/**
@@ -1617,7 +1629,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 				settings.errorCapture === BrowserErrorCaptureEnum.tryAndCatch);
 		const id = TIMER.setImmediate(() => {
 			// We need to call endImmediate() before the callback as the callback might throw an error.
-			this.#browserFrame[PropertySymbol.asyncTaskManager].endImmediate(id);
+			this.#asyncTaskManager.endImmediate(id);
 			if (useTryCatch) {
 				let result: any;
 				try {
@@ -1632,7 +1644,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 				callback(this.performance.now());
 			}
 		});
-		this.#browserFrame[PropertySymbol.asyncTaskManager].startImmediate(id);
+		this.#asyncTaskManager.startImmediate(id);
 		return id;
 	}
 
@@ -1648,7 +1660,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 			return;
 		}
 		TIMER.clearImmediate(id);
-		this.#browserFrame[PropertySymbol.asyncTaskManager].endImmediate(id);
+		this.#asyncTaskManager.endImmediate(id);
 	}
 
 	/**
@@ -1661,7 +1673,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 			return;
 		}
 		let isAborted = false;
-		const taskId = this.#browserFrame[PropertySymbol.asyncTaskManager].startTask(
+		const taskId = this.#asyncTaskManager.startTask(
 			() => (isAborted = true)
 		);
 		const settings = this.#browserFrame.page.context.browser.settings;
@@ -1672,7 +1684,7 @@ export default class BrowserWindow extends EventTarget implements INodeJSGlobal 
 		TIMER.queueMicrotask(() => {
 			if (!isAborted) {
 				// We need to call endTask() before the callback as the callback might throw an error.
-				this.#browserFrame[PropertySymbol.asyncTaskManager].endTask(taskId);
+				this.#asyncTaskManager.endTask(taskId);
 				if (useTryCatch) {
 					let result: any;
 					try {

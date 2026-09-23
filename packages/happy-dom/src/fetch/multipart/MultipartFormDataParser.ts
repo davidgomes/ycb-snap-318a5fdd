@@ -2,6 +2,7 @@ import type FormData from '../../form-data/FormData.js';
 import { ReadableStream } from 'stream/web';
 import * as PropertySymbol from '../../PropertySymbol.js';
 import MultipartReader from './MultipartReader.js';
+import FetchBodyUtility from '../utilities/FetchBodyUtility.js';
 import DOMExceptionNameEnum from '../../exception/DOMExceptionNameEnum.js';
 import { Buffer } from 'buffer';
 import type BrowserWindow from '../../window/BrowserWindow.js';
@@ -58,27 +59,14 @@ export default class MultipartFormDataParser {
 			);
 		}
 
-		const bodyReader = body.getReader();
 		const reader = new MultipartReader(window, match[1] || match[2]);
 		const chunks: any[] = [];
 		let buffer: Buffer;
 		const bytes = 0;
 
-		let readResult = await bodyReader.read();
-
-		while (!readResult.done) {
-			if (requestOrResponse[PropertySymbol.error]) {
-				throw requestOrResponse[PropertySymbol.error];
-			}
-			if (requestOrResponse[PropertySymbol.aborted]) {
-				throw new window.DOMException(
-					'Failed to read response body: The stream was aborted.',
-					DOMExceptionNameEnum.abortError
-				);
-			}
-			reader.write(readResult.value);
-			readResult = await bodyReader.read();
-		}
+		await FetchBodyUtility.readBodyStream(window, requestOrResponse, body, (chunk) =>
+			reader.write(chunk)
+		);
 
 		try {
 			buffer =

@@ -11,11 +11,139 @@ import type { TResponseBody } from '../types/TResponseBody.js';
 import { Buffer } from 'buffer';
 import Stream from 'stream';
 import type BrowserWindow from '../../window/BrowserWindow.js';
+import WindowBrowserContext from '../../window/WindowBrowserContext.js';
 
 /**
  * Fetch body utility.
  */
 export default class FetchBodyUtility {
+	static #abortListeners: WeakMap<object, () => void> = new WeakMap();
+
+	/**
+	 * Starts an async task for consuming a body, which aborts the consumption when the browser frame or page is closed.
+	 *
+	 * Throws an "AbortError" if the window has been shut down.
+	 *
+	 * @param window Window.
+	 * @param requestOrResponse Request or response.
+	 * @param [onAbort] Called when aborted.
+	 * @returns Function that ends the task.
+	 */
+	public static startBodyTask(
+		window: BrowserWindow,
+		requestOrResponse: { [PropertySymbol.aborted]: boolean },
+		onAbort?: () => void
+	): () => void {
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+		const abort = (): void => {
+			this.abortBody(requestOrResponse);
+			if (onAbort) {
+				onAbort();
+			}
+		};
+
+		if (!asyncTaskManager) {
+			abort();
+			throw this.createAbortError(window);
+		}
+
+		let taskID: number;
+
+		try {
+			taskID = asyncTaskManager.startTask(abort);
+		} catch {
+			throw this.createAbortError(window);
+		}
+
+		return () => asyncTaskManager.endTask(taskID);
+	}
+
+	/**
+	 * Aborts consumption of a body.
+	 *
+	 * @param requestOrResponse Request or response.
+	 */
+	public static abortBody(requestOrResponse: { [PropertySymbol.aborted]: boolean }): void {
+		requestOrResponse[PropertySymbol.aborted] = true;
+		const listener = this.#abortListeners.get(requestOrResponse);
+		if (listener) {
+			this.#abortListeners.delete(requestOrResponse);
+			listener();
+		}
+	}
+
+	/**
+	 * Reads all chunks of a body stream. Rejects with an "AbortError" if aborted.
+	 *
+	 * @param window Window.
+	 * @param requestOrResponse Request or response.
+	 * @param body Body stream.
+	 * @param onChunk Called for each chunk.
+	 */
+	public static async readBodyStream(
+		window: BrowserWindow,
+		requestOrResponse: {
+			[PropertySymbol.aborted]: boolean;
+			[PropertySymbol.error]: Error | null;
+		},
+		body: ReadableStream,
+		onChunk: (chunk: any) => void
+	): Promise<void> {
+		if (requestOrResponse[PropertySymbol.aborted]) {
+			throw this.createAbortError(window);
+		}
+
+		const reader = body.getReader();
+
+		this.#abortListeners.set(requestOrResponse, () => {
+			reader.cancel().catch(() => {});
+		});
+
+		try {
+			let readResult = await reader.read();
+			while (!readResult.done) {
+				if (requestOrResponse[PropertySymbol.error]) {
+					throw requestOrResponse[PropertySymbol.error];
+				}
+				if (requestOrResponse[PropertySymbol.aborted]) {
+					throw this.createAbortError(window);
+				}
+				onChunk(readResult.value);
+				readResult = await reader.read();
+			}
+		} catch (error) {
+			if (requestOrResponse[PropertySymbol.error]) {
+				throw requestOrResponse[PropertySymbol.error];
+			}
+			if (requestOrResponse[PropertySymbol.aborted]) {
+				throw this.createAbortError(window);
+			}
+			throw error;
+		} finally {
+			this.#abortListeners.delete(requestOrResponse);
+		}
+
+		if (requestOrResponse[PropertySymbol.error]) {
+			throw requestOrResponse[PropertySymbol.error];
+		}
+		if (requestOrResponse[PropertySymbol.aborted]) {
+			throw this.createAbortError(window);
+		}
+	}
+
+	/**
+	 * Creates an abort error.
+	 *
+	 * @param window Window.
+	 * @returns Error.
+	 */
+	public static createAbortError(window: BrowserWindow): DOMException {
+		return new window.DOMException(
+			'Failed to read response body: The stream was aborted.',
+			DOMExceptionNameEnum.abortError
+		);
+	}
+
 	/**
 	 * Parses body and returns stream and type.
 	 *
@@ -197,27 +325,14 @@ export default class FetchBodyUtility {
 			throw requestOrResponse[PropertySymbol.error];
 		}
 
-		const reader = body.getReader();
-		const chunks = [];
+		const chunks: any[] = [];
 		let bytes = 0;
 
 		try {
-			let readResult = await reader.read();
-			while (!readResult.done) {
-				if (requestOrResponse[PropertySymbol.error]) {
-					throw requestOrResponse[PropertySymbol.error];
-				}
-				if (requestOrResponse[PropertySymbol.aborted]) {
-					throw new window.DOMException(
-						'Failed to read response body: The stream was aborted.',
-						DOMExceptionNameEnum.abortError
-					);
-				}
-				const chunk = readResult.value;
+			await this.readBodyStream(window, requestOrResponse, body, (chunk) => {
 				bytes += chunk.length;
 				chunks.push(chunk);
-				readResult = await reader.read();
-			}
+			});
 		} catch (error) {
 			if (error instanceof DOMException) {
 				throw error;

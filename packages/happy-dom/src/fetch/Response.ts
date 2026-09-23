@@ -13,7 +13,6 @@ import MultipartFormDataParser from './multipart/MultipartFormDataParser.js';
 import type BrowserWindow from '../window/BrowserWindow.js';
 import type ICachedResponse from './cache/response/ICachedResponse.js';
 import { Buffer } from 'buffer';
-import WindowBrowserContext from '../window/WindowBrowserContext.js';
 
 const REDIRECT_STATUS_CODES = [301, 302, 303, 307, 308];
 
@@ -107,32 +106,18 @@ export default class Response implements Response {
 			);
 		}
 
-		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
-
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return new ArrayBuffer(0);
-		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
-
 		(<boolean>this.bodyUsed) = true;
 
 		let buffer: Buffer | null = this[PropertySymbol.buffer];
 
 		if (!buffer) {
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
-			});
+			const endTask = FetchBodyUtility.startBodyTask(window, this);
 
 			try {
 				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-			} catch (error) {
-				asyncTaskManager.endTask(taskID);
-				throw error;
+			} finally {
+				endTask();
 			}
-
-			asyncTaskManager.endTask(taskID);
 		}
 
 		this.#storeBodyInCache(buffer);
@@ -169,30 +154,18 @@ export default class Response implements Response {
 			);
 		}
 
-		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
-
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return Buffer.alloc(0);
-		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
-
 		(<boolean>this.bodyUsed) = true;
 
 		let buffer: Buffer | null = this[PropertySymbol.buffer];
 
 		if (!buffer) {
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
-			});
+			const endTask = FetchBodyUtility.startBodyTask(window, this);
+
 			try {
 				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-			} catch (error) {
-				asyncTaskManager.endTask(taskID);
-				throw error;
+			} finally {
+				endTask();
 			}
-			asyncTaskManager.endTask(taskID);
 		}
 
 		this.#storeBodyInCache(buffer);
@@ -215,30 +188,18 @@ export default class Response implements Response {
 			);
 		}
 
-		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
-
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return '';
-		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
-
 		(<boolean>this.bodyUsed) = true;
 
 		let buffer: Buffer | null = this[PropertySymbol.buffer];
 
 		if (!buffer) {
-			const taskID = asyncTaskManager.startTask(() => {
-				this[PropertySymbol.aborted] = true;
-			});
+			const endTask = FetchBodyUtility.startBodyTask(window, this);
+
 			try {
 				buffer = await FetchBodyUtility.consumeBodyStream(window, this);
-			} catch (error) {
-				asyncTaskManager.endTask(taskID);
-				throw error;
+			} finally {
+				endTask();
 			}
-			asyncTaskManager.endTask(taskID);
 		}
 
 		this.#storeBodyInCache(buffer);
@@ -263,14 +224,6 @@ export default class Response implements Response {
 	 */
 	public async formData(): Promise<FormData> {
 		const window = this[PropertySymbol.window];
-		const browserFrame = new WindowBrowserContext(window).getBrowserFrame();
-
-		// No browser frame means that the browser is being teared down.
-		if (!browserFrame) {
-			return new window.FormData();
-		}
-
-		const asyncTaskManager = browserFrame[PropertySymbol.asyncTaskManager];
 		const contentType = this.headers.get('Content-Type');
 
 		if (contentType && this.body && /multipart/i.test(contentType)) {
@@ -283,9 +236,17 @@ export default class Response implements Response {
 
 			(<boolean>this.bodyUsed) = true;
 
-			const taskID = browserFrame[PropertySymbol.asyncTaskManager].startTask(() => {
-				this[PropertySymbol.aborted] = true;
-			});
+			let endTask: () => void = () => {};
+
+			try {
+				endTask = FetchBodyUtility.startBodyTask(window, this);
+			} catch (error) {
+				// A fully buffered body can still be read after the window has been shut down.
+				if (!this[PropertySymbol.buffer]) {
+					throw error;
+				}
+				this[PropertySymbol.aborted] = false;
+			}
 			let formData: FormData;
 			let buffer: Buffer;
 
@@ -293,13 +254,11 @@ export default class Response implements Response {
 				const result = await MultipartFormDataParser.streamToFormData(window, this, contentType);
 				formData = result.formData;
 				buffer = result.buffer;
-			} catch (error) {
-				asyncTaskManager.endTask(taskID);
-				throw error;
+			} finally {
+				endTask();
 			}
 
 			this.#storeBodyInCache(buffer);
-			asyncTaskManager.endTask(taskID);
 
 			return formData;
 		}

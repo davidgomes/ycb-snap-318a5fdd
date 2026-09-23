@@ -84,7 +84,15 @@ export default class WindowBrowserContext {
 	 * @returns Async task manager.
 	 */
 	public getAsyncTaskManager(): AsyncTaskManager | null {
-		return this.getBrowserFrame()?.[PropertySymbol.asyncTaskManager] || null;
+		const browserFrame = this.getBrowserFrame();
+		if (!browserFrame) {
+			return null;
+		}
+		return (
+			this.#window[PropertySymbol.asyncTaskManager] ||
+			browserFrame[PropertySymbol.asyncTaskManager] ||
+			null
+		);
 	}
 
 	/**
