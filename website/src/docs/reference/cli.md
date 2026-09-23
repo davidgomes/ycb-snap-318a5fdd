@@ -293,6 +293,43 @@ Output task information in JSON format (use with `--list` or `--list-all`).
 task --list --json
 ```
 
+#### `--no-status`
+
+Skip checking whether tasks are up-to-date (use with `--json` or `--graph`).
+
+```bash
+task --list --json --no-status
+```
+
+#### `--graph`
+
+Show the dependency graph of the given tasks instead of running them. Both
+`deps` and task calls in `cmds` are included, and for loops produce one edge
+per iteration. If no task is given, the `default` task is used. See
+[Graph Output Format](#graph-output-format).
+
+```bash
+task build --graph
+```
+
+#### `--graph-format <format>`
+
+Set the `--graph` output format. Available formats: `json` (default), `dot`,
+`text`.
+
+```bash
+task build --graph --graph-format dot | dot -Tsvg > graph.svg
+```
+
+#### `--graph-reverse`
+
+Invert the graph to show every task in the Taskfile that depends on the given
+task.
+
+```bash
+task setup --graph --graph-reverse --graph-format text
+```
+
 #### `--sort <mode>`
 
 Change task listing order. Available modes:
@@ -385,6 +422,7 @@ Task uses specific exit codes to indicate different types of errors:
 - **205** - Task cancelled by user
 - **206** - Missing required variables
 - **207** - Variable has incorrect value
+- **208** - Dependency cycle detected (when using `--graph`)
 
 ::: info
 
@@ -423,3 +461,50 @@ When using `--json` with `--list` or `--list-all`:
   "location": "/path/to/Taskfile.yml"
 }
 ```
+
+## Graph Output Format
+
+When using `--graph` (or `--graph-format json`), trimmed to a single node:
+
+```json
+{
+  "roots": ["build"],
+  "nodes": {
+    "build": {
+      "name": "build",
+      "desc": "Build the application",
+      "location": {
+        "taskfile": "/path/to/Taskfile.yml",
+        "line": 12,
+        "column": 3
+      },
+      "up_to_date": false,
+      "deps": ["lint", "setup"],
+      "method": "checksum"
+    }
+  },
+  "edges": [
+    { "from": "build", "to": "setup", "type": "dep", "vars": {} },
+    { "from": "build", "to": "lint", "type": "cmd", "vars": { "CI": true } },
+    { "from": "lint", "to": "setup", "type": "dep", "vars": {} }
+  ],
+  "depth_groups": [["setup"], ["lint"], ["build"]],
+  "longest_path": ["build", "lint", "setup"]
+}
+```
+
+- `roots` are the requested tasks, with aliases and wildcards resolved.
+- `nodes` are keyed by the fully qualified task name. `deps` lists every task
+  it calls, from both `deps` and `cmds`. `up_to_date` is omitted with
+  `--no-status`.
+- `edges` have a `type` of `dep` or `cmd` and hold the `vars` passed to the
+  called task.
+- `depth_groups` put tasks without dependencies at level 0, and every other task
+  one level above its deepest dependency.
+- `longest_path` is the longest chain of calls from a root, root first.
+
+With `--graph-reverse`, edges point from a task to the tasks that depend on it,
+and depth groups and the longest path are computed on the reversed graph.
+
+Dynamic (`sh:`) variables are not evaluated when building the graph, the same
+as with `--list` and `--summary`.
