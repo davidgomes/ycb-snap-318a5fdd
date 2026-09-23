@@ -10,6 +10,9 @@ import {
   fromResult,
   fromMaybe,
   toMaybe,
+  sequenceMaybeAsResult,
+  traverseMaybeAsResult,
+  zipMaybeAsResult,
 } from 'true-myth/toolbelt';
 
 describe('transposeResult', () => {
@@ -114,4 +117,64 @@ test('`fromResult`', () => {
   const reason = 'oh teh noes';
   const anErr = Result.err<number, string>(reason);
   expect(fromResult(anErr)).toEqual(Maybe.nothing());
+});
+
+describe('maybe collections as results', () => {
+  test('`sequenceMaybeAsResult` turns the first `Nothing` into `Err` and stops', () => {
+    expect(sequenceMaybeAsResult('missing', [Maybe.just(1), Maybe.just(2)])).toEqual(
+      Result.ok([1, 2])
+    );
+
+    let pulls = 0;
+    const maybes: Iterable<Maybe<number>> = {
+      [Symbol.iterator]() {
+        const values = [Maybe.just(1), Maybe.nothing<number>(), Maybe.just(3)];
+        let index = 0;
+        return {
+          next() {
+            pulls += 1;
+            const value = values[index];
+            if (value === undefined) {
+              return { done: true, value: undefined };
+            }
+            index += 1;
+            return { done: false, value };
+          },
+        };
+      },
+    };
+    expect(sequenceMaybeAsResult('missing', maybes)).toEqual(Result.err('missing'));
+    expect(pulls).toBe(2);
+
+    const curried = sequenceMaybeAsResult<number, string>('missing');
+    expect(curried([Maybe.just(4)])).toEqual(Result.ok([4]));
+    expectTypeOf(curried).toEqualTypeOf<
+      (maybes: Iterable<Maybe<number>>) => Result<number[], string>
+    >();
+  });
+
+  test('`traverseMaybeAsResult` curries on `errValue`', () => {
+    const parse = (text: string) =>
+      text === '' ? Maybe.nothing<number>() : Maybe.just(text.length);
+    expect(traverseMaybeAsResult('empty', ['ab', 'c'], parse)).toEqual(Result.ok([2, 1]));
+    expect(traverseMaybeAsResult('empty', ['ab', ''], parse)).toEqual(Result.err('empty'));
+
+    const curried = traverseMaybeAsResult<string, number, string>('empty');
+    expect(curried(['ab', 'c'], parse)).toEqual(Result.ok([2, 1]));
+  });
+
+  test('`zipMaybeAsResult` pairs `Just`s and uses `errValue` for `Nothing`', () => {
+    expect(zipMaybeAsResult('missing', Maybe.just(1), Maybe.just('a'))).toEqual(
+      Result.ok([1, 'a'])
+    );
+    expect(zipMaybeAsResult('missing', Maybe.nothing<number>(), Maybe.just('a'))).toEqual(
+      Result.err('missing')
+    );
+    expect(zipMaybeAsResult('missing', Maybe.just(1), Maybe.nothing<string>())).toEqual(
+      Result.err('missing')
+    );
+
+    const curried = zipMaybeAsResult<number, string, string>('missing');
+    expect(curried(Maybe.just(1), Maybe.just('a'))).toEqual(Result.ok([1, 'a']));
+  });
 });

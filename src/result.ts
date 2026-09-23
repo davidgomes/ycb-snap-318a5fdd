@@ -381,6 +381,26 @@ class ResultImpl<T, E> {
     return this.andThen(identity);
   }
 
+  /**
+    Iterate the success value.
+
+    An {@linkcode Ok} yields its wrapped value once. An {@linkcode Err} yields
+    nothing, so only successes appear when a `Result` is spread or visited with
+    `for...of`:
+
+    ```ts
+    import { ok, err } from 'true-myth/result';
+
+    const values = [...ok(1), ...err<number, string>('nope'), ...ok(2)];
+    console.log(values); // [1, 2]
+    ```
+   */
+  *[Symbol.iterator](): Generator<T, void, undefined> {
+    if (this.repr[0] === 'Ok') {
+      yield this.repr[1];
+    }
+  }
+
   cast() {
     return this;
   }
@@ -2015,6 +2035,170 @@ export function flatten<T, E1, E2>(nested: Result<Result<T, E2>, E1>): Result<T,
   // Uses `andThen` directly rather than calling `.flatten()` to avoid an extra
   // function dispatch.
   return nested.andThen(identity);
+}
+
+function collectResults<T, E>(results: Iterable<Result<T, E>>): Result<T[], E> {
+  const values: T[] = [];
+  for (const item of results) {
+    if (item.isErr) {
+      return Result.err(item.error);
+    }
+    values.push(item.value);
+  }
+  return Result.ok(values);
+}
+
+/**
+  Combine an iterable of {@linkcode Result}s into one `Result` of the values.
+
+  The result is {@linkcode Ok} an array of every contained value when every item
+  is `Ok`. The first {@linkcode Err} is returned as-is, and iteration stops
+  immediately: later items are not pulled from the iterable.
+
+  An empty iterable is `Ok([])`.
+
+  ```ts
+  import { err, ok, sequence } from 'true-myth/result';
+
+  sequence([ok(1), ok(2)]); // Ok([1, 2])
+  sequence([ok(1), err('nope')]); // Err('nope')
+  ```
+
+  @param results The `Result`s to combine.
+ */
+export function sequence(results: readonly []): Result<[], never>;
+export function sequence<const A extends readonly AnyResult[]>(results: A): All<A>;
+export function sequence<T, E>(results: Iterable<Result<T, E>>): Result<T[], E>;
+export function sequence(results: Iterable<AnyResult>): Result<unknown[], unknown> {
+  return collectResults(results);
+}
+
+function traverseResults<T, U, E>(
+  items: Iterable<T>,
+  fn: (item: T) => Result<U, E>
+): Result<U[], E> {
+  const values: U[] = [];
+  for (const item of items) {
+    const result = fn(item);
+    if (result.isErr) {
+      return Result.err(result.error);
+    }
+    values.push(result.value);
+  }
+  return Result.ok(values);
+}
+
+/**
+  Map `fn` over `items` and combine the resulting {@linkcode Result}s.
+
+  Equivalent to {@linkcode sequence} of the mapped `Result`s, including
+  short-circuiting: `fn` is not called, and the iterable is not advanced, after
+  the first {@linkcode Err}.
+
+  The two-argument form is `traverse(items, fn)`. Passing only `fn` returns
+  `(items) => Result<U[], E>`.
+
+  ```ts
+  import { err, ok, traverse } from 'true-myth/result';
+
+  const parse = (text: string) => (text === '' ? err('empty') : ok(text.length));
+
+  traverse(['ab', 'c'], parse); // Ok([2, 1])
+  traverse(['ab', ''], parse); // Err('empty')
+  ```
+
+  @param items Values to transform.
+  @param fn Function that returns a `Result` for each item.
+ */
+export function traverse<T, U, E>(
+  items: Iterable<T>,
+  fn: (item: T) => Result<U, E>
+): Result<U[], E>;
+export function traverse<T, U, E>(
+  fn: (item: T) => Result<U, E>
+): (items: Iterable<T>) => Result<U[], E>;
+export function traverse<T, U, E>(
+  itemsOrFn: Iterable<T> | ((item: T) => Result<U, E>),
+  fn?: (item: T) => Result<U, E>
+): Result<U[], E> | ((items: Iterable<T>) => Result<U[], E>) {
+  if (fn === undefined) {
+    const mapFn = itemsOrFn as (item: T) => Result<U, E>;
+    return (items) => traverseResults(items, mapFn);
+  }
+  return traverseResults(itemsOrFn as Iterable<T>, fn);
+}
+
+/**
+  Combine two {@linkcode Result}s into a `Result` of a pair.
+
+  The result is {@linkcode Ok} `[a, b]` only when both inputs are `Ok`. If `a`
+  is {@linkcode Err}, that error is returned. Otherwise an error from `b` is
+  returned.
+
+  @param a The first `Result`.
+  @param b The second `Result`.
+ */
+export function zip<A, B, E, F>(a: Result<A, E>, b: Result<B, F>): Result<[A, B], E | F> {
+  if (a.isErr) {
+    return Result.err(a.error);
+  }
+  if (b.isErr) {
+    return Result.err(b.error);
+  }
+  const pair: [A, B] = [a.value, b.value];
+  return Result.ok(pair);
+}
+
+/**
+  Combine two {@linkcode Result}s with `fn`.
+
+  `fn` runs only when both inputs are {@linkcode Ok}. If either is
+  {@linkcode Err}, that error is returned (the error from `a` wins when both
+  failed) and `fn` is not called.
+
+  @param a The first `Result`.
+  @param b The second `Result`.
+  @param fn Combines the two contained values.
+ */
+export function zipWith<A, B, C, E, F>(
+  a: Result<A, E>,
+  b: Result<B, F>,
+  fn: (a: A, b: B) => C
+): Result<C, E | F> {
+  if (a.isErr) {
+    return Result.err(a.error);
+  }
+  if (b.isErr) {
+    return Result.err(b.error);
+  }
+  return Result.ok(fn(a.value, b.value));
+}
+
+/**
+  Split an iterable of {@linkcode Result}s into the contained values and errors.
+
+  Order is preserved within each list. Every item is visited.
+
+  ```ts
+  import { err, ok, partition } from 'true-myth/result';
+
+  partition([ok(1), err('a'), ok(2), err('b')]); // [[1, 2], ['a', 'b']]
+  ```
+
+  @param results The `Result`s to split.
+  @returns A pair of `[oks, errs]`.
+ */
+export function partition<T, E>(results: Iterable<Result<T, E>>): [T[], E[]] {
+  const oks: T[] = [];
+  const errs: E[] = [];
+  for (const item of results) {
+    if (item.isOk) {
+      oks.push(item.value);
+    } else {
+      errs.push(item.error);
+    }
+  }
+  return [oks, errs];
 }
 
 /**

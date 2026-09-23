@@ -42,6 +42,14 @@ import Task, {
   stopRetrying,
   isRetryFailed,
   flatten,
+  sequence,
+  traverse,
+  traverseSerial,
+  zip,
+  zipWith,
+  tap,
+  tapRejected,
+  retryN,
 } from 'true-myth/task';
 import {
   exponential,
@@ -3764,6 +3772,250 @@ describe('module-scope functions', () => {
           .flatten();
       expect(flattened.state).toBe(State.Pending);
     });
+  });
+});
+
+describe('`Task` iteration and collection', () => {
+  test('async iterator yields exactly one `Result`', async () => {
+    const resolved: Result<number, string>[] = [];
+    for await (const item of Task.resolve<number, string>(42)) {
+      resolved.push(item);
+    }
+    expect(resolved).toEqual([Result.ok(42)]);
+
+    const rejected: Result<number, string>[] = [];
+    for await (const item of Task.reject<number, string>('boom')) {
+      rejected.push(item);
+    }
+    expect(rejected).toEqual([Result.err('boom')]);
+
+    const again: Result<number, string>[] = [];
+    const reusable = Task.resolve<number, string>(1);
+    for await (const item of reusable) {
+      again.push(item);
+    }
+    for await (const item of reusable) {
+      again.push(item);
+    }
+    expect(again).toEqual([Result.ok(1), Result.ok(1)]);
+  });
+
+  test('`sequence` and `traverse` run in parallel', async () => {
+    const events: string[] = [];
+    const sequenced = sequence([
+      new Task<number, string>((resolveTask) => {
+        events.push('a');
+        setTimeout(() => resolveTask(1), 15);
+      }),
+      new Task<number, string>((resolveTask) => {
+        events.push('b');
+        resolveTask(2);
+      }),
+    ]);
+    expect(events).toEqual(['a', 'b']);
+    expect(await sequenced).toEqual(Result.ok([1, 2]));
+
+    expect(await sequence([Task.resolve(1), Task.reject<number, string>('no')])).toEqual(
+      Result.err('no')
+    );
+    expect(await sequence([])).toEqual(Result.ok([]));
+
+    const started: number[] = [];
+    const traversed = traverse([1, 2], (n) => {
+      started.push(n);
+      return n === 2 ? Task.reject<number, string>('no') : Task.resolve(n);
+    });
+    expect(started).toEqual([1, 2]);
+    expect(await traversed).toEqual(Result.err('no'));
+
+    const curried = traverse((n: number) => Task.resolve<number, string>(n + 1));
+    expect(await curried([1, 2])).toEqual(Result.ok([2, 3]));
+  });
+
+  test('`traverseSerial` waits and stops on the first rejection', async () => {
+    const events: string[] = [];
+    const serial = traverseSerial([1, 2, 3], (n) => {
+      events.push(`start ${n}`);
+      return new Task<number, string>((resolveTask, rejectTask) => {
+        setTimeout(() => {
+          events.push(`settle ${n}`);
+          if (n === 2) {
+            rejectTask('no');
+          } else {
+            resolveTask(n);
+          }
+        }, 5);
+      });
+    });
+
+    expect(events).toEqual(['start 1']);
+    expect(await serial).toEqual(Result.err('no'));
+    expect(events).toEqual(['start 1', 'settle 1', 'start 2', 'settle 2']);
+
+    let closed = false;
+    const failing = traverseSerial(
+      {
+        [Symbol.iterator]() {
+          let sent = false;
+          return {
+            next() {
+              if (sent) {
+                return { done: true, value: undefined };
+              }
+              sent = true;
+              return { done: false, value: 1 };
+            },
+            return() {
+              closed = true;
+              return { done: true, value: undefined };
+            },
+          };
+        },
+      },
+      () => Task.reject<number, string>('stop')
+    );
+    expect(await failing).toEqual(Result.err('stop'));
+    expect(closed).toBe(true);
+
+    const withoutReturn = traverseSerial(
+      {
+        [Symbol.iterator]() {
+          let sent = false;
+          return {
+            next() {
+              if (sent) {
+                return { done: true, value: undefined };
+              }
+              sent = true;
+              return { done: false, value: 1 };
+            },
+          };
+        },
+      },
+      () => Task.reject<number, string>('stop')
+    );
+    expect(await withoutReturn).toEqual(Result.err('stop'));
+
+    const curried = traverseSerial((n: number) => Task.resolve<number, string>(n));
+    expect(await curried([4, 5])).toEqual(Result.ok([4, 5]));
+  });
+
+  test('`zip` and `zipWith` join two tasks', async () => {
+    expect(await zip(Task.resolve(1), Task.resolve('a'))).toEqual(Result.ok([1, 'a']));
+    expect(await zip(Task.reject<number, string>('no'), Task.resolve('a'))).toEqual(
+      Result.err('no')
+    );
+
+    let called = false;
+    expect(
+      await zipWith(Task.resolve(2), Task.resolve(3), (left, right) => {
+        called = true;
+        return left + right;
+      })
+    ).toEqual(Result.ok(5));
+    expect(called).toBe(true);
+
+    called = false;
+    expect(
+      await zipWith(Task.reject<number, string>('no'), Task.resolve(3), () => {
+        called = true;
+        return 0;
+      })
+    ).toEqual(Result.err('no'));
+    expect(called).toBe(false);
+  });
+
+  test('`tap` and `tapRejected` pass the outcome through', async () => {
+    const seen: number[] = [];
+    const tapped = tap(Task.resolve<number, string>(42), (value) => {
+      seen.push(value);
+    });
+    expect(await tapped).toEqual(Result.ok(42));
+    expect(seen).toEqual([42]);
+
+    seen.length = 0;
+    expect(
+      await tap(Task.reject<number, string>('no'), (value) => {
+        seen.push(value);
+      })
+    ).toEqual(Result.err('no'));
+    expect(seen).toEqual([]);
+
+    const log = tap((value: number) => {
+      seen.push(value);
+    });
+    expect(await log(Task.resolve<number, string>(3))).toEqual(Result.ok(3));
+    expect(seen).toEqual([3]);
+
+    const reasons: string[] = [];
+    expect(
+      await tapRejected(Task.reject<number, string>('boom'), (reason) => {
+        reasons.push(reason);
+      })
+    ).toEqual(Result.err('boom'));
+    expect(reasons).toEqual(['boom']);
+
+    reasons.length = 0;
+    expect(
+      await tapRejected(Task.resolve<number, string>(1), (reason) => {
+        reasons.push(reason);
+      })
+    ).toEqual(Result.ok(1));
+    expect(reasons).toEqual([]);
+
+    const logRejection = tapRejected((reason: string) => {
+      reasons.push(reason);
+    });
+    expect(await logRejection(Task.reject<number, string>('later'))).toEqual(Result.err('later'));
+    expect(reasons).toEqual(['later']);
+  });
+
+  test('`retryN` retries a task-producing function', async () => {
+    let tries = 0;
+    const recovered = await retryN(2, () => {
+      tries += 1;
+      return tries < 3 ? Task.reject(tries) : Task.resolve('ok');
+    });
+    expect(recovered).toEqual(Result.ok('ok'));
+    expect(tries).toBe(3);
+
+    tries = 0;
+    const exhausted = await retryN(2, () => {
+      tries += 1;
+      return Task.reject<string, string>('no');
+    });
+    expect(exhausted).toEqual(Result.err('no'));
+    expect(tries).toBe(3);
+
+    tries = 0;
+    await retryN(0, () => {
+      tries += 1;
+      return Task.reject('once');
+    });
+    expect(tries).toBe(1);
+
+    tries = 0;
+    await retryN(Number.NaN, () => {
+      tries += 1;
+      return Task.reject('nan');
+    });
+    expect(tries).toBe(1);
+
+    tries = 0;
+    await retryN(-3, () => {
+      tries += 1;
+      return Task.reject('negative');
+    });
+    expect(tries).toBe(1);
+
+    tries = 0;
+    const curried = retryN(1);
+    const outcome = await curried(() => {
+      tries += 1;
+      return tries === 1 ? Task.reject('first') : Task.resolve(9);
+    });
+    expect(outcome).toEqual(Result.ok(9));
+    expect(tries).toBe(2);
   });
 });
 

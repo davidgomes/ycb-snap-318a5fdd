@@ -1614,3 +1614,110 @@ describe('`Result` method tests', () => {
     });
   });
 });
+
+describe('`Result` iteration and collection', () => {
+  test('`Ok` yields its value once and `Err` yields nothing', () => {
+    expect([...result.ok(1)]).toEqual([1]);
+    expect([...result.ok(1)]).toEqual([1]);
+    expect([...result.err<number, string>('nope')]).toEqual([]);
+
+    const yielded: number[] = [];
+    for (const value of result.ok(7)) {
+      yielded.push(value);
+    }
+    expect(yielded).toEqual([7]);
+  });
+
+  test('`sequence` keeps successes and stops on the first `Err`', () => {
+    const oks = result.sequence([result.ok(1), result.ok(2)]);
+    expect(oks).toEqual(result.ok([1, 2]));
+    expectTypeOf(oks).toEqualTypeOf<Result<[number, number], never>>();
+
+    expect(result.sequence([])).toEqual(result.ok([]));
+    expectTypeOf(result.sequence([])).toEqualTypeOf<Result<[], never>>();
+
+    const failure = result.sequence([result.ok(1), result.err('first'), result.err('second')]);
+    expect(failure).toEqual(result.err('first'));
+
+    let pulls = 0;
+    const iterable: Iterable<Result<number, string>> = {
+      [Symbol.iterator]() {
+        const values = [result.ok(1), result.err<number, string>('stop'), result.ok(3)];
+        let index = 0;
+        return {
+          next() {
+            pulls += 1;
+            const value = values[index];
+            if (value === undefined) {
+              return { done: true, value: undefined };
+            }
+            index += 1;
+            return { done: false, value };
+          },
+        };
+      },
+    };
+    expect(result.sequence(iterable)).toEqual(result.err('stop'));
+    expect(pulls).toBe(2);
+  });
+
+  test('`traverse` maps then sequences, and curries the function', () => {
+    const parse = (text: string) => (text === '' ? result.err('empty') : result.ok(text.length));
+    expect(result.traverse(['ab', 'c'], parse)).toEqual(result.ok([2, 1]));
+    expect(result.traverse(['ab', ''], parse)).toEqual(result.err('empty'));
+
+    let calls = 0;
+    result.traverse([1, 2, 3], (n) => {
+      calls += 1;
+      return n === 2 ? result.err('no') : result.ok(n);
+    });
+    expect(calls).toBe(2);
+
+    const curried = result.traverse(parse);
+    expect(curried(['ab', 'c'])).toEqual(result.ok([2, 1]));
+    expectTypeOf(curried).toEqualTypeOf<(items: Iterable<string>) => Result<number[], string>>();
+  });
+
+  test('`zip` and `zipWith` are left-biased on errors', () => {
+    expect(result.zip(result.ok(1), result.ok('a'))).toEqual(result.ok([1, 'a']));
+    expect(result.zip(result.err<number, string>('left'), result.err<string, number>(2))).toEqual(
+      result.err('left')
+    );
+    expect(result.zip(result.ok<number, string>(1), result.err<string, number>(2))).toEqual(
+      result.err(2)
+    );
+
+    let called = false;
+    expect(
+      result.zipWith(result.ok(2), result.ok(3), (left, right) => {
+        called = true;
+        return left + right;
+      })
+    ).toEqual(result.ok(5));
+    expect(called).toBe(true);
+
+    called = false;
+    expect(
+      result.zipWith(result.err<number, string>('no'), result.ok(3), () => {
+        called = true;
+        return 0;
+      })
+    ).toEqual(result.err('no'));
+    expect(called).toBe(false);
+  });
+
+  test('`partition` splits oks and errs', () => {
+    expect(
+      result.partition([
+        result.ok(1),
+        result.err<number, string>('a'),
+        result.ok(2),
+        result.err<number, string>('b'),
+      ])
+    ).toEqual([
+      [1, 2],
+      ['a', 'b'],
+    ]);
+    expect(result.partition<number, string>([])).toEqual([[], []]);
+  });
+});
