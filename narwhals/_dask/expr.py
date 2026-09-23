@@ -386,9 +386,7 @@ class DaskExpr(
             ).max()
         )
 
-    def rolling_median(
-        self, window_size: int, *, min_samples: int, center: bool
-    ) -> Self:
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
         return self._with_callable(
             lambda expr: expr.rolling(
                 window=window_size, min_periods=min_samples, center=center

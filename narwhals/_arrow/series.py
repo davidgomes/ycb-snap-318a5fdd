@@ -1009,7 +1009,7 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
 
     def _rolling_min_max(
         self,
-        func: Callable[..., ChunkedArrayAny],
+        func: Callable[..., Any],
         window_size: int,
         *,
         min_samples: int,
@@ -1046,9 +1046,7 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
             pc.max_element_wise, window_size, min_samples=min_samples, center=center
         )
 
-    def rolling_median(
-        self, window_size: int, *, min_samples: int, center: bool
-    ) -> Self:
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
         return self.rolling_quantile(
             window_size,
             quantile=0.5,
