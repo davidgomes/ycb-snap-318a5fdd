@@ -435,6 +435,62 @@ class test_Queue:
         assert 'foo' in repr(b)
         assert 'Queue' in repr(b)
 
+    def test_dead_letter_attributes(self) -> None:
+        q = Queue('foo', self.exchange, 'rk')
+        assert q.dead_letter_exchange is None
+        assert q.dead_letter_routing_key is None
+        assert not q.has_dead_letter_exchange
+        assert q.effective_dead_letter_exchange is None
+        assert q.effective_dead_letter_routing_key == 'rk'
+        assert q.effective_message_ttl is None
+
+        q = Queue('foo', self.exchange, 'rk',
+                  dead_letter_exchange=Exchange('dlx'),
+                  dead_letter_routing_key='drk', message_ttl=2)
+        assert q.has_dead_letter_exchange
+        assert q.effective_dead_letter_exchange == 'dlx'
+        assert q.effective_dead_letter_routing_key == 'drk'
+        assert q.effective_message_ttl == 2
+
+    def test_dead_letter_from_queue_arguments(self) -> None:
+        q = Queue('foo', self.exchange, 'rk', queue_arguments={
+            'x-dead-letter-exchange': 'dlx',
+            'x-dead-letter-routing-key': 'drk',
+            'x-message-ttl': 1500,
+        })
+        assert q.has_dead_letter_exchange
+        assert q.effective_dead_letter_exchange == 'dlx'
+        assert q.effective_dead_letter_routing_key == 'drk'
+        assert q.effective_message_ttl == 1.5
+
+    def test_with_dead_letter(self) -> None:
+        q = Queue.with_dead_letter('foo', 'dlx', exchange=self.exchange,
+                                   routing_key='rk')
+        assert q.name == 'foo'
+        assert q.dead_letter_exchange == 'dlx'
+        assert q.effective_dead_letter_routing_key == 'rk'
+
+    def test_from_dict_dead_letter(self) -> None:
+        q = Queue.from_dict('foo', exchange='foo', routing_key='rk',
+                            dead_letter_exchange='dlx',
+                            dead_letter_routing_key='drk')
+        assert q.dead_letter_exchange == 'dlx'
+        assert q.dead_letter_routing_key == 'drk'
+
+    def test_queue_declare_dead_letter_arguments(self) -> None:
+        chan = Connection(transport='memory').channel()
+        q = Queue('foo', 'test_queue_declare_dead_letter', 'rk',
+                  dead_letter_exchange=Exchange('dlx'),
+                  dead_letter_routing_key='drk', max_length=3)
+        q(chan).queue_declare()
+        assert chan.get_queue_properties('foo') == {
+            'dead_letter_exchange': 'dlx',
+            'dead_letter_routing_key': 'drk',
+            'max_length': 3,
+        }
+        chan.queue_delete('foo')
+        chan.exchange_delete('test_queue_declare_dead_letter')
+
 
 class test_MaybeChannelBound:
 

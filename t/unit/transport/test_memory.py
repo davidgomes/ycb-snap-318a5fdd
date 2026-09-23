@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+from time import sleep
 
 import pytest
 
@@ -182,3 +183,32 @@ class test_MemoryTransport:
 
         assert self.q3(self.c).get().payload == {'hello': 'on return'}
         assert self.q3(self.c).get() is None
+
+    def test_dead_letter_on_reject_and_expire(self):
+        channel = self.c.channel()
+        dlx = Exchange('test_transport_memory_dlx', 'direct')
+        dlq = Queue('test_transport_memory_dlq', exchange=dlx,
+                    routing_key='dead')
+        q = Queue.with_dead_letter(
+            'test_transport_memory_dl', dlx, 'dead',
+            exchange=self.e, routing_key='test_transport_memory_dl',
+        )
+        dlq(channel).declare()
+        q(channel).declare()
+        producer = Producer(channel, self.e)
+
+        producer.publish({'n': 1}, routing_key='test_transport_memory_dl')
+        q(channel).get().reject()
+        dead = dlq(channel).get()
+        assert dead.payload == {'n': 1}
+        assert dead.headers['x-death'][0]['reason'] == 'rejected'
+        dead.ack()
+
+        producer.publish({'n': 2}, routing_key='test_transport_memory_dl',
+                         expiration=0.001)
+        sleep(0.01)
+        assert channel.expire_messages('test_transport_memory_dl') == 1
+        dead = dlq(channel).get()
+        assert dead.payload == {'n': 2}
+        assert dead.headers['x-death'][0]['reason'] == 'expired'
+        assert dead.headers['x-first-death-reason'] == 'expired'
