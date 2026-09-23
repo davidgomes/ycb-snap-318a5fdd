@@ -471,7 +471,26 @@ class LayerBlendingRanges(BaseElement):
         return cls(composite_ranges, channel_ranges)  # type: ignore[arg-type]
 
     def write(self, fp: BinaryIO, **kwargs: Any) -> int:
+        self._validate()
         return write_length_block(fp, lambda f: self._write_body(f))
+
+    def _validate(self) -> None:
+        def check_range(name: str, pairs: list[tuple[int, int]]) -> None:
+            if len(pairs) != 2:
+                raise ValueError(
+                    f"{name} must have exactly 2 (black, white) pairs, got {len(pairs)}"
+                )
+            for pair in pairs:
+                if len(pair) != 2:
+                    raise ValueError(
+                        f"{name} pairs must have exactly 2 values, got {len(pair)}"
+                    )
+
+        if self.composite_ranges is not None:
+            check_range("composite_ranges", self.composite_ranges)
+        if self.channel_ranges is not None:
+            for index, channel in enumerate(self.channel_ranges):
+                check_range(f"channel_ranges[{index}]", channel)
 
     def _write_body(self, fp: BinaryIO) -> int:
         written = 0
