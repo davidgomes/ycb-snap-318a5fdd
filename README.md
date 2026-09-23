@@ -239,6 +239,15 @@ When using the `--sort-by-size` option, Vulture sorts unused code by its
 number of lines. This helps developers prioritize where to look for dead
 code first.
 
+## Caching
+
+With `--cache`, Vulture stores per-file analysis results in a cache
+directory (`.vulture-cache/` by default, change it with `--cache-dir=PATH`).
+Subsequent runs only re-analyze changed files and files that (transitively)
+import them. The cache is invalidated automatically when the Python or
+Vulture version or relevant settings change. Use `--cache-clear` to remove
+all contents of the cache directory before running.
+
 ## Examples
 
 Consider the following Python script (`dead_code.py`):

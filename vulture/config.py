@@ -11,6 +11,7 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
+from .cache import DEFAULT_CACHE_DIR
 from .version import __version__
 
 #: Possible configuration options and their respective defaults
@@ -24,6 +25,9 @@ DEFAULTS = {
     "make_whitelist": False,
     "sort_by_size": False,
     "verbose": False,
+    "cache": False,
+    "cache_clear": False,
+    "cache_dir": DEFAULT_CACHE_DIR,
 }
 
 
@@ -165,6 +169,26 @@ def _parse_args(args=None):
         type=str,
         default="pyproject.toml",
         help="Path to pyproject.toml config file.",
+    )
+    parser.add_argument(
+        "--cache",
+        action="store_true",
+        default=missing,
+        help="Cache analysis results and only re-analyze changed files and"
+        " files that (transitively) import them.",
+    )
+    parser.add_argument(
+        "--cache-clear",
+        action="store_true",
+        default=missing,
+        help="Remove all contents of the cache directory before running.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        metavar="PATH",
+        type=str,
+        default=missing,
+        help="Directory for the cache (default: .vulture-cache/).",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", default=missing
