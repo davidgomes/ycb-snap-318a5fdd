@@ -38,6 +38,7 @@ Common layer properties:
 - ``visible``: Visibility flag
 - ``opacity``: Opacity (0-255)
 - ``blend_mode``: Blend mode enum
+- ``blend_ranges``: Blend If sliders
 - ``bbox``: Bounding box (left, top, right, bottom)
 - ``width``, ``height``: Dimensions
 - ``kind``: Layer type string ('pixel', 'group', 'type', etc.)
@@ -106,6 +107,7 @@ from PIL import Image, ImageChops
 
 import psd_tools.psd.engine_data as engine_data
 from psd_tools.api import pil_io
+from psd_tools.api.blend_range import BlendRanges
 from psd_tools.api.effects import Effects
 from psd_tools.api.mask import Mask
 from psd_tools.api.protocols import GroupMixinProtocol, LayerProtocol, PSDProtocol
@@ -309,6 +311,31 @@ class Layer(LayerProtocol):
         if self.blend_mode != blend_mode:
             self._psd._mark_updated()
         self._record.blend_mode = blend_mode
+
+    @property
+    def blend_ranges(self) -> BlendRanges:
+        """
+        Blend If sliders for this layer. Writable.
+
+        The returned object is a snapshot. Assign it back after editing so the
+        change is stored on the layer and included in :py:meth:`PSDImage.save`.
+
+        Example::
+
+            ranges = layer.blend_ranges
+            ranges.composite.this_layer_black = (32, 64)
+            layer.blend_ranges = ranges
+
+        :return: :py:class:`~psd_tools.api.blend_range.BlendRanges`
+        """
+        return BlendRanges.from_raw(self._record.blending_ranges)
+
+    @blend_ranges.setter
+    def blend_ranges(self, value: BlendRanges) -> None:
+        before = self._record.blending_ranges.tobytes()
+        value.apply_to_raw(self._record.blending_ranges)
+        if before != self._record.blending_ranges.tobytes() and self._psd is not None:
+            self._psd._mark_updated()
 
     @property
     def left(self) -> int:

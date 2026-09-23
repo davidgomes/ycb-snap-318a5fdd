@@ -98,6 +98,24 @@ def test_layer_blending_ranges() -> None:
             ],
         )
     )
+    # Empty blocks are stored as null ranges and must still round-trip.
+    check_write_read(LayerBlendingRanges(None, None))  # type: ignore[arg-type]
+
+
+def test_layer_blending_ranges_rejects_bad_pair_counts() -> None:
+    bad_composite = LayerBlendingRanges(
+        [(0, 1)],
+        [],
+    )
+    with pytest.raises(ValueError, match="composite_ranges"):
+        bad_composite.tobytes()
+
+    bad_channel = LayerBlendingRanges(
+        [(0, 1), (2, 3)],
+        [[(0, 1)]],
+    )
+    with pytest.raises(ValueError, match="channel range"):
+        bad_channel.tobytes()
 
 
 def test_layer_record() -> None:

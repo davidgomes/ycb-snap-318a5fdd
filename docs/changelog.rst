@@ -1,6 +1,13 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+- [api] Add ``BlendRangeChannel``, ``BlendRanges``, and ``Layer.blend_ranges`` for reading and writing Photoshop Blend If sliders
+- [composite] Apply Blend If ranges when compositing a layer
+- [psd] Validate ``LayerBlendingRanges`` pair counts when writing
+
 1.14.0 (2026-03-03)
 -------------------
 

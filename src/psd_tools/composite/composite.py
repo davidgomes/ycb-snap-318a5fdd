@@ -336,6 +336,11 @@ class Compositor(object):
         shape *= shape_mask
         alpha *= shape_mask * opacity_mask * opacity_const
 
+        # Blend If: This Layer reads source color, Underlying Layer reads backdrop.
+        blend_if_weight = self._get_blend_if_weight(layer, color)
+        shape *= blend_if_weight
+        alpha *= blend_if_weight
+
         # TODO: Tag.BLEND_INTERIOR_ELEMENTS controls how inner effects apply.
 
         # TODO: Apply before effects
@@ -549,6 +554,15 @@ class Compositor(object):
         assert shape is not None
         assert opacity is not None
         return shape, opacity
+
+    def _get_blend_if_weight(
+        self, layer: Layer, color: np.ndarray
+    ) -> np.ndarray | float:
+        """Per-pixel Blend If weight. ``1.0`` when the sliders are full range."""
+        ranges = layer.blend_ranges
+        if ranges.is_default:
+            return 1.0
+        return ranges.compute_visibility(color, self._color)
 
     def _get_const(self, layer: Layer) -> tuple[float, float]:
         """Get constant attributes."""
