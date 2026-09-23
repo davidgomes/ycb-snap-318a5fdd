@@ -2,6 +2,7 @@ from typing import TypeVar, overload
 
 from returns.context import NoDeps
 from returns.interfaces.failable import DiverseFailableN, SingleFailableN
+from returns.interfaces.specific.validated import ValidatedLikeN
 from returns.primitives.hkt import KindN, kinded
 
 _ValueType = TypeVar('_ValueType')
@@ -75,6 +76,8 @@ def internal_cond(
         return container_type.from_value(success_value)
 
     if issubclass(container_type, DiverseFailableN):
+        return container_type.from_failure(error_value)
+    if issubclass(container_type, ValidatedLikeN):
         return container_type.from_failure(error_value)
     return container_type.empty
 

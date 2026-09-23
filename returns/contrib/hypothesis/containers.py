@@ -33,7 +33,7 @@ def strategy_from_container(
     and only exceptions for failure cases.
     """
     from returns.interfaces.applicative import ApplicativeN  # noqa: PLC0415
-    from returns.interfaces.specific import maybe, result  # noqa: PLC0415
+    from returns.interfaces.specific import maybe, result, validated  # noqa: PLC0415
 
     def factory(type_: type) -> st.SearchStrategy:
         value_type, error_type = _get_type_vars(type_)
@@ -48,7 +48,10 @@ def strategy_from_container(
                     st.from_type(value_type),
                 )
             )
-        if issubclass(container_type, result.ResultLikeN):
+        if issubclass(
+            container_type,
+            (result.ResultLikeN, validated.ValidatedLikeN),
+        ):
             strategies.append(
                 st.builds(
                     container_type.from_failure,
