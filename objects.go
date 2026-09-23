@@ -576,6 +576,14 @@ type CompiledFunction struct {
 	VarArgs       bool
 	SourceMap     map[int]parser.Pos
 	Free          []*ObjectPtr
+
+	// Runtime binding for Go-side calls. globals is the slice this function
+	// reads and writes; constants and fileSet come from the bytecode that
+	// compiled it. These fields are not part of the public bytecode encoding.
+	globals   []Object
+	constants []Object
+	fileSet   *parser.SourceFileSet
+	maxAllocs int64
 }
 
 // TypeName returns the name of the type.
@@ -600,7 +608,12 @@ func (o *CompiledFunction) Copy() Object {
 		NumLocals:     o.NumLocals,
 		NumParameters: o.NumParameters,
 		VarArgs:       o.VarArgs,
+		SourceMap:     o.SourceMap,
 		Free:          append([]*ObjectPtr{}, o.Free...), // DO NOT Copy() of elements; these are variable pointers
+		globals:       o.globals,
+		constants:     o.constants,
+		fileSet:       o.fileSet,
+		maxAllocs:     o.maxAllocs,
 	}
 }
 
@@ -624,6 +637,13 @@ func (o *CompiledFunction) SourcePos(ip int) parser.Pos {
 // CanCall returns whether the Object can be Called.
 func (o *CompiledFunction) CanCall() bool {
 	return true
+}
+
+// Call executes the compiled function outside the VM that produced it.
+// Globals, imports, and closure captures match an in-script call of the same
+// function. Closures and composite values returned from Call stay callable.
+func (o *CompiledFunction) Call(args ...Object) (Object, error) {
+	return o.call(args)
 }
 
 // Error represents an error value.

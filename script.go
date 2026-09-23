@@ -265,10 +265,14 @@ func (c *Compiled) Clone() *Compiled {
 		globals:       make([]Object, len(c.globals)),
 		maxAllocs:     c.maxAllocs,
 	}
-	// copy global objects
+	// copy global objects. Compiled functions are rebound to the clone so
+	// later calls and captured locals do not alias the source runtime.
+	// One rebinder keeps aliases between globals (two names for the same
+	// closure, or closures that share a capture) intact inside the clone.
+	rb := newRebinder(clone)
 	for idx, g := range c.globals {
 		if g != nil {
-			clone.globals[idx] = g.Copy()
+			clone.globals[idx] = clone.copyGlobal(g, rb)
 		}
 	}
 	return clone
@@ -342,6 +346,8 @@ func (c *Compiled) Set(name string, value interface{}) error {
 	if !ok {
 		return fmt.Errorf("'%s' is not defined", name)
 	}
-	c.globals[idx] = obj
+	// Rebind callables that came from another compiled instance. Captures are
+	// snapshotted; global reads resolve against this instance.
+	c.globals[idx] = c.isolateAssigned(obj)
 	return nil
 }

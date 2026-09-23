@@ -32,6 +32,9 @@ type VM struct {
 	maxAllocs   int64
 	allocs      int64
 	err         error
+	// funcCache interns bound copies of constant functions so repeated
+	// OpConstant loads keep pointer identity (tail calls compare pointers).
+	funcCache map[*CompiledFunction]*CompiledFunction
 }
 
 // NewVM creates a VM.
@@ -76,22 +79,27 @@ func (v *VM) Run() (err error) {
 
 	v.run()
 	atomic.StoreInt64(&v.aborting, 0)
-	err = v.err
-	if err != nil {
-		filePos := v.fileSet.Position(
-			v.curFrame.fn.SourcePos(v.ip - 1))
-		err = fmt.Errorf("Runtime Error: %w\n\tat %s",
-			err, filePos)
-		for v.framesIndex > 1 {
-			v.framesIndex--
-			v.curFrame = &v.frames[v.framesIndex-1]
-			filePos = v.fileSet.Position(
-				v.curFrame.fn.SourcePos(v.curFrame.ip - 1))
-			err = fmt.Errorf("%w\n\tat %s", err, filePos)
-		}
-		return err
+	return v.runtimeError()
+}
+
+// runtimeError formats v.err with the same stack trace as an in-script failure.
+func (v *VM) runtimeError() error {
+	err := v.err
+	if err == nil {
+		return nil
 	}
-	return nil
+	filePos := v.fileSet.Position(
+		v.curFrame.fn.SourcePos(v.ip - 1))
+	err = fmt.Errorf("Runtime Error: %w\n\tat %s",
+		err, filePos)
+	for v.framesIndex > 1 {
+		v.framesIndex--
+		v.curFrame = &v.frames[v.framesIndex-1]
+		filePos = v.fileSet.Position(
+			v.curFrame.fn.SourcePos(v.curFrame.ip - 1))
+		err = fmt.Errorf("%w\n\tat %s", err, filePos)
+	}
+	return err
 }
 
 func (v *VM) run() {
@@ -103,7 +111,7 @@ func (v *VM) run() {
 			v.ip += 2
 			cidx := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
 
-			v.stack[v.sp] = v.constants[cidx]
+			v.stack[v.sp] = v.materialize(v.constants[cidx])
 			v.sp++
 		case parser.OpNull:
 			v.stack[v.sp] = UndefinedValue
@@ -675,6 +683,16 @@ func (v *VM) run() {
 			} else {
 				retVal = UndefinedValue
 			}
+			if retVal == nil {
+				retVal = UndefinedValue
+			}
+			// A function invoked from Go is the root frame. Stop and leave
+			// the return value on the stack instead of walking off frames[0].
+			if v.framesIndex == 1 {
+				v.stack[0] = retVal
+				v.sp = 1
+				return
+			}
 			//v.sp--
 			v.framesIndex--
 			v.curFrame = &v.frames[v.framesIndex-1]
@@ -765,14 +783,7 @@ func (v *VM) run() {
 				}
 			}
 			v.sp -= numFree
-			cl := &CompiledFunction{
-				Instructions:  fn.Instructions,
-				NumLocals:     fn.NumLocals,
-				NumParameters: fn.NumParameters,
-				VarArgs:       fn.VarArgs,
-				SourceMap:     fn.SourceMap,
-				Free:          free,
-			}
+			cl := v.bindFunction(fn, free)
 			v.allocs--
 			if v.allocs == 0 {
 				v.err = ErrObjectAllocLimit
