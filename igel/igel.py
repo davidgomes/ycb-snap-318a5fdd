@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import warnings
+from pathlib import Path
 
 import joblib
 import numpy as np
@@ -12,6 +13,13 @@ import pandas as pd
 try:
     from igel.configs import configs
     from igel.data import evaluate_model, metrics_dict, models_dict
+    from igel.features import (
+        FeatureSchemaError,
+        apply_feature_schema,
+        build_feature_schema,
+        load_feature_schema,
+        save_feature_schema,
+    )
     from igel.hyperparams import hyperparameter_search
     from igel.preprocessing import (
         encode,
@@ -38,6 +46,13 @@ except ImportError:
     from data import evaluate_model
     from configs import configs
     from data import models_dict, metrics_dict
+    from features import (
+        FeatureSchemaError,
+        apply_feature_schema,
+        build_feature_schema,
+        load_feature_schema,
+        save_feature_schema,
+    )
     from preprocessing import update_dataset_props
     from preprocessing import (
         handle_missing_values,
@@ -75,6 +90,9 @@ class Igel:
     description_file = configs.get(
         "description_file"
     )  # path to the description.json file
+    feature_schema_file = configs.get(
+        "feature_schema_file"
+    )  # path to the feature_schema.joblib file
     evaluation_file = configs.get(
         "evaluation_file"
     )  # path to the evaluation.json file
@@ -89,6 +107,7 @@ class Igel:
     )  # model props that can be changed from the yaml file
     model = None
     predictions = None  # store predictions as pandas df
+    feature_schema = None  # selected raw features, see igel.features
 
     def __init__(self, **cli_args):
         logger.info(f"Entered CLI args: {cli_args}")
@@ -157,6 +176,16 @@ class Igel:
                 "model_path", self.default_model_path
             )
             logger.info(f"path of the pre-fitted model => {self.model_path}")
+            sibling_description = (
+                Path(str(self.model_path)).parent
+                / Path(str(self.description_file)).name
+            )
+            self.description_file = cli_args.get(
+                "description_file",
+                sibling_description
+                if sibling_description.exists()
+                else self.description_file,
+            )
         
         # if entered command is evaluate or predict, then the pre-fitted model needs to be loaded and used
         else:
@@ -186,6 +215,9 @@ class Igel:
                 self.dataset_props: dict = dic.get(
                     "dataset_props"
                 )  # dataset props entered while fitting
+            self.feature_schema = load_feature_schema(
+                dic, self.description_file
+            )
         getattr(self, self.command)()
 
     def _create_model(self, **kwargs):
@@ -316,6 +348,7 @@ class Igel:
                 data_path=self.data_path, **read_data_options
             )
             logger.info(f"dataset shape: {dataset.shape}")
+            dataset = self._select_features(dataset, target)
             attributes = list(dataset.columns)
             logger.info(f"dataset attributes: {attributes}")
 
@@ -408,8 +441,36 @@ class Igel:
 
             return x_train, y_train, x_test, y_test
 
+        except FeatureSchemaError:
+            raise
         except Exception as e:
             logger.exception(f"error occured while preparing the data: {e}")
+
+    def _select_features(self, dataset, target="fit"):
+        """
+        restrict the raw dataset to the schema's input features (and the targets if needed).
+        The schema is built from dataset.features while fitting and loaded from the
+        results directory otherwise.
+        """
+        targets = (
+            []
+            if self.model_type == "clustering" or target == "predict"
+            else list(self.target)
+        )
+        if self.command == "fit":
+            features = self.dataset_props.get("features")
+            if features is None:
+                return dataset
+            self.feature_schema = build_feature_schema(
+                dataset, features, target=targets
+            )
+        if self.feature_schema is None:
+            return dataset
+        dataset = apply_feature_schema(
+            dataset, self.feature_schema, target=targets
+        )
+        logger.info(f"dataset shape after feature selection: {dataset.shape}")
+        return dataset
 
     def _prepare_clustering_data(self):
         """
@@ -577,6 +638,23 @@ class Igel:
             }
             fit_description["clustering_results"] = clustering_res
 
+        if self.feature_schema is not None:
+            save_feature_schema(self.feature_schema, self.feature_schema_file)
+            fit_description.update(
+                {
+                    "feature_schema_path": str(self.feature_schema_file),
+                    "input_features": self.feature_schema["input_features"],
+                    "dropped_features": self.feature_schema[
+                        "dropped_features"
+                    ],
+                    "duplicate_feature_aliases": self.feature_schema[
+                        "duplicate_feature_aliases"
+                    ],
+                }
+            )
+        elif os.path.exists(self.feature_schema_file):
+            os.remove(self.feature_schema_file)
+
         if cv_params:
             cv_res = {
                 "fit_time": cv_results["fit_time"].tolist(),
@@ -625,6 +703,8 @@ class Igel:
             with open(self.evaluation_file, "w", encoding="utf-8") as f:
                 json.dump(eval_results, f, ensure_ascii=False, indent=4)
 
+        except FeatureSchemaError:
+            raise
         except Exception as e:
             logger.exception(f"error occured during evaluation: {e}")
 
@@ -656,6 +736,8 @@ class Igel:
             )
             return df_pred
 
+        except FeatureSchemaError:
+            raise
         except Exception as e:
             logger.exception(f"Error while preparing predictions: {e}")
 
@@ -680,7 +762,11 @@ class Igel:
                 f"Trying to load sklearn model from directory - {self.model_path} "
             )
             model = self._load_model(f=self.model_path)
-            initial_type = [('float_input', FloatTensorType([None, 4]))]
+            n_inputs = self._get_input_width()
+            logger.info(f"exporting model with {n_inputs} input features")
+            initial_type = [
+                ("float_input", FloatTensorType([None, n_inputs]))
+            ]
             onx = convert_sklearn(model, initial_types=initial_type)
             
             # check if model_results folder is present and create if absent
@@ -704,6 +790,22 @@ class Igel:
             )
         except Exception as e:
             logger.exception(f"Error while exporting model: {e}")
+
+    def _get_input_width(self) -> int:
+        """
+        number of model inputs as recorded in description.json while fitting
+        """
+        with open(self.description_file) as f:
+            description = json.load(f)
+        train_shape = description.get("train_data_shape")
+        if train_shape and len(train_shape) > 1:
+            return int(train_shape[1])
+        input_features = description.get("input_features")
+        if input_features:
+            return len(input_features)
+        raise Exception(
+            f"cannot derive the model input width from {self.description_file}"
+        )
 
     @staticmethod
     def create_init_mock_file(

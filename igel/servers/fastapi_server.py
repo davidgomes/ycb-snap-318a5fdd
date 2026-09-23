@@ -4,10 +4,11 @@ from pathlib import Path
 
 import pandas as pd
 import uvicorn
-from fastapi import Body, FastAPI
+from fastapi import Body, FastAPI, HTTPException
 from igel import Igel
 from igel.configs import temp_post_req_data_path
 from igel.constants import Constants
+from igel.features import FeatureSchemaError
 
 try:
     from .helper import remove_temp_data_file
@@ -62,16 +63,19 @@ async def predict(data: dict = Body(...)):
                 Path(model_resutls_path) / Constants.prediction_file
             )
 
-            res = Igel(
-                cmd="predict",
-                data_path=str(temp_post_req_data_path),
-                model_path=model_path,
-                description_file=description_file,
-                prediction_file=prediction_file,
-            )
-
-            # remove temp file:
-            remove_temp_data_file(temp_post_req_data_path)
+            try:
+                res = Igel(
+                    cmd="predict",
+                    data_path=str(temp_post_req_data_path),
+                    model_path=model_path,
+                    description_file=description_file,
+                    prediction_file=prediction_file,
+                )
+            except FeatureSchemaError as ex:
+                logger.error(f"invalid prediction input: {ex}")
+                raise HTTPException(status_code=400, detail=str(ex))
+            finally:
+                remove_temp_data_file(temp_post_req_data_path)
 
             logger.info("sending predictions back to client...")
             return {"prediction": res.predictions.to_numpy().tolist()}
