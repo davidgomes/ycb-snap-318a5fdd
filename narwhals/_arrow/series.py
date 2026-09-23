@@ -1025,9 +1025,7 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
             center=center,
         )
 
-    def rolling_median(
-        self, window_size: int, *, min_samples: int, center: bool
-    ) -> Self:
+    def rolling_median(self, window_size: int, *, min_samples: int, center: bool) -> Self:
         return self.rolling_quantile(
             window_size,
             quantile=0.5,
@@ -1051,17 +1049,17 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
         end = (window_size - 1) // 2 if center else 0
         # Row `i` holds the positions of the elements in the window of the `i`-th element.
         positions = np.arange(n)[:, None] + np.arange(end - window_size + 1, end + 1)
+        out_of_bounds = (positions < 0) | (positions >= n)
         windows = self.native.take(
-            pa.array(positions.ravel(), mask=((positions < 0) | (positions >= n)).ravel())
+            pa.array(positions.ravel(), type=pa.int64(), mask=out_of_bounds.ravel())
         )
 
         # Sort values within each window. Nulls are placed last (the default), so the
         # `k`-th smallest valid value of window `i` is at `i * window_size + k`.
+        window = pa.array(np.repeat(np.arange(n), window_size))
         sorted_windows = windows.take(
             pc.sort_indices(
-                pa.table(
-                    {"window": np.repeat(np.arange(n), window_size), "value": windows}
-                ),
+                pa.Table.from_arrays([window, windows], names=["window", "value"]),
                 sort_keys=[("window", "ascending"), ("value", "ascending")],
             )
         )
@@ -1072,7 +1070,9 @@ class ArrowSeries(EagerSeries["ChunkedArrayAny"]):
 
         def value_at(index: _1DArray) -> ChunkedArrayAny:
             flat_index = np.arange(n) * window_size + index.astype(np.int64)
-            return sorted_windows.take(pa.array(flat_index, mask=is_masked))
+            return sorted_windows.take(
+                pa.array(flat_index, type=pa.int64(), mask=is_masked)
+            )
 
         if interpolation == "lower":
             result = value_at(np.floor(rank))
