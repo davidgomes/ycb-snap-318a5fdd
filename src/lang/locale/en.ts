@@ -528,6 +528,19 @@ export default {
       'name': 'Line Break at Document End',
       'description': 'Ensures that there is exactly one line break at the end of a document if the note is not empty.',
     },
+    // link-style.ts
+    'link-style': {
+      'name': 'Link Style',
+      'description': 'Converts links and images between the Obsidian wiki link format and the markdown link format. <b>Note: external links and images are never converted to wiki links, and markdown links and images that have a title or span multiple lines are left as is.</b>',
+      'link-style': {
+        'name': 'Link Style',
+        'description': 'The style to convert links to',
+      },
+      'image-style': {
+        'name': 'Image Style',
+        'description': 'The style to convert images and other embeds to',
+      },
+    },
     // move-footnotes-to-the-bottom.ts
     'move-footnotes-to-the-bottom': {
       'name': 'Move Footnotes to the bottom',
@@ -950,6 +963,10 @@ export default {
     'single string comma delimited': 'single string comma delimited',
     'single string space delimited': 'single string space delimited',
     'single-line space delimited': 'single-line space delimited',
+    // link-style.ts
+    'no-change': 'no change',
+    'markdown': 'markdown',
+    'wiki': 'wiki',
     // yaml-title.ts
     'first-h1': 'First H1',
     'first-h1-or-filename-if-h1-missing': 'First H1 or Filename if H1 is Missing',
