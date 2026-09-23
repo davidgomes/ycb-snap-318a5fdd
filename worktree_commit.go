@@ -40,6 +40,14 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		return plumbing.ZeroHash, err
 	}
 
+	mergeHead, merging, err := w.readMergeHead()
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	if merging && !hashInSlice(opts.Parents, mergeHead) {
+		opts.Parents = append(opts.Parents, mergeHead)
+	}
+
 	if opts.All {
 		if err := w.autoAddModifiedAndDeleted(); err != nil {
 			return plumbing.ZeroHash, err
@@ -88,7 +96,7 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		previousTree = parentCommit.TreeHash
 	}
 
-	if treeHash == previousTree && !opts.AllowEmptyCommits {
+	if treeHash == previousTree && !opts.AllowEmptyCommits && !merging {
 		return plumbing.ZeroHash, ErrEmptyCommit
 	}
 
@@ -97,7 +105,24 @@ func (w *Worktree) Commit(msg string, opts *CommitOptions) (plumbing.Hash, error
 		return plumbing.ZeroHash, err
 	}
 
-	return commit, w.updateHEAD(commit)
+	if err := w.updateHEAD(commit); err != nil {
+		return plumbing.ZeroHash, err
+	}
+	if merging {
+		if err := w.clearMergeHead(); err != nil {
+			return plumbing.ZeroHash, err
+		}
+	}
+	return commit, nil
+}
+
+func hashInSlice(haystack []plumbing.Hash, needle plumbing.Hash) bool {
+	for _, h := range haystack {
+		if h == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // CherryPick cherry picks commits and merge them into the worktree based on the selected

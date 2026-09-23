@@ -567,16 +567,9 @@ func (w *Worktree) fillEncodedObjectFromSymlink(dst io.Writer, path string, _ os
 }
 
 func (w *Worktree) addOrUpdateFileToIndex(idx *index.Index, filename string, h plumbing.Hash) error {
-	e, err := idx.Entry(filename)
-	if err != nil && !errors.Is(err, index.ErrEntryNotFound) {
-		return err
-	}
-
-	if errors.Is(err, index.ErrEntryNotFound) {
-		return w.doAddFileToIndex(idx, filename, h)
-	}
-
-	return w.doUpdateFileToIndex(e, filename, h)
+	// Re-staging a conflicted path replaces every stage (1/2/3) with one stage-0 entry.
+	removeAllIndexEntries(idx, filename)
+	return w.doAddFileToIndex(idx, filename, h)
 }
 
 func (w *Worktree) doAddFileToIndex(idx *index.Index, filename string, h plumbing.Hash) error {
@@ -684,12 +677,35 @@ func (w *Worktree) doRemoveFile(idx *index.Index, path string) (plumbing.Hash, e
 }
 
 func (w *Worktree) deleteFromIndex(idx *index.Index, path string) (plumbing.Hash, error) {
-	e, err := idx.Remove(path)
-	if err != nil {
-		return plumbing.ZeroHash, err
+	path = filepath.ToSlash(path)
+	var h plumbing.Hash
+	found := false
+	kept := make([]*index.Entry, 0, len(idx.Entries))
+	for _, e := range idx.Entries {
+		if e.Name == path {
+			found = true
+			h = e.Hash
+			continue
+		}
+		kept = append(kept, e)
 	}
+	if !found {
+		return plumbing.ZeroHash, index.ErrEntryNotFound
+	}
+	idx.Entries = kept
+	return h, nil
+}
 
-	return e.Hash, nil
+// removeAllIndexEntries drops every index stage for path.
+func removeAllIndexEntries(idx *index.Index, name string) {
+	name = filepath.ToSlash(name)
+	kept := make([]*index.Entry, 0, len(idx.Entries))
+	for _, e := range idx.Entries {
+		if e.Name != name {
+			kept = append(kept, e)
+		}
+	}
+	idx.Entries = kept
 }
 
 func (w *Worktree) deleteFromFilesystem(path string) error {
