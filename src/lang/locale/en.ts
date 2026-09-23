@@ -405,6 +405,19 @@ export default {
         'description': 'The style used to denote emphasized content',
       },
     },
+    // link-style.ts
+    'link-style': {
+      'name': 'Link Style',
+      'description': 'Converts between Obsidian wiki links/embeds and markdown links/images.',
+      'link-style': {
+        'name': 'Link Style',
+        'description': 'The style used for links',
+      },
+      'image-style': {
+        'name': 'Image Style',
+        'description': 'The style used for images and embeds',
+      },
+    },
     // empty-line-around-blockquotes.ts
     'empty-line-around-blockquotes': {
       'name': 'Empty Line Around Blockquotes',
