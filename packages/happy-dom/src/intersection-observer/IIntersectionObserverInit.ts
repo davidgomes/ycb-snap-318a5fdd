@@ -1,16 +1,21 @@
+import type Document from '../nodes/document/Document.js';
 import type Element from '../nodes/element/Element.js';
 
+/**
+ * Options for constructing an IntersectionObserver.
+ */
 export default interface IIntersectionObserverInit {
 	/**
-	 * A specific ancestor of the target element against which the intersection is to be calculated.
+	 * Ancestor element used as the intersection root.
+	 * Null or omitted uses the document viewport.
 	 */
-	root?: Element;
+	root?: Element | Document | null;
 	/**
-	 * A string which specifies a specific property to observe on the intersection target.
+	 * Margin around the root. Accepts 1-4 CSS shorthand values in px or %.
 	 */
 	rootMargin?: string;
 	/**
-	 * A list of thresholds, sorted in increasing numeric order, where each threshold is a ratio of intersection area to bounding box area of the target.
+	 * One ratio, or a list of ratios, between 0 and 1.
 	 */
 	threshold?: number | number[];
 }
