@@ -52,6 +52,7 @@ Examples:
     EOFError: multiplexer is closed
 """
 import collections
+import logging
 import os
 import struct
 import threading
@@ -108,6 +109,57 @@ class _Waiter(object):
     def __init__(self):
         self.event = threading.Event()
         self.ok = False
+
+
+class _ChannelBuffer(Buffer):
+    """Receive buffer of a :class:`MuxChannel`.
+
+    It is filled by the multiplexer's reader thread while the channel's user
+    consumes it, so every access is serialized by the channel's lock.
+
+    Bytes at the front of the buffer may be marked as credited, meaning they
+    no longer count towards flow control, see :attr:`pending`.
+    """
+    def __init__(self, lock, on_consumed):
+        super(_ChannelBuffer, self).__init__()
+        self._lock = lock
+        self._on_consumed = on_consumed
+        self._credited = 0
+
+    @property
+    def pending(self):
+        """Number of buffered bytes that count towards flow control."""
+        return self.size - self._credited
+
+    def credit_all(self):
+        with self._lock:
+            self._credited = self.size
+
+    def __contains__(self, x):
+        with self._lock:
+            return super(_ChannelBuffer, self).__contains__(x)
+
+    def index(self, x):
+        with self._lock:
+            return super(_ChannelBuffer, self).index(x)
+
+    def add(self, data):
+        with self._lock:
+            super(_ChannelBuffer, self).add(data)
+
+    def unget(self, data):
+        with self._lock:
+            super(_ChannelBuffer, self).unget(data)
+            # Put-back bytes were consumed before, or never came from the peer.
+            self._credited += len(data)
+
+    def get(self, want=float('inf')):
+        with self._lock:
+            data = super(_ChannelBuffer, self).get(want)
+            if data:
+                self._credited = max(self._credited - len(data), 0)
+                self._on_consumed()
+            return data
 
 
 class TubeMultiplexer(object):
@@ -354,7 +406,7 @@ class TubeMultiplexer(object):
                 waiter.event.set()
 
         for channel in channels:
-            channel._on_eof()
+            channel._release()
 
         # Let both threads finish before closing the tube under them, but
         # never hold up the close for long.
@@ -523,7 +575,7 @@ class TubeMultiplexer(object):
                 channel._on_fin()
         elif ftype == _CLOSE:
             if channel is not None:
-                channel._on_close()
+                channel._release()
         else:
             raise ValueError('unknown frame type %d' % ftype)
 
@@ -610,6 +662,8 @@ class MuxChannel(tube):
         Traceback (most recent call last):
         ...
         TimeoutError: ...
+        >>> b.buffer.over_high_water
+        True
 
         Draining the buffer lets the sender resume:
 
@@ -646,8 +700,10 @@ class MuxChannel(tube):
         self._lock = threading.RLock()
         self._cond = threading.Condition(self._lock)
 
-        self._rbuf = Buffer()
-        self._rbuf.set_watermarks(high=multiplexer.high_water_mark, low=multiplexer.low_water_mark)
+        # The multiplexer delivers received data straight into the tube buffer,
+        # so that everything not yet consumed counts towards flow control.
+        self.buffer = _ChannelBuffer(self._lock, self._report_consumed)
+        self.buffer.set_watermarks(high=multiplexer.high_water_mark, low=multiplexer.low_water_mark)
 
         self._send_open = True   # We may send
         self._recv_open = True   # The peer may send
@@ -657,7 +713,9 @@ class MuxChannel(tube):
 
         self._remote_window = 0  # Peer's high water mark
         self._unacked = 0        # Bytes sent that the peer has not consumed yet
-        self._unreported = 0     # Bytes consumed that we have not told the peer about yet
+        self._delivered = 0      # Bytes received from the peer
+        self._reported = 0       # Bytes the peer has been told we consumed
+        self._chunks = 0         # Number of chunks added to the buffer
 
         self._stats = {
             'bytes_sent': 0,
@@ -686,23 +744,36 @@ class MuxChannel(tube):
         with self._lock:
             return dict(self._stats)
 
+    def _fillbuffer(self, timeout=tube.default):
+        # Data is already put into self.buffer by the multiplexer, so rather
+        # than reading, wait for more of it to arrive.
+        with self.local(timeout):
+            deadline = time.time() + self.timeout
+            with self._cond:
+                # Asking for more data means that whatever is buffered is being
+                # held on to (e.g. by recvn() or recvall()), so it must not stop
+                # the peer from sending.
+                self.buffer.credit_all()
+                self._report_consumed()
+                seen = self._chunks
+                while self._chunks == seen:
+                    if self._closed or self._recv_shut or not self._recv_open:
+                        raise EOFError
+                    remaining = deadline - time.time()
+                    if remaining <= 0:
+                        return b''
+                    self._cond.wait(remaining)
+                data = b''.join(self.buffer.data[seen - self._chunks:])
+
+        if self.isEnabledFor(logging.DEBUG):
+            self.debug('Received %#x bytes:' % len(data))
+            self.maybe_hexdump(data, level=logging.DEBUG)
+        return data
+
     def recv_raw(self, numb):
-        deadline = time.time() + self.timeout
-        with self._cond:
-            while True:
-                if self._closed or self._recv_shut:
-                    raise EOFError
-                if self._rbuf.size:
-                    data = self._rbuf.get(numb)
-                    self._unreported += len(data)
-                    self._report_consumed()
-                    return data
-                if not self._recv_open:
-                    raise EOFError
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    return None
-                self._cond.wait(remaining)
+        if not self.buffer and not self._fillbuffer():
+            return None
+        return self.buffer.get(numb)
 
     def send_raw(self, data):
         deadline = time.time() + self.timeout
@@ -731,7 +802,7 @@ class MuxChannel(tube):
     def can_recv_raw(self, timeout):
         deadline = None if timeout is None else time.time() + timeout
         with self._cond:
-            while not self._rbuf.size:
+            while not self.buffer.size:
                 if self._closed or self._recv_shut or not self._recv_open:
                     return False
                 if deadline is None:
@@ -741,7 +812,7 @@ class MuxChannel(tube):
                 if remaining <= 0:
                     return False
                 self._cond.wait(remaining)
-            return not (self._closed or self._recv_shut)
+            return True
 
     def settimeout_raw(self, timeout):
         pass
@@ -749,8 +820,7 @@ class MuxChannel(tube):
     def connected_raw(self, direction):
         with self._lock:
             send = self._send_open
-            recv = not (self._closed or self._recv_shut) \
-                   and bool(self._recv_open or self._rbuf.size or self.buffer.size)
+            recv = not (self._closed or self._recv_shut) and bool(self._recv_open or self.buffer.size)
         if direction == 'send':
             return send
         if direction == 'recv':
@@ -765,8 +835,6 @@ class MuxChannel(tube):
                 self._send_open = False
             elif direction == 'recv':
                 self._recv_shut = True
-                self._unreported += self._rbuf.size
-                self._rbuf.get()
                 self._report_consumed()
             self._cond.notify_all()
 
@@ -774,13 +842,14 @@ class MuxChannel(tube):
         """close()
 
         Closes the channel in both directions, and signals EOF to the peer.
+
+        Data that was already received can still be read.
         """
         with self._cond:
             if self._closed:
                 return
             self._closed = True
             self._send_open = False
-            self._rbuf.get()
             if not self._released:
                 self._released = True
                 self._mux._enqueue_quiet(_frame(_CLOSE, self._channel_id))
@@ -789,9 +858,16 @@ class MuxChannel(tube):
 
     # Called with self._lock held
     def _report_consumed(self):
-        if self._unreported and not self._released and (self._recv_shut or self._rbuf.under_low_water):
-            self._mux._enqueue_quiet(_frame(_WINDOW, self._channel_id, _U64.pack(self._unreported)))
-            self._unreported = 0
+        """Hands the peer more credit once the buffer is drained to the low water mark."""
+        if self._released:
+            return
+        pending = self.buffer.pending
+        if not self._recv_shut and pending > self.buffer.low_water:
+            return
+        consumed = self._delivered - self._reported - pending
+        if consumed > 0:
+            self._mux._enqueue_quiet(_frame(_WINDOW, self._channel_id, _U64.pack(consumed)))
+            self._reported += consumed
 
     def _release(self):
         with self._cond:
@@ -805,12 +881,14 @@ class MuxChannel(tube):
         with self._cond:
             self._stats['frames_received'] += 1
             self._stats['bytes_received'] += len(data)
-            if self._closed or self._recv_shut:
-                self._unreported += len(data)
+            self._delivered += len(data)
+            if self._recv_shut:
                 self._report_consumed()
                 return
-            self._rbuf.add(data)
-            self._cond.notify_all()
+            if data:
+                self.buffer.add(data)
+                self._chunks += 1
+                self._cond.notify_all()
 
     def _on_window(self, size):
         with self._cond:
@@ -821,9 +899,3 @@ class MuxChannel(tube):
         with self._cond:
             self._recv_open = False
             self._cond.notify_all()
-
-    def _on_close(self):
-        self._release()
-
-    def _on_eof(self):
-        self._release()
