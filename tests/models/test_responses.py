@@ -698,8 +698,16 @@ JSON_CASES = [
     ("application/json", b'[1, "two", {"three": [3]}]', [1, "two", {"three": [3]}]),
     ("application/json", b"[]", []),
     ("application/json", b" \r\n\t[ 1 , 2 ] \n", [1, 2]),
-    ("application/json", b'[[1, [2]], {"a": "]}"}, "\\"[{"]', [[1, [2]], {"a": "]}"}, '"[{']),
-    ("application/json", b"[1.5e3, -0, true, false, null]", [1500.0, 0, True, False, None]),
+    (
+        "application/json",
+        b'[[1, [2]], {"a": "]}"}, "\\"[{"]',
+        [[1, [2]], {"a": "]}"}, '"[{'],
+    ),
+    (
+        "application/json",
+        b"[1.5e3, -0, true, false, null]",
+        [1500.0, 0, True, False, None],
+    ),
     ("application/json", b'"text"', ["text"]),
     ("application/json", b"1", [1]),
     ("application/json", b"\xef\xbb\xbf[1]", [1]),
@@ -710,7 +718,11 @@ JSON_CASES = [
     ("APPLICATION/GEO+JSON", b'[{"type": "Point"}]', [{"type": "Point"}]),
     # Newline delimited JSON.
     ("application/x-ndjson", b'{"a": 1}\n{"b": 2}\n', [{"a": 1}, {"b": 2}]),
-    ("application/ndjson", b'{"a": 1}\r\n\r\n \t\r{"b": 2}\n\n[3]', [{"a": 1}, {"b": 2}, [3]]),
+    (
+        "application/ndjson",
+        b'{"a": 1}\r\n\r\n \t\r{"b": 2}\n\n[3]',
+        [{"a": 1}, {"b": 2}, [3]],
+    ),
     ("application/ndjson", b' 1 \n"two"\nnull', [1, "two", None]),
     ("application/ndjson", b"\xef\xbb\xbf{}\n[]", [{}, []]),
     ("application/ndjson; charset=utf-8", b"\n \n\xef\xbb\xbf{}\n[]", [{}, []]),
@@ -807,7 +819,9 @@ def test_iter_json_decoding_error(content_type, content):
     ],
 )
 def test_iter_json_unsupported_content_type(content_type):
-    response = httpx.Response(200, headers={"Content-Type": content_type}, content=b"[1]")
+    response = httpx.Response(
+        200, headers={"Content-Type": content_type}, content=b"[1]"
+    )
     with pytest.raises(httpx.DecodingError):
         list(response.iter_json())
 
