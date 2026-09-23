@@ -56,6 +56,15 @@ def get_sections(cache_dir):
     return set(data["modules"]), set(data["unanalyzed"])
 
 
+def assert_cache_files(cache_dir):
+    names = {path.name for path in cache_dir.iterdir()}
+    assert {"cache.json", "cache.json.bak", "cache.json.meta"} <= names
+    # Windows additionally uses a lock file.
+    assert names <= {"cache.json", "cache.json.bak", "cache.json.meta"} | {
+        cache.LOCK_FILENAME
+    }
+
+
 def check_checksum(cache_dir):
     cache_path = cache.get_cache_path(cache_dir)
     meta = json.loads(Path(f"{cache_path}.meta").read_text())
@@ -435,11 +444,7 @@ def test_backup_and_meta_are_written_on_every_save(project, cache_dir):
         backup = Path(f"{cache_path}.bak")
         assert backup.read_bytes() == cache_path.read_bytes()
         check_checksum(cache_dir)
-        assert {path.name for path in cache_dir.iterdir()} == {
-            "cache.json",
-            "cache.json.bak",
-            "cache.json.meta",
-        }
+        assert_cache_files(cache_dir)
 
 
 def test_keyboard_interrupt_saves_partial_cache(
@@ -721,11 +726,7 @@ def test_cli(project, tmp_path, monkeypatch):
     assert (
         call_main(["--cache", str(project)], monkeypatch) == ExitCode.DeadCode
     )
-    assert {path.name for path in default_dir.iterdir()} == {
-        "cache.json",
-        "cache.json.bak",
-        "cache.json.meta",
-    }
+    assert_cache_files(default_dir)
     assert (
         call_main(["--cache", str(project)], monkeypatch) == ExitCode.DeadCode
     )
