@@ -59,7 +59,12 @@ export function selectorId(pathString: string, name: string): string {
 
 /** Remember which logic and local name a selector function belongs to, so that it survives re-wrapping. */
 export function tagSelector(fn: Selector, logic: Logic, name: string, kind: SelectorKind): void {
-  getAtomicContext().identities.set(fn, { id: selectorId(logic.pathString, name), pathString: logic.pathString, name, kind })
+  getAtomicContext().identities.set(fn, {
+    id: selectorId(logic.pathString, name),
+    pathString: logic.pathString,
+    name,
+    kind,
+  })
 }
 
 /** Find the node of a selector on the currently mounted logic with that identity */
@@ -269,7 +274,11 @@ class TrackingSession {
     if (cached) {
       return cached
     }
-    const proxy = isMap ? this.mapProxy(value, node) : isSet ? this.setProxy(value, node) : this.objectProxy(value, node)
+    const proxy = isMap
+      ? this.mapProxy(value, node)
+      : isSet
+      ? this.setProxy(value, node)
+      : this.objectProxy(value, node)
     this.proxies.set(value, proxy)
     this.proxyInfo.set(proxy, { raw: value, node })
     this.raws.add(value)
