@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -20,6 +21,38 @@ func TestRepo(t *testing.T) {
 
 func TestEmptyRepoNameAndOwner(t *testing.T) {
 	require.Empty(t, Repo{}.String())
+}
+
+func TestLoadRetryConfig(t *testing.T) {
+	conf := `
+version: 2
+uploads:
+  - name: production
+    target: https://example.invalid/{{ .Version }}/
+    retry:
+      attempts: 4
+      delay: 2s
+      max_delay: 30s
+artifactories:
+  - name: corp
+    target: https://artifactory.example/{{ .Version }}/
+    retry:
+      attempts: 3
+      delay: 1s
+      max_delay: 15s
+blobs:
+  - provider: s3
+    bucket: '{{ .Env.BUCKET }}'
+    retry:
+      attempts: 5
+      delay: 500ms
+      max_delay: 1m
+`
+	prop, err := LoadReader(strings.NewReader(conf))
+	require.NoError(t, err)
+	require.Equal(t, Retry{Attempts: 4, Delay: 2 * time.Second, MaxDelay: 30 * time.Second}, prop.Uploads[0].Retry)
+	require.Equal(t, Retry{Attempts: 3, Delay: time.Second, MaxDelay: 15 * time.Second}, prop.Artifactories[0].Retry)
+	require.Equal(t, Retry{Attempts: 5, Delay: 500 * time.Millisecond, MaxDelay: time.Minute}, prop.Blobs[0].Retry)
 }
 
 func TestLoadReader(t *testing.T) {

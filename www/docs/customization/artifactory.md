@@ -271,6 +271,19 @@ artifactories:
     #
     # <!-- md:inline_version v2.1 -->.
     extra_files_only: true
+
+    # Retry each artifact, including extra files, when the upload hits a
+    # transport error or HTTP 408, 429, 500, 502, 503, or 504.
+    #
+    # For 429 and 503, a valid Retry-After (delta-seconds or HTTP-date) waits
+    # max(exponential backoff, Retry-After), then caps that wait at max_delay.
+    # Every try sends the full artifact again.
+    #
+    # Unset or attempts: 0 publishes once.
+    retry:
+      attempts: 3
+      delay: 1s
+      max_delay: 30s
 ```
 
 <!-- md:pro -->

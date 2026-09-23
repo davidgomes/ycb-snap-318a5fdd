@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/caarlos0/log"
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
+	"github.com/goreleaser/goreleaser/v2/internal/attempt"
 	"github.com/goreleaser/goreleaser/v2/internal/extrafiles"
 	"github.com/goreleaser/goreleaser/v2/internal/semerrgroup"
 	"github.com/goreleaser/goreleaser/v2/internal/tmpl"
@@ -125,8 +126,29 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 		}
 	}
 
-	if err := up.Open(ctx, bucketURL); err != nil {
-		return handleError(err, bucketURL)
+	instance, err := blobInstance(ctx, conf)
+	if err != nil {
+		return err
+	}
+
+	return publishBlob(ctx, conf, up, bucketURL, dir, instance)
+}
+
+// publishBlob opens the bucket and uploads every artifact.
+// Open retries are not recorded. Each artifact upload attempt is.
+func publishBlob(ctx *context.Context, conf config.Blob, up uploader, bucketURL, dir, instance string) error {
+	// Bucket open is retried, but those tries are not publish attempts.
+	if err := attempt.Do(ctx, conf.Retry, func() error {
+		err := up.Open(ctx, bucketURL)
+		if err == nil {
+			return nil
+		}
+		return classifyBlobErr(ctx, err, bucketURL)
+	}, nil); err != nil {
+		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
+			return cerr
+		}
+		return err
 	}
 	defer up.Close()
 
@@ -137,7 +159,7 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 			dataFile := artifact.Path
 			uploadFile := path.Join(dir, artifact.Name)
 
-			return uploadData(ctx, conf, up, dataFile, uploadFile, bucketURL)
+			return uploadData(ctx, conf, up, artifact, dataFile, uploadFile, bucketURL, instance)
 		})
 	}
 
@@ -148,11 +170,23 @@ func doUpload(ctx *context.Context, conf config.Blob) error {
 	for name, fullpath := range files {
 		g.Go(func() error {
 			uploadFile := path.Join(dir, name)
-			return uploadData(ctx, conf, up, fullpath, uploadFile, bucketURL)
+			return uploadData(ctx, conf, up, nil, fullpath, uploadFile, bucketURL, instance)
 		})
 	}
 
 	return g.Wait()
+}
+
+func blobInstance(ctx *context.Context, conf config.Blob) (string, error) {
+	provider, err := tmpl.New(ctx).Apply(conf.Provider)
+	if err != nil {
+		return "", err
+	}
+	bucket, err := tmpl.New(ctx).Apply(conf.Bucket)
+	if err != nil {
+		return "", err
+	}
+	return provider + "://" + bucket, nil
 }
 
 func artifactList(ctx *context.Context, conf config.Blob) []*artifact.Artifact {
@@ -182,16 +216,70 @@ func artifactList(ctx *context.Context, conf config.Blob) []*artifact.Artifact {
 	)).List()
 }
 
-func uploadData(ctx *context.Context, conf config.Blob, up uploader, dataFile, uploadFile, bucketURL string) error {
-	data, err := getData(ctx, conf, dataFile)
+func uploadData(ctx *context.Context, conf config.Blob, up uploader, art *artifact.Artifact, dataFile, uploadFile, bucketURL, instance string) error {
+	err := attempt.Do(ctx, conf.Retry, func() error {
+		// Read the artifact on every try so a retry sends the full contents.
+		data, err := getData(ctx, conf, dataFile)
+		if err != nil {
+			if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
+				return cerr
+			}
+			return err
+		}
+		if err := up.Upload(ctx, uploadFile, data); err != nil {
+			return classifyBlobErr(ctx, err, bucketURL)
+		}
+		return nil
+	}, func(n int, err error) {
+		rec := context.PublishAttempt{
+			Publisher: "blob",
+			Instance:  instance,
+			Target:    uploadFile,
+			Attempt:   n,
+			Status:    context.PublishStatusFailure,
+		}
+		if err == nil {
+			rec.Status = context.PublishStatusSuccess
+		} else {
+			rec.Error = err.Error()
+		}
+		ctx.RecordPublishAttempt(rec, art)
+	})
 	if err != nil {
+		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
+			return cerr
+		}
 		return err
 	}
-
-	if err := up.Upload(ctx, uploadFile, data); err != nil {
-		return handleError(err, bucketURL)
-	}
 	return nil
+}
+
+func classifyBlobErr(ctx *context.Context, err error, bucketURL string) error {
+	if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
+		return cerr
+	}
+	wrapped := handleError(err, bucketURL)
+	if isTransient(err) {
+		return attempt.Retriable(wrapped, 0)
+	}
+	return wrapped
+}
+
+// isTransient reports whether err, or an error it wraps, exposes Timeout or
+// Temporary and that method returns true.
+func isTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	var timeout interface{ Timeout() bool }
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		return true
+	}
+	var temporary interface{ Temporary() bool }
+	if errors.As(err, &temporary) && temporary.Temporary() {
+		return true
+	}
+	return false
 }
 
 // errorContains check if error contains specific string.

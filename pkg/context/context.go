@@ -12,6 +12,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goreleaser/goreleaser/v2/internal/artifact"
@@ -112,6 +113,10 @@ type Context struct {
 	Skips             map[string]bool
 
 	NotifiedDeprecations map[string]struct{}
+
+	extraMu sync.Mutex
+	// Extra holds supplemental publisher output, including publish_attempts.
+	Extra Extra `json:"extra,omitempty"`
 }
 
 type Runtime struct {

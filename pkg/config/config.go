@@ -1173,6 +1173,10 @@ type Blob struct {
 	ContentDisposition string      `yaml:"content_disposition,omitempty" json:"content_disposition,omitempty"`
 	IncludeMeta        bool        `yaml:"include_meta,omitempty" json:"include_meta,omitempty"`
 	ExtraFilesOnly     bool        `yaml:"extra_files_only,omitempty" json:"extra_files_only,omitempty"`
+	// Retry is optional. Unset or zero Attempts publishes each artifact once.
+	// Delay is the initial exponential backoff. MaxDelay caps every wait,
+	// including a Retry-After delay.
+	Retry Retry `yaml:"retry,omitempty" json:"retry,omitempty"`
 }
 
 // Upload configuration.
@@ -1196,6 +1200,10 @@ type Upload struct {
 	ExtraFiles         []ExtraFile       `yaml:"extra_files,omitempty" json:"extra_files,omitempty"`
 	ExtraFilesOnly     bool              `yaml:"extra_files_only,omitempty" json:"extra_files_only,omitempty"`
 	Skip               string            `yaml:"skip,omitempty" json:"skip,omitempty" jsonschema:"oneof_type=string;boolean"`
+	// Retry is optional. Unset or zero Attempts publishes each artifact once.
+	// Delay is the initial exponential backoff. MaxDelay caps every wait,
+	// including a Retry-After delay. Artifactories use this same struct.
+	Retry Retry `yaml:"retry,omitempty" json:"retry,omitempty"`
 
 	// Since v2.12
 	Password string `yaml:"password,omitempty" json:"password,omitempty"`
