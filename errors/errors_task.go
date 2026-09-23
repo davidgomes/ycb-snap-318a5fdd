@@ -118,6 +118,24 @@ func (err *TaskCalledTooManyTimesError) Code() int {
 	return CodeTaskCalledTooManyTimes
 }
 
+// TaskDependencyCycleError is returned when the dependency graph of a task
+// contains a cycle. Tasks holds the tasks in the cycle, starting and ending
+// with the same task.
+type TaskDependencyCycleError struct {
+	Tasks []string
+}
+
+func (err *TaskDependencyCycleError) Error() string {
+	return fmt.Sprintf(
+		`task: Found a dependency cycle between tasks: %s`,
+		strings.Join(err.Tasks, " -> "),
+	)
+}
+
+func (err *TaskDependencyCycleError) Code() int {
+	return CodeTaskDependencyCycle
+}
+
 // TaskCancelledByUserError is returned when the user does not accept an optional prompt to continue.
 type TaskCancelledByUserError struct {
 	TaskName string
