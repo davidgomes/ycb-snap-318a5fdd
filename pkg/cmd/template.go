@@ -17,7 +17,6 @@ limitations under the License.
 package cmd
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -117,17 +116,18 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			// We ignore a potential error here because, when the --debug flag was specified,
 			// we always want to print the YAML, even if it is not valid. The error is still returned afterwards.
 			if rel != nil {
-				var manifests bytes.Buffer
-				fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
+				// Hooks that are skipped or written to files are removed from the stream.
+				omittedHooks := rel.Hooks
 				if !client.DisableHooks {
+					omittedHooks = nil
 					fileWritten := make(map[string]bool)
 					for _, m := range rel.Hooks {
 						if skipTests && isTestHook(m) {
+							omittedHooks = append(omittedHooks, m)
 							continue
 						}
-						if client.OutputDir == "" {
-							fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", m.Path, m.Manifest)
-						} else {
+						if client.OutputDir != "" {
+							omittedHooks = append(omittedHooks, m)
 							newDir := client.OutputDir
 							if client.UseReleaseName {
 								newDir = filepath.Join(client.OutputDir, client.ReleaseName)
@@ -142,16 +142,16 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 								return err
 							}
 						}
-
 					}
 				}
+				manifests := withoutHooks(client.ManifestStream, omittedHooks)
 
 				// if we have a list of files to render, then check that each of the
 				// provided files exists in the chart.
 				if len(showFiles) > 0 {
 					// This is necessary to ensure consistent manifest ordering when using --show-only
 					// with globs or directory names.
-					splitManifests := releaseutil.SplitManifests(manifests.String())
+					splitManifests := releaseutil.SplitManifests(manifests)
 					manifestsKeys := make([]string, 0, len(splitManifests))
 					for k := range splitManifests {
 						manifestsKeys = append(manifestsKeys, k)
@@ -194,7 +194,7 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 						fmt.Fprintf(out, "---\n%s\n", m)
 					}
 				} else {
-					fmt.Fprintf(out, "%s", manifests.String())
+					fmt.Fprintln(out, strings.TrimSuffix(manifests, "\n"))
 				}
 			}
 

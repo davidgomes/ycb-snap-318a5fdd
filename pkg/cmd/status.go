@@ -120,6 +120,9 @@ type statusPrinter struct {
 	showMetadata bool
 	hideNotes    bool
 	noColor      bool
+	// manifestStream, when set, is printed as the MANIFEST section instead of
+	// a stream assembled from the stored manifest and hooks.
+	manifestStream string
 }
 
 func (s statusPrinter) getV1Release() *releasev1.Release {
@@ -228,11 +231,15 @@ func (s statusPrinter) WriteTable(out io.Writer) error {
 	}
 
 	if strings.EqualFold(rel.Info.Description, "Dry run complete") || s.debug {
-		_, _ = fmt.Fprintln(out, "HOOKS:")
-		for _, h := range rel.Hooks {
-			_, _ = fmt.Fprintf(out, "---\n# Source: %s\n%s\n", h.Path, h.Manifest)
+		stream := s.manifestStream
+		if stream == "" {
+			docs := manifestDocs(rel.Manifest)
+			for _, h := range rel.Hooks {
+				docs = append(docs, hookDoc(h.Path, h.Manifest))
+			}
+			stream = unifiedManifestStream(docs)
 		}
-		_, _ = fmt.Fprintf(out, "MANIFEST:\n%s\n", rel.Manifest)
+		_, _ = fmt.Fprintf(out, "MANIFEST:\n%s", stream)
 	}
 
 	// Hide notes from output - option in install and upgrades

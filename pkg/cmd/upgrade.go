@@ -166,11 +166,12 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 						return err
 					}
 					return outfmt.Write(out, &statusPrinter{
-						release:      rel,
-						debug:        settings.Debug,
-						showMetadata: false,
-						hideNotes:    instClient.HideNotes,
-						noColor:      settings.ShouldDisableColor(),
+						release:        rel,
+						debug:          settings.Debug,
+						showMetadata:   false,
+						hideNotes:      instClient.HideNotes,
+						noColor:        settings.ShouldDisableColor(),
+						manifestStream: instClient.ManifestStream,
 					})
 				} else if err != nil {
 					return err
@@ -255,16 +256,18 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 				return fmt.Errorf("UPGRADE FAILED: %w", err)
 			}
 
-			if outfmt == output.Table {
+			isDryRun := client.DryRunStrategy == action.DryRunClient || client.DryRunStrategy == action.DryRunServer
+			if outfmt == output.Table && !isDryRun {
 				fmt.Fprintf(out, "Release %q has been upgraded. Happy Helming!\n", args[0])
 			}
 
 			return outfmt.Write(out, &statusPrinter{
-				release:      rel,
-				debug:        settings.Debug,
-				showMetadata: false,
-				hideNotes:    client.HideNotes,
-				noColor:      settings.ShouldDisableColor(),
+				release:        rel,
+				debug:          settings.Debug,
+				showMetadata:   false,
+				hideNotes:      client.HideNotes,
+				noColor:        settings.ShouldDisableColor(),
+				manifestStream: client.ManifestStream,
 			})
 		},
 	}

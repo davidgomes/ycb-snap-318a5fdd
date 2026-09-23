@@ -580,6 +580,15 @@ func TestUpgradeWithDryRun(t *testing.T) {
 	if !strings.Contains(out, "kind: Secret") {
 		t.Error("expected secret in output from --dry-run but found none")
 	}
+	if strings.Contains(out, "Happy Helming!") {
+		t.Error("expected no success message in output from --dry-run")
+	}
+	if strings.Count(out, "MANIFEST:\n") != 1 || strings.Contains(out, "HOOKS:") {
+		t.Errorf("expected a single MANIFEST section in output from --dry-run, got:\n%s", out)
+	}
+	if strings.Contains(out, "\n\n") {
+		t.Errorf("expected no blank lines in output from --dry-run, got:\n%s", out)
+	}
 
 	// Ensure the secret is not in the output
 	cmd = fmt.Sprintf("upgrade %s --dry-run --hide-secret '%s'", releaseName, chartPath)

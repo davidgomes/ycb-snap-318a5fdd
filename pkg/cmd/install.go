@@ -162,11 +162,12 @@ func newInstallCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			}
 
 			return outfmt.Write(out, &statusPrinter{
-				release:      rel,
-				debug:        settings.Debug,
-				showMetadata: false,
-				hideNotes:    client.HideNotes,
-				noColor:      settings.ShouldDisableColor(),
+				release:        rel,
+				debug:          settings.Debug,
+				showMetadata:   false,
+				hideNotes:      client.HideNotes,
+				noColor:        settings.ShouldDisableColor(),
+				manifestStream: client.ManifestStream,
 			})
 		},
 	}

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -59,7 +60,15 @@ func newGetManifestCmd(cfg *action.Configuration, out io.Writer) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(out, rac.Manifest())
+			docs := manifestDocs(rac.Manifest())
+			for _, h := range rac.Hooks() {
+				hac, err := release.NewHookAccessor(h)
+				if err != nil {
+					return err
+				}
+				docs = append(docs, hookDoc(hac.Path(), hac.Manifest()))
+			}
+			fmt.Fprintln(out, strings.TrimSuffix(unifiedManifestStream(docs), "\n"))
 			return nil
 		},
 	}
