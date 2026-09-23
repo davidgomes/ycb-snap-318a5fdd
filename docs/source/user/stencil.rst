@@ -137,9 +137,8 @@ Stencil decorator options
 =========================
 
 .. note::
-   The stencil decorator may be augmented in the future to provide additional
-   mechanisms for border handling. At present, only one behaviour is
-   implemented, ``"constant"`` (see ``func_or_mode`` below for details).
+   Out-of-bounds accesses are controlled by the ``mode`` option
+   (see :ref:`stencil-mode`). The default is ``"constant"``.
 
 .. _stencil-neighborhood:
 
@@ -172,26 +171,59 @@ specified neighborhood, **the behavior is undefined.**
 
 .. _stencil-mode:
 
-``func_or_mode``
-----------------
+``mode`` / ``func_or_mode``
+---------------------------
 
-The optional ``func_or_mode`` parameter controls how the border of the output array
-is handled.  Currently, there is only one supported value, ``"constant"``.
-In ``constant`` mode, the stencil kernel is not applied in cases where
-the kernel would access elements outside the valid range of the input
-array.  In such cases, those elements in the output array are assigned
-to a constant value, as specified by the ``cval`` parameter.
+The optional ``mode`` parameter controls how out-of-bounds accesses are
+handled.  It may be passed positionally (``@stencil('wrap')``) or by
+keyword (``@stencil(mode='wrap')``).  A single string applies to every
+dimension.  A tuple of strings, one per dimension, selects a mode for
+each axis, for example ``@stencil(mode=('wrap', 'nearest'))``.  The
+tuple length must match the dimensionality of the input array.
+An unrecognized mode raises ``NumbaValueError``.
+
+Supported values are:
+
+``constant``
+    The default.  The stencil kernel is not applied where it would read
+    outside the array.  Those output elements are set to ``cval``.
+
+``wrap``
+    Circular indexing.  The kernel is applied at every output element,
+    and an out-of-bounds index wraps around to the other side of that
+    dimension.
+
+``nearest``
+    The kernel is applied at every output element.  An out-of-bounds
+    index is clamped to the nearest in-bounds edge of that dimension.
+
+``reflect``
+    The kernel is applied at every output element.  An out-of-bounds
+    index is reflected about the edge without repeating the edge value.
+    If that reflected index is still out of bounds, the read yields
+    ``cval``.
+
+``symmetric``
+    The kernel is applied at every output element.  An out-of-bounds
+    index is reflected about the edge, repeating the edge value.  If
+    that reflected index is still out of bounds, the read yields
+    ``cval``.
+
+``mode`` composes with the other stencil options ``cval``,
+``neighborhood``, and ``standard_indexing``.
 
 ``cval``
 --------
 
-The optional cval parameter defaults to zero but can be set to any
-desired value, which is then used for the border of the output array
-if the ``func_or_mode`` parameter is set to ``constant``.  The cval parameter is
-ignored in all other modes.  The type of the cval parameter must match
-the return type of the stencil kernel.  If the user wishes the output
-array to be constructed from a particular type then they should ensure
-that the stencil kernel returns that type.
+The optional cval parameter defaults to zero.  In ``constant`` mode it is
+the value written to output elements where the kernel is not applied.
+In ``reflect`` and ``symmetric`` modes it is also the fallback for a read
+whose index is still out of bounds after one reflection.  ``wrap`` and
+``nearest`` do not use ``cval`` for reads.  The type of the cval parameter
+must match the return type of the stencil kernel when it is used to fill
+output elements.  If the user wishes the output array to be constructed
+from a particular type then they should ensure that the stencil kernel
+returns that type.
 
 ``standard_indexing``
 ---------------------

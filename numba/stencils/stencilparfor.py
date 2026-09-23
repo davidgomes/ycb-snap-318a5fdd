@@ -164,6 +164,7 @@ class StencilPass(object):
 
         # create parfor vars
         ndims = self.typemap[in_arr.name].ndim
+        modes = stencil_func.get_modes(ndims)
         scope = in_arr.scope
         loc = in_arr.loc
         parfor_vars = []
@@ -175,7 +176,7 @@ class StencilPass(object):
 
         start_lengths, end_lengths = self._replace_stencil_accesses(
              stencil_ir, parfor_vars, in_args, index_offsets, stencil_func,
-             arg_to_arr_dict)
+             arg_to_arr_dict, modes)
 
         if config.DEBUG_ARRAY_OPT >= 1:
             print("stencil_blocks after replace stencil accesses")
@@ -192,10 +193,15 @@ class StencilPass(object):
         start_inds = []
         last_inds = []
         for i in range(ndims):
-            last_ind = self._get_stencil_last_ind(in_arr_dim_sizes[i],
-                                        end_lengths[i], gen_nodes, scope, loc)
-            start_ind = self._get_stencil_start_ind(
-                                        start_lengths[i], gen_nodes, scope, loc)
+            if modes[i] == "constant":
+                last_ind = self._get_stencil_last_ind(in_arr_dim_sizes[i],
+                                            end_lengths[i], gen_nodes, scope, loc)
+                start_ind = self._get_stencil_start_ind(
+                                            start_lengths[i], gen_nodes, scope, loc)
+            else:
+                # Non-constant modes apply the kernel at every position.
+                last_ind = in_arr_dim_sizes[i]
+                start_ind = 0
             start_inds.append(start_ind)
             last_inds.append(last_ind)
             # start from stencil size to avoid invalid array access
@@ -378,6 +384,8 @@ class StencilPass(object):
 
             # For each dimension, add setitem to set border values.
             for dim in range(in_arr_typ.ndim):
+                if modes[dim] != "constant":
+                    continue
                 # First, fill all entries with ":".
                 start_tuple_items = [slice_var] * in_arr_typ.ndim
                 last_tuple_items = [slice_var] * in_arr_typ.ndim
@@ -548,7 +556,8 @@ class StencilPass(object):
         return ret_var
 
     def _replace_stencil_accesses(self, stencil_ir, parfor_vars, in_args,
-                                  index_offsets, stencil_func, arg_to_arr_dict):
+                                  index_offsets, stencil_func, arg_to_arr_dict,
+                                  modes):
         """ Convert relative indexing in the stencil kernel to standard indexing
             by adding the loop index variables to the corresponding dimensions
             of the array index tuples.
@@ -668,20 +677,41 @@ class StencilPass(object):
                         new_body.append(tuple_assign)
 
                     # getitem return type is scalar if all indices are integer
-                    if all([self.typemap[v.name] == types.intp
-                                                        for v in index_vars]):
+                    all_integer = all([self.typemap[v.name] == types.intp
+                                                        for v in index_vars])
+                    if all_integer:
                         getitem_return_typ = self.typemap[
                                                     stmt.value.value.name].dtype
                     else:
                         # getitem returns an array
                         getitem_return_typ = self.typemap[stmt.value.value.name]
                     # new getitem with the new index var
-                    getitem_call = ir.Expr.getitem(stmt.value.value, ind_var,
-                                                                            loc)
-                    self.calltypes[getitem_call] = signature(
-                        getitem_return_typ,
-                        self.typemap[stmt.value.value.name],
-                        self.typemap[ind_var.name])
+                    use_boundary = all_integer and any(
+                        mode != "constant" for mode in modes)
+                    if not use_boundary:
+                        getitem_call = ir.Expr.getitem(stmt.value.value,
+                                                       ind_var, loc)
+                        self.calltypes[getitem_call] = signature(
+                            getitem_return_typ,
+                            self.typemap[stmt.value.value.name],
+                            self.typemap[ind_var.name])
+                    else:
+                        array_type = self.typemap[stmt.value.value.name]
+                        accessor = stencil_func.get_boundary_getitem(
+                            modes, array_type)
+                        accessor_type = types.functions.Dispatcher(accessor)
+                        accessor_var = ir.Var(scope, mk_unique_var(
+                            "$boundary_getitem"), loc)
+                        self.typemap[accessor_var.name] = accessor_type
+                        new_body.append(ir.Assign(ir.Global(
+                            "boundary_getitem", accessor, loc), accessor_var,
+                            loc))
+                        getitem_call = ir.Expr.call(
+                            accessor_var, [stmt.value.value, ind_var], (), loc)
+                        self.calltypes[getitem_call] = \
+                            accessor_type.get_call_type(
+                                self.typingctx,
+                                [array_type, self.typemap[ind_var.name]], {})
                     stmt.value = getitem_call
 
                 new_body.append(stmt)

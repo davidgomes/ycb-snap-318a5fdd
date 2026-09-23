@@ -18,6 +18,7 @@ from numba.core.ir_utils import (
     guard,
     get_definition,
     find_callname,
+    find_const,
     find_build_sequence,
     get_np_ufunc_typ,
     get_ir_of_code,
@@ -220,6 +221,9 @@ class InlineClosureCallPass(object):
         kernel_ir = get_ir_of_code(self.func_ir.func_id.func.__globals__,
                                    stencil_def.code)
         options = dict(expr.kws)
+        mode = self._stencil_mode_from_options(options)
+        self._resolve_stencil_cval(options)
+        self._resolve_stencil_standard_indexing(options)
         if 'neighborhood' in options:
             fixed = guard(self._fix_stencil_neighborhood, options)
             if not fixed:
@@ -234,12 +238,69 @@ class InlineClosureCallPass(object):
                     "stencil index_offsets option should be a tuple"
                     " with constant structure such as (offset, )"
                 )
-        sf = StencilFunc(kernel_ir, 'constant', options)
+        sf = StencilFunc(kernel_ir, mode, options)
+        # Decorator options live on the StencilFunc. Do not forward them as
+        # call keywords; neighborhood and index_offsets stay, because those
+        # are also runtime arguments.
+        expr.kws = [(k, v) for (k, v) in expr.kws
+                    if k not in ('mode', 'cval', 'standard_indexing')]
         sf.kws = expr.kws # hack to keep variables live
         sf_global = ir.Global('stencil', sf, expr.loc)
         self.func_ir._definitions[lhs.name] = [sf_global]
         instr.value = sf_global
         return True
+
+    def _resolve_stencil_cval(self, options):
+        """Replace an inlined constant ``cval`` keyword with its value."""
+        if 'cval' not in options:
+            return
+        resolved = guard(find_const, self.func_ir, options['cval'])
+        if resolved is None:
+            raise errors.NumbaValueError("stencil cval must be a constant")
+        options['cval'] = resolved
+
+    def _resolve_stencil_standard_indexing(self, options):
+        """Replace an inlined ``standard_indexing`` tuple with its names."""
+        if 'standard_indexing' not in options:
+            return
+        var = options['standard_indexing']
+        one = guard(find_const, self.func_ir, var)
+        if isinstance(one, str):
+            options['standard_indexing'] = (one,)
+            return
+        seq = guard(get_definition, self.func_ir, var)
+        if seq is None or not hasattr(seq, 'items'):
+            raise errors.NumbaValueError(
+                "stencil standard_indexing must be a constant tuple of names")
+        try:
+            names = tuple(find_const(self.func_ir, item) for item in seq.items)
+        except GuardException:
+            raise errors.NumbaValueError(
+                "stencil standard_indexing must be a constant tuple of names")
+        if not all(isinstance(name, str) for name in names):
+            raise errors.NumbaValueError(
+                "stencil standard_indexing must be a constant tuple of names")
+        options['standard_indexing'] = names
+
+    def _stencil_mode_from_options(self, options):
+        """Resolve a constant ``mode`` keyword from an inlined stencil call."""
+        mode = 'constant'
+        if 'mode' not in options:
+            return mode
+        mode_var = options.pop('mode')
+        resolved = guard(find_const, self.func_ir, mode_var)
+        if resolved is not None:
+            return resolved
+        mode_tuple = guard(get_definition, self.func_ir, mode_var)
+        if mode_tuple is None or not hasattr(mode_tuple, 'items'):
+            raise errors.NumbaValueError(
+                "stencil mode must be a constant string or tuple")
+        try:
+            return tuple(find_const(self.func_ir, item)
+                         for item in mode_tuple.items)
+        except GuardException:
+            raise errors.NumbaValueError(
+                "stencil mode must be a constant string or tuple")
 
     def _fix_stencil_neighborhood(self, options):
         """

@@ -3219,5 +3219,237 @@ class TestManyStencils(TestStencilBase):
                                                  'cval':cval})
 
 
+def _boundary_index(index, size, mode):
+    """Python equivalent of one stencil boundary mode along one axis."""
+    if mode == "constant":
+        if index < 0 or index >= size:
+            return None
+        return index
+    if mode == "wrap":
+        return index % size
+    if mode == "nearest":
+        if index < 0:
+            return 0
+        if index >= size:
+            return size - 1
+        return index
+    if mode == "reflect":
+        if index < 0:
+            index = -index
+        elif index >= size:
+            index = 2 * size - index - 2
+    elif mode == "symmetric":
+        if index < 0:
+            index = -index - 1
+        elif index >= size:
+            index = 2 * size - index - 1
+    else:
+        raise AssertionError(mode)
+    if index < 0 or index >= size:
+        return None
+    return index
+
+
+def _load_with_mode(array, indices, modes, cval):
+    if isinstance(modes, str):
+        modes = (modes,) * array.ndim
+    mapped = []
+    for axis, index in enumerate(indices):
+        resolved = _boundary_index(index, array.shape[axis], modes[axis])
+        if resolved is None:
+            return cval
+        mapped.append(resolved)
+    return array[tuple(mapped)]
+
+
+class TestStencilBoundaryModes(unittest.TestCase):
+    """Boundary modes for @stencil out-of-bounds accesses."""
+
+    def _check_paths(self, kernel, expected, args):
+        got = kernel(*args)
+        np.testing.assert_array_equal(got, expected)
+
+        # Explicit parameters: a star-arg wrapper does not match the stencil
+        # kernel arity that the parallel array analysis expects.
+        if len(args) == 1:
+            def wrapped(a):
+                return kernel(a)
+
+            def wrapped_par(a):
+                return kernel(a)
+        elif len(args) == 2:
+            def wrapped(a, b):
+                return kernel(a, b)
+
+            def wrapped_par(a, b):
+                return kernel(a, b)
+        else:
+            raise AssertionError(len(args))
+
+        np.testing.assert_array_equal(njit(wrapped)(*args), expected)
+        if not _32bit:
+            np.testing.assert_array_equal(
+                njit(parallel=True)(wrapped_par)(*args), expected)
+
+    def test_modes_1d(self):
+        data = np.array([1, 2, 3, 4], dtype=np.int64)
+        cval = 0
+
+        def kernel_body(a):
+            return a[-1] + a[1]
+
+        for mode in ("wrap", "nearest", "reflect", "symmetric", "constant"):
+            kernel = stencil(mode)(kernel_body)
+            expected = np.empty_like(data)
+            for i in range(data.shape[0]):
+                left = _load_with_mode(data, (i - 1,), mode, cval)
+                right = _load_with_mode(data, (i + 1,), mode, cval)
+                # constant mode does not apply the kernel on the border
+                if mode == "constant" and (
+                        _boundary_index(i - 1, data.shape[0], mode) is None or
+                        _boundary_index(i + 1, data.shape[0], mode) is None):
+                    expected[i] = cval
+                else:
+                    expected[i] = left + right
+            self._check_paths(kernel, expected, (data,))
+
+    def test_per_dimension_mode_and_options(self):
+        data = np.arange(12, dtype=np.int64).reshape(3, 4)
+        weights = np.array([[10, 0, 0, 0],
+                            [0, 0, 0, 0],
+                            [0, 0, 0, 0]], dtype=np.int64)
+        cval = 5
+        modes = ("wrap", "nearest")
+
+        @stencil(mode=modes, cval=cval, neighborhood=((-1, 1), (-1, 1)),
+                 standard_indexing=("b",))
+        def kernel(a, b):
+            return a[-1, 1] + a[1, -1] + b[0, 0]
+
+        expected = np.empty(data.shape, dtype=np.int64)
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                # neighborhood is 1 in the nearest dimension, so constant-style
+                # borders are not involved; both modes run the kernel everywhere.
+                left = _load_with_mode(data, (i - 1, j + 1), modes, cval)
+                right = _load_with_mode(data, (i + 1, j - 1), modes, cval)
+                expected[i, j] = left + right + weights[0, 0]
+        self._check_paths(kernel, expected, (data, weights))
+
+    def test_reflection_falls_back_to_cval(self):
+        data = np.array([2, 4, 6], dtype=np.int64)
+        cval = -3
+
+        @stencil("reflect", cval=cval)
+        def reflect_kernel(a):
+            return a[-4]
+
+        @stencil("symmetric", cval=cval)
+        def symmetric_kernel(a):
+            return a[-4]
+
+        for mode, kernel in (("reflect", reflect_kernel),
+                             ("symmetric", symmetric_kernel)):
+            expected = np.empty_like(data)
+            for i in range(data.shape[0]):
+                expected[i] = _load_with_mode(data, (i - 4,), mode, cval)
+            self._check_paths(kernel, expected, (data,))
+
+    def test_constant_cval_and_tuple_length(self):
+        @stencil("constant", cval=7)
+        def kernel(a):
+            return a[-1] + a[1]
+
+        data = np.arange(5, dtype=np.int64)
+        got = kernel(data)
+        self.assertEqual(got[0], 7)
+        self.assertEqual(got[-1], 7)
+        self.assertTrue(np.all(got[1:-1] == data[:-2] + data[2:]))
+
+        @stencil(mode=("wrap", "nearest"))
+        def kernel2d(a):
+            return a[0, 0]
+
+        with self.assertRaises(NumbaValueError) as raised:
+            kernel2d(np.arange(4))
+        self.assertIn("does not match", str(raised.exception))
+
+    def test_mixed_wrap_and_constant(self):
+        data = np.arange(12, dtype=np.int64).reshape(3, 4)
+
+        @stencil(mode=("wrap", "constant"), cval=9)
+        def kernel(a):
+            return a[-1, 0] + a[0, 1]
+
+        expected = np.array([[9, 11, 13, 9],
+                             [5, 7, 9, 9],
+                             [13, 15, 17, 9]], dtype=np.int64)
+        self._check_paths(kernel, expected, (data,))
+
+    def test_invalid_modes(self):
+        with self.assertRaises(NumbaValueError):
+            @stencil("edge")
+            def kernel(a):
+                return a[0]
+
+        with self.assertRaises(NumbaValueError):
+            @stencil(mode=1)
+            def kernel(a):
+                return a[0]
+
+        with self.assertRaises(NumbaValueError):
+            @stencil(mode=())
+            def kernel(a):
+                return a[0]
+
+        with self.assertRaises(NumbaValueError):
+            @stencil("wrap", mode="nearest")
+            def kernel(a):
+                return a[0]
+
+    def test_inline_mode_const(self):
+        def impl(a):
+            return numba.stencil(lambda x: x[-1] + x[1], mode="wrap")(a)
+
+        def impl_tuple(a):
+            return numba.stencil(lambda x: x[-1, 0] + x[0, 1],
+                                 mode=("wrap", "nearest"))(a)
+
+        data = np.array([1, 2, 3, 4], dtype=np.int64)
+        expected = np.empty_like(data)
+        for i in range(data.size):
+            expected[i] = (_load_with_mode(data, (i - 1,), "wrap", 0) +
+                           _load_with_mode(data, (i + 1,), "wrap", 0))
+        np.testing.assert_array_equal(njit(impl)(data), expected)
+        if not _32bit:
+            np.testing.assert_array_equal(
+                njit(parallel=True)(impl)(data), expected)
+
+        grid = np.arange(9, dtype=np.int64).reshape(3, 3)
+        expected2 = np.empty_like(grid)
+        modes = ("wrap", "nearest")
+        for i in range(3):
+            for j in range(3):
+                expected2[i, j] = (
+                    _load_with_mode(grid, (i - 1, j), modes, 0) +
+                    _load_with_mode(grid, (i, j + 1), modes, 0))
+        np.testing.assert_array_equal(njit(impl_tuple)(grid), expected2)
+        if not _32bit:
+            np.testing.assert_array_equal(
+                njit(parallel=True)(impl_tuple)(grid), expected2)
+
+        def impl_cval(a):
+            return numba.stencil(lambda x: x[-4], mode="reflect", cval=-3)(a)
+
+        small = np.array([2, 4, 6], dtype=np.int64)
+        expected_cval = np.empty_like(small)
+        for i in range(small.size):
+            expected_cval[i] = _load_with_mode(small, (i - 4,), "reflect", -3)
+        np.testing.assert_array_equal(njit(impl_cval)(small), expected_cval)
+        if not _32bit:
+            np.testing.assert_array_equal(
+                njit(parallel=True)(impl_cval)(small), expected_cval)
+
+
 if __name__ == "__main__":
     unittest.main()
