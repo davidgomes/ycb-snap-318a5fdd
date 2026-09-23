@@ -192,7 +192,7 @@ class InlineClosureCallPass(object):
         return True
 
     def _inline_stencil(self, instr, call_name, func_def):
-        from numba.stencils.stencil import StencilFunc
+        from numba.stencils.stencil import StencilFunc, _normalize_mode
         lhs = instr.target
         expr = instr.value
         # We keep the escaping variables of the stencil kernel
@@ -234,8 +234,16 @@ class InlineClosureCallPass(object):
                     "stencil index_offsets option should be a tuple"
                     " with constant structure such as (offset, )"
                 )
-        sf = StencilFunc(kernel_ir, 'constant', options)
-        sf.kws = expr.kws # hack to keep variables live
+        mode = 'constant'
+        if 'mode' in options:
+            mode = guard(ir_utils.find_const, self.func_ir,
+                         options.pop('mode'))
+            if mode is None:
+                raise ValueError("stencil mode option should be a constant "
+                                 "string or tuple of strings")
+        sf = StencilFunc(kernel_ir, _normalize_mode(mode), options)
+        # hack to keep variables live, mode is already resolved to a constant
+        sf.kws = [kw for kw in expr.kws if kw[0] != 'mode']
         sf_global = ir.Global('stencil', sf, expr.loc)
         self.func_ir._definitions[lhs.name] = [sf_global]
         instr.value = sf_global

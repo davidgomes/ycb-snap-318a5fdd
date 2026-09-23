@@ -67,6 +67,15 @@ class StencilPass(object):
                         and isinstance(stmt.value, ir.Expr)
                         and stmt.value.op == 'call'
                         and stmt.value.func.name in stencil_calls):
+                    # Stencils with non-constant boundary modes are not
+                    # converted to parfors and are lowered as regular
+                    # (sequential) stencil calls instead.
+                    sf = stencil_dict[stmt.value.func.name]
+                    first_arg_typ = self.typemap[stmt.value.args[0].name]
+                    if (isinstance(first_arg_typ, types.npytypes.Array) and
+                            any(m != 'constant' for m in
+                                sf.get_modes(first_arg_typ.ndim))):
+                        continue
                     kws = dict(stmt.value.kws)
                     # Create dictionary of input argument number to
                     # the argument itself.
@@ -83,8 +92,6 @@ class StencilPass(object):
 
                     out_arr = kws.get('out')
 
-                    # Get the StencilFunc object corresponding to this call.
-                    sf = stencil_dict[stmt.value.func.name]
                     stencil_ir, rt, arg_to_arr_dict = get_stencil_ir(sf,
                             self.typingctx, arg_typemap,
                             block.scope, block.loc, input_dict,
