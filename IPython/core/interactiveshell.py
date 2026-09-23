@@ -82,6 +82,7 @@ from IPython.core.macro import Macro
 from IPython.core.payload import PayloadManager
 from IPython.core.prefilter import PrefilterManager
 from IPython.core.profiledir import ProfileDir
+from IPython.core.sessionbundle import SessionBundleRecorder
 from IPython.core.tips import pick_tip
 from IPython.core.usage import default_banner
 from IPython.display import display
@@ -2412,6 +2413,58 @@ class InteractiveShell(SingletonConfigurable):
         else:
             self.Completer.namespace = self.user_ns
             self.Completer.global_namespace = self.user_global_ns
+
+    #-------------------------------------------------------------------------
+    # Things related to session bundles
+    #-------------------------------------------------------------------------
+
+    _session_bundle_recorder: Optional[SessionBundleRecorder] = None
+
+    def start_session_bundle(self, path, *, overwrite=False, redact=None) -> str:
+        """Start recording executed cells to a session bundle at ``path``.
+
+        See :mod:`IPython.core.sessionbundle` for the bundle format.
+
+        Parameters
+        ----------
+        path : str or path-like
+            Where to write the bundle.
+        overwrite : bool
+            Replace an existing bundle at ``path`` instead of raising
+            :class:`FileExistsError`.
+        redact : list of str, optional
+            Literal strings replaced by ``<redacted>`` in every recorded event.
+
+        Returns
+        -------
+        The bundle path.
+        """
+        if self._session_bundle_recorder is not None:
+            raise RuntimeError(
+                "A session bundle is already being recorded to "
+                f"{self._session_bundle_recorder.path}; stop it first"
+            )
+        recorder = SessionBundleRecorder(
+            self, path, overwrite=overwrite, redact=redact
+        )
+        recorder.start()
+        self._session_bundle_recorder = recorder
+        return str(recorder.path)
+
+    def stop_session_bundle(self) -> str:
+        """Stop the current session bundle recording and return its path."""
+        recorder = self._session_bundle_recorder
+        if recorder is None:
+            raise RuntimeError("No session bundle is being recorded")
+        self._session_bundle_recorder = None
+        return str(recorder.stop())
+
+    def session_bundle_status(self) -> dict:
+        """Return ``{"recording": bool, "path": str | None}``."""
+        recorder = self._session_bundle_recorder
+        if recorder is None:
+            return {"recording": False, "path": None}
+        return recorder.status()
 
     #-------------------------------------------------------------------------
     # Things related to magics

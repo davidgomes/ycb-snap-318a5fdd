@@ -17,7 +17,10 @@ import os
 import sys
 
 # Our own packages
+from IPython.core import magic_arguments
+from IPython.core.error import UsageError
 from IPython.core.magic import Magics, magics_class, line_magic
+from IPython.utils.process import arg_split
 from warnings import warn
 from traitlets import Bool
 
@@ -193,3 +196,61 @@ class LoggingMagics(Magics):
         """Print the status of the logging system."""
 
         self.shell.logger.logstate()
+
+    @magic_arguments.magic_arguments()
+    @magic_arguments.argument(
+        "action",
+        choices=["start", "status", "stop"],
+        help="Start or stop recording, or show the recording status.",
+    )
+    @magic_arguments.argument(
+        "path",
+        nargs="?",
+        help="Bundle file to record to (required for 'start').",
+    )
+    @magic_arguments.argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace the bundle if it already exists.",
+    )
+    @magic_arguments.argument(
+        "--redact",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help="Literal string replaced by <redacted> in the recording. "
+        "May be given several times.",
+    )
+    @line_magic
+    def session_bundle(self, parameter_s=""):
+        """Record the session to a single bundle file that can be replayed.
+
+        Usage::
+
+          %session_bundle start <path> [--overwrite] [--redact PATTERN]...
+          %session_bundle status
+          %session_bundle stop
+
+        While recording, every executed cell is written to ``<path>`` (a ZIP
+        archive with ``metadata.json`` and ``events.jsonl``) together with
+        its stdout, stderr, result and error, if any. ``status`` returns
+        ``{"recording": bool, "path": str | None}``.
+
+        Use :func:`IPython.core.sessionbundle.load_session_bundle` to read a
+        bundle and :func:`IPython.core.sessionbundle.replay_session_bundle` to
+        run it again.
+        """
+        # Split like a shell so that quoted paths and patterns lose their quotes.
+        argv = arg_split(parameter_s, posix=os.name == "posix")
+        args = self.session_bundle.parser.parse_args(argv)
+        if args.action == "start":
+            if args.path is None:
+                raise UsageError("%session_bundle start requires a path")
+            return self.shell.start_session_bundle(
+                args.path, overwrite=args.overwrite, redact=args.redact
+            )
+        if args.path is not None or args.overwrite or args.redact:
+            raise UsageError(f"%session_bundle {args.action} takes no other arguments")
+        if args.action == "stop":
+            return self.shell.stop_session_bundle()
+        return self.shell.session_bundle_status()
