@@ -127,10 +127,33 @@ const eitherRemoved = world.query(Or(Removed(Position), Removed(Velocity)))
 const eitherChanged = world.query(Or(Changed(Position), Changed(Velocity)))
 ```
 
+**Pair tracking:**
+
+Pass a relation pair to track individual targets. The base relation only fires on the first target added or the last removed; a pair fires for every target. `'*'` matches any target.
+
+```typescript
+const adopted = world.query(Added(ChildOf(parent)))
+const abandoned = world.query(Removed(ChildOf(parent)))
+const reprioritized = world.query(Changed(ChildOf(parent)))
+const anyNewParent = world.query(Added(ChildOf('*')))
+
+// Manually flag a pair change
+child.changed(ChildOf(parent))
+
+// readEach/updateEach give the data for the pair's target
+world.query(Changed(ChildOf(parent))).readEach(([childOf]) => childOf.priority)
+```
+
+- Exclusive target replacement counts as a removal of the old pair and an addition of the new one
+- Adding and removing the same pair between two query runs cancel out, in either order
+- Destroying an entity removes all its pairs (and pairs targeting it)
+- Pair modifiers compose with `Or` and must match together with other query parameters
+
 **Key points:**
 
 - Create instances at module scope, not inside functions
 - Tracking resets after each query execution
+- Modifier instances survive `world.reset()` and can keep being used
 - Changed only tracks `set()` calls and `entity.changed()` signals
 
 ## Caching queries

@@ -364,12 +364,42 @@ const orphaned = world.query(Removed(ChildOf))
 const updated = world.query(Changed(ChildOf))
 ```
 
-> 👉 **Note**<br>
-> Tracking modifiers do not accept pairs directly such as `Changed(ChildOf(parent))`. Instead, pass the base relation to the modifier and add the pair as a separate query parameter to filter by target.
+Passing the base relation tracks the relation as a whole: `Added(ChildOf)` fires when the first target is added and `Removed(ChildOf)` when the last one is removed. Pass a pair to track individual targets instead. A pair with the wildcard `'*'` matches any target.
 
 ```js
 const parent = world.spawn()
 
+// Track when a ChildOf relation to this specific parent is added, removed or changed
+const adopted = world.query(Added(ChildOf(parent)))
+const abandoned = world.query(Removed(ChildOf(parent)))
+const reprioritized = world.query(Changed(ChildOf(parent)))
+
+// Track every pair added, even when the entity already relates to another target
+const anyNewParent = world.query(Added(ChildOf('*')))
+```
+
+Pair tracking works per target within each observation window, the time between two runs of a query:
+
+- Adding a target to an entity that already has the relation is an addition, and removing a target that is not the last one is a removal.
+- Replacing the target of an exclusive relation is both a removal of the old pair and an addition of the new one.
+- Adding and removing the same pair within a window cancel each other out, in either order.
+- Destroying an entity removes all of its pairs, as well as pairs on other entities that target it.
+
+Pair modifiers compose with `Or` and with other query parameters, all of which must match together. When iterating results with `readEach` or `updateEach`, a pair with a specific target gives the data for that target. Pair changes can be manually flagged with `entity.changed(ChildOf(parent))`.
+
+```js
+// Entities that gained either parent
+const either = world.query(Or(Added(ChildOf(parentA)), Added(ChildOf(parentB))))
+
+// Read the data of the changed pair
+world.query(Changed(ChildOf(parent))).readEach(([childOf]) => {
+  console.log(childOf.priority)
+})
+```
+
+The base relation can still be combined with a pair parameter to filter relation-level tracking by target.
+
+```js
 // Filter changed entities by a specific target
 const changedChildren = world.query(Changed(ChildOf), ChildOf(parent))
 ```
