@@ -23,7 +23,9 @@ describe('parse', () => {
 
   test('should accept resolved recursive schemas', () => {
     const schema = recursive(object({ children: array(Recur) }));
-    type Output = { children: Output[] };
+    interface Output {
+      children: Output[];
+    }
     expectTypeOf(parse(schema, { children: [] })).toEqualTypeOf<Output>();
   });
 

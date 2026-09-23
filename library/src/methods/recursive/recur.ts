@@ -39,12 +39,17 @@ export const Recur: RecurSchema = {
     return _getStandardProps(this);
   },
   '~run'(dataset, config) {
+    // Get wrapped schema of closest recursive schema
     const schema = (config as RecursiveConfig)['~recur'];
+
+    // If placeholder is unresolved, throw error
     if (!schema) {
       throw new Error(
         'Unresolved Recur placeholder. Wrap the schema with recursive(...) or recursiveAsync(...) first.'
       );
     }
+
+    // Otherwise, parse input with wrapped schema
     return schema['~run'](dataset, config) as OutputDataset<
       RecurPlaceholder,
       never

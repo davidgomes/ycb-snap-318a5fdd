@@ -21,6 +21,7 @@ import {
   union,
 } from '../../schemas/index.ts';
 import type { InferInput, InferIssue, InferOutput } from '../../types/index.ts';
+import { parse } from '../parse/index.ts';
 import { pipe } from '../pipe/index.ts';
 import { Recur, type RecurSchema } from './recur.ts';
 import { recursive, type RecursiveSchema } from './recursive.ts';
@@ -50,11 +51,19 @@ describe('recursive', () => {
   });
 
   describe('should infer self-referencing types', () => {
-    const schema = recursive(
-      object({ name: string(), children: array(Recur) })
-    );
-    type Schema = typeof schema;
-    type Node = { name: string; children: Node[] };
+    type Schema = RecursiveSchema<
+      ObjectSchema<
+        {
+          readonly name: StringSchema<undefined>;
+          readonly children: ArraySchema<RecurSchema, undefined>;
+        },
+        undefined
+      >
+    >;
+    interface Node {
+      name: string;
+      children: Node[];
+    }
 
     test('of input', () => {
       type Input = InferInput<Schema>;
@@ -94,7 +103,7 @@ describe('recursive', () => {
       })
     );
     type Output = InferOutput<typeof schema>;
-    expectTypeOf<Output>().toEqualTypeOf<{
+    expectTypeOf(parse(schema, null)).toEqualTypeOf<{
       array: Output[];
       record: { [key: string]: Output };
       map: Map<string, Output>;
@@ -107,21 +116,23 @@ describe('recursive', () => {
   test('should infer top level containers', () => {
     const arraySchema = recursive(array(Recur));
     type ArrayOutput = InferOutput<typeof arraySchema>;
-    expectTypeOf<ArrayOutput>().toEqualTypeOf<ArrayOutput[]>();
+    expectTypeOf(parse(arraySchema, null)).toEqualTypeOf<ArrayOutput[]>();
 
     const recordSchema = recursive(record(string(), Recur));
     type RecordOutput = InferOutput<typeof recordSchema>;
-    expectTypeOf<RecordOutput>().toEqualTypeOf<{
+    expectTypeOf(parse(recordSchema, null)).toEqualTypeOf<{
       [key: string]: RecordOutput;
     }>();
 
     const mapSchema = recursive(map(string(), Recur));
     type MapOutput = InferOutput<typeof mapSchema>;
-    expectTypeOf<MapOutput>().toEqualTypeOf<Map<string, MapOutput>>();
+    expectTypeOf(parse(mapSchema, null)).toEqualTypeOf<
+      Map<string, MapOutput>
+    >();
 
     const setSchema = recursive(set(Recur));
     type SetOutput = InferOutput<typeof setSchema>;
-    expectTypeOf<SetOutput>().toEqualTypeOf<Set<SetOutput>>();
+    expectTypeOf(parse(setSchema, null)).toEqualTypeOf<Set<SetOutput>>();
   });
 
   test('should infer unions', () => {
@@ -129,7 +140,7 @@ describe('recursive', () => {
       union([string(), number(), array(Recur), record(string(), Recur)])
     );
     type Json = string | number | Json[] | { [key: string]: Json };
-    expectTypeOf<InferOutput<typeof schema>>().toEqualTypeOf<Json>();
+    expectTypeOf(parse(schema, null)).toEqualTypeOf<Json>();
   });
 
   test('should preserve transformed input and output types', () => {
@@ -145,7 +156,7 @@ describe('recursive', () => {
     type Input = InferInput<typeof schema>;
     type Output = InferOutput<typeof schema>;
     expectTypeOf<Input>().toEqualTypeOf<{ id: string; items: Input[] }>();
-    expectTypeOf<Output>().toEqualTypeOf<{
+    expectTypeOf(parse(schema, null)).toEqualTypeOf<{
       id: number;
       items: Output[];
       count: number;
@@ -157,7 +168,10 @@ describe('recursive', () => {
       intersect([object({ children: array(Recur) }), object({ id: number() })])
     );
     type Output = InferOutput<typeof schema>;
-    expectTypeOf<Output>().toEqualTypeOf<{ children: Output[]; id: number }>();
+    expectTypeOf(parse(schema, null)).toEqualTypeOf<{
+      children: Output[];
+      id: number;
+    }>();
     expectTypeOf<InferIssue<typeof schema>>().toEqualTypeOf<
       ObjectIssue | ArrayIssue | NumberIssue | IntersectIssue
     >();
@@ -166,19 +180,32 @@ describe('recursive', () => {
   test('should compose nested recursive schemas', () => {
     const inner = recursive(object({ label: string(), nested: array(Recur) }));
     const outer = recursive(object({ inner, children: array(Recur) }));
-    type Inner = { label: string; nested: Inner[] };
-    type Outer = { inner: Inner; children: Outer[] };
-    expectTypeOf<InferOutput<typeof outer>>().toEqualTypeOf<Outer>();
+    interface Inner {
+      label: string;
+      nested: Inner[];
+    }
+    interface Outer {
+      inner: Inner;
+      children: Outer[];
+    }
+    expectTypeOf(parse(outer, null)).toEqualTypeOf<Outer>();
     expectTypeOf<HasRecur<InferOutput<typeof outer>>>().toEqualTypeOf<false>();
   });
 
   test('should detect unresolved placeholders', () => {
-    const unresolved = object({ children: array(Recur) });
-    expectTypeOf<
-      HasRecur<InferOutput<typeof unresolved>>
-    >().toEqualTypeOf<true>();
-    const inner = recursive(object({ nested: array(Recur) }));
-    const mixed = object({ inner, children: array(Recur) });
-    expectTypeOf<HasRecur<InferOutput<typeof mixed>>>().toEqualTypeOf<true>();
+    type Unresolved = ObjectSchema<
+      { readonly children: ArraySchema<RecurSchema, undefined> },
+      undefined
+    >;
+    expectTypeOf<HasRecur<InferInput<Unresolved>>>().toEqualTypeOf<true>();
+    expectTypeOf<HasRecur<InferOutput<Unresolved>>>().toEqualTypeOf<true>();
+    type Mixed = ObjectSchema<
+      {
+        readonly inner: RecursiveSchema<Unresolved>;
+        readonly children: ArraySchema<RecurSchema, undefined>;
+      },
+      undefined
+    >;
+    expectTypeOf<HasRecur<InferOutput<Mixed>>>().toEqualTypeOf<true>();
   });
 });

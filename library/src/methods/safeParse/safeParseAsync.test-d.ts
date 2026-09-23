@@ -20,12 +20,18 @@ describe('safeParseAsync', () => {
     >();
   });
 
-  test('should accept resolved recursive schemas', () => {
+  test('should accept resolved recursive schemas', async () => {
     const schema = recursive(object({ children: array(Recur) }));
-    type Output = { children: Output[] };
+    interface Output {
+      children: Output[];
+    }
     expectTypeOf(safeParseAsync(schema, { children: [] })).toEqualTypeOf<
       Promise<SafeParseResult<typeof schema>>
     >();
+    const result = await safeParseAsync(schema, { children: [] });
+    if (result.success) {
+      expectTypeOf(result.output).toEqualTypeOf<Output>();
+    }
   });
 
   test('should accept generic schemas', () => {

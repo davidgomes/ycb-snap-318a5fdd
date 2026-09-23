@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, test } from 'vitest';
 import {
-  checkAsync,
+  type CheckActionAsync,
   type CheckIssue,
   transformAsync,
 } from '../../actions/index.ts';
@@ -23,6 +23,8 @@ import {
   type StringSchema,
 } from '../../schemas/index.ts';
 import type { InferInput, InferIssue, InferOutput } from '../../types/index.ts';
+import { parseAsync } from '../parse/index.ts';
+import type { SchemaWithPipeAsync } from '../pipe/index.ts';
 import { pipeAsync } from '../pipe/index.ts';
 import { Recur, type RecurSchema } from './recur.ts';
 import { recursiveAsync, type RecursiveSchemaAsync } from './recursiveAsync.ts';
@@ -47,17 +49,24 @@ describe('recursiveAsync', () => {
   });
 
   describe('should infer self-referencing types', () => {
-    const schema = recursiveAsync(
-      objectAsync({
-        name: pipeAsync(
-          string(),
-          checkAsync(async (input) => input.length > 0)
-        ),
-        children: arrayAsync(Recur),
-      })
-    );
-    type Schema = typeof schema;
-    type Node = { name: string; children: Node[] };
+    type Schema = RecursiveSchemaAsync<
+      ObjectSchemaAsync<
+        {
+          readonly name: SchemaWithPipeAsync<
+            readonly [
+              StringSchema<undefined>,
+              CheckActionAsync<string, undefined>,
+            ]
+          >;
+          readonly children: ArraySchemaAsync<RecurSchema, undefined>;
+        },
+        undefined
+      >
+    >;
+    interface Node {
+      name: string;
+      children: Node[];
+    }
 
     test('of input', () => {
       type Input = InferInput<Schema>;
@@ -84,7 +93,7 @@ describe('recursiveAsync', () => {
     });
   });
 
-  test('should infer value positions', () => {
+  test('should infer value positions', async () => {
     const schema = recursiveAsync(
       objectAsync({
         array: arrayAsync(Recur),
@@ -94,7 +103,7 @@ describe('recursiveAsync', () => {
       })
     );
     type Output = InferOutput<typeof schema>;
-    expectTypeOf<Output>().toEqualTypeOf<{
+    expectTypeOf(await parseAsync(schema, null)).toEqualTypeOf<{
       array: Output[];
       record: { [key: string]: Output };
       map: Map<string, Output>;
@@ -103,13 +112,15 @@ describe('recursiveAsync', () => {
     expectTypeOf<InferInput<typeof schema>>().toEqualTypeOf<Output>();
   });
 
-  test('should infer sync wrapped schemas', () => {
+  test('should infer sync wrapped schemas', async () => {
     const schema = recursiveAsync(object({ children: array(Recur) }));
     type Output = InferOutput<typeof schema>;
-    expectTypeOf<Output>().toEqualTypeOf<{ children: Output[] }>();
+    expectTypeOf(await parseAsync(schema, null)).toEqualTypeOf<{
+      children: Output[];
+    }>();
   });
 
-  test('should preserve transformed input and output types', () => {
+  test('should preserve transformed input and output types', async () => {
     const schema = recursiveAsync(
       pipeAsync(
         objectAsync({
@@ -128,14 +139,14 @@ describe('recursiveAsync', () => {
     type Input = InferInput<typeof schema>;
     type Output = InferOutput<typeof schema>;
     expectTypeOf<Input>().toEqualTypeOf<{ id: string; items: Input[] }>();
-    expectTypeOf<Output>().toEqualTypeOf<{
+    expectTypeOf(await parseAsync(schema, null)).toEqualTypeOf<{
       id: number;
       items: Output[];
       count: number;
     }>();
   });
 
-  test('should compose with intersect', () => {
+  test('should compose with intersect', async () => {
     const schema = recursiveAsync(
       intersectAsync([
         objectAsync({ children: arrayAsync(Recur) }),
@@ -143,6 +154,9 @@ describe('recursiveAsync', () => {
       ])
     );
     type Output = InferOutput<typeof schema>;
-    expectTypeOf<Output>().toEqualTypeOf<{ children: Output[]; id: number }>();
+    expectTypeOf(await parseAsync(schema, null)).toEqualTypeOf<{
+      children: Output[];
+      id: number;
+    }>();
   });
 });

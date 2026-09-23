@@ -22,7 +22,9 @@ describe('safeParse', () => {
 
   test('should accept resolved recursive schemas', () => {
     const schema = recursive(object({ children: array(Recur) }));
-    type Output = { children: Output[] };
+    interface Output {
+      children: Output[];
+    }
     expectTypeOf(safeParse(schema, { children: [] })).toEqualTypeOf<
       SafeParseResult<typeof schema>
     >();

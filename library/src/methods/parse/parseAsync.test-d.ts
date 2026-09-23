@@ -23,7 +23,9 @@ describe('parseAsync', () => {
 
   test('should accept resolved recursive schemas', () => {
     const schema = recursive(object({ children: array(Recur) }));
-    type Output = { children: Output[] };
+    interface Output {
+      children: Output[];
+    }
     expectTypeOf(parseAsync(schema, { children: [] })).toEqualTypeOf<
       Promise<Output>
     >();

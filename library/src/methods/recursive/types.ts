@@ -111,7 +111,10 @@ type ResolveRecurValue<TValue, TRoot> = TValue extends RecurPlaceholder
  * Replaces the nested recur placeholders with the root type.
  *
  * Hint: The root type is resolved with the same type arguments at each
- * placeholder, so the resulting type references itself.
+ * placeholder, so the resulting type references itself. Maps, sets, promises
+ * and arrays are written as explicit type references, because TypeScript only
+ * defers their item types in that form. Otherwise, a root that is itself one
+ * of these types would be instantiated infinitely.
  */
 export type ResolveRecur<TValue, TRoot> =
   HasRecur<TValue> extends false
