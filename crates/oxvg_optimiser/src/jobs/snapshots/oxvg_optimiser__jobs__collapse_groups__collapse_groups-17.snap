@@ -1,0 +1,16 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should determine anchors from structure before any group is collapsed -->\n    <style>\n        svg > g > g > path { fill: red }\n    </style>\n    <g>\n        <g>\n            <path d=\"...\"/>\n        </g>\n    </g>\n    <g>\n        <g>\n            <g>\n                <path d=\"...\"/>\n            </g>\n        </g>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should determine anchors from structure before any group is collapsed -->
+    <style>
+        svg>g>g>path{fill:red}
+    </style>
+    <g>
+        <g>
+            <path d=""/>
+        </g>
+    </g>
+    <path d=""/>
+</svg>

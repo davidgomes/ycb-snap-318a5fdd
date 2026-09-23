@@ -1,0 +1,18 @@
+---
+source: crates/oxvg_optimiser/src/jobs/collapse_groups.rs
+expression: "test_config(r#\"{ \"collapseGroups\": true }\"#,\nSome(r#\"<svg xmlns=\"http://www.w3.org/2000/svg\">\n    <!-- Should preserve anchors of combinators, but collapse unrelated groups -->\n    <style>\n        .a > path { fill: red }\n        .b .c { fill: blue }\n    </style>\n    <g class=\"a\">\n        <path d=\"...\"/>\n    </g>\n    <g class=\"a\">\n        <rect/>\n    </g>\n    <g>\n        <g class=\"b\">\n            <g>\n                <path class=\"c\" d=\"...\"/>\n            </g>\n        </g>\n    </g>\n    <g class=\"b\">\n        <path d=\"...\"/>\n    </g>\n</svg>\"#))?"
+---
+<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve anchors of combinators, but collapse unrelated groups -->
+    <style>
+        .a>path{fill:red}.b .c{fill:#00f}
+    </style>
+    <g class="a">
+        <path d=""/>
+    </g>
+    <rect class="a"/>
+    <g class="b">
+        <path class="c" d=""/>
+    </g>
+    <path d="" class="b"/>
+</svg>

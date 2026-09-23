@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "wasm")]
 use tsify::Tsify;
 
-use crate::error::JobsError;
+use crate::{error::JobsError, utils::structural_selectors::StructuralDependencies};
 
 #[cfg_attr(feature = "wasm", derive(Tsify))]
 #[cfg_attr(feature = "napi", napi(object))]
@@ -45,15 +45,29 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
 
     fn prepare(
         &self,
-        _document: &Element<'input, 'arena>,
-        _context: &mut Context<'input, 'arena, '_>,
+        document: &Element<'input, 'arena>,
+        context: &mut Context<'input, 'arena, '_>,
     ) -> Result<PrepareOutcome, Self::Error> {
-        Ok(if self.0 {
-            PrepareOutcome::none
-        } else {
-            PrepareOutcome::skip
-        })
+        if self.0 {
+            context.query_has_stylesheet(document);
+            State {
+                dependencies: StructuralDependencies::new(
+                    document,
+                    &context.query_has_stylesheet_result,
+                ),
+            }
+            .start_with_context(document, context)?;
+        }
+        Ok(PrepareOutcome::skip)
     }
+}
+
+struct State<'input, 'arena> {
+    dependencies: StructuralDependencies<'input, 'arena>,
+}
+
+impl<'input, 'arena> Visitor<'input, 'arena> for State<'input, 'arena> {
+    type Error = JobsError<'input>;
 
     fn exit_element(
         &self,
@@ -70,8 +84,18 @@ impl<'input, 'arena> Visitor<'input, 'arena> for CollapseGroups {
         if !is_element!(element, G) || !element.has_child_elements() {
             return Ok(());
         }
+        if self.dependencies.is_implicated(element) {
+            log::debug!("collapse_groups: not collapsing: implicated by structural selector");
+            return Ok(());
+        }
 
-        move_attributes_to_child(element);
+        move_attributes_to_child(element, &self.dependencies);
+        if self.dependencies.is_ordered_parent(element)
+            || self.dependencies.is_ordered_parent(&parent)
+        {
+            log::debug!("collapse_groups: not flattening: sibling positions are selected");
+            return Ok(());
+        }
         flatten_when_all_attributes_moved(element);
         Ok(())
     }
@@ -83,7 +107,10 @@ impl Default for CollapseGroups {
     }
 }
 
-fn move_attributes_to_child(element: &Element) {
+fn move_attributes_to_child<'input, 'arena>(
+    element: &Element<'input, 'arena>,
+    dependencies: &StructuralDependencies<'input, 'arena>,
+) {
     log::debug!("collapse_groups: move_attributes_to_child");
 
     let mut children = element.children_iter();
@@ -93,6 +120,10 @@ fn move_attributes_to_child(element: &Element) {
     };
     if children.next().is_some() {
         log::debug!("collapse_groups: not moving attrs: many children");
+        return;
+    }
+    if dependencies.is_implicated(&first_child) {
+        log::debug!("collapse_groups: not moving attrs: child implicated by structural selector");
         return;
     }
 
@@ -489,6 +520,89 @@ fn collapse_groups() -> anyhow::Result<()> {
         </g>
     </g>
     <circle cx="25" cy="15" r="10" stroke="black" stroke-width=".1" fill="none"/>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve anchors of combinators, but collapse unrelated groups -->
+    <style>
+        .a > path { fill: red }
+        .b .c { fill: blue }
+    </style>
+    <g class="a">
+        <path d="..."/>
+    </g>
+    <g class="a">
+        <rect/>
+    </g>
+    <g>
+        <g class="b">
+            <g>
+                <path class="c" d="..."/>
+            </g>
+        </g>
+    </g>
+    <g class="b">
+        <path d="..."/>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should preserve groups and siblings of structural pseudo-classes -->
+    <style>
+        .x:first-child { fill: red }
+        .y:nth-child(2) { fill: blue }
+    </style>
+    <g>
+        <g>
+            <path class="x" d="..."/>
+        </g>
+    </g>
+    <g>
+        <g>
+            <rect/>
+            <rect/>
+        </g>
+        <path class="y" d="..."/>
+    </g>
+    <g>
+        <g>
+            <path d="..."/>
+        </g>
+    </g>
+</svg>"#
+        )
+    )?);
+
+    insta::assert_snapshot!(test_config(
+        r#"{ "collapseGroups": true }"#,
+        Some(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">
+    <!-- Should determine anchors from structure before any group is collapsed -->
+    <style>
+        svg > g > g > path { fill: red }
+    </style>
+    <g>
+        <g>
+            <path d="..."/>
+        </g>
+    </g>
+    <g>
+        <g>
+            <g>
+                <path d="..."/>
+            </g>
+        </g>
+    </g>
 </svg>"#
         )
     )?);
