@@ -314,6 +314,23 @@ describe('Query modifiers', () => {
         expect(entities2.length).toBe(1);
     });
 
+    it('should not add newly spawned entities to tracking queries', () => {
+        const Added = createAdded();
+        const Removed = createRemoved();
+        const Changed = createChanged();
+
+        world.query(Added(Foo));
+        world.query(Removed(Foo));
+        world.query(Changed(Position));
+
+        world.spawn();
+        world.spawn(Bar);
+
+        expect(world.query(Added(Foo)).length).toBe(0);
+        expect(world.query(Removed(Foo)).length).toBe(0);
+        expect(world.query(Changed(Position)).length).toBe(0);
+    });
+
     it('should combine Not and Removed modifiers with logical AND', () => {
         const Removed = createRemoved();
 
