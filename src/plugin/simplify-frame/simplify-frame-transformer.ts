@@ -6,7 +6,10 @@ import type { QueryId } from '../../util/query-id.js'
 import { freeze } from '../../util/object-utils.js'
 
 export class SimplifyFrameTransformer extends OperationNodeTransformer {
-  protected override transformOver(node: OverNode, queryId?: QueryId): OverNode {
+  protected override transformOver(
+    node: OverNode,
+    queryId?: QueryId,
+  ): OverNode {
     const transformed = super.transformOver(node, queryId)
 
     if (

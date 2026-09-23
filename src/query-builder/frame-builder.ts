@@ -213,9 +213,7 @@ export interface FrameBetweenBuilderProps {
   readonly start: FrameBoundNode
 }
 
-export type FrameBuilderCallback = (
-  builder: FrameBuilder,
-) => FrameClauseBuilder
+export type FrameBuilderCallback = (builder: FrameBuilder) => FrameClauseBuilder
 
 function parseFrameBound(
   type: Extract<FrameBoundType, 'preceding' | 'following'>,
