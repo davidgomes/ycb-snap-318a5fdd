@@ -1904,6 +1904,24 @@ time.clock(input.y, time.clock(input.x))
 	}
 }
 
+func TestEvalPartialTemplateStringSource(t *testing.T) {
+	buf := new(bytes.Buffer)
+	params := newEvalCommandParams()
+	params.partial = true
+	_ = params.outputFormat.Set(formats.Source)
+	_, err := eval([]string{`x = $"hello {input.name}"`}, params, buf, nil)
+	if err != nil {
+		t.Fatal("unexpected error:", err)
+	}
+	if strings.Contains(buf.String(), "internal.template_string") {
+		t.Fatalf("source output leaked internal.template_string:\n%s", buf.String())
+	}
+	expected := "# Query 1\nx = $\"hello {input.name}\"\n\n"
+	if diff := cmp.Diff(expected, buf.String()); diff != "" {
+		t.Error("output mismatch (-want +got):\n", diff)
+	}
+}
+
 func TestEvalPartialOutput_RegoVersion(t *testing.T) {
 	tests := []struct {
 		note                string

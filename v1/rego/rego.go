@@ -2607,6 +2607,11 @@ func (r *Rego) partial(ctx context.Context, ectx *EvalContext) (*PartialQueries,
 		return nil, err
 	}
 
+	// Compilation lowers template strings to internal.template_string. Put
+	// residual queries and support modules back into template-string syntax
+	// before they are returned or recompiled for a later partial evaluation.
+	restorePartialTemplateStrings(queries, support)
+
 	// If the target rego-version is v0, and the rego.v1 import is available, then we attempt to apply it to support modules.
 	if r.regoVersion == ast.RegoV0 &&
 		(r.capabilities == nil ||
