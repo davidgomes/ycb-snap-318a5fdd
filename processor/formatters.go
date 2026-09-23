@@ -793,6 +793,9 @@ create table t        (
 
 func fileSummarize(input chan *FileJob) string {
 	if FormatMulti != "" {
+		if BoundedMemory {
+			return fileSummarizeMultiBounded(input)
+		}
 		return fileSummarizeMulti(input)
 	}
 
@@ -866,7 +869,16 @@ func fileSummarizeMulti(input chan *FileJob) string {
 				val = toCSV(i)
 			case "csv-stream":
 				// special case where we want to ignore writing to stdout to disk as it's already done
-				_ = toCSVStream(i)
+				// Rows are sorted when a sort column is set so repeated runs match, including
+				// bounded-memory output for the same inputs.
+				var records [][]string
+				for result := range i {
+					records = append(records, csvStreamRow(result))
+				}
+				sortCSVStreamRecords(records)
+				var buf strings.Builder
+				writeCSVStreamRecords(&buf, records)
+				fmt.Print(buf.String())
 				continue
 			case "html":
 				val = toHtml(i)
@@ -929,7 +941,9 @@ func fileSummarizeLong(input chan *FileJob) string {
 
 		if !ok {
 			files := []*FileJob{}
-			files = append(files, res)
+			if !boundedSummaryNoRetain {
+				files = append(files, res)
+			}
 
 			langs[res.Language] = LanguageSummary{
 				Name:               res.Language,
@@ -945,7 +959,10 @@ func fileSummarizeLong(input chan *FileJob) string {
 			}
 		} else {
 			tmp := langs[res.Language]
-			files := append(tmp.Files, res)
+			files := tmp.Files
+			if !boundedSummaryNoRetain {
+				files = append(files, res)
+			}
 			lineLength := append(tmp.LineLength, res.LineLength...)
 
 			langs[res.Language] = LanguageSummary{
@@ -986,7 +1003,7 @@ func fileSummarizeLong(input chan *FileJob) string {
 		if Percent {
 			_, _ = fmt.Fprintf(str,
 				tabularWideFormatBodyPercent,
-				float64(len(summary.Files))/float64(sumFiles)*100,
+				float64(summary.Count)/float64(sumFiles)*100,
 				float64(summary.Lines)/float64(sumLines)*100,
 				float64(summary.Blank)/float64(sumBlank)*100,
 				float64(summary.Comment)/float64(sumComment)*100,
@@ -1116,7 +1133,9 @@ func fileSummarizeShort(input chan *FileJob) string {
 
 		if !ok {
 			files := []*FileJob{}
-			files = append(files, res)
+			if !boundedSummaryNoRetain {
+				files = append(files, res)
+			}
 
 			lang[res.Language] = LanguageSummary{
 				Name:       res.Language,
@@ -1131,7 +1150,10 @@ func fileSummarizeShort(input chan *FileJob) string {
 			}
 		} else {
 			tmp := lang[res.Language]
-			files := append(tmp.Files, res)
+			files := tmp.Files
+			if !boundedSummaryNoRetain {
+				files = append(files, res)
+			}
 			lineLength := append(tmp.LineLength, res.LineLength...)
 
 			lang[res.Language] = LanguageSummary{
@@ -1175,7 +1197,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 			if !Complexity {
 				_, _ = p.Fprintf(str,
 					tabularShortPercentLanguageFormatBody,
-					float64(len(summary.Files))/float64(sumFiles)*100,
+					float64(summary.Count)/float64(sumFiles)*100,
 					float64(summary.Lines)/float64(sumLines)*100,
 					float64(summary.Blank)/float64(sumBlank)*100,
 					float64(summary.Comment)/float64(sumComment)*100,
@@ -1185,7 +1207,7 @@ func fileSummarizeShort(input chan *FileJob) string {
 			} else {
 				_, _ = p.Fprintf(str,
 					tabularShortPercentLanguageFormatBodyNoComplexity,
-					float64(len(summary.Files))/float64(sumFiles)*100,
+					float64(summary.Count)/float64(sumFiles)*100,
 					float64(summary.Lines)/float64(sumLines)*100,
 					float64(summary.Blank)/float64(sumBlank)*100,
 					float64(summary.Comment)/float64(sumComment)*100,

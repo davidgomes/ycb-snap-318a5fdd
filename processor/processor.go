@@ -136,6 +136,21 @@ var Format = ""
 // FormatMulti is a rule for defining multiple output formats
 var FormatMulti = ""
 
+// BoundedMemory limits how many per-file results are kept in memory when
+// producing --format-multi output. Excess records are spilled to disk.
+var BoundedMemory = false
+
+// BoundedMemoryDir is the directory used for spill files. Required when
+// BoundedMemory is enabled.
+var BoundedMemoryDir = ""
+
+// BoundedMemoryMaxInMemoryFiles is the maximum number of file records kept
+// in memory at once. Required and must be > 0 when BoundedMemory is enabled.
+var BoundedMemoryMaxInMemoryFiles = 0
+
+// BoundedMemoryStats emits a single stderr summary line when enabled.
+var BoundedMemoryStats = false
+
 // SQLProject is used to store the name for the SQL insert formats but is optional
 var SQLProject = ""
 
@@ -609,6 +624,11 @@ func Process() {
 
 	SortBy = strings.ToLower(SortBy)
 
+	if err := configureBoundedMemory(dirPaths); err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+
 	printDebugF("NumCPU: %d", runtime.NumCPU())
 	printDebugF("SortBy: %s", SortBy)
 	printDebugF("PathDenyList: %v", PathDenyList)
@@ -701,4 +721,5 @@ func Process() {
 		_ = os.WriteFile(FileOutput, []byte(result), 0644)
 		fmt.Println("results written to " + FileOutput)
 	}
+	emitBoundedMemoryStats()
 }
