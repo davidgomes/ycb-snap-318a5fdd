@@ -3219,5 +3219,179 @@ class TestManyStencils(TestStencilBase):
                                                  'cval':cval})
 
 
+class TestStencilModes(TestStencilBase):
+
+    _pad_modes = {'wrap': 'wrap', 'nearest': 'edge', 'reflect': 'reflect',
+                  'symmetric': 'symmetric'}
+
+    def reference_2d(self, a, modes, cval=0):
+        # Reference for the kernel used in test_2d_mode_combinations built
+        # with np.pad, using a radius one neighborhood.
+        padded = a
+        for dim, mode in enumerate(modes):
+            if mode != 'constant':
+                width = [(0, 0)] * a.ndim
+                width[dim] = (1, 1)
+                padded = np.pad(padded, width, mode=self._pad_modes[mode])
+        out = np.full(a.shape, cval, dtype=np.float64)
+        for i in range(a.shape[0]):
+            for j in range(a.shape[1]):
+                pos = (i, j)
+                if any(mode == 'constant' and
+                       not (1 <= pos[dim] < a.shape[dim] - 1)
+                       for dim, mode in enumerate(modes)):
+                    continue
+                pi = i + int(modes[0] != 'constant')
+                pj = j + int(modes[1] != 'constant')
+                out[i, j] = (padded[pi - 1, pj] + 2 * padded[pi + 1, pj] +
+                             3 * padded[pi, pj - 1] + 5 * padded[pi, pj + 1] +
+                             7 * padded[pi - 1, pj + 1])
+        return out
+
+    def run_all(self, sf, *args):
+        if len(args) == 1:
+            wrapper = lambda a: sf(a)
+        else:
+            wrapper = lambda a, b: sf(a, b)
+        results = [sf(*args), njit(wrapper)(*args)]
+        if not _32bit:
+            results.append(njit(parallel=True)(wrapper)(*args))
+        return results
+
+    def test_2d_mode_combinations(self):
+        a = np.arange(30.).reshape(5, 6) ** 1.3
+        all_modes = ('constant', 'wrap', 'nearest', 'reflect', 'symmetric')
+        for m0 in all_modes:
+            for m1 in all_modes:
+                @stencil(mode=(m0, m1), cval=-1.5)
+                def kernel(x):
+                    return (x[-1, 0] + 2 * x[1, 0] + 3 * x[0, -1] +
+                            5 * x[0, 1] + 7 * x[-1, 1])
+                expected = self.reference_2d(a, (m0, m1), cval=-1.5)
+                for got in self.run_all(kernel, a):
+                    np.testing.assert_allclose(got, expected,
+                                               err_msg=str((m0, m1)))
+
+    def test_1d_single_modes(self):
+        a = np.array([1., 2., 4., 8., 16.])
+
+        def kernel(x):
+            return x[-1] + 10 * x[1]
+
+        expected = {
+            'wrap': [36., 41., 82., 164., 18.],
+            'nearest': [21., 41., 82., 164., 168.],
+            'reflect': [22., 41., 82., 164., 88.],
+            'symmetric': [21., 41., 82., 164., 168.],
+            'constant': [0., 41., 82., 164., 0.],
+        }
+        for mode, exp in expected.items():
+            for sf in (stencil(mode)(kernel), stencil(mode=mode)(kernel),
+                       stencil(mode=(mode,))(kernel)):
+                for got in self.run_all(sf, a):
+                    np.testing.assert_allclose(got, exp, err_msg=mode)
+
+    def test_reflect_out_of_reach_uses_cval(self):
+        a = np.array([1., 2., 3.])
+
+        def kernel(x):
+            return x[-3] + 10 * x[4]
+
+        # e.g. reflect at i=0: x[-3] -> index 3, still out of bounds so cval
+        # is used, while x[4] -> index 0.
+        cases = {'reflect': [100. + 10., 3. + 1000., 2. + 1000.],
+                 'symmetric': [3. + 20., 2. + 10., 1. + 1000.]}
+        for mode, exp in cases.items():
+            sf = stencil(mode, cval=100.)(kernel)
+            for got in self.run_all(sf, a):
+                np.testing.assert_allclose(got, exp, err_msg=mode)
+        sf = stencil('reflect')(kernel)
+        np.testing.assert_allclose(sf(a), [10., 3., 2.])
+
+    def test_integer_array_keeps_dtype(self):
+        a = np.arange(5)
+
+        @stencil('reflect')
+        def kernel(x):
+            return x[-1] + x[1]
+
+        for got in self.run_all(kernel, a):
+            self.assertEqual(got.dtype, a.dtype)
+            np.testing.assert_array_equal(got, [2, 2, 4, 6, 6])
+
+    def test_with_neighborhood(self):
+        a = np.array([1., 2., 4., 8., 16.])
+
+        @stencil(mode='nearest', neighborhood=((-2, 0),))
+        def kernel(x):
+            acc = 0.
+            for i in range(-2, 1):
+                acc += x[i]
+            return acc
+
+        for got in self.run_all(kernel, a):
+            np.testing.assert_allclose(got, [3., 4., 7., 14., 28.])
+
+    def test_with_standard_indexing(self):
+        a = np.array([1., 2., 4., 8., 16.])
+        w = np.array([1., 10.])
+
+        @stencil(mode='wrap', standard_indexing=('w',))
+        def kernel(x, w):
+            return w[0] * x[-1] + w[1] * x[1]
+
+        for got in self.run_all(kernel, a, w):
+            np.testing.assert_allclose(got, [36., 41., 82., 164., 18.])
+
+    def test_out_argument(self):
+        a = np.array([1., 2., 4., 8., 16.])
+
+        @stencil('symmetric')
+        def kernel(x):
+            return x[-1] + 10 * x[1]
+
+        out = np.full(5, -1.)
+        kernel(a, out=out)
+        np.testing.assert_allclose(out, [21., 41., 82., 164., 168.])
+
+    def test_in_jit_stencil_mode(self):
+        a = np.array([1., 2., 4., 8., 16.])
+
+        def impl(x):
+            return numba.stencil(lambda y: y[-1] + y[1], mode='wrap')(x)
+
+        expected = np.roll(a, 1) + np.roll(a, -1)
+        np.testing.assert_allclose(njit(impl)(a), expected)
+        if not _32bit:
+            np.testing.assert_allclose(njit(parallel=True)(impl)(a), expected)
+
+    def test_invalid_mode(self):
+        def kernel(x):
+            return x[0]
+
+        for bad in ('foo', ('wrap', 'bad'), (), 3):
+            with self.assertRaises(NumbaValueError):
+                stencil(mode=bad)(kernel)
+        with self.assertRaises(NumbaValueError):
+            stencil('foo')
+        with self.assertRaises(NumbaValueError):
+            stencil('wrap', mode='nearest')
+
+    def test_mode_length_mismatch(self):
+        @stencil(mode=('wrap', 'nearest'))
+        def kernel(x):
+            return x[-1]
+
+        a = np.arange(5.)
+        with self.assertRaises(NumbaValueError) as raises:
+            kernel(a)
+        self.assertIn("2 dimensional mode specified for 1 dimensional",
+                      str(raises.exception))
+        with self.assertRaises(TypingError) as raises:
+            njit(lambda x: kernel(x))(a)
+        self.assertIn("2 dimensional mode specified for 1 dimensional",
+                      str(raises.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
