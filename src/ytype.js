@@ -23,6 +23,7 @@ import {
 } from './internals.js'
 
 import * as contentType from './structs/ContentType.js'
+import { noteMapWrite } from './utils/MapConflict.js'
 
 import * as traits from 'lib0/traits'
 import * as delta from 'lib0/delta'
@@ -1738,6 +1739,7 @@ export const typeListDelete = (transaction, parent, index, length) => {
  * @function
  */
 export const typeMapDelete = (transaction, parent, key) => {
+  noteMapWrite(transaction, parent, key, 'delete', undefined)
   const c = parent._map.get(key)
   if (c !== undefined) {
     c.delete(transaction)
@@ -1754,6 +1756,7 @@ export const typeMapDelete = (transaction, parent, key) => {
  * @function
  */
 export const typeMapSet = (transaction, parent, key, value) => {
+  noteMapWrite(transaction, parent, key, 'set', value)
   const left = parent._map.get(key) || null
   const doc = transaction.doc
   const ownClientId = doc.clientID

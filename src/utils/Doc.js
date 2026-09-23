@@ -11,6 +11,7 @@ import {
 } from '../internals.js'
 
 import { YType } from '../ytype.js'
+import { isMapConflictPolicy, summarizeMapConflicts } from './MapConflict.js'
 import { ObservableV2 } from 'lib0/observable'
 import * as random from 'lib0/random'
 import * as map from 'lib0/map'
@@ -31,6 +32,8 @@ export const generateNewClientId = random.uint32
  * @property {boolean} [DocOpts.isSuggestionDoc] Set to true if this document merely suggests
  * changes. If this flag is not set in a suggestion document, automatic formatting changes will be
  * displayed as suggestions, which might not be intended.
+ * @property {'allow'|'collect'|'error'} [DocOpts.mapConflictPolicy='allow'] How overlapping Y.Map key writes are handled.
+ * `allow` keeps the default CRDT behavior. `collect` records conflicts. `error` rejects them before they apply.
  */
 
 /**
@@ -57,8 +60,20 @@ export class Doc extends ObservableV2 {
   /**
    * @param {DocOpts} opts configuration
    */
-  constructor ({ guid = random.uuidv4(), collectionid = null, gc = true, gcFilter = () => true, meta = null, autoLoad = false, shouldLoad = true, isSuggestionDoc = false } = {}) {
+  constructor ({ guid = random.uuidv4(), collectionid = null, gc = true, gcFilter = () => true, meta = null, autoLoad = false, shouldLoad = true, isSuggestionDoc = false, mapConflictPolicy = 'allow' } = {}) {
     super()
+    if (!isMapConflictPolicy(mapConflictPolicy)) {
+      throw new Error(`Unknown mapConflictPolicy: ${mapConflictPolicy}`)
+    }
+    /**
+     * @type {'allow'|'collect'|'error'}
+     */
+    this.mapConflictPolicy = mapConflictPolicy
+    /**
+     * Conflicts recorded while `mapConflictPolicy` is `collect`.
+     * @type {Array<import('./MapConflict.js').MapConflict>}
+     */
+    this._mapConflicts = []
     this.gc = gc
     this.gcFilter = gcFilter
     this.clientID = generateNewClientId()
@@ -185,6 +200,25 @@ export class Doc extends ObservableV2 {
    */
   transact (f, origin = null) {
     return transact(this, f, origin)
+  }
+
+  /**
+   * Conflicts collected for Y.Map-style key writes when `mapConflictPolicy` is `collect`.
+   *
+   * @return {Array<import('./MapConflict.js').MapConflict>}
+   */
+  getMapConflicts () {
+    return this._mapConflicts.slice()
+  }
+
+  /**
+   * Counts of collected map conflicts. Each bucket is a plain object keyed by
+   * conflict type, map key, parent id, or source.
+   *
+   * @return {ReturnType<typeof summarizeMapConflicts>}
+   */
+  getMapConflictSummary () {
+    return summarizeMapConflicts(this._mapConflicts)
   }
 
   /**

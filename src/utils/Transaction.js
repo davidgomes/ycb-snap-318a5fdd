@@ -21,6 +21,7 @@ import * as math from 'lib0/math'
 import * as set from 'lib0/set'
 import * as logging from 'lib0/logging'
 import { callAll } from 'lib0/function'
+import { MapConflictError, rollbackMapTransaction } from './MapConflict.js'
 
 /**
  * A transaction is created for every change on the Yjs model. It is possible
@@ -130,6 +131,16 @@ export class Transaction {
      */
     this._needFormattingCleanup = false
     this._done = false
+    /**
+     * Attribute writes performed by this transaction, keyed by parent id and map key.
+     * @type {Map<string, Array<import('./MapConflict.js').MapConflictWrite>>}
+     */
+    this._mapWrites = new Map()
+    /**
+     * Conflict produced for a parent/key in this transaction, so later writes update it.
+     * @type {Map<string, import('./MapConflict.js').MapConflict>}
+     */
+    this._mapConflictSlots = new Map()
   }
 
   /**
@@ -650,6 +661,11 @@ export const transact = (doc, f, origin = null, local = true) => {
   }
   try {
     result = f(doc._transaction)
+  } catch (e) {
+    if (initialCall && doc._transaction != null && e instanceof MapConflictError && doc.mapConflictPolicy === 'error') {
+      rollbackMapTransaction(doc._transaction)
+    }
+    throw e
   } finally {
     if (initialCall) {
       const finishCleanup = doc._transaction === transactionCleanups[0]
