@@ -15,6 +15,39 @@ const os = require('os');
 describe('Server', function() {
   this.timeout(10000);
 
+  describe('broadcastAbort', function() {
+    let abortServer;
+
+    beforeEach(function() {
+      abortServer = new Server(new Config('ci', {}));
+    });
+
+    it('tolerates an uninitialized io', function() {
+      expect(() => abortServer.broadcastAbort()).to.not.throw();
+    });
+
+    it('emits abort-tests to all clients only once', function() {
+      let emitted = [];
+      abortServer.io = { emit: evt => emitted.push(evt) };
+
+      abortServer.broadcastAbort();
+      abortServer.broadcastAbort();
+
+      expect(emitted).to.deep.equal(['abort-tests']);
+    });
+
+    it('broadcasts again after resetAbort', function() {
+      let emitted = [];
+      abortServer.io = { emit: evt => emitted.push(evt) };
+
+      abortServer.broadcastAbort();
+      abortServer.resetAbort();
+      abortServer.broadcastAbort();
+
+      expect(emitted).to.deep.equal(['abort-tests', 'abort-tests']);
+    });
+  });
+
   let baseUrl, server, config;
   let port = 63571;
 

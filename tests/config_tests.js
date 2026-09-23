@@ -571,6 +571,12 @@ describe('Config', function() {
     });
   });
 
+  describe('bail_on_test_failure', function() {
+    it('defaults to false', function() {
+      expect(config.get('bail_on_test_failure')).to.eq(false);
+    });
+  });
+
   describe('socket_heartbeat_timeout', function() {
     it('defaults to 5 seconds when browser_disconnect_timeout is not provided', function() {
       expect(config.get('socket_heartbeat_timeout')).to.eq(5);

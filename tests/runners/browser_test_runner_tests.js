@@ -528,4 +528,49 @@ describe('browser test runner', function() {
       runner.finish();
     });
   });
+
+  describe('abort', function() {
+    let runner, reporter, socket, launcher;
+
+    beforeEach(function() {
+      reporter = new FakeReporter();
+      let config = new Config('ci', { reporter: reporter });
+      launcher = new Launcher('ci', { protocol: 'browser' }, config);
+      runner = new BrowserTestRunner(launcher, reporter, 1, false, config);
+      socket = new FakeSocket();
+      runner.tryAttach('browser', launcher.id, socket);
+    });
+
+    it('emits abort-tests via the socket and returns the same promise when called again', function() {
+      let emit = sinon.spy(socket, 'emit');
+
+      let first = runner.abort();
+      let second = runner.abort();
+
+      expect(first).to.be.an.instanceof(Bluebird);
+      expect(second).to.equal(first);
+      expect(emit.withArgs('abort-tests')).to.have.been.calledOnce();
+      expect(runner.finished).to.be.true();
+      return first;
+    });
+
+    it('suppresses subsequent results and errors', function() {
+      return runner.abort().then(() => {
+        socket.emit('test-result', { failed: 1, name: 'late failure' });
+        socket.emit('top-level-error', 'Oops', 'http://x', 1);
+        runner.reportResults(new Error('Browser exited unexpectedly'), 1);
+
+        expect(reporter.results).to.be.empty();
+      });
+    });
+
+    it('works without a socket', function() {
+      let config = new Config('ci', { reporter: reporter });
+      let detached = new BrowserTestRunner(launcher, reporter, 2, false, config);
+
+      return detached.abort().then(() => {
+        expect(detached.aborted).to.be.true();
+      });
+    });
+  });
 });

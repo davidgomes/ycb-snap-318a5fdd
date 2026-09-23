@@ -318,6 +318,48 @@ describe('mochaAdapter', function() {
       });
     });
 
+    describe('when Testem has been aborted', function() {
+      let testemGlobals;
+
+      beforeEach(function() {
+        testemGlobals = {};
+        replaceGlobals({ Testem: { aborted: true } }, testemGlobals);
+      });
+
+      afterEach(function() {
+        restoreGlobals(testemGlobals);
+      });
+
+      it('suppresses events and signals "all-test-results" once', function() {
+        runner.emit('start', {}, null);
+        runner.emit('fail', tests.failed, { message: 'msg', stack: 'trace' });
+        runner.emit('end', {}, null);
+
+        expect(_emit).to.have.been.calledOnceWith('all-test-results');
+        expect(originalEmit).to.have.been.calledThrice();
+      });
+
+      it('suppresses results inside deferred callbacks', function() {
+        global.Testem.aborted = false;
+        runner.emit('test end', tests.passed, null);
+        global.Testem.aborted = true;
+
+        _setTimeout.lastCall.args[0]();
+        runner.emit('end', {}, null);
+
+        expect(_emit).to.have.been.calledOnceWith('all-test-results');
+      });
+
+      it('does not signal "all-test-results" again when already sent', function() {
+        global.Testem.aborted = false;
+        runner.emit('end', {}, null);
+        global.Testem.aborted = true;
+        runner.emit('fail', tests.failed, { message: 'msg', stack: 'trace' });
+
+        expect(_emit).to.have.been.calledOnceWith('all-test-results');
+      });
+    });
+
     describe('when a "fail" event is emitted', function() {
       beforeEach(function() {
         evt = 'fail';

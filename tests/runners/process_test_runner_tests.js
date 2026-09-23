@@ -19,6 +19,41 @@ describe('ProcessTestRunner', function() {
     });
   });
 
+  describe('abort', function() {
+    var runner;
+
+    beforeEach(function() {
+      var settings = {
+        exe: 'node',
+        args: [path.join(__dirname, '../fixtures/processes/just-running.js')]
+      };
+      var launcher = new Launcher('node-running', settings, config);
+      runner = new ProcessTestRunner(launcher, reporter);
+    });
+
+    it('kills the process, finishes the run and suppresses its result', function() {
+      var started = new Promise(function(resolve) {
+        runner.launcher.processCtl.once('processStarted', resolve);
+      });
+      var run = runner.start();
+
+      return started.then(function() {
+        var first = runner.abort();
+        expect(runner.abort()).to.equal(first);
+        return Promise.all([first, run]);
+      }).then(function() {
+        expect(runner.aborted).to.equal(true);
+        expect(reporter.results).to.deep.equal([]);
+      });
+    });
+
+    it('resolves when the runner was never started', function() {
+      return runner.abort().then(function() {
+        expect(reporter.results).to.deep.equal([]);
+      });
+    });
+  });
+
   it('calls onStart & onEnd', function(done) {
     var settings = {
       exe: 'node',

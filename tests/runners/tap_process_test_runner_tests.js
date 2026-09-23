@@ -10,6 +10,44 @@ var TapProcessTestRunner = require('../../lib/runners/tap_process_test_runner');
 var FakeReporter = require('../support/fake_reporter');
 
 describe('tap process test runner', function() {
+  describe('abort', function() {
+    var runner, reporter, launcher;
+
+    beforeEach(function() {
+      reporter = new FakeReporter();
+      var config = new Config('ci', {
+        reporter: reporter
+      });
+
+      var settings = {
+        exe: 'node',
+        args: [path.join(__dirname, '../fixtures/processes/echo.js')],
+        protocol: 'tap'
+      };
+      launcher = new Launcher('tap', settings, config);
+      runner = new TapProcessTestRunner(launcher, reporter);
+    });
+
+    it('is idempotent, finishes the run and suppresses later results', function() {
+      var started = new Promise(function(resolve) {
+        launcher.processCtl.once('processStarted', resolve);
+      });
+      var run = runner.start();
+
+      return started.then(function() {
+        var first = runner.abort();
+        expect(runner.abort()).to.equal(first);
+
+        runner.onTestResult({ name: 'late', passed: false });
+        runner.onProcessError(new Error('killed'));
+
+        return Promise.all([first, run]);
+      }).then(function() {
+        expect(reporter.results).to.deep.equal([]);
+      });
+    });
+  });
+
   describe('onTestResult', function() {
     var runner, reporter, launcher;
 

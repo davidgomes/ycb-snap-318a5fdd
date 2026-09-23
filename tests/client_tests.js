@@ -87,6 +87,56 @@ describe('Testem Client', function() {
     sinon.assert.calledWithExactly(global.decycle, sinon.match.any, decycleDepth + 1);
   });
 
+  describe('handleAbortTests', function() {
+    let posted, originalHandlers;
+
+    beforeEach(function() {
+      originalHandlers = Testem.evtHandlers;
+      Testem.evtHandlers = {};
+      posted = [];
+      Testem._isIframeReady = true;
+      Testem.iframe = {
+        contentWindow: {
+          postMessage: function(message) {
+            posted.push(JSON.parse(message).data);
+          }
+        }
+      };
+    });
+
+    afterEach(function() {
+      Testem.aborted = false;
+      Testem.evtHandlers = originalHandlers;
+    });
+
+    it('sets aborted and emits abort-tests and after-tests-complete directly', function() {
+      Testem.handleAbortTests();
+
+      expect(Testem.aborted).to.be.true();
+      expect(posted).to.deep.equal([['abort-tests'], ['after-tests-complete']]);
+    });
+
+    it('queues the final events until the iframe is ready', function() {
+      Testem._isIframeReady = false;
+      Testem.emitMessageQueue = [];
+
+      Testem.handleAbortTests();
+
+      expect(Testem.emitMessageQueue.map(message => message.emitArgs)).to.deep.equal([['abort-tests'], ['after-tests-complete']]);
+      Testem.emitMessageQueue = [];
+    });
+
+    it('blocks further emitMessage calls', function() {
+      Testem.handleAbortTests();
+      posted = [];
+
+      Testem.emitMessage('test-result', { name: 'late' });
+      Testem.emit('all-test-results');
+
+      expect(posted).to.be.empty();
+    });
+  });
+
   it('runs registered hooks after all tests finished', function(done) {
     let firstCalled = false;
     let secondCalled = false;

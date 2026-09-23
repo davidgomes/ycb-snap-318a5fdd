@@ -359,6 +359,160 @@ describe('Reporter', function() {
     });
   });
 
+  describe('bail_on_test_failure', function() {
+    const log = require('npmlog');
+
+    function bailApp(bailValue, subReporter) {
+      return {
+        config: {
+          get: function(key) {
+            switch (key) {
+              case 'reporter':
+                return subReporter || new FakeReporter();
+              case 'bail_on_test_failure':
+                return bailValue;
+            }
+          }
+        }
+      };
+    }
+
+    const fail = name => ({ name: name, passed: false });
+    const pass = name => ({ name: name, passed: true });
+
+    it('is disabled by default', function() {
+      let reporter = new Reporter(bailApp(undefined), stream);
+
+      reporter.report('chrome', fail('a'));
+      reporter.report('chrome', fail('b'));
+
+      expect(reporter.hasBailed()).to.be.false();
+      expect(reporter.bailOnTestFailure).to.be.false();
+    });
+
+    it('bails on the first failure when true', function() {
+      let sub = new FakeReporter();
+      let reporter = new Reporter(bailApp(true, sub), stream);
+      let onFailure = sinon.spy();
+      reporter.on('test-failure', onFailure);
+
+      reporter.report('chrome', pass('a'));
+      reporter.report('chrome', fail('b'));
+
+      expect(reporter.hasBailed()).to.be.true();
+      expect(reporter.bailReason).to.equal('b');
+      expect(onFailure).to.have.been.calledOnceWith('chrome', sinon.match({ name: 'b' }));
+      expect(sub.results).to.have.lengthOf(2);
+    });
+
+    it('bails on the Nth failure and ignores skipped and todo tests', function() {
+      let reporter = new Reporter(bailApp(2), stream);
+
+      reporter.report('chrome', fail('a'));
+      reporter.report('chrome', { name: 'skipped', skipped: true });
+      reporter.report('chrome', { name: 'todo', passed: false, todo: true });
+      expect(reporter.hasBailed()).to.be.false();
+
+      reporter.report('firefox', fail('b'));
+      expect(reporter.hasBailed()).to.be.true();
+      expect(reporter.bailReason).to.equal('b');
+    });
+
+    it('gates results reported after the bail from sub-reporters', function() {
+      let sub = new FakeReporter();
+      let reporter = new Reporter(bailApp(1, sub), stream);
+      let onFailure = sinon.spy();
+      reporter.on('test-failure', onFailure);
+
+      reporter.report('chrome', fail('a'));
+      reporter.report('chrome', fail('b'));
+      reporter.report('chrome', pass('c'));
+
+      expect(sub.results).to.have.lengthOf(1);
+      expect(onFailure).to.have.been.calledOnce();
+      expect(reporter.getBailReport().suppressedAfterBail).to.equal(2);
+    });
+
+    it('exposes a bail report', function() {
+      let reporter = new Reporter(bailApp(2), stream);
+
+      expect(reporter.getBailReport()).to.include({ bailLauncher: null, testsRanBeforeBail: 0 });
+
+      reporter.report('chrome', pass('a'));
+      reporter.report('chrome', fail('b'));
+      reporter.report('firefox', fail('c'));
+      reporter.report('firefox', fail('d'));
+
+      let report = reporter.getBailReport();
+      expect(report.testsRanBeforeBail).to.equal(3);
+      expect(report.bailLauncher).to.equal('firefox');
+      expect(report.failuresByLauncher).to.deep.equal({ chrome: 1, firefox: 1 });
+      expect(Object.getPrototypeOf(report.failuresByLauncher)).to.equal(Object.prototype);
+      expect(report.failedTests).to.deep.equal(['b', 'c']);
+    });
+
+    it('resets bail state so sub-reporters receive results again', function() {
+      let sub = new FakeReporter();
+      let reporter = new Reporter(bailApp(1, sub), stream);
+
+      reporter.report('chrome', fail('a'));
+      reporter.report('chrome', pass('b'));
+      reporter.resetBailState();
+
+      expect(reporter.hasBailed()).to.be.false();
+      expect(reporter.bailReason).to.be.null();
+      expect(reporter.getBailReport()).to.deep.include({
+        bailLauncher: null,
+        testsRanBeforeBail: 0,
+        failuresByLauncher: {},
+        failedTests: []
+      });
+
+      reporter.report('chrome', pass('c'));
+      reporter.report('chrome', fail('d'));
+
+      expect(sub.results.map(r => r.result.name)).to.deep.equal(['a', 'c', 'd']);
+      expect(reporter.getBailReport().testsRanBeforeBail).to.equal(2);
+      expect(reporter.bailReason).to.equal('d');
+    });
+
+    it('only shows post-reset bail activity in TAP output', function() {
+      let reporter = new Reporter(bailApp(1, 'tap'), stream);
+
+      reporter.report('chrome', fail('a'));
+      reporter.report('chrome', pass('b'));
+      reporter.resetBailState();
+      reporter.report('chrome', pass('c'));
+      reporter.finish();
+
+      let output = stream.read().toString();
+      expect(output).to.not.match(/Bail out!/);
+      expect(output).to.not.match(/# bailed/);
+      expect(output).to.match(/ok 2 chrome - \[undefined ms\] - c/);
+    });
+
+    [0, -1, 1.5, '2', 'yes', NaN].forEach(function(value) {
+      it(`warns and disables bailing for invalid value ${require('util').inspect(value)}`, function() {
+        let warn = sandbox.stub(log, 'warn');
+        let reporter = new Reporter(bailApp(value), stream);
+
+        expect(warn).to.have.been.calledWith('bail_on_test_failure', sinon.match.string);
+        expect(reporter.bailOnTestFailure).to.be.false();
+
+        reporter.report('chrome', fail('a'));
+        expect(reporter.hasBailed()).to.be.false();
+      });
+    });
+
+    it('does not warn for valid values', function() {
+      let warn = sandbox.stub(log, 'warn');
+
+      [true, false, 3, undefined].forEach(value => new Reporter(bailApp(value), stream));
+
+      expect(warn).to.not.have.been.called();
+    });
+  });
+
   describe('hasTests', function() {
     let app = mockApp();
     let reporter;

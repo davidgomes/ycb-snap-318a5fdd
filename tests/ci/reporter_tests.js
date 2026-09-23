@@ -1213,4 +1213,96 @@ describe('test reporters', function() {
     });
 
   });
+
+  describe('bail output', function() {
+    var Reporter = require('../../lib/utils/reporter');
+    var stream;
+
+    function runBailedSuite(reporterName) {
+      var config = new Config('ci', {}, {
+        reporter: reporterName,
+        bail_on_test_failure: 2
+      });
+      var reporter = new Reporter({ config: config }, stream);
+
+      reporter.report('chrome', { name: 'passes', passed: true });
+      reporter.report('chrome', { name: 'first failure', passed: false, error: { message: 'boom' } });
+      reporter.report('chrome', { name: 'second failure', passed: false, error: { message: 'boom' } });
+      reporter.report('chrome', { name: 'suppressed one', passed: true });
+      reporter.report('chrome', { name: 'suppressed two', passed: false });
+      reporter.finish();
+
+      return stream.read().toString();
+    }
+
+    beforeEach(function() {
+      stream = new PassThrough();
+    });
+
+    it('tap reporter writes Bail out! and bail summary lines', function() {
+      var output = runBailedSuite('tap');
+
+      assert.match(output, /^Bail out! second failure \(2 failures\)$/m);
+      assert.match(output, /# bailed\n# ran before bail 3\n# suppressed 2/);
+      assert.notMatch(output, /suppressed one/);
+      assert.isBelow(output.indexOf('Bail out!'), output.indexOf('# bailed'));
+      assert.notMatch(output, /# ok/);
+    });
+
+    it('dot reporter writes Bail out! and bail summary lines', function() {
+      var output = runBailedSuite('dot');
+
+      assert.match(output, /^Bail out! second failure \(2 failures\)$/m);
+      assert.match(output, /# bailed\n# ran before bail 3\n# suppressed 2/);
+      assert.isBelow(output.indexOf('Bail out!'), output.indexOf('# bailed'));
+    });
+
+    it('tap and dot reporters omit bail lines when not bailed', function() {
+      ['tap', 'dot'].forEach(function(name) {
+        stream = new PassThrough();
+        var reporter = new Reporter({ config: new Config('ci', {}, { reporter: name }) }, stream);
+        reporter.report('chrome', { name: 'fails', passed: false });
+        reporter.finish();
+        var output = stream.read().toString();
+
+        assert.notMatch(output, /Bail out!/);
+        assert.notMatch(output, /# bailed/);
+      });
+    });
+
+    it('teamcity reporter writes bail message, statistics and build problem', function() {
+      var output = runBailedSuite('teamcity');
+
+      assert.include(output, '##teamcity[message text=\'Bail out! second failure\' status=\'ERROR\']');
+      assert.include(output, '##teamcity[buildStatisticValue key=\'bailedTests\' value=\'2\']');
+      assert.include(output, '##teamcity[buildStatisticValue key=\'testsBeforeBail\' value=\'3\']');
+      assert.include(output, '##teamcity[buildStatisticValue key=\'suppressedAfterBail\' value=\'2\']');
+      assert.match(output, /##teamcity\[buildProblem description='[^']*second failure'\]/);
+      assert.notMatch(output, /suppressed one/);
+      assert.isBelow(output.indexOf('buildProblem'), output.indexOf('testSuiteFinished'));
+    });
+
+    it('xunit reporter adds bail error, properties and system-out', function() {
+      var output = runBailedSuite('xunit');
+
+      assertXmlIsValid(output);
+      assert.match(output, /<testsuite [^>]*errors="1"/);
+      assert.include(output, '<property name="bailReason" value="second failure"/>');
+      assert.include(output, '<property name="testsBeforeBail" value="3"/>');
+      assert.include(output, '<property name="suppressedAfterBail" value="2"/>');
+      assert.match(output, /<error type="bail" message="Bail out! second failure"\/>/);
+      assert.match(output, /<system-out>Bailed out after 2 test failure\(s\): second failure\nTests ran before bail: 3\nSuppressed after bail: 2<\/system-out>/);
+      assert.notMatch(output, /suppressed one/);
+    });
+
+    it('xunit reporter omits bail elements when not bailed', function() {
+      var reporter = new Reporter({ config: new Config('ci', {}, { reporter: 'xunit' }) }, stream);
+      reporter.report('chrome', { name: 'fails', passed: false });
+      reporter.finish();
+      var output = stream.read().toString();
+
+      assert.notMatch(output, /errors=/);
+      assert.notMatch(output, /<properties>|<system-out>/);
+    });
+  });
 });
