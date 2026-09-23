@@ -873,6 +873,36 @@ Whether garbage collection is enabled on this doc instance. Set `doc.gc = false`
 in order to disable gc and be able to restore old content. See https://github.com/yjs/yjs#yjs-crdt-algorithm
 for more information about gc in Yjs.
   </dd>
+  <b><code>mapConflictPolicy: 'allow' | 'collect' | 'error'</code></b>
+  <dd>
+Configured via <code>new Y.Doc({ mapConflictPolicy })</code>. Defines how
+conflicting writes to the same attribute key are handled, i.e. several sets, or
+a set and a delete, within a single transaction or a single (merged) update.
+<code>'allow'</code> (default) applies them without conflict detection.
+<code>'collect'</code> records them (see <code>getMapConflicts()</code>).
+<code>'error'</code> throws a <code>Y.MapConflictError</code> (with
+<code>err.conflicts</code>) before the conflicting write is applied. Conflicting
+updates are rejected as a whole, before anything is integrated. Conflicts that
+involve Yjs types or subdocuments are marked as ambiguous.
+  </dd>
+  <b><code>getMapConflicts():Array&lt;MapConflict&gt;</code></b>
+  <dd>
+The conflicts recorded with <code>mapConflictPolicy: 'collect'</code>. Each
+conflict describes the <code>key</code>, <code>parentId</code>, <code>type</code>
+(<code>'set-set'</code>, <code>'delete-set'</code>, or <code>'ambiguous'</code>),
+<code>source</code> (<code>'local'</code>, <code>'remote'</code>, or
+<code>'mixed'</code>), a <code>message</code>, the conflicting
+<code>writes</code>, and the deterministic <code>resolution</code>
+(<code>{ winner, strategy, deterministic }</code>).
+  </dd>
+  <b><code>getMapConflictSummary():MapConflictSummary</code></b>
+  <dd>
+Counts the recorded conflicts: <code>{ count, total, byType, byKey, byParent,
+bySource }</code>. The <code>by*</code> fields map a type, key, parent id, or
+source to the number of conflicts.
+  </dd>
+  <b><code>clearMapConflicts()</code></b>
+  <dd>Forget all recorded conflicts.</dd>
   <b><code>transact(function(Transaction):void [, origin:any])</code></b>
   <dd>
 Every change on the shared document happens in a transaction. Observer calls and
