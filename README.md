@@ -67,6 +67,13 @@ PARAMETERS:
   --episode-api={tvdb,*tvmaze}: set episode api provider
   --episode-directory: set episode relocation directory
   --episode-format: set episode renaming format specification
+  --watch=<PATH,...>: directories the daemon scans (top-level only)
+  --daemon-config=<PATH>: JSON file listing daemon watch entries
+  --daemon-state=<PATH>: daemon state file; logs go to <PATH>.log
+  --stability-interval-ms=<MS>: delay between file size checks
+  --stability-checks=<NUMBER>: skip files whose size changes over N checks
+  --batch-size=<NUMBER>: limit the files moved per daemon cycle
+  --notify-webhook=<URL>: POST a JSON summary after the daemon moves files
 
 DIRECTIVES:
   Directives are one-off arguments that are used to perform secondary tasks
@@ -84,9 +91,30 @@ DIRECTIVES:
   --no-cache: disable request cache
   --media={movie,episode}: override media detection
   --test: mocks the renaming and moving of files
+  --daemon={start,stop,status,logs,stats,restart}: manage the watch daemon
+  --daemon-run-once: run a single daemon cycle in the foreground
+  --dry-run: with --daemon-run-once, print moves without making them
+  --validate-daemon-config: check the --daemon-config file then exit
+  --lines=<NUMBER>: with --daemon logs, only show the last N lines
 ```
 
 Parameters can either by entered as command line arguments or from a config file named `.mnamer-v2.json`.
+
+👀 **Watch Daemon**
+
+`$ mnamer --daemon start --watch ~/Downloads --movie-directory ~/Movies`
+
+The daemon moves files from the top level of each watched directory into its movie directory, keeping their names. It doesn't look up metadata or prompt. Files ending in `.part` are skipped, and so are files whose size is still changing. Existing files are never overwritten; a clashing file is given a unique name instead. Watch paths from `--watch`, positional arguments, and a `--daemon-config` file are combined. A config file can also set glob exclusions for each watch directory:
+
+```json
+{
+  "watch": [
+    {"path": "/downloads", "movie_directory": "/movies", "exclude": ["*.tmp", "*.partial"]}
+  ]
+}
+```
+
+Use `--daemon-run-once` (optionally with `--dry-run`) to run a single cycle in the foreground. `--daemon stats` and `--daemon logs` read the state file set by `--daemon-state` (default `daemon-state.json`) and its `.log` file.
 
 ## Contributions
 
