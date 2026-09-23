@@ -50,9 +50,7 @@ def test_field_options_helper():
         "flatten_rename": None,
     }
 
-    assert field_options(
-        flatten=True, flatten_rename={"a": "b"}
-    ) == {
+    assert field_options(flatten=True, flatten_rename={"a": "b"}) == {
         "serialize": None,
         "deserialize": None,
         "serialization_strategy": None,

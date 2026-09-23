@@ -476,7 +476,9 @@ class CodeBuilder:
             if filtered_fields:
                 if config.forbid_extra_keys:
                     own_fields = [
-                        f for f in filtered_fields if f[0] not in flattened_fields
+                        f
+                        for f in filtered_fields
+                        if f[0] not in flattened_fields
                     ]
                     allowed_keys = {f[1] or f[0] for f in own_fields}
                     for f in filtered_fields:
@@ -1398,7 +1400,9 @@ class CodeBuilder:
                 if i in renamed:
                     new_key = renamed[i]
                     keys: typing.Tuple[str, ...] = (new_key,)
-                    accepted = (new_key,) if slot.accepted else ()
+                    accepted: typing.Tuple[str, ...] = (
+                        (new_key,) if slot.accepted else ()
+                    )
                     for key in slot.keys:
                         pack_rename[key] = new_key
                     if slot.accepted:
@@ -1428,7 +1432,9 @@ class CodeBuilder:
         optional = self.get_field_default(fname) is None
         if is_optional(typ, resolved_type_params):
             optional = True
-            typ = not_none_type_arg(get_args(typ), resolved_type_params)
+            typ = not_none_type_arg(
+                get_args(typ), resolved_type_params
+            )  # type: ignore[assignment]
         real_type = self.get_real_type(
             fname, get_type_origin(typ) if is_annotated(typ) else typ
         )
