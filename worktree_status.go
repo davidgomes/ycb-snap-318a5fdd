@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/go-git/go-billy/v6/util"
@@ -317,6 +318,12 @@ func (w *Worktree) doAddDirectory(idx *index.Index, s Status, directory string, 
 
 	directory = filepath.ToSlash(filepath.Clean(directory))
 
+	// A file/directory conflict resolved in favor of the directory.
+	if hasUnmergedEntries(idx, directory) {
+		removeUnmergedEntries(idx, directory)
+		added = true
+	}
+
 	for name := range s {
 		if !isPathInDirectory(name, directory) {
 			continue
@@ -462,7 +469,8 @@ func (w *Worktree) AddGlob(pattern string) error {
 // the file added is different from the index.
 // if s status is nil will skip the status check and update the index anyway
 func (w *Worktree) doAddFile(idx *index.Index, s Status, path string, ignorePattern []gitignore.Pattern) (added bool, h plumbing.Hash, err error) {
-	if s != nil && s.File(path).Worktree == Unmodified {
+	unmerged := hasUnmergedEntries(idx, path)
+	if !unmerged && s != nil && s.File(path).Worktree == Unmodified {
 		return false, h, nil
 	}
 	if len(ignorePattern) > 0 {
@@ -478,10 +486,19 @@ func (w *Worktree) doAddFile(idx *index.Index, s Status, path string, ignorePatt
 	if err != nil {
 		if os.IsNotExist(err) {
 			added = true
+			if unmerged {
+				removeUnmergedEntries(idx, path)
+				return added, h, nil
+			}
+
 			h, err = w.deleteFromIndex(idx, path)
 		}
 
 		return added, h, err
+	}
+
+	if unmerged {
+		removeUnmergedEntries(idx, path)
 	}
 
 	if err := w.addOrUpdateFileToIndex(idx, path, h); err != nil {
@@ -489,6 +506,28 @@ func (w *Worktree) doAddFile(idx *index.Index, s Status, path string, ignorePatt
 	}
 
 	return true, h, err
+}
+
+// hasUnmergedEntries reports whether path has conflict entries (stages 1 to 3)
+// in the index.
+func hasUnmergedEntries(idx *index.Index, path string) bool {
+	path = filepath.ToSlash(path)
+	for _, e := range idx.Entries {
+		if e.Name == path && e.Stage != 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+// removeUnmergedEntries removes the conflict entries (stages 1 to 3) of path
+// from the index.
+func removeUnmergedEntries(idx *index.Index, path string) {
+	path = filepath.ToSlash(path)
+	idx.Entries = slices.DeleteFunc(idx.Entries, func(e *index.Entry) bool {
+		return e.Name == path && e.Stage != 0
+	})
 }
 
 func (w *Worktree) copyFileToStorage(path string) (hash plumbing.Hash, err error) {
