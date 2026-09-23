@@ -15,6 +15,7 @@ import {getWindowSize} from './utils.js';
 import reconciler from './reconciler.js';
 import render from './renderer.js';
 import * as dom from './dom.js';
+import {calculateGridLayout} from './grid.js';
 import {hideCursorEscape, showCursorEscape} from './cursor-helpers.js';
 import logUpdate, {type LogUpdate, type CursorPosition} from './log-update.js';
 import {bsu, esu, shouldSynchronize} from './write-synchronized.js';
@@ -510,6 +511,8 @@ export default class Ink {
 			undefined,
 			Yoga.DIRECTION_LTR,
 		);
+
+		calculateGridLayout(this.rootNode);
 	};
 
 	onRender: () => void = () => {

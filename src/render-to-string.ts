@@ -4,6 +4,7 @@ import {LegacyRoot} from 'react-reconciler/constants.js';
 import reconciler from './reconciler.js';
 import renderer from './renderer.js';
 import {createNode, type DOMElement} from './dom.js';
+import {calculateGridLayout} from './grid.js';
 
 export type RenderToStringOptions = {
 	/**
@@ -65,6 +66,8 @@ const renderToString = (
 			undefined,
 			Yoga.DIRECTION_LTR,
 		);
+
+		calculateGridLayout(rootNode);
 	};
 
 	rootNode.onImmediateRender = () => {

@@ -4,12 +4,16 @@ import {type Styles} from './styles.js';
 import wrapText from './wrap-text.js';
 import squashTextNodes from './squash-text-nodes.js';
 import {type OutputTransformer} from './render-node-to-output.js';
+import {createGridMeasureFunc, isGridContainer} from './grid.js';
 
 type InkNode = {
 	parentNode: DOMElement | undefined;
 	yogaNode?: YogaNode;
 	internal_static?: boolean;
 	style: Styles;
+
+	// Position of a grid item's cell within its grid container. Grid items are separate Yoga roots, so Yoga doesn't include it in their computed position.
+	internal_gridOffset?: {x: number; y: number};
 };
 
 type LayoutListener = () => void;
@@ -108,6 +112,21 @@ export const createNode = (nodeName: ElementNames): DOMElement => {
 	return node;
 };
 
+// Grid items aren't Yoga children of their grid container, so changes to them have to be forwarded to it manually
+const addGridItem = (node: DOMElement, itemNode: DOMNode): void => {
+	itemNode.yogaNode?.setDirtiedFunc(() => {
+		node.yogaNode?.markDirty();
+	});
+
+	node.yogaNode?.markDirty();
+};
+
+const removeGridItem = (node: DOMElement, itemNode: DOMNode): void => {
+	itemNode.yogaNode?.unsetDirtiedFunc();
+	itemNode.internal_gridOffset = undefined;
+	node.yogaNode?.markDirty();
+};
+
 export const appendChildNode = (
 	node: DOMElement,
 	childNode: DOMElement,
@@ -119,7 +138,9 @@ export const appendChildNode = (
 	childNode.parentNode = node;
 	node.childNodes.push(childNode);
 
-	if (childNode.yogaNode) {
+	if (childNode.yogaNode && isGridContainer(node)) {
+		addGridItem(node, childNode);
+	} else if (childNode.yogaNode) {
 		node.yogaNode?.insertChild(
 			childNode.yogaNode,
 			node.yogaNode.getChildCount(),
@@ -143,7 +164,14 @@ export const insertBeforeNode = (
 	newChildNode.parentNode = node;
 
 	const index = node.childNodes.indexOf(beforeChildNode);
-	if (index >= 0) {
+	if (newChildNode.yogaNode && isGridContainer(node)) {
+		node.childNodes.splice(
+			index >= 0 ? index : node.childNodes.length,
+			0,
+			newChildNode,
+		);
+		addGridItem(node, newChildNode);
+	} else if (index >= 0) {
 		node.childNodes.splice(index, 0, newChildNode);
 		if (newChildNode.yogaNode) {
 			node.yogaNode?.insertChild(newChildNode.yogaNode, index);
@@ -168,7 +196,9 @@ export const removeChildNode = (
 	node: DOMElement,
 	removeNode: DOMNode,
 ): void => {
-	if (removeNode.yogaNode) {
+	if (removeNode.yogaNode && isGridContainer(node)) {
+		removeGridItem(node, removeNode);
+	} else if (removeNode.yogaNode) {
 		removeNode.parentNode?.yogaNode?.removeChild(removeNode.yogaNode);
 	}
 
@@ -197,9 +227,81 @@ export const setAttribute = (
 	node.attributes[key] = value;
 };
 
+const gridContainerStyles = [
+	'gridTemplateColumns',
+	'gridTemplateRows',
+	'gap',
+	'columnGap',
+	'rowGap',
+] as const;
+
+const gridItemStyles = ['gridColumn', 'gridRow'] as const;
+
+const updateGridStyles = (node: DOMElement, previousStyle: Styles): void => {
+	const {yogaNode, parentNode} = node;
+
+	if (!yogaNode) {
+		return;
+	}
+
+	const wasGridContainer =
+		node.nodeName === 'ink-box' && previousStyle.display === 'grid';
+	const isGrid = isGridContainer(node);
+
+	if (isGrid && !wasGridContainer) {
+		// Yoga doesn't allow children on nodes with a measure function
+		for (const childNode of node.childNodes) {
+			if (childNode.yogaNode) {
+				yogaNode.removeChild(childNode.yogaNode);
+			}
+		}
+
+		yogaNode.setMeasureFunc(createGridMeasureFunc(node));
+
+		for (const childNode of node.childNodes) {
+			if (childNode.yogaNode) {
+				addGridItem(node, childNode);
+			}
+		}
+
+		yogaNode.markDirty();
+	} else if (wasGridContainer && !isGrid) {
+		// Yoga only allows marking nodes with a measure function as dirty
+		yogaNode.markDirty();
+		yogaNode.unsetMeasureFunc();
+
+		for (const childNode of node.childNodes) {
+			if (childNode.yogaNode) {
+				childNode.yogaNode.unsetDirtiedFunc();
+				childNode.internal_gridOffset = undefined;
+				yogaNode.insertChild(childNode.yogaNode, yogaNode.getChildCount());
+			}
+		}
+	} else if (
+		isGrid &&
+		gridContainerStyles.some(key => previousStyle[key] !== node.style[key])
+	) {
+		yogaNode.markDirty();
+	}
+
+	if (
+		parentNode &&
+		isGridContainer(parentNode) &&
+		gridItemStyles.some(key => previousStyle[key] !== node.style[key])
+	) {
+		parentNode.yogaNode?.markDirty();
+	}
+};
+
 export const setStyle = (node: DOMNode, style?: Styles): void => {
+	const previousStyle = node.style;
+
 	// Rendering code assumes style is always an object.
 	node.style = style ?? {};
+
+	if (node.nodeName !== '#text') {
+		updateGridStyles(node, previousStyle);
+	}
 };
 
 export const createTextNode = (text: string): TextNode => {

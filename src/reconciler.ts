@@ -5,7 +5,7 @@ import {
 	NoEventPriority,
 } from 'react-reconciler/constants.js';
 import * as Scheduler from 'scheduler';
-import Yoga, {type Node as YogaNode} from 'yoga-layout';
+import Yoga from 'yoga-layout';
 import {createContext, version as reactVersion} from 'react';
 import {
 	createTextNode,
@@ -17,6 +17,7 @@ import {
 	setTextNodeValue,
 	createNode,
 	setAttribute,
+	type DOMNode,
 	type DOMNodeAttribute,
 	type TextNode,
 	type ElementNames,
@@ -24,6 +25,7 @@ import {
 } from './dom.js';
 import applyStyles, {type Styles} from './styles.js';
 import {type OutputTransformer} from './render-node-to-output.js';
+import {isGridContainer} from './grid.js';
 
 // We need to conditionally perform devtools connection to avoid
 // accidentally breaking other third-party code.
@@ -78,9 +80,21 @@ const diff = (before: AnyObject, after: AnyObject): AnyObject | undefined => {
 	return isChanged ? changed : undefined;
 };
 
-const cleanupYogaNode = (node?: YogaNode): void => {
-	node?.unsetMeasureFunc();
-	node?.freeRecursive();
+const cleanupYogaNode = (node: DOMNode, isYogaRoot = true): void => {
+	if (node.nodeName !== '#text') {
+		const isGrid = isGridContainer(node);
+
+		for (const childNode of node.childNodes) {
+			// Grid items are separate Yoga roots, so freeing their grid container doesn't free them
+			cleanupYogaNode(childNode, isGrid);
+		}
+	}
+
+	if (isYogaRoot) {
+		node.yogaNode?.unsetMeasureFunc();
+		node.yogaNode?.unsetDirtiedFunc();
+		node.yogaNode?.freeRecursive();
+	}
 };
 
 type Props = Record<string, unknown>;
@@ -293,7 +307,7 @@ export default createReconciler<
 	insertInContainerBefore: insertBeforeNode,
 	removeChildFromContainer(node, removeNode) {
 		removeChildNode(node, removeNode);
-		cleanupYogaNode(removeNode.yogaNode);
+		cleanupYogaNode(removeNode);
 	},
 	commitUpdate(node, _type, oldProps, newProps) {
 		if (currentRootNode && node.internal_static) {
@@ -345,7 +359,7 @@ export default createReconciler<
 	},
 	removeChild(node, removeNode) {
 		removeChildNode(node, removeNode);
-		cleanupYogaNode(removeNode.yogaNode);
+		cleanupYogaNode(removeNode);
 	},
 	setCurrentUpdatePriority(newPriority: number) {
 		currentUpdatePriority = newPriority;

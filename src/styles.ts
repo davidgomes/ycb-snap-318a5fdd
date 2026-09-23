@@ -244,9 +244,40 @@ export type Styles = {
 	readonly aspectRatio?: number;
 
 	/**
-	Set this property to `none` to hide the element.
+	Set this property to `none` to hide the element. Set it to `grid` to lay out children in a grid defined by `gridTemplateColumns` and `gridTemplateRows`.
 	*/
-	readonly display?: 'flex' | 'none';
+	readonly display?: 'flex' | 'grid' | 'none';
+
+	/**
+	Column tracks of a grid container, as a space-separated list of track sizes.
+
+	Each track size is a fixed number of columns (`10`), a fraction of the remaining space (`1fr`), `auto` to fit the content, or `minmax(min, max)` where `min` is a fixed number and `max` is a fixed number or a fraction.
+
+	@example
+	```
+	'10 1fr auto minmax(5, 2fr)'
+	```
+	*/
+	readonly gridTemplateColumns?: string;
+
+	/**
+	Row tracks of a grid container, using the same syntax as `gridTemplateColumns`.
+
+	Rows that aren't defined here are created automatically as needed and sized to fit their content.
+	*/
+	readonly gridTemplateRows?: string;
+
+	/**
+	Grid columns the element occupies inside a grid container. Accepts a 1-based column index (`2`) or a `'start / end'` pair of 1-based grid lines, where `end` is exclusive (`'1 / 3'` spans the first two columns).
+
+	Elements without `gridColumn` or `gridRow` are placed automatically in the next free cell.
+	*/
+	readonly gridColumn?: number | string;
+
+	/**
+	Grid rows the element occupies inside a grid container, using the same syntax as `gridColumn`.
+	*/
+	readonly gridRow?: number | string;
 
 	/**
 	Add a border with a specified style. If `borderStyle` is `undefined` (the default), no border will be added.
@@ -686,8 +717,11 @@ const applyDimensionStyles = (node: YogaNode, style: Styles): void => {
 
 const applyDisplayStyles = (node: YogaNode, style: Styles): void => {
 	if ('display' in style) {
+		// Grid containers are measured leaves in Yoga, so they use the regular flex display.
 		node.setDisplay(
-			style.display === 'flex' ? Yoga.DISPLAY_FLEX : Yoga.DISPLAY_NONE,
+			style.display === 'flex' || style.display === 'grid'
+				? Yoga.DISPLAY_FLEX
+				: Yoga.DISPLAY_NONE,
 		);
 	}
 };
