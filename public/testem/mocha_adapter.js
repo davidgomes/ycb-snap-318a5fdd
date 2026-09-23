@@ -7,7 +7,7 @@ Testem`s adapter for Mocha. It works by monkey-patching `Runner.prototype.emit`.
 
 */
 
-/* globals mocha, emit, Mocha */
+/* globals mocha, emit, Mocha, Testem */
 /* globals module */
 /* exported mochaAdapter */
 'use strict';
@@ -25,6 +25,19 @@ function mochaAdapter() {
   var Runner;
   var ended = false;
   var waiting = 0;
+  var allResultsSent = false;
+
+  function isAborted() {
+    return typeof Testem !== 'undefined' && Testem.aborted;
+  }
+
+  function signalAllTestResultsOnce() {
+    if (allResultsSent) {
+      return;
+    }
+    allResultsSent = true;
+    emit('all-test-results');
+  }
 
   try {
     Runner = mocha.Runner || Mocha.Runner;
@@ -47,17 +60,27 @@ function mochaAdapter() {
 
   var oEmit = Runner.prototype.emit;
   Runner.prototype.emit = function(evt, test, err) {
+    if (isAborted()) {
+      signalAllTestResultsOnce();
+      oEmit.apply(this, arguments);
+      return;
+    }
     var name = getFullName(test);
     if (evt === 'start') {
       emit('tests-start', { name: name });
     } else if (evt === 'end') {
       if (waiting === 0) {
         emit('all-test-results');
+        allResultsSent = true;
       }
       ended = true;
     } else if (evt === 'test end') {
       waiting++;
       _setTimeout(function() {
+        if (isAborted()) {
+          signalAllTestResultsOnce();
+          return;
+        }
         waiting--;
         if (test.state === 'passed') {
           testPass(test);
@@ -66,10 +89,15 @@ function mochaAdapter() {
         }
         if (ended && waiting === 0) {
           emit('all-test-results');
+          allResultsSent = true;
         }
       }, 0);
     } else if (evt === 'fail') {
-      testFail(test, err);
+      if (isAborted()) {
+        signalAllTestResultsOnce();
+      } else {
+        testFail(test, err);
+      }
     }
 
     oEmit.apply(this, arguments);
@@ -88,6 +116,10 @@ function mochaAdapter() {
       results.passed++;
       results.total++;
       results.tests.push(tst);
+      if (isAborted()) {
+        signalAllTestResultsOnce();
+        return;
+      }
       emit('test-result', tst);
     }
 
@@ -116,6 +148,10 @@ function mochaAdapter() {
       results.failed++;
       results.total++;
       results.tests.push(tst);
+      if (isAborted()) {
+        signalAllTestResultsOnce();
+        return;
+      }
       emit('test-result', tst);
 
     }
@@ -132,6 +168,10 @@ function mochaAdapter() {
       };
       results.total++;
       results.tests.push(tst);
+      if (isAborted()) {
+        signalAllTestResultsOnce();
+        return;
+      }
       emit('test-result', tst);
     }
   };

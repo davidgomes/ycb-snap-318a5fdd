@@ -141,7 +141,14 @@ var Testem = {
     var match = window.location.pathname.match(/^\/(-?[0-9]+)/);
     return match ? match[1] : null;
   },
+  aborted: false,
   emitMessage: function() {
+    if (this.aborted || Testem.aborted || this._noConnectionRequired) {
+      return;
+    }
+    this._deliverMessage.apply(this, arguments);
+  },
+  _deliverMessage: function() {
     if (this._noConnectionRequired) {
       return;
     }
@@ -264,6 +271,9 @@ var Testem = {
         case 'stop-run':
           self.emit('after-tests-complete');
           break;
+        case 'abort-tests':
+          self.handleAbortTests();
+          break;
         default:
           if (type && type.indexOf('testem:') === 0) {
             self.emit(type, message.data);
@@ -302,6 +312,25 @@ var Testem = {
     }
     for (var j = 0; j < removeIdx.length; j++) {
       handlers.splice(j, 1);
+    }
+  },
+  handleAbortTests: function() {
+    if (this.aborted || Testem.aborted) {
+      return;
+    }
+    Testem.aborted = true;
+    this.aborted = true;
+
+    var events = ['abort-tests', 'after-tests-complete'];
+    for (var n = 0; n < events.length; n++) {
+      var evt = events[n];
+      if (this.evtHandlers && this.evtHandlers[evt]) {
+        var handlers = this.evtHandlers[evt];
+        for (var j = 0; j < handlers.length; j++) {
+          handlers[j].call(this);
+        }
+      }
+      this._deliverMessage(evt);
     }
   },
   runAfterTests: function() {

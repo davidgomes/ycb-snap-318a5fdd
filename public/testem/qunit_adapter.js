@@ -14,7 +14,7 @@ Testem's QUnit adapter. Works by using QUnit's hooks:
 
 */
 
-/* globals QUnit, emit */
+/* globals QUnit, emit, Testem */
 /* exported qunitAdapter */
 'use strict';
 
@@ -30,6 +30,34 @@ function qunitAdapter() {
   };
   var currentTest;
   var id = 1;
+  var allResultsSent = false;
+
+  function isAborted() {
+    return typeof Testem !== 'undefined' && Testem.aborted;
+  }
+
+  function clearQueue() {
+    if (typeof QUnit !== 'undefined' && QUnit.config && QUnit.config.queue) {
+      QUnit.config.queue.length = 0;
+    }
+  }
+
+  function signalAllTestResultsOnce() {
+    if (allResultsSent) {
+      return;
+    }
+    allResultsSent = true;
+    emit('all-test-results');
+  }
+
+  function suppressIfAborted() {
+    if (!isAborted()) {
+      return false;
+    }
+    clearQueue();
+    signalAllTestResultsOnce();
+    return true;
+  }
 
   function lineNumber(e) {
     return e.line || e.lineNumber;
@@ -52,6 +80,9 @@ function qunitAdapter() {
   }
 
   QUnit.log(function(params, e) {
+    if (suppressIfAborted()) {
+      return;
+    }
     if (e) {
       currentTest.items.push({
         passed: params.result,
@@ -81,6 +112,9 @@ function qunitAdapter() {
 
   });
   QUnit.testStart(function(params) {
+    if (suppressIfAborted()) {
+      return;
+    }
     currentTest = {
       id: id++,
       name: (params.module ? params.module + ': ' : '') + params.name,
@@ -89,6 +123,9 @@ function qunitAdapter() {
     emit('tests-start', currentTest);
   });
   QUnit.testDone(function(params) {
+    if (suppressIfAborted()) {
+      return;
+    }
     currentTest.failed = params.failed;
     currentTest.passed = params.passed;
     currentTest.skipped = params.skipped;
@@ -109,10 +146,17 @@ function qunitAdapter() {
 
     results.tests.push(currentTest);
 
+    if (suppressIfAborted()) {
+      return;
+    }
     emit('test-result', currentTest);
   });
   QUnit.done(function(params) {
+    if (suppressIfAborted()) {
+      return;
+    }
     results.runDuration = params.runtime;
+    allResultsSent = true;
     emit('all-test-results');
   });
 

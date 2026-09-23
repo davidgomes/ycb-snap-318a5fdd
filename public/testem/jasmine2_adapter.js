@@ -7,7 +7,7 @@
 
  */
 
-/* globals emit, jasmine */
+/* globals emit, jasmine, Testem */
 /* exported jasmine2Adapter */
 'use strict';
 
@@ -21,13 +21,35 @@ function jasmine2Adapter() {
     tests: []
   };
 
+  var allResultsSent = false;
+
+  function isAborted() {
+    return typeof Testem !== 'undefined' && Testem.aborted;
+  }
+
+  function signalAllTestResultsOnce() {
+    if (allResultsSent) {
+      return;
+    }
+    allResultsSent = true;
+    emit('all-test-results');
+  }
+
   function Jasmine2AdapterReporter() {
 
     this.jasmineStarted = function() {
+      if (isAborted()) {
+        signalAllTestResultsOnce();
+        return;
+      }
       emit('tests-start');
     };
 
     this.specStarted = function(spec) {
+      if (isAborted()) {
+        signalAllTestResultsOnce();
+        return;
+      }
       var currentTest = {
         name: spec.fullName
       };
@@ -35,6 +57,10 @@ function jasmine2Adapter() {
     };
 
     this.specDone = function(spec) {
+      if (isAborted()) {
+        signalAllTestResultsOnce();
+        return;
+      }
 
       var test = {
         passed: 0,
@@ -73,10 +99,19 @@ function jasmine2Adapter() {
 
       results.total++;
 
+      if (isAborted()) {
+        signalAllTestResultsOnce();
+        return;
+      }
       emit('test-result', test);
     };
 
     this.jasmineDone = function() {
+      if (isAborted()) {
+        signalAllTestResultsOnce();
+        return;
+      }
+      allResultsSent = true;
       emit('all-test-results');
     };
 
