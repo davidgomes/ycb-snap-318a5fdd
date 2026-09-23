@@ -465,6 +465,65 @@ spec:
 			wantErrors: []string{"retry.perTryTimeout must be less than timeouts.request"},
 		},
 		{
+			name: "TrafficPolicy: valid consistentHash",
+			input: `---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: test
+spec:
+  consistentHash:
+    headers:
+    - headerName: x-user
+      regexRewrite:
+        pattern: "^(.*)$"
+        substitution: "\\1"
+    cookies:
+    - name: session
+      ttl: 1h30m
+      attributes:
+      - name: SameSite
+        value: Strict
+    - name: other
+      ttl: "3600"
+    queryParameters:
+    - name: q
+    filterState:
+    - key: k
+    sourceIp:
+      terminal: true
+`,
+		},
+		{
+			name: "TrafficPolicy: consistentHash.disable with other fields",
+			input: `---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: test
+spec:
+  consistentHash:
+    disable: true
+    sourceIp: {}
+`,
+			wantErrors: []string{"no other fields may be set when disable is true"},
+		},
+		{
+			name: "TrafficPolicy: consistentHash.cookies[].ttl invalid",
+			input: `---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: test
+spec:
+  consistentHash:
+    cookies:
+    - name: session
+      ttl: forever
+`,
+			wantErrors: []string{"ttl must be a duration (e.g. 1h30m) or an integer number of seconds"},
+		},
+		{
 			name: "TrafficPolicy: retry.perTryTimeout must be at least 1ms",
 			input: `---
 apiVersion: gateway.kgateway.dev/v1alpha1

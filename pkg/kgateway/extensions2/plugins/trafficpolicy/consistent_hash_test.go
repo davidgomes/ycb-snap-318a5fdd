@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"k8s.io/utils/ptr"
 
 	"github.com/kgateway-dev/kgateway/v2/api/v1alpha1/kgateway"
 	"github.com/kgateway-dev/kgateway/v2/pkg/pluginsdk/ir"
@@ -74,12 +73,12 @@ func TestConstructConsistentHash(t *testing.T) {
 		},
 		{
 			name:     "disable produces no hash policies",
-			spec:     &kgateway.ConsistentHash{Disable: ptr.To(true)},
+			spec:     &kgateway.ConsistentHash{Disable: new(true)},
 			disabled: true,
 		},
 		{
 			name: "disable false behaves like empty",
-			spec: &kgateway.ConsistentHash{Disable: ptr.To(false)},
+			spec: &kgateway.ConsistentHash{Disable: new(false)},
 			expected: []*envoyroutev3.RouteAction_HashPolicy{
 				sourceIPHashPolicy(false),
 			},
@@ -87,9 +86,9 @@ func TestConstructConsistentHash(t *testing.T) {
 		{
 			name: "entries are emitted in canonical type order",
 			spec: &kgateway.ConsistentHash{
-				SourceIP:        &kgateway.ConsistentHashSourceIP{Terminal: ptr.To(true)},
+				SourceIP:        &kgateway.ConsistentHashSourceIP{Terminal: new(true)},
 				FilterState:     []kgateway.ConsistentHashFilterState{{Key: "fs"}},
-				QueryParameters: []kgateway.ConsistentHashQueryParameter{{Name: "q", Terminal: ptr.To(true)}},
+				QueryParameters: []kgateway.ConsistentHashQueryParameter{{Name: "q", Terminal: new(true)}},
 				Cookies:         []kgateway.ConsistentHashCookie{{Name: "c"}},
 				Headers:         []kgateway.ConsistentHashHeader{{HeaderName: "x-user"}},
 			},
@@ -105,21 +104,21 @@ func TestConstructConsistentHash(t *testing.T) {
 			name: "entries are deduplicated by key keeping the first occurrence",
 			spec: &kgateway.ConsistentHash{
 				Headers: []kgateway.ConsistentHashHeader{
-					{HeaderName: "X-User", Terminal: ptr.To(true)},
+					{HeaderName: "X-User", Terminal: new(true)},
 					{HeaderName: "x-other"},
 					{HeaderName: "x-user"},
 				},
 				Cookies: []kgateway.ConsistentHashCookie{
-					{Name: "c", Terminal: ptr.To(true)},
+					{Name: "c", Terminal: new(true)},
 					{Name: "c"},
 					{Name: "C"},
 				},
 				QueryParameters: []kgateway.ConsistentHashQueryParameter{
 					{Name: "q"},
-					{Name: "q", Terminal: ptr.To(true)},
+					{Name: "q", Terminal: new(true)},
 				},
 				FilterState: []kgateway.ConsistentHashFilterState{
-					{Key: "fs", Terminal: ptr.To(true)},
+					{Key: "fs", Terminal: new(true)},
 					{Key: "fs"},
 				},
 			},
@@ -160,13 +159,13 @@ func TestConstructConsistentHash(t *testing.T) {
 			spec: &kgateway.ConsistentHash{
 				Cookies: []kgateway.ConsistentHashCookie{{
 					Name: "session",
-					TTL:  ptr.To("1h30m"),
-					Path: ptr.To("/"),
+					TTL:  new("1h30m"),
+					Path: new("/"),
 					Attributes: []kgateway.ConsistentHashCookieAttribute{
-						{Name: "SameSite", Value: ptr.To("Strict")},
+						{Name: "SameSite", Value: new("Strict")},
 						{Name: "Secure"},
 					},
-					Terminal: ptr.To(true),
+					Terminal: new(true),
 				}},
 			},
 			expected: []*envoyroutev3.RouteAction_HashPolicy{{
@@ -187,7 +186,7 @@ func TestConstructConsistentHash(t *testing.T) {
 		{
 			name: "cookie with integer seconds ttl",
 			spec: &kgateway.ConsistentHash{
-				Cookies: []kgateway.ConsistentHashCookie{{Name: "session", TTL: ptr.To("3600")}},
+				Cookies: []kgateway.ConsistentHashCookie{{Name: "session", TTL: new("3600")}},
 			},
 			expected: []*envoyroutev3.RouteAction_HashPolicy{{
 				PolicySpecifier: &envoyroutev3.RouteAction_HashPolicy_Cookie_{
@@ -201,7 +200,7 @@ func TestConstructConsistentHash(t *testing.T) {
 		{
 			name: "invalid cookie ttl",
 			spec: &kgateway.ConsistentHash{
-				Cookies: []kgateway.ConsistentHashCookie{{Name: "session", TTL: ptr.To("forever")}},
+				Cookies: []kgateway.ConsistentHashCookie{{Name: "session", TTL: new("forever")}},
 			},
 			wantErr: `invalid consistentHash cookie "session" ttl: time: invalid duration "forever"`,
 		},
@@ -299,7 +298,7 @@ func TestConsistentHashIREquals(t *testing.T) {
 	assert.False(t, base().Equals(other), "disable differs")
 
 	other = base()
-	other.filterState = []*envoyroutev3.RouteAction_HashPolicy{filterStateHP("fs", false)}
+	other.filterState = []*envoyroutev3.RouteAction_HashPolicy{filterStateHP("other", false)}
 	assert.False(t, base().Equals(other), "filterState differs")
 }
 
