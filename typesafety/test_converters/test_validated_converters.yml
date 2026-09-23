@@ -1,0 +1,18 @@
+- case: result_to_validated
+  disable_cache: false
+  main: |
+    from returns.converters import result_to_validated
+    from returns.result import Result
+
+    x: Result[int, str]
+    reveal_type(result_to_validated(x))  # N: Revealed type is "returns.validated.Validated[builtins.int, builtins.str]"
+
+
+- case: validated_to_result
+  disable_cache: false
+  main: |
+    from returns.converters import validated_to_result
+    from returns.validated import Validated
+
+    x: Validated[int, str]
+    reveal_type(validated_to_result(x))  # N: Revealed type is "returns.result.Result[builtins.int, builtins.tuple[builtins.str, ...]]"

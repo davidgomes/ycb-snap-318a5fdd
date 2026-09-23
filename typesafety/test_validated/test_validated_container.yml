@@ -1,0 +1,94 @@
+- case: validated_constructors
+  disable_cache: false
+  main: |
+    from returns.result import Failure, Success
+    from returns.validated import Invalid, Valid, Validated
+
+    reveal_type(Valid(1))  # N: Revealed type is "returns.validated.Valid[builtins.int]"
+    reveal_type(Invalid(('a',)))  # N: Revealed type is "returns.validated.Invalid[builtins.str]"
+    reveal_type(Validated.from_value(1))  # N: Revealed type is "returns.validated.Validated[builtins.int, Any]"
+    reveal_type(Validated.from_failure('a'))  # N: Revealed type is "returns.validated.Validated[Any, builtins.str]"
+    reveal_type(Validated.from_result(Success(1)))  # N: Revealed type is "returns.validated.Validated[builtins.int, Any]"
+    reveal_type(Validated.from_result(Failure('a')))  # N: Revealed type is "returns.validated.Validated[Any, builtins.str]"
+
+
+- case: validated_from_validated
+  disable_cache: false
+  main: |
+    from returns.validated import Validated
+
+    x: Validated[int, str]
+    reveal_type(Validated.from_validated(x))  # N: Revealed type is "returns.validated.Validated[builtins.int, builtins.str]"
+
+
+- case: validated_methods
+  disable_cache: false
+  main: |
+    from returns.validated import Validated
+
+    def bindable(arg: int) -> Validated[float, str]:
+        ...
+
+    def lashable(errors: tuple[str, ...]) -> Validated[int, bytes]:
+        ...
+
+    x: Validated[int, str]
+    reveal_type(x.map(str))  # N: Revealed type is "returns.validated.Validated[builtins.str, builtins.str]"
+    reveal_type(x.alt(len))  # N: Revealed type is "returns.validated.Validated[builtins.int, builtins.int]"
+    reveal_type(x.bind(bindable))  # N: Revealed type is "returns.validated.Validated[builtins.float, builtins.str]"
+    reveal_type(x.bind_validated(bindable))  # N: Revealed type is "returns.validated.Validated[builtins.float, builtins.str]"
+    reveal_type(x.lash(lashable))  # N: Revealed type is "returns.validated.Validated[builtins.int, builtins.bytes]"
+    reveal_type(x.swap())  # N: Revealed type is "returns.validated.Validated[builtins.tuple[builtins.str, ...], builtins.int]"
+
+
+- case: validated_unwrap
+  disable_cache: false
+  main: |
+    from returns.validated import Validated
+
+    x: Validated[int, str]
+    reveal_type(x.unwrap())  # N: Revealed type is "builtins.int"
+    reveal_type(x.failure())  # N: Revealed type is "builtins.tuple[builtins.str, ...]"
+    reveal_type(x.value_or(None))  # N: Revealed type is "builtins.int | None"
+
+
+- case: validated_combine
+  disable_cache: false
+  main: |
+    from returns.validated import Validated
+
+    def combinator(first: int, second: float) -> str:
+        ...
+
+    x: Validated[int, str]
+    y: Validated[float, str]
+    reveal_type(Validated.combine(x, y, combinator))  # N: Revealed type is "returns.validated.Validated[builtins.str, builtins.str]"
+    reveal_type(Validated.combine_n((x, y, x), bool))  # N: Revealed type is "returns.validated.Validated[builtins.bool, builtins.str]"
+
+
+- case: validated_do_with_errors
+  disable_cache: false
+  main: |
+    from returns.validated import Validated
+
+    a: Validated[int, str]
+    b: Validated[float, bytes]
+
+    reveal_type(Validated.do(  # N: Revealed type is "returns.validated.Validated[builtins.float, builtins.str | builtins.bytes]"
+        x + y
+        for x in a
+        for y in b
+    ))
+
+
+- case: validated_do_types_missmatch
+  disable_cache: false
+  main: |
+    from returns.validated import Valid, Validated
+    from returns.result import Success
+
+    Validated.do(
+        x + y
+        for x in Success(1)  # E: Invalid type supplied in do-notation: expected "returns.validated.Validated[Any, Any]", got "returns.result.Success[builtins.int]"  [misc]
+        for y in Valid(2.5)
+    )
