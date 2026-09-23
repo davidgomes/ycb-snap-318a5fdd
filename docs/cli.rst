@@ -1561,6 +1561,49 @@ This command takes the same options as the ``sqlite-utils insert`` command - so 
 
 By default all of the SQL queries will be executed in a single transaction. To commit every 20 records, use ``--batch-size 20``.
 
+.. _cli_safe_import:
+
+Safe imports with rollback and invariants
+=========================================
+
+The ``insert``, ``upsert`` and ``bulk`` commands accept a ``--safe-mode`` option. In safe mode a checkpoint of the entire database is captured before any changes are made. If the operation fails, or any import invariant is violated after the write, the database is restored to the exact state it was in before the command ran - including any tables, columns, indexes or triggers that were created or altered - and the command exits with a non-zero status. The command only exits with status 0 if the changes were committed.
+
+When ``--safe-mode`` is used the input format is inferred if no format option is provided: files ending in ``.csv``, ``.tsv``, ``.jsonl`` or ``.ndjson`` are treated accordingly, otherwise the content is inspected to detect JSON, newline-delimited JSON, CSV or TSV.
+
+.. code-block:: bash
+
+    sqlite-utils insert data.db chickens chickens.csv --safe-mode
+    echo '[{"id": 1, "age": -1}]' | sqlite-utils bulk data.db \
+      'update chickens set age = :age where id = :id' - --safe-mode
+
+Import invariants are stored in the database itself, in an ``_import_invariants`` table. An invariant can be:
+
+- A ``SELECT`` query - the first column of the first row must be truthy
+- An aggregate expression such as ``count(*) <= 1000`` or ``max(age) < 30``, evaluated once for the table
+- Any other expression, such as ``age >= 0``, which must be true for every row in the table
+
+.. code-block:: bash
+
+    sqlite-utils add-import-invariant data.db chickens 'age >= 0'
+    # Outputs the new invariant ID, e.g. inv_3f2a1b9c0d1e
+    sqlite-utils list-import-invariants data.db chickens
+    sqlite-utils remove-import-invariant data.db chickens inv_3f2a1b9c0d1e
+
+``list-import-invariants`` outputs the ID and SQL of each invariant, separated by a tab.
+
+``validate-import-invariants`` checks the invariants against the current data in the table. It always exits with status 0 and outputs ``PASS`` or ``FAIL``, followed by the ID, SQL and error for each failing invariant:
+
+.. code-block:: bash
+
+    sqlite-utils validate-import-invariants data.db chickens
+
+``enable-safe-import`` and ``disable-safe-import`` toggle a persistent flag in the database which is required before checkpoints can be created manually using the Python ``db.create_import_checkpoint()`` method.
+
+.. code-block:: bash
+
+    sqlite-utils enable-safe-import data.db
+    sqlite-utils disable-safe-import data.db
+
 .. _cli_insert_files:
 
 Inserting data from files

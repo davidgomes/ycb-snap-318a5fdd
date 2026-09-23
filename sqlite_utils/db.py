@@ -8,11 +8,13 @@ from .utils import (
     column_affinity,
     progressbar,
     find_spatialite,
+    TypeTracker,
 )
 import binascii
 from collections import namedtuple
 from collections.abc import Mapping
 import contextlib
+import csv
 import datetime
 import decimal
 import inspect
@@ -280,6 +282,30 @@ class PrimaryKeyRequired(Exception):
 
 class InvalidColumns(Exception):
     "Specified columns do not exist"
+
+
+class SafeImportError(Exception):
+    "Base class for safe import errors"
+
+
+class SafeImportNotEnabledError(SafeImportError):
+    pass
+
+
+class CheckpointNotFoundError(SafeImportError):
+    pass
+
+
+class CheckpointNotActiveError(SafeImportError):
+    pass
+
+
+class SafeImportValidationError(SafeImportError):
+    "Raised in strict mode when import invariant validation fails"
+
+    def __init__(self, message: str, failures: List[Dict[str, Any]]) -> None:
+        super().__init__(message)
+        self.failures = failures
 
 
 class DescIndex(str):
@@ -1364,6 +1390,325 @@ class Database:
         cursor = self.execute("select InitSpatialMetadata(1)")
         result = cursor.fetchone()
         return result and bool(result[0])
+
+    # Safe import support
+
+    _SAFE_IMPORT_SETTINGS_TABLE = "_safe_import_settings"
+    _IMPORT_INVARIANTS_TABLE = "_import_invariants"
+
+    @property
+    def _checkpoints(self) -> Dict[str, Dict[str, Any]]:
+        return self.__dict__.setdefault("_safe_import_checkpoints", {})
+
+    def _safe_import_enabled(self) -> bool:
+        if self._SAFE_IMPORT_SETTINGS_TABLE not in self.table_names():
+            return False
+        row = self.execute(
+            "select value from [{}] where key = 'enabled'".format(
+                self._SAFE_IMPORT_SETTINGS_TABLE
+            )
+        ).fetchone()
+        return bool(row and row[0] == "1")
+
+    def _set_safe_import(self, enabled: bool) -> None:
+        with self.conn:
+            self.execute(
+                "create table if not exists [{}] (key text primary key, value text)".format(
+                    self._SAFE_IMPORT_SETTINGS_TABLE
+                )
+            )
+            self.execute(
+                "insert or replace into [{}] (key, value) values ('enabled', ?)".format(
+                    self._SAFE_IMPORT_SETTINGS_TABLE
+                ),
+                ["1" if enabled else "0"],
+            )
+
+    def enable_safe_import(self) -> None:
+        "Enable safe import mode for this database (persisted in the database)."
+        self._set_safe_import(True)
+
+    def disable_safe_import(self) -> None:
+        "Disable safe import mode for this database."
+        self._set_safe_import(False)
+
+    def _new_checkpoint(self) -> str:
+        if self.conn.in_transaction:
+            self.conn.commit()
+        snapshot = sqlite3.connect(":memory:")
+        self.conn.backup(snapshot)
+        checkpoint_id = "cp_" + secrets.token_hex(8)
+        self._checkpoints[checkpoint_id] = {"snapshot": snapshot, "active": True}
+        return checkpoint_id
+
+    def create_import_checkpoint(self) -> str:
+        """
+        Capture the full current state of the database (data and schema) and
+        return a checkpoint ID that can be passed to ``rollback_to_checkpoint()``.
+        """
+        if not self._safe_import_enabled():
+            raise SafeImportNotEnabledError(
+                "Safe import is not enabled - call enable_safe_import() first"
+            )
+        return self._new_checkpoint()
+
+    def _get_active_checkpoint(self, checkpoint_id: str) -> Dict[str, Any]:
+        checkpoint = self._checkpoints.get(checkpoint_id)
+        if checkpoint is None:
+            raise CheckpointNotFoundError(
+                "Checkpoint {!r} not found".format(checkpoint_id)
+            )
+        if not checkpoint["active"]:
+            raise CheckpointNotActiveError(
+                "Checkpoint {!r} has already been committed or rolled back".format(
+                    checkpoint_id
+                )
+            )
+        return checkpoint
+
+    def rollback_to_checkpoint(self, checkpoint_id: str) -> None:
+        "Restore the database to the exact state captured by the checkpoint."
+        checkpoint = self._get_active_checkpoint(checkpoint_id)
+        if self.conn.in_transaction:
+            self.conn.rollback()
+        checkpoint["snapshot"].backup(self.conn)
+        checkpoint["active"] = False
+
+    def commit_checkpoint(self, checkpoint_id: str) -> None:
+        "Accept all changes made since the checkpoint was created."
+        checkpoint = self._get_active_checkpoint(checkpoint_id)
+        if self.conn.in_transaction:
+            self.conn.commit()
+        checkpoint["active"] = False
+
+    def cleanup_checkpoint(self, checkpoint_id: str) -> None:
+        "Discard a checkpoint and release its resources."
+        checkpoint = self._checkpoints.pop(checkpoint_id, None)
+        if checkpoint is None:
+            raise CheckpointNotFoundError(
+                "Checkpoint {!r} not found".format(checkpoint_id)
+            )
+        checkpoint["snapshot"].close()
+
+    def _ensure_invariants_table(self) -> None:
+        self.execute(
+            "create table if not exists [{}] ("
+            "id text primary key, table_name text not null, expression text not null"
+            ")".format(self._IMPORT_INVARIANTS_TABLE)
+        )
+
+    def add_import_invariant(self, table: str, sql: str) -> str:
+        """
+        Add an invariant for ``table``. ``sql`` is either a ``SELECT`` query whose
+        first column must be truthy, an aggregate expression evaluated once for
+        the table, or an expression that must be true for every row.
+        """
+        invariant_id = "inv_" + secrets.token_hex(6)
+        with self.conn:
+            self._ensure_invariants_table()
+            self.execute(
+                "insert into [{}] (id, table_name, expression) values (?, ?, ?)".format(
+                    self._IMPORT_INVARIANTS_TABLE
+                ),
+                [invariant_id, table, sql],
+            )
+        return invariant_id
+
+    def remove_import_invariant(self, table: str, invariant_id: str) -> None:
+        "Remove an invariant previously added with ``add_import_invariant()``."
+        if self._IMPORT_INVARIANTS_TABLE not in self.table_names():
+            return
+        with self.conn:
+            self.execute(
+                "delete from [{}] where table_name = ? and id = ?".format(
+                    self._IMPORT_INVARIANTS_TABLE
+                ),
+                [table, invariant_id],
+            )
+
+    def list_import_invariants(self, table: str) -> List[Dict[str, str]]:
+        "List invariants for ``table`` as a list of ``{id, expression}`` dicts."
+        if self._IMPORT_INVARIANTS_TABLE not in self.table_names():
+            return []
+        return [
+            {"id": row[0], "expression": row[1]}
+            for row in self.execute(
+                "select id, expression from [{}] where table_name = ? order by rowid".format(
+                    self._IMPORT_INVARIANTS_TABLE
+                ),
+                [table],
+            ).fetchall()
+        ]
+
+    def _import_invariant_tables(self) -> List[str]:
+        if self._IMPORT_INVARIANTS_TABLE not in self.table_names():
+            return []
+        return [
+            row[0]
+            for row in self.execute(
+                "select distinct table_name from [{}]".format(
+                    self._IMPORT_INVARIANTS_TABLE
+                )
+            ).fetchall()
+        ]
+
+    _AGGREGATE_RE = re.compile(
+        r"\b(count|sum|avg|min|max|total|group_concat)\s*\(", re.IGNORECASE
+    )
+
+    def _check_invariant(self, table: str, expression: str) -> Optional[str]:
+        stripped = expression.strip()
+        try:
+            if re.match(r"select\b", stripped, re.IGNORECASE):
+                row = self.execute(stripped).fetchone()
+                if not (row and row[0]):
+                    return "Query returned a falsy result: {!r}".format(
+                        row[0] if row else None
+                    )
+            elif self._AGGREGATE_RE.search(stripped):
+                row = self.execute(
+                    "select ({}) from [{}]".format(stripped, table)
+                ).fetchone()
+                if not (row and row[0]):
+                    return "Aggregate expression evaluated to {!r}".format(
+                        row[0] if row else None
+                    )
+            else:
+                count = self.execute(
+                    "select count(*) from [{}] where not coalesce(({}), 0)".format(
+                        table, stripped
+                    )
+                ).fetchone()[0]
+                if count:
+                    return "{} row(s) violate the invariant".format(count)
+        except sqlite3.Error as ex:
+            return "Error evaluating invariant: {}".format(ex)
+        return None
+
+    def validate_import_invariants(self, table: str) -> Dict[str, Any]:
+        "Evaluate every invariant for ``table``."
+        failures = []
+        for invariant in self.list_import_invariants(table):
+            error = self._check_invariant(table, invariant["expression"])
+            if error is not None:
+                failures.append(
+                    {
+                        "id": invariant["id"],
+                        "expression": invariant["expression"],
+                        "error": error,
+                    }
+                )
+        return {"valid": not failures, "failures": failures}
+
+    def _run_safely(
+        self, tables: Iterable[str], operation: Callable[[], Any], strict: bool
+    ) -> Dict[str, Any]:
+        checkpoint_id = self._new_checkpoint()
+        try:
+            operation()
+        except Exception as ex:
+            self.rollback_to_checkpoint(checkpoint_id)
+            if strict:
+                raise
+            return {
+                "success": False,
+                "checkpoint_id": checkpoint_id,
+                "failures": [],
+                "error_report": "Import failed and was rolled back: {}: {}".format(
+                    type(ex).__name__, ex
+                ),
+            }
+        failures = []
+        for table in tables:
+            for failure in self.validate_import_invariants(table)["failures"]:
+                failures.append(dict(failure, table=table))
+        if failures:
+            self.rollback_to_checkpoint(checkpoint_id)
+            report = "Import invariant validation failed, changes rolled back:\n" + (
+                "\n".join(
+                    "- {} ({}): {}".format(f["id"], f["expression"], f["error"])
+                    for f in failures
+                )
+            )
+            if strict:
+                raise SafeImportValidationError(report, failures)
+            return {
+                "success": False,
+                "checkpoint_id": checkpoint_id,
+                "failures": failures,
+                "error_report": report,
+            }
+        self.commit_checkpoint(checkpoint_id)
+        self.cleanup_checkpoint(checkpoint_id)
+        return {"success": True}
+
+    def safe_bulk_insert(
+        self, table: str, records: Iterable[Dict[str, Any]], strict: bool = False, **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Insert records inside a checkpoint, validate the table's invariants and
+        roll back to the exact pre-operation state on any failure.
+        """
+        return self._run_safely(
+            [table], lambda: self[table].insert_all(records, **kwargs), strict
+        )
+
+    def safe_bulk_upsert(
+        self,
+        table: str,
+        records: Iterable[Dict[str, Any]],
+        pk: Any,
+        strict: bool = False,
+        **kwargs
+    ) -> Dict[str, Any]:
+        "Like ``safe_bulk_insert()`` but performs an upsert using ``pk``."
+        return self._run_safely(
+            [table], lambda: self[table].upsert_all(records, pk=pk, **kwargs), strict
+        )
+
+    def _import_records(self, table: str, records, typed: bool, safe_mode, strict):
+        def operation():
+            if typed:
+                tracker = TypeTracker()
+                self[table].insert_all(tracker.wrap(records))
+                if self[table].exists():
+                    self[table].transform(types=tracker.types)
+            else:
+                self[table].insert_all(records)
+
+        if not safe_mode:
+            operation()
+            return {"success": True}
+        return self._run_safely([table], operation, strict)
+
+    def import_csv(
+        self, table: str, source: Any, safe_mode: bool = False, strict: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Import CSV from a file path or text file-like object into ``table``,
+        detecting column types.
+        """
+        if isinstance(source, (str, pathlib.Path)):
+            with open(source, newline="", encoding="utf-8-sig") as fp:
+                rows = list(csv.DictReader(fp))
+        else:
+            rows = list(csv.DictReader(source))
+        return self._import_records(table, rows, True, safe_mode, strict)
+
+    def import_json(
+        self, table: str, data: Any, safe_mode: bool = False, strict: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Import JSON data (a list/dict, a JSON string or a file-like object) into
+        ``table``.
+        """
+        if hasattr(data, "read"):
+            data = json.load(data)
+        elif isinstance(data, (str, bytes)):
+            data = json.loads(data)
+        if isinstance(data, dict):
+            data = [data]
+        return self._import_records(table, data, False, safe_mode, strict)
 
 
 class Queryable:

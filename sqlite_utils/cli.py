@@ -853,6 +853,125 @@ def reset_counts(path, load_extension):
     db.reset_counts()
 
 
+def _safe_import_db(path, load_extension):
+    db = sqlite_utils.Database(path)
+    _register_db_for_cleanup(db)
+    _load_extensions(db, load_extension)
+    return db
+
+
+_existing_path_argument = click.argument(
+    "path",
+    type=click.Path(exists=True, file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+
+
+@cli.command(name="enable-safe-import")
+@_existing_path_argument
+@load_extension_option
+def enable_safe_import(path, load_extension):
+    """Enable safe import mode for a database
+
+    Example:
+
+    \b
+        sqlite-utils enable-safe-import data.db
+    """
+    _safe_import_db(path, load_extension).enable_safe_import()
+
+
+@cli.command(name="disable-safe-import")
+@_existing_path_argument
+@load_extension_option
+def disable_safe_import(path, load_extension):
+    """Disable safe import mode for a database
+
+    Example:
+
+    \b
+        sqlite-utils disable-safe-import data.db
+    """
+    _safe_import_db(path, load_extension).disable_safe_import()
+
+
+@cli.command(name="add-import-invariant")
+@_existing_path_argument
+@click.argument("table")
+@click.argument("sql")
+@load_extension_option
+def add_import_invariant(path, table, sql, load_extension):
+    """Add an invariant that must hold for TABLE after a --safe-mode import
+
+    SQL can be a SELECT query returning a truthy value, an aggregate
+    expression such as 'count(*) < 1000' or a per-row expression such
+    as 'age >= 0'. Outputs the ID of the new invariant.
+
+    Example:
+
+    \b
+        sqlite-utils add-import-invariant data.db chickens 'age >= 0'
+    """
+    click.echo(_safe_import_db(path, load_extension).add_import_invariant(table, sql))
+
+
+@cli.command(name="remove-import-invariant")
+@_existing_path_argument
+@click.argument("table")
+@click.argument("invariant_id")
+@load_extension_option
+def remove_import_invariant(path, table, invariant_id, load_extension):
+    """Remove an import invariant by ID
+
+    Example:
+
+    \b
+        sqlite-utils remove-import-invariant data.db chickens inv_1a2b3c
+    """
+    _safe_import_db(path, load_extension).remove_import_invariant(table, invariant_id)
+
+
+@cli.command(name="list-import-invariants")
+@_existing_path_argument
+@click.argument("table")
+@load_extension_option
+def list_import_invariants(path, table, load_extension):
+    """List import invariants for TABLE, showing ID and SQL
+
+    Example:
+
+    \b
+        sqlite-utils list-import-invariants data.db chickens
+    """
+    for invariant in _safe_import_db(path, load_extension).list_import_invariants(
+        table
+    ):
+        click.echo("{}\t{}".format(invariant["id"], invariant["expression"]))
+
+
+@cli.command(name="validate-import-invariants")
+@_existing_path_argument
+@click.argument("table")
+@load_extension_option
+def validate_import_invariants(path, table, load_extension):
+    """Check the import invariants for TABLE against its current data
+
+    Example:
+
+    \b
+        sqlite-utils validate-import-invariants data.db chickens
+    """
+    result = _safe_import_db(path, load_extension).validate_import_invariants(table)
+    if result["valid"]:
+        click.echo("PASS: all import invariants are valid")
+        return
+    click.echo("FAIL: {} invariant(s) failed validation".format(len(result["failures"])))
+    for failure in result["failures"]:
+        click.echo(
+            "{}\t{}\t{}".format(failure["id"], failure["expression"], failure["error"])
+        )
+
+
 _import_options = (
     click.option(
         "--flatten",
@@ -889,6 +1008,13 @@ _import_options = (
         "--encoding",
         help="Character encoding for input, defaults to utf-8",
     ),
+)
+
+
+_safe_mode_option = click.option(
+    "--safe-mode",
+    is_flag=True,
+    help="Roll back all changes if the operation fails or import invariants are violated",
 )
 
 
@@ -962,6 +1088,7 @@ def insert_upsert_options(*, require_pk=False):
                     default=False,
                     help="Apply STRICT mode to created table",
                 ),
+                _safe_mode_option,
             )
         ):
             fn = decorator(fn)
@@ -1006,7 +1133,12 @@ def insert_upsert_implementation(
     bulk_sql=None,
     functions=None,
     strict=False,
+    safe_mode=False,
 ):
+    if safe_mode:
+        kwargs = dict(locals(), safe_mode=False)
+        _safe_insert_upsert(kwargs)
+        return
     db = sqlite_utils.Database(path)
     _register_db_for_cleanup(db)
     _load_extensions(db, load_extension)
@@ -1186,6 +1318,53 @@ def insert_upsert_implementation(
             decoded_buffer.close()
 
 
+def _infer_format(data, filename):
+    filename = (filename or "").lower()
+    if filename.endswith(".csv"):
+        return "csv"
+    if filename.endswith(".tsv"):
+        return "tsv"
+    if filename.endswith((".jsonl", ".ndjson")):
+        return "nl"
+    text = data.decode("utf-8-sig", "ignore").strip()
+    if text.startswith(("[", "{")):
+        try:
+            json.loads(text)
+            return None
+        except ValueError:
+            if all(
+                line.strip().startswith("{") for line in text.splitlines() if line.strip()
+            ):
+                return "nl"
+            return None
+    first_line = text.splitlines()[0] if text else ""
+    if "\t" in first_line and "," not in first_line:
+        return "tsv"
+    return "csv"
+
+
+def _safe_insert_upsert(kwargs):
+    file = kwargs["file"]
+    data = file.read()
+    if not any(kwargs[key] for key in ("nl", "csv", "tsv", "lines", "text")) and not (
+        kwargs["delimiter"] or kwargs["quotechar"] or kwargs["sniff"] or kwargs["no_headers"]
+    ):
+        inferred = _infer_format(data, getattr(file, "name", None))
+        if inferred:
+            kwargs[inferred] = True
+    kwargs["file"] = io.BytesIO(data)
+    db = sqlite_utils.Database(kwargs["path"])
+    _register_db_for_cleanup(db)
+    _load_extensions(db, kwargs["load_extension"])
+    table = kwargs["table"]
+    tables = [table] if table else db._import_invariant_tables()
+    result = db._run_safely(
+        tables, lambda: insert_upsert_implementation(**kwargs), strict=False
+    )
+    if not result["success"]:
+        raise click.ClickException(result["error_report"])
+
+
 def _find_variables(tb, vars):
     to_find = list(vars)
     found = {}
@@ -1248,6 +1427,7 @@ def insert(
     not_null,
     default,
     strict,
+    safe_mode,
 ):
     """
     Insert records from FILE into a table, creating the table if it
@@ -1328,6 +1508,7 @@ def insert(
             not_null=not_null,
             default=default,
             strict=strict,
+            safe_mode=safe_mode,
         )
     except UnicodeDecodeError as ex:
         raise click.ClickException(UNICODE_ERROR.format(ex))
@@ -1365,6 +1546,7 @@ def upsert(
     load_extension,
     silent,
     strict,
+    safe_mode,
 ):
     """
     Upsert records based on their primary key. Works like 'insert' but if
@@ -1411,6 +1593,7 @@ def upsert(
             load_extension=load_extension,
             silent=silent,
             strict=strict,
+            safe_mode=safe_mode,
         )
     except UnicodeDecodeError as ex:
         raise click.ClickException(UNICODE_ERROR.format(ex))
@@ -1432,6 +1615,7 @@ def upsert(
 )
 @import_options
 @load_extension_option
+@_safe_mode_option
 def bulk(
     path,
     sql,
@@ -1453,6 +1637,7 @@ def bulk(
     no_headers,
     encoding,
     load_extension,
+    safe_mode,
 ):
     """
     Execute parameterized SQL against the provided list of documents.
@@ -1499,6 +1684,7 @@ def bulk(
             silent=False,
             bulk_sql=sql,
             functions=functions,
+            safe_mode=safe_mode,
         )
     except (OperationalError, sqlite3.IntegrityError) as e:
         raise click.ClickException(str(e))
