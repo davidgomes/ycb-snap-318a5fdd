@@ -11,6 +11,7 @@ carried along wherever the target form can hold them.
 from __future__ import annotations
 
 from typing import TypeVar
+from typing import cast
 
 from tomlkit.container import Container
 from tomlkit.container import ends_with_whitespace
@@ -57,7 +58,7 @@ def to_inline_table(key_path: str, doc: _D) -> _D:
             key_path, "Only a table can be converted to an inline table"
         )
 
-    fragments = [hit.item for hit in hits]
+    fragments = _fragments(hits)
     if _has_aot(fragments):
         raise ConversionError(
             key_path, "An array of tables cannot be placed in an inline table"
@@ -112,7 +113,7 @@ def to_standard_table(key_path: str, doc: _D) -> _D:
             key_path, "A standard table cannot be placed in an inline table"
         )
 
-    inline = hit.item
+    inline = cast(InlineTable, hit.item)
     trivia = Trivia(indent=_line_indent(inline.trivia.indent))
     if inline.trivia.comment:
         trivia.comment_ws = inline.trivia.comment_ws
@@ -152,7 +153,7 @@ def to_dotted_keys(key_path: str, doc: _D, max_depth: int | None = None) -> _D:
             key_path, "Only a table or an inline table can be flattened"
         )
 
-    fragments = [hit.item for hit in hits]
+    fragments = _fragments(hits)
     if _has_aot(fragments):
         raise ConversionError(
             key_path, "An array of tables cannot be written with dotted keys"
@@ -422,6 +423,10 @@ def _find(doc: Container, names: list[str], key_path: str) -> list[_Hit]:
     return hits
 
 
+def _fragments(hits: list[_Hit]) -> list[Table | InlineTable]:
+    return [cast("Table | InlineTable", hit.item) for hit in hits]
+
+
 def _form(hits: list[_Hit]) -> type[Table | InlineTable] | None:
     items = [hit.item for hit in hits]
     if len(items) == 1 and isinstance(items[0], InlineTable):
@@ -572,6 +577,7 @@ def _to_inline(fragments: list[Table | InlineTable]) -> InlineTable:
         if entry.key is None:
             continue
 
+        item: Item
         if entry.tables is not None:
             key, item = _key(entry.key), _to_inline(entry.tables)
         else:
@@ -679,7 +685,7 @@ def _table(
     return Table(container, trivia or Trivia(), False, super_table, name)
 
 
-def _line(prefix: list[Key], key: SingleKey, item: Item) -> tuple[SingleKey, Item]:
+def _line(prefix: list[Key], key: Key, item: Item) -> tuple[Key, Item]:
     """The body entry of the assignment ``prefix.key = item``."""
     for part in reversed(prefix):
         item = _table([(key, item)], name=part.key, super_table=True)
@@ -816,6 +822,7 @@ def _insert(
         if key is None:
             continue
 
+        assert isinstance(key, SingleKey)
         current = container._map.get(key)
         if current is None:
             container._map[key] = position
