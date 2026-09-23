@@ -27,6 +27,9 @@ type QueryResult map[ast.Var]*ast.Term
 
 // Query provides a configurable interface for performing query evaluation.
 type Query struct {
+	// ruleProfileHooks is first so the empty struct compiled without the
+	// profile build tag does not change Query's size.
+	ruleProfileHooks
 	seed                        io.Reader
 	time                        time.Time
 	cancel                      Cancel
@@ -420,6 +423,7 @@ func (q *Query) PartialRun(ctx context.Context) (partials []ast.Body, support []
 		e.inliningControl.PushDisable(q.disableInlining, false)
 	}
 
+	q.applyRuleProfiler(e)
 	e.caller = e
 	q.metrics.Timer(metrics.RegoPartialEval).Start()
 	defer q.metrics.Timer(metrics.RegoPartialEval).Stop()
@@ -603,6 +607,7 @@ func (q *Query) Iter(ctx context.Context, iter func(QueryResult) error) error {
 		strictObjects:               q.strictObjects,
 		roundTripper:                q.roundTripper,
 	}
+	q.applyRuleProfiler(e)
 	e.caller = e
 	q.metrics.Timer(metrics.RegoQueryEval).Start()
 	err := e.Run(func(e *eval) error {

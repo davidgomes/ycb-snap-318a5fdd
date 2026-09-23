@@ -101,6 +101,7 @@ type EvalContext struct {
 	metrics                     metrics.Metrics
 	txn                         storage.Transaction
 	instrument                  bool
+	ruleProfile                 bool
 	instrumentation             *topdown.Instrumentation
 	partialNamespace            string
 	queryTracers                []topdown.QueryTracer
@@ -434,6 +435,7 @@ func (pq preparedQuery) newEvalContext(ctx context.Context, options []EvalOption
 		metrics:                  nil,
 		txn:                      nil,
 		instrument:               false,
+		ruleProfile:              pq.r.ruleProfile,
 		instrumentation:          nil,
 		partialNamespace:         pq.r.partialNamespace,
 		queryTracers:             nil,
@@ -632,6 +634,7 @@ type Rego struct {
 	trace                       bool
 	instrumentation             *topdown.Instrumentation
 	instrument                  bool
+	ruleProfile                 bool
 	capture                     map[*ast.Expr]ast.Var // map exprs to generated capture vars
 	termVarID                   int
 	dump                        io.Writer
@@ -1457,6 +1460,7 @@ func (r *Rego) Eval(ctx context.Context) (ResultSet, error) {
 		EvalTransaction(r.txn),
 		EvalMetrics(r.metrics),
 		EvalInstrument(r.instrument),
+		EvalRuleProfile(r.ruleProfile),
 		EvalTime(r.time),
 		EvalInterQueryBuiltinCache(r.interQueryBuiltinCache),
 		EvalInterQueryBuiltinValueCache(r.interQueryBuiltinValueCache),
@@ -2293,6 +2297,9 @@ func (r *Rego) eval(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
 		q = q.WithHTTPRoundTripper(ectx.httpRoundTripper)
 	}
 
+	var profile *EvalProfile
+	q, profile = configureRuleProfile(q, ectx.ruleProfile)
+
 	for i := range ectx.resolvers {
 		q = q.WithResolver(ectx.resolvers[i].ref, ectx.resolvers[i].r)
 	}
@@ -2329,6 +2336,7 @@ func (r *Rego) eval(ctx context.Context, ectx *EvalContext) (ResultSet, error) {
 		return nil, nil
 	}
 
+	stampRuleProfile(rs, profile)
 	return rs, nil
 }
 

@@ -448,6 +448,32 @@ if !results.Allowed() {
 }
 ```
 
+#### Rule evaluation profiling
+
+Rule profiling counts how many times each rule is entered during a query and
+how many of those entries succeed. It is compiled in with the `profile` build
+tag. Without that tag, turning the option on leaves `Result.Profile` nil.
+
+Enable it for every evaluation of a `rego.Rego` object with
+`rego.EnableRuleProfile`, or for one prepared-query evaluation with
+`rego.EvalRuleProfile`. When profiling is disabled, `Result.Profile` is nil.
+When it is enabled, the profile lists every rule the evaluator entered,
+including rules that fail. A rule with more than one definition is counted
+once for each definition that is tried.
+
+```go
+results, err := rego.New(
+    rego.Query("data.example.authz.allow"),
+    rego.Module("example.rego", module),
+    rego.EnableRuleProfile(true),
+).Eval(ctx)
+if err != nil {
+    // Handle error.
+} else if len(results) > 0 && results[0].Profile != nil {
+    // results[0].Profile.Stat("data.example.authz.allow")
+}
+```
+
 For more examples of embedding OPA as a library see the
 [`rego`](https://pkg.go.dev/github.com/open-policy-agent/opa/v1/rego#pkg-examples)
 package in the Go documentation.

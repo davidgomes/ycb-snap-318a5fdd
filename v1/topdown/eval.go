@@ -71,6 +71,9 @@ func (ee deferredEarlyExitError) Error() string {
 // of the struct, and use something like betteralign (https://github.com/dkorunic/betteralign) if you
 // need help with that.
 type eval struct {
+	// ruleProfileHooks is first so the empty struct compiled without the
+	// profile build tag does not change eval's size.
+	ruleProfileHooks
 	ctx                         context.Context
 	metrics                     metrics.Metrics
 	seed                        io.Reader
@@ -2299,10 +2302,12 @@ func (e *evalFunc) evalOneRule(iter unifyIterator, rule *ast.Rule, args []*ast.T
 	var result *ast.Term
 
 	child.traceEnter(rule)
+	child.profileEnterRule(rule)
 
 	err := child.biunifyTerms(e.terms[1:], args, e.e.bindings, child.bindings, func() error {
 		return child.eval(func(child *eval) error {
 			child.traceExit(rule)
+			child.profileSucceedRule(rule)
 
 			// Partial evaluation must save an expression that tests the output value if the output value
 			// was not captured to handle the case where the output value may be `false`.
@@ -2348,6 +2353,7 @@ func (e *evalFunc) evalOneRule(iter unifyIterator, rule *ast.Rule, args []*ast.T
 		})
 	})
 
+	child.profileLeaveRule(rule)
 	return result, err
 }
 
@@ -2385,6 +2391,7 @@ func (e *evalFunc) partialEvalSupportRule(rule *ast.Rule, path ast.Ref) error {
 
 	e.e.childWithBindingSizeHint(rule.Body, child, ast.EstimateBodyBindingCount(rule.Body))
 	child.traceEnter(rule)
+	child.profileEnterRule(rule)
 
 	e.e.saveStack.PushQuery(nil)
 
@@ -2398,6 +2405,7 @@ func (e *evalFunc) partialEvalSupportRule(rule *ast.Rule, path ast.Ref) error {
 
 	err := child.eval(func(child *eval) error {
 		child.traceExit(rule)
+		child.profileSucceedRule(rule)
 
 		current := e.e.saveStack.PopQuery()
 		plugged := current.Plug(e.e.caller.bindings)
@@ -2426,6 +2434,7 @@ func (e *evalFunc) partialEvalSupportRule(rule *ast.Rule, path ast.Ref) error {
 		return nil
 	})
 
+	child.profileLeaveRule(rule)
 	e.e.saveSet.Pop()
 	e.e.saveStack.PopQuery()
 	return err
@@ -2923,8 +2932,10 @@ func (e evalVirtualPartial) evalAllRulesNoCache(rules []*ast.Rule) (*ast.Term, e
 	for _, rule := range rules {
 		e.e.childWithBindingSizeHint(rule.Body, child, ast.EstimateBodyBindingCount(rule.Body))
 		child.traceEnter(rule)
+		child.profileEnterRule(rule)
 		err := child.eval(func(*eval) error {
 			child.traceExit(rule)
+			child.profileSucceedRule(rule)
 			var err error
 			result, _, err = e.reduce(rule, child.bindings, result, &visitedRefs)
 			if err != nil {
@@ -2934,6 +2945,7 @@ func (e evalVirtualPartial) evalAllRulesNoCache(rules []*ast.Rule) (*ast.Term, e
 			child.traceRedo(rule)
 			return nil
 		})
+		child.profileLeaveRule(rule)
 
 		if err != nil {
 			return nil, err
@@ -2960,6 +2972,7 @@ func (e evalVirtualPartial) evalOneRulePreUnify(iter unifyIterator, rule *ast.Ru
 	e.e.childWithBindingSizeHint(rule.Body, child, ast.EstimateBodyBindingCount(rule.Body))
 
 	child.traceEnter(rule)
+	child.profileEnterRule(rule)
 	var defined bool
 
 	headKey := rule.Head.Key
@@ -2973,6 +2986,7 @@ func (e evalVirtualPartial) evalOneRulePreUnify(iter unifyIterator, rule *ast.Ru
 		return child.eval(func(child *eval) error {
 
 			child.traceExit(rule)
+			child.profileSucceedRule(rule)
 
 			term := rule.Head.Value
 			if term == nil {
@@ -3011,6 +3025,7 @@ func (e evalVirtualPartial) evalOneRulePreUnify(iter unifyIterator, rule *ast.Ru
 		})
 	})
 
+	child.profileLeaveRule(rule)
 	if err != nil {
 		return nil, err
 	}
@@ -3055,6 +3070,7 @@ func (e evalVirtualPartial) evalOneRulePostUnify(iter unifyIterator, rule *ast.R
 	e.e.childWithBindingSizeHint(rule.Body, child, ast.EstimateBodyBindingCount(rule.Body))
 
 	child.traceEnter(rule)
+	child.profileEnterRule(rule)
 	var defined bool
 
 	err := child.eval(func(child *eval) error {
@@ -3063,6 +3079,7 @@ func (e evalVirtualPartial) evalOneRulePostUnify(iter unifyIterator, rule *ast.R
 			return e.evalOneRuleContinue(iter, rule, child)
 		})
 	})
+	child.profileLeaveRule(rule)
 
 	if err != nil {
 		return err
@@ -3078,6 +3095,7 @@ func (e evalVirtualPartial) evalOneRulePostUnify(iter unifyIterator, rule *ast.R
 func (e evalVirtualPartial) evalOneRuleContinue(iter unifyIterator, rule *ast.Rule, child *eval) error {
 
 	child.traceExit(rule)
+	child.profileSucceedRule(rule)
 
 	term := rule.Head.Value
 	if term == nil {
@@ -3141,12 +3159,14 @@ func (e evalVirtualPartial) partialEvalSupportRule(rule *ast.Rule, _ ast.Ref) (b
 
 	e.e.childWithBindingSizeHint(rule.Body, child, ast.EstimateBodyBindingCount(rule.Body))
 	child.traceEnter(rule)
+	child.profileEnterRule(rule)
 
 	e.e.saveStack.PushQuery(nil)
 	var defined bool
 
 	err := child.eval(func(child *eval) error {
 		child.traceExit(rule)
+		child.profileSucceedRule(rule)
 		defined = true
 
 		current := e.e.saveStack.PopQuery()
@@ -3198,6 +3218,7 @@ func (e evalVirtualPartial) partialEvalSupportRule(rule *ast.Rule, _ ast.Ref) (b
 		e.e.saveStack.PushQuery(current)
 		return nil
 	})
+	child.profileLeaveRule(rule)
 	e.e.saveStack.PopQuery()
 	return defined, err
 }
@@ -3643,10 +3664,12 @@ func (e evalVirtualComplete) evalValueRule(iter unifyIterator, rule *ast.Rule, p
 	e.e.childWithBindingSizeHint(rule.Body, child, ast.EstimateBodyBindingCount(rule.Body))
 	child.findOne = findOne
 	child.traceEnter(rule)
+	child.profileEnterRule(rule)
 
 	var result *ast.Term
 	err := child.eval(func(child *eval) error {
 		child.traceExit(rule)
+		child.profileSucceedRule(rule)
 
 		result = child.bindings.Plug(rule.Head.Value)
 
@@ -3671,6 +3694,7 @@ func (e evalVirtualComplete) evalValueRule(iter unifyIterator, rule *ast.Rule, p
 		return nil
 	})
 
+	child.profileLeaveRule(rule)
 	return result, err
 }
 
@@ -3681,9 +3705,11 @@ func (e evalVirtualComplete) partialEval(iter unifyIterator) error {
 	for _, rule := range e.ir.Rules {
 		e.e.childWithBindingSizeHint(rule.Body, child, ast.EstimateBodyBindingCount(rule.Body))
 		child.traceEnter(rule)
+		child.profileEnterRule(rule)
 
 		err := child.eval(func(child *eval) error {
 			child.traceExit(rule)
+			child.profileSucceedRule(rule)
 			term, termbindings := child.bindings.apply(rule.Head.Value)
 
 			if err := e.evalTerm(iter, term, termbindings); err != nil {
@@ -3693,6 +3719,7 @@ func (e evalVirtualComplete) partialEval(iter unifyIterator) error {
 			child.traceRedo(rule)
 			return nil
 		})
+		child.profileLeaveRule(rule)
 
 		if err != nil {
 			return err
@@ -3756,12 +3783,14 @@ func (e evalVirtualComplete) partialEvalSupportRule(rule *ast.Rule, packagePath 
 
 	e.e.childWithBindingSizeHint(rule.Body, child, ast.EstimateBodyBindingCount(rule.Body))
 	child.traceEnter(rule)
+	child.profileEnterRule(rule)
 
 	e.e.saveStack.PushQuery(nil)
 	var defined bool
 
 	err := child.eval(func(child *eval) error {
 		child.traceExit(rule)
+		child.profileSucceedRule(rule)
 		defined = true
 
 		current := e.e.saveStack.PopQuery()
@@ -3788,6 +3817,7 @@ func (e evalVirtualComplete) partialEvalSupportRule(rule *ast.Rule, packagePath 
 		e.e.saveStack.PushQuery(current)
 		return nil
 	})
+	child.profileLeaveRule(rule)
 	e.e.saveStack.PopQuery()
 	return defined, err
 }
