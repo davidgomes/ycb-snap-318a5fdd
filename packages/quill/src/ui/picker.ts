@@ -2,6 +2,12 @@ import DropdownIcon from '../assets/icons/dropdown.svg';
 
 let optionsCounter = 0;
 
+const pickers = new WeakMap<HTMLElement, Picker>();
+
+function getPicker(select: HTMLElement) {
+  return pickers.get(select) ?? null;
+}
+
 function toggleAriaAttribute(element: HTMLElement, attribute: string) {
   element.setAttribute(
     attribute,
@@ -22,12 +28,15 @@ class Picker {
     // @ts-expect-error Fix me later
     this.select.parentNode.insertBefore(this.container, this.select);
 
+    pickers.set(select, this);
     this.label.addEventListener('mousedown', () => {
+      if (this.select.disabled) return;
       this.togglePicker();
     });
     this.label.addEventListener('keydown', (event) => {
       switch (event.key) {
         case 'Enter':
+          if (this.select.disabled) return;
           this.togglePicker();
           break;
         case 'Escape':
@@ -62,11 +71,13 @@ class Picker {
       item.setAttribute('data-label', option.textContent);
     }
     item.addEventListener('click', () => {
+      if (this.select.disabled) return;
       this.selectItem(item, true);
     });
     item.addEventListener('keydown', (event) => {
       switch (event.key) {
         case 'Enter':
+          if (this.select.disabled) return;
           this.selectItem(item, true);
           event.preventDefault();
           break;
@@ -192,7 +203,19 @@ class Picker {
       option != null &&
       option !== this.select.querySelector('option[selected]');
     this.label.classList.toggle('ql-active', isActive);
+    this.updateDisabled();
+  }
+
+  updateDisabled() {
+    const disabled = this.select.disabled;
+    this.container.classList.toggle('ql-disabled', disabled);
+    if (this.label.getAttribute('aria-disabled') !== String(disabled)) {
+      this.label.setAttribute('aria-disabled', String(disabled));
+    }
+    if (disabled && this.container.classList.contains('ql-expanded')) {
+      this.close();
+    }
   }
 }
 
-export default Picker;
+export { Picker as default, getPicker };

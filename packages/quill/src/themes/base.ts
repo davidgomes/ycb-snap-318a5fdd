@@ -5,7 +5,8 @@ import Theme from '../core/theme.js';
 import type { ThemeOptions } from '../core/theme.js';
 import ColorPicker from '../ui/color-picker.js';
 import IconPicker from '../ui/icon-picker.js';
-import Picker from '../ui/picker.js';
+import Picker, { getPicker } from '../ui/picker.js';
+import { getActiveToolbar } from '../modules/toolbar.js';
 import Tooltip from '../ui/tooltip.js';
 import type { Range } from '../core/selection.js';
 import type Clipboard from '../modules/clipboard.js';
@@ -142,6 +143,8 @@ class BaseTheme extends Theme {
     icons: Record<string, string | Record<string, string>>,
   ) {
     this.pickers = Array.from(selects).map((select) => {
+      const existing = getPicker(select);
+      if (existing != null) return existing;
       if (select.classList.contains('ql-align')) {
         if (select.querySelector('option') == null) {
           fillSelect(select, ALIGNS);
@@ -178,6 +181,13 @@ class BaseTheme extends Theme {
       return new Picker(select);
     });
     const update = () => {
+      const toolbar = (this.quill as any).getModule('toolbar');
+      if (
+        toolbar?.container != null &&
+        getActiveToolbar(toolbar.container) !== toolbar
+      ) {
+        return;
+      }
       this.pickers.forEach((picker) => {
         picker.update();
       });
@@ -204,13 +214,21 @@ BaseTheme.DEFAULTS = merge({}, Theme.DEFAULTS, {
               this.quill.uploader.options.mimetypes.join(', '),
             );
             fileInput.classList.add('ql-image');
+            const { container } = this;
             fileInput.addEventListener('change', () => {
-              const range = this.quill.getSelection(true);
-              this.quill.uploader.upload(range, fileInput.files);
+              const toolbar = getActiveToolbar(container);
+              if (toolbar != null && toolbar.quill.isEnabled()) {
+                const range = toolbar.quill.getSelection(true);
+                toolbar.quill.uploader.upload(range, fileInput.files);
+              }
               fileInput.value = '';
             });
             this.container.appendChild(fileInput);
           }
+          fileInput.setAttribute(
+            'accept',
+            this.quill.uploader.options.mimetypes.join(', '),
+          );
           fileInput.click();
         },
         video() {

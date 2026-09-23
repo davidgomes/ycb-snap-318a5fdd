@@ -4,6 +4,7 @@ import Quill from '../core/quill.js';
 import logger from '../core/logger.js';
 import Module from '../core/module.js';
 import type { Range } from '../core/selection.js';
+import { getPicker } from '../ui/picker.js';
 
 const debug = logger('quill:toolbar');
 
@@ -45,7 +46,6 @@ class Toolbar extends Module<ToolbarProps> {
       return;
     }
     this.container.classList.add('ql-toolbar');
-    this.controls = [];
     this.handlers = {};
     if (this.options.handlers) {
       Object.keys(this.options.handlers).forEach((format) => {
@@ -55,16 +55,35 @@ class Toolbar extends Module<ToolbarProps> {
         }
       });
     }
+    const group = getGroup(this.container);
+    this.controls = group.controls;
+    group.toolbars.add(this);
+    if (group.active == null || !isLive(group.active)) {
+      group.active = this;
+    }
     Array.from(this.container.querySelectorAll('button, select')).forEach(
       (input) => {
         // @ts-expect-error
         this.attach(input);
       },
     );
-    this.quill.on(Quill.events.EDITOR_CHANGE, () => {
-      const [range] = this.quill.selection.getRange(); // quill.getSelection triggers update
-      this.update(range);
+    this.quill.on(Quill.events.EDITOR_CHANGE, (type, range) => {
+      if (
+        group.active !== this &&
+        type === Quill.events.SELECTION_CHANGE &&
+        range != null
+      ) {
+        activate(group, this);
+        return;
+      }
+      if (group.active !== this) return;
+      const [current] = this.quill.selection.getRange(); // quill.getSelection triggers update
+      this.update(current);
     });
+    this.quill.root.addEventListener('focus', () => {
+      if (group.active !== this) activate(group, this);
+    });
+    if (group.active === this) syncDisabled(group);
   }
 
   addHandler(format: string, handler: Handler) {
@@ -87,53 +106,79 @@ class Toolbar extends Module<ToolbarProps> {
       debug.warn('ignoring attaching to nonexistent format', format, input);
       return;
     }
+    // @ts-expect-error
+    const group = getGroup(this.container);
+    if (group.listeners.has(input)) return;
     const eventName = input.tagName === 'SELECT' ? 'change' : 'click';
-    input.addEventListener(eventName, (e) => {
-      let value;
-      if (input.tagName === 'SELECT') {
-        // @ts-expect-error
-        if (input.selectedIndex < 0) return;
-        // @ts-expect-error
-        const selected = input.options[input.selectedIndex];
-        if (selected.hasAttribute('selected')) {
-          value = false;
-        } else {
-          value = selected.value || false;
-        }
-      } else {
-        if (input.classList.contains('ql-active')) {
-          value = false;
-        } else {
-          // @ts-expect-error
-          value = input.value || !input.hasAttribute('value');
-        }
+    const name = format;
+    const listener = (e: Event) => {
+      const toolbar = getActive(group);
+      if (toolbar == null || !toolbar.quill.isEnabled()) {
         e.preventDefault();
+        return;
       }
-      this.quill.focus();
-      const [range] = this.quill.selection.getRange();
-      if (this.handlers[format] != null) {
-        this.handlers[format].call(this, value);
-      } else if (
-        // @ts-expect-error
-        this.quill.scroll.query(format).prototype instanceof EmbedBlot
-      ) {
-        value = prompt(`Enter ${format}`); // eslint-disable-line no-alert
-        if (!value) return;
-        this.quill.updateContents(
-          new Delta()
-            // @ts-expect-error Fix me later
-            .retain(range.index)
-            // @ts-expect-error Fix me later
-            .delete(range.length)
-            .insert({ [format]: value }),
-          Quill.sources.USER,
-        );
-      } else {
-        this.quill.format(format, value, Quill.sources.USER);
-      }
-      this.update(range);
-    });
+      toolbar.handle(name, input, e);
+    };
+    input.addEventListener(eventName, listener);
+    group.listeners.set(input, { eventName, listener });
     this.controls.push([format, input]);
+  }
+
+  detach(input: HTMLElement) {
+    // @ts-expect-error
+    const group = getGroup(this.container);
+    const entry = group.listeners.get(input);
+    if (entry == null) return;
+    input.removeEventListener(entry.eventName, entry.listener);
+    group.listeners.delete(input);
+    const index = group.controls.findIndex(([, control]) => control === input);
+    if (index >= 0) group.controls.splice(index, 1);
+  }
+
+  handle(format: string, input: HTMLElement, e: Event) {
+    let value;
+    if (input.tagName === 'SELECT') {
+      // @ts-expect-error
+      if (input.selectedIndex < 0) return;
+      // @ts-expect-error
+      const selected = input.options[input.selectedIndex];
+      if (selected.hasAttribute('selected')) {
+        value = false;
+      } else {
+        value = selected.value || false;
+      }
+    } else {
+      if (input.classList.contains('ql-active')) {
+        value = false;
+      } else {
+        // @ts-expect-error
+        value = input.value || !input.hasAttribute('value');
+      }
+      e.preventDefault();
+    }
+    this.quill.focus();
+    const [range] = this.quill.selection.getRange();
+    if (this.handlers[format] != null) {
+      this.handlers[format].call(this, value);
+    } else if (
+      // @ts-expect-error
+      this.quill.scroll.query(format).prototype instanceof EmbedBlot
+    ) {
+      value = prompt(`Enter ${format}`); // eslint-disable-line no-alert
+      if (!value) return;
+      this.quill.updateContents(
+        new Delta()
+          // @ts-expect-error Fix me later
+          .retain(range.index)
+          // @ts-expect-error Fix me later
+          .delete(range.length)
+          .insert({ [format]: value }),
+        Quill.sources.USER,
+      );
+    } else {
+      this.quill.format(format, value, Quill.sources.USER);
+    }
+    this.update(range);
   }
 
   update(range: Range | null) {
@@ -179,10 +224,166 @@ class Toolbar extends Module<ToolbarProps> {
         input.classList.toggle('ql-active', isActive);
         input.setAttribute('aria-pressed', isActive.toString());
       }
+      const picker = input.tagName === 'SELECT' ? getPicker(input) : null;
+      if (picker != null) picker.update();
     });
   }
 }
 Toolbar.DEFAULTS = {};
+
+interface ToolbarGroup {
+  container: HTMLElement;
+  toolbars: Set<Toolbar>;
+  active: Toolbar | null;
+  controls: [string, HTMLElement][];
+  listeners: Map<
+    HTMLElement,
+    { eventName: string; listener: (e: Event) => void }
+  >;
+  observer: MutationObserver | null;
+}
+
+const groups = new WeakMap<HTMLElement, ToolbarGroup>();
+
+function isLive(toolbar: Toolbar) {
+  return toolbar.quill.root.isConnected;
+}
+
+function getGroup(container: HTMLElement): ToolbarGroup {
+  let group = groups.get(container);
+  if (group == null) {
+    group = {
+      container,
+      toolbars: new Set(),
+      active: null,
+      controls: [],
+      listeners: new Map(),
+      observer: null,
+    };
+    groups.set(container, group);
+    observe(group);
+  }
+  return group;
+}
+
+function getActive(group: ToolbarGroup) {
+  prune(group);
+  return group.active;
+}
+
+function prune(group: ToolbarGroup) {
+  group.toolbars.forEach((toolbar) => {
+    if (!isLive(toolbar)) group.toolbars.delete(toolbar);
+  });
+  if (group.active != null && !isLive(group.active)) {
+    group.active = null;
+    const fileInput = group.container.querySelector(
+      'input.ql-image[type=file]',
+    );
+    if (fileInput != null) fileInput.remove();
+    group.controls.forEach(([, input]) => {
+      if (input.tagName === 'SELECT') {
+        const picker = getPicker(input);
+        if (picker != null) picker.close();
+      }
+    });
+    Toolbar.prototype.update.call({ controls: group.controls } as any, null);
+    syncDisabled(group);
+  }
+  if (group.toolbars.size === 0 && group.observer != null) {
+    group.observer.disconnect();
+    group.observer = null;
+    group.listeners.forEach(({ eventName, listener }, input) => {
+      input.removeEventListener(eventName, listener);
+    });
+    group.listeners.clear();
+    group.controls.splice(0, group.controls.length);
+    groups.delete(group.container);
+  }
+}
+
+function activate(group: ToolbarGroup, toolbar: Toolbar) {
+  if (!isLive(toolbar)) return;
+  group.active = toolbar;
+  prune(group);
+  const fileInput = group.container.querySelector(
+    'input.ql-image[type=file]',
+  );
+  const uploader = (toolbar.quill as any).uploader;
+  if (fileInput != null && uploader?.options?.mimetypes) {
+    fileInput.setAttribute('accept', uploader.options.mimetypes.join(', '));
+  }
+  syncDisabled(group);
+  const [range] = toolbar.quill.selection.getRange();
+  toolbar.update(range);
+}
+
+function syncDisabled(group: ToolbarGroup) {
+  const active = group.active;
+  const disabled = active == null || !active.quill.isEnabled();
+  group.controls.forEach(([, input]) => {
+    const control = input as HTMLButtonElement | HTMLSelectElement;
+    if (control.disabled !== disabled) control.disabled = disabled;
+    if (input.tagName === 'SELECT') {
+      const picker = getPicker(input);
+      if (picker != null) picker.updateDisabled();
+    }
+  });
+}
+
+function observe(group: ToolbarGroup) {
+  group.observer = new MutationObserver((mutations) => {
+    let controlsChanged = false;
+    mutations.forEach((mutation) => {
+      if (mutation.type !== 'childList') return;
+      if (!group.container.contains(mutation.target)) return;
+      mutation.removedNodes.forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        const inputs = [node, ...Array.from(node.querySelectorAll('button'))];
+        inputs.forEach((input) => {
+          if (input.tagName !== 'BUTTON' || input.isConnected) return;
+          const entry = group.listeners.get(input);
+          if (entry == null) return;
+          input.removeEventListener(entry.eventName, entry.listener);
+          group.listeners.delete(input);
+          const index = group.controls.findIndex(([, c]) => c === input);
+          if (index >= 0) group.controls.splice(index, 1);
+        });
+      });
+      mutation.addedNodes.forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        const inputs = [node, ...Array.from(node.querySelectorAll('button'))];
+        inputs.forEach((input) => {
+          if (input.tagName !== 'BUTTON') return;
+          if (!group.container.contains(input)) return;
+          if (group.listeners.has(input)) return;
+          const toolbar =
+            getActive(group) ?? Array.from(group.toolbars).find(isLive);
+          if (toolbar == null) return;
+          toolbar.attach(input);
+          controlsChanged = true;
+        });
+      });
+    });
+    prune(group);
+    syncDisabled(group);
+    if (controlsChanged && group.active != null) {
+      const [range] = group.active.quill.selection.getRange();
+      group.active.update(range);
+    }
+  });
+  group.observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class'],
+  });
+}
+
+function getActiveToolbar(container: HTMLElement) {
+  const group = groups.get(container);
+  return group == null ? null : getActive(group);
+}
 
 function addButton(container: HTMLElement, format: string, value?: string) {
   const input = document.createElement('button');
@@ -309,4 +510,4 @@ Toolbar.DEFAULTS = {
   },
 };
 
-export { Toolbar as default, addControls };
+export { Toolbar as default, addControls, getActiveToolbar };

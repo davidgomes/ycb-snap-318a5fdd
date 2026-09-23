@@ -245,4 +245,75 @@ describe('Toolbar', () => {
       expect(boldButton?.classList.contains('ql-active')).toBe(true);
     });
   });
+
+  describe('shared container', () => {
+    const setup = () => {
+      const toolbar = createContainer();
+      addControls(toolbar, [['bold'], [{ size: ['small', false, 'large'] }]]);
+      const make = () =>
+        new Quill(createContainer('<p>0123</p>'), {
+          modules: { toolbar: { container: toolbar } },
+          theme: 'snow',
+          registry: createRegistry([SizeClass, Bold]),
+        });
+      const a = make();
+      const b = make();
+      return { toolbar, a, b };
+    };
+
+    test('no duplicated pickers and targets active editor', () => {
+      const { toolbar, a, b } = setup();
+      expect(toolbar.querySelectorAll('.ql-picker').length).toBe(1);
+      b.setSelection(1, 2, 'user');
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLElement;
+      bold.click();
+      expect(b.getContents().ops[1]).toEqual({
+        insert: '12',
+        attributes: { bold: true },
+      });
+      expect(a.getContents().ops[0].attributes).toBeUndefined();
+      expect(bold.classList.contains('ql-active')).toBe(true);
+      a.setSelection(0, 0, 'user');
+      expect(bold.classList.contains('ql-active')).toBe(false);
+    });
+
+    test('disabled active editor', async () => {
+      const { toolbar, a, b } = setup();
+      b.setSelection(1, 2, 'user');
+      b.disable();
+      await new Promise((r) => setTimeout(r));
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLButtonElement;
+      expect(bold.disabled).toBe(true);
+      expect(
+        toolbar.querySelector('.ql-picker')?.classList.contains('ql-disabled'),
+      ).toBe(true);
+      bold.click();
+      expect(b.getContents().ops[0].attributes).toBeUndefined();
+      a.setSelection(1, 2, 'user');
+      expect(bold.disabled).toBe(false);
+    });
+
+    test('removed editor and dynamic buttons', async () => {
+      const { toolbar, a, b } = setup();
+      b.setSelection(1, 2, 'user');
+      b.container.remove();
+      const bold = toolbar.querySelector('button.ql-bold') as HTMLElement;
+      bold.click();
+      expect(a.getContents().ops[0].attributes).toBeUndefined();
+      a.setSelection(0, 2, 'user');
+      const button = document.createElement('button');
+      button.classList.add('ql-bold');
+      toolbar.appendChild(button);
+      await new Promise((r) => setTimeout(r));
+      button.remove();
+      await new Promise((r) => setTimeout(r));
+      toolbar.appendChild(button);
+      await new Promise((r) => setTimeout(r));
+      button.click();
+      expect(a.getContents().ops[0]).toEqual({
+        insert: '01',
+        attributes: { bold: true },
+      });
+    });
+  });
 });
