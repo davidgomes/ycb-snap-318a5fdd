@@ -42,6 +42,7 @@ import { collectModuleDurationsDiagnostic, collectSourceModulesLocations } from 
 import { VitestPackageInstaller } from './packageInstaller'
 import { createPool } from './pool'
 import { TestProject } from './project'
+import { recordFileDurations } from './sequencers/duration-history'
 import { getDefaultTestProject, resolveBrowserProjects, resolveProjects } from './projects/resolveProjects'
 import { BlobReporter, readBlobs } from './reporters/blob'
 import { HangingProcessReporter } from './reporters/hanging-process'
@@ -940,6 +941,13 @@ export class Vitest {
           }
         }
         finally {
+          try {
+            await recordFileDurations(this, this.state.getFiles())
+          }
+          catch (error) {
+            this.logger.warn(`Failed to record test file durations: ${(error as Error)?.message ?? error}`)
+          }
+
           const coverage = await this.coverageProvider?.generateCoverage({ allTestsRun })
 
           const errors = this.state.getUnhandledErrors()

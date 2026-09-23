@@ -56,6 +56,91 @@ function parseInspector(inspect: string | undefined | boolean | number) {
   return { host, port: Number(port) || defaultInspectPort }
 }
 
+const shardStrategies = ['hash', 'time', 'round-robin', 'affinity']
+const durationSmoothingStrategies = ['latest', 'average', 'p95', 'median']
+const durationFallbackStrategies = ['hash', 'equal-split']
+
+function assertOneOf(name: string, value: unknown, allowed: string[]) {
+  if (value !== undefined && !allowed.includes(value as string)) {
+    throw new Error(
+      `"sequence.${name}" must be one of ${allowed.map(v => `"${v}"`).join(', ')}, received: ${JSON.stringify(value)}`,
+    )
+  }
+}
+
+function assertBoolean(name: string, value: unknown) {
+  if (value !== undefined && typeof value !== 'boolean') {
+    throw new TypeError(`"sequence.${name}" must be a boolean, received: ${JSON.stringify(value)}`)
+  }
+}
+
+function assertNumber(name: string, value: unknown, requirement: string, isValid: (value: number) => boolean) {
+  if (value !== undefined && (typeof value !== 'number' || Number.isNaN(value) || !isValid(value))) {
+    throw new Error(`"sequence.${name}" must be ${requirement}, received: ${JSON.stringify(value)}`)
+  }
+}
+
+function resolveSequenceDurationOptions(sequence: ResolvedConfig['sequence']) {
+  assertOneOf('shardStrategy', sequence.shardStrategy, shardStrategies)
+  assertBoolean('balanceShardsByTime', sequence.balanceShardsByTime)
+  assertBoolean('recordFileDurations', sequence.recordFileDurations)
+  assertBoolean('durationBasedSorting', sequence.durationBasedSorting)
+  assertNumber('durationHistoryTTL', sequence.durationHistoryTTL, 'a finite number greater than or equal to 0', v => Number.isFinite(v) && v >= 0)
+  const historyPath: unknown = sequence.durationHistoryPath
+  if (
+    historyPath !== undefined
+    && (typeof historyPath !== 'string' || historyPath.length === 0 || historyPath.trim() !== historyPath)
+  ) {
+    throw new Error(
+      `"sequence.durationHistoryPath" must be a non-empty string without leading or trailing whitespace, received: ${JSON.stringify(historyPath)}`,
+    )
+  }
+  assertNumber('durationHistoryMaxRuns', sequence.durationHistoryMaxRuns, 'an integer greater than or equal to 1', v => Number.isInteger(v) && v >= 1)
+  assertOneOf('durationSmoothing', sequence.durationSmoothing, durationSmoothingStrategies)
+  const rules: unknown = sequence.shardAffinityRules
+  if (rules !== undefined) {
+    if (!Array.isArray(rules)) {
+      throw new TypeError(`"sequence.shardAffinityRules" must be an array, received: ${JSON.stringify(rules)}`)
+    }
+    rules.forEach((rule, index) => {
+      if (
+        !rule
+        || typeof rule !== 'object'
+        || typeof rule.pattern !== 'string'
+        || typeof rule.shardIndex !== 'number'
+        || !Number.isInteger(rule.shardIndex)
+        || rule.shardIndex < 0
+      ) {
+        throw new Error(
+          `"sequence.shardAffinityRules[${index}]" must be an object with a string "pattern" and a non-negative integer "shardIndex", received: ${JSON.stringify(rule)}`,
+        )
+      }
+    })
+  }
+  assertNumber('rebalanceThreshold', sequence.rebalanceThreshold, 'a number between 0 and 1', v => v >= 0 && v <= 1)
+  assertNumber('isolateSlowThreshold', sequence.isolateSlowThreshold, 'a number greater than or equal to 0', v => v >= 0)
+  assertOneOf('durationFallbackStrategy', sequence.durationFallbackStrategy, durationFallbackStrategies)
+
+  sequence.balanceShardsByTime ??= false
+  if (sequence.balanceShardsByTime && sequence.shardStrategy === undefined) {
+    sequence.shardStrategy = 'time'
+  }
+  sequence.shardStrategy ??= 'hash'
+  if (sequence.shardStrategy !== 'time') {
+    sequence.balanceShardsByTime = false
+  }
+  sequence.recordFileDurations ??= false
+  sequence.durationBasedSorting ??= false
+  sequence.durationHistoryTTL ??= 0
+  sequence.durationHistoryPath ??= 'duration-history.json'
+  sequence.durationHistoryMaxRuns ??= 1
+  sequence.durationSmoothing ??= 'latest'
+  sequence.shardAffinityRules ??= []
+  sequence.rebalanceThreshold ??= 0
+  sequence.isolateSlowThreshold ??= 0
+  sequence.durationFallbackStrategy ??= 'hash'
+}
+
 /**
  * @deprecated Internal function
  */
@@ -774,6 +859,7 @@ export function resolveConfig(
   }
   resolved.sequence.groupOrder ??= 0
   resolved.sequence.hooks ??= 'stack'
+  resolveSequenceDurationOptions(resolved.sequence)
   // Set seed if either files or tests are shuffled
   if (resolved.sequence.sequencer === RandomSequencer || resolved.sequence.shuffle) {
     resolved.sequence.seed ??= Date.now()
