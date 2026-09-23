@@ -11,6 +11,7 @@ import type { TResponseBody } from '../types/TResponseBody.js';
 import { Buffer } from 'buffer';
 import Stream from 'stream';
 import type BrowserWindow from '../../window/BrowserWindow.js';
+import WindowBrowserContext from '../../window/WindowBrowserContext.js';
 
 /**
  * Fetch body utility.
@@ -241,6 +242,75 @@ export default class FetchBodyUtility {
 			);
 		}
 	}
+
+	/**
+	 * Consumes a request or response body as an async task of the browser frame.
+	 *
+	 * The returned promise is rejected with an "AbortError" if the task is aborted before the body has been consumed (e.g. when the page is closed or navigated).
+	 *
+	 * Once the browser frame has been closed, only empty or fully buffered bodies can be consumed.
+	 *
+	 * @param window Window.
+	 * @param requestOrResponse Request or response.
+	 * @param requestOrResponse.body Body.
+	 * @param consume Consumes the body.
+	 * @param [onAbort] Called when the task is aborted.
+	 * @returns Promise.
+	 */
+	public static consumeBodyAsAsyncTask<T>(
+		window: BrowserWindow,
+		requestOrResponse: {
+			body: ReadableStream | null;
+			[PropertySymbol.buffer]?: Buffer | null;
+			[PropertySymbol.aborted]: boolean;
+		},
+		consume: () => Promise<T>,
+		onAbort?: () => void
+	): Promise<T> {
+		const asyncTaskManager = new WindowBrowserContext(window).getAsyncTaskManager();
+
+		if (!asyncTaskManager) {
+			if (!requestOrResponse.body || requestOrResponse[PropertySymbol.buffer]) {
+				return consume();
+			}
+			return Promise.reject(this.getAbortError(window));
+		}
+
+		return new Promise((resolve, reject) => {
+			const taskID = asyncTaskManager.startTask(() => {
+				requestOrResponse[PropertySymbol.aborted] = true;
+				if (onAbort) {
+					onAbort();
+				}
+				reject(this.getAbortError(window));
+			});
+
+			consume().then(
+				(result) => {
+					asyncTaskManager.endTask(taskID);
+					resolve(result);
+				},
+				(error) => {
+					asyncTaskManager.endTask(taskID);
+					reject(error);
+				}
+			);
+		});
+	}
+
+	/**
+	 * Returns the error used when reading a body is aborted.
+	 *
+	 * @param window Window.
+	 * @returns Error.
+	 */
+	private static getAbortError(window: BrowserWindow): DOMException {
+		return new window.DOMException(
+			'Failed to read response body: The stream was aborted.',
+			DOMExceptionNameEnum.abortError
+		);
+	}
+
 	/**
 	 * Wraps a given value in a browser ReadableStream.
 	 *
