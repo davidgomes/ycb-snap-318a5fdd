@@ -2058,6 +2058,7 @@ export function flatten<T, E1, E2>(nested: Result<Result<T, E2>, E1>): Result<T,
 
   @param results The `Result`s to combine into a single `Result`.
  */
+export function sequence(results: readonly []): Result<[], never>;
 export function sequence<const A extends readonly AnyResult[]>(results: A): All<A>;
 export function sequence<T, E>(results: Iterable<Result<T, E>>): Result<Array<T>, E>;
 export function sequence(results: Iterable<AnyResult>): Result<Array<unknown>, unknown> {

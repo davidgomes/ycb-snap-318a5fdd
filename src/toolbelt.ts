@@ -174,7 +174,7 @@ export function fromResult<T extends {}>(result: Result<T, unknown>): Maybe<T> {
   import { sequenceMaybeAsResult } from 'true-myth/toolbelt';
 
   sequenceMaybeAsResult('missing', [maybe.just(1), maybe.just(2)]); // Ok([1, 2])
-  sequenceMaybeAsResult('missing', [maybe.just(1), maybe.nothing()]); // Err('missing')
+  sequenceMaybeAsResult('missing', [maybe.just(1), maybe.nothing<number>()]); // Err('missing')
   ```
 
   @param errValue The error to use if any item is `Nothing`.
@@ -303,7 +303,9 @@ export function zipMaybeAsResult<A extends {}, B extends {}, E>(
   errValue: E,
   a?: Maybe<A>,
   b?: Maybe<B>
-): Result<[A, B], E> | (<A extends {}, B extends {}>(a: Maybe<A>, b: Maybe<B>) => Result<[A, B], E>) {
+):
+  | Result<[A, B], E>
+  | (<A extends {}, B extends {}>(a: Maybe<A>, b: Maybe<B>) => Result<[A, B], E>) {
   const op = <A extends {}, B extends {}>(ma: Maybe<A>, mb: Maybe<B>) =>
     toOkOrErr(errValue, zip(ma, mb));
   return a === undefined ? op : op(a, b as Maybe<B>);

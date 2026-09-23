@@ -1905,9 +1905,7 @@ export type SequencedValues<A extends readonly AnyMaybe[]> = {
 
   @param maybes The `Maybe`s to combine into a single `Maybe`.
  */
-export function sequence<const A extends readonly AnyMaybe[]>(
-  maybes: A
-): Maybe<SequencedValues<A>>;
+export function sequence<const A extends readonly AnyMaybe[]>(maybes: A): Maybe<SequencedValues<A>>;
 export function sequence<T extends {}>(maybes: Iterable<Maybe<T>>): Maybe<Array<T>>;
 export function sequence(maybes: Iterable<AnyMaybe>): Maybe<Array<{}>> {
   return traverse(maybes, identity);
@@ -1929,9 +1927,10 @@ export function sequence(maybes: Iterable<AnyMaybe>): Maybe<Array<{}>> {
   ```ts
   import * as maybe from 'true-myth/maybe';
 
-  const parse = (s: string) => maybe.of(Number.parseInt(s, 10)).andThen(
-    (n) => Number.isNaN(n) ? maybe.nothing<number>() : maybe.just(n)
-  );
+  const parse = (s: string) => {
+    const n = Number.parseInt(s, 10);
+    return Number.isNaN(n) ? maybe.nothing<number>() : maybe.just(n);
+  };
 
   maybe.traverse(['1', '2', '3'], parse); // Just([1, 2, 3])
   maybe.traverse(['1', 'nope', '3'], parse); // Nothing
@@ -2064,10 +2063,7 @@ export function compact<T extends {}>(maybes: Iterable<Maybe<T>>): Array<T> {
   @param items The items to apply `fn` to.
   @param fn    A function producing a `Maybe` from each item.
  */
-export function filterMap<A, B extends {}>(
-  items: Iterable<A>,
-  fn: (item: A) => Maybe<B>
-): Array<B>;
+export function filterMap<A, B extends {}>(items: Iterable<A>, fn: (item: A) => Maybe<B>): Array<B>;
 /**
   Apply a function which produces a {@linkcode Maybe} to every item in an
   iterable, keeping the values of all {@linkcode Just} results and silently

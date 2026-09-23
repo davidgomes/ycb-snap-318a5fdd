@@ -2729,6 +2729,7 @@ export function flatten<T, E, F>(nestedTask: Task<Task<T, E>, F>): Task<T, E | F
 
   @param tasks The tasks to wait on.
  */
+export function sequence(tasks: readonly []): Task<[], never>;
 export function sequence<const A extends readonly AnyTask[]>(tasks: A): All<A>;
 export function sequence<T, E>(tasks: Iterable<Task<T, E>>): Task<Array<T>, E>;
 export function sequence(tasks: Iterable<AnyTask>): Task<unknown, unknown> {
@@ -2795,10 +2796,10 @@ export function traverse<A, T, E>(
   ```ts
   import * as task from 'true-myth/task';
 
-  const save = (record: Record) => task.fromPromise(db.save(record));
+  const save = (row: Row) => task.fromPromise(db.save(row));
 
-  // Saves each record only after the previous one has been saved.
-  let saved = await task.traverseSerial(records, save);
+  // Saves each row only after the previous one has been saved.
+  let saved = await task.traverseSerial(rows, save);
   ```
 
   @param items The items to apply `fn` to.
