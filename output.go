@@ -33,6 +33,8 @@ type Output struct {
 	fgColor   Color
 	bgSync    *sync.Once
 	bgColor   Color
+
+	preserveResets bool
 }
 
 // Environ is an interface for getting environment variables.
@@ -131,6 +133,23 @@ func WithUnsafe() OutputOption {
 	return func(o *Output) {
 		o.unsafe = true
 	}
+}
+
+// WithPreserveResets returns a new OutputOption that sets whether Styles
+// created by the Output, its template helpers, and Output.Truncate re-open
+// the enclosing style after resets. See Style.PreserveResets.
+func WithPreserveResets(v bool) OutputOption {
+	return func(o *Output) {
+		o.preserveResets = v
+	}
+}
+
+// String returns a new Style for the Output's profile. The Style inherits the
+// Output's preserve-resets default.
+func (o Output) String(s ...string) Style {
+	st := o.Profile.String(s...)
+	st.preserveResets = o.preserveResets
+	return st
 }
 
 // ForegroundColor returns the terminal's default foreground color.

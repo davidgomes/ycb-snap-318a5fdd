@@ -2,8 +2,10 @@ package termenv
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
+	"github.com/muesli/termenv/ansi"
 	"github.com/rivo/uniseg"
 )
 
@@ -24,7 +26,8 @@ const (
 type Style struct {
 	profile Profile
 	string
-	styles []string
+	styles         []string
+	preserveResets bool
 }
 
 // String returns a new Style.
@@ -53,7 +56,33 @@ func (t Style) Styled(s string) string {
 		return s
 	}
 
-	return fmt.Sprintf("%s%sm%s%sm", CSI, seq, s, CSI+ResetSeq)
+	styled := fmt.Sprintf("%s%sm%s%sm", CSI, seq, s, CSI+ResetSeq)
+	if t.preserveResets {
+		styled = ansi.TruncateANSI(styled, math.MaxInt, ansi.TruncateOptions{PreserveResets: true})
+	}
+	return styled
+}
+
+// PreserveResets makes the Style re-open itself after each run of SGR resets
+// in its text, so styled text nested inside it doesn't end it early.
+func (t Style) PreserveResets() Style {
+	t.preserveResets = true
+	return t
+}
+
+// Truncate renders the Style with its text cut to at most width terminal
+// cells. Escape sequences are never split, the tail counts toward width and
+// inherits the style active at the cut, and open styles and hyperlinks get
+// closed. opts.PreserveResets enables PreserveResets for this call.
+//
+// Under the Ascii profile it returns the plain text cut to width, without a
+// tail.
+func (t Style) Truncate(width int, opts TruncateOptions) string {
+	if t.profile == Ascii {
+		return ansi.TruncateANSI(ansi.StripANSI(t.string), width, ansi.TruncateOptions{})
+	}
+	t.preserveResets = t.preserveResets || opts.PreserveResets
+	return ansi.TruncateANSI(t.String(), width, ansi.TruncateOptions{Tail: opts.Tail})
 }
 
 // Foreground sets a foreground color.
