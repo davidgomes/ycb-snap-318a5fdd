@@ -97,7 +97,32 @@ clause ->
   ( limit_clause
   | select_clause
   | other_clause
+  | pipe_clause
   | set_operation ) {% unwrap %}
+
+pipe_clause -> %PIPE (%RESERVED_CLAUSE | %RESERVED_JOIN | %LIMIT) free_form_sql:* pipe_subclause:? {%
+  ([pipeToken, [nameToken], children, subClause]) => ({
+    type: NodeType.pipe_clause,
+    nameKw: toKeywordNode(nameToken),
+    children,
+    ...(subClause ? { subClause } : {}),
+  })
+%}
+pipe_clause -> %PIPE select_clause {%
+  ([pipeToken, { nameKw, children }]) => ({
+    type: NodeType.pipe_clause,
+    nameKw,
+    children,
+  })
+%}
+
+pipe_subclause -> %RESERVED_PIPE_SUBCLAUSE free_form_sql:* {%
+  ([nameToken, children]) => ({
+    type: NodeType.clause,
+    nameKw: toKeywordNode(nameToken),
+    children,
+  })
+%}
 
 limit_clause -> %LIMIT _ expression_chain_ (%COMMA free_form_sql:+):? {%
   ([limitToken, _, exp1, optional]) => {

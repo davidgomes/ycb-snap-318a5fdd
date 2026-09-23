@@ -189,7 +189,7 @@ export const bigquery: DialectOptions = {
     paramTypes: { positional: true, named: ['@'], quoted: ['@'] },
     variableTypes: [{ regex: String.raw`@@\w+` }],
     lineCommentTypes: ['--', '#'],
-    operators: ['&', '|', '^', '~', '>>', '<<', '||', '=>'],
+    operators: ['&', '|', '^', '~', '>>', '<<', '||', '=>', '|>'],
     postProcess,
   },
   formatOptions: {
@@ -199,8 +199,53 @@ export const bigquery: DialectOptions = {
 };
 
 function postProcess(tokens: Token[]): Token[] {
-  return detectArraySubscripts(combineParameterizedTypes(tokens));
+  return detectPipeSyntax(detectArraySubscripts(combineParameterizedTypes(tokens)));
 }
+
+// Pipe syntax: https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax
+// Converts |> operator to PIPE token, promotes the keyword following it to a clause,
+// and marks GROUP BY inside |> AGGREGATE as a sub-clause.
+function detectPipeSyntax(tokens: Token[]): Token[] {
+  const result: Token[] = [];
+  let aggregateDepth: number | undefined;
+  let depth = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    let token = tokens[i];
+    if (token.type === TokenType.OPERATOR && token.text === '|>') {
+      aggregateDepth = undefined;
+      result.push({ ...token, type: TokenType.PIPE });
+      const next = tokens[i + 1];
+      if (next && pipeClauseKeywords.includes(next.raw.toUpperCase())) {
+        const text = next.raw.toUpperCase();
+        if (text === 'AGGREGATE') {
+          aggregateDepth = depth;
+        }
+        result.push({ ...next, type: TokenType.RESERVED_CLAUSE, text });
+        i++;
+      }
+      continue;
+    }
+    if (token.type === TokenType.OPEN_PAREN) {
+      depth++;
+    } else if (token.type === TokenType.CLOSE_PAREN) {
+      depth--;
+      if (aggregateDepth !== undefined && depth < aggregateDepth) {
+        aggregateDepth = undefined;
+      }
+    } else if (
+      aggregateDepth === depth &&
+      token.type === TokenType.RESERVED_CLAUSE &&
+      token.text === 'GROUP BY'
+    ) {
+      token = { ...token, type: TokenType.RESERVED_PIPE_SUBCLAUSE };
+      aggregateDepth = undefined;
+    }
+    result.push(token);
+  }
+  return result;
+}
+
+const pipeClauseKeywords = ['AGGREGATE', 'EXTEND', 'SET', 'DROP', 'AS'];
 
 // Converts OFFSET token inside array from RESERVED_CLAUSE to RESERVED_FUNCTION_NAME
 // See: https://cloud.google.com/bigquery/docs/reference/standard-sql/functions-and-operators#array_subscript_operator

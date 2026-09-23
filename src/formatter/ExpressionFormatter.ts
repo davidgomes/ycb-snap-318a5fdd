@@ -10,6 +10,7 @@ import {
   AstNode,
   BetweenPredicateNode,
   SetOperationNode,
+  PipeClauseNode,
   ClauseNode,
   FunctionCallNode,
   LimitClauseNode,
@@ -120,6 +121,8 @@ export default class ExpressionFormatter {
         return this.formatClause(node);
       case NodeType.set_operation:
         return this.formatSetOperation(node);
+      case NodeType.pipe_clause:
+        return this.formatPipeClause(node);
       case NodeType.limit_clause:
         return this.formatLimitClause(node);
       case NodeType.all_columns_asterisk:
@@ -289,6 +292,29 @@ export default class ExpressionFormatter {
     this.layout.add(WS.NEWLINE, WS.INDENT, this.showKw(node.nameKw), WS.NEWLINE);
     this.layout.add(WS.INDENT);
     this.layout = this.formatSubExpression(node.children);
+  }
+
+  private formatPipeClause(node: PipeClauseNode) {
+    this.layout.add(WS.NEWLINE, WS.INDENT, '|>', WS.SPACE, this.showNonTabularKw(node.nameKw));
+    this.layout.indentation.increaseTopLevel();
+    if (this.isOnelinePipeClause(node) || isTabularStyle(this.cfg)) {
+      this.layout.add(WS.SPACE);
+    } else {
+      this.layout.add(WS.NEWLINE, WS.INDENT);
+    }
+    this.layout = this.formatSubExpression(node.children);
+    if (node.subClause) {
+      this.formatClauseInIndentedStyle(node.subClause);
+    }
+    this.layout.indentation.decreaseTopLevel();
+  }
+
+  private isOnelinePipeClause(node: PipeClauseNode): boolean {
+    return (
+      node.nameKw.tokenType === TokenType.RESERVED_JOIN ||
+      node.nameKw.tokenType === TokenType.LIMIT ||
+      node.nameKw.text === 'AS'
+    );
   }
 
   private formatLimitClause(node: LimitClauseNode) {

@@ -601,4 +601,81 @@ describe('BigQueryFormatter', () => {
       expect(format(input, { linesBetweenQueries: 0 })).toBe(input);
     });
   });
+
+  describe('pipe syntax', () => {
+    it('formats pipe query with all pipe clauses', () => {
+      const input = `FROM t |> WHERE x > 1 AND y=2 |> AGGREGATE COUNT(*) AS c, SUM(v) GROUP BY a, b
+        |> EXTEND a+1 AS z |> SET z = 2 |> DROP z |> AS q |> LEFT JOIN u ON q.a = u.a
+        |> SELECT a, b |> ORDER BY a DESC |> LIMIT 10;`;
+      expect(format(input)).toBe(dedent`
+        FROM
+          t
+        |> WHERE
+          x > 1
+          AND y = 2
+        |> AGGREGATE
+          COUNT(*) AS c,
+          SUM(v)
+          GROUP BY
+            a,
+            b
+        |> EXTEND
+          a + 1 AS z
+        |> SET
+          z = 2
+        |> DROP
+          z
+        |> AS q
+        |> LEFT JOIN u ON q.a = u.a
+        |> SELECT
+          a,
+          b
+        |> ORDER BY
+          a DESC
+        |> LIMIT 10;
+      `);
+    });
+
+    it('formats pipe query inside subquery', () => {
+      expect(format('SELECT a FROM (FROM t |> WHERE b = 1 |> SELECT a);')).toBe(dedent`
+        SELECT
+          a
+        FROM
+          (
+            FROM
+              t
+            |> WHERE
+              b = 1
+            |> SELECT
+              a
+          );
+      `);
+    });
+
+    it('applies keywordCase to pipe keywords', () => {
+      expect(format('from t |> Aggregate count(*) Group By a', { keywordCase: 'upper' })).toBe(
+        dedent`
+          FROM
+            t
+          |> AGGREGATE
+            count(*)
+            GROUP BY
+              a
+        `
+      );
+    });
+
+    it('formats mixed pipe and traditional statements independently', () => {
+      expect(format('FROM t |> LIMIT 1; SELECT a | b > 1 FROM t;')).toBe(dedent`
+        FROM
+          t
+        |> LIMIT 1;
+
+        SELECT
+          a | b > 1
+        FROM
+          t;
+      `);
+    });
+  });
 });
