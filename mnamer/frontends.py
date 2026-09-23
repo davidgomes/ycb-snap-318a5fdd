@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from mnamer import tty
+from mnamer import daemon, tty
 from mnamer.const import SYSTEM, USAGE, VERSION
 from mnamer.exceptions import (
     MnamerAbortException,
@@ -65,6 +65,8 @@ class Frontend(ABC):
 
 class Cli(Frontend):
     def __init__(self, settings: SettingStore):
+        if daemon.is_daemon_request(settings):
+            raise SystemExit(daemon.dispatch(settings))
         super().__init__(settings)
         if not settings.targets:
             tty.error(USAGE)
