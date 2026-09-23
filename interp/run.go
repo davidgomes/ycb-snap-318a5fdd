@@ -3556,6 +3556,17 @@ func _make(n *node) {
 
 func reset(n *node) {
 	next := getExec(n.tnext)
+	// Embedded values are installed here so the usual zeroing of package-level
+	// variables does not overwrite them before the first statement runs.
+	if n.embedValue.IsValid() {
+		i := n.child[0].findex
+		val := n.embedValue
+		n.exec = func(f *frame) bltn {
+			f.data[i] = val
+			return next
+		}
+		return
+	}
 
 	switch l := len(n.child) - 1; l {
 	case 1:

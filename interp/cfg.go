@@ -2296,6 +2296,11 @@ func (interp *Interpreter) cfg(root *node, sc *scope, importPath, pkgName string
 				c.typ = n.typ
 				c.findex = index
 			}
+			if len(n.embeds) > 0 {
+				if err = interp.materializeEmbed(n); err != nil {
+					return
+				}
+			}
 		}
 	})
 
