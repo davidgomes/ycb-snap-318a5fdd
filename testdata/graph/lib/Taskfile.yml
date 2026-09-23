@@ -1,0 +1,10 @@
+version: '3'
+
+tasks:
+  setup:
+    cmds:
+      - echo setup
+
+  arch:
+    cmds:
+      - echo {{.OS}}

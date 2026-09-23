@@ -87,6 +87,9 @@ var (
 	Cert                string
 	CertKey             string
 	Interactive         bool
+	Graph               bool
+	GraphFormat         string
+	GraphReverse        bool
 )
 
 func init() {
@@ -128,7 +131,10 @@ func init() {
 	pflag.BoolVarP(&ListJson, "json", "j", false, "Formats task list as JSON.")
 	pflag.StringVar(&TaskSort, "sort", "", "Changes the order of the tasks when listed. [default|alphanumeric|none].")
 	pflag.BoolVar(&Status, "status", false, "Exits with non-zero exit code if any of the given tasks is not up-to-date.")
-	pflag.BoolVar(&NoStatus, "no-status", false, "Ignore status when listing tasks as JSON")
+	pflag.BoolVar(&Graph, "graph", false, "Shows the dependency graph of the given task(s).")
+	pflag.StringVar(&GraphFormat, "graph-format", "", "Sets the output format of --graph: [json|dot|text]. Defaults to json.")
+	pflag.BoolVar(&GraphReverse, "graph-reverse", false, "With --graph, shows the tasks that depend on the given task(s).")
+	pflag.BoolVar(&NoStatus, "no-status", false, "Ignore status when listing tasks as JSON or showing a graph")
 	pflag.BoolVar(&Nested, "nested", false, "Nest namespaces when listing tasks as JSON")
 	pflag.BoolVar(&Insecure, "insecure", getConfig(config, "REMOTE_INSECURE", func() *bool { return config.Remote.Insecure }, false), "Forces Task to download Taskfiles over insecure connections.")
 	pflag.BoolVarP(&Watch, "watch", "w", false, "Enables watch of the given task.")
@@ -234,8 +240,18 @@ func Validate() error {
 		return errors.New("task: --json only applies to --list or --list-all")
 	}
 
-	if NoStatus && !ListJson {
-		return errors.New("task: --no-status only applies to --json with --list or --list-all")
+	if NoStatus && !ListJson && !Graph {
+		return errors.New("task: --no-status only applies to --graph or --json with --list or --list-all")
+	}
+
+	if (GraphFormat != "" || GraphReverse) && !Graph {
+		return errors.New("task: --graph-format and --graph-reverse only apply to --graph")
+	}
+
+	switch GraphFormat {
+	case "", task.GraphFormatJSON, task.GraphFormatDOT, task.GraphFormatText:
+	default:
+		return errors.New("task: --graph-format must be one of: json, dot, text")
 	}
 
 	if Nested && !ListJson {
@@ -308,6 +324,9 @@ func (o *flagsOption) ApplyToExecutor(e *task.Executor) {
 		task.WithTaskSorter(sorter),
 		task.WithVersionCheck(true),
 		task.WithFailfast(Failfast),
+		task.WithGraphFormat(GraphFormat),
+		task.WithGraphReverse(GraphReverse),
+		task.WithGraphNoStatus(NoStatus),
 	)
 }
 

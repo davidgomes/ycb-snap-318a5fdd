@@ -1,0 +1,40 @@
+version: '3'
+
+includes:
+  lib: ./lib
+
+tasks:
+  default:
+    deps: [build]
+
+  build:
+    desc: Build everything
+    aliases: [b]
+    deps: [compile, lib:setup]
+    cmds:
+      - task: package
+        vars: { TARGET: release }
+
+  compile:
+    deps: [generate]
+    cmds:
+      - for: [linux, darwin]
+        task: lib:arch
+        vars: { OS: '{{.ITEM}}' }
+
+  generate:
+    deps: [lib:setup]
+
+  package:
+    cmds:
+      - echo packaging
+
+  fresh:
+    status:
+      - "true"
+
+  uses-fresh:
+    deps: [fresh]
+
+  gen-*:
+    deps: [generate]

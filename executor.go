@@ -55,6 +55,9 @@ type (
 		Concurrency         int
 		Interval            time.Duration
 		Failfast            bool
+		GraphFormat         string
+		GraphReverse        bool
+		GraphNoStatus       bool
 
 		// I/O
 		Stdin  io.Reader
