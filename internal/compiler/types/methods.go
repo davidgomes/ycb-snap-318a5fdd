@@ -182,11 +182,17 @@ func selectMethod(t reflect.Type, name string) (s selection, ok, ambiguous bool)
 		isPtr bool
 	}
 	candidates := []candidate{{typ: t, ptr: isPtr, isPtr: isPtr}}
+	// seen holds the types already visited at a lower depth, so that
+	// recursive embedded types are not visited again.
+	seen := map[reflect.Type]bool{}
 	for depth := 0; len(candidates) > 0; depth++ {
 		var found []selection
 		var others int
 		var next []candidate
 		for _, c := range candidates {
+			if seen[c.typ] {
+				continue
+			}
 			if m := MethodOf(c.typ, name); m != nil {
 				found = append(found, selection{method: m, path: c.path, ptr: c.ptr, isPtr: c.isPtr})
 				continue
@@ -221,6 +227,9 @@ func selectMethod(t reflect.Type, name string) (s selection, ok, ambiguous bool)
 				return found[0], true, false
 			}
 			return selection{}, false, len(found) > 0
+		}
+		for _, c := range candidates {
+			seen[c.typ] = true
 		}
 		candidates = next
 	}
