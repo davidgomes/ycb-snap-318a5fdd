@@ -36,15 +36,35 @@ def field_options(
     ] = None,
     serialization_strategy: Optional[SerializationStrategy] = None,
     alias: Optional[str] = None,
+    flatten: bool = False,
+    flatten_prefix: Optional[Union[str, bool]] = None,
+    flatten_rename: Optional[dict[str, str]] = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    return {
+    if flatten_prefix is not None and flatten_rename is not None:
+        raise ValueError(
+            "flatten_prefix and flatten_rename are mutually exclusive"
+        )
+    if (flatten_prefix is not None or flatten_rename is not None) and (
+        not flatten
+    ):
+        raise ValueError(
+            "flatten_prefix and flatten_rename require flatten=True"
+        )
+    result = {
         "serialize": serialize,
         "deserialize": deserialize,
         "serialization_strategy": serialization_strategy,
         "alias": alias,
         **kwargs,
     }
+    if flatten:
+        result["flatten"] = True
+        if flatten_prefix is not None:
+            result["flatten_prefix"] = flatten_prefix
+        if flatten_rename is not None:
+            result["flatten_rename"] = dict(flatten_rename)
+    return result
 
 
 class _PassThrough(SerializationStrategy):
