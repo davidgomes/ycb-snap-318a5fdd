@@ -26,6 +26,7 @@ import { benchmarkConfigDefaults, configDefaults } from '../../defaults'
 import { isAgent, isCI, stdProvider } from '../../utils/env'
 import { getWorkersCountByPercentage } from '../../utils/workers'
 import { BaseSequencer } from '../sequencers/BaseSequencer'
+import { resolveDurationSequence } from '../sequencers/duration-history'
 import { RandomSequencer } from '../sequencers/RandomSequencer'
 
 function resolvePath(path: string, root: string) {
@@ -778,6 +779,7 @@ export function resolveConfig(
   if (resolved.sequence.sequencer === RandomSequencer || resolved.sequence.shuffle) {
     resolved.sequence.seed ??= Date.now()
   }
+  resolveDurationSequence(resolved.sequence)
 
   resolved.typecheck = {
     ...configDefaults.typecheck,
