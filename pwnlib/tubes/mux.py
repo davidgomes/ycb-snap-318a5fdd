@@ -89,27 +89,6 @@ def _remaining(deadline):
     return max(deadline - time.time(), 0)
 
 
-class _ChannelBuffer(Buffer):
-    """Receive buffer of a :class:`MuxChannel` which reports consumption to
-    the channel so the remote sender's window can be updated."""
-
-    def __init__(self, channel, *a, **kw):
-        super(_ChannelBuffer, self).__init__(*a, **kw)
-        self._channel = channel
-
-    def get(self, want=float('inf')):
-        data = super(_ChannelBuffer, self).get(want)
-        if data:
-            self._channel._credit(len(data))
-        return data
-
-    def unget(self, data):
-        before = self.size
-        super(_ChannelBuffer, self).unget(data)
-        if self.size > before:
-            self._channel._credit(before - self.size)
-
-
 class MuxChannel(tube):
     """A logical channel of a :class:`TubeMultiplexer`.
 
@@ -123,9 +102,10 @@ class MuxChannel(tube):
         self._channel_id = channel_id
         self._cond = threading.Condition(threading.Lock())
 
-        self.buffer = _ChannelBuffer(self)
-        self.buffer.set_watermarks(mux.high_water_mark, mux.low_water_mark)
+        # Incoming data not yet pulled into self.buffer; this is the buffer
+        # whose watermarks govern the remote sender.
         self._rx = Buffer()
+        self._rx.set_watermarks(mux.high_water_mark, mux.low_water_mark)
 
         self._remote_high = remote_high
         self._remote_low = remote_low
@@ -197,16 +177,9 @@ class MuxChannel(tube):
             self._remote_closed = True
             self._cond.notify_all()
 
-    # Flow control credits, sent while holding self._cond so that window
-    # updates keep their order relative to other frames on this channel.
-
     def _send_window(self, delta):
         if delta and not self._closed and self._peer_reachable():
             self._mux._enqueue(_frame(_WINDOW_UPD, self._channel_id, _WINDOW.pack(delta)))
-
-    def _credit(self, delta):
-        with self._cond:
-            self._send_window(delta)
 
     # tube interface
 
@@ -225,9 +198,8 @@ class MuxChannel(tube):
                     return None
                 self._cond.wait(remaining)
 
-            # Bytes moved into self.buffer are credited when the user consumes
-            # them, so the move itself must be uncounted.
             data = self._rx.get(numb)
+            self._send_window(len(data))
             return data
 
     def send_raw(self, data):
