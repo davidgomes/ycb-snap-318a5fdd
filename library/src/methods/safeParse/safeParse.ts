@@ -5,6 +5,7 @@ import type {
   Config,
   InferIssue,
 } from '../../types/index.ts';
+import type { IsUnresolvedRecur } from '../recursive/types.ts';
 import type { SafeParseResult } from './types.ts';
 
 /**
@@ -16,19 +17,25 @@ import type { SafeParseResult } from './types.ts';
  *
  * @returns The parse result.
  */
-// @__NO_SIDE_EFFECTS__
 export function safeParse<
   const TSchema extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
 >(
-  schema: TSchema,
+  schema: TSchema & (IsUnresolvedRecur<TSchema> extends true ? never : unknown),
   input: unknown,
   config?: Config<InferIssue<TSchema>>
-): SafeParseResult<TSchema> {
+): SafeParseResult<TSchema>;
+
+// @__NO_SIDE_EFFECTS__
+export function safeParse(
+  schema: BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  input: unknown,
+  config?: Config<BaseIssue<unknown>>
+): SafeParseResult<BaseSchema<unknown, unknown, BaseIssue<unknown>>> {
   const dataset = schema['~run']({ value: input }, getGlobalConfig(config));
   return {
     typed: dataset.typed,
     success: !dataset.issues,
     output: dataset.value,
     issues: dataset.issues,
-  } as SafeParseResult<TSchema>;
+  } as SafeParseResult<BaseSchema<unknown, unknown, BaseIssue<unknown>>>;
 }
