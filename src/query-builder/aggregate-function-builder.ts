@@ -417,6 +417,86 @@ export class AggregateFunctionBuilder<DB, TB extends keyof DB, O = unknown>
   }
 
   /**
+   * Adds `respect nulls` after the function arguments.
+   *
+   * Use this with value accessors such as `firstValue`, `lastValue`,
+   * `nthValue`, `lag` and `lead`. The text is placed after the closing
+   * parenthesis of the arguments and before `within group`, `filter` or `over`.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db
+   *   .selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn
+   *       .firstValue<string | null>('first_name')
+   *       .respectNulls()
+   *       .over((ob) => ob.orderBy('id'))
+   *       .as('first_name'),
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select first_value("first_name") respect nulls over(order by "id") as "first_name"
+   * from "person"
+   * ```
+   */
+  respectNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNulls(
+        this.#props.aggregateFunctionNode,
+        'respect nulls',
+      ),
+    })
+  }
+
+  /**
+   * Adds `ignore nulls` after the function arguments.
+   *
+   * Use this with value accessors such as `firstValue`, `lastValue`,
+   * `nthValue`, `lag` and `lead`. The text is placed after the closing
+   * parenthesis of the arguments and before `within group`, `filter` or `over`.
+   *
+   * See {@link respectNulls} for the opposite behavior.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db
+   *   .selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn
+   *       .lastValue<number | null>('age')
+   *       .ignoreNulls()
+   *       .over((ob) => ob.orderBy('id'))
+   *       .as('last_age'),
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select last_value("age") ignore nulls over(order by "id") as "last_age"
+   * from "person"
+   * ```
+   */
+  ignoreNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNulls(
+        this.#props.aggregateFunctionNode,
+        'ignore nulls',
+      ),
+    })
+  }
+
+  /**
    * Simply calls the provided function passing `this` as the only argument. `$call` returns
    * what the provided function returns.
    */

@@ -89,7 +89,11 @@ import type { ExplainNode } from '../operation-node/explain-node.js'
 import type { SchemableIdentifierNode } from '../operation-node/schemable-identifier-node.js'
 import type { DefaultInsertValueNode } from '../operation-node/default-insert-value-node.js'
 import type { AggregateFunctionNode } from '../operation-node/aggregate-function-node.js'
-import type { OverNode } from '../operation-node/over-node.js'
+import type {
+  OverNode,
+  WindowFrameBound,
+  WindowFrameClause,
+} from '../operation-node/over-node.js'
 import type { PartitionByNode } from '../operation-node/partition-by-node.js'
 import type { PartitionByItemNode } from '../operation-node/partition-by-item-node.js'
 import { SetOperationNode } from '../operation-node/set-operation-node.js'
@@ -1488,6 +1492,11 @@ export class DefaultQueryCompiler
 
     this.append(')')
 
+    if (node.nulls) {
+      this.append(' ')
+      this.append(node.nulls)
+    }
+
     if (node.withinGroup) {
       this.append(' within group (')
       this.visitNode(node.withinGroup)
@@ -1512,16 +1521,52 @@ export class DefaultQueryCompiler
     if (node.partitionBy) {
       this.visitNode(node.partitionBy)
 
-      if (node.orderBy) {
+      if (node.orderBy || node.frame) {
         this.append(' ')
       }
     }
 
     if (node.orderBy) {
       this.visitNode(node.orderBy)
+
+      if (node.frame) {
+        this.append(' ')
+      }
+    }
+
+    if (node.frame) {
+      this.appendWindowFrame(node.frame)
     }
 
     this.append(')')
+  }
+
+  private appendWindowFrame(frame: WindowFrameClause): void {
+    this.append(frame.mode)
+    this.append(' ')
+
+    if (frame.end) {
+      this.append('between ')
+      this.appendWindowFrameBound(frame.start)
+      this.append(' and ')
+      this.appendWindowFrameBound(frame.end)
+    } else {
+      this.appendWindowFrameBound(frame.start)
+    }
+
+    if (frame.exclusion) {
+      this.append(' exclude ')
+      this.append(frame.exclusion)
+    }
+  }
+
+  private appendWindowFrameBound(bound: WindowFrameBound): void {
+    if (bound.offset) {
+      this.visitNode(bound.offset)
+      this.append(' ')
+    }
+
+    this.append(bound.type)
   }
 
   protected override visitPartitionBy(node: PartitionByNode): void {

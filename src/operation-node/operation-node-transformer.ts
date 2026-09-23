@@ -72,7 +72,11 @@ import type { ExplainNode } from './explain-node.js'
 import type { SchemableIdentifierNode } from './schemable-identifier-node.js'
 import type { DefaultInsertValueNode } from './default-insert-value-node.js'
 import type { AggregateFunctionNode } from './aggregate-function-node.js'
-import type { OverNode } from './over-node.js'
+import type {
+  OverNode,
+  WindowFrameBound,
+  WindowFrameClause,
+} from './over-node.js'
 import type { PartitionByNode } from './partition-by-node.js'
 import type { PartitionByItemNode } from './partition-by-item-node.js'
 import type { SetOperationNode } from './set-operation-node.js'
@@ -1071,6 +1075,7 @@ export class OperationNodeTransformer {
       withinGroup: this.transformNode(node.withinGroup, queryId),
       filter: this.transformNode(node.filter, queryId),
       over: this.transformNode(node.over, queryId),
+      nulls: node.nulls,
     })
   }
 
@@ -1079,6 +1084,9 @@ export class OperationNodeTransformer {
       kind: 'OverNode',
       orderBy: this.transformNode(node.orderBy, queryId),
       partitionBy: this.transformNode(node.partitionBy, queryId),
+      frame: transformWindowFrame(node.frame, (child) =>
+        this.transformNode(child, queryId),
+      ),
     })
   }
 
@@ -1353,4 +1361,32 @@ export class OperationNodeTransformer {
     // An Object.freezed leaf node. No need to clone.
     return node
   }
+}
+
+function transformWindowFrame(
+  frame: WindowFrameClause | undefined,
+  transformNode: (node: OperationNode) => OperationNode,
+): WindowFrameClause | undefined {
+  if (!frame) {
+    return undefined
+  }
+
+  return freeze({
+    mode: frame.mode,
+    start: transformWindowFrameBound(frame.start, transformNode),
+    end: frame.end
+      ? transformWindowFrameBound(frame.end, transformNode)
+      : undefined,
+    exclusion: frame.exclusion,
+  })
+}
+
+function transformWindowFrameBound(
+  bound: WindowFrameBound,
+  transformNode: (node: OperationNode) => OperationNode,
+): WindowFrameBound {
+  return freeze({
+    type: bound.type,
+    offset: bound.offset ? transformNode(bound.offset) : undefined,
+  })
 }

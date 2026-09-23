@@ -45,7 +45,15 @@ import type { Compilable } from '../util/compilable.js'
 import type { QueryExecutor } from '../query-executor/query-executor.js'
 import type { QueryId } from '../util/query-id.js'
 import { asArray, freeze } from '../util/object-utils.js'
-import { type GroupByArg, parseGroupBy } from '../parser/group-by-parser.js'
+import {
+  type GroupByArg,
+  type GroupByExpression,
+  type GroupingSetExpression,
+  parseGroupBy,
+  parseGroupByCube,
+  parseGroupByGroupingSets,
+  parseGroupByRollup,
+} from '../parser/group-by-parser.js'
 import type { KyselyPlugin } from '../plugin/kysely-plugin.js'
 import type { WhereInterface } from './where-interface.js'
 import {
@@ -1086,6 +1094,109 @@ export interface SelectQueryBuilder<DB, TB extends keyof DB, O>
    */
   groupBy<GE extends GroupByArg<DB, TB, O>>(
     groupBy: GE,
+  ): SelectQueryBuilder<DB, TB, O>
+
+  /**
+   * Adds a `cube(...)` element to the `group by` clause.
+   *
+   * Composes with {@link groupBy}, {@link groupByRollup} and
+   * {@link groupByGroupingSets}. Each call appends another grouping element.
+   * `cube` arguments are compiled as a flat comma-separated list.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db
+   *   .selectFrom('person')
+   *   .select((eb) => [
+   *     'gender',
+   *     'first_name',
+   *     eb.fn.countAll<number>().as('person_count'),
+   *   ])
+   *   .groupBy('id')
+   *   .groupByCube('gender', 'first_name')
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "gender", "first_name", count(*) as "person_count"
+   * from "person"
+   * group by "id", cube("gender", "first_name")
+   * ```
+   */
+  groupByCube(
+    ...columns: GroupByExpression<DB, TB, O>[]
+  ): SelectQueryBuilder<DB, TB, O>
+
+  /**
+   * Adds a `rollup(...)` element to the `group by` clause.
+   *
+   * Composes with {@link groupBy}, {@link groupByCube} and
+   * {@link groupByGroupingSets}. `rollup` arguments are compiled as a flat
+   * comma-separated list.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db
+   *   .selectFrom('person')
+   *   .select((eb) => [
+   *     'gender',
+   *     eb.fn.countAll<number>().as('person_count'),
+   *   ])
+   *   .groupByRollup('gender', 'first_name')
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "gender", count(*) as "person_count"
+   * from "person"
+   * group by rollup("gender", "first_name")
+   * ```
+   */
+  groupByRollup(
+    ...columns: GroupByExpression<DB, TB, O>[]
+  ): SelectQueryBuilder<DB, TB, O>
+
+  /**
+   * Adds a `grouping sets(...)` element to the `group by` clause.
+   *
+   * Each argument is one grouping set. A set is either a single expression or
+   * a list of expressions. An empty list is the empty grouping set `()`.
+   * Every set is wrapped in its own parentheses.
+   *
+   * Composes with {@link groupBy}, {@link groupByCube} and
+   * {@link groupByRollup}.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db
+   *   .selectFrom('person')
+   *   .select((eb) => [
+   *     'gender',
+   *     'first_name',
+   *     eb.fn.countAll<number>().as('person_count'),
+   *   ])
+   *   .groupBy('id')
+   *   .groupByGroupingSets(['first_name', 'last_name'], ['first_name'], [])
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "gender", "first_name", count(*) as "person_count"
+   * from "person"
+   * group by "id", grouping sets(("first_name", "last_name"), ("first_name"), ())
+   * ```
+   */
+  groupByGroupingSets(
+    ...sets: GroupingSetExpression<DB, TB, O>[]
   ): SelectQueryBuilder<DB, TB, O>
 
   orderBy<OE extends OrderByExpression<DB, TB, O>>(
@@ -2418,6 +2529,42 @@ class SelectQueryBuilderImpl<
       queryNode: SelectQueryNode.cloneWithGroupByItems(
         this.#props.queryNode,
         parseGroupBy(groupBy),
+      ),
+    })
+  }
+
+  groupByCube(
+    ...columns: GroupByExpression<DB, TB, O>[]
+  ): SelectQueryBuilder<DB, TB, O> {
+    return new SelectQueryBuilderImpl({
+      ...this.#props,
+      queryNode: SelectQueryNode.cloneWithGroupByItems(
+        this.#props.queryNode,
+        parseGroupByCube(columns),
+      ),
+    })
+  }
+
+  groupByRollup(
+    ...columns: GroupByExpression<DB, TB, O>[]
+  ): SelectQueryBuilder<DB, TB, O> {
+    return new SelectQueryBuilderImpl({
+      ...this.#props,
+      queryNode: SelectQueryNode.cloneWithGroupByItems(
+        this.#props.queryNode,
+        parseGroupByRollup(columns),
+      ),
+    })
+  }
+
+  groupByGroupingSets(
+    ...sets: GroupingSetExpression<DB, TB, O>[]
+  ): SelectQueryBuilder<DB, TB, O> {
+    return new SelectQueryBuilderImpl({
+      ...this.#props,
+      queryNode: SelectQueryNode.cloneWithGroupByItems(
+        this.#props.queryNode,
+        parseGroupByGroupingSets(sets),
       ),
     })
   }

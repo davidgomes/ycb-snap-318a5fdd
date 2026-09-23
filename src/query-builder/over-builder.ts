@@ -15,6 +15,10 @@ import {
 } from '../parser/partition-by-parser.js'
 import { freeze } from '../util/object-utils.js'
 import type { OrderByInterface } from './order-by-interface.js'
+import {
+  CompletedWindowFrame,
+  WindowFrameBuilder,
+} from './window-frame-builder.js'
 
 export class OverBuilder<DB, TB extends keyof DB>
   implements OrderByInterface<DB, TB, {}>, OperationNodeSource
@@ -132,6 +136,90 @@ export class OverBuilder<DB, TB extends keyof DB>
   }
 
   /**
+   * Adds a `rows` frame (extent) to the `over` clause.
+   *
+   * Single-bound shorthands and `between ... and ...` frames are both supported,
+   * along with `exclude` modifiers. Numeric offsets are query parameters.
+   * Pass an {@link Expression} to inline a SQL literal instead.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db
+   *   .selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn
+   *       .sum<number>('age')
+   *       .over((ob) =>
+   *         ob
+   *           .partitionBy('gender')
+   *           .orderBy('id')
+   *           .rows((fb) => fb.betweenUnboundedPreceding().andCurrentRow()),
+   *       )
+   *       .as('running_age'),
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select sum("age") over(
+   *   partition by "gender"
+   *   order by "id"
+   *   rows between unbounded preceding and current row
+   * ) as "running_age"
+   * from "person"
+   * ```
+   *
+   * An inline offset:
+   *
+   * ```ts
+   * import { sql } from 'kysely'
+   *
+   * await db
+   *   .selectFrom('person')
+   *   .select((eb) =>
+   *     eb.fn
+   *       .sum<number>('age')
+   *       .over((ob) =>
+   *         ob.orderBy('id').rows((fb) => fb.preceding(sql`1`)),
+   *       )
+   *       .as('previous_age'),
+   *   )
+   *   .execute()
+   * ```
+   */
+  rows(
+    frame: (fb: WindowFrameBuilder) => CompletedWindowFrame,
+  ): OverBuilder<DB, TB> {
+    return this.#frame('rows', frame)
+  }
+
+  /**
+   * Adds a `range` frame (extent) to the `over` clause.
+   *
+   * See {@link rows} for the frame builder API. `range` is the SQL-standard
+   * default mode.
+   */
+  range(
+    frame: (fb: WindowFrameBuilder) => CompletedWindowFrame,
+  ): OverBuilder<DB, TB> {
+    return this.#frame('range', frame)
+  }
+
+  /**
+   * Adds a `groups` frame (extent) to the `over` clause.
+   *
+   * See {@link rows} for the frame builder API.
+   */
+  groups(
+    frame: (fb: WindowFrameBuilder) => CompletedWindowFrame,
+  ): OverBuilder<DB, TB> {
+    return this.#frame('groups', frame)
+  }
+
+  /**
    * Simply calls the provided function passing `this` as the only argument. `$call` returns
    * what the provided function returns.
    */
@@ -141,6 +229,18 @@ export class OverBuilder<DB, TB extends keyof DB>
 
   toOperationNode(): OverNode {
     return this.#props.overNode
+  }
+
+  #frame(
+    mode: 'rows' | 'range' | 'groups',
+    frame: (fb: WindowFrameBuilder) => CompletedWindowFrame,
+  ): OverBuilder<DB, TB> {
+    return new OverBuilder({
+      overNode: OverNode.cloneWithFrame(
+        this.#props.overNode,
+        frame(new WindowFrameBuilder()).toClause(mode),
+      ),
+    })
   }
 }
 
