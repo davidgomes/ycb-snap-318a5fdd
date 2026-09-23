@@ -109,6 +109,7 @@ from textual.geometry import Offset, Region, Size
 from textual.keys import (
     REPLACED_KEYS,
     _character_to_key,
+    _get_key_aliases,
     _get_unicode_name_from_key,
     _normalize_key_list,
     format_key,
@@ -3833,7 +3834,12 @@ class App(Generic[ReturnType], DOMNode):
         """
         self.post_message(events.Key(key, None))
 
-    async def _check_bindings(self, key: str, priority: bool = False) -> bool:
+    async def _check_bindings(
+        self,
+        key: str,
+        priority: bool = False,
+        aliases: Iterable[str] = (),
+    ) -> bool:
         """Handle a key press.
 
         This method is used internally by the bindings system.
@@ -3841,21 +3847,35 @@ class App(Generic[ReturnType], DOMNode):
         Args:
             key: A key.
             priority: If `True` check from `App` down, otherwise from focused up.
+            aliases: Additional key names that should match at each namespace,
+                checked after `key`. Used for Kitty alternate-key shortcuts.
 
         Returns:
             True if the key was handled by a binding, otherwise False
         """
+        candidates = [key, *[alias for alias in aliases if alias != key]]
         for namespace, bindings in (
             reversed(self.screen._binding_chain)
             if priority
             else self.screen._modal_binding_chain
         ):
-            key_bindings = bindings.key_to_bindings.get(key, ())
-            for binding in key_bindings:
-                if binding.priority == priority:
-                    if await self.run_action(binding.action, namespace):
-                        return True
+            for candidate in candidates:
+                key_bindings = bindings.key_to_bindings.get(candidate, ())
+                for binding in key_bindings:
+                    if binding.priority == priority:
+                        if await self.run_action(binding.action, namespace):
+                            return True
         return False
+
+    def _alternate_binding_aliases(self, event: events.Key) -> list[str]:
+        """Return Kitty alternate-key aliases that are not historical key aliases.
+
+        Historical aliases such as ``tab`` / ``ctrl+i`` stay on the key-method
+        path. Alternate-key aliases, such as ``ctrl+plus``, participate in
+        binding lookup.
+        """
+        builtin = set(_get_key_aliases(event.key))
+        return [alias for alias in event.aliases if alias not in builtin]
 
     def action_help_quit(self) -> None:
         """Bound to ctrl+C to alert the user that it no longer quits."""
@@ -4002,7 +4022,11 @@ class App(Generic[ReturnType], DOMNode):
                         self.screen._clear_tooltip()
                     except NoScreen:
                         pass
-                if not await self._check_bindings(event.key, priority=True):
+                if not await self._check_bindings(
+                    event.key,
+                    priority=True,
+                    aliases=self._alternate_binding_aliases(event),
+                ):
                     forward_target = self.focused or self.screen
                     forward_target._forward_event(event)
             else:
@@ -4208,7 +4232,11 @@ class App(Generic[ReturnType], DOMNode):
         message.stop()
 
     async def _on_key(self, event: events.Key) -> None:
-        if not (await self._check_bindings(event.key)):
+        if not (
+            await self._check_bindings(
+                event.key, aliases=self._alternate_binding_aliases(event)
+            )
+        ):
             await dispatch_key(self, event)
 
     async def _on_resize(self, event: events.Resize) -> None:

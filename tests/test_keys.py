@@ -69,6 +69,80 @@ def test_get_key_display():
     assert app.get_key_display(Binding("delete", "", "")) == "del"
 
 
+def test_key_event_metadata_defaults():
+    from textual.events import Key
+
+    event = Key("a", "a")
+    assert event.phase == "press"
+    assert event.modifiers == ()
+    assert event.base_key == "a"
+    assert event.shifted_key is None
+    assert event.base_layout_key is None
+    assert event.is_press
+    assert not event.is_repeat
+    assert not event.is_release
+    assert not any(
+        (event.shift, event.alt, event.ctrl, event.super, event.hyper, event.meta)
+    )
+
+
+def test_key_event_metadata_agrees_with_public_name():
+    from textual.events import Key
+
+    event = Key("alt+ctrl+a", "\x01")
+    assert event.modifiers == ("alt", "ctrl")
+    assert event.base_key == "a"
+    assert event.alt
+    assert event.ctrl
+    assert not event.shift
+
+
+def test_key_event_explicit_shift_metadata():
+    from textual.events import Key
+
+    event = Key(
+        "A",
+        "A",
+        phase="repeat",
+        modifiers=("shift",),
+        base_key="a",
+        shifted_key="A",
+    )
+    assert event.character == "A"
+    assert event.modifiers == ("shift",)
+    assert event.base_key == "a"
+    assert event.is_repeat
+    assert event.shift
+    assert "A" in event.aliases
+
+
+async def test_kitty_alternate_key_matches_binding():
+    """Shifted Kitty alternates match the unshifted shortcut binding."""
+    fired: list[bool] = []
+
+    class PlusApp(App):
+        BINDINGS = [Binding("ctrl+plus", "plus", "Plus")]
+
+        def action_plus(self) -> None:
+            fired.append(True)
+
+    app = PlusApp()
+    async with app.run_test() as pilot:
+        from textual.events import Key
+
+        await app._on_key(
+            Key(
+                "ctrl+shift+equals_sign",
+                None,
+                modifiers=("ctrl", "shift"),
+                base_key="equals_sign",
+                shifted_key="plus",
+            )
+        )
+        await pilot.pause()
+    assert fired == [True]
+
+
 def test_key_to_character():
     assert key_to_character("f") == "f"
     assert key_to_character("F") == "F"

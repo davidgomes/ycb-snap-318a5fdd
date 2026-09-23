@@ -8,7 +8,7 @@ from typing_extensions import Final
 
 from textual import constants, events, messages
 from textual._ansi_sequences import ANSI_SEQUENCES_KEYS, IGNORE_SEQUENCE
-from textual._keyboard_protocol import FUNCTIONAL_KEYS
+from textual._keyboard_protocol import FUNCTIONAL_KEYS, MODIFIER_FUNCTIONAL_KEYS
 from textual._parser import ParseEOF, Parser, ParseTimeout, Peek1, Read1, TokenCallback
 from textual.keys import KEY_NAME_REPLACEMENTS, Keys, _character_to_key
 from textual.message import Message
@@ -37,10 +37,224 @@ FOCUSOUT: Final[str] = "\x1b[O"
 SPECIAL_SEQUENCES = {BRACKETED_PASTE_START, BRACKETED_PASTE_END, FOCUSIN, FOCUSOUT}
 """Set of special sequences."""
 
-_re_extended_key: Final = re.compile(r"\x1b\[(?:(\d+)(?:;(\d+))?)?([u~ABCDEFHPQRS])")
+# CSI unicode-key-code:shifted:base-layout ; modifiers:event-type ; text u
+_re_extended_key: Final = re.compile(
+    r"\x1b\["
+    r"(?P<number>\d*)"
+    r"(?::(?P<shifted>\d*))?"
+    r"(?::(?P<base_layout>\d*))?"
+    r"(?:;(?P<modifiers>\d*)(?::(?P<event_type>\d+))?)?"
+    r"(?:;(?P<text>[\d:]*))?"
+    r"(?P<end>[u~ABCDEFHPQRS])"
+)
+_MODIFIER_BITS: Final = ("shift", "alt", "ctrl", "super", "hyper", "meta")
+_PHASE_BY_EVENT_TYPE: Final = {1: "press", 2: "repeat", 3: "release"}
 _re_in_band_window_resize: Final = re.compile(
     r"\x1b\[48;(\d+(?:\:.*?)?);(\d+(?:\:.*?)?);(\d+(?:\:.*?)?);(\d+(?:\:.*?)?)t"
 )
+
+
+def _safe_chr(codepoint: int) -> str:
+    """Return a character for a code point, or an empty string when it is invalid."""
+    try:
+        return chr(codepoint)
+    except (OverflowError, ValueError):
+        return ""
+
+
+def _optional_codepoint(value: str | None) -> int | None:
+    """Parse an optional Kitty code-point field."""
+    if not value:
+        return None
+    return int(value)
+
+
+def _textual_name(codepoint: int, *, unshifted: bool = False) -> str | None:
+    """Convert a Unicode code point to a Textual key name."""
+    character = _safe_chr(codepoint)
+    if not character:
+        return None
+    name = _character_to_key(character)
+    if unshifted and len(name) == 1 and name.isalpha():
+        return name.lower()
+    return name
+
+
+def _codepoints_to_characters(text: str | None) -> list[str]:
+    """Decode Kitty associated-text code points separated by colons."""
+    if not text:
+        return []
+    characters: list[str] = []
+    for part in text.split(":"):
+        if not part.isdecimal():
+            continue
+        character = _safe_chr(int(part))
+        if character:
+            characters.append(character)
+    return characters
+
+
+def _with_alt(key: str) -> str:
+    """Add the alt modifier to a public key name, keeping modifiers sorted."""
+    parts = key.split("+")
+    *modifiers, base = parts
+    if "alt" not in modifiers:
+        modifiers.append("alt")
+    modifiers.sort()
+    return "+".join([*modifiers, base])
+
+
+def _plain_or_shift_key(
+    *,
+    base_key: str,
+    modifiers: tuple[str, ...],
+    text: str | None,
+    codepoint: int,
+    functional: bool,
+    shifted_character: str,
+) -> tuple[str, str | None]:
+    """Resolve the public key and character for an unmodified or shift-only key.
+
+    Shift-only printable keys keep the shifted character. Other keys keep a
+    character only when the terminal sent associated text, or when the key
+    itself is a single alphanumeric character.
+    """
+    shift = "shift" in modifiers
+    if text is not None:
+        if shift and text.isspace():
+            return f"shift+{base_key}", text
+        if len(text) == 1 and text.isalnum():
+            return text, text
+        if text.isprintable():
+            return _character_to_key(text), text
+        return base_key, text
+
+    if shift and shifted_character:
+        if shifted_character.isspace():
+            return f"shift+{base_key}", shifted_character
+        if len(shifted_character) == 1 and shifted_character.isalnum():
+            return shifted_character, shifted_character
+        if shifted_character.isprintable():
+            return _character_to_key(shifted_character), shifted_character
+
+    if shift and not functional:
+        raw = _safe_chr(codepoint)
+        if raw.isalpha():
+            return raw.upper(), raw.upper()
+
+    if shift:
+        return f"shift+{base_key}", None
+    if not functional:
+        raw = _safe_chr(codepoint)
+        if len(raw) == 1 and raw.isalnum():
+            return raw, raw
+    return base_key, None
+
+
+def parse_extended_key(sequence: str) -> list[events.Key] | None:
+    """Parse a Kitty keyboard-protocol sequence into key events.
+
+    Args:
+        sequence: Input sequence.
+
+    Returns:
+        Key events, or `None` when the sequence is not a Kitty key.
+    """
+    match = _re_extended_key.fullmatch(sequence)
+    if match is None:
+        return None
+
+    number = match.group("number")
+    codepoint = 1 if number == "" else int(number)
+    end = match.group("end") or "u"
+    modifiers_field = match.group("modifiers")
+    modifier_value = int(modifiers_field) if modifiers_field else 1
+    modifier_bits = max(modifier_value - 1, 0)
+    event_type_field = match.group("event_type")
+    event_type = int(event_type_field) if event_type_field else 1
+    phase = _PHASE_BY_EVENT_TYPE.get(event_type, "press")
+    modifiers = tuple(
+        sorted(
+            name
+            for index, name in enumerate(_MODIFIER_BITS)
+            if modifier_bits & (1 << index)
+        )
+    )
+    shifted_codepoint = _optional_codepoint(match.group("shifted"))
+    base_layout_codepoint = _optional_codepoint(match.group("base_layout"))
+    shifted_key = _textual_name(shifted_codepoint) if shifted_codepoint else None
+    base_layout_key = (
+        _textual_name(base_layout_codepoint, unshifted=True)
+        if base_layout_codepoint
+        else None
+    )
+    texts = _codepoints_to_characters(match.group("text"))
+    shifted_character = _safe_chr(shifted_codepoint) if shifted_codepoint else ""
+
+    def make(key: str, character: str | None, *, base_key: str | None) -> events.Key:
+        return events.Key(
+            key,
+            character,
+            phase=phase,
+            modifiers=modifiers,
+            base_key=base_key,
+            shifted_key=shifted_key,
+            base_layout_key=base_layout_key,
+        )
+
+    if codepoint == 0:
+        text_values = [text for text in texts if text]
+        if text_values:
+            return [make(text, text, base_key=text) for text in text_values]
+
+    functional_name = FUNCTIONAL_KEYS.get(f"{codepoint}{end}")
+    if functional_name:
+        base_key = functional_name
+        functional = True
+    else:
+        base_key = _textual_name(codepoint, unshifted=True) if codepoint else ""
+        if not base_key:
+            base_key = _safe_chr(codepoint) or str(codepoint)
+        functional = False
+
+    def legacy_final(key_events: list[events.Key]) -> list[events.Key]:
+        """Keep historical CSI-final names and a null character.
+
+        Sequences that end in ``~`` or a letter predate the Kitty ``u`` form.
+        Their public key stays ``modifiers + base`` and the character stays
+        unset, matching the previous parser.
+        """
+        if end == "u":
+            return key_events
+        legacy_base = base_key.lower() if len(base_key) == 1 else base_key
+        public = "+".join([*modifiers, legacy_base]) if modifiers else legacy_base
+        return [make(public, None, base_key=legacy_base)]
+
+    if base_key in MODIFIER_FUNCTIONAL_KEYS:
+        return legacy_final([make(base_key, None, base_key=base_key)])
+
+    if any(modifier != "shift" for modifier in modifiers):
+        return legacy_final(
+            [make("+".join([*modifiers, base_key]), None, base_key=base_key)]
+        )
+
+    text_values: list[str | None] = list(texts) if texts else [None]
+    return legacy_final(
+        [
+            make(
+                *_plain_or_shift_key(
+                    base_key=base_key,
+                    modifiers=modifiers,
+                    text=text,
+                    codepoint=codepoint,
+                    functional=functional,
+                    shifted_character=shifted_character,
+                ),
+                base_key=base_key,
+            )
+            for text in text_values
+        ]
+    )
 
 
 IS_ITERM = (
@@ -336,29 +550,8 @@ class XTermParser(Parser[Message]):
             Keys
         """
 
-        if (match := _re_extended_key.fullmatch(sequence)) is not None:
-            number, modifiers, end = match.groups()
-            number = number or 1
-            if not (key := FUNCTIONAL_KEYS.get(f"{number}{end}", "")):
-                try:
-                    key = _character_to_key(chr(int(number)))
-                except Exception:
-                    key = chr(int(number))
-            key_tokens: list[str] = []
-            if modifiers:
-                modifier_bits = int(modifiers) - 1
-                # Not convinced of the utility in reporting caps_lock and num_lock
-                MODIFIERS = ("shift", "alt", "ctrl", "super", "hyper", "meta")
-                # Ignore caps_lock and num_lock modifiers
-                for bit, modifier in enumerate(MODIFIERS):
-                    if modifier_bits & (1 << bit):
-                        key_tokens.append(modifier)
-
-            key_tokens.sort()
-            key_tokens.append(key.lower())
-            yield events.Key(
-                "+".join(key_tokens), sequence if len(sequence) == 1 else None
-            )
+        if (extended_keys := parse_extended_key(sequence)) is not None:
+            yield from extended_keys
             return
 
         keys = ANSI_SEQUENCES_KEYS.get(sequence)
@@ -373,8 +566,12 @@ class XTermParser(Parser[Message]):
         if isinstance(keys, tuple):
             # If the sequence mapped to a tuple, then it's values from the
             # `Keys` enum. Raise key events from what we find in the tuple.
+            # ESC-prefixed fallback sets alt for the following character. Merge
+            # that into the public name so Enter, Space, Backspace, and
+            # Ctrl+letter keep their Textual key names.
             for key in keys:
-                yield events.Key(key.value, sequence if len(sequence) == 1 else None)
+                name = _with_alt(key.value) if alt else key.value
+                yield events.Key(name, sequence if len(sequence) == 1 else None)
             return
         # If keys is a string, the intention is that it's a mapping to a
         # character, which should really be treated as the sequence for the

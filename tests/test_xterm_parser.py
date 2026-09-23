@@ -386,3 +386,97 @@ def test_terminal_mode_reporting_synchronized_output_not_supported(parser):
     sequence = "\x1b[?2026;0$y"
     events = list(parser.feed(sequence))
     assert events == []
+
+
+def _feed_keys(parser: XTermParser, sequence: str) -> list[Key]:
+    events = list(parser.feed(sequence))
+    if not any(isinstance(event, Key) for event in events):
+        events.extend(parser.feed(""))
+    return [event for event in events if isinstance(event, Key)]
+
+
+def test_kitty_shift_only_printable_keeps_character_and_metadata(parser):
+    """Shift+A keeps the shifted character and the unshifted base key."""
+    event = _feed_keys(parser, "\x1b[97;2;65u")[0]
+    assert event.key in {"A", "shift+a"}
+    assert event.character == "A"
+    assert event.modifiers == ("shift",)
+    assert event.base_key == "a"
+    assert event.phase == "press"
+    assert event.is_press
+    assert event.shift
+    assert not event.alt
+
+
+def test_kitty_non_shift_printable_shortcut_has_no_character(parser):
+    event = _feed_keys(parser, "\x1b[97;4;65u")[0]
+    assert event.key == "alt+shift+a"
+    assert event.character is None
+    assert event.modifiers == ("alt", "shift")
+    assert event.base_key == "a"
+
+
+def test_kitty_associated_text_only_uses_text_as_key_and_character(parser):
+    event = _feed_keys(parser, "\x1b[0;;229u")[0]
+    assert event.key == "å"
+    assert event.character == "å"
+
+
+def test_kitty_alternate_shifted_key_uses_textual_name_and_alias(parser):
+    event = _feed_keys(parser, "\x1b[61:43;6u")[0]
+    assert event.shifted_key == "plus"
+    assert event.base_key == "equals_sign"
+    assert event.modifiers == ("ctrl", "shift")
+    assert event.character is None
+    assert "ctrl+plus" in event.aliases
+
+
+def test_legacy_csi_final_keeps_null_character(parser):
+    """CSI-final sequences that collided with the extended parser stay non-printing."""
+    space = _feed_keys(parser, "\x1b[32~")[0]
+    assert space.key == "space"
+    assert space.character is None
+    enter = _feed_keys(parser, "\x1b[13u")[0]
+    assert enter.key == "enter"
+    assert enter.character is None
+    assert enter.base_key == "enter"
+    assert enter.modifiers == ()
+
+
+def test_kitty_event_phases(parser):
+    repeat = _feed_keys(parser, "\x1b[97;1:2u")[0]
+    release = _feed_keys(parser, "\x1b[97;5:3u")[0]
+    assert repeat.phase == "repeat"
+    assert repeat.is_repeat
+    assert repeat.character == "a"
+    assert release.phase == "release"
+    assert release.is_release
+    assert release.key == "ctrl+a"
+    assert release.modifiers == ("ctrl",)
+    assert release.base_key == "a"
+    assert release.ctrl
+
+
+def test_kitty_multiple_associated_text_characters(parser):
+    events = _feed_keys(parser, "\x1b[58;2;126:47u")
+    assert "".join(event.character or "" for event in events) == "~/"
+
+
+@pytest.mark.parametrize(
+    "sequence,key,character,modifiers,base_key",
+    [
+        ("\x1b\r", "alt+enter", "\r", ("alt",), "enter"),
+        ("\x1b ", "alt+space", " ", ("alt",), "space"),
+        ("\x1b\x08", "alt+backspace", "\x08", ("alt",), "backspace"),
+        ("\x1b\x01", "alt+ctrl+a", "\x01", ("alt", "ctrl"), "a"),
+    ],
+)
+def test_legacy_alt_prefixed_fallback(
+    parser, sequence, key, character, modifiers, base_key
+):
+    event = _feed_keys(parser, sequence)[0]
+    assert event.key == key
+    assert event.character == character
+    assert event.modifiers == modifiers
+    assert event.base_key == base_key
+    assert event.phase == "press"
