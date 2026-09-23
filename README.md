@@ -51,6 +51,7 @@ Each rule is its own set of logic and is designed to be run independently. This 
 ### Content rules
 
 - [auto-correct-common-misspellings](https://platers.github.io/obsidian-linter/settings/content-rules/#auto-correct-common-misspellings)
+- [auto-toc](https://platers.github.io/obsidian-linter/settings/content-rules/#auto-toc)
 - [blockquote-style](https://platers.github.io/obsidian-linter/settings/content-rules/#blockquote-style)
 - [convert-bullet-list-markers](https://platers.github.io/obsidian-linter/settings/content-rules/#convert-bullet-list-markers)
 - [default-language-for-code-fences](https://platers.github.io/obsidian-linter/settings/content-rules/#default-language-for-code-fences)

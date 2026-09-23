@@ -153,6 +153,113 @@ But this also affects javaSrript(what should be JavaScript) and other proper nam
 ``````
 </details>
 
+## Auto TOC
+
+Alias: `auto-toc`
+
+Generates or updates a table of contents between <code>&lt;!-- toc --&gt;</code> and <code>&lt;!-- /toc --&gt;</code> based on the ATX headings in the file. Files without a <code>&lt;!-- toc --&gt;</code> marker are left unchanged.
+
+### Options
+
+| Name | Description | List Items | Default Value |
+| ---- | ----------- | ---------- | ------------- |
+| `List Style` | Whether the table of contents uses a bulleted or numbered list | `bullet`: Uses an unordered list for the table of contents<br/><br/>`number`: Uses an ordered list for the table of contents | `bullet` |
+| `Bullet Marker` | The list item indicator to use when the list style is bullet | `-`: Uses `-` as the list item indicator<br/><br/>`*`: Uses `*` as the list item indicator<br/><br/>`+`: Uses `+` as the list item indicator | `-` |
+| `Ordered List Style` | How list items are numbered when the list style is number | `always-one`: Every ordered list item uses `1.`<br/><br/>`increment`: Ordered list items are numbered incrementally across the whole table of contents | `always-one` |
+| `Indent Size` | The number of spaces used for each nested level in the table of contents | N/A | `2` |
+| `Minimum Heading Level` | The smallest heading level to include in the table of contents | N/A | `2` |
+| `Maximum Heading Level` | The largest heading level to include in the table of contents | N/A | `6` |
+| `Title` | An optional line to add at the top of the table of contents (i.e. <code>**Contents**</code>). Leave empty for no title. | N/A |  |
+| `Use Explicit IDs` | Uses a trailing <code>{#id}</code> on a heading as its anchor | N/A | false |
+| `Strip Formatting in TOC` | Removes links, images, and formatting from the heading text shown in the table of contents | N/A | false |
+| `Exclude Headings` | Headings to exclude from the table of contents with one per line. Plain values match case-insensitively and values wrapped in <code>/</code> are treated as case-insensitive regular expressions. | N/A |  |
+
+
+
+### Examples
+
+<details><summary>A table of contents is generated after the `<!-- toc -->` marker and the missing end marker is added</summary>
+
+Before:
+
+`````` markdown
+# Title
+
+<!-- toc -->
+
+## Introduction
+
+### Getting **Started**
+
+## Usage
+``````
+
+After:
+
+`````` markdown
+# Title
+
+<!-- toc -->
+
+- [Introduction](#introduction)
+  - [Getting **Started**](#getting-started)
+- [Usage](#usage)
+
+<!-- /toc -->
+
+## Introduction
+
+### Getting **Started**
+
+## Usage
+``````
+</details>
+<details><summary>An existing table of contents is updated with a title, numbered items, and deduplicated anchors</summary>
+
+Before:
+
+`````` markdown
+<!-- toc -->
+- [Old](#old)
+<!-- /toc -->
+## Notes
+## Notes
+## [[Linked Page|Alias]]
+``````
+
+After:
+
+`````` markdown
+<!-- toc -->
+
+**Contents**
+
+1. [Notes](#notes)
+2. [Notes](#notes-1)
+3. [Alias](#alias)
+
+<!-- /toc -->
+
+## Notes
+## Notes
+## [[Linked Page|Alias]]
+``````
+</details>
+<details><summary>Files without a `<!-- toc -->` marker are left unchanged</summary>
+
+Before:
+
+`````` markdown
+## Heading
+``````
+
+After:
+
+`````` markdown
+## Heading
+``````
+</details>
+
 ## Blockquote Style
 
 Alias: `blockquote-style`
