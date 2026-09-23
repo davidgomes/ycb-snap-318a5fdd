@@ -91,6 +91,65 @@ describe('report file output', function() {
     });
   });
 
+  it('writes one report file per launcher when report_file uses <launcher>', function(done) {
+    let stdout = new PassThrough();
+    let perLauncherDir = path.join(reportDir, 'per-launcher');
+    let config = new Config('ci', {
+      port: 0,
+      reporter: 'tap',
+      stdout_stream: stdout,
+      report_file: path.join(perLauncherDir, '<launcher>.tap'),
+      launchers: {
+        'Passing Process': { command: 'node -e "process.exit(0)"' },
+        'Failing (Process)': { command: 'node -e "process.exit(1)"' }
+      },
+      launch_in_ci: ['Passing Process', 'Failing (Process)']
+    });
+
+    let app = new App(config, exitCode => {
+      try {
+        expect(exitCode).to.eq(1);
+        expect(fs.readdirSync(perLauncherDir).sort()).to.deep.equal(['Failing__Process_.tap', 'Passing_Process.tap']);
+
+        let passing = fs.readFileSync(path.join(perLauncherDir, 'Passing_Process.tap'), 'utf-8');
+        expect(passing).to.match(/^ok 1 Passing Process/m);
+        expect(passing).to.match(/# tests 1/);
+        expect(passing).not.to.contain('Failing');
+
+        let failing = fs.readFileSync(path.join(perLauncherDir, 'Failing__Process_.tap'), 'utf-8');
+        expect(failing).to.match(/^not ok 1 Failing \(Process\)/m);
+        expect(failing).not.to.contain('Passing');
+
+        expect(stdout.read().toString()).to.match(/# tests 2/);
+        done();
+      } catch (e) {
+        done(e);
+      }
+    });
+    app.start();
+  });
+
+  it('fails without creating a file when report_file has an unknown template', function(done) {
+    let stdout = new PassThrough();
+    let config = new Config('ci', {
+      reporter: 'tap',
+      stdout_stream: stdout,
+      report_file: path.join(reportDir, 'report-<browser>.tap')
+    });
+
+    let app = new App(config, exitCode => {
+      try {
+        expect(exitCode).to.eq(1);
+        expect(stdout.read().toString()).to.contain('Unknown template variable "<browser>"');
+        expect(fs.readdirSync(reportDir)).to.deep.equal(['test-reports.xml']);
+        done();
+      } catch (e) {
+        done(e);
+      }
+    });
+    app.start();
+  });
+
   it('writes out results to the file', function(done) {
     let reportFile = new ReportFile(filename);
     let reportStream = reportFile.outputStream;
