@@ -184,7 +184,7 @@ func validMergePath(path string) bool {
 	if path == "" {
 		return false
 	}
-	for _, seg := range strings.Split(path, ".") {
+	for seg := range strings.SplitSeq(path, ".") {
 		if strings.TrimSpace(seg) == "" {
 			return false
 		}
@@ -406,7 +406,7 @@ func mergeKeyOf(e any, keyPath string) (string, bool) {
 
 func lookupPath(m map[string]any, path string) (any, bool) {
 	var cur any = m
-	for _, seg := range strings.Split(path, ".") {
+	for seg := range strings.SplitSeq(path, ".") {
 		table, ok := cur.(map[string]any)
 		if !ok {
 			return nil, false
