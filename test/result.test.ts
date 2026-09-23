@@ -1614,3 +1614,124 @@ describe('`Result` method tests', () => {
     });
   });
 });
+
+describe('iteration and collection combinators', () => {
+  function* counted<T>(items: T[], pulled: { count: number }): Generator<T> {
+    for (const item of items) {
+      pulled.count += 1;
+      yield item;
+    }
+  }
+
+  test('`[Symbol.iterator]`', () => {
+    expect([...result.ok(42)]).toEqual([42]);
+    expect([...result.err('nope')]).toEqual([]);
+    expectTypeOf([...result.ok<number, string>(1)]).toEqualTypeOf<number[]>();
+  });
+
+  test('equality still distinguishes values', () => {
+    expect(result.err('a')).not.toEqual(result.err('b'));
+    expect(result.ok(1)).not.toEqual(result.ok(2));
+  });
+
+  describe('`sequence`', () => {
+    test('all `Ok`', () => {
+      expect(result.sequence([result.ok(1), result.ok(2)])).toEqual(result.ok([1, 2]));
+    });
+
+    test('returns the first `Err`', () => {
+      expect(result.sequence([result.ok(1), result.err('a'), result.err('b')])).toEqual(
+        result.err('a')
+      );
+    });
+
+    test('empty', () => {
+      const empty = result.sequence([]);
+      expect(empty).toEqual(result.ok([]));
+      expectTypeOf(empty).toEqualTypeOf<Result<[], never>>();
+    });
+
+    test('types', () => {
+      const arr: Array<Result<number, string>> = [];
+      expectTypeOf(result.sequence(arr)).toEqualTypeOf<Result<number[], string>>();
+    });
+
+    test('accepts any iterable and stops after the first `Err`', () => {
+      const pulled = { count: 0 };
+      const items: Array<Result<number, string>> = [result.ok(1), result.err('a'), result.ok(3)];
+      const sequenced = result.sequence(counted(items, pulled));
+      expect(sequenced).toEqual(result.err('a'));
+      expect(pulled.count).toBe(2);
+      expectTypeOf(sequenced).toEqualTypeOf<Result<number[], string>>();
+    });
+  });
+
+  describe('`traverse`', () => {
+    const parse = (s: string): Result<number, string> => {
+      const n = Number.parseInt(s, 10);
+      return Number.isNaN(n) ? result.err(`bad: ${s}`) : result.ok(n);
+    };
+
+    test('all succeed', () => {
+      const traversed = result.traverse(['1', '2'], parse);
+      expect(traversed).toEqual(result.ok([1, 2]));
+      expectTypeOf(traversed).toEqualTypeOf<Result<number[], string>>();
+    });
+
+    test('passes the index', () => {
+      expect(result.traverse(['a', 'b'], (s, i) => result.ok(`${s}${i}`))).toEqual(
+        result.ok(['a0', 'b1'])
+      );
+    });
+
+    test('stops after the first failure', () => {
+      const pulled = { count: 0 };
+      const calls: string[] = [];
+      const traversed = result.traverse(counted(['1', 'x', 'y'], pulled), (s) => {
+        calls.push(s);
+        return parse(s);
+      });
+      expect(traversed).toEqual(result.err('bad: x'));
+      expect(calls).toEqual(['1', 'x']);
+      expect(pulled.count).toBe(2);
+    });
+
+    test('curried', () => {
+      const parseAll = result.traverse(parse);
+      expectTypeOf(parseAll).toEqualTypeOf<(items: Iterable<string>) => Result<number[], string>>();
+      expect(parseAll(new Set(['4', '5']))).toEqual(result.ok([4, 5]));
+    });
+  });
+
+  test('`zip`', () => {
+    const zipped = result.zip(result.ok<number, string>(1), result.ok<string, boolean>('a'));
+    expect(zipped).toEqual(result.ok([1, 'a']));
+    expectTypeOf(zipped).toEqualTypeOf<Result<[number, string], string | boolean>>();
+    expect(result.zip(result.err('x'), result.err('y'))).toEqual(result.err('x'));
+    expect(result.zip(result.ok(1), result.err('y'))).toEqual(result.err('y'));
+  });
+
+  test('`zipWith`', () => {
+    const add = (a: number, b: number) => a + b;
+    expect(result.zipWith(result.ok(1), result.ok(2), add)).toEqual(result.ok(3));
+    expect(result.zipWith(result.ok(1), result.err('nope'), add)).toEqual(result.err('nope'));
+    expect(result.zipWith(result.err('first'), result.err('second'), add)).toEqual(
+      result.err('first')
+    );
+  });
+
+  test('`partition`', () => {
+    const items: Array<Result<number, string>> = [
+      result.ok(1),
+      result.err('a'),
+      result.ok(2),
+      result.err('b'),
+    ];
+    const [oks, errs] = result.partition(items);
+    expect(oks).toEqual([1, 2]);
+    expect(errs).toEqual(['a', 'b']);
+    expectTypeOf(oks).toEqualTypeOf<number[]>();
+    expectTypeOf(errs).toEqualTypeOf<string[]>();
+    expect(result.partition([])).toEqual([[], []]);
+  });
+});

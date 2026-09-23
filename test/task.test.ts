@@ -43,6 +43,7 @@ import Task, {
   isRetryFailed,
   flatten,
 } from 'true-myth/task';
+import * as task from 'true-myth/task';
 import {
   exponential,
   fibonacci,
@@ -3839,3 +3840,216 @@ function printError(e: Error): string {
   let cause = maybeCause.mapOr('', (cause) => `\n\tcaused by: ${cause}`);
   return `${e.name}: ${e.message}${cause}`;
 }
+
+describe('iteration and collection combinators', () => {
+  describe('`[Symbol.asyncIterator]`', () => {
+    test('yields exactly one `Ok` for a resolved task', async () => {
+      const seen: Array<Result<number, string>> = [];
+      for await (const r of Task.resolve<number, string>(42)) {
+        seen.push(r);
+      }
+      expect(seen).toEqual([Result.ok(42)]);
+    });
+
+    test('yields exactly one `Err` for a rejected task', async () => {
+      const seen: Array<Result<number, string>> = [];
+      for await (const r of Task.reject<number, string>('oh no')) {
+        seen.push(r);
+      }
+      expect(seen).toEqual([Result.err('oh no')]);
+    });
+
+    test('waits for a pending task', async () => {
+      const { task, resolve } = Task.withResolvers<number, string>();
+      const iterator = task[Symbol.asyncIterator]();
+      const next = iterator.next();
+      resolve(1);
+      expect(await next).toEqual({ done: false, value: Result.ok(1) });
+      expect(await iterator.next()).toEqual({ done: true, value: undefined });
+    });
+  });
+
+  describe('`sequence`', () => {
+    test('all resolve', async () => {
+      const t = task.sequence([Task.resolve(1), Task.resolve(2)]);
+      expect(await t).toEqual(Result.ok([1, 2]));
+    });
+
+    test('rejects with the first rejection', async () => {
+      const t = task.sequence([Task.resolve(1), Task.reject('a')]);
+      expect(await t).toEqual(Result.err('a'));
+    });
+
+    test('empty', async () => {
+      const t = task.sequence([]);
+      expectTypeOf(t).toEqualTypeOf<Task<[], never>>();
+      expect(await t).toEqual(Result.ok([]));
+    });
+
+    test('accepts any iterable', async () => {
+      const tasks = new Set([Task.resolve<number, string>(1), Task.resolve<number, string>(2)]);
+      const t = task.sequence(tasks);
+      expectTypeOf(t).toEqualTypeOf<Task<number[], string>>();
+      expect(await t).toEqual(Result.ok([1, 2]));
+    });
+  });
+
+  describe('`traverse`', () => {
+    test('runs concurrently and preserves order', async () => {
+      const started: number[] = [];
+      const t = task.traverse([30, 10, 20], (ms, i) => {
+        started.push(i);
+        return timer(ms).map((n) => n * 2);
+      });
+      expect(started).toEqual([0, 1, 2]);
+      expectTypeOf(t).toEqualTypeOf<Task<number[], never>>();
+      expect(await t).toEqual(Result.ok([60, 20, 40]));
+    });
+
+    test('rejects', async () => {
+      const t = task.traverse([1, 2], (n) =>
+        n === 2 ? Task.reject<number, string>('two') : Task.resolve<number, string>(n)
+      );
+      expect(await t).toEqual(Result.err('two'));
+    });
+
+    test('curried', async () => {
+      const double = task.traverse((n: number) => Task.resolve<number, string>(n * 2));
+      expectTypeOf(double).toEqualTypeOf<(items: Iterable<number>) => Task<number[], string>>();
+      expect(await double([1, 2])).toEqual(Result.ok([2, 4]));
+    });
+  });
+
+  describe('`traverseSerial`', () => {
+    test('runs one at a time', async () => {
+      const log: string[] = [];
+      const t = task.traverseSerial([20, 5], (ms, i) => {
+        log.push(`start ${i}`);
+        return timer(ms).inspect(() => log.push(`end ${i}`));
+      });
+      expect(log).toEqual(['start 0']);
+      expect(await t).toEqual(Result.ok([20, 5]));
+      expect(log).toEqual(['start 0', 'end 0', 'start 1', 'end 1']);
+    });
+
+    test('stops on the first rejection', async () => {
+      const calls: number[] = [];
+      let pulled = 0;
+      function* items() {
+        for (const n of [1, 2, 3]) {
+          pulled += 1;
+          yield n;
+        }
+      }
+      const t = task.traverseSerial(items(), (n) => {
+        calls.push(n);
+        return n === 2 ? Task.reject<number, string>('two') : Task.resolve<number, string>(n);
+      });
+      expectTypeOf(t).toEqualTypeOf<Task<number[], string>>();
+      expect(await t).toEqual(Result.err('two'));
+      expect(calls).toEqual([1, 2]);
+      expect(pulled).toBe(2);
+    });
+
+    test('curried', async () => {
+      const double = task.traverseSerial((n: number) => Task.resolve<number, string>(n * 2));
+      expectTypeOf(double).toEqualTypeOf<(items: Iterable<number>) => Task<number[], string>>();
+      expect(await double([1, 2])).toEqual(Result.ok([2, 4]));
+    });
+  });
+
+  test('`zip`', async () => {
+    const zipped = task.zip(Task.resolve<number, string>(1), Task.resolve<string, boolean>('a'));
+    expectTypeOf(zipped).toEqualTypeOf<Task<[number, string], string | boolean>>();
+    expect(await zipped).toEqual(Result.ok([1, 'a']));
+    expect(await task.zip(Task.resolve(1), Task.reject('b'))).toEqual(Result.err('b'));
+  });
+
+  test('`zipWith`', async () => {
+    const add = (a: number, b: number) => a + b;
+    const zipped = task.zipWith(Task.resolve(1), Task.resolve(2), add);
+    expectTypeOf(zipped).toEqualTypeOf<Task<number, never>>();
+    expect(await zipped).toEqual(Result.ok(3));
+    expect(await task.zipWith(Task.reject('a'), Task.resolve(2), add)).toEqual(Result.err('a'));
+  });
+
+  describe('`tap`', () => {
+    test('non-curried', async () => {
+      const seen: number[] = [];
+      const t = task.tap(Task.resolve<number, string>(42), (n) => seen.push(n));
+      expectTypeOf(t).toEqualTypeOf<Task<number, string>>();
+      expect(await t).toEqual(Result.ok(42));
+      expect(seen).toEqual([42]);
+
+      await task.tap(Task.reject<number, string>('no'), (n) => seen.push(n));
+      expect(seen).toEqual([42]);
+    });
+
+    test('curried', async () => {
+      const seen: number[] = [];
+      const log = task.tap<number, string>((n) => seen.push(n));
+      expect(await log(Task.resolve(1))).toEqual(Result.ok(1));
+      expect(seen).toEqual([1]);
+    });
+  });
+
+  describe('`tapRejected`', () => {
+    test('non-curried', async () => {
+      const seen: string[] = [];
+      const t = task.tapRejected(Task.reject<number, string>('no'), (e) => seen.push(e));
+      expectTypeOf(t).toEqualTypeOf<Task<number, string>>();
+      expect(await t).toEqual(Result.err('no'));
+      expect(seen).toEqual(['no']);
+
+      await task.tapRejected(Task.resolve<number, string>(1), (e) => seen.push(e));
+      expect(seen).toEqual(['no']);
+    });
+
+    test('curried', async () => {
+      const seen: string[] = [];
+      const log = task.tapRejected<number, string>((e) => seen.push(e));
+      expect(await log(Task.reject('bad'))).toEqual(Result.err('bad'));
+      expect(seen).toEqual(['bad']);
+    });
+  });
+
+  describe('`retryN`', () => {
+    test('resolves without retrying', async () => {
+      let calls = 0;
+      const t = task.retryN(3, () => {
+        calls += 1;
+        return Task.resolve<string, string>('ok');
+      });
+      expectTypeOf(t).toEqualTypeOf<Task<string, string>>();
+      expect(await t).toEqual(Result.ok('ok'));
+      expect(calls).toBe(1);
+    });
+
+    test('retries until it resolves', async () => {
+      const attempts: number[] = [];
+      const t = task.retryN(3, (attempt) => {
+        attempts.push(attempt);
+        return attempt < 2 ? Task.reject<number, string>(`fail ${attempt}`) : Task.resolve(attempt);
+      });
+      expect(await t).toEqual(Result.ok(2));
+      expect(attempts).toEqual([0, 1, 2]);
+    });
+
+    test('rejects with the last reason after n retries', async () => {
+      let calls = 0;
+      const t = task.retryN(2, () => Task.reject<number, string>(`fail ${calls++}`));
+      expect(await t).toEqual(Result.err('fail 2'));
+      expect(calls).toBe(3);
+    });
+
+    test('zero retries', async () => {
+      let calls = 0;
+      const t = task.retryN(0, () => {
+        calls += 1;
+        return Task.reject('nope');
+      });
+      expect(await t).toEqual(Result.err('nope'));
+      expect(calls).toBe(1);
+    });
+  });
+});

@@ -10,6 +10,9 @@ import {
   fromResult,
   fromMaybe,
   toMaybe,
+  sequenceMaybeAsResult,
+  traverseMaybeAsResult,
+  zipMaybeAsResult,
 } from 'true-myth/toolbelt';
 
 describe('transposeResult', () => {
@@ -114,4 +117,87 @@ test('`fromResult`', () => {
   const reason = 'oh teh noes';
   const anErr = Result.err<number, string>(reason);
   expect(fromResult(anErr)).toEqual(Maybe.nothing());
+});
+
+describe('`sequenceMaybeAsResult`', () => {
+  test('all `Just`', () => {
+    const r = sequenceMaybeAsResult('missing', [Maybe.just(1), Maybe.just(2)]);
+    expect(r).toEqual(Result.ok([1, 2]));
+    expectTypeOf(r).toEqualTypeOf<Result<number[], string>>();
+  });
+
+  test('stops at the first `Nothing`', () => {
+    let pulled = 0;
+    function* items() {
+      for (const m of [Maybe.just(1), Maybe.nothing<number>(), Maybe.just(3)]) {
+        pulled += 1;
+        yield m;
+      }
+    }
+    expect(sequenceMaybeAsResult('missing', items())).toEqual(Result.err('missing'));
+    expect(pulled).toBe(2);
+  });
+
+  test('curried', () => {
+    const seq = sequenceMaybeAsResult<number, string>('missing');
+    expectTypeOf(seq).toEqualTypeOf<
+      (maybes: Iterable<Maybe<number>>) => Result<number[], string>
+    >();
+    expect(seq([Maybe.nothing()])).toEqual(Result.err('missing'));
+    expect(seq([])).toEqual(Result.ok([]));
+  });
+});
+
+describe('`traverseMaybeAsResult`', () => {
+  const lookup = (key: string, i: number) =>
+    Maybe.of(({ a: 1, b: 2 } as Record<string, number>)[key]).map((n) => n + i);
+
+  test('all `Just`', () => {
+    const r = traverseMaybeAsResult('missing', ['a', 'b'], lookup);
+    expect(r).toEqual(Result.ok([1, 3]));
+    expectTypeOf(r).toEqualTypeOf<Result<number[], string>>();
+  });
+
+  test('stops at the first `Nothing`', () => {
+    const calls: string[] = [];
+    const r = traverseMaybeAsResult('missing', ['a', 'z', 'b'], (key, i) => {
+      calls.push(key);
+      return lookup(key, i);
+    });
+    expect(r).toEqual(Result.err('missing'));
+    expect(calls).toEqual(['a', 'z']);
+  });
+
+  test('curried', () => {
+    const trav = traverseMaybeAsResult('missing');
+    const r = trav(['a'], lookup);
+    expectTypeOf(r).toEqualTypeOf<Result<number[], string>>();
+    expect(r).toEqual(Result.ok([1]));
+    expect(trav(['z'], lookup)).toEqual(Result.err('missing'));
+  });
+});
+
+describe('`zipMaybeAsResult`', () => {
+  test('both `Just`', () => {
+    const r = zipMaybeAsResult('missing', Maybe.just(1), Maybe.just('a'));
+    expect(r).toEqual(Result.ok([1, 'a']));
+    expectTypeOf(r).toEqualTypeOf<Result<[number, string], string>>();
+  });
+
+  test('either `Nothing`', () => {
+    expect(zipMaybeAsResult('missing', Maybe.nothing<number>(), Maybe.just('a'))).toEqual(
+      Result.err('missing')
+    );
+    expect(zipMaybeAsResult('missing', Maybe.just(1), Maybe.nothing<string>())).toEqual(
+      Result.err('missing')
+    );
+  });
+
+  test('curried', () => {
+    const zip = zipMaybeAsResult('missing');
+    const r = zip(Maybe.just(1), Maybe.just(true));
+    expectTypeOf(r).toEqualTypeOf<Result<[number, boolean], string>>();
+    expect(r).toEqual(Result.ok([1, true]));
+    expect(zip(Maybe.nothing<number>(), Maybe.just(true))).toEqual(Result.err('missing'));
+  });
 });
