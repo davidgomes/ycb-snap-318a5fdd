@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"io"
 	"math"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -199,6 +200,9 @@ func (d DeferredBatchOp) Finish() error {
 type Batch struct {
 	batchInternal
 	applied atomic.Bool
+	// applyDurNanos is (memtable apply duration in nanoseconds)+1 once apply
+	// has finished for a tracked sync commit. Zero means apply has not finished.
+	applyDurNanos atomic.Int64
 	// lifecycle is used to negotiate the lifecycle of a Batch. A Batch and its
 	// underlying batchInternal.data byte slice may be reused. There are two
 	// mechanisms for reuse:
@@ -387,6 +391,12 @@ type batchInternal struct {
 	// variable may violate memory safety. Since we don't use atomics here,
 	// false negatives are possible.
 	committing bool
+
+	// trackSyncCommit is set for a Sync commit so the WAL write path can report
+	// durability after the sync finishes. Non-sync commits leave it false.
+	trackSyncCommit bool
+	// commitCorrelationID is copied from WriteOptions.CommitCorrelationID.
+	commitCorrelationID uint64
 }
 
 // BatchCommitStats exposes stats related to committing a batch.
@@ -1627,6 +1637,7 @@ func (b *Batch) reset() {
 		db:       b.db,
 	}
 	b.applied.Store(false)
+	b.applyDurNanos.Store(0)
 	if b.data != nil {
 		if cap(b.data) > b.opts.maxRetainedSizeBytes {
 			// If the capacity of the buffer is larger than our maximum
@@ -1698,6 +1709,31 @@ func (b *Batch) Reader() batchrepr.Reader {
 		b.init(batchrepr.HeaderLen)
 	}
 	return batchrepr.Read(b.data)
+}
+
+// publishApplyDuration records the wall time spent applying the batch. A sync
+// durability relay waits for this before it fires BatchDurable. A non-positive
+// duration is preserved; the relay clamps it for successful syncs.
+func (b *Batch) publishApplyDuration(d time.Duration) {
+	if !b.trackSyncCommit {
+		return
+	}
+	if d < 0 {
+		d = 0
+	}
+	// Store nanos+1 so zero remains "not yet published".
+	b.applyDurNanos.Store(int64(d) + 1)
+}
+
+// waitApplyDuration blocks until publishApplyDuration has been called.
+func (b *Batch) waitApplyDuration() time.Duration {
+	for {
+		v := b.applyDurNanos.Load()
+		if v != 0 {
+			return time.Duration(v - 1)
+		}
+		runtime.Gosched()
+	}
 }
 
 // SyncWait is to be used in conjunction with DB.ApplyNoSyncWait.

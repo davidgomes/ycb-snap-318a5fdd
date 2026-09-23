@@ -66,6 +66,9 @@ func TestEventListener(t *testing.T) {
 				info.BlockReadBytes = 7894
 				tableIngested(info)
 			}
+			// BatchDurable timings are not deterministic and the callback races
+			// with WAL filesystem logging. Durability is covered separately.
+			lel.BatchDurable = noopBatchDurable
 			opts := &Options{
 				// The table stats collector runs asynchronously and its
 				// timing is less predictable. It increments nextJobID, which

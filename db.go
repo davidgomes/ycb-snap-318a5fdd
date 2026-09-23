@@ -301,6 +301,9 @@ type DB struct {
 
 	commit *commitPipeline
 
+	// durability tracks WAL sync completion for Sync commits and the wait APIs.
+	durability durabilityTracker
+
 	// readState provides access to the state needed for reading without needing
 	// to acquire DB.mu.
 	readState struct {
@@ -819,6 +822,12 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 		}
 	}
 	batch.committing = true
+	batch.trackSyncCommit = sync && !d.opts.DisableWAL
+	batch.commitCorrelationID = 0
+	if opts != nil {
+		batch.commitCorrelationID = opts.CommitCorrelationID
+	}
+	batch.applyDurNanos.Store(0)
 
 	if batch.db == nil {
 		if err := batch.refreshMemTableSize(); err != nil {
@@ -903,7 +912,7 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 		b.flushable.setSeqNum(b.SeqNum())
 		if !d.opts.DisableWAL {
 			var err error
-			size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr}, b)
+			size, err = d.writeRecordSyncAware(b, repr, syncWG, syncErr)
 			if err != nil {
 				panic(err)
 			}
@@ -945,7 +954,7 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 	d.logBytesIn.Add(uint64(len(repr)))
 
 	if b.flushable == nil {
-		size, err = d.mu.log.writer.WriteRecord(repr, wal.SyncOptions{Done: syncWG, Err: syncErr}, b)
+		size, err = d.writeRecordSyncAware(b, repr, syncWG, syncErr)
 		if err != nil {
 			panic(err)
 		}
@@ -1569,6 +1578,10 @@ func (d *DB) Close() error {
 
 	d.closed.Store(errors.WithStack(ErrClosed))
 	close(d.closedCh)
+	// Unblock durability waiters before tearing down the WAL. Sync relays may
+	// still complete and record a durable sequence number; waiters already
+	// blocked observe the close error.
+	d.durability.onClose(ErrClosed)
 	d.bgCtxCancel()
 
 	defer d.cacheHandle.Close()
@@ -2081,6 +2094,10 @@ func (d *DB) Metrics() *Metrics {
 	metrics.Uptime = d.opts.private.timeNow().Sub(d.openedAt)
 
 	metrics.manualMemory = manual.GetMetrics()
+	if count, dur, ok := d.durability.metricSnapshot(); ok {
+		metrics.DurableCommitCount = count
+		metrics.DurableCommitDuration = dur
+	}
 
 	return metrics
 }

@@ -316,6 +316,8 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 	// for reuse. See Batch.release().
 	mem, err := p.prepare(b, syncWAL, noSyncWait)
 	if err != nil {
+		// A sync relay may already be waiting to learn the apply duration.
+		b.publishApplyDuration(0)
 		b.db = nil // prevent batch reuse on error
 		// NB: we are not doing <-p.commitQueueSem since the batch is still
 		// sitting in the pending queue. We should consider fixing this by also
@@ -324,13 +326,16 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 	}
 
 	// Apply the batch to the memtable.
+	applyStart := crtime.NowMono()
 	if err := p.env.apply(b, mem); err != nil {
+		b.publishApplyDuration(applyStart.Elapsed())
 		b.db = nil // prevent batch reuse on error
 		// NB: we are not doing <-p.commitQueueSem since the batch is still
 		// sitting in the pending queue. We should consider fixing this by also
 		// removing the batch from the pending queue.
 		return err
 	}
+	b.publishApplyDuration(applyStart.Elapsed())
 
 	// Publish the batch sequence number.
 	p.publish(b)
