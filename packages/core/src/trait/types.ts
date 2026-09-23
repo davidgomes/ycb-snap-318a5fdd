@@ -1,3 +1,4 @@
+import type { Aspect } from '../aspect/aspect';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import type { QueryInstance } from '../query/types';
@@ -43,7 +44,12 @@ export type TraitTuple<T extends Trait = Trait> = [
         : never,
 ];
 
-export type ConfigurableTrait<T extends Trait = Trait> = T | TraitTuple<T> | RelationPair<T>;
+export type ConfigurableTrait<T extends Trait = Trait> =
+    | T
+    | TraitTuple<T>
+    | RelationPair<T>
+    | Aspect
+    | [Aspect, Record<string, unknown>];
 
 export type SetTraitCallback<T extends Trait | RelationPair> = (
     prev: TraitRecord<ExtractSchema<T>>

@@ -145,6 +145,38 @@ useEffect(() => {
 
 ## Advanced
 
+### Aspects
+
+`createAspect` groups two or more traits so they can be checked, read, written, and queried as one unit. Nested aspects flatten. Each call returns a distinct aspect with `id`, `traits`, and a merged `schema`. Constituents must use different field names. Relations cannot be constituents. Tag traits can.
+
+```js
+import { createAspect, trait } from 'koota'
+
+const Position = trait({ x: 0, y: 0 })
+const Health = trait({ hp: 100 })
+const IsAlive = trait()
+
+const Unit = createAspect(Position, Health, IsAlive)
+
+const entity = world.spawn(Unit({ x: 1, hp: 80 }))
+entity.has(Unit) // true when every constituent is present
+entity.get(Unit) // { x: 1, y: 0, hp: 80 }
+
+entity.set(Unit, { x: 4, hp: 50 }) // writes each field back to its trait
+entity.remove(Unit) // removes every constituent
+```
+
+`entity.add(Unit)` adds only the constituents that are missing and applies initial values by field, leaving traits the entity already has untouched.
+
+An aspect used as a query parameter requires every constituent. `readEach` yields one merged object and `updateEach` writes those fields back to the constituent stores. Aspects work with `Not`, `Or`, `Added`, `Removed`, and `Changed`:
+
+- `Not(Unit)` matches entities missing at least one constituent.
+- `Changed(Unit)` matches when any constituent's data changed.
+- `Added(Unit)` matches the transition to every constituent being present.
+- `Removed(Unit)` matches the transition away from that complete set.
+
+`world.onAdd(Unit, …)` runs when an entity goes from incomplete to complete, `onRemove` runs on the reverse transition, and `onChange` runs when any constituent changes while all of them are present.
+
 ### Relations
 
 Koota supports relations between entities using the `relation` function. Relations allow you to build graphs by creating connections between entities with efficient queries.

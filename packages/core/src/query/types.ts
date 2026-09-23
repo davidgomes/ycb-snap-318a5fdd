@@ -1,3 +1,4 @@
+import type { Aspect } from '../aspect/aspect';
 import type { Entity } from '../entity/types';
 import type { RelationPair } from '../relation/types';
 import { AoSFactory } from '../storage';
@@ -15,7 +16,7 @@ import { $modifier } from './modifier';
 import { $parameters, $queryRef } from './symbols';
 
 export type QueryModifier = (...components: Trait[]) => Modifier;
-export type QueryParameter = Trait | RelationPair | ReturnType<QueryModifier>;
+export type QueryParameter = Trait | Aspect | RelationPair | ReturnType<QueryModifier>;
 export type QuerySubscriber = (entity: Entity) => void;
 export type QueryUnsubscriber = () => void;
 
@@ -62,6 +63,8 @@ export type InstancesFromParameters<T extends QueryParameter[]> = T extends [
                       ? [ReturnType<ExtractSchema<First>>]
                       : [TraitRecord<First>]
                   : []
+              : First extends Aspect
+                ? [Record<string, unknown>]
               : First extends Modifier
                 ? IsNotModifier<First> extends true
                     ? []
@@ -93,10 +96,14 @@ export type Modifier<TTrait extends Trait[] = Trait[], TType extends string = st
     id: number;
     traits: TTrait;
     traitIds: number[];
+    /** Aspect arguments. Constituents stay on `traits` for registration. */
+    aspectGroups?: Aspect[];
+    /** Argument order, including aspect groups as single terms. */
+    terms?: import('../aspect/aspect').ModifierTerm[];
 };
 
 /** Parameter types that can be passed to Or modifier */
-export type OrParameter = Trait | Modifier;
+export type OrParameter = Trait | Modifier | Aspect;
 
 /** Or modifier that can contain both traits and nested modifiers */
 export type OrModifier<T extends OrParameter[] = OrParameter[]> = Modifier<
@@ -124,6 +131,12 @@ type ExtractTraitsFromOrParams<T extends OrParameter[]> = T extends [infer First
 export type TrackingGroup = {
     /** Whether all traits must match (and) or any trait can match (or) */
     logic: 'and' | 'or';
+    /**
+     * Aspect modifiers track the group as one unit:
+     * add = transition to all-present, remove = transition from all-present,
+     * change = any constituent changed while all are present.
+     */
+    mode?: 'aspect-add' | 'aspect-remove' | 'aspect-change';
     /** The type of tracking event */
     type: 'add' | 'remove' | 'change';
     /** Tracking modifier ID for snapshot/mask lookups */
@@ -155,6 +168,10 @@ export type QueryInstance<T extends QueryParameter[] = QueryParameter[]> = {
     }[];
     /** Unified tracking groups with explicit AND/OR logic */
     trackingGroups: TrackingGroup[];
+    /** Not(aspect): entity must be missing at least one constituent of each group. */
+    exclusionMasks: number[][];
+    /** Or(aspect): each group matches only when every constituent is present. */
+    orGroupMasks: number[][];
     generations: number[];
     entities: SparseSet;
     isTracking: boolean;

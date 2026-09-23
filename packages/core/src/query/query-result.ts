@@ -1,3 +1,5 @@
+import { parametersHaveAspect } from './query-result-aspect';
+import { createMergedQueryResult } from './query-result-aspect';
 import { $internal } from '../common';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
@@ -25,6 +27,10 @@ export function createQueryResult<T extends QueryParameter[]>(
     query: QueryInstance,
     params: QueryParameter[]
 ): QueryResult<T> {
+    if (parametersHaveAspect(params)) {
+        return createMergedQueryResult(world, entities, query, params);
+    }
+
     const traits: Trait[] = [];
     const stores: Store<any>[] = [];
 

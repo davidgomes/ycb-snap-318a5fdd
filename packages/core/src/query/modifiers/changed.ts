@@ -1,10 +1,10 @@
 import { $internal } from '../../common';
 import type { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
-import { isRelation } from '../../relation/utils/is-relation';
+import { splitModifierInputs, type FlattenInputs } from '../../aspect/aspect';
 import { hasTrait, registerTrait } from '../../trait/trait';
 import { getTraitInstance, hasTraitInstance } from '../../trait/trait-instance';
-import type { ExtractTraits, Trait, TraitOrRelation } from '../../trait/types';
+import type { Trait } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import type { World } from '../../world';
 import { createModifier } from '../modifier';
@@ -20,13 +20,17 @@ export function createChanged() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <const T extends readonly unknown[]>(
         ...inputs: T
-    ): Modifier<ExtractTraits<T>, `changed-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`changed-${id}`, id, traits);
+    ): Modifier<
+        FlattenInputs<T> extends readonly Trait[] ? [...FlattenInputs<T>] : Trait[],
+        `changed-${number}`
+    > => {
+        const { traits, aspects, terms } = splitModifierInputs(inputs);
+        return createModifier(`changed-${id}`, id, traits, aspects, terms) as Modifier<
+            FlattenInputs<T> extends readonly Trait[] ? [...FlattenInputs<T>] : Trait[],
+            `changed-${number}`
+        >;
     };
 }
 

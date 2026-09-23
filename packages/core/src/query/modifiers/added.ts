@@ -1,6 +1,5 @@
-import { $internal } from '../../common';
-import { isRelation } from '../../relation/utils/is-relation';
-import type { ExtractTraits, TraitOrRelation } from '../../trait/types';
+import { splitModifierInputs, type FlattenInputs } from '../../aspect/aspect';
+import type { Trait } from '../../trait/types';
 import { universe } from '../../universe/universe';
 import { createModifier } from '../modifier';
 import type { Modifier } from '../types';
@@ -14,12 +13,16 @@ export function createAdded() {
         setTrackingMasks(world, id);
     }
 
-    return <T extends TraitOrRelation[]>(
+    return <const T extends readonly unknown[]>(
         ...inputs: T
-    ): Modifier<ExtractTraits<T>, `added-${number}`> => {
-        const traits = inputs.map((input) =>
-            isRelation(input) ? input[$internal].trait : input
-        ) as ExtractTraits<T>;
-        return createModifier(`added-${id}`, id, traits);
+    ): Modifier<
+        FlattenInputs<T> extends readonly Trait[] ? [...FlattenInputs<T>] : Trait[],
+        `added-${number}`
+    > => {
+        const { traits, aspects, terms } = splitModifierInputs(inputs);
+        return createModifier(`added-${id}`, id, traits, aspects, terms) as Modifier<
+            FlattenInputs<T> extends readonly Trait[] ? [...FlattenInputs<T>] : Trait[],
+            `added-${number}`
+        >;
     };
 }

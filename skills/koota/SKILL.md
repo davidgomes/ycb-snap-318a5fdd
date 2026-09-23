@@ -92,6 +92,10 @@ For detailed patterns and monorepo structures, see [references/architecture.md](
 | **Relations** | Prepositional   | `ChildOf`, `HeldBy`, `Contains`  |
 | **Trait**     | Noun            | `Position`, `Velocity`, `Health` |
 
+## Aspects
+
+`createAspect` treats two or more traits as one unit (`id`, `traits`, merged `schema`). Overlapping field names and relations throw at creation. Tags are allowed. Nested aspects flatten. `has` requires every constituent. `get` merges fields or returns undefined. `set`, `add`, and `remove` distribute work to the owning traits. Queries require every constituent and merge data in `readEach` / `updateEach`. See [references/aspects.md](references/aspects.md).
+
 ## Relations
 
 Relations build graphs between entities such as hierarchies, inventories, targeting.

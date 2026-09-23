@@ -2,7 +2,8 @@ import { $internal } from '../../common';
 import { Entity } from '../../entity/types';
 import { getEntityId } from '../../entity/utils/pack-entity';
 import { World } from '../../world';
-import { EventType, QueryInstance } from '../types';
+import { EventType, QueryInstance, TrackingGroup } from '../types';
+import { failsExclusionGroups, hasAllBits, matchesDeferredOr } from './aspect-masks';
 
 /**
  * Check if an entity matches a tracking query with event handling.
@@ -29,12 +30,15 @@ export function checkQueryTracking(
     const traitInstancesAll = query.traitInstances.all;
     const entityMasks = world[$internal].entityMasks;
     const eid = getEntityId(entity);
+    const exclusionMasks = query.exclusionMasks;
+    const orGroupMasks = query.orGroupMasks;
+    const deferOr = orGroupMasks.length > 0;
 
     const generationsLen = generations.length;
     const trackingGroupsLen = trackingGroups.length;
 
     // Early exit: no traits to check
-    if (traitInstancesAll.length === 0) return false;
+    if (traitInstancesAll.length === 0 && exclusionMasks.length === 0) return false;
 
     // 1. Check static constraints (required/forbidden/or)
     for (let i = 0; i < generationsLen; i++) {
@@ -56,8 +60,16 @@ export function checkQueryTracking(
         // Check required traits
         if (required && (entityMask & required) !== required) return false;
 
-        // Check Or traits
-        if (or !== 0 && (entityMask & or) === 0) return false;
+        // Check Or traits. Aspect groups are resolved after the generation loop.
+        if (!deferOr && or !== 0 && (entityMask & or) === 0) return false;
+    }
+
+    if (exclusionMasks.length > 0 && failsExclusionGroups(exclusionMasks, entityMasks, eid)) {
+        return false;
+    }
+
+    if (deferOr && !matchesDeferredOr(orGroupMasks, generations, staticBitmasks, entityMasks, eid)) {
+        return false;
     }
 
     // 2. Process tracking groups - update trackers and check cross-event invalidation
@@ -71,6 +83,46 @@ export function checkQueryTracking(
         const groupLogic = group.logic;
         const groupBitmasks = group.bitmasks;
         const groupBitmask = groupBitmasks[eventGenerationId];
+
+        if (group.mode) {
+            const affected = Boolean(groupBitmask && (groupBitmask & eventBitflag));
+            if (affected) {
+                if (eventType === 'remove') {
+                    if (group.mode === 'aspect-add' || group.mode === 'aspect-change') return false;
+                } else if (eventType === 'add') {
+                    if (group.mode === 'aspect-remove' || group.mode === 'aspect-change') return false;
+                }
+
+                if (group.mode === 'aspect-add' && eventType === 'add') {
+                    if (hasAllBits(entityMasks, eid, group.bitmasks)) satisfyAspect(group, eid);
+                } else if (group.mode === 'aspect-remove' && eventType === 'remove') {
+                    if (hadAllBits(entityMasks, eid, group.bitmasks, eventGenerationId, eventBitflag)) {
+                        satisfyAspect(group, eid);
+                    }
+                } else if (group.mode === 'aspect-change' && eventType === 'change') {
+                    const genMasks = entityMasks[eventGenerationId];
+                    const entityMask = genMasks ? (genMasks[eid] | 0) : 0;
+                    if (!(entityMask & eventBitflag)) return false;
+                    if (!hasAllBits(entityMasks, eid, group.bitmasks)) return false;
+                    const groupTrackers = group.trackers;
+                    let trackerArr = groupTrackers[eventGenerationId];
+                    if (!trackerArr) {
+                        trackerArr = [];
+                        groupTrackers[eventGenerationId] = trackerArr;
+                    }
+                    trackerArr[eid] = (trackerArr[eid] | 0) | eventBitflag;
+                }
+            }
+
+            const satisfied = aspectGroupSatisfied(group, eid, entityMasks);
+            if (group.logic === 'or') {
+                hasOrGroup = true;
+                if (satisfied) anyOrMatched = true;
+            } else if (!satisfied) {
+                return false;
+            }
+            continue;
+        }
 
         // Check if this event affects this group's traits
         if (groupBitmask && (groupBitmask & eventBitflag)) {
@@ -143,4 +195,77 @@ export function checkQueryTracking(
     }
 
     return true;
+}
+
+function satisfyAspect(group: TrackingGroup, eid: number) {
+    const bitmasks = group.bitmasks;
+    const trackers = group.trackers;
+    for (let gen = 0; gen < bitmasks.length; gen++) {
+        const mask = (bitmasks[gen] ?? 0) | 0;
+        if (!mask) continue;
+        let trackerArr = trackers[gen];
+        if (!trackerArr) {
+            trackerArr = [];
+            trackers[gen] = trackerArr;
+        }
+        trackerArr[eid] = mask;
+    }
+}
+
+function hadAllBits(
+    entityMasks: number[][],
+    eid: number,
+    bitmasks: readonly (number | undefined)[],
+    eventGenerationId: number,
+    eventBitflag: number
+): boolean {
+    let any = false;
+    for (let gen = 0; gen < bitmasks.length; gen++) {
+        const mask = (bitmasks[gen] ?? 0) | 0;
+        if (!mask) continue;
+        any = true;
+        let current = (entityMasks[gen]?.[eid] ?? 0) | 0;
+        if (gen === eventGenerationId) current |= eventBitflag;
+        if ((current & mask) !== mask) return false;
+    }
+    return any;
+}
+
+function aspectGroupSatisfied(
+    group: TrackingGroup,
+    eid: number,
+    entityMasks: number[][]
+): boolean {
+    const hasAll = hasAllBits(entityMasks, eid, group.bitmasks);
+    const covered = trackersCover(group, eid);
+
+    if (group.mode === 'aspect-add') return hasAll && covered;
+    if (group.mode === 'aspect-remove') return !hasAll && covered;
+    if (group.mode === 'aspect-change') {
+        if (!hasAll) return false;
+        const bitmasks = group.bitmasks;
+        const trackers = group.trackers;
+        for (let gen = 0; gen < bitmasks.length; gen++) {
+            const mask = (bitmasks[gen] ?? 0) | 0;
+            if (!mask) continue;
+            const tracker = trackers[gen] ? (trackers[gen]![eid] | 0) : 0;
+            if ((tracker & mask) !== 0) return true;
+        }
+        return false;
+    }
+
+    return false;
+}
+
+function trackersCover(group: TrackingGroup, eid: number): boolean {
+    const bitmasks = group.bitmasks;
+    let any = false;
+    for (let gen = 0; gen < bitmasks.length; gen++) {
+        const mask = (bitmasks[gen] ?? 0) | 0;
+        if (!mask) continue;
+        any = true;
+        const tracker = group.trackers[gen] ? (group.trackers[gen]![eid] | 0) : 0;
+        if ((tracker & mask) !== mask) return false;
+    }
+    return any;
 }
