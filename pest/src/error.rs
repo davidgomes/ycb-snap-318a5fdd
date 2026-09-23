@@ -809,6 +809,17 @@ mod tests {
     use alloc::vec;
 
     #[test]
+    fn whitespace_range_token() {
+        let is_whitespace: IsWhitespaceFn = Box::new(|string| string == " " || string == "\n");
+        let range = |start, end| ParsingToken::Range { start, end };
+
+        assert!(range(' ', ' ').is_whitespace(&is_whitespace));
+        assert!(range('\n', '\n').is_whitespace(&is_whitespace));
+        assert!(!range('\n', ' ').is_whitespace(&is_whitespace));
+        assert!(!range('a', 'z').is_whitespace(&is_whitespace));
+    }
+
+    #[test]
     fn display_parsing_error_mixed() {
         let input = "ab\ncd\nef";
         let pos = Position::new(input, 4).unwrap();

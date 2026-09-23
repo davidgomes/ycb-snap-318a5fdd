@@ -1933,4 +1933,81 @@ mod test {
         assert_eq!(normalize_index(-5, 5), Some(0));
         assert_eq!(normalize_index(-6, 3), None);
     }
+
+    type State<'i> = Box<ParserState<'i, ()>>;
+
+    const CHAR_CLASS: [(char, char); 3] = [('0', '9'), ('_', '_'), ('a', 'z')];
+    const CHAR_CLASS_INPUTS: [&str; 5] = ["5", "_", "q", "-", ""];
+
+    fn state(input: &str, error_detail: bool) -> State<'_> {
+        let mut state = ParserState::new(input);
+        state.parse_attempts.enabled = error_detail;
+        state
+    }
+
+    fn states(input: &str) -> Vec<State<'_>> {
+        let tracked_ahead = state(input, true)
+            .lookahead(true, |state| state.match_string(input))
+            .unwrap();
+        vec![state(input, false), state(input, true), tracked_ahead]
+    }
+
+    fn outcome(result: ParseResult<State<'_>>) -> (bool, usize, ParseAttempts<()>) {
+        match result {
+            Ok(state) => (true, state.position.pos(), state.parse_attempts.clone()),
+            Err(state) => (false, state.position.pos(), state.parse_attempts.clone()),
+        }
+    }
+
+    #[allow(clippy::almost_complete_range)]
+    fn char_choice(state: State<'_>) -> ParseResult<State<'_>> {
+        state
+            .match_range('0'..'9')
+            .or_else(|state| state.match_string("_"))
+            .or_else(|state| state.match_range('a'..'z'))
+    }
+
+    fn negated_char_choice(state: State<'_>) -> ParseResult<State<'_>> {
+        state
+            .lookahead(false, char_choice)
+            .and_then(|state| state.skip(1))
+    }
+
+    #[test]
+    fn match_char_class_like_choice() {
+        for input in CHAR_CLASS_INPUTS {
+            for (class, choice) in states(input).into_iter().zip(states(input)) {
+                assert_eq!(
+                    outcome(class.match_char_class(&CHAR_CLASS)),
+                    outcome(char_choice(choice)),
+                );
+            }
+            for (class, choice) in states(input).into_iter().zip(states(input)) {
+                assert_eq!(
+                    outcome(class.lookahead(false, |state| state.match_char_class(&CHAR_CLASS))),
+                    outcome(choice.lookahead(false, char_choice)),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn match_negated_char_class_like_negated_choice() {
+        for input in CHAR_CLASS_INPUTS {
+            for (class, choice) in states(input).into_iter().zip(states(input)) {
+                assert_eq!(
+                    outcome(class.match_negated_char_class(&CHAR_CLASS)),
+                    outcome(negated_char_choice(choice)),
+                );
+            }
+            for (class, choice) in states(input).into_iter().zip(states(input)) {
+                assert_eq!(
+                    outcome(
+                        class.lookahead(false, |state| state.match_negated_char_class(&CHAR_CLASS))
+                    ),
+                    outcome(choice.lookahead(false, negated_char_choice)),
+                );
+            }
+        }
+    }
 }
