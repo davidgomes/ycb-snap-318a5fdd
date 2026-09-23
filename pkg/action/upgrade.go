@@ -131,6 +131,10 @@ type Upgrade struct {
 	EnableDNS bool
 	// TakeOwnership will skip the check for helm annotations and adopt all existing resources.
 	TakeOwnership bool
+	// ManifestStream is set by Run to the rendered manifests and hooks as a
+	// single stream, ordered by Source path and, within a template file, in
+	// rendered order. It is intended for display, not for applying.
+	ManifestStream string
 }
 
 type resultMessage struct {
@@ -296,10 +300,11 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 		return nil, nil, false, err
 	}
 
-	hooks, manifestDoc, notesTxt, err := u.cfg.renderResources(chart, valuesToRender, "", "", u.SubNotes, false, false, u.PostRenderer, interactWithServer(u.DryRunStrategy), u.EnableDNS, u.HideSecret)
+	hooks, manifestDoc, manifestStream, notesTxt, err := u.cfg.renderResourcesWithStream(chart, valuesToRender, "", "", u.SubNotes, false, false, u.PostRenderer, interactWithServer(u.DryRunStrategy), u.EnableDNS, u.HideSecret)
 	if err != nil {
 		return nil, nil, false, err
 	}
+	u.ManifestStream = manifestStream
 
 	if driver.ContainsSystemLabels(u.Labels) {
 		return nil, nil, false, fmt.Errorf("user supplied labels contains system reserved label name. System labels: %+v", driver.GetSystemLabels())

@@ -260,17 +260,27 @@ func splitAndDeannotate(postrendered string) (map[string]string, error) {
 //
 //	This code has to do with writing files to disk.
 func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values, releaseName, outputDir string, subNotes, useReleaseName, includeCrds bool, pr postrenderer.PostRenderer, interactWithRemote, enableDNS, hideSecret bool) ([]*release.Hook, *bytes.Buffer, string, error) {
+	hs, b, _, notes, err := cfg.renderResourcesWithStream(ch, values, releaseName, outputDir, subNotes, useReleaseName, includeCrds, pr, interactWithRemote, enableDNS, hideSecret)
+	return hs, b, notes, err
+}
+
+// renderResourcesWithStream behaves like renderResources, and additionally
+// returns the unified manifest stream: every rendered document written to the
+// manifest buffer plus every hook, ordered by Source path and, within a single
+// template file, in the order the documents were rendered.
+func (cfg *Configuration) renderResourcesWithStream(ch *chart.Chart, values common.Values, releaseName, outputDir string, subNotes, useReleaseName, includeCrds bool, pr postrenderer.PostRenderer, interactWithRemote, enableDNS, hideSecret bool) ([]*release.Hook, *bytes.Buffer, string, string, error) {
 	var hs []*release.Hook
 	b := bytes.NewBuffer(nil)
+	var stream manifestStream
 
 	caps, err := cfg.getCapabilities()
 	if err != nil {
-		return hs, b, "", err
+		return hs, b, "", "", err
 	}
 
 	if ch.Metadata.KubeVersion != "" {
 		if !chartutil.IsCompatibleRange(ch.Metadata.KubeVersion, caps.KubeVersion.String()) {
-			return hs, b, "", fmt.Errorf("chart requires kubeVersion: %s which is incompatible with Kubernetes %s", ch.Metadata.KubeVersion, caps.KubeVersion.Version)
+			return hs, b, "", "", fmt.Errorf("chart requires kubeVersion: %s which is incompatible with Kubernetes %s", ch.Metadata.KubeVersion, caps.KubeVersion.Version)
 		}
 	}
 
@@ -283,7 +293,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 	if interactWithRemote && cfg.RESTClientGetter != nil {
 		restConfig, err := cfg.RESTClientGetter.ToRESTConfig()
 		if err != nil {
-			return hs, b, "", err
+			return hs, b, "", "", err
 		}
 		e := engine.New(restConfig)
 		e.EnableDNS = enableDNS
@@ -299,7 +309,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 	}
 
 	if err2 != nil {
-		return hs, b, "", err2
+		return hs, b, "", "", err2
 	}
 
 	// NOTES.txt gets rendered like all the other files, but because it's not a hook nor a resource,
@@ -333,19 +343,19 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 		// Merge files as stream of documents for sending to post renderer
 		merged, err := annotateAndMerge(files)
 		if err != nil {
-			return hs, b, notes, fmt.Errorf("error merging manifests: %w", err)
+			return hs, b, "", notes, fmt.Errorf("error merging manifests: %w", err)
 		}
 
 		// Run the post renderer
 		postRendered, err := pr.Run(bytes.NewBufferString(merged))
 		if err != nil {
-			return hs, b, notes, fmt.Errorf("error while running post render on files: %w", err)
+			return hs, b, "", notes, fmt.Errorf("error while running post render on files: %w", err)
 		}
 
 		// Use the file list and contents received from the post renderer
 		files, err = splitAndDeannotate(postRendered.String())
 		if err != nil {
-			return hs, b, notes, fmt.Errorf("error while parsing post rendered output: %w", err)
+			return hs, b, "", notes, fmt.Errorf("error while parsing post rendered output: %w", err)
 		}
 	}
 
@@ -364,33 +374,39 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 				continue
 			}
 			fmt.Fprintf(b, "---\n# Source: %s\n%s\n", name, content)
+			stream.add(name, 0, fmt.Sprintf("# Source: %s\n%s", name, content))
 		}
-		return hs, b, "", err
+		return hs, b, stream.String(), "", err
 	}
 
 	// Aggregate all valid manifests into one big doc.
 	fileWritten := make(map[string]bool)
 
 	if includeCrds {
-		for _, crd := range ch.CRDObjects() {
+		for i, crd := range ch.CRDObjects() {
 			if outputDir == "" {
 				fmt.Fprintf(b, "---\n# Source: %s\n%s\n", crd.Filename, string(crd.File.Data[:]))
+				stream.add(crd.Filename, i, fmt.Sprintf("# Source: %s\n%s", crd.Filename, string(crd.File.Data[:])))
 			} else {
 				err = writeToFile(outputDir, crd.Filename, string(crd.File.Data[:]), fileWritten[crd.Filename])
 				if err != nil {
-					return hs, b, "", err
+					return hs, b, "", "", err
 				}
 				fileWritten[crd.Filename] = true
 			}
 		}
 	}
 
+	positions := newRenderedPositions(files)
 	for _, m := range manifests {
 		if outputDir == "" {
+			index := positions.take(m.Name, m.Content)
 			if hideSecret && m.Head.Kind == "Secret" && m.Head.Version == "v1" {
 				fmt.Fprintf(b, "---\n# Source: %s\n# HIDDEN: The Secret output has been suppressed\n", m.Name)
+				stream.add(m.Name, index, fmt.Sprintf("# Source: %s\n# HIDDEN: The Secret output has been suppressed", m.Name))
 			} else {
 				fmt.Fprintf(b, "---\n# Source: %s\n%s\n", m.Name, m.Content)
+				stream.add(m.Name, index, fmt.Sprintf("# Source: %s\n%s", m.Name, m.Content))
 			}
 		} else {
 			newDir := outputDir
@@ -403,13 +419,17 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values common.Values,
 			// used by install or upgrade
 			err = writeToFile(newDir, m.Name, m.Content, fileWritten[m.Name])
 			if err != nil {
-				return hs, b, "", err
+				return hs, b, "", "", err
 			}
 			fileWritten[m.Name] = true
 		}
 	}
 
-	return hs, b, notes, nil
+	for _, h := range hs {
+		stream.add(h.Path, positions.take(h.Path, h.Manifest), fmt.Sprintf("# Source: %s\n%s", h.Path, h.Manifest))
+	}
+
+	return hs, b, stream.String(), notes, nil
 }
 
 // RESTClientGetter gets the rest client
