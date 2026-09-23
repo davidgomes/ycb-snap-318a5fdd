@@ -151,6 +151,7 @@ func (tsr *templateStringRewriter) rewriteBody(body ast.Body, outer ast.VarSet) 
 				repl = ast.NewExpr(ts)
 			}
 			repl.Negated = expr.Negated
+			repl.Generated = expr.Generated
 			repl.With = expr.With
 			repl.Location = expr.Location
 
@@ -189,8 +190,8 @@ func (tsr *templateStringRewriter) rewriteBody(body ast.Body, outer ast.VarSet) 
 
 	exprs := make([]*ast.Expr, 0, len(body))
 	for i, expr := range body {
+		exprs = append(exprs, guards[i]...)
 		if !removed[i] {
-			exprs = append(exprs, guards[i]...)
 			exprs = append(exprs, expr)
 		}
 	}
@@ -307,7 +308,9 @@ func (tsr *templateStringRewriter) templateString(arg *ast.Term, body ast.Body, 
 				case ast.IsConstant(x.Value):
 					parts = append(parts, templateStringExprPart(x, nil, x.Location))
 				default:
-					if _, ok := x.Value.(ast.Var); !ok {
+					_, isVar := x.Value.(ast.Var)
+					guarded := slices.ContainsFunc(guards, func(g *ast.Expr) bool { return g.Operand(1).Equal(x) })
+					if !isVar && !guarded {
 						// The set is undefined when its element is, while an
 						// interpolated expression would print "<undefined>", so
 						// keep the requirement that the element is defined.
