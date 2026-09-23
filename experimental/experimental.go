@@ -5,7 +5,13 @@ package experimental
 
 import (
 	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental/snapshot"
 )
+
+// NewSnapshotCoordinator returns a coordinator for multi-module memory snapshots.
+func NewSnapshotCoordinator() *snapshot.Coordinator {
+	return snapshot.NewCoordinator()
+}
 
 // InternalModule is an api.Module that exposes additional
 // information.
