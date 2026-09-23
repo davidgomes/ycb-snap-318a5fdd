@@ -47,6 +47,9 @@ const (
 	OpIteratorValue               // Iterator value
 	OpBinaryOp                    // Binary operation
 	OpSuspend                     // Suspend VM
+	OpHasIndex                    // Index exists (array pos / map key)
+	OpSliceFrom                   // Array tail starting at index
+	OpIsMissing                   // True if value is an omitted argument
 )
 
 // OpcodeNames are string representation of opcodes.
@@ -93,6 +96,9 @@ var OpcodeNames = [...]string{
 	OpIteratorValue: "ITVAL",
 	OpBinaryOp:      "BINARYOP",
 	OpSuspend:       "SUSPEND",
+	OpHasIndex:      "HASIDX",
+	OpSliceFrom:     "SLICEFROM",
+	OpIsMissing:     "ISMISS",
 }
 
 // OpcodeOperands is the number of operands.
@@ -139,6 +145,9 @@ var OpcodeOperands = [...][]int{
 	OpIteratorValue: {},
 	OpBinaryOp:      {1},
 	OpSuspend:       {},
+	OpHasIndex:      {},
+	OpSliceFrom:     {},
+	OpIsMissing:     {},
 }
 
 // ReadOperands reads operands from the bytecode.

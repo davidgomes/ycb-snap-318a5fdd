@@ -538,6 +538,80 @@ func (v *VM) run() {
 				v.err = fmt.Errorf("not indexable: %s", left.TypeName())
 				return
 			}
+		case parser.OpIsMissing:
+			val := v.stack[v.sp-1]
+			v.sp--
+			if val == argMissing {
+				v.stack[v.sp] = TrueValue
+			} else {
+				v.stack[v.sp] = FalseValue
+			}
+			v.sp++
+		case parser.OpHasIndex:
+			index := v.stack[v.sp-1]
+			left := v.stack[v.sp-2]
+			v.sp -= 2
+			ok, err := indexExists(left, index)
+			if err != nil {
+				if err == ErrNotIndexable {
+					v.err = fmt.Errorf("not indexable: %s", left.TypeName())
+					return
+				}
+				if err == ErrInvalidIndexType {
+					v.err = fmt.Errorf("invalid index type: %s",
+						index.TypeName())
+					return
+				}
+				v.err = err
+				return
+			}
+			if ok {
+				v.stack[v.sp] = TrueValue
+			} else {
+				v.stack[v.sp] = FalseValue
+			}
+			v.sp++
+		case parser.OpSliceFrom:
+			index := v.stack[v.sp-1]
+			left := v.stack[v.sp-2]
+			v.sp -= 2
+			var seq []Object
+			switch left := left.(type) {
+			case *Array:
+				seq = left.Value
+			case *ImmutableArray:
+				seq = left.Value
+			case *Undefined:
+				seq = nil
+			default:
+				v.err = fmt.Errorf("not an array: %s", left.TypeName())
+				return
+			}
+			start := 0
+			if index != UndefinedValue {
+				idx, ok := index.(*Int)
+				if !ok {
+					v.err = fmt.Errorf("invalid index type: %s",
+						index.TypeName())
+					return
+				}
+				start = int(idx.Value)
+			}
+			if start < 0 {
+				v.err = fmt.Errorf("invalid slice index: %d", start)
+				return
+			}
+			var tail []Object
+			if start < len(seq) {
+				tail = append([]Object{}, seq[start:]...)
+			}
+			v.allocs--
+			if v.allocs == 0 {
+				v.err = ErrObjectAllocLimit
+				return
+			}
+			v.stack[v.sp] = &Array{Value: tail}
+			v.sp++
 		case parser.OpCall:
 			numArgs := int(v.curInsts[v.ip+1])
 			spread := int(v.curInsts[v.ip+2])
@@ -587,7 +661,25 @@ func (v *VM) run() {
 						v.sp = spStart + 1
 					}
 				}
-				if numArgs != callee.NumParameters {
+				if callee.HasDefaults && !callee.VarArgs {
+					if numArgs < callee.NumRequired {
+						v.err = fmt.Errorf(
+							"wrong number of arguments: want>=%d, got=%d",
+							callee.NumRequired, numArgs)
+						return
+					}
+					if numArgs > callee.NumParameters {
+						v.err = fmt.Errorf(
+							"wrong number of arguments: want<=%d, got=%d",
+							callee.NumParameters, numArgs)
+						return
+					}
+					for numArgs < callee.NumParameters {
+						v.stack[v.sp] = argMissing
+						v.sp++
+						numArgs++
+					}
+				} else if numArgs != callee.NumParameters {
 					if callee.VarArgs {
 						v.err = fmt.Errorf(
 							"wrong number of arguments: want>=%d, got=%d",
@@ -769,6 +861,8 @@ func (v *VM) run() {
 				Instructions:  fn.Instructions,
 				NumLocals:     fn.NumLocals,
 				NumParameters: fn.NumParameters,
+				NumRequired:   fn.NumRequired,
+				HasDefaults:   fn.HasDefaults,
 				VarArgs:       fn.VarArgs,
 				SourceMap:     fn.SourceMap,
 				Free:          free,
@@ -879,6 +973,50 @@ func (v *VM) run() {
 // IsStackEmpty tests if the stack is empty or not.
 func (v *VM) IsStackEmpty() bool {
 	return v.sp == 0
+}
+
+func indexExists(obj, index Object) (bool, error) {
+	switch o := obj.(type) {
+	case *Array:
+		idx, ok := index.(*Int)
+		if !ok {
+			return false, ErrInvalidIndexType
+		}
+		i := int(idx.Value)
+		return i >= 0 && i < len(o.Value), nil
+	case *ImmutableArray:
+		idx, ok := index.(*Int)
+		if !ok {
+			return false, ErrInvalidIndexType
+		}
+		i := int(idx.Value)
+		return i >= 0 && i < len(o.Value), nil
+	case *Map:
+		key, ok := index.(*String)
+		if !ok {
+			return false, ErrInvalidIndexType
+		}
+		_, exists := o.Value[key.Value]
+		return exists, nil
+	case *ImmutableMap:
+		key, ok := index.(*String)
+		if !ok {
+			return false, ErrInvalidIndexType
+		}
+		_, exists := o.Value[key.Value]
+		return exists, nil
+	case *String:
+		idx, ok := index.(*Int)
+		if !ok {
+			return false, ErrInvalidIndexType
+		}
+		i := int(idx.Value)
+		return i >= 0 && i < len([]rune(o.Value)), nil
+	case *Undefined:
+		return false, nil
+	default:
+		return false, ErrNotIndexable
+	}
 }
 
 func indexAssign(dst, src Object, selectors []Object) error {

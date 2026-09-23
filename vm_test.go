@@ -104,6 +104,54 @@ func (c *customError) Unwrap() error {
 	return c.err
 }
 
+func TestDestructure(t *testing.T) {
+	expectRun(t, `[a, b, c] := [1, 2, 3]; out = a + b + c`, nil, 6)
+	expectRun(t, `[a, b] := [1]; out = [a, b]`, nil, ARR{1, tengo.UndefinedValue})
+	expectRun(t, `[] := [1, 2, 3]; out = 1`, nil, 1)
+	expectRun(t, `[a, b = 50] := [1]; out = b`, nil, 50)
+	expectRun(t, `[a, b = 50] := [1, 2]; out = b`, nil, 2)
+	expectRun(t, `[a, b = 50] := [1, undefined]; out = b`, nil, tengo.UndefinedValue)
+	expectRun(t, `[a, b = a] := [7]; out = b`, nil, 7)
+	expectRun(t, `[a = 1, b = a] := []; out = a + b`, nil, 2)
+	expectRun(t, `[a, ...rest] := [1, 2, 3]; out = rest`, nil, ARR{2, 3})
+	expectRun(t, `[...rest] := [1, 2]; out = rest`, nil, ARR{1, 2})
+	expectRun(t, `[a, b, ...rest] := [1]; out = rest`, nil, ARR{})
+	expectRun(t, `[[a, b], c] := [[1, 2], 3]; out = a + b + c`, nil, 6)
+	expectRun(t, `[[a = 5]] := []; out = a`, nil, 5)
+	expectRun(t, `[[a = 5]] := [[]]; out = a`, nil, 5)
+	expectRun(t, `[[a = 5]] := [[undefined]]; out = a`, nil, tengo.UndefinedValue)
+	expectRun(t, `[_ , b] := [1, 2]; out = b`, nil, 2)
+
+	expectRun(t, `{x} := {x: 9}; out = x`, nil, 9)
+	expectRun(t, `{x} := {}; out = x`, nil, tengo.UndefinedValue)
+	expectRun(t, `{} := {a: 1}; out = 1`, nil, 1)
+	expectRun(t, `{x: a} := {x: 4}; out = a`, nil, 4)
+	expectRun(t, `{x: a = 50} := {}; out = a`, nil, 50)
+	expectRun(t, `{x: a = 50} := {x: 1}; out = a`, nil, 1)
+	expectRun(t, `{x: a = 50} := {x: undefined}; out = a`, nil, tengo.UndefinedValue)
+	expectRun(t, `{x, y: z = x} := {x: 3}; out = z`, nil, 3)
+	expectRun(t, `{"x": a} := {x: 8}; out = a`, nil, 8)
+	expectRun(t, `{x = 50} := {}; out = x`, nil, 50)
+	expectRun(t, `{x: [a, b]} := {x: [1, 2]}; out = a + b`, nil, 3)
+	expectRun(t, `[{a}, b] := [{a: 1}, 2]; out = a + b`, nil, 3)
+
+	expectRun(t, `f := func([a, b]) { return a + b }; out = f([1, 2])`, nil, 3)
+	expectRun(t, `f := func({x}) { return x }; out = f({x: 9})`, nil, 9)
+	expectRun(t, `f := func([a = 10]) { return a }; out = f([])`, nil, 10)
+	expectRun(t, `f := func([a = 10]) { return a }; out = f([undefined])`, nil, tengo.UndefinedValue)
+	expectRun(t, `f := func(a = 10) { return a }; out = f()`, nil, 10)
+	expectRun(t, `f := func(a = 10) { return a }; out = f(3)`, nil, 3)
+	expectRun(t, `f := func(a = 10) { return a }; out = f(undefined)`, nil, tengo.UndefinedValue)
+	expectRun(t, `f := func(a, b = a) { return b }; out = f(4)`, nil, 4)
+	expectRun(t, `f := func([a, ...rest]) { return rest }; out = f([1, 2, 3])`, nil, ARR{2, 3})
+	expectRun(t, `f := func(a, [b, c]) { return a+b+c }; out = f(1, [2, 3])`, nil, 6)
+
+	expectError(t, `[a, b] = [1, 2]`, nil, "cannot use destructuring with =")
+	expectError(t, `[a, ...b, c] := [1, 2, 3]`, nil, "rest element must be last")
+	expectError(t, `{...a} := {a: 1}`, nil, "rest element not allowed in map pattern")
+	expectError(t, `[a, a] := [1, 2]`, nil, "redeclared")
+}
+
 func TestArray(t *testing.T) {
 	expectRun(t, `out = [1, 2 * 2, 3 + 3]`, nil, ARR{1, 4, 6})
 

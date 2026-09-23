@@ -59,6 +59,7 @@ type Compiler struct {
 	loopIndex       int
 	trace           io.Writer
 	indent          int
+	tempSeq         int
 }
 
 // NewCompiler creates a Compiler.
@@ -389,11 +390,60 @@ func (c *Compiler) Compile(node parser.Node) error {
 	case *parser.FuncLit:
 		c.enterScope()
 
-		for _, p := range node.Type.Params.List {
-			s := c.symbolTable.Define(p.Name)
-
-			// function arguments is not assigned directly.
-			s.LocalAssigned = true
+		paramExprs := funcParams(node.Type.Params)
+		paramSyms := make([]*Symbol, len(paramExprs))
+		paramDefs := make([]parser.Expr, len(paramExprs))
+		paramPats := make([]parser.Expr, len(paramExprs))
+		numRequired := 0
+		hasDefaults := false
+		for i, pe := range paramExprs {
+			switch pat := pe.(type) {
+			case *parser.Ident:
+				s := c.symbolTable.Define(pat.Name)
+				s.LocalAssigned = true
+				paramSyms[i] = s
+				numRequired = i + 1
+			case *parser.BinaryExpr:
+				if pat.Token != token.Assign {
+					return c.errorf(node, "invalid function parameter")
+				}
+				id, ok := pat.LHS.(*parser.Ident)
+				if !ok {
+					return c.errorf(node, "invalid function parameter")
+				}
+				s := c.symbolTable.Define(id.Name)
+				s.LocalAssigned = true
+				paramSyms[i] = s
+				paramDefs[i] = pat.RHS
+				hasDefaults = true
+			default:
+				if err := validateDestructure(pat); err != nil {
+					return c.errorf(node, "%s", err.Error())
+				}
+				s := c.symbolTable.Define(fmt.Sprintf(":arg%d", i))
+				s.LocalAssigned = true
+				paramSyms[i] = s
+				paramPats[i] = pat
+				numRequired = i + 1
+			}
+		}
+		if node.Type.Params.VarArgs {
+			// The variadic collector is required in the same way as before.
+			hasDefaults = false
+			numRequired = len(paramExprs)
+		}
+		for i := range paramExprs {
+			if paramPats[i] != nil {
+				c.loadSymbol(node, paramSyms[i])
+				if err := c.compileDestructure(node, paramPats[i]); err != nil {
+					return err
+				}
+			}
+			if paramDefs[i] != nil {
+				if err := c.compileParamDefault(node, paramSyms[i], paramDefs[i]); err != nil {
+					return err
+				}
+			}
 		}
 
 		if err := c.Compile(node.Body); err != nil {
@@ -463,7 +513,9 @@ func (c *Compiler) Compile(node parser.Node) error {
 		compiledFunction := &CompiledFunction{
 			Instructions:  instructions,
 			NumLocals:     numLocals,
-			NumParameters: len(node.Type.Params.List),
+			NumParameters: len(paramExprs),
+			NumRequired:   numRequired,
+			HasDefaults:   hasDefaults,
 			VarArgs:       node.Type.Params.VarArgs,
 			SourceMap:     sourceMap,
 		}
@@ -631,8 +683,8 @@ func (c *Compiler) SetImportDir(dir string) {
 //
 // Use this method if you want other source file extension than ".tengo".
 //
-//     // this will search for *.tengo, *.foo, *.bar
-//     err := c.SetImportFileExt(".tengo", ".foo", ".bar")
+//	// this will search for *.tengo, *.foo, *.bar
+//	err := c.SetImportFileExt(".tengo", ".foo", ".bar")
 //
 // This function requires at least one argument, since it will replace the
 // current list of extension name.
@@ -667,6 +719,18 @@ func (c *Compiler) compileAssign(
 	numLHS, numRHS := len(lhs), len(rhs)
 	if numLHS > 1 || numRHS > 1 {
 		return c.errorf(node, "tuple assignment not allowed")
+	}
+	if len(lhs) == 1 && isDestructurePattern(lhs[0]) {
+		if op != token.Define {
+			return c.errorf(node, "cannot use destructuring with =")
+		}
+		if err := validateDestructure(lhs[0]); err != nil {
+			return c.errorf(node, "%s", err.Error())
+		}
+		if err := c.Compile(rhs[0]); err != nil {
+			return err
+		}
+		return c.compileDestructure(node, lhs[0])
 	}
 
 	// resolve and compile left-hand side
@@ -1366,6 +1430,336 @@ func iterateInstructions(
 		}
 		i += read
 	}
+}
+
+func funcParams(list *parser.IdentList) []parser.Expr {
+	if list == nil {
+		return nil
+	}
+	if list.Params != nil {
+		return list.Params
+	}
+	out := make([]parser.Expr, len(list.List))
+	for i, id := range list.List {
+		out[i] = id
+	}
+	return out
+}
+
+func isDestructurePattern(e parser.Expr) bool {
+	switch e.(type) {
+	case *parser.ArrayPattern, *parser.MapPattern:
+		return true
+	default:
+		return false
+	}
+}
+
+func validateDestructure(e parser.Expr) error {
+	switch e := e.(type) {
+	case *parser.ArrayPattern:
+		seenRest := false
+		for _, el := range e.Elements {
+			if seenRest {
+				return fmt.Errorf("rest element must be last")
+			}
+			if _, ok := el.(*parser.RestExpr); ok {
+				seenRest = true
+				continue
+			}
+			if err := validateDestructure(el); err != nil {
+				return err
+			}
+		}
+	case *parser.MapPattern:
+		for _, el := range e.Elements {
+			if _, ok := el.Value.(*parser.RestExpr); ok {
+				return fmt.Errorf("rest element not allowed in map pattern")
+			}
+			if err := validateDestructure(el.Value); err != nil {
+				return err
+			}
+		}
+	case *parser.BinaryExpr:
+		if e.Token == token.Assign {
+			return validateDestructure(e.LHS)
+		}
+	}
+	return nil
+}
+
+func (c *Compiler) compileParamDefault(
+	node parser.Node,
+	sym *Symbol,
+	def parser.Expr,
+) error {
+	c.loadSymbol(node, sym)
+	c.emit(node, parser.OpIsMissing)
+	jump := c.emit(node, parser.OpJumpFalsy, 0)
+	if err := c.Compile(def); err != nil {
+		return err
+	}
+	if err := c.storeSymbol(node, sym, false); err != nil {
+		return err
+	}
+	c.changeOperand(jump, len(c.currentInstructions()))
+	return nil
+}
+
+func (c *Compiler) compileDestructure(node parser.Node, pat parser.Expr) error {
+	if err := c.declarePattern(node, pat); err != nil {
+		return err
+	}
+	return c.emitDestructure(node, pat)
+}
+
+func (c *Compiler) declarePattern(node parser.Node, pat parser.Expr) error {
+	switch pat := pat.(type) {
+	case *parser.Ident:
+		return c.declareBinding(node, pat.Name)
+	case *parser.BinaryExpr:
+		if pat.Token != token.Assign {
+			return c.errorf(node, "invalid destructuring pattern")
+		}
+		id, ok := pat.LHS.(*parser.Ident)
+		if !ok {
+			return c.errorf(node, "invalid destructuring pattern")
+		}
+		return c.declareBinding(node, id.Name)
+	case *parser.RestExpr:
+		return c.declareBinding(node, pat.Name.Name)
+	case *parser.ArrayPattern:
+		for _, el := range pat.Elements {
+			if err := c.declarePattern(node, el); err != nil {
+				return err
+			}
+		}
+	case *parser.MapPattern:
+		for _, el := range pat.Elements {
+			if err := c.declarePattern(node, el.Value); err != nil {
+				return err
+			}
+		}
+	default:
+		return c.errorf(node, "invalid destructuring pattern")
+	}
+	return nil
+}
+
+func (c *Compiler) declareBinding(node parser.Node, name string) error {
+	if name == "_" || name == "" {
+		return nil
+	}
+	_, depth, exists := c.symbolTable.Resolve(name, true)
+	if depth == 0 && exists {
+		return c.errorf(node, "'%s' redeclared in this block", name)
+	}
+	c.symbolTable.Define(name)
+	return nil
+}
+
+func (c *Compiler) emitDestructure(node parser.Node, pat parser.Expr) error {
+	switch pat := pat.(type) {
+	case *parser.Ident:
+		return c.assignIdent(node, pat.Name)
+	case *parser.BinaryExpr:
+		if pat.Token != token.Assign {
+			return c.errorf(node, "invalid destructuring pattern")
+		}
+		id, ok := pat.LHS.(*parser.Ident)
+		if !ok {
+			return c.errorf(node, "invalid destructuring pattern")
+		}
+		// Value is present: ignore the default.
+		return c.assignIdent(node, id.Name)
+	case *parser.ArrayPattern:
+		if len(pat.Elements) == 0 {
+			c.emit(node, parser.OpPop)
+			return nil
+		}
+		tmp, err := c.allocTemp(node)
+		if err != nil {
+			return err
+		}
+		idx := 0
+		for _, el := range pat.Elements {
+			if rest, ok := el.(*parser.RestExpr); ok {
+				c.loadSymbol(node, tmp)
+				c.emitConstInt(node, int64(idx))
+				c.emit(node, parser.OpSliceFrom)
+				if err := c.assignIdent(node, rest.Name.Name); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := c.compilePatternElem(node, tmp, func() {
+				c.emitConstInt(node, int64(idx))
+			}, el); err != nil {
+				return err
+			}
+			idx++
+		}
+		return nil
+	case *parser.MapPattern:
+		if len(pat.Elements) == 0 {
+			c.emit(node, parser.OpPop)
+			return nil
+		}
+		tmp, err := c.allocTemp(node)
+		if err != nil {
+			return err
+		}
+		for _, el := range pat.Elements {
+			key := el.Key
+			if err := c.compilePatternElem(node, tmp, func() {
+				c.emit(node, parser.OpConstant, c.addConstant(&String{Value: key}))
+			}, el.Value); err != nil {
+				return err
+			}
+		}
+		return nil
+	case *parser.RestExpr:
+		return c.assignIdent(node, pat.Name.Name)
+	default:
+		return c.errorf(node, "invalid destructuring pattern")
+	}
+}
+
+func (c *Compiler) compilePatternElem(
+	node parser.Node,
+	src *Symbol,
+	emitKey func(),
+	el parser.Expr,
+) error {
+	c.loadSymbol(node, src)
+	emitKey()
+	c.emit(node, parser.OpHasIndex)
+	missing := c.emit(node, parser.OpJumpFalsy, 0)
+	c.loadSymbol(node, src)
+	emitKey()
+	c.emit(node, parser.OpIndex)
+	if err := c.emitDestructure(node, stripDefault(el)); err != nil {
+		return err
+	}
+	done := c.emit(node, parser.OpJump, 0)
+	c.changeOperand(missing, len(c.currentInstructions()))
+	if err := c.bindMissing(node, el); err != nil {
+		return err
+	}
+	c.changeOperand(done, len(c.currentInstructions()))
+	return nil
+}
+
+func stripDefault(el parser.Expr) parser.Expr {
+	if b, ok := el.(*parser.BinaryExpr); ok && b.Token == token.Assign {
+		return b.LHS
+	}
+	return el
+}
+
+func (c *Compiler) bindMissing(node parser.Node, el parser.Expr) error {
+	switch el := el.(type) {
+	case *parser.Ident:
+		c.emit(node, parser.OpNull)
+		return c.assignIdent(node, el.Name)
+	case *parser.BinaryExpr:
+		if el.Token != token.Assign {
+			return c.errorf(node, "invalid destructuring pattern")
+		}
+		id, ok := el.LHS.(*parser.Ident)
+		if !ok {
+			return c.errorf(node, "invalid destructuring pattern")
+		}
+		if err := c.Compile(el.RHS); err != nil {
+			return err
+		}
+		return c.assignIdent(node, id.Name)
+	case *parser.ArrayPattern:
+		for _, child := range el.Elements {
+			if rest, ok := child.(*parser.RestExpr); ok {
+				c.emit(node, parser.OpArray, 0)
+				if err := c.assignIdent(node, rest.Name.Name); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := c.bindMissing(node, child); err != nil {
+				return err
+			}
+		}
+		return nil
+	case *parser.MapPattern:
+		for _, child := range el.Elements {
+			if err := c.bindMissing(node, child.Value); err != nil {
+				return err
+			}
+		}
+		return nil
+	case *parser.RestExpr:
+		c.emit(node, parser.OpArray, 0)
+		return c.assignIdent(node, el.Name.Name)
+	default:
+		c.emit(node, parser.OpNull)
+		c.emit(node, parser.OpPop)
+		return nil
+	}
+}
+
+func (c *Compiler) assignIdent(node parser.Node, name string) error {
+	if name == "_" || name == "" {
+		c.emit(node, parser.OpPop)
+		return nil
+	}
+	sym, _, ok := c.symbolTable.Resolve(name, true)
+	if !ok {
+		return c.errorf(node, "unresolved reference '%s'", name)
+	}
+	return c.storeSymbol(node, sym, true)
+}
+
+func (c *Compiler) allocTemp(node parser.Node) (*Symbol, error) {
+	c.tempSeq++
+	sym := c.symbolTable.Define(fmt.Sprintf(":d%d", c.tempSeq))
+	if err := c.storeSymbol(node, sym, true); err != nil {
+		return nil, err
+	}
+	return sym, nil
+}
+
+func (c *Compiler) loadSymbol(node parser.Node, symbol *Symbol) {
+	switch symbol.Scope {
+	case ScopeGlobal:
+		c.emit(node, parser.OpGetGlobal, symbol.Index)
+	case ScopeLocal:
+		c.emit(node, parser.OpGetLocal, symbol.Index)
+	case ScopeFree:
+		c.emit(node, parser.OpGetFree, symbol.Index)
+	default:
+		panic(fmt.Errorf("invalid symbol scope: %s", symbol.Scope))
+	}
+}
+
+func (c *Compiler) storeSymbol(node parser.Node, symbol *Symbol, define bool) error {
+	switch symbol.Scope {
+	case ScopeGlobal:
+		c.emit(node, parser.OpSetGlobal, symbol.Index)
+	case ScopeLocal:
+		if define && !symbol.LocalAssigned {
+			c.emit(node, parser.OpDefineLocal, symbol.Index)
+		} else {
+			c.emit(node, parser.OpSetLocal, symbol.Index)
+		}
+		symbol.LocalAssigned = true
+	case ScopeFree:
+		c.emit(node, parser.OpSetFree, symbol.Index)
+	default:
+		return c.errorf(node, "invalid assignment variable scope: %s", symbol.Scope)
+	}
+	return nil
+}
+
+func (c *Compiler) emitConstInt(node parser.Node, v int64) {
+	c.emit(node, parser.OpConstant, c.addConstant(&Int{Value: v}))
 }
 
 func tracec(c *Compiler, msg string) *Compiler {

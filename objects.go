@@ -21,6 +21,10 @@ var (
 
 	// UndefinedValue represents an undefined value.
 	UndefinedValue Object = &Undefined{}
+	// argMissing marks an omitted function argument. It is a distinct
+	// undefined instance so parameter defaults do not treat an explicit
+	// undefined argument as missing.
+	argMissing Object = &Undefined{missing: true}
 )
 
 // Object represents an object in the VM.
@@ -573,6 +577,8 @@ type CompiledFunction struct {
 	Instructions  []byte
 	NumLocals     int // number of local variables (including function parameters)
 	NumParameters int
+	NumRequired   int  // parameters required when HasDefaults is set
+	HasDefaults   bool // trailing parameters may be omitted
 	VarArgs       bool
 	SourceMap     map[int]parser.Pos
 	Free          []*ObjectPtr
@@ -599,6 +605,8 @@ func (o *CompiledFunction) Copy() Object {
 		Instructions:  append([]byte{}, o.Instructions...),
 		NumLocals:     o.NumLocals,
 		NumParameters: o.NumParameters,
+		NumRequired:   o.NumRequired,
+		HasDefaults:   o.HasDefaults,
 		VarArgs:       o.VarArgs,
 		Free:          append([]*ObjectPtr{}, o.Free...), // DO NOT Copy() of elements; these are variable pointers
 	}
@@ -1523,6 +1531,7 @@ func (o *Time) Equals(x Object) bool {
 // Undefined represents an undefined value.
 type Undefined struct {
 	ObjectImpl
+	missing bool
 }
 
 // TypeName returns the name of the type.

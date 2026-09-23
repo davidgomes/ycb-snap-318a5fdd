@@ -646,32 +646,72 @@ func (p *Parser) parseIdentList() *IdentList {
 	}
 
 	var params []*Ident
+	var pats []Expr
 	lparen := p.expect(token.LParen)
 	isVarArgs := false
+	complex := false
 	if p.token != token.RParen {
-		if p.token == token.Ellipsis {
+		pat, id, variadic := p.parseFuncParam()
+		if variadic {
 			isVarArgs = true
-			p.next()
 		}
-
-		params = append(params, p.parseIdent())
+		if id != nil && pat == id {
+			params = append(params, id)
+		} else {
+			complex = true
+		}
+		pats = append(pats, pat)
 		for !isVarArgs && p.token == token.Comma {
 			p.next()
-			if p.token == token.Ellipsis {
+			pat, id, variadic = p.parseFuncParam()
+			if variadic {
 				isVarArgs = true
-				p.next()
 			}
-			params = append(params, p.parseIdent())
+			if id != nil && pat == id {
+				params = append(params, id)
+			} else {
+				complex = true
+			}
+			pats = append(pats, pat)
 		}
 	}
 
 	rparen := p.expect(token.RParen)
-	return &IdentList{
+	list := &IdentList{
 		LParen:  lparen,
 		RParen:  rparen,
 		VarArgs: isVarArgs,
 		List:    params,
 	}
+	if complex {
+		list.Params = pats
+		list.List = nil
+	}
+	return list
+}
+
+// parseFuncParam parses one function parameter. id is non-nil for a plain
+// identifier (including a variadic one). variadic is true when this parameter
+// is the `...name` varargs collector.
+func (p *Parser) parseFuncParam() (pat Expr, id *Ident, variadic bool) {
+	if p.token == token.Ellipsis {
+		p.next()
+		id = p.parseIdent()
+		return id, id, true
+	}
+	if p.token == token.LBrack || p.token == token.LBrace {
+		return p.parsePattern(), nil, false
+	}
+	id = p.parseIdent()
+	if p.token == token.Assign {
+		pos := p.pos
+		p.next()
+		def := p.parseExpr()
+		return &BinaryExpr{
+			LHS: id, RHS: def, Token: token.Assign, TokenPos: pos,
+		}, nil, false
+	}
+	return id, id, false
 }
 
 func (p *Parser) parseStmt() (stmt Stmt) {
@@ -944,6 +984,19 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 		defer untracep(tracep(p, "SimpleStmt"))
 	}
 
+	if p.lookingAtDestructure() {
+		pat := p.parsePattern()
+		pos, tok := p.pos, p.token
+		p.next()
+		y := p.parseExprList()
+		return &AssignStmt{
+			LHS:      []Expr{pat},
+			RHS:      y,
+			Token:    tok,
+			TokenPos: pos,
+		}
+	}
+
 	x := p.parseExprList()
 
 	switch p.token {
@@ -1019,6 +1072,183 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 		return s
 	}
 	return &ExprStmt{Expr: x[0]}
+}
+
+type parseSnap struct {
+	scanner   Scanner
+	pos       Pos
+	token     token.Token
+	tokenLit  string
+	errors    int
+	syncPos   Pos
+	syncCount int
+}
+
+func (p *Parser) snapshot() parseSnap {
+	return parseSnap{
+		scanner:   *p.scanner,
+		pos:       p.pos,
+		token:     p.token,
+		tokenLit:  p.tokenLit,
+		errors:    len(p.errors),
+		syncPos:   p.syncPos,
+		syncCount: p.syncCount,
+	}
+}
+
+func (p *Parser) restore(s parseSnap) {
+	*p.scanner = s.scanner
+	p.pos = s.pos
+	p.token = s.token
+	p.tokenLit = s.tokenLit
+	p.errors = p.errors[:s.errors]
+	p.syncPos = s.syncPos
+	p.syncCount = s.syncCount
+}
+
+// lookingAtDestructure reports whether the current `[` or `{` is the start of
+// a destructuring pattern followed by `:=` or `=`.
+func (p *Parser) lookingAtDestructure() bool {
+	if p.token != token.LBrack && p.token != token.LBrace {
+		return false
+	}
+	saved := p.snapshot()
+	defer p.restore(saved)
+
+	depth := 0
+	for {
+		switch p.token {
+		case token.LBrack, token.LBrace, token.LParen:
+			depth++
+		case token.RBrack, token.RBrace, token.RParen:
+			depth--
+		case token.EOF:
+			return false
+		}
+		if depth == 0 {
+			p.next()
+			return p.token == token.Define || p.token == token.Assign
+		}
+		p.next()
+	}
+}
+
+func (p *Parser) parsePattern() Expr {
+	switch p.token {
+	case token.LBrack:
+		return p.parseArrayPattern()
+	case token.LBrace:
+		return p.parseMapPattern()
+	case token.Ellipsis:
+		return p.parseRest()
+	case token.Ident:
+		id := p.parseIdent()
+		if p.token == token.Assign {
+			pos := p.pos
+			p.next()
+			def := p.parseExpr()
+			return &BinaryExpr{
+				LHS: id, RHS: def, Token: token.Assign, TokenPos: pos,
+			}
+		}
+		return id
+	default:
+		pos := p.pos
+		p.errorExpected(pos, "binding pattern")
+		p.next()
+		return &BadExpr{From: pos, To: p.pos}
+	}
+}
+
+func (p *Parser) parseRest() *RestExpr {
+	pos := p.expect(token.Ellipsis)
+	return &RestExpr{Ellipsis: pos, Name: p.parseIdent()}
+}
+
+func (p *Parser) parseArrayPattern() Expr {
+	lbrack := p.expect(token.LBrack)
+	p.exprLevel++
+	var elements []Expr
+	for p.token != token.RBrack && p.token != token.EOF {
+		elements = append(elements, p.parsePattern())
+		if !p.expectComma(token.RBrack, "array element") {
+			break
+		}
+	}
+	p.exprLevel--
+	rbrack := p.expect(token.RBrack)
+	return &ArrayPattern{
+		Elements: elements,
+		LBrack:   lbrack,
+		RBrack:   rbrack,
+	}
+}
+
+func (p *Parser) parseMapPattern() Expr {
+	lbrace := p.expect(token.LBrace)
+	p.exprLevel++
+	var elements []*MapPatternElem
+	for p.token != token.RBrace && p.token != token.EOF {
+		if p.token == token.Ellipsis {
+			elements = append(elements, &MapPatternElem{Value: p.parseRest()})
+		} else {
+			elements = append(elements, p.parseMapPatternElem())
+		}
+		if !p.expectComma(token.RBrace, "map element") {
+			break
+		}
+	}
+	p.exprLevel--
+	rbrace := p.expect(token.RBrace)
+	return &MapPattern{
+		LBrace:   lbrace,
+		Elements: elements,
+		RBrace:   rbrace,
+	}
+}
+
+func (p *Parser) parseMapPatternElem() *MapPatternElem {
+	pos := p.pos
+	key := "_"
+	isIdent := false
+	if p.token == token.Ident {
+		key = p.tokenLit
+		isIdent = true
+	} else if p.token == token.String {
+		v, _ := strconv.Unquote(p.tokenLit)
+		key = v
+	} else {
+		p.errorExpected(pos, "map key")
+	}
+	p.next()
+
+	el := &MapPatternElem{Key: key, KeyPos: pos}
+	switch p.token {
+	case token.Colon:
+		el.Colon = p.expect(token.Colon)
+		el.Value = p.parsePattern()
+	case token.Assign:
+		if !isIdent {
+			p.errorExpected(p.pos, "':'")
+		}
+		el.Shorthand = true
+		apos := p.pos
+		p.next()
+		def := p.parseExpr()
+		el.Value = &BinaryExpr{
+			LHS:      &Ident{Name: key, NamePos: pos},
+			RHS:      def,
+			Token:    token.Assign,
+			TokenPos: apos,
+		}
+	default:
+		if !isIdent {
+			p.errorExpected(p.pos, "':'")
+		}
+		el.Shorthand = true
+		el.Value = &Ident{Name: key, NamePos: pos}
+	}
+	return el
 }
 
 func (p *Parser) parseExprList() (list []Expr) {

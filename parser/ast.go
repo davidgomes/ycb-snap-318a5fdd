@@ -23,7 +23,10 @@ type IdentList struct {
 	LParen  Pos
 	VarArgs bool
 	List    []*Ident
-	RParen  Pos
+	// Params is the full parameter list when a parameter uses a
+	// destructuring pattern or a default value. Nil for plain identifiers.
+	Params []Expr
+	RParen Pos
 }
 
 // Pos returns the position of first character belonging to the node.
@@ -53,11 +56,24 @@ func (n *IdentList) NumFields() int {
 	if n == nil {
 		return 0
 	}
+	if n.Params != nil {
+		return len(n.Params)
+	}
 	return len(n.List)
 }
 
 func (n *IdentList) String() string {
 	var list []string
+	if n.Params != nil {
+		for i, e := range n.Params {
+			s := e.String()
+			if n.VarArgs && i == len(n.Params)-1 {
+				s = "..." + s
+			}
+			list = append(list, s)
+		}
+		return "(" + strings.Join(list, ", ") + ")"
+	}
 	for i, e := range n.List {
 		if n.VarArgs && i == len(n.List)-1 {
 			list = append(list, "..."+e.String())

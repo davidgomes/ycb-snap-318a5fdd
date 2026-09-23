@@ -599,3 +599,101 @@ func (e *UndefinedLit) End() Pos {
 func (e *UndefinedLit) String() string {
 	return "undefined"
 }
+
+// ArrayPattern is an array destructuring pattern.
+type ArrayPattern struct {
+	Elements []Expr
+	LBrack   Pos
+	RBrack   Pos
+}
+
+func (e *ArrayPattern) exprNode() {}
+
+// Pos returns the position of first character belonging to the node.
+func (e *ArrayPattern) Pos() Pos {
+	return e.LBrack
+}
+
+// End returns the position of first character immediately after the node.
+func (e *ArrayPattern) End() Pos {
+	return e.RBrack + 1
+}
+
+func (e *ArrayPattern) String() string {
+	var elements []string
+	for _, m := range e.Elements {
+		elements = append(elements, m.String())
+	}
+	return "[" + strings.Join(elements, ", ") + "]"
+}
+
+// MapPatternElem is one key binding in a map destructuring pattern.
+type MapPatternElem struct {
+	Key       string
+	KeyPos    Pos
+	Colon     Pos
+	Value     Expr
+	Shorthand bool
+}
+
+func (e *MapPatternElem) String() string {
+	if _, ok := e.Value.(*RestExpr); ok {
+		return e.Value.String()
+	}
+	if e.Shorthand {
+		if b, ok := e.Value.(*BinaryExpr); ok && b.Token == token.Assign {
+			return e.Key + " = " + b.RHS.String()
+		}
+		return e.Key
+	}
+	return e.Key + ": " + e.Value.String()
+}
+
+// MapPattern is a map destructuring pattern.
+type MapPattern struct {
+	LBrace   Pos
+	Elements []*MapPatternElem
+	RBrace   Pos
+}
+
+func (e *MapPattern) exprNode() {}
+
+// Pos returns the position of first character belonging to the node.
+func (e *MapPattern) Pos() Pos {
+	return e.LBrace
+}
+
+// End returns the position of first character immediately after the node.
+func (e *MapPattern) End() Pos {
+	return e.RBrace + 1
+}
+
+func (e *MapPattern) String() string {
+	var elements []string
+	for _, m := range e.Elements {
+		elements = append(elements, m.String())
+	}
+	return "{" + strings.Join(elements, ", ") + "}"
+}
+
+// RestExpr is a `...name` rest binding in an array pattern.
+type RestExpr struct {
+	Ellipsis Pos
+	Name     *Ident
+}
+
+func (e *RestExpr) exprNode() {}
+
+// Pos returns the position of first character belonging to the node.
+func (e *RestExpr) Pos() Pos {
+	return e.Ellipsis
+}
+
+// End returns the position of first character immediately after the node.
+func (e *RestExpr) End() Pos {
+	return e.Name.End()
+}
+
+func (e *RestExpr) String() string {
+	return "..." + e.Name.String()
+}
