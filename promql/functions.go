@@ -23,7 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/facette/natsort"
 	"github.com/grafana/regexp"
 	"github.com/prometheus/common/model"
 
@@ -641,54 +640,47 @@ func funcSortDesc(vectorVals []Vector, _ Matrix, _ parser.Expressions, _ *EvalNo
 
 // === sort_by_label(vector parser.ValueTypeVector, label parser.ValueTypeString...) (Vector, Annotations) ===
 func funcSortByLabel(vectorVals []Vector, _ Matrix, args parser.Expressions, _ *EvalNodeHelper) (Vector, annotations.Annotations) {
-	lbls := stringSliceFromArgs(args[1:])
-	slices.SortFunc(vectorVals[0], func(a, b Sample) int {
-		for _, label := range lbls {
-			lv1 := a.Metric.Get(label)
-			lv2 := b.Metric.Get(label)
-
-			if lv1 == lv2 {
-				continue
-			}
-
-			if natsort.Compare(lv1, lv2) {
-				return -1
-			}
-
-			return +1
-		}
-
-		// If all labels provided as arguments were equal, sort by the full label set. This ensures a consistent ordering.
-		return labels.Compare(a.Metric, b.Metric)
-	})
-
-	return vectorVals[0], nil
+	return sortVectorByLabels(vectorVals[0], stringSliceFromArgs(args[1:]), false), nil
 }
 
 // === sort_by_label_desc(vector parser.ValueTypeVector, label parser.ValueTypeString...) (Vector, Annotations) ===
 func funcSortByLabelDesc(vectorVals []Vector, _ Matrix, args parser.Expressions, _ *EvalNodeHelper) (Vector, annotations.Annotations) {
-	lbls := stringSliceFromArgs(args[1:])
-	slices.SortFunc(vectorVals[0], func(a, b Sample) int {
-		for _, label := range lbls {
-			lv1 := a.Metric.Get(label)
-			lv2 := b.Metric.Get(label)
+	return sortVectorByLabels(vectorVals[0], stringSliceFromArgs(args[1:]), true), nil
+}
 
-			if lv1 == lv2 {
-				continue
-			}
-
-			if natsort.Compare(lv1, lv2) {
-				return +1
-			}
-
-			return -1
+func sortVectorByLabels(vec Vector, lbls []string, desc bool) Vector {
+	type keyedSample struct {
+		sample Sample
+		keys   []typedLabelValue
+	}
+	items := make([]keyedSample, len(vec))
+	for i, s := range vec {
+		keys := make([]typedLabelValue, len(lbls))
+		for j, label := range lbls {
+			keys[j] = parseTypedLabelValue(s.Metric.Get(label))
 		}
-
+		items[i] = keyedSample{sample: s, keys: keys}
+	}
+	slices.SortFunc(items, func(a, b keyedSample) int {
+		c := 0
+		for j := range lbls {
+			if c = compareTypedLabelValues(&a.keys[j], &b.keys[j]); c != 0 {
+				break
+			}
+		}
 		// If all labels provided as arguments were equal, sort by the full label set. This ensures a consistent ordering.
-		return -labels.Compare(a.Metric, b.Metric)
+		if c == 0 {
+			c = labels.Compare(a.sample.Metric, b.sample.Metric)
+		}
+		if desc {
+			return -c
+		}
+		return c
 	})
-
-	return vectorVals[0], nil
+	for i := range items {
+		vec[i] = items[i].sample
+	}
+	return vec
 }
 
 func clamp(vec Vector, minVal, maxVal float64, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
