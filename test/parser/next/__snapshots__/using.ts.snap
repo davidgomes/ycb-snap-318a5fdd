@@ -1,0 +1,616 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Next - using > using declarations (fail) > { using [x] = null; } 1`] = `
+"SyntaxError [1:8-1:9]: using declaration cannot have destructuring
+> 1 | { using [x] = null; }
+    |         ^ using declaration cannot have destructuring"
+`;
+
+exports[`Next - using > using declarations (fail) > { using { x } = null; } 1`] = `
+"SyntaxError [1:8-1:9]: using declaration cannot have destructuring
+> 1 | { using { x } = null; }
+    |         ^ using declaration cannot have destructuring"
+`;
+
+exports[`Next - using > using declarations (fail) > { using foo; } 1`] = `
+"SyntaxError [1:11-1:12]: using declaration must have an initializer
+> 1 | { using foo; }
+    |            ^ using declaration must have an initializer"
+`;
+
+exports[`Next - using > using declarations (fail) > async function f(){ for (await using x in y); } 1`] = `
+"SyntaxError [1:39-1:41]: using declarations are not allowed in for-in statements
+> 1 | async function f(){ for (await using x in y); }
+    |                                        ^^ using declarations are not allowed in for-in statements"
+`;
+
+exports[`Next - using > using declarations (fail) > await using foo = null 1`] = `
+"SyntaxError [1:0-1:5]: await using is only allowed inside async functions and module code
+> 1 | await using foo = null
+    | ^^^^^ await using is only allowed inside async functions and module code"
+`;
+
+exports[`Next - using > using declarations (fail) > class C { static { await using x = null; } } 1`] = `
+"SyntaxError [1:19-1:24]: await using is only allowed inside async functions and module code
+> 1 | class C { static { await using x = null; } }
+    |                    ^^^^^ await using is only allowed inside async functions and module code"
+`;
+
+exports[`Next - using > using declarations (fail) > for (await using x of y); 1`] = `
+"SyntaxError [1:5-1:10]: await using is only allowed inside async functions and module code
+> 1 | for (await using x of y);
+    |      ^^^^^ await using is only allowed inside async functions and module code"
+`;
+
+exports[`Next - using > using declarations (fail) > for (using x in y); 1`] = `
+"SyntaxError [1:13-1:15]: using declarations are not allowed in for-in statements
+> 1 | for (using x in y);
+    |              ^^ using declarations are not allowed in for-in statements"
+`;
+
+exports[`Next - using > using declarations (fail) > function f(){ await using foo = null } 1`] = `
+"SyntaxError [1:14-1:19]: await using is only allowed inside async functions and module code
+> 1 | function f(){ await using foo = null }
+    |               ^^^^^ await using is only allowed inside async functions and module code"
+`;
+
+exports[`Next - using > using declarations (fail) > using foo = null 1`] = `
+"SyntaxError [1:0-1:5]: using declarations are not allowed in the global scope
+> 1 | using foo = null
+    | ^^^^^ using declarations are not allowed in the global scope"
+`;
+
+exports[`Next - using > using declarations (pass) > { using x = null, y = 1; } 1`] = `
+{
+  "body": [
+    {
+      "body": [
+        {
+          "declarations": [
+            {
+              "id": {
+                "name": "x",
+                "type": "Identifier",
+              },
+              "init": {
+                "type": "Literal",
+                "value": null,
+              },
+              "type": "VariableDeclarator",
+            },
+            {
+              "id": {
+                "name": "y",
+                "type": "Identifier",
+              },
+              "init": {
+                "type": "Literal",
+                "value": 1,
+              },
+              "type": "VariableDeclarator",
+            },
+          ],
+          "kind": "using",
+          "type": "VariableDeclaration",
+        },
+      ],
+      "type": "BlockStatement",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > { using x = null; } 1`] = `
+{
+  "body": [
+    {
+      "body": [
+        {
+          "declarations": [
+            {
+              "id": {
+                "name": "x",
+                "type": "Identifier",
+              },
+              "init": {
+                "type": "Literal",
+                "value": null,
+              },
+              "type": "VariableDeclarator",
+            },
+          ],
+          "kind": "using",
+          "type": "VariableDeclaration",
+        },
+      ],
+      "type": "BlockStatement",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > async function f(){ await using x = null; } 1`] = `
+{
+  "body": [
+    {
+      "async": true,
+      "body": {
+        "body": [
+          {
+            "declarations": [
+              {
+                "id": {
+                  "name": "x",
+                  "type": "Identifier",
+                },
+                "init": {
+                  "type": "Literal",
+                  "value": null,
+                },
+                "type": "VariableDeclarator",
+              },
+            ],
+            "kind": "await using",
+            "type": "VariableDeclaration",
+          },
+        ],
+        "type": "BlockStatement",
+      },
+      "generator": false,
+      "id": {
+        "name": "f",
+        "type": "Identifier",
+      },
+      "params": [],
+      "type": "FunctionDeclaration",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > async function f(){ for (await using x of y); } 1`] = `
+{
+  "body": [
+    {
+      "async": true,
+      "body": {
+        "body": [
+          {
+            "await": false,
+            "body": {
+              "type": "EmptyStatement",
+            },
+            "left": {
+              "declarations": [
+                {
+                  "id": {
+                    "name": "x",
+                    "type": "Identifier",
+                  },
+                  "init": null,
+                  "type": "VariableDeclarator",
+                },
+              ],
+              "kind": "await using",
+              "type": "VariableDeclaration",
+            },
+            "right": {
+              "name": "y",
+              "type": "Identifier",
+            },
+            "type": "ForOfStatement",
+          },
+        ],
+        "type": "BlockStatement",
+      },
+      "generator": false,
+      "id": {
+        "name": "f",
+        "type": "Identifier",
+      },
+      "params": [],
+      "type": "FunctionDeclaration",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > async function f(){ for await (await using x of y); } 1`] = `
+{
+  "body": [
+    {
+      "async": true,
+      "body": {
+        "body": [
+          {
+            "await": true,
+            "body": {
+              "type": "EmptyStatement",
+            },
+            "left": {
+              "declarations": [
+                {
+                  "id": {
+                    "name": "x",
+                    "type": "Identifier",
+                  },
+                  "init": null,
+                  "type": "VariableDeclarator",
+                },
+              ],
+              "kind": "await using",
+              "type": "VariableDeclaration",
+            },
+            "right": {
+              "name": "y",
+              "type": "Identifier",
+            },
+            "type": "ForOfStatement",
+          },
+        ],
+        "type": "BlockStatement",
+      },
+      "generator": false,
+      "id": {
+        "name": "f",
+        "type": "Identifier",
+      },
+      "params": [],
+      "type": "FunctionDeclaration",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > async function f(){ for await (using x of y); } 1`] = `
+{
+  "body": [
+    {
+      "async": true,
+      "body": {
+        "body": [
+          {
+            "await": true,
+            "body": {
+              "type": "EmptyStatement",
+            },
+            "left": {
+              "declarations": [
+                {
+                  "id": {
+                    "name": "x",
+                    "type": "Identifier",
+                  },
+                  "init": null,
+                  "type": "VariableDeclarator",
+                },
+              ],
+              "kind": "using",
+              "type": "VariableDeclaration",
+            },
+            "right": {
+              "name": "y",
+              "type": "Identifier",
+            },
+            "type": "ForOfStatement",
+          },
+        ],
+        "type": "BlockStatement",
+      },
+      "generator": false,
+      "id": {
+        "name": "f",
+        "type": "Identifier",
+      },
+      "params": [],
+      "type": "FunctionDeclaration",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > await using x = null; 1`] = `
+{
+  "body": [
+    {
+      "declarations": [
+        {
+          "id": {
+            "name": "x",
+            "type": "Identifier",
+          },
+          "init": {
+            "type": "Literal",
+            "value": null,
+          },
+          "type": "VariableDeclarator",
+        },
+      ],
+      "kind": "await using",
+      "type": "VariableDeclaration",
+    },
+  ],
+  "sourceType": "module",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > for (await using x of y); 1`] = `
+{
+  "body": [
+    {
+      "await": false,
+      "body": {
+        "type": "EmptyStatement",
+      },
+      "left": {
+        "declarations": [
+          {
+            "id": {
+              "name": "x",
+              "type": "Identifier",
+            },
+            "init": null,
+            "type": "VariableDeclarator",
+          },
+        ],
+        "kind": "await using",
+        "type": "VariableDeclaration",
+      },
+      "right": {
+        "name": "y",
+        "type": "Identifier",
+      },
+      "type": "ForOfStatement",
+    },
+  ],
+  "sourceType": "module",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > for (using x = 1;;); 1`] = `
+{
+  "body": [
+    {
+      "body": {
+        "type": "EmptyStatement",
+      },
+      "init": {
+        "declarations": [
+          {
+            "id": {
+              "name": "x",
+              "type": "Identifier",
+            },
+            "init": {
+              "type": "Literal",
+              "value": 1,
+            },
+            "type": "VariableDeclarator",
+          },
+        ],
+        "kind": "using",
+        "type": "VariableDeclaration",
+      },
+      "test": null,
+      "type": "ForStatement",
+      "update": null,
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > for (using x of y); 1`] = `
+{
+  "body": [
+    {
+      "await": false,
+      "body": {
+        "type": "EmptyStatement",
+      },
+      "left": {
+        "declarations": [
+          {
+            "id": {
+              "name": "x",
+              "type": "Identifier",
+            },
+            "init": null,
+            "type": "VariableDeclarator",
+          },
+        ],
+        "kind": "using",
+        "type": "VariableDeclaration",
+      },
+      "right": {
+        "name": "y",
+        "type": "Identifier",
+      },
+      "type": "ForOfStatement",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > for (using x of y); 2`] = `
+{
+  "body": [
+    {
+      "await": false,
+      "body": {
+        "type": "EmptyStatement",
+      },
+      "left": {
+        "declarations": [
+          {
+            "id": {
+              "name": "x",
+              "type": "Identifier",
+            },
+            "init": null,
+            "type": "VariableDeclarator",
+          },
+        ],
+        "kind": "using",
+        "type": "VariableDeclaration",
+      },
+      "right": {
+        "name": "y",
+        "type": "Identifier",
+      },
+      "type": "ForOfStatement",
+    },
+  ],
+  "sourceType": "module",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > function f(){ using x = null; } 1`] = `
+{
+  "body": [
+    {
+      "async": false,
+      "body": {
+        "body": [
+          {
+            "declarations": [
+              {
+                "id": {
+                  "name": "x",
+                  "type": "Identifier",
+                },
+                "init": {
+                  "type": "Literal",
+                  "value": null,
+                },
+                "type": "VariableDeclarator",
+              },
+            ],
+            "kind": "using",
+            "type": "VariableDeclaration",
+          },
+        ],
+        "type": "BlockStatement",
+      },
+      "generator": false,
+      "id": {
+        "name": "f",
+        "type": "Identifier",
+      },
+      "params": [],
+      "type": "FunctionDeclaration",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > switch (0) { default: using x = null; } 1`] = `
+{
+  "body": [
+    {
+      "cases": [
+        {
+          "consequent": [
+            {
+              "declarations": [
+                {
+                  "id": {
+                    "name": "x",
+                    "type": "Identifier",
+                  },
+                  "init": {
+                    "type": "Literal",
+                    "value": null,
+                  },
+                  "type": "VariableDeclarator",
+                },
+              ],
+              "kind": "using",
+              "type": "VariableDeclaration",
+            },
+          ],
+          "test": null,
+          "type": "SwitchCase",
+        },
+      ],
+      "discriminant": {
+        "type": "Literal",
+        "value": 0,
+      },
+      "type": "SwitchStatement",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > using
+foo; 1`] = `
+{
+  "body": [
+    {
+      "expression": {
+        "name": "using",
+        "type": "Identifier",
+      },
+      "type": "ExpressionStatement",
+    },
+    {
+      "expression": {
+        "name": "foo",
+        "type": "Identifier",
+      },
+      "type": "ExpressionStatement",
+    },
+  ],
+  "sourceType": "script",
+  "type": "Program",
+}
+`;
+
+exports[`Next - using > using declarations (pass) > using x = null; 1`] = `
+{
+  "body": [
+    {
+      "declarations": [
+        {
+          "id": {
+            "name": "x",
+            "type": "Identifier",
+          },
+          "init": {
+            "type": "Literal",
+            "value": null,
+          },
+          "type": "VariableDeclarator",
+        },
+      ],
+      "kind": "using",
+      "type": "VariableDeclaration",
+    },
+  ],
+  "sourceType": "module",
+  "type": "Program",
+}
+`;

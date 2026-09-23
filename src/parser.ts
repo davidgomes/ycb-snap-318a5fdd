@@ -233,6 +233,13 @@ function parseStatementListItem(
   //   LetOrConst BindingList[?In, ?Yield] ;
   const start = parser.tokenStart;
 
+  if (parser.options.next) {
+    const explicitResource = matchExplicitResourceDeclaration(parser, context);
+    if (explicitResource) {
+      return parseExplicitResourceDeclaration(parser, context, scope, privateScope, origin, explicitResource, true);
+    }
+  }
+
   switch (parser.getToken()) {
     //   HoistableDeclaration[?Yield, ~Default]
     case Token.FunctionKeyword:
@@ -1665,6 +1672,135 @@ function parseLetIdentOrVarDeclarationStatement(
  * @param origin Binding origin
  * @param type Binding kind
  */
+function isUsingIdentifier(parser: Parser): boolean {
+  return parser.getToken() === Token.Identifier && parser.tokenValue === 'using';
+}
+
+function isAwaitKeywordToken(parser: Parser): boolean {
+  return parser.getToken() === Token.AwaitKeyword && (parser.getToken() & Token.IsEscaped) === 0;
+}
+
+function isBindingElementStart(parser: Parser): boolean {
+  return (parser.getToken() & (Token.IsIdentifier | Token.IsPatternStart)) !== 0;
+}
+
+/**
+ * `using` / `await using` are only declarations when no line terminator
+ * separates the keywords from each other or from the binding.
+ */
+function matchExplicitResourceDeclaration(parser: Parser, context: Context): 'using' | 'await using' | null {
+  if (!parser.options.next) return null;
+
+  const saved = {
+    flags: parser.flags,
+    index: parser.index,
+    line: parser.line,
+    column: parser.column,
+    startIndex: parser.startIndex,
+    startColumn: parser.startColumn,
+    startLine: parser.startLine,
+    tokenIndex: parser.tokenIndex,
+    tokenColumn: parser.tokenColumn,
+    tokenLine: parser.tokenLine,
+    tokenValue: parser.tokenValue,
+    tokenRaw: parser.tokenRaw,
+    tokenRegExp: parser.tokenRegExp,
+    currentChar: parser.currentChar,
+    token: parser.getToken(),
+  };
+  const { onToken, onComment } = parser.options;
+  parser.options.onToken = undefined;
+  parser.options.onComment = undefined;
+
+  const restore = () => {
+    parser.flags = saved.flags;
+    parser.index = saved.index;
+    parser.line = saved.line;
+    parser.column = saved.column;
+    parser.startIndex = saved.startIndex;
+    parser.startColumn = saved.startColumn;
+    parser.startLine = saved.startLine;
+    parser.tokenIndex = saved.tokenIndex;
+    parser.tokenColumn = saved.tokenColumn;
+    parser.tokenLine = saved.tokenLine;
+    parser.tokenValue = saved.tokenValue;
+    parser.tokenRaw = saved.tokenRaw;
+    parser.tokenRegExp = saved.tokenRegExp;
+    parser.currentChar = saved.currentChar;
+    parser.setToken(saved.token, true);
+    parser.options.onToken = onToken;
+    parser.options.onComment = onComment;
+  };
+
+  try {
+    if (isUsingIdentifier(parser)) {
+      nextToken(parser, context);
+      if (parser.flags & Flags.NewLine || !isBindingElementStart(parser)) return null;
+      return 'using';
+    }
+    if (isAwaitKeywordToken(parser)) {
+      nextToken(parser, context);
+      if (parser.flags & Flags.NewLine || !isUsingIdentifier(parser)) return null;
+      nextToken(parser, context);
+      if (parser.flags & Flags.NewLine || !isBindingElementStart(parser)) return null;
+      return 'await using';
+    }
+    return null;
+  } finally {
+    restore();
+  }
+}
+
+function allowsAwaitUsing(context: Context): boolean {
+  if (context & Context.InStaticBlock) return false;
+  if (context & Context.InAwaitContext) return true;
+  return (context & (Context.Module | Context.InGlobal)) === (Context.Module | Context.InGlobal);
+}
+
+function parseExplicitResourceDeclaration(
+  parser: Parser,
+  context: Context,
+  scope: Scope | undefined,
+  privateScope: PrivateScope | undefined,
+  origin: Origin,
+  kindName: 'using' | 'await using',
+  checkGlobal: boolean,
+): ESTree.VariableDeclaration {
+  const start = parser.tokenStart;
+  const awaitUsing = kindName === 'await using';
+
+  // `await using` at script top-level reports the async-context error.
+  if (awaitUsing && !allowsAwaitUsing(context)) {
+    parser.report(Errors.AwaitUsingNotAsync);
+  } else if (
+    checkGlobal &&
+    origin & Origin.TopLevel &&
+    context & Context.InGlobal &&
+    (context & Context.Module) === 0
+  ) {
+    parser.report(Errors.UsingNotAllowedGlobal);
+  }
+
+  if (awaitUsing) nextToken(parser, context);
+  nextToken(parser, context);
+
+  const kind = awaitUsing ? BindingKind.AwaitUsing : BindingKind.Using;
+  const declarations = parseVariableDeclarationList(parser, context, scope, privateScope, kind, origin);
+
+  if ((origin & Origin.ForStatement) === 0) {
+    matchOrInsertSemicolon(parser, context | Context.AllowRegExp);
+  }
+
+  return parser.finishNode<ESTree.VariableDeclaration>(
+    {
+      type: 'VariableDeclaration',
+      kind: kindName,
+      declarations,
+    },
+    start,
+  );
+}
+
 function parseLexicalDeclaration(
   parser: Parser,
   context: Context,
@@ -1793,6 +1929,10 @@ function parseVariableDeclaration(
   const { tokenStart } = parser;
   const token = parser.getToken();
 
+  if (kind & (BindingKind.Using | BindingKind.AwaitUsing) && (token & Token.IsPatternStart) === Token.IsPatternStart) {
+    parser.report(Errors.UsingNoDestructuring);
+  }
+
   let init: ESTree.Expression | ESTree.BindingPattern | ESTree.Identifier | null = null;
 
   const id = parseBindingPattern(parser, context, scope, privateScope, kind, origin);
@@ -1817,11 +1957,12 @@ function parseVariableDeclaration(
       }
     }
     // Normal const declarations, and const declarations in for(;;) heads, must be initialized.
-  } else if (
-    (kind & BindingKind.Const || (token & Token.IsPatternStart) > 0) &&
-    (parser.getToken() & Token.IsInOrOf) !== Token.IsInOrOf
-  ) {
-    parser.report(Errors.DeclarationMissingInitializer, kind & BindingKind.Const ? 'const' : 'destructuring');
+  } else if ((parser.getToken() & Token.IsInOrOf) !== Token.IsInOrOf) {
+    if (kind & (BindingKind.Using | BindingKind.AwaitUsing)) {
+      parser.report(Errors.UsingMissingInitializer);
+    } else if (kind & BindingKind.Const || (token & Token.IsPatternStart) > 0) {
+      parser.report(Errors.DeclarationMissingInitializer, kind & BindingKind.Const ? 'const' : 'destructuring');
+    }
   }
 
   return parser.finishNode<ESTree.VariableDeclarator>(
@@ -1873,10 +2014,28 @@ function parseForStatement(
     parser.getToken() === Token.ConstKeyword;
   let right;
 
+  const explicitResource = matchExplicitResourceDeclaration(parser, context);
+
   const { tokenStart } = parser;
   const token = parser.getToken();
 
-  if (isVarDecl) {
+  if (explicitResource) {
+    if (explicitResource === 'await using' && !allowsAwaitUsing(context)) {
+      parser.report(Errors.AwaitUsingNotAsync);
+    }
+    init = parseExplicitResourceDeclaration(
+      parser,
+      context | Context.DisallowIn,
+      scope,
+      privateScope,
+      Origin.ForStatement,
+      explicitResource,
+      false,
+    );
+    isVarDecl = true;
+    parser.assignable = AssignmentKind.Assignable;
+    if (parser.getToken() === Token.InKeyword) parser.report(Errors.UsingNotAllowedForIn);
+  } else if (isVarDecl) {
     if (token === Token.LetKeyword) {
       init = parseIdentifier(parser, context);
       if (parser.getToken() & (Token.IsIdentifier | Token.IsPatternStart)) {
@@ -8285,7 +8444,9 @@ function parseAndClassifyIdentifier(
   }
 
   if ((token & Token.Type) === (Token.LetKeyword & Token.Type)) {
-    if (kind & (BindingKind.Let | BindingKind.Const)) parser.report(Errors.InvalidLetConstBinding);
+    if (kind & (BindingKind.Let | BindingKind.Const | BindingKind.Using | BindingKind.AwaitUsing)) {
+      parser.report(Errors.InvalidLetConstBinding);
+    }
   }
   if (token === Token.AwaitKeyword) {
     if (context & Context.InAwaitContext) parser.report(Errors.InvalidAwaitAsIdentifier);
