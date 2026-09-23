@@ -154,6 +154,7 @@ type TrafficPolicySpec struct {
 	// ConsistentHash configures the hash policies used by hashing load balancers
 	// (e.g. RingHash and Maglev) to compute the hash key for a request.
 	// If set without any hash sources, defaults to hashing on the source IP.
+	// It is applicable to HTTPRoutes and GRPCRoutes, and ignored for other targeted kinds.
 	// +optional
 	ConsistentHash *ConsistentHash `json:"consistentHash,omitempty"`
 }
@@ -239,11 +240,14 @@ type ConsistentHashCookie struct {
 	// present in the request. A zero TTL generates a session cookie.
 	// Accepts a Go duration string (e.g. "1h30m") or an integer number of seconds (e.g. "3600").
 	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
 	// +kubebuilder:validation:XValidation:rule="self.matches('^[0-9]+$') || self.matches('^([0-9]+([.][0-9]+)?(ns|us|ms|s|m|h))+$')",message="ttl must be a duration (e.g. 1h30m) or an integer number of seconds"
 	TTL *string `json:"ttl,omitempty"`
 
 	// Path is the path of the generated cookie.
 	// +optional
+	// +kubebuilder:validation:MaxLength=1024
 	Path *string `json:"path,omitempty"`
 
 	// Attributes are additional attributes (e.g. SameSite, Secure) set on the generated cookie.

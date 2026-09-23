@@ -1,0 +1,74 @@
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: empty
+spec:
+  consistentHash: {}
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: full
+spec:
+  consistentHash:
+    headers:
+      - headerName: x-user
+        terminal: true
+        regexRewrite:
+          pattern: "^(.*)$"
+          substitution: ""
+    cookies:
+      - name: session
+        ttl: 1h30m
+        path: /
+        attributes:
+          - name: SameSite
+            value: Lax
+          - name: Secure
+      - name: other
+        ttl: "3600"
+    queryParameters:
+      - name: user
+    filterState:
+      - key: io.istio.peer
+    sourceIp:
+      terminal: false
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: disable-only
+spec:
+  consistentHash:
+    disable: true
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: disable-false-with-fields
+spec:
+  consistentHash:
+    disable: false
+    sourceIp: {}
+---
+_err: no other fields may be set when disable is true
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: disable-with-fields
+spec:
+  consistentHash:
+    disable: true
+    headers:
+      - headerName: x-user
+---
+_err: ttl must be a duration
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: invalid-ttl
+spec:
+  consistentHash:
+    cookies:
+      - name: session
+        ttl: forever
