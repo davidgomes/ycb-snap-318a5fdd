@@ -11,6 +11,7 @@ import type { DropIndexNode } from '../operation-node/drop-index-node.js'
 import type { DropTableNode } from '../operation-node/drop-table-node.js'
 import type { FromNode } from '../operation-node/from-node.js'
 import type { GroupByItemNode } from '../operation-node/group-by-item-node.js'
+import type { GroupByModifierNode } from '../operation-node/group-by-modifier-node.js'
 import type { GroupByNode } from '../operation-node/group-by-node.js'
 import type { IdentifierNode } from '../operation-node/identifier-node.js'
 import { InsertQueryNode } from '../operation-node/insert-query-node.js'
@@ -89,6 +90,8 @@ import type { ExplainNode } from '../operation-node/explain-node.js'
 import type { SchemableIdentifierNode } from '../operation-node/schemable-identifier-node.js'
 import type { DefaultInsertValueNode } from '../operation-node/default-insert-value-node.js'
 import type { AggregateFunctionNode } from '../operation-node/aggregate-function-node.js'
+import type { FrameBoundNode } from '../operation-node/frame-bound-node.js'
+import type { OverFrameNode } from '../operation-node/over-frame-node.js'
 import type { OverNode } from '../operation-node/over-node.js'
 import type { PartitionByNode } from '../operation-node/partition-by-node.js'
 import type { PartitionByItemNode } from '../operation-node/partition-by-item-node.js'
@@ -797,6 +800,30 @@ export class DefaultQueryCompiler
     this.visitNode(node.groupBy)
   }
 
+  protected override visitGroupByModifier(node: GroupByModifierNode): void {
+    this.append(node.modifier)
+    this.append('(')
+
+    if (node.modifier === 'grouping sets') {
+      const lastIndex = node.sets.length - 1
+
+      for (let i = 0; i <= lastIndex; i++) {
+        this.append('(')
+        this.compileList(node.sets[i])
+        this.append(')')
+
+        if (i < lastIndex) {
+          this.append(', ')
+        }
+      }
+    } else {
+      const expressions = node.sets[0] ?? []
+      this.compileList(expressions)
+    }
+
+    this.append(')')
+  }
+
   protected override visitUpdateQuery(node: UpdateQueryNode): void {
     const wrapInParens =
       this.parentNode !== undefined &&
@@ -1488,6 +1515,10 @@ export class DefaultQueryCompiler
 
     this.append(')')
 
+    if (node.nulls) {
+      this.append(node.nulls === 'ignore' ? ' ignore nulls' : ' respect nulls')
+    }
+
     if (node.withinGroup) {
       this.append(' within group (')
       this.visitNode(node.withinGroup)
@@ -1509,19 +1540,59 @@ export class DefaultQueryCompiler
   protected override visitOver(node: OverNode): void {
     this.append('over(')
 
+    let needsSpace = false
+
     if (node.partitionBy) {
       this.visitNode(node.partitionBy)
-
-      if (node.orderBy) {
-        this.append(' ')
-      }
+      needsSpace = true
     }
 
     if (node.orderBy) {
+      if (needsSpace) {
+        this.append(' ')
+      }
+
       this.visitNode(node.orderBy)
+      needsSpace = true
+    }
+
+    if (node.frame) {
+      if (needsSpace) {
+        this.append(' ')
+      }
+
+      this.visitNode(node.frame)
     }
 
     this.append(')')
+  }
+
+  protected override visitOverFrame(node: OverFrameNode): void {
+    this.append(node.unit)
+    this.append(' ')
+
+    if (node.end) {
+      this.append('between ')
+      this.visitNode(node.start)
+      this.append(' and ')
+      this.visitNode(node.end)
+    } else {
+      this.visitNode(node.start)
+    }
+
+    if (node.exclusion) {
+      this.append(' exclude ')
+      this.append(node.exclusion)
+    }
+  }
+
+  protected override visitFrameBound(node: FrameBoundNode): void {
+    if (node.offset) {
+      this.visitNode(node.offset)
+      this.append(' ')
+    }
+
+    this.append(node.bound)
   }
 
   protected override visitPartitionBy(node: PartitionByNode): void {

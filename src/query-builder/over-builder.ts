@@ -15,6 +15,10 @@ import {
 } from '../parser/partition-by-parser.js'
 import { freeze } from '../util/object-utils.js'
 import type { OrderByInterface } from './order-by-interface.js'
+import {
+  CompletedOverFrameBuilder,
+  OverFrameBuilder,
+} from './over-frame-builder.js'
 
 export class OverBuilder<DB, TB extends keyof DB>
   implements OrderByInterface<DB, TB, {}>, OperationNodeSource
@@ -127,6 +131,75 @@ export class OverBuilder<DB, TB extends keyof DB>
       overNode: OverNode.cloneWithPartitionByItems(
         this.#props.overNode,
         parsePartitionBy(partitionBy),
+      ),
+    })
+  }
+
+  /**
+   * Adds a `rows` frame extent to the `over` clause.
+   *
+   * ```ts
+   * eb.fn.sum<number>('id').over((ob) =>
+   *   ob.orderBy('id').rows((fb) => fb.betweenPreceding(1).andCurrentRow())
+   * )
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * sum("id") over(order by "id" rows between $1 preceding and current row)
+   * ```
+   */
+  rows(
+    callback: (builder: OverFrameBuilder) => CompletedOverFrameBuilder,
+  ): OverBuilder<DB, TB> {
+    return this.#frame('rows', callback)
+  }
+
+  /**
+   * Adds a `range` frame extent to the `over` clause.
+   *
+   * ```ts
+   * eb.fn.sum<number>('id').over((ob) =>
+   *   ob.orderBy('id').range((fb) =>
+   *     fb.betweenUnboundedPreceding().andCurrentRow()
+   *   )
+   * )
+   * ```
+   */
+  range(
+    callback: (builder: OverFrameBuilder) => CompletedOverFrameBuilder,
+  ): OverBuilder<DB, TB> {
+    return this.#frame('range', callback)
+  }
+
+  /**
+   * Adds a `groups` frame extent to the `over` clause.
+   *
+   * ```ts
+   * eb.fn.sum<number>('id').over((ob) =>
+   *   ob
+   *     .orderBy('id')
+   *     .groups((fb) => fb.betweenCurrentRow().andUnboundedFollowing())
+   * )
+   * ```
+   */
+  groups(
+    callback: (builder: OverFrameBuilder) => CompletedOverFrameBuilder,
+  ): OverBuilder<DB, TB> {
+    return this.#frame('groups', callback)
+  }
+
+  #frame(
+    unit: 'rows' | 'range' | 'groups',
+    callback: (builder: OverFrameBuilder) => CompletedOverFrameBuilder,
+  ): OverBuilder<DB, TB> {
+    const completed = callback(new OverFrameBuilder())
+
+    return new OverBuilder({
+      overNode: OverNode.cloneWithFrame(
+        this.#props.overNode,
+        completed.toFrame(unit),
       ),
     })
   }

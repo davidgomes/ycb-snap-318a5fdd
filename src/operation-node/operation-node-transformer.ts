@@ -29,6 +29,7 @@ import type { OrderByNode } from './order-by-node.js'
 import type { OrderByItemNode } from './order-by-item-node.js'
 import type { GroupByNode } from './group-by-node.js'
 import type { GroupByItemNode } from './group-by-item-node.js'
+import type { GroupByModifierNode } from './group-by-modifier-node.js'
 import type { UpdateQueryNode } from './update-query-node.js'
 import type { ColumnUpdateNode } from './column-update-node.js'
 import type { LimitNode } from './limit-node.js'
@@ -73,6 +74,8 @@ import type { SchemableIdentifierNode } from './schemable-identifier-node.js'
 import type { DefaultInsertValueNode } from './default-insert-value-node.js'
 import type { AggregateFunctionNode } from './aggregate-function-node.js'
 import type { OverNode } from './over-node.js'
+import type { OverFrameNode } from './over-frame-node.js'
+import type { FrameBoundNode } from './frame-bound-node.js'
 import type { PartitionByNode } from './partition-by-node.js'
 import type { PartitionByItemNode } from './partition-by-item-node.js'
 import type { SetOperationNode } from './set-operation-node.js'
@@ -175,6 +178,7 @@ export class OperationNodeTransformer {
     OrderByItemNode: this.transformOrderByItem.bind(this),
     GroupByNode: this.transformGroupBy.bind(this),
     GroupByItemNode: this.transformGroupByItem.bind(this),
+    GroupByModifierNode: this.transformGroupByModifier.bind(this),
     UpdateQueryNode: this.transformUpdateQuery.bind(this),
     ColumnUpdateNode: this.transformColumnUpdate.bind(this),
     LimitNode: this.transformLimit.bind(this),
@@ -219,6 +223,8 @@ export class OperationNodeTransformer {
     DefaultInsertValueNode: this.transformDefaultInsertValue.bind(this),
     AggregateFunctionNode: this.transformAggregateFunction.bind(this),
     OverNode: this.transformOver.bind(this),
+    OverFrameNode: this.transformOverFrame.bind(this),
+    FrameBoundNode: this.transformFrameBound.bind(this),
     PartitionByNode: this.transformPartitionBy.bind(this),
     PartitionByItemNode: this.transformPartitionByItem.bind(this),
     SetOperationNode: this.transformSetOperation.bind(this),
@@ -576,6 +582,19 @@ export class OperationNodeTransformer {
     return requireAllProps<GroupByItemNode>({
       kind: 'GroupByItemNode',
       groupBy: this.transformNode(node.groupBy, queryId),
+    })
+  }
+
+  protected transformGroupByModifier(
+    node: GroupByModifierNode,
+    queryId?: QueryId,
+  ): GroupByModifierNode {
+    return requireAllProps<GroupByModifierNode>({
+      kind: 'GroupByModifierNode',
+      modifier: node.modifier,
+      sets: freeze(
+        node.sets.map((set) => this.transformNodeList(set, queryId)),
+      ),
     })
   }
 
@@ -1071,6 +1090,7 @@ export class OperationNodeTransformer {
       withinGroup: this.transformNode(node.withinGroup, queryId),
       filter: this.transformNode(node.filter, queryId),
       over: this.transformNode(node.over, queryId),
+      nulls: node.nulls,
     })
   }
 
@@ -1079,6 +1099,31 @@ export class OperationNodeTransformer {
       kind: 'OverNode',
       orderBy: this.transformNode(node.orderBy, queryId),
       partitionBy: this.transformNode(node.partitionBy, queryId),
+      frame: this.transformNode(node.frame, queryId),
+    })
+  }
+
+  protected transformOverFrame(
+    node: OverFrameNode,
+    queryId?: QueryId,
+  ): OverFrameNode {
+    return requireAllProps({
+      kind: 'OverFrameNode',
+      unit: node.unit,
+      start: this.transformNode(node.start, queryId),
+      end: this.transformNode(node.end, queryId),
+      exclusion: node.exclusion,
+    })
+  }
+
+  protected transformFrameBound(
+    node: FrameBoundNode,
+    queryId?: QueryId,
+  ): FrameBoundNode {
+    return requireAllProps({
+      kind: 'FrameBoundNode',
+      bound: node.bound,
+      offset: this.transformNode(node.offset, queryId),
     })
   }
 

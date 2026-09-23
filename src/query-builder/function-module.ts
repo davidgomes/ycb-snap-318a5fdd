@@ -2,6 +2,8 @@ import { ExpressionWrapper } from '../expression/expression-wrapper.js'
 import type { Expression } from '../expression/expression.js'
 import { AggregateFunctionNode } from '../operation-node/aggregate-function-node.js'
 import { FunctionNode } from '../operation-node/function-node.js'
+import type { OperationNode } from '../operation-node/operation-node.js'
+import { ValueNode } from '../operation-node/value-node.js'
 import type {
   ExtractTypeFromCoalesce1,
   ExtractTypeFromCoalesce3,
@@ -13,6 +15,7 @@ import {
   type ExtractTypeFromReferenceExpression,
   type ReferenceExpression,
   type StringReference,
+  parseReferenceExpression,
   parseReferenceExpressionOrList,
   type ExtractTypeFromStringReference,
 } from '../parser/reference-parser.js'
@@ -769,6 +772,178 @@ export interface FunctionModule<DB, TB extends keyof DB> {
         ? Simplify<ShallowDehydrateObject<O>>
         : never
   >
+
+  /**
+   * Calls the `grouping` function for a grouped column.
+   *
+   * `grouping(column)` returns 0 for a normal row and 1 when that column
+   * was null-filled by `cube`, `rollup`, or `grouping sets`.
+   *
+   * You can specify the output type as the first type argument, the same way
+   * as {@link count}.
+   *
+   * ```ts
+   * await db
+   *   .selectFrom('person')
+   *   .select((eb) => [
+   *     'first_name',
+   *     eb.fn.grouping<number>('first_name').as('first_name_grouped'),
+   *   ])
+   *   .groupByRollup('first_name')
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select "first_name", grouping("first_name") as "first_name_grouped"
+   * from "person"
+   * group by rollup("first_name")
+   * ```
+   */
+  grouping<
+    O extends number | string | bigint = number | string | bigint,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+  ): ExpressionWrapper<DB, TB, O>
+
+  /**
+   * Calls `row_number()`.
+   *
+   * Output type follows {@link count}: `number | string | bigint` unless you
+   * pass an explicit type argument.
+   */
+  rowNumber<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls `rank()`.
+   */
+  rank<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls `dense_rank()`.
+   */
+  denseRank<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls `percent_rank()`.
+   */
+  percentRank<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls `cume_dist()`.
+   */
+  cumeDist<
+    O extends number | string | bigint = number | string | bigint,
+  >(): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls `ntile(buckets)`.
+   *
+   * `buckets` is a `number` or `bigint` query parameter, not a column reference.
+   */
+  ntile<O extends number | string | bigint = number | string | bigint>(
+    buckets: number | bigint,
+  ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls `first_value(column)`.
+   *
+   * Output type is inferred from the column, like {@link max}. Pass an explicit
+   * type argument to override it: `firstValue<string | null>('first_name')`.
+   *
+   * Chain {@link AggregateFunctionBuilder.ignoreNulls} or
+   * {@link AggregateFunctionBuilder.respectNulls} to add null treatment
+   * after the argument list.
+   */
+  firstValue<
+    O = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true ? ExtractTypeFromReferenceExpression<DB, TB, RE> : O
+  >
+
+  /**
+   * Calls `last_value(column)`.
+   */
+  lastValue<
+    O = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true ? ExtractTypeFromReferenceExpression<DB, TB, RE> : O
+  >
+
+  /**
+   * Calls `nth_value(column, n)`.
+   *
+   * `n` is a `number` or `bigint` query parameter, not a column reference.
+   */
+  nthValue<
+    O = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+    n: number | bigint,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true ? ExtractTypeFromReferenceExpression<DB, TB, RE> : O
+  >
+
+  /**
+   * Calls `lag(column)`, `lag(column, offset)`, or `lag(column, offset, default)`.
+   *
+   * Offsets and default values are `number | bigint` query parameters, not
+   * column references.
+   */
+  lag<
+    O = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true ? ExtractTypeFromReferenceExpression<DB, TB, RE> : O
+  >
+
+  /**
+   * Calls `lead(column)`, `lead(column, offset)`, or `lead(column, offset, default)`.
+   *
+   * Offsets and default values are `number | bigint` query parameters, not
+   * column references.
+   */
+  lead<
+    O = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
+  >(
+    column: RE,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true ? ExtractTypeFromReferenceExpression<DB, TB, RE> : O
+  >
 }
 
 export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
@@ -860,5 +1035,109 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
         ]),
       )
     },
+
+    grouping(column: ReferenceExpression<DB, TB>): any {
+      return fn('grouping', [column])
+    },
+
+    rowNumber(): any {
+      return agg('row_number')
+    },
+
+    rank(): any {
+      return agg('rank')
+    },
+
+    denseRank(): any {
+      return agg('dense_rank')
+    },
+
+    percentRank(): any {
+      return agg('percent_rank')
+    },
+
+    cumeDist(): any {
+      return agg('cume_dist')
+    },
+
+    ntile(buckets: number | bigint): any {
+      return aggregate('ntile', [ValueNode.create(buckets)])
+    },
+
+    firstValue(column: ReferenceExpression<DB, TB>): any {
+      return agg('first_value', [column])
+    },
+
+    lastValue(column: ReferenceExpression<DB, TB>): any {
+      return agg('last_value', [column])
+    },
+
+    nthValue(column: ReferenceExpression<DB, TB>, n: number | bigint): any {
+      return aggregate('nth_value', [
+        parseReferenceExpression(column),
+        ValueNode.create(n),
+      ])
+    },
+
+    lag(
+      column: ReferenceExpression<DB, TB>,
+      offset?: number | bigint,
+      defaultValue?: number | bigint,
+    ): any {
+      return aggregate(
+        'lag',
+        orderedNumericArgs(
+          parseReferenceExpression(column),
+          offset,
+          defaultValue,
+        ),
+      )
+    },
+
+    lead(
+      column: ReferenceExpression<DB, TB>,
+      offset?: number | bigint,
+      defaultValue?: number | bigint,
+    ): any {
+      return aggregate(
+        'lead',
+        orderedNumericArgs(
+          parseReferenceExpression(column),
+          offset,
+          defaultValue,
+        ),
+      )
+    },
   })
+
+  function aggregate(
+    name: string,
+    args: readonly OperationNode[],
+  ): AggregateFunctionBuilder<DB, TB, any> {
+    return new AggregateFunctionBuilder({
+      aggregateFunctionNode: AggregateFunctionNode.create(name, args),
+    })
+  }
+
+  function orderedNumericArgs(
+    column: OperationNode,
+    offset?: number | bigint,
+    defaultValue?: number | bigint,
+  ): OperationNode[] {
+    const args = [column]
+
+    if (offset !== undefined) {
+      args.push(ValueNode.create(offset))
+    }
+
+    if (defaultValue !== undefined) {
+      if (offset === undefined) {
+        throw new Error('lag/lead default value requires an offset argument')
+      }
+
+      args.push(ValueNode.create(defaultValue))
+    }
+
+    return args
+  }
 }

@@ -32,6 +32,7 @@ import type { OrderByNode } from './order-by-node.js'
 import type { OrderByItemNode } from './order-by-item-node.js'
 import type { GroupByNode } from './group-by-node.js'
 import type { GroupByItemNode } from './group-by-item-node.js'
+import type { GroupByModifierNode } from './group-by-modifier-node.js'
 import type { UpdateQueryNode } from './update-query-node.js'
 import type { ColumnUpdateNode } from './column-update-node.js'
 import type { LimitNode } from './limit-node.js'
@@ -75,6 +76,8 @@ import type { SchemableIdentifierNode } from './schemable-identifier-node.js'
 import type { DefaultInsertValueNode } from './default-insert-value-node.js'
 import type { AggregateFunctionNode } from './aggregate-function-node.js'
 import type { OverNode } from './over-node.js'
+import type { OverFrameNode } from './over-frame-node.js'
+import type { FrameBoundNode } from './frame-bound-node.js'
 import type { PartitionByNode } from './partition-by-node.js'
 import type { PartitionByItemNode } from './partition-by-item-node.js'
 import type { SetOperationNode } from './set-operation-node.js'
@@ -141,6 +144,7 @@ export abstract class OperationNodeVisitor {
     OrderByItemNode: this.visitOrderByItem.bind(this),
     GroupByNode: this.visitGroupBy.bind(this),
     GroupByItemNode: this.visitGroupByItem.bind(this),
+    GroupByModifierNode: this.visitGroupByModifier.bind(this),
     UpdateQueryNode: this.visitUpdateQuery.bind(this),
     ColumnUpdateNode: this.visitColumnUpdate.bind(this),
     LimitNode: this.visitLimit.bind(this),
@@ -184,6 +188,8 @@ export abstract class OperationNodeVisitor {
     DefaultInsertValueNode: this.visitDefaultInsertValue.bind(this),
     AggregateFunctionNode: this.visitAggregateFunction.bind(this),
     OverNode: this.visitOver.bind(this),
+    OverFrameNode: this.visitOverFrame.bind(this),
+    FrameBoundNode: this.visitFrameBound.bind(this),
     PartitionByNode: this.visitPartitionBy.bind(this),
     PartitionByItemNode: this.visitPartitionByItem.bind(this),
     SetOperationNode: this.visitSetOperation.bind(this),
@@ -240,6 +246,7 @@ export abstract class OperationNodeVisitor {
   protected abstract visitOrderByItem(node: OrderByItemNode): void
   protected abstract visitGroupBy(node: GroupByNode): void
   protected abstract visitGroupByItem(node: GroupByItemNode): void
+  protected abstract visitGroupByModifier(node: GroupByModifierNode): void
   protected abstract visitUpdateQuery(node: UpdateQueryNode): void
   protected abstract visitColumnUpdate(node: ColumnUpdateNode): void
   protected abstract visitLimit(node: LimitNode): void
@@ -301,6 +308,8 @@ export abstract class OperationNodeVisitor {
   protected abstract visitDefaultInsertValue(node: DefaultInsertValueNode): void
   protected abstract visitAggregateFunction(node: AggregateFunctionNode): void
   protected abstract visitOver(node: OverNode): void
+  protected abstract visitOverFrame(node: OverFrameNode): void
+  protected abstract visitFrameBound(node: FrameBoundNode): void
   protected abstract visitPartitionBy(node: PartitionByNode): void
   protected abstract visitPartitionByItem(node: PartitionByItemNode): void
   protected abstract visitSetOperation(node: SetOperationNode): void

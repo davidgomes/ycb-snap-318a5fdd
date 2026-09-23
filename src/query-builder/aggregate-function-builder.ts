@@ -103,6 +103,52 @@ export class AggregateFunctionBuilder<DB, TB extends keyof DB, O = unknown>
   }
 
   /**
+   * Adds `respect nulls` after the function arguments and before `filter` / `over`.
+   *
+   * ```ts
+   * eb.fn.firstValue('first_name').respectNulls().over((ob) => ob.orderBy('id'))
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * first_value("first_name") respect nulls over(order by "id")
+   * ```
+   */
+  respectNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNulls(
+        this.#props.aggregateFunctionNode,
+        'respect',
+      ),
+    })
+  }
+
+  /**
+   * Adds `ignore nulls` after the function arguments and before `filter` / `over`.
+   *
+   * ```ts
+   * eb.fn.lastValue('first_name').ignoreNulls().over((ob) => ob.orderBy('id'))
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * last_value("first_name") ignore nulls over(order by "id")
+   * ```
+   */
+  ignoreNulls(): AggregateFunctionBuilder<DB, TB, O> {
+    return new AggregateFunctionBuilder({
+      ...this.#props,
+      aggregateFunctionNode: AggregateFunctionNode.cloneWithNulls(
+        this.#props.aggregateFunctionNode,
+        'ignore',
+      ),
+    })
+  }
+
+  /**
    * Adds an `order by` clause inside the aggregate function.
    *
    * ### Examples
