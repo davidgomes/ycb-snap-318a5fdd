@@ -39,40 +39,12 @@ export function registerRuleAlias(alias: string): void {
  * @return {{startIndex: number, endIndex: number}[]} The start and end indexes of each disabled section from the last to the earliest.
  */
 export function getDisabledSectionsInText(text: string, ruleAlias: string | null): TextSection[] {
-  if (!text.includes('linter-')) {
+  const markerInfo = getMarkerInfo(text);
+  if (!markerInfo) {
     return [];
   }
 
-  const lines = text.split('\n');
-  // a trailing line break ends the last line rather than starting a new one
-  if (text.endsWith('\n')) {
-    lines.pop();
-  }
-
-  const lineStarts: number[] = [];
-  let lineStart = 0;
-  const possibleMarkers: Marker[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    lineStarts.push(lineStart);
-    lineStart += lines[i].length + 1;
-
-    const marker = parseMarker(lines[i], i);
-    if (marker) {
-      possibleMarkers.push(marker);
-    }
-  }
-
-  if (possibleMarkers.length === 0) {
-    return [];
-  }
-
-  const [sectionsWithoutMarkers, codeAndMathSpans] = getSectionsWithoutMarkers(text);
-  const markers = possibleMarkers.filter((marker) => {
-    const markerStart = lineStarts[marker.line] + lines[marker.line].length - lines[marker.line].trimStart().length;
-
-    return !sectionsWithoutMarkers.some((section) => section.startIndex <= markerStart && markerStart < section.endIndex);
-  });
-
+  const {lines, lineStarts, markers, codeAndMathSpans} = markerInfo;
   const isLineDisabled = new Array<boolean>(lines.length).fill(false);
   for (const marker of markers) {
     isLineDisabled[marker.line] = true;
@@ -103,6 +75,97 @@ export function getDisabledSectionsInText(text: string, ruleAlias: string | null
   return disabledSections.reverse();
 }
 
+/**
+ * Moves blank lines that a rule added between a line-scoped disable marker and the line it disabled to before the marker,
+ * so that the marker still disables the same line the next time the text is linted.
+ * @param {string} originalText - The text before the rule was applied.
+ * @param {string} newText - The text after the rule was applied.
+ * @return {string} The new text with line-scoped disable markers directly before the lines they disable.
+ */
+export function keepLineScopedMarkersWithTheirLines(originalText: string, newText: string): string {
+  if (originalText === newText) {
+    return newText;
+  }
+
+  const original = getMarkerInfo(originalText);
+  const isDirectlyBeforeContent = (lines: string[], line: number) => line + 1 < lines.length && lines[line + 1].trim() !== '';
+  if (!original || !original.markers.some((marker) => marker.kind === 'disable-lines' && isDirectlyBeforeContent(original.lines, marker.line))) {
+    return newText;
+  }
+
+  const updated = getMarkerInfo(newText);
+  if (!updated || updated.markers.length !== original.markers.length) {
+    return newText;
+  }
+
+  const lines = updated.lines;
+  for (let i = original.markers.length - 1; i >= 0; i--) {
+    const originalLine = original.markers[i].line;
+    const line = updated.markers[i].line;
+    if (original.markers[i].kind !== 'disable-lines' || original.lines[originalLine] !== lines[line] || !isDirectlyBeforeContent(original.lines, originalLine)) {
+      continue;
+    }
+
+    let contentLine = line + 1;
+    while (contentLine < lines.length && lines[contentLine].trim() === '') {
+      contentLine++;
+    }
+
+    if (contentLine === line + 1 || contentLine === lines.length) {
+      continue;
+    }
+
+    const addedBlankLines = lines.splice(line + 1, contentLine - line - 1);
+    if (line > 0 && lines[line - 1].trim() !== '') {
+      lines.splice(line, 0, ...addedBlankLines);
+    }
+  }
+
+  return lines.join('\n') + (newText.endsWith('\n') ? '\n' : '');
+}
+
+function getMarkerInfo(text: string): {lines: string[], lineStarts: number[], markers: Marker[], codeAndMathSpans: LineSpan[]} | null {
+  if (!text.includes('linter-')) {
+    return null;
+  }
+
+  const lines = text.split('\n');
+  // a trailing line break ends the last line rather than starting a new one
+  if (text.endsWith('\n')) {
+    lines.pop();
+  }
+
+  const lineStarts: number[] = [];
+  let lineStart = 0;
+  const possibleMarkers: Marker[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    lineStarts.push(lineStart);
+    lineStart += lines[i].length + 1;
+
+    const marker = parseMarker(lines[i], i);
+    if (marker) {
+      possibleMarkers.push(marker);
+    }
+  }
+
+  if (possibleMarkers.length === 0) {
+    return null;
+  }
+
+  const [sectionsWithoutMarkers, codeAndMathSpans] = getSectionsWithoutMarkers(text);
+  const markers = possibleMarkers.filter((marker) => {
+    const markerStart = lineStarts[marker.line] + lines[marker.line].length - lines[marker.line].trimStart().length;
+
+    return !sectionsWithoutMarkers.some((section) => section.startIndex <= markerStart && markerStart < section.endIndex);
+  });
+
+  if (markers.length === 0) {
+    return null;
+  }
+
+  return {lines, lineStarts, markers, codeAndMathSpans};
+}
+
 function parseMarker(lineText: string, line: number): Marker | null {
   const lineMatch = lineText.match(markerLineRegex);
   if (!lineMatch) {
@@ -122,7 +185,7 @@ function parseMarker(lineText: string, line: number): Marker | null {
   }
 
   const directive = contentMatch[1];
-  let ruleList = contentMatch[2];
+  const ruleList = contentMatch[2];
   if (directive === 'disable-next-n-lines') {
     if (ruleList !== '' && !/^[ \t:]/.test(ruleList)) {
       return null;
@@ -133,9 +196,7 @@ function parseMarker(lineText: string, line: number): Marker | null {
       return {line, kind: 'disable-lines', rules: null, lineCount: 0};
     }
 
-    ruleList = lineCountMatch[2];
-
-    return {line, kind: 'disable-lines', rules: parseRuleList(ruleList), lineCount: parseInt(lineCountMatch[1], 10)};
+    return {line, kind: 'disable-lines', rules: parseRuleList(lineCountMatch[2]), lineCount: parseInt(lineCountMatch[1], 10)};
   }
 
   if (ruleList !== '' && !/^[ \t]/.test(ruleList)) {
