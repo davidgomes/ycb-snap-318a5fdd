@@ -3068,7 +3068,44 @@ const funcDocs: Record<string, React.ReactNode> = {
       </p>
 
       <p>
-        <code>sort_by_label</code> uses{" "}
+        <code>sort_by_label</code> interprets label values as typed values where possible. Values are first ordered by
+        the following classes:
+      </p>
+
+      <ol>
+        <li>Values with leading whitespace. These are never interpreted as typed values.</li>
+        <li>
+          Positive infinity (e.g. <code>+Inf</code>, <code>inf</code>).
+        </li>
+        <li>
+          Finite numbers (e.g. <code>-1.5</code>, <code>+2</code>, <code>1e3</code>). <code>NaN</code> is not a number.
+        </li>
+        <li>
+          Negative infinity (e.g. <code>-Inf</code>).
+        </li>
+        <li>
+          Durations with a signed, possibly scientific coefficient (e.g. <code>-1.5e3ms</code>), or a sum of terms (e.g.{" "}
+          <code>1h30m</code>).
+        </li>
+        <li>
+          Byte sizes with SI or IEC units (e.g. <code>1.5GiB</code>, <code>2e3kB</code>).
+        </li>
+        <li>
+          Semantic versions with an optional <code>v</code> prefix (e.g. <code>v1.2.3-rc.1</code>).
+        </li>
+        <li>IP addresses, IPv4 before IPv6. IPv4-mapped IPv6 addresses are IPv6.</li>
+        <li>CIDR prefixes, IPv4 before IPv6.</li>
+        <li>
+          RFC 3339 timestamps (e.g. <code>2024-01-01T00:00:00Z</code>).
+        </li>
+        <li>All other values, including empty ones.</li>
+      </ol>
+
+      <p>
+        Values within the same class are ordered by their typed value: numbers, durations and byte sizes by their exact
+        magnitude, semantic versions by precedence, IP addresses by their bytes, CIDR prefixes by their network address
+        and then by prefix length, and timestamps chronologically. Values with equal typed values, values with leading
+        whitespace, and untyped values are ordered in
         <a href="https://en.wikipedia.org/wiki/Natural_sort_order">natural sort order</a>.
       </p>
     </>

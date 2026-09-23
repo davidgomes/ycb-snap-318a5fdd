@@ -816,8 +816,28 @@ label values are equal, elements are sorted by their full label sets.
 Please note that `sort_by_label` only affects the results of instant queries, as
 range query results always have a fixed output ordering.
 
-`sort_by_label` uses [natural sort
-order](https://en.wikipedia.org/wiki/Natural_sort_order).
+`sort_by_label` interprets label values as typed values where possible. Values
+are first ordered by the following classes:
+
+1. Values with leading whitespace. These are never interpreted as typed values.
+2. Positive infinity (e.g. `+Inf`, `inf`).
+3. Finite numbers (e.g. `-1.5`, `+2`, `1e3`). `NaN` is not a number.
+4. Negative infinity (e.g. `-Inf`).
+5. Durations with a signed, possibly scientific coefficient (e.g. `-1.5e3ms`),
+   or a sum of terms (e.g. `1h30m`).
+6. Byte sizes with SI or IEC units (e.g. `1.5GiB`, `2e3kB`).
+7. Semantic versions with an optional `v` prefix (e.g. `v1.2.3-rc.1`).
+8. IP addresses, IPv4 before IPv6. IPv4-mapped IPv6 addresses are IPv6.
+9. CIDR prefixes, IPv4 before IPv6.
+10. RFC 3339 timestamps (e.g. `2024-01-01T00:00:00Z`).
+11. All other values, including empty ones.
+
+Values within the same class are ordered by their typed value: numbers,
+durations and byte sizes by their exact magnitude, semantic versions by
+precedence, IP addresses by their bytes, CIDR prefixes by their network address
+and then by prefix length, and timestamps chronologically. Values with equal
+typed values, values with leading whitespace, and untyped values are ordered in
+[natural sort order](https://en.wikipedia.org/wiki/Natural_sort_order).
 
 ## `sort_by_label_desc()`
 
