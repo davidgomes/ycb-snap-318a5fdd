@@ -3,6 +3,7 @@ package tengo
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/d5/tengo/v2/parser"
@@ -311,6 +312,10 @@ var callTrampoline = &CompiledFunction{
 	Instructions: append(MakeInstruction(parser.OpCall, 1, 1),
 		parser.OpSuspend),
 }
+
+// idleVMs holds VMs for calls from Go made while no VM is running against the
+// globals of the called function.
+var idleVMs = sync.Pool{New: func() interface{} { return new(VM) }}
 
 // invoke calls fn with args on top of the current state of the VM, and returns
 // once the call returns. The state of the VM is restored afterwards, so this

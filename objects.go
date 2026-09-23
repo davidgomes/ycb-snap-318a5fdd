@@ -639,12 +639,15 @@ func (o *CompiledFunction) Call(args ...Object) (Object, error) {
 	if o.rt == nil {
 		return nil, errUnboundFunction
 	}
-	v := o.rt.env.vm
-	if v == nil {
-		v = newVM(o.rt)
-		v.allocs = v.maxAllocs + 1
+	if v := o.rt.env.vm; v != nil {
+		return v.invoke(o, args)
 	}
-	return v.invoke(o, args)
+	v := idleVMs.Get().(*VM)
+	v.maxAllocs = o.rt.env.maxAllocs
+	v.allocs = v.maxAllocs + 1
+	ret, err := v.invoke(o, args)
+	idleVMs.Put(v)
+	return ret, err
 }
 
 // SourcePos returns the source position of the instruction at ip.
