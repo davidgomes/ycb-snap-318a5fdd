@@ -646,6 +646,8 @@ func (p *Parser) parseIdentList() *IdentList {
 	}
 
 	var params []*Ident
+	var patterns []Expr
+	hasPatterns := false
 	lparen := p.expect(token.LParen)
 	isVarArgs := false
 	if p.token != token.RParen {
@@ -654,24 +656,42 @@ func (p *Parser) parseIdentList() *IdentList {
 			p.next()
 		}
 
-		params = append(params, p.parseIdent())
+		param, pattern := p.parseParam(isVarArgs)
+		params, patterns = append(params, param), append(patterns, pattern)
+		hasPatterns = hasPatterns || pattern != nil
 		for !isVarArgs && p.token == token.Comma {
 			p.next()
 			if p.token == token.Ellipsis {
 				isVarArgs = true
 				p.next()
 			}
-			params = append(params, p.parseIdent())
+			param, pattern := p.parseParam(isVarArgs)
+			params, patterns = append(params, param), append(patterns, pattern)
+			hasPatterns = hasPatterns || pattern != nil
 		}
+	}
+	if !hasPatterns {
+		patterns = nil
 	}
 
 	rparen := p.expect(token.RParen)
 	return &IdentList{
-		LParen:  lparen,
-		RParen:  rparen,
-		VarArgs: isVarArgs,
-		List:    params,
+		LParen:   lparen,
+		RParen:   rparen,
+		VarArgs:  isVarArgs,
+		List:     params,
+		Patterns: patterns,
 	}
+}
+
+// parseParam parses a function parameter. A destructuring pattern parameter
+// is returned along with a placeholder identifier.
+func (p *Parser) parseParam(isVarArgs bool) (*Ident, Expr) {
+	if isVarArgs || (p.token != token.LBrack && p.token != token.LBrace) {
+		return p.parseIdent(), nil
+	}
+	pattern := p.parsePattern()
+	return &Ident{Name: "_", NamePos: pattern.Pos()}, pattern
 }
 
 func (p *Parser) parseStmt() (stmt Stmt) {
@@ -944,6 +964,10 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 		defer untracep(tracep(p, "SimpleStmt"))
 	}
 
+	if p.isPatternAssign() {
+		return p.parsePatternAssign()
+	}
+
 	x := p.parseExprList()
 
 	switch p.token {
@@ -1019,6 +1043,178 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 		return s
 	}
 	return &ExprStmt{Expr: x[0]}
+}
+
+// isPatternAssign reports whether the current token opens a bracketed
+// construct that is immediately followed by '=' or ':='. Such a construct is
+// the left-hand side of a destructuring assignment rather than an array or map
+// literal. The scanner is not advanced.
+func (p *Parser) isPatternAssign() bool {
+	if p.token != token.LBrack && p.token != token.LBrace {
+		return false
+	}
+
+	s := *p.scanner
+	s.errorHandler = nil
+	depth := 0
+	for tok := p.token; tok != token.EOF; tok, _, _ = s.Scan() {
+		switch tok {
+		case token.LParen, token.LBrack, token.LBrace:
+			depth++
+		case token.RParen, token.RBrack, token.RBrace:
+			depth--
+			if depth == 0 {
+				tok, _, _ = s.Scan()
+				return tok == token.Define || tok == token.Assign
+			}
+		}
+	}
+	return false
+}
+
+func (p *Parser) parsePatternAssign() Stmt {
+	if p.trace {
+		defer untracep(tracep(p, "PatternAssign"))
+	}
+
+	x := p.parsePattern()
+	tok := token.Define
+	if p.token == token.Assign {
+		tok = token.Assign
+	}
+	pos := p.expect(tok)
+	y := p.parseExprList()
+	return &AssignStmt{
+		LHS:      []Expr{x},
+		RHS:      y,
+		Token:    tok,
+		TokenPos: pos,
+	}
+}
+
+// parsePattern parses a destructuring target: an identifier, an array pattern
+// or a map pattern.
+func (p *Parser) parsePattern() Expr {
+	switch p.token {
+	case token.Ident:
+		return p.parseIdent()
+	case token.LBrack:
+		return p.parseArrayPattern()
+	case token.LBrace:
+		return p.parseMapPattern()
+	}
+
+	pos := p.pos
+	p.errorExpected(pos, "identifier or destructuring pattern")
+	p.advance(stmtStart)
+	return &BadExpr{From: pos, To: p.pos}
+}
+
+func (p *Parser) parseDefaultPattern(target Expr) Expr {
+	if p.token != token.Assign {
+		return target
+	}
+
+	pos := p.pos
+	p.next()
+	return &DefaultPattern{
+		Target:    target,
+		AssignPos: pos,
+		Default:   p.parseExpr(),
+	}
+}
+
+func (p *Parser) parseArrayPattern() *ArrayPattern {
+	if p.trace {
+		defer untracep(tracep(p, "ArrayPattern"))
+	}
+
+	lbrack := p.expect(token.LBrack)
+	p.exprLevel++
+
+	var elements []Expr
+	for p.token != token.RBrack && p.token != token.EOF {
+		if p.token == token.Ellipsis {
+			pos := p.pos
+			p.next()
+			elements = append(elements, &RestElement{
+				EllipsisPos: pos,
+				Name:        p.parseIdent(),
+			})
+		} else {
+			elements = append(elements,
+				p.parseDefaultPattern(p.parsePattern()))
+		}
+
+		if !p.expectComma(token.RBrack, "array pattern element") {
+			break
+		}
+	}
+
+	p.exprLevel--
+	rbrack := p.expect(token.RBrack)
+	return &ArrayPattern{
+		Elements: elements,
+		LBrack:   lbrack,
+		RBrack:   rbrack,
+	}
+}
+
+func (p *Parser) parseMapPatternElement() *MapPatternElement {
+	if p.trace {
+		defer untracep(tracep(p, "MapPatternElement"))
+	}
+
+	pos := p.pos
+	name := "_"
+	isIdent := p.token == token.Ident
+	switch p.token {
+	case token.Ident:
+		name = p.tokenLit
+	case token.String:
+		name, _ = strconv.Unquote(p.tokenLit)
+	case token.Ellipsis:
+		p.error(pos, "rest element not supported in map pattern")
+	default:
+		p.errorExpected(pos, "map key")
+	}
+	p.next()
+
+	elem := &MapPatternElement{Key: name, KeyPos: pos}
+	if isIdent && p.token != token.Colon {
+		elem.Value = &Ident{Name: name, NamePos: pos}
+	} else {
+		elem.ColonPos = p.expect(token.Colon)
+		elem.Value = p.parsePattern()
+	}
+	elem.Value = p.parseDefaultPattern(elem.Value)
+	return elem
+}
+
+func (p *Parser) parseMapPattern() *MapPattern {
+	if p.trace {
+		defer untracep(tracep(p, "MapPattern"))
+	}
+
+	lbrace := p.expect(token.LBrace)
+	p.exprLevel++
+
+	var elements []*MapPatternElement
+	for p.token != token.RBrace && p.token != token.EOF {
+		elements = append(elements, p.parseMapPatternElement())
+
+		if !p.expectComma(token.RBrace, "map pattern element") {
+			break
+		}
+	}
+
+	p.exprLevel--
+	rbrace := p.expect(token.RBrace)
+	return &MapPattern{
+		LBrace:   lbrace,
+		RBrace:   rbrace,
+		Elements: elements,
+	}
 }
 
 func (p *Parser) parseExprList() (list []Expr) {
