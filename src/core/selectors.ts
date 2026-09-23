@@ -1,6 +1,13 @@
 import { Logic, LogicBuilder, LogicPropSelectors, Selector, SelectorDefinition, SelectorDefinitions } from '../types'
 import { createSelector, createSelectorCreator, defaultMemoize, ParametricSelector } from 'reselect'
 import { getStoreState } from '../kea/context'
+import {
+  assertNoCircularDependencies,
+  createDerivedSelector,
+  isAtomicEnabled,
+  registerKnownFunction,
+  trackSelectorInputs,
+} from './atomic-selectors'
 
 /**
   Logic builder:
@@ -28,11 +35,18 @@ export function selectors<L extends Logic = Logic>(
 
     // small cache so the order would not count
     const builtSelectors: Record<string, Selector> = {}
+    const atomic = isAtomicEnabled()
     for (const key of Object.keys(selectorInputs)) {
       if (typeof logic.selectors[key] !== 'undefined') {
         throw new Error(`[KEA] Logic "${logic.pathString}" selector "${key}" already exists`)
       }
-      addSelectorAndValue(logic, key, (...args) => builtSelectors[key](...args))
+      // Placeholder keeps forward references working while later inputs are built.
+      // Identity is the selector name, not this wrapper — atomic health keys off path + name.
+      const placeholder: Selector = (...args) => builtSelectors[key](...args)
+      if (atomic) {
+        registerKnownFunction(logic, key, placeholder)
+      }
+      addSelectorAndValue(logic, key, placeholder)
     }
 
     const propSelectors =
@@ -61,17 +75,24 @@ export function selectors<L extends Logic = Logic>(
         throw new Error(`[KEA] Logic "${logic.pathString}" selector "${key}" is undefined`)
       }
       const [input, func, memoizeOptions] = arr
-      const args: ParametricSelector<any, any, any>[] = input(logic.selectors, propSelectors)
+      const args: ParametricSelector<any, any, any>[] = atomic
+        ? trackSelectorInputs(logic, key, input, propSelectors)
+        : input(logic.selectors, propSelectors)
 
       if (args.filter((a) => typeof a !== 'function').length > 0) {
         const argTypes = args.map((a) => typeof a).join(', ')
         const msg = `[KEA] Logic "${logic.pathString}", selector "${key}" has incorrect input: [${argTypes}].`
         throw new Error(msg)
       }
-      builtSelectors[key] = createSelector(args, func, { memoizeOptions })
+      const selector = atomic
+        ? createDerivedSelector(logic, key, func, memoizeOptions)
+        : createSelector(args, func, { memoizeOptions })
+      builtSelectors[key] = selector
 
-      addSelectorAndValue(logic, key, (state = getStoreState(), props = logic.props) =>
-        builtSelectors[key](state, props),
+      addSelectorAndValue(
+        logic,
+        key,
+        atomic ? selector : (state = getStoreState(), props = logic.props) => builtSelectors[key](state, props),
       )
 
       if (!logic.values.hasOwnProperty(key)) {
@@ -82,6 +103,10 @@ export function selectors<L extends Logic = Logic>(
           enumerable: true,
         })
       }
+    }
+
+    if (atomic) {
+      assertNoCircularDependencies(logic)
     }
   }
 }

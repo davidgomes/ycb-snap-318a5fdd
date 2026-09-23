@@ -3,6 +3,7 @@ import { createStore } from './store'
 import { Context, ContextOptions } from '../types'
 import type { Store } from 'redux'
 import { corePlugin } from '../core'
+import { atomicSelectorsPlugin } from '../core/atomic-selectors'
 
 let context: Context
 
@@ -66,6 +67,7 @@ export function openContext(options: ContextOptions = {}, initial = false): Cont
       attachStrategy: 'dispatch',
       detachStrategy: 'dispatch',
       defaultPath: ['kea', 'logic'],
+      atomicSelectors: false,
       ...otherOptions,
     },
   } as Context
@@ -87,6 +89,11 @@ export function openContext(options: ContextOptions = {}, initial = false): Cont
   setContext(newContext)
 
   activatePlugin(corePlugin)
+
+  // Installed beside core, with no mount hooks, so user plugin ordering (afterMount, etc.) stays intact.
+  if (newContext.options.atomicSelectors) {
+    activatePlugin(atomicSelectorsPlugin)
+  }
 
   runPlugins('afterOpenContext', newContext, options)
 
