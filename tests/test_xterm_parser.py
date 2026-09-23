@@ -386,3 +386,114 @@ def test_terminal_mode_reporting_synchronized_output_not_supported(parser):
     sequence = "\x1b[?2026;0$y"
     events = list(parser.feed(sequence))
     assert events == []
+
+
+def _parse_keys(parser: XTermParser, sequence: str) -> list[Key]:
+    return [
+        event
+        for event in [*parser.feed(sequence), *parser.feed("")]
+        if isinstance(event, Key)
+    ]
+
+
+@pytest.mark.parametrize(
+    "sequence,key,phase",
+    [
+        ("\x1b[97u", "a", "press"),
+        ("\x1b[97;1:1u", "a", "press"),
+        ("\x1b[97;1:2u", "a", "repeat"),
+        ("\x1b[97;1:3u", "a", "release"),
+        ("\x1b[99;5:3u", "ctrl+c", "release"),
+        ("\x1b[13;1:2u", "enter", "repeat"),
+        ("\x1b[1;1:3A", "up", "release"),
+    ],
+)
+def test_kitty_key_phase(parser, sequence: str, key: str, phase: str) -> None:
+    [event] = _parse_keys(parser, sequence)
+    assert event.key == key
+    assert event.phase == phase
+    assert event.is_press == (phase == "press")
+    assert event.is_repeat == (phase == "repeat")
+    assert event.is_release == (phase == "release")
+
+
+@pytest.mark.parametrize(
+    "sequence",
+    ["\x1b[97;2u", "\x1b[97;2;65u", "\x1b[97:65;2u", "\x1b[97:65;2:3u"],
+)
+def test_kitty_shift_printable(parser, sequence: str) -> None:
+    [event] = _parse_keys(parser, sequence)
+    assert event.key in ("A", "shift+a")
+    assert event.character == "A"
+    assert event.modifiers == ("shift",)
+    assert event.base_key == "a"
+    assert event.shift
+    assert not (event.alt or event.ctrl or event.super or event.hyper or event.meta)
+
+
+@pytest.mark.parametrize(
+    "sequence", ["\x1b[97;4u", "\x1b[97:65;4u", "\x1b[97:65;4;65u"]
+)
+def test_kitty_modified_printable(parser, sequence: str) -> None:
+    [event] = _parse_keys(parser, sequence)
+    assert event.key == "alt+shift+a"
+    assert event.character is None
+    assert event.modifiers == ("alt", "shift")
+    assert event.base_key == "a"
+
+
+def test_kitty_associated_text_only(parser) -> None:
+    [event] = _parse_keys(parser, "\x1b[0;;229u")
+    assert event.key == "å"
+    assert event.character == "å"
+
+
+def test_kitty_alternate_keys(parser) -> None:
+    [event] = _parse_keys(parser, "\x1b[61:43;6u")
+    assert event.key == "ctrl+shift+equals_sign"
+    assert event.character is None
+    assert event.modifiers == ("ctrl", "shift")
+    assert event.base_key == "equals_sign"
+    assert event.shifted_key == "plus"
+    assert "ctrl+plus" in event.aliases
+
+
+def test_kitty_base_layout_key(parser) -> None:
+    [event] = _parse_keys(parser, "\x1b[1089::99;5u")
+    assert event.modifiers == ("ctrl",)
+    assert event.base_layout_key == "c"
+    assert "ctrl+c" in event.aliases
+
+
+@pytest.mark.parametrize(
+    "sequence,key,character,modifiers,base_key",
+    [
+        ("\x1b\r", "alt+enter", "\r", ("alt",), "enter"),
+        ("\x1b ", "alt+space", " ", ("alt",), "space"),
+        ("\x1b\x08", "alt+backspace", "\x08", ("alt",), "backspace"),
+        ("\x1b\x01", "alt+ctrl+a", "\x01", ("alt", "ctrl"), "a"),
+        ("\x1ba", "alt+a", "a", ("alt",), "a"),
+        ("\x1bA", "alt+shift+a", "A", ("alt", "shift"), "a"),
+    ],
+)
+def test_legacy_alt_prefixed_keys(
+    parser, sequence: str, key: str, character: str, modifiers, base_key: str
+) -> None:
+    [event] = _parse_keys(parser, sequence)
+    assert event.key == key
+    assert event.character == character
+    assert event.modifiers == modifiers
+    assert event.base_key == base_key
+    assert event.phase == "press"
+
+
+def test_key_event_defaults() -> None:
+    event = Key("ctrl+a", None)
+    assert event.phase == "press"
+    assert event.modifiers == ("ctrl",)
+    assert event.base_key == "a"
+    assert event.shifted_key is None
+    assert event.base_layout_key is None
+    assert event.ctrl and not event.shift
+    with pytest.raises(ValueError):
+        Key("a", "a", phase="down")  # type: ignore[arg-type]
