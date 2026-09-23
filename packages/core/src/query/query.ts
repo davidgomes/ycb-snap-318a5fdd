@@ -58,8 +58,10 @@ export function addEntityToQuery(query: QueryInstance, entity: Entity) {
     query.entities.add(entity);
 
     // Notify subscriptions.
-    for (const sub of query.addSubscriptions) {
-        sub(entity);
+    if (!query.world[$internal].suppressSubscriptions) {
+        for (const sub of query.addSubscriptions) {
+            sub(entity);
+        }
     }
 
     query.version++;
@@ -74,8 +76,10 @@ export function removeEntityFromQuery(world: World, query: QueryInstance, entity
     ctx.dirtyQueries.add(query);
 
     // Notify subscriptions.
-    for (const sub of query.removeSubscriptions) {
-        sub(entity);
+    if (!ctx.suppressSubscriptions) {
+        for (const sub of query.removeSubscriptions) {
+            sub(entity);
+        }
     }
 
     query.version++;

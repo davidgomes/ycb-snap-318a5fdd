@@ -28,6 +28,8 @@ Number.prototype.remove = function (this: Entity, ...traits: (Trait | RelationPa
 // @ts-expect-error
 Number.prototype.has = function (this: Entity, trait: Trait | RelationPair) {
     const world = getEntityWorld(this);
+    const logical = world[$internal].readHas?.(this, trait);
+    if (logical !== null && logical !== undefined) return logical;
     if (isRelationPair(trait)) return hasRelationPair(world, this, trait);
     return /* @inline @pure */ hasTrait(world, this, trait);
 };
@@ -44,7 +46,10 @@ Number.prototype.changed = function (this: Entity, trait: Trait) {
 
 // @ts-expect-error
 Number.prototype.get = function (this: Entity, trait: Trait | RelationPair) {
-    return getTrait(getEntityWorld(this), this, trait);
+    const world = getEntityWorld(this);
+    const logical = world[$internal].readGet?.(this, trait);
+    if (logical?.hit) return logical.value;
+    return getTrait(world, this, trait);
 };
 
 // @ts-expect-error
@@ -59,12 +64,18 @@ Number.prototype.set = function (
 
 //@ts-expect-error
 Number.prototype.targetsFor = function (this: Entity, relation: Relation<any>) {
-    return getRelationTargets(getEntityWorld(this), relation, this);
+    const world = getEntityWorld(this);
+    const logical = world[$internal].readTargets?.(this, relation);
+    if (logical != null) return logical.slice();
+    return getRelationTargets(world, relation, this);
 };
 
 //@ts-expect-error
 Number.prototype.targetFor = function (this: Entity, relation: Relation<any>) {
-    return getFirstRelationTarget(getEntityWorld(this), relation, this);
+    const world = getEntityWorld(this);
+    const logical = world[$internal].readTargets?.(this, relation);
+    if (logical != null) return logical[0];
+    return getFirstRelationTarget(world, relation, this);
 };
 
 //@ts-expect-error
@@ -80,6 +91,7 @@ Number.prototype.generation = function (this: Entity) {
 //@ts-expect-error
 Number.prototype.isAlive = function (this: Entity) {
     const world = getEntityWorld(this);
-    const entityIndex = world[$internal].entityIndex;
-    return isEntityAlive(entityIndex, this);
+    const alive = world[$internal].readAlive?.(this);
+    if (alive !== null && alive !== undefined) return alive;
+    return isEntityAlive(world[$internal].entityIndex, this);
 };

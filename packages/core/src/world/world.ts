@@ -1,4 +1,6 @@
 import { $internal } from '../common';
+import { createDeferredBuffer } from '../deferred/types';
+import { installDeferred, resetDeferred } from '../deferred/deferred';
 import { createEntity, destroyEntity } from '../entity/entity';
 import type { Entity } from '../entity/types';
 import { createEntityIndex, getAliveEntities, isEntityAlive } from '../entity/utils/entity-index';
@@ -54,6 +56,19 @@ export function createWorld(
             worldEntity: null!,
             trackedTraits: new Set(),
             resetSubscriptions: new Set(),
+            deferredStack: [createDeferredBuffer()],
+            reservedEntities: new Set(),
+            suppressSubscriptions: false,
+            applyingDeferred: false,
+            deferredViewDirty: false,
+            beforeMutation: null,
+            enterDeferred: null,
+            exitDeferred: null,
+            captureSnapshot: null,
+            readHas: null,
+            readGet: null,
+            readTargets: null,
+            readAlive: null,
         } as WorldInternal,
 
         traits: new Set<Trait>(),
@@ -89,9 +104,15 @@ export function createWorld(
         },
 
         has(target: Entity | Trait): boolean {
-            return typeof target === 'number'
-                ? isEntityAlive(world[$internal].entityIndex, target)
-                : hasTrait(world, world[$internal].worldEntity, target);
+            const ctx = world[$internal];
+            if (typeof target === 'number') {
+                const alive = ctx.readAlive?.(target);
+                if (alive !== null && alive !== undefined) return alive;
+                return isEntityAlive(ctx.entityIndex, target);
+            }
+            const logical = ctx.readHas?.(ctx.worldEntity, target);
+            if (logical !== null && logical !== undefined) return logical;
+            return hasTrait(world, ctx.worldEntity, target);
         },
 
         add(...addTraits: ConfigurableTrait[]) {
@@ -103,7 +124,10 @@ export function createWorld(
         },
 
         get<T extends Trait>(trait: T): TraitRecord<ExtractSchema<T>> | undefined {
-            return getTrait(world, world[$internal].worldEntity, trait);
+            const ctx = world[$internal];
+            const logical = ctx.readGet?.(ctx.worldEntity, trait);
+            if (logical?.hit) return logical.value as TraitRecord<ExtractSchema<T>> | undefined;
+            return getTrait(world, ctx.worldEntity, trait);
         },
 
         set<T extends Trait>(trait: T, value: TraitValue<ExtractSchema<T>> | SetTraitCallback<T>) {
@@ -123,6 +147,7 @@ export function createWorld(
         },
 
         reset() {
+            resetDeferred(world);
             lazyTraits = undefined;
             const ctx = world[$internal];
 
@@ -382,6 +407,8 @@ export function createWorld(
     } else {
         world.init(...(optionsOrFirstTrait ? [optionsOrFirstTrait, ...traits] : traits));
     }
+
+    installDeferred(world);
 
     return world;
 }

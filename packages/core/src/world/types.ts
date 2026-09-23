@@ -9,6 +9,7 @@ import type {
     QueryResult,
     QueryUnsubscriber,
 } from '../query/types';
+import type { Deferred, DeferredBuffer, DeferredHooks } from '../deferred/types';
 import type { Relation } from '../relation/types';
 import type {
     ConfigurableTrait,
@@ -43,6 +44,24 @@ export type WorldInternal = {
     worldEntity: Entity;
     trackedTraits: Set<Trait>;
     resetSubscriptions: Set<(world: World) => void>;
+    /** Command buffers. The root buffer is always present; `updateEach` pushes inner ones. */
+    deferredStack: DeferredBuffer[];
+    /** Entities allocated by deferred spawn that have not materialized yet. */
+    reservedEntities: Set<Entity>;
+    /** When true, trait and query callbacks are replayed from the flush diff. */
+    suppressSubscriptions: boolean;
+    /** True while a buffer is applying, so mutation hooks do not flush again. */
+    applyingDeferred: boolean;
+    /** Structural reads must rebuild the deferred overlay. */
+    deferredViewDirty: boolean;
+    beforeMutation: DeferredHooks['beforeMutation'];
+    enterDeferred: DeferredHooks['enterDeferred'];
+    exitDeferred: DeferredHooks['exitDeferred'];
+    captureSnapshot: DeferredHooks['captureSnapshot'];
+    readHas: DeferredHooks['readHas'];
+    readGet: DeferredHooks['readGet'];
+    readTargets: DeferredHooks['readTargets'];
+    readAlive: DeferredHooks['readAlive'];
 };
 
 export type World = {
@@ -97,4 +116,6 @@ export type World = {
         relation: Relation<T>,
         callback: (entity: Entity, target: Entity) => void
     ): QueryUnsubscriber;
+    /** Batches entity mutations until `updateEach` exits, `flush`, or an immediate mutation. */
+    deferred: Deferred;
 };

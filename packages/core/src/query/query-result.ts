@@ -1,4 +1,5 @@
 import { $internal } from '../common';
+import { getEntityWorld } from '../entity/entity';
 import type { Entity } from '../entity/types';
 import { getEntityId } from '../entity/utils/pack-entity';
 import { isRelationPair } from '../relation/utils/is-relation';
@@ -53,6 +54,8 @@ export function createQueryResult<T extends QueryParameter[]>(
             callback: (state: InstancesFromParameters<T>, entity: Entity, index: number) => void,
             options: QueryResultOptions = { changeDetection: 'auto' }
         ) {
+            world[$internal].enterDeferred?.();
+            try {
             const state = Array.from({ length: traits.length });
 
             // Inline all three permutations of updateEach for performance.
@@ -171,6 +174,9 @@ export function createQueryResult<T extends QueryParameter[]>(
             }
 
             return results;
+            } finally {
+                world[$internal].exitDeferred?.();
+            }
         },
 
         useStores(callback: (stores: StoresFromParameters<T>, entities: readonly Entity[]) => void) {
@@ -306,8 +312,14 @@ const relationOnlyMethods = {
     },
     updateEach(this: QueryResult<any>, callback: any) {
         // No traits to update, just iterate entities
-        for (let i = 0; i < this.length; i++) {
-            callback([], this[i], i);
+        const world = this.length > 0 ? getEntityWorld(this[0]) : undefined;
+        world?.[$internal].enterDeferred?.();
+        try {
+            for (let i = 0; i < this.length; i++) {
+                callback([], this[i], i);
+            }
+        } finally {
+            world?.[$internal].exitDeferred?.();
         }
         return this;
     },

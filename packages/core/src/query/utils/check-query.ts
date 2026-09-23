@@ -12,6 +12,8 @@ export function checkQuery(world: World, query: QueryInstance, entity: Entity): 
     const staticBitmasks = query.staticBitmasks;
     const generations = query.generations;
     const ctx = world[$internal];
+    // Deferred spawns stay out of queries until their spawn command runs.
+    if (ctx.reservedEntities.has(entity)) return false;
     const eid = getEntityId(entity);
 
     if (query.traitInstances.all.length === 0) return false;

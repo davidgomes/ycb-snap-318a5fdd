@@ -5,7 +5,7 @@ import type { ConfigurableTrait } from '../trait/types';
 import { universe } from '../universe/universe';
 import type { World } from '../world';
 import type { Entity } from './types';
-import { allocateEntity, releaseEntity } from './utils/entity-index';
+import { allocateEntity, isEntityAlive, releaseEntity } from './utils/entity-index';
 import { getEntityId, getEntityWorldId } from './utils/pack-entity';
 
 // Ensure entity methods are patched.
@@ -33,9 +33,16 @@ const cachedQueue = [] as Entity[];
 
 export function destroyEntity(world: World, entity: Entity) {
     const ctx = world[$internal];
+    ctx.deferredViewDirty = true;
 
-    // Check if entity exists.
-    if (!world.has(entity)) throw new Error('Koota: The entity being destroyed does not exist.');
+    // Structural liveness. `world.has` also reflects queued destroys and spawns.
+    const existed = isEntityAlive(ctx.entityIndex, entity);
+    if (!ctx.applyingDeferred) ctx.beforeMutation?.(entity);
+    if (!isEntityAlive(ctx.entityIndex, entity)) {
+        // Deferred destroy already removed it, or it was never alive.
+        if (existed) return;
+        throw new Error('Koota: The entity being destroyed does not exist.');
+    }
 
     // Caching the lookup in the outer scope of the loop increases performance.
     const entityQueue = cachedQueue;
@@ -56,6 +63,7 @@ export function destroyEntity(world: World, entity: Entity) {
         if (processedEntities.has(currentEntity)) continue;
 
         processedEntities.add(currentEntity);
+        ctx.captureSnapshot?.(currentEntity);
 
         for (const relation of ctx.relations) {
             const relationCtx = relation[$internal];
@@ -64,8 +72,9 @@ export function destroyEntity(world: World, entity: Entity) {
             // If autoDestroy is 'orphan', destroy those sources
             const sources = getEntitiesWithRelationTo(world, relation, currentEntity);
             for (const source of sources) {
-                if (!world.has(source)) continue;
+                if (!isEntityAlive(ctx.entityIndex, source)) continue;
 
+                ctx.captureSnapshot?.(source);
                 // Remove the relation from source to currentEntity
                 cleanupRelationTarget(world, relation, source, currentEntity);
 
@@ -78,7 +87,7 @@ export function destroyEntity(world: World, entity: Entity) {
             if (relationCtx.autoDestroy === 'target') {
                 const targets = getRelationTargets(world, relation, currentEntity);
                 for (const target of targets) {
-                    if (!world.has(target)) continue;
+                    if (!isEntityAlive(ctx.entityIndex, target)) continue;
                     if (!processedEntities.has(target)) entityQueue.push(target);
                 }
             }
