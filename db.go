@@ -301,6 +301,9 @@ type DB struct {
 
 	commit *commitPipeline
 
+	// durability tracks the durability of commits with WriteOptions.Sync.
+	durability durabilityTracker
+
 	// readState provides access to the state needed for reading without needing
 	// to acquire DB.mu.
 	readState struct {
@@ -832,7 +835,21 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 			return err
 		}
 	}
-	if err := d.commit.Commit(batch, sync, noSyncWait); err != nil {
+	err := d.commit.Commit(batch, sync, noSyncWait)
+	if sync && !batch.Empty() {
+		s := &batch.durable
+		s.info.SeqNum = batch.SeqNum()
+		s.info.CorrelationID = opts.getCommitCorrelationID()
+		s.info.BatchSize = len(batch.data)
+		s.info.KeyCount = batch.Count()
+		if noSyncWait && err == nil {
+			// Batch.SyncWait reports the commit once it observes the WAL sync.
+			s.db = d
+		} else {
+			d.batchDurable(s, err)
+		}
+	}
+	if err != nil {
 		// There isn't much we can do on an error here. The commit pipeline will be
 		// horked at this point.
 		d.opts.Logger.Fatalf("pebble: fatal commit error: %v", err)
@@ -1570,6 +1587,7 @@ func (d *DB) Close() error {
 	d.closed.Store(errors.WithStack(ErrClosed))
 	close(d.closedCh)
 	d.bgCtxCancel()
+	d.durability.close()
 
 	defer d.cacheHandle.Close()
 
@@ -2079,6 +2097,8 @@ func (d *DB) Metrics() *Metrics {
 	metrics.SecondaryCacheMetrics = d.objProvider.Metrics()
 
 	metrics.Uptime = d.opts.private.timeNow().Sub(d.openedAt)
+
+	metrics.DurableCommitCount, metrics.DurableCommitDuration = d.durability.durableCommitMetrics()
 
 	metrics.manualMemory = manual.GetMetrics()
 

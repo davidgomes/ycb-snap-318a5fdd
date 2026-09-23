@@ -375,6 +375,16 @@ type Metrics struct {
 
 	WALMetrics WALMetrics
 
+	// DurableCommitCount is the number of commits with WriteOptions.Sync that
+	// became durable. It is only maintained when EventListener.BatchDurable is
+	// configured.
+	DurableCommitCount uint64
+	// DurableCommitDuration is the cumulative time those commits spent in the
+	// WAL sync phase (see BatchDurableInfo.SyncDuration), which excludes the
+	// rest of the commit. It is only maintained when EventListener.BatchDurable
+	// is configured.
+	DurableCommitDuration time.Duration
+
 	CategoryStats []block.CategoryStatsAggregate
 
 	SecondaryCacheMetrics SecondaryCacheMetrics

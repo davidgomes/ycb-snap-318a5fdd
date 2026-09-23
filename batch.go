@@ -371,6 +371,8 @@ type batchInternal struct {
 
 	commitErr error
 
+	durable batchDurableState
+
 	// Position bools together to reduce the sizeof the struct.
 
 	// ingestedSSTBatch indicates that the batch contains one or more key kinds
@@ -1704,6 +1706,10 @@ func (b *Batch) Reader() batchrepr.Reader {
 func (b *Batch) SyncWait() error {
 	now := crtime.NowMono()
 	b.fsyncWait.Wait()
+	if d := b.durable.db; d != nil {
+		b.durable.db = nil
+		d.batchDurable(&b.durable, b.commitErr)
+	}
 	if b.commitErr != nil {
 		b.db = nil // prevent batch reuse on error
 	}

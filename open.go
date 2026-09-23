@@ -227,6 +227,8 @@ func Open(dirname string, opts *Options) (db *DB, err error) {
 		apply:         d.commitApply,
 		write:         d.commitWrite,
 	})
+	d.durability.walDisabled = opts.DisableWAL
+	d.durability.batchDurableConfigured = isBatchDurableConfigured(opts.EventListener.BatchDurable)
 	d.mu.nextJobID = 1
 	d.mu.mem.nextSize = min(opts.MemTableSize, initialMemTableSize)
 	d.mu.compact.cond.L = &d.mu.Mutex

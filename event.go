@@ -6,6 +6,7 @@ package pebble
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -76,6 +77,47 @@ func (i DataCorruptionInfo) SafeFormat(w redact.SafePrinter, _ rune) {
 		w.Printf(" (remote locator %q)", redact.Safe(i.Locator))
 	}
 	w.Printf("; bounds: %s; details: %+v", i.Bounds.String(), i.Details)
+}
+
+// BatchDurableInfo contains the info for a BatchDurable event.
+type BatchDurableInfo struct {
+	// JobID identifies the event. It can be passed to DB.WaitForJobDurability.
+	// Job IDs are assigned from a sequence dedicated to BatchDurable events.
+	JobID int
+	// SeqNum is the sequence number of the first record in the batch.
+	SeqNum base.SeqNum
+	// Err is non-nil if the commit failed, including when the WAL sync failed.
+	Err error
+	// ApplyDuration is the time spent writing the batch to the WAL and applying
+	// it to the memtable.
+	ApplyDuration time.Duration
+	// SyncDuration is the time from writing the batch to the WAL until the
+	// completion of the WAL sync was observed. For DB.ApplyNoSyncWait, the
+	// completion is observed by Batch.SyncWait.
+	SyncDuration time.Duration
+	// CorrelationID is the WriteOptions.CommitCorrelationID of the commit.
+	CorrelationID uint64
+	// BatchSize is the size of the encoded batch in bytes.
+	BatchSize int
+	// KeyCount is the number of records in the batch (see Batch.Count).
+	KeyCount uint32
+}
+
+func (i BatchDurableInfo) String() string {
+	return redact.StringWithoutMarkers(i)
+}
+
+// SafeFormat implements redact.SafeFormatter.
+func (i BatchDurableInfo) SafeFormat(w redact.SafePrinter, _ rune) {
+	if i.Err != nil {
+		w.Printf("[JOB %d] batch durability error (seqnum %s, correlation %d): %s",
+			redact.Safe(i.JobID), i.SeqNum, redact.Safe(i.CorrelationID), i.Err)
+		return
+	}
+	w.Printf("[JOB %d] batch durable (seqnum %s, correlation %d): %d keys (%s), apply %s, sync %s",
+		redact.Safe(i.JobID), i.SeqNum, redact.Safe(i.CorrelationID), redact.Safe(i.KeyCount),
+		redact.Safe(humanize.Bytes.Int64(int64(i.BatchSize))),
+		redact.Safe(i.ApplyDuration), redact.Safe(i.SyncDuration))
 }
 
 // LevelInfo contains info pertaining to a particular level.
@@ -925,6 +967,13 @@ type EventListener struct {
 	// operation such as flush or compaction.
 	BackgroundError func(error)
 
+	// BatchDurable is invoked exactly once for every commit with
+	// WriteOptions.Sync set, after the WAL sync completes, including when the
+	// commit fails. It is invoked on the committing goroutine: by DB.Apply
+	// before it returns, and by Batch.SyncWait for DB.ApplyNoSyncWait. It is
+	// never invoked for commits that don't sync the WAL.
+	BatchDurable func(BatchDurableInfo)
+
 	// BlobFileCreated is invoked after a blob file has been created.
 	BlobFileCreated func(BlobFileCreateInfo)
 
@@ -1036,6 +1085,9 @@ func (l *EventListener) EnsureDefaults(logger Logger) {
 			l.BackgroundError = func(error) {}
 		}
 	}
+	if l.BatchDurable == nil {
+		l.BatchDurable = noopBatchDurable
+	}
 	if l.BlobFileCreated == nil {
 		l.BlobFileCreated = func(info BlobFileCreateInfo) {}
 	}
@@ -1122,6 +1174,17 @@ func (l *EventListener) EnsureDefaults(logger Logger) {
 	}
 }
 
+// noopBatchDurable is the BatchDurable callback installed when none is
+// configured. It is a named function so that isBatchDurableConfigured can
+// recognize it after EnsureDefaults has run.
+func noopBatchDurable(BatchDurableInfo) {}
+
+// isBatchDurableConfigured returns true if fn is a BatchDurable callback other
+// than the default installed by EventListener.EnsureDefaults.
+func isBatchDurableConfigured(fn func(BatchDurableInfo)) bool {
+	return fn != nil && reflect.ValueOf(fn).Pointer() != reflect.ValueOf(noopBatchDurable).Pointer()
+}
+
 // MakeLoggingEventListener creates an EventListener that logs all events to the
 // specified logger.
 func MakeLoggingEventListener(logger Logger) EventListener {
@@ -1132,6 +1195,12 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 	return EventListener{
 		BackgroundError: func(err error) {
 			logger.Errorf("background error: %s", err)
+		},
+		// Successful sync commits are too frequent to log.
+		BatchDurable: func(info BatchDurableInfo) {
+			if info.Err != nil {
+				logger.Errorf("%s", info)
+			}
 		},
 		BlobFileCreated: func(info BlobFileCreateInfo) {
 			logger.Infof("%s", info)
@@ -1218,11 +1287,19 @@ func MakeLoggingEventListener(logger Logger) EventListener {
 func TeeEventListener(a, b EventListener) EventListener {
 	a.EnsureDefaults(nil)
 	b.EnsureDefaults(nil)
+	batchDurable := noopBatchDurable
+	if isBatchDurableConfigured(a.BatchDurable) || isBatchDurableConfigured(b.BatchDurable) {
+		batchDurable = func(info BatchDurableInfo) {
+			a.BatchDurable(info)
+			b.BatchDurable(info)
+		}
+	}
 	return EventListener{
 		BackgroundError: func(err error) {
 			a.BackgroundError(err)
 			b.BackgroundError(err)
 		},
+		BatchDurable: batchDurable,
 		BlobFileCreated: func(info BlobFileCreateInfo) {
 			a.BlobFileCreated(info)
 			b.BlobFileCreated(info)

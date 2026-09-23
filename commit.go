@@ -306,7 +306,8 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 	if syncWAL {
 		p.logSyncQSem <- struct{}{}
 	}
-	b.commitStats.SemaphoreWaitDuration = commitStartTime.Elapsed()
+	applyStartTime := crtime.NowMono()
+	b.commitStats.SemaphoreWaitDuration = applyStartTime.Sub(commitStartTime)
 
 	// Prepare the batch for committing: enqueuing the batch in the pending
 	// queue, determining the batch sequence number and writing the data to the
@@ -322,6 +323,9 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 		// removing the batch from the pending queue.
 		return err
 	}
+	if syncWAL {
+		b.durable.walWritten = crtime.NowMono()
+	}
 
 	// Apply the batch to the memtable.
 	if err := p.env.apply(b, mem); err != nil {
@@ -330,6 +334,9 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 		// sitting in the pending queue. We should consider fixing this by also
 		// removing the batch from the pending queue.
 		return err
+	}
+	if syncWAL {
+		b.durable.info.ApplyDuration = applyStartTime.Elapsed()
 	}
 
 	// Publish the batch sequence number.
