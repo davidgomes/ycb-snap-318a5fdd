@@ -15,6 +15,12 @@ import {
   isURL,
 } from './is.js';
 import { findArr } from './util.js';
+import {
+  deserializeError,
+  errorTypeAnnotation,
+  ErrorTypeAnnotation,
+  serializeError,
+} from './error-serializer.js';
 import SuperJSON from './index.js';
 
 export type PrimitiveTypeAnnotation = 'number' | 'undefined' | 'bigint';
@@ -26,7 +32,11 @@ type ClassTypeAnnotation = ['class', string];
 type SymbolTypeAnnotation = ['symbol', string];
 type CustomTypeAnnotation = ['custom', string];
 
-type SimpleTypeAnnotation = LeafTypeAnnotation | 'map' | 'set' | 'Error';
+type SimpleTypeAnnotation =
+  | LeafTypeAnnotation
+  | 'map'
+  | 'set'
+  | ErrorTypeAnnotation;
 
 type CompositeTypeAnnotation =
   | TypedArrayAnnotation
@@ -48,6 +58,16 @@ function simpleTransformation<I, O, A extends SimpleTypeAnnotation>(
     transform,
     untransform,
   };
+}
+
+function errorRule<A extends ErrorTypeAnnotation>(annotation: A) {
+  return simpleTransformation(
+    (v, superJson): v is Error =>
+      isError(v) && errorTypeAnnotation(v, superJson) === annotation,
+    annotation,
+    serializeError,
+    deserializeError
+  );
 }
 
 const simpleRules = [
@@ -78,37 +98,9 @@ const simpleRules = [
     v => new Date(v)
   ),
 
-  simpleTransformation(
-    isError,
-    'Error',
-    (v, superJson) => {
-      const baseError: any = {
-        name: v.name,
-        message: v.message,
-      };
-
-      if ('cause' in v) {
-        baseError.cause = v.cause;
-      }
-
-      superJson.allowedErrorProps.forEach(prop => {
-        baseError[prop] = (v as any)[prop];
-      });
-
-      return baseError;
-    },
-    (v, superJson) => {
-      const e = new Error(v.message, { cause: v.cause });
-      e.name = v.name;
-      e.stack = v.stack;
-
-      superJson.allowedErrorProps.forEach(prop => {
-        (e as any)[prop] = v[prop];
-      });
-
-      return e;
-    }
-  ),
+  errorRule('Error/stack'),
+  errorRule('Error/frames'),
+  errorRule('Error'),
 
   simpleTransformation(
     isRegExp,
