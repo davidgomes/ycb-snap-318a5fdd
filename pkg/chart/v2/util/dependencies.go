@@ -320,6 +320,12 @@ func processImportValues(c *chart.Chart, merge bool) error {
 	// the parents values. This enables parent charts to import a large section
 	// from a child and then override select parts. This is why b is merged into
 	// cvals in the code below and not the other way around.
+	//
+	// cvals now holds subchart defaults merged with the parent's values. As it
+	// becomes the parent's defaults below, arrays covered by merge strategies
+	// are reset to the parent's own values so that strategies are applied only
+	// once when the values are coalesced again at render time.
+	util.RestoreMergeStrategyPaths(c, cvals, c.Values, nil)
 	if merge {
 		// deep copying the cvals as there are cases where pointers can end
 		// up in the cvals when they are copied onto b in ways that break things.

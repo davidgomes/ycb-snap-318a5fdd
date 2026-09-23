@@ -210,6 +210,8 @@ func addInstallFlags(cmd *cobra.Command, f *pflag.FlagSet, client *action.Instal
 	f.BoolVar(&client.EnableDNS, "enable-dns", false, "enable DNS lookups when rendering templates")
 	f.BoolVar(&client.HideNotes, "hide-notes", false, "if set, do not show notes in install output. Does not affect presence in chart metadata")
 	f.BoolVar(&client.TakeOwnership, "take-ownership", false, "if set, install will ignore the check for helm annotations and take ownership of the existing resources")
+	f.StringArrayVar(&client.MergeStrategies, "merge-strategy", []string{}, "set the merge strategy (\"append\" or \"merge\") of an array in the chart's values (e.g. env=append). Overrides the chart's helm.sh/merge-strategy annotations")
+	f.StringArrayVar(&client.MergeKeys, "merge-key", []string{}, "set the key field used to match elements of an array with the \"merge\" strategy (e.g. env=name). Overrides the chart's helm.sh/merge-key annotations")
 	addValueOptionsFlags(f, valueOpts)
 	addChartPathOptionsFlags(f, &client.ChartPathOptions)
 	AddWaitFlag(cmd, &client.WaitStrategy)

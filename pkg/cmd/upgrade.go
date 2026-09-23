@@ -156,6 +156,8 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 					instClient.TakeOwnership = client.TakeOwnership
 					instClient.ForceConflicts = client.ForceConflicts
 					instClient.ServerSideApply = client.ServerSideApply != "false"
+					instClient.MergeStrategies = client.MergeStrategies
+					instClient.MergeKeys = client.MergeKeys
 
 					if isReleaseUninstalled(versions) {
 						instClient.Replace = true
@@ -300,6 +302,8 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 	f.BoolVar(&client.DependencyUpdate, "dependency-update", false, "update dependencies if they are missing before installing the chart")
 	f.BoolVar(&client.EnableDNS, "enable-dns", false, "enable DNS lookups when rendering templates")
 	f.BoolVar(&client.TakeOwnership, "take-ownership", false, "if set, upgrade will ignore the check for helm annotations and take ownership of the existing resources")
+	f.StringArrayVar(&client.MergeStrategies, "merge-strategy", []string{}, "set the merge strategy (\"append\" or \"merge\") of an array in the chart's values (e.g. env=append). Overrides the chart's helm.sh/merge-strategy annotations")
+	f.StringArrayVar(&client.MergeKeys, "merge-key", []string{}, "set the key field used to match elements of an array with the \"merge\" strategy (e.g. env=name). Overrides the chart's helm.sh/merge-key annotations")
 	addDryRunFlag(cmd)
 	addChartPathOptionsFlags(f, &client.ChartPathOptions)
 	addValueOptionsFlags(f, valueOpts)

@@ -123,6 +123,12 @@ type Upgrade struct {
 	PostRenderer postrenderer.PostRenderer
 	// DisableOpenAPIValidation controls whether OpenAPI validation is enforced.
 	DisableOpenAPIValidation bool
+	// MergeStrategies overrides the chart's array merge strategy annotations,
+	// in "path=strategy" format.
+	MergeStrategies []string
+	// MergeKeys overrides the chart's array merge key annotations, in
+	// "path=key" format.
+	MergeKeys []string
 	// Get missing dependencies
 	DependencyUpdate bool
 	// Lock to control raceconditions when the process receives a SIGTERM
@@ -266,6 +272,11 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 
 	}
 
+	mergeStrategies, err := util.ParseMergeStrategyOverrides(u.MergeStrategies, u.MergeKeys)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
 	// determine if values will be reused
 	vals, err = u.reuseValues(chart, currentRelease, vals)
 	if err != nil {
@@ -291,7 +302,7 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 	if err != nil {
 		return nil, nil, false, err
 	}
-	valuesToRender, err := util.ToRenderValuesWithSchemaValidation(chart, vals, options, caps, u.SkipSchemaValidation)
+	valuesToRender, err := util.ToRenderValuesWithMergeStrategies(chart, vals, options, caps, u.SkipSchemaValidation, mergeStrategies)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -601,11 +612,20 @@ func (u *Upgrade) failRelease(rel *release.Release, created kube.ResourceList, e
 //
 // This is skipped if the u.ResetValues flag is set, in which case the
 // request values are not altered.
+//
+// When old and new values are merged, arrays covered by the new chart's merge
+// strategies (or the given overrides) are combined with the old values treated
+// as defaults, e.g. "append" places old elements before new ones.
 func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, newVals map[string]any) (map[string]any, error) {
 	if u.ResetValues {
 		// If ResetValues is set, we completely ignore current.Config.
 		u.cfg.Logger().Debug("resetting values to the chart's original version")
 		return newVals, nil
+	}
+
+	mergeStrategies, err := util.ParseMergeStrategyOverrides(u.MergeStrategies, u.MergeKeys)
+	if err != nil {
+		return nil, err
 	}
 
 	// If the ReuseValues flag is set, we always copy the old values over the new config's values.
@@ -618,8 +638,13 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 			return nil, fmt.Errorf("failed to rebuild old values: %w", err)
 		}
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		strategies := util.ChartMergeStrategies(chart, mergeStrategies)
+		newVals = util.CoalesceTablesWithMergeStrategies(newVals, current.Config, strategies)
 
+		// oldVals already has merge strategies applied against the old
+		// chart's defaults and current.Config, which is also part of newVals.
+		// Reset those arrays so strategies are not applied twice on render.
+		util.RestoreMergeStrategyPaths(chart, oldVals, current.Chart.Values, mergeStrategies)
 		chart.Values = oldVals
 
 		return newVals, nil
@@ -629,7 +654,8 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 	if u.ResetThenReuseValues {
 		u.cfg.Logger().Debug("merging values from old release to new values")
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		strategies := util.ChartMergeStrategies(chart, mergeStrategies)
+		newVals = util.CoalesceTablesWithMergeStrategies(newVals, current.Config, strategies)
 
 		return newVals, nil
 	}
