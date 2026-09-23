@@ -190,6 +190,12 @@ func TestUpgradeCmd(t *testing.T) {
 			golden: "output/upgrade-uninstalled-with-keep-history.txt",
 			rels:   []*release.Release{relWithStatusMock("funny-bunny", 2, ch, rcommon.StatusUninstalled)},
 		},
+		{
+			name:   "dry-run upgrade displaying a single unified manifest stream",
+			cmd:    "upgrade funny-bunny testdata/testcharts/manifest-stream --dry-run",
+			golden: "output/upgrade-dry-run-manifest-stream.txt",
+			rels:   []*release.Release{relMock("funny-bunny", 2, ch)},
+		},
 	}
 	runTestCmd(t, tests)
 }

@@ -1,0 +1,64 @@
+---
+# Source: manifest-stream/templates/app.yaml
+# 1 (rendered first although install order would place the Service before it)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-app
+spec:
+  selector:
+    matchLabels:
+      app: release-name
+  template:
+    metadata:
+      labels:
+        app: release-name
+    spec:
+      containers:
+        - name: app
+          image: nginx
+---
+# Source: manifest-stream/templates/app.yaml
+# 2 (a hook stays where it was rendered in its template)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-setup
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+data:
+  step: setup
+---
+# Source: manifest-stream/templates/app.yaml
+# 3
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-app
+spec:
+  selector:
+    app: release-name
+  ports:
+    - port: 80
+---
+# Source: manifest-stream/templates/tests/test-app.yaml
+# 4
+apiVersion: v1
+kind: Pod
+metadata:
+  name: release-name-test
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: test
+      image: busybox
+      command: ["wget", "release-name-app:80"]
+  restartPolicy: Never
+---
+# Source: manifest-stream/templates/z-namespace.yaml
+# 5 (ordered by source path although install order would place it first)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: release-name-extra

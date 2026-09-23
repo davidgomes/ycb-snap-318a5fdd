@@ -600,6 +600,17 @@ func TestUpgradeRelease_DryRun(t *testing.T) {
 	is.NoError(err)
 	is.Equal(common.StatusPendingUpgrade, res.Info.Status)
 	is.Contains(res.Manifest, "kind: Secret")
+	is.Equal(`---
+# Source: hello/templates/hello
+hello: world
+---
+# Source: hello/templates/hooks
+`+manifestWithHook+`
+---
+# Source: hello/templates/secret.yaml
+apiVersion: v1
+kind: Secret
+`, res.ManifestStream)
 
 	lastReleasei, err := upAction.cfg.Releases.Last(rel.Name)
 	req.NoError(err)
@@ -620,6 +631,7 @@ func TestUpgradeRelease_DryRun(t *testing.T) {
 	is.NoError(err)
 	is.Equal(common.StatusPendingUpgrade, res.Info.Status)
 	is.NotContains(res.Manifest, "kind: Secret")
+	is.NotContains(res.ManifestStream, "kind: Secret")
 
 	lastReleasei, err = upAction.cfg.Releases.Last(rel.Name)
 	req.NoError(err)

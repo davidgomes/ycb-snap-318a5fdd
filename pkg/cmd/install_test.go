@@ -269,6 +269,11 @@ func TestInstall(t *testing.T) {
 			golden: "output/install-dry-run-with-secret-hidden.txt",
 		},
 		{
+			name:   "dry-run displaying a single unified manifest stream",
+			cmd:    "install stream testdata/testcharts/manifest-stream --dry-run",
+			golden: "output/install-dry-run-manifest-stream.txt",
+		},
+		{
 			name:      "hide-secret error without dry-run",
 			cmd:       "install secrets testdata/testcharts/chart-with-secret --hide-secret",
 			wantError: true,

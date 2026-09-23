@@ -1,0 +1,34 @@
+---
+# Source: vesta/templates/app.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vesta-setup
+  annotations:
+    "helm.sh/hook": pre-install
+---
+# Source: vesta/templates/app.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: vesta-app
+---
+# Source: vesta/templates/app.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vesta-app
+---
+# Source: vesta/templates/tests/test-app.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vesta-test
+  annotations:
+    "helm.sh/hook": test
+---
+# Source: vesta/templates/z-namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vesta-extra

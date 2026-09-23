@@ -1,0 +1,5 @@
+# 5 (ordered by source path although install order would place it first)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Name }}-extra

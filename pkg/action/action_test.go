@@ -1107,6 +1107,137 @@ func TestRenderResources_NoPostRenderer(t *testing.T) {
 	assert.Equal(t, "", notes)
 }
 
+func TestRenderResourcesWithStream(t *testing.T) {
+	modTime := time.Now()
+	templates := []*common.File{
+		{Name: "templates/workload.yaml", ModTime: modTime, Data: []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: setup
+  annotations:
+    "helm.sh/hook": pre-install
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignored
+  annotations:
+    "helm.sh/hook": not-a-hook-event
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+`)},
+		{Name: "templates/secret.yaml", ModTime: modTime, Data: []byte("apiVersion: v1\nkind: Secret\nmetadata:\n  name: creds\n")},
+		{Name: "templates/namespace.yaml", ModTime: modTime, Data: []byte("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: extra\n")},
+		{Name: "templates/_helpers.tpl", ModTime: modTime, Data: []byte(`{{ define "unused" }}kind: Unused{{ end }}`)},
+	}
+	crd := common.File{Name: "crds/widgets.yaml", ModTime: modTime, Data: []byte("apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n\n")}
+
+	namespace := `---
+# Source: hello/templates/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: extra
+`
+	deployment := `---
+# Source: hello/templates/workload.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+`
+	hookSecret := `---
+# Source: hello/templates/workload.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: setup
+  annotations:
+    "helm.sh/hook": pre-install
+`
+	service := `---
+# Source: hello/templates/workload.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+`
+
+	tests := []struct {
+		name        string
+		includeCrds bool
+		hideSecret  bool
+		expected    string
+	}{
+		{
+			name: "orders documents by source path, then by position within the template",
+			expected: namespace + `---
+# Source: hello/templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: creds
+` + deployment + hookSecret + service,
+		},
+		{
+			name:        "includes CRDs by source path",
+			includeCrds: true,
+			expected: `---
+# Source: hello/crds/widgets.yaml
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+` + namespace + `---
+# Source: hello/templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: creds
+` + deployment + hookSecret + service,
+		},
+		{
+			name:       "hides secrets, including hooks",
+			hideSecret: true,
+			expected: namespace + `---
+# Source: hello/templates/secret.yaml
+# HIDDEN: The Secret output has been suppressed
+` + deployment + `---
+# Source: hello/templates/workload.yaml
+# HIDDEN: The Secret output has been suppressed
+` + service,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := actionConfigFixture(t)
+			ch := buildChartWithTemplates(templates, withFile(crd))
+
+			hooks, buf, _, stream, err := cfg.renderResourcesWithStream(
+				ch, map[string]any{}, "test-release", "", false, false, tt.includeCrds,
+				nil, false, false, tt.hideSecret,
+			)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, stream)
+
+			require.Len(t, hooks, 1)
+			assert.Equal(t, "setup", hooks[0].Name)
+			assert.NotContains(t, buf.String(), "helm.sh/hook")
+			assert.Less(t, strings.Index(buf.String(), "kind: Namespace"), strings.Index(buf.String(), "kind: Deployment"),
+				"the release manifest keeps install order")
+		})
+	}
+}
+
 func TestDetermineReleaseSSAApplyMethod(t *testing.T) {
 	assert.Equal(t, release.ApplyMethodClientSideApply, determineReleaseSSApplyMethod(false))
 	assert.Equal(t, release.ApplyMethodServerSideApply, determineReleaseSSApplyMethod(true))

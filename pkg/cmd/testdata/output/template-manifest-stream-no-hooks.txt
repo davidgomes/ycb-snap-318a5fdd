@@ -1,0 +1,38 @@
+---
+# Source: manifest-stream/templates/app.yaml
+# 1 (rendered first although install order would place the Service before it)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-app
+spec:
+  selector:
+    matchLabels:
+      app: release-name
+  template:
+    metadata:
+      labels:
+        app: release-name
+    spec:
+      containers:
+        - name: app
+          image: nginx
+---
+# Source: manifest-stream/templates/app.yaml
+# 3
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-app
+spec:
+  selector:
+    app: release-name
+  ports:
+    - port: 80
+---
+# Source: manifest-stream/templates/z-namespace.yaml
+# 5 (ordered by source path although install order would place it first)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: release-name-extra

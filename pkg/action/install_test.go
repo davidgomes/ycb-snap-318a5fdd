@@ -465,6 +465,50 @@ func TestInstallRelease_DryRunClient(t *testing.T) {
 	}
 }
 
+func TestInstallRelease_ManifestStream(t *testing.T) {
+	tests := []struct {
+		dryRunStrategy DryRunStrategy
+		expected       string
+	}{
+		{
+			dryRunStrategy: DryRunClient,
+			expected: `---
+# Source: hello/templates/goodbye
+goodbye: world
+---
+# Source: hello/templates/hello
+hello: world
+---
+# Source: hello/templates/hooks
+` + manifestWithHook + `
+---
+# Source: hello/templates/with-partials
+hello: Earth
+`,
+		},
+		{
+			dryRunStrategy: DryRunNone,
+			expected:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.dryRunStrategy), func(t *testing.T) {
+			instAction := installAction(t)
+			instAction.DryRunStrategy = tt.dryRunStrategy
+
+			resi, err := instAction.Run(buildChart(withSampleTemplates()), map[string]any{})
+			require.NoError(t, err)
+			res, err := releaserToV1Release(resi)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.expected, res.ManifestStream)
+			assert.NotContains(t, res.Manifest, "helm.sh/hook")
+			assert.Len(t, res.Hooks, 1)
+		})
+	}
+}
+
 func TestInstallRelease_DryRunHiddenSecret(t *testing.T) {
 	is := assert.New(t)
 	instAction := installAction(t)

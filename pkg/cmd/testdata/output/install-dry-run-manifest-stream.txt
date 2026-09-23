@@ -1,0 +1,73 @@
+NAME: stream
+LAST DEPLOYED: Fri Sep  2 22:04:05 1977
+NAMESPACE: default
+STATUS: pending-install
+REVISION: 1
+DESCRIPTION: Dry run complete
+MANIFEST:
+---
+# Source: manifest-stream/templates/app.yaml
+# 1 (rendered first although install order would place the Service before it)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stream-app
+spec:
+  selector:
+    matchLabels:
+      app: stream
+  template:
+    metadata:
+      labels:
+        app: stream
+    spec:
+      containers:
+        - name: app
+          image: nginx
+---
+# Source: manifest-stream/templates/app.yaml
+# 2 (a hook stays where it was rendered in its template)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stream-setup
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+data:
+  step: setup
+---
+# Source: manifest-stream/templates/app.yaml
+# 3
+apiVersion: v1
+kind: Service
+metadata:
+  name: stream-app
+spec:
+  selector:
+    app: stream
+  ports:
+    - port: 80
+---
+# Source: manifest-stream/templates/tests/test-app.yaml
+# 4
+apiVersion: v1
+kind: Pod
+metadata:
+  name: stream-test
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: test
+      image: busybox
+      command: ["wget", "stream-app:80"]
+  restartPolicy: Never
+---
+# Source: manifest-stream/templates/z-namespace.yaml
+# 5 (ordered by source path although install order would place it first)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stream-extra
+NOTES:
+stream has been rendered.

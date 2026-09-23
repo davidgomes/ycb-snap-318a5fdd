@@ -26,6 +26,7 @@ var chartPath = "testdata/testcharts/subchart"
 
 func TestTemplateCmd(t *testing.T) {
 	deletevalchart := "testdata/testcharts/issue-9027"
+	manifestStreamChart := "testdata/testcharts/manifest-stream"
 
 	tests := []cmdTestCase{
 		{
@@ -120,6 +121,22 @@ func TestTemplateCmd(t *testing.T) {
 			// Helm previously used random file order. Repeat the test so we
 			// don't accidentally get the expected result.
 			repeat: 10,
+		},
+		{
+			name:   "unified manifest stream ordered by source path, then rendered order within each template",
+			cmd:    fmt.Sprintf("template '%s'", manifestStreamChart),
+			golden: "output/template-manifest-stream.txt",
+			repeat: 10,
+		},
+		{
+			name:   "unified manifest stream without hooks",
+			cmd:    fmt.Sprintf("template '%s' --no-hooks", manifestStreamChart),
+			golden: "output/template-manifest-stream-no-hooks.txt",
+		},
+		{
+			name:   "unified manifest stream with show-only keeps hooks in rendered order",
+			cmd:    fmt.Sprintf("template '%s' --show-only templates/app.yaml", manifestStreamChart),
+			golden: "output/template-manifest-stream-show-only.txt",
 		},
 		{
 			name:      "chart with template with invalid yaml",

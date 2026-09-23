@@ -1,0 +1,5 @@
+apiVersion: v2
+name: manifest-stream
+description: Test the ordering of the unified manifest stream
+type: application
+version: 0.1.0
