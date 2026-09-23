@@ -6,6 +6,17 @@ incremental in minor, bugfixes only are patches.
 See [0Ver](https://0ver.org/).
 
 
+## Unreleased
+
+### Features
+
+- Added `Validated` container with `Valid` and `Invalid` types
+  that accumulates errors in `.apply`, `combine`, and `combine_n`
+- Added `ValidatedLikeN` interface, `bind_validated` pointfree function,
+  `validated` decorator, `result_to_validated`
+  and `validated_to_result` converters
+
+
 ## 0.26.0
 
 ### Features
