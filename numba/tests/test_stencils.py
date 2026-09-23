@@ -3219,5 +3219,74 @@ class TestManyStencils(TestStencilBase):
                                                  'cval':cval})
 
 
+class TestStencilModes(TestStencilBase):
+
+    def test_modes_1d(self):
+        def kernel(a):
+            return a[-2] + 10 * a[1]
+
+        a = np.arange(5.)
+        for mode, pad in [('wrap', 'wrap'), ('nearest', 'edge'),
+                          ('reflect', 'reflect'),
+                          ('symmetric', 'symmetric')]:
+            p = np.pad(a, 2, mode=pad)
+            expected = p[0:5] + 10 * p[3:8]
+            np.testing.assert_allclose(stencil(mode)(kernel)(a), expected)
+            np.testing.assert_allclose(stencil(kernel, mode=mode)(a),
+                                       expected)
+            sf = stencil(kernel, mode=mode)
+            np.testing.assert_allclose(njit(lambda x: sf(x))(a), expected)
+
+    def test_modes_per_dimension(self):
+        def kernel(b):
+            return b[-1, 0] + b[0, 1]
+
+        b = np.arange(12.).reshape(3, 4)
+        got = stencil(kernel, mode=('wrap', 'nearest'))(b)
+        expected = (np.roll(b, 1, 0) +
+                    np.pad(b, ((0, 0), (0, 1)), 'edge')[:, 1:])
+        np.testing.assert_allclose(got, expected)
+
+        got = stencil(kernel, mode=('constant', 'wrap'), cval=-1.)(b)
+        expected = np.roll(b, 1, 0) + np.roll(b, -1, 1)
+        expected[0, :] = -1.
+        np.testing.assert_allclose(got, expected)
+
+    def test_reflect_out_of_bounds_uses_cval(self):
+        def kernel(a):
+            return a[-3]
+
+        for mode, expected in (('reflect', [99., 99.]),
+                               ('symmetric', [99., 1.])):
+            got = stencil(kernel, mode=mode, cval=99.)(np.arange(2.))
+            np.testing.assert_allclose(got, expected)
+
+    def test_modes_with_options(self):
+        def kernel(a, w):
+            return w[0] * a[-1] + w[1] * a[1]
+
+        a = np.arange(5.)
+        w = np.array([1., 2.])
+        got = stencil(kernel, mode='wrap', standard_indexing=("w",))(a, w)
+        np.testing.assert_allclose(got, np.roll(a, 1) + 2 * np.roll(a, -1))
+
+        def kernel2(a):
+            return a[-1] + a[0]
+
+        got = stencil(kernel2, mode='wrap', neighborhood=((-1, 0),))(a)
+        np.testing.assert_allclose(got, np.roll(a, 1) + a)
+
+    def test_invalid_modes(self):
+        def kernel(a):
+            return a[-1]
+
+        with self.assertRaises(NumbaValueError):
+            stencil('foo')
+        with self.assertRaises(NumbaValueError):
+            stencil(kernel, mode=('wrap', 'bar'))
+        with self.assertRaises(NumbaValueError):
+            stencil(kernel, mode=('wrap', 'wrap'))(np.arange(5.))
+
+
 if __name__ == "__main__":
     unittest.main()
