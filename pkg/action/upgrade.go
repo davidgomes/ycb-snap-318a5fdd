@@ -101,6 +101,12 @@ type Upgrade struct {
 	ReuseValues bool
 	// ResetThenReuseValues will reset the values to the chart's built-ins then merge with user's last supplied values.
 	ResetThenReuseValues bool
+	// MergeStrategies overrides Chart.yaml helm.sh/merge-strategy/<path> annotations.
+	// Each entry is path=append or path=merge.
+	MergeStrategies []string
+	// MergeKeys overrides Chart.yaml helm.sh/merge-key/<path> annotations.
+	// Each entry is path=<key>. The key may be a dotted path.
+	MergeKeys []string
 	// MaxHistory limits the maximum number of revisions saved per release
 	MaxHistory int
 	// RollbackOnFailure enables rolling back the upgraded release on failure
@@ -267,12 +273,12 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 	}
 
 	// determine if values will be reused
-	vals, err = u.reuseValues(chart, currentRelease, vals)
+	vals, skipStrategies, err := u.reuseValues(chart, currentRelease, vals)
 	if err != nil {
 		return nil, nil, false, err
 	}
 
-	if err := chartutil.ProcessDependencies(chart, vals); err != nil {
+	if err := chartutil.ProcessDependenciesWithStrategies(chart, vals, u.MergeStrategies, u.MergeKeys, skipStrategies); err != nil {
 		return nil, nil, false, err
 	}
 
@@ -291,7 +297,11 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chartv2.Chart, vals map[str
 	if err != nil {
 		return nil, nil, false, err
 	}
-	valuesToRender, err := util.ToRenderValuesWithSchemaValidation(chart, vals, options, caps, u.SkipSchemaValidation)
+	valuesToRender, err := util.ToRenderValuesWithStrategyOverrides(chart, vals, options, caps, u.SkipSchemaValidation, util.StrategyOverrides{
+		MergeStrategies: u.MergeStrategies,
+		MergeKeys:       u.MergeKeys,
+		Skip:            skipStrategies,
+	})
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -601,11 +611,11 @@ func (u *Upgrade) failRelease(rel *release.Release, created kube.ResourceList, e
 //
 // This is skipped if the u.ResetValues flag is set, in which case the
 // request values are not altered.
-func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, newVals map[string]any) (map[string]any, error) {
+func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, newVals map[string]any) (map[string]any, bool, error) {
 	if u.ResetValues {
-		// If ResetValues is set, we completely ignore current.Config.
+		// ResetValues drops previous config and does not apply merge strategies.
 		u.cfg.Logger().Debug("resetting values to the chart's original version")
-		return newVals, nil
+		return newVals, true, nil
 	}
 
 	// If the ReuseValues flag is set, we always copy the old values over the new config's values.
@@ -615,30 +625,44 @@ func (u *Upgrade) reuseValues(chart *chartv2.Chart, current *release.Release, ne
 		// We have to regenerate the old coalesced values:
 		oldVals, err := util.CoalesceValues(current.Chart, current.Config)
 		if err != nil {
-			return nil, fmt.Errorf("failed to rebuild old values: %w", err)
+			return nil, false, fmt.Errorf("failed to rebuild old values: %w", err)
 		}
 
-		newVals = util.CoalesceTables(newVals, current.Config)
+		merged, err := u.mergeWithPreviousConfig(chart, newVals, current.Config)
+		if err != nil {
+			return nil, false, err
+		}
 
 		chart.Values = oldVals
 
-		return newVals, nil
+		// chart.Values is already the coalesced previous release. Applying
+		// strategies again would append those values a second time.
+		return merged, true, nil
 	}
 
-	// If the ResetThenReuseValues flag is set, we use the new chart's values, but we copy the old config's values over the new config's values.
+	// ResetThenReuseValues keeps the new chart defaults as the coalesce base.
+	// Old config is merged on top of the new values here; strategies are applied
+	// when those values are coalesced with the new chart defaults.
 	if u.ResetThenReuseValues {
 		u.cfg.Logger().Debug("merging values from old release to new values")
-
-		newVals = util.CoalesceTables(newVals, current.Config)
-
-		return newVals, nil
+		return util.CoalesceTables(newVals, current.Config), false, nil
 	}
 
 	if len(newVals) == 0 && len(current.Config) > 0 {
 		u.cfg.Logger().Debug("copying values from old release", "name", current.Name, "version", current.Version)
 		newVals = current.Config
 	}
-	return newVals, nil
+	return newVals, false, nil
+}
+
+// mergeWithPreviousConfig strategy-merges previous user config into the new
+// values. Append places the previous elements before the new ones.
+func (u *Upgrade) mergeWithPreviousConfig(chrt *chartv2.Chart, newVals, previous map[string]any) (map[string]any, error) {
+	strategies, keys, err := util.StrategiesForChartTree(chrt, u.MergeStrategies, u.MergeKeys)
+	if err != nil {
+		return nil, err
+	}
+	return util.CoalesceTablesWithStrategies(newVals, previous, strategies, keys), nil
 }
 
 func validateManifest(c kube.Interface, manifest []byte, openAPIValidation bool) error {

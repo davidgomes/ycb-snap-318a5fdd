@@ -36,6 +36,8 @@ type Accessor interface {
 	Values() map[string]any
 	Schema() []byte
 	Deprecated() bool
+	// Annotations returns chart metadata annotations. Nil metadata yields nil.
+	Annotations() map[string]string
 }
 
 type DependencyAccessor interface {

@@ -232,6 +232,7 @@ func addInstallFlags(cmd *cobra.Command, f *pflag.FlagSet, client *action.Instal
 }
 
 func runInstall(args []string, client *action.Install, valueOpts *values.Options, out io.Writer) (*release.Release, error) {
+	applyMergeStrategyOverrides(&client.MergeStrategies, &client.MergeKeys, valueOpts)
 	slog.Debug("Original chart version", "version", client.Version)
 	if client.Version == "" && client.Devel {
 		slog.Debug("setting version to >0.0.0-0")

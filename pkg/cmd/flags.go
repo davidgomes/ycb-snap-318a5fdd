@@ -54,6 +54,20 @@ func addValueOptionsFlags(f *pflag.FlagSet, v *values.Options) {
 	f.StringArrayVar(&v.FileValues, "set-file", []string{}, "set values from respective files specified via the command line (can specify multiple or separate values with commas: key1=path1,key2=path2)")
 	f.StringArrayVar(&v.JSONValues, "set-json", []string{}, "set JSON values on the command line (can specify multiple or separate values with commas: key1=jsonval1,key2=jsonval2 or using json format: {\"key1\": jsonval1, \"key2\": \"jsonval2\"})")
 	f.StringArrayVar(&v.LiteralValues, "set-literal", []string{}, "set a literal STRING value on the command line")
+	f.StringArrayVar(&v.MergeStrategies, "merge-strategy", nil, "override a chart array merge strategy (path=append|path=merge). Can be repeated. Takes precedence over Chart.yaml annotations for the same path")
+	f.StringArrayVar(&v.MergeKeys, "merge-key", nil, "override a chart array merge key (path=key). The key may be a dotted field path. Can be repeated. Takes precedence over Chart.yaml annotations for the same path")
+}
+
+func applyMergeStrategyOverrides(strategies, keys *[]string, v *values.Options) {
+	if v == nil {
+		return
+	}
+	if len(*strategies) == 0 && len(v.MergeStrategies) > 0 {
+		*strategies = v.MergeStrategies
+	}
+	if len(*keys) == 0 && len(v.MergeKeys) > 0 {
+		*keys = v.MergeKeys
+	}
 }
 
 func AddWaitFlag(cmd *cobra.Command, wait *kube.WaitStrategy) {

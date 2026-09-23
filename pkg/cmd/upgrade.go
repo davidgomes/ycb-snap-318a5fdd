@@ -177,6 +177,7 @@ func newUpgradeCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 				}
 			}
 
+			applyMergeStrategyOverrides(&client.MergeStrategies, &client.MergeKeys, valueOpts)
 			if client.Version == "" && client.Devel {
 				slog.Debug("setting version to >0.0.0-0")
 				client.Version = ">0.0.0-0"

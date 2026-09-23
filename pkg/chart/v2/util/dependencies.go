@@ -29,7 +29,13 @@ import (
 
 // ProcessDependencies checks through this chart's dependencies, processing accordingly.
 func ProcessDependencies(c *chart.Chart, v common.Values) error {
-	if err := processDependencyEnabled(c, v, ""); err != nil {
+	return ProcessDependenciesWithStrategies(c, v, nil, nil, false)
+}
+
+// ProcessDependenciesWithStrategies checks chart dependencies using optional
+// merge-strategy overrides. skipStrategies leaves array coalescing unchanged.
+func ProcessDependenciesWithStrategies(c *chart.Chart, v common.Values, mergeStrategies, mergeKeys []string, skipStrategies bool) error {
+	if err := processDependencyEnabled(c, v, "", mergeStrategies, mergeKeys, skipStrategies); err != nil {
 		return err
 	}
 	return processDependencyImportValues(c, true)
@@ -142,7 +148,7 @@ func copyMetadata(metadata *chart.Metadata) *chart.Metadata {
 }
 
 // processDependencyEnabled removes disabled charts from dependencies
-func processDependencyEnabled(c *chart.Chart, v map[string]any, path string) error {
+func processDependencyEnabled(c *chart.Chart, v map[string]any, path string, mergeStrategies, mergeKeys []string, skipStrategies bool) error {
 	if c.Metadata.Dependencies == nil {
 		return nil
 	}
@@ -180,7 +186,11 @@ Loop:
 	for _, lr := range c.Metadata.Dependencies {
 		lr.Enabled = true
 	}
-	cvals, err := util.CoalesceValues(c, v)
+	cvals, err := util.CoalesceValuesWithOverrides(c, v, util.StrategyOverrides{
+		MergeStrategies: mergeStrategies,
+		MergeKeys:       mergeKeys,
+		Skip:            skipStrategies,
+	})
 	if err != nil {
 		return err
 	}
@@ -215,7 +225,7 @@ Loop:
 	// recursively call self to process sub dependencies
 	for _, t := range cd {
 		subpath := path + t.Metadata.Name + "."
-		if err := processDependencyEnabled(t, cvals, subpath); err != nil {
+		if err := processDependencyEnabled(t, cvals, subpath, mergeStrategies, mergeKeys, skipStrategies); err != nil {
 			return err
 		}
 	}

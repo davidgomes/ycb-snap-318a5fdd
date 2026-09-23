@@ -223,6 +223,45 @@ func TestValidateChartIconURL(t *testing.T) {
 	}
 }
 
+func TestV3ChartfileMergeStrategyAnnotations(t *testing.T) {
+	dir := t.TempDir()
+	chartYAML := `apiVersion: v3
+name: merge
+description: test
+version: 0.1.0
+annotations:
+  helm.sh/merge-strategy/missing: nope
+  helm.sh/merge-strategy/name: append
+  helm.sh/merge-strategy/items: merge
+  helm.sh/merge-strategy/absent: append
+  helm.sh/merge-key/orphan: id
+`
+	valuesYAML := "name: app\nitems:\n  - name: a\n"
+	if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), []byte(chartYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "values.yaml"), []byte(valuesYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	linter := support.Linter{ChartDir: dir}
+	Chartfile(&linter)
+
+	var warnings []string
+	for _, msg := range linter.Messages {
+		if msg.Severity != support.WarningSev {
+			continue
+		}
+		warnings = append(warnings, msg.Err.Error())
+	}
+	joined := strings.Join(warnings, "\n")
+	for _, want := range []string{"unsupported", "missing", "non-array", "name", "not found", "absent", "items", "orphan"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("Chartfile warnings %q missing %q", joined, want)
+		}
+	}
+}
+
 func TestV3Chartfile(t *testing.T) {
 	t.Run("Chart.yaml basic validity issues", func(t *testing.T) {
 		linter := support.Linter{ChartDir: badChartDir}

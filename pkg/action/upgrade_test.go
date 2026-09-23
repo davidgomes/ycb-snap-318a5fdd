@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/cli-runtime/pkg/resource"
 
+	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/kube"
 	kubefake "helm.sh/helm/v4/pkg/kube/fake"
@@ -801,4 +802,80 @@ func TestUpgradeRelease_WaitOptionsPassedDownstream(t *testing.T) {
 
 	// Verify that WaitOptions were passed to GetWaiter
 	is.NotEmpty(failer.RecordedWaitOptions, "WaitOptions should be passed to GetWaiter")
+}
+
+func TestUpgradeRelease_MergeStrategies(t *testing.T) {
+	itemsTemplate := []*chartcommon.File{{
+		Name: "templates/hello",
+		Data: []byte("items: {{ .Values.items | toJson }}\n"),
+	}}
+	withStrategy := func(values map[string]any) chartOption {
+		return func(opts *chartOptions) {
+			opts.Metadata.Annotations = map[string]string{
+				"helm.sh/merge-strategy/items": "append",
+			}
+			opts.Values = values
+		}
+	}
+
+	t.Run("reuse values appends old config before new values", func(t *testing.T) {
+		upAction := upgradeAction(t)
+		rel := releaseStub()
+		rel.Name = "merge-reuse"
+		rel.Info.Status = common.StatusDeployed
+		rel.Chart = buildChartWithTemplates(itemsTemplate, withStrategy(map[string]any{"items": []any{"chart"}}))
+		rel.Config = map[string]any{"items": []any{"old"}}
+		require.NoError(t, upAction.cfg.Releases.Create(rel))
+
+		upAction.ReuseValues = true
+		newChart := buildChartWithTemplates(itemsTemplate, withStrategy(map[string]any{"items": []any{"chart"}}))
+		resi, err := upAction.Run(rel.Name, newChart, map[string]any{"items": []any{"new"}})
+		require.NoError(t, err)
+		res, err := releaserToV1Release(resi)
+		require.NoError(t, err)
+		assert.Equal(t, []any{"old", "new"}, res.Config["items"])
+		assert.Contains(t, res.Manifest, `["old","new"]`)
+		assert.Equal(t, "chart", newChart.Values["items"].([]any)[0])
+	})
+
+	t.Run("reset values ignores strategies", func(t *testing.T) {
+		upAction := upgradeAction(t)
+		rel := releaseStub()
+		rel.Name = "merge-reset"
+		rel.Info.Status = common.StatusDeployed
+		rel.Chart = buildChartWithTemplates(itemsTemplate, withStrategy(map[string]any{"items": []any{"chart"}}))
+		rel.Config = map[string]any{"items": []any{"old"}}
+		require.NoError(t, upAction.cfg.Releases.Create(rel))
+
+		upAction.ResetValues = true
+		newChart := buildChartWithTemplates(itemsTemplate, withStrategy(map[string]any{"items": []any{"chart"}}))
+		resi, err := upAction.Run(rel.Name, newChart, map[string]any{"items": []any{"new"}})
+		require.NoError(t, err)
+		res, err := releaserToV1Release(resi)
+		require.NoError(t, err)
+		assert.Equal(t, []any{"new"}, res.Config["items"])
+		assert.Contains(t, res.Manifest, `["new"]`)
+		assert.NotContains(t, res.Manifest, "chart")
+		assert.NotContains(t, res.Manifest, "old")
+	})
+
+	t.Run("reset then reuse uses chart defaults as the strategy base", func(t *testing.T) {
+		upAction := upgradeAction(t)
+		rel := releaseStub()
+		rel.Name = "merge-reset-reuse"
+		rel.Info.Status = common.StatusDeployed
+		rel.Chart = buildChartWithTemplates(itemsTemplate, withStrategy(map[string]any{"items": []any{"old-chart"}}))
+		rel.Config = map[string]any{"items": []any{"old"}}
+		require.NoError(t, upAction.cfg.Releases.Create(rel))
+
+		upAction.ResetThenReuseValues = true
+		newChart := buildChartWithTemplates(itemsTemplate, withStrategy(map[string]any{"items": []any{"chart"}}))
+		resi, err := upAction.Run(rel.Name, newChart, map[string]any{"items": []any{"new"}})
+		require.NoError(t, err)
+		res, err := releaserToV1Release(resi)
+		require.NoError(t, err)
+		assert.Equal(t, []any{"new"}, res.Config["items"])
+		assert.Contains(t, res.Manifest, `["chart","new"]`)
+		assert.Equal(t, []any{"chart"}, newChart.Values["items"])
+	})
 }

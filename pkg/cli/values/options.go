@@ -38,6 +38,10 @@ type Options struct {
 	FileValues    []string // --set-file
 	JSONValues    []string // --set-json
 	LiteralValues []string // --set-literal
+	// MergeStrategies overrides chart merge-strategy annotations (path=append|merge).
+	MergeStrategies []string
+	// MergeKeys overrides chart merge-key annotations (path=key).
+	MergeKeys []string
 }
 
 // MergeValues merges values from files specified via -f/--values and directly
