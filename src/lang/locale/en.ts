@@ -303,6 +303,51 @@ export default {
       'name': 'Add Blank Line After YAML',
       'description': 'Adds a blank line after the YAML block if it does not end the current file or it is not already followed by at least 1 blank line',
     },
+    // auto-toc.ts
+    'auto-toc': {
+      'name': 'Auto Table of Contents',
+      'description': 'Generates or updates a table of contents between `<!-- toc -->` and `<!-- /toc -->` markers. Only runs when a `<!-- toc -->` marker is present.',
+      'list-style': {
+        'name': 'List Style',
+        'description': 'Whether the table of contents uses a bullet or numbered list',
+      },
+      'bullet-marker': {
+        'name': 'Bullet Marker',
+        'description': 'The marker used for bullet list items',
+      },
+      'ordered-list-style': {
+        'name': 'Ordered List Style',
+        'description': 'How numbered list items are numbered',
+      },
+      'indent-size': {
+        'name': 'Indent Size',
+        'description': 'The number of spaces used per nesting level',
+      },
+      'min-level': {
+        'name': 'Minimum Heading Level',
+        'description': 'The smallest heading level to include',
+      },
+      'max-level': {
+        'name': 'Maximum Heading Level',
+        'description': 'The largest heading level to include',
+      },
+      'title': {
+        'name': 'Title',
+        'description': 'An optional line placed above the table of contents list',
+      },
+      'use-explicit-ids': {
+        'name': 'Use Explicit IDs',
+        'description': 'Use a trailing `{#id}` on a heading as its anchor',
+      },
+      'strip-formatting-in-toc': {
+        'name': 'Strip Formatting in TOC',
+        'description': 'Removes links and formatting from heading text in the table of contents',
+      },
+      'exclude-headings': {
+        'name': 'Exclude Headings',
+        'description': 'Headings to exclude, one per line. Literals match case-insensitively; `/.../` is a case-insensitive regex',
+      },
+    },
     // blockquotify-on-paste.ts
     'add-blockquote-indentation-on-paste': {
       'name': 'Add Blockquote Indentation on Paste',
