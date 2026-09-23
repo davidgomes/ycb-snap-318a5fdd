@@ -117,8 +117,7 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 			// We ignore a potential error here because, when the --debug flag was specified,
 			// we always want to print the YAML, even if it is not valid. The error is still returned afterwards.
 			if rel != nil {
-				var manifests bytes.Buffer
-				fmt.Fprintln(&manifests, strings.TrimSpace(rel.Manifest))
+				docs := splitManifestDocs(rel.Manifest)
 				if !client.DisableHooks {
 					fileWritten := make(map[string]bool)
 					for _, m := range rel.Hooks {
@@ -126,7 +125,7 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 							continue
 						}
 						if client.OutputDir == "" {
-							fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", m.Path, m.Manifest)
+							docs = append(docs, hookManifestDoc(m.Path, m.Manifest))
 						} else {
 							newDir := client.OutputDir
 							if client.UseReleaseName {
@@ -145,6 +144,8 @@ func newTemplateCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 
 					}
 				}
+				var manifests bytes.Buffer
+				manifests.WriteString(unifiedManifestStream(docs))
 
 				// if we have a list of files to render, then check that each of the
 				// provided files exists in the chart.

@@ -59,7 +59,15 @@ func newGetManifestCmd(cfg *action.Configuration, out io.Writer) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(out, rac.Manifest())
+			docs := splitManifestDocs(rac.Manifest())
+			for _, hook := range rac.Hooks() {
+				hac, err := release.NewHookAccessor(hook)
+				if err != nil {
+					return err
+				}
+				docs = append(docs, hookManifestDoc(hac.Path(), hac.Manifest()))
+			}
+			fmt.Fprint(out, unifiedManifestStream(docs))
 			return nil
 		},
 	}
