@@ -285,6 +285,42 @@ Show detailed information about a task.
 task build --summary
 ```
 
+#### `--graph`
+
+Print the dependency graph of the given tasks. When no task names are given,
+the default task is used. Aliases and wildcards are resolved, and tasks from
+included Taskfiles are shown with their fully qualified names.
+
+```bash
+task --graph build
+task --graph --format text build
+task --graph --format dot build
+```
+
+#### `--format <json|dot|text>`
+
+Select the output format for `--graph`. `json` is the default.
+
+- `json` — roots, nodes, edges, depth groups, and the longest path
+- `dot` — a Graphviz `digraph tasks { ... }` with edges pointing at dependencies.
+  Up-to-date tasks are drawn with `style=dashed`
+- `text` — an indented tree (two spaces per level). A dependency that appears
+  again is marked `(repeated)` and its subtree is not expanded
+
+```bash
+task --graph --format dot build
+```
+
+#### `--reverse`
+
+Invert `--graph` so it shows every task that depends on the given task, instead
+of the tasks it depends on. Depth groups and the longest path are computed on
+the reversed graph.
+
+```bash
+task --graph --reverse lint
+```
+
 #### `--json`
 
 Output task information in JSON format (use with `--list` or `--list-all`).
@@ -385,6 +421,7 @@ Task uses specific exit codes to indicate different types of errors:
 - **205** - Task cancelled by user
 - **206** - Missing required variables
 - **207** - Variable has incorrect value
+- **208** - Task dependency cycle
 
 ::: info
 

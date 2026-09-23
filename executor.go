@@ -55,6 +55,9 @@ type (
 		Concurrency         int
 		Interval            time.Duration
 		Failfast            bool
+		GraphFormat         string
+		GraphReverse        bool
+		GraphNoStatus       bool
 
 		// I/O
 		Stdin  io.Reader
@@ -616,4 +619,46 @@ type failfastOption struct {
 
 func (o *failfastOption) ApplyToExecutor(e *Executor) {
 	e.Failfast = o.failfast
+}
+
+// WithGraphFormat sets the output format used by [Executor.Graph].
+// Accepted values are "json", "dot", and "text". An empty string selects json.
+func WithGraphFormat(format string) ExecutorOption {
+	return &graphFormatOption{format}
+}
+
+type graphFormatOption struct {
+	format string
+}
+
+func (o *graphFormatOption) ApplyToExecutor(e *Executor) {
+	e.GraphFormat = o.format
+}
+
+// WithGraphReverse inverts [Executor.Graph] so it shows tasks that depend on
+// the requested tasks instead of the tasks they depend on.
+func WithGraphReverse(reverse bool) ExecutorOption {
+	return &graphReverseOption{reverse}
+}
+
+type graphReverseOption struct {
+	reverse bool
+}
+
+func (o *graphReverseOption) ApplyToExecutor(e *Executor) {
+	e.GraphReverse = o.reverse
+}
+
+// WithGraphNoStatus tells [Executor.Graph] to skip fingerprint checks. JSON
+// nodes then omit up_to_date and DOT output does not style nodes as dashed.
+func WithGraphNoStatus(noStatus bool) ExecutorOption {
+	return &graphNoStatusOption{noStatus}
+}
+
+type graphNoStatusOption struct {
+	noStatus bool
+}
+
+func (o *graphNoStatusOption) ApplyToExecutor(e *Executor) {
+	e.GraphNoStatus = o.noStatus
 }

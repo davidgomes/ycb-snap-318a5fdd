@@ -199,5 +199,9 @@ func run() error {
 		return e.Status(ctx, calls...)
 	}
 
+	if flags.Graph {
+		return e.Graph(calls...)
+	}
+
 	return e.Run(ctx, calls...)
 }

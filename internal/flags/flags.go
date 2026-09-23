@@ -65,6 +65,9 @@ var (
 	AssumeYes           bool
 	Dry                 bool
 	Summary             bool
+	Graph               bool
+	GraphFormat         string
+	GraphReverse        bool
 	ExitCode            bool
 	Parallel            bool
 	Concurrency         int
@@ -128,7 +131,7 @@ func init() {
 	pflag.BoolVarP(&ListJson, "json", "j", false, "Formats task list as JSON.")
 	pflag.StringVar(&TaskSort, "sort", "", "Changes the order of the tasks when listed. [default|alphanumeric|none].")
 	pflag.BoolVar(&Status, "status", false, "Exits with non-zero exit code if any of the given tasks is not up-to-date.")
-	pflag.BoolVar(&NoStatus, "no-status", false, "Ignore status when listing tasks as JSON")
+	pflag.BoolVar(&NoStatus, "no-status", false, "Ignore status when listing tasks as JSON or printing a task graph.")
 	pflag.BoolVar(&Nested, "nested", false, "Nest namespaces when listing tasks as JSON")
 	pflag.BoolVar(&Insecure, "insecure", getConfig(config, "REMOTE_INSECURE", func() *bool { return config.Remote.Insecure }, false), "Forces Task to download Taskfiles over insecure connections.")
 	pflag.BoolVarP(&Watch, "watch", "w", false, "Enables watch of the given task.")
@@ -140,6 +143,9 @@ func init() {
 	pflag.BoolVarP(&Parallel, "parallel", "p", false, "Executes tasks provided on command line in parallel.")
 	pflag.BoolVarP(&Dry, "dry", "n", getConfig(config, "DRY", func() *bool { return nil }, false), "Compiles and prints tasks in the order that they would be run, without executing them.")
 	pflag.BoolVar(&Summary, "summary", false, "Show summary about a task.")
+	pflag.BoolVar(&Graph, "graph", false, "Prints the dependency graph of the given tasks.")
+	pflag.StringVar(&GraphFormat, "format", "", "Graph output format: [json|dot|text]. Defaults to json.")
+	pflag.BoolVar(&GraphReverse, "reverse", false, "Shows tasks that depend on the given tasks instead of their dependencies.")
 	pflag.BoolVarP(&ExitCode, "exit-code", "x", false, "Pass-through the exit code of the task command.")
 	pflag.StringVarP(&Dir, "dir", "d", "", "Sets the directory in which Task will execute and look for a Taskfile.")
 	pflag.StringVarP(&Entrypoint, "taskfile", "t", "", `Choose which Taskfile to run. Defaults to "Taskfile.yml".`)
@@ -234,8 +240,28 @@ func Validate() error {
 		return errors.New("task: --json only applies to --list or --list-all")
 	}
 
-	if NoStatus && !ListJson {
-		return errors.New("task: --no-status only applies to --json with --list or --list-all")
+	if GraphFormat != "" && !Graph {
+		return errors.New("task: --format only applies to --graph")
+	}
+
+	if Graph {
+		switch GraphFormat {
+		case "", "json", "dot", "text":
+		default:
+			return errors.New("task: --format must be json, dot, or text")
+		}
+	}
+
+	if GraphReverse && !Graph {
+		return errors.New("task: --reverse only applies to --graph")
+	}
+
+	if Graph && (List || ListAll) {
+		return errors.New("task: cannot use --graph with --list or --list-all")
+	}
+
+	if NoStatus && !ListJson && !Graph {
+		return errors.New("task: --no-status only applies to --json with --list or --list-all or to --graph")
 	}
 
 	if Nested && !ListJson {
@@ -300,6 +326,9 @@ func (o *flagsOption) ApplyToExecutor(e *task.Executor) {
 		task.WithInteractive(Interactive),
 		task.WithDry(Dry || Status),
 		task.WithSummary(Summary),
+		task.WithGraphFormat(GraphFormat),
+		task.WithGraphReverse(GraphReverse),
+		task.WithGraphNoStatus(NoStatus),
 		task.WithParallel(Parallel),
 		task.WithColor(Color),
 		task.WithConcurrency(Concurrency),
