@@ -386,3 +386,96 @@ def test_terminal_mode_reporting_synchronized_output_not_supported(parser):
     sequence = "\x1b[?2026;0$y"
     events = list(parser.feed(sequence))
     assert events == []
+
+
+def _feed(parser, sequence: str):
+    events = list(parser.feed(sequence))
+    events.extend(parser.feed(""))
+    return events
+
+
+def test_kitty_shift_only_printable_preserves_character(parser):
+    event = _feed(parser, "\x1b[97;2;65u")[0]
+    assert event.key in {"A", "shift+a"}
+    assert event.character == "A"
+    assert event.modifiers == ("shift",)
+    assert event.base_key == "a"
+    assert event.phase == "press"
+    assert event.is_press
+    assert event.shift
+    assert not event.ctrl
+
+
+def test_kitty_modified_printable_shortcut(parser):
+    event = _feed(parser, "\x1b[97;4;65u")[0]
+    assert event.key == "alt+shift+a"
+    assert event.character is None
+    assert event.modifiers == ("alt", "shift")
+    assert event.base_key == "a"
+
+
+def test_kitty_phases(parser):
+    repeat = _feed(parser, "\x1b[97;1:2u")[0]
+    assert repeat.phase == "repeat"
+    assert repeat.is_repeat
+    assert repeat.key == "a"
+
+    parser = type(parser)()
+    release = _feed(parser, "\x1b[97;1:3u")[0]
+    assert release.phase == "release"
+    assert release.is_release
+    assert not release.is_press
+
+
+def test_kitty_associated_text_only(parser):
+    event = _feed(parser, "\x1b[0;;229u")[0]
+    assert event.key == "å"
+    assert event.character == "å"
+
+
+def test_kitty_alternate_plus_alias(parser):
+    event = _feed(parser, "\x1b[61:43;6u")[0]
+    assert event.shifted_key == "plus"
+    assert event.base_key == "equals_sign"
+    assert "ctrl+plus" in event.aliases
+    assert event.character is None
+    assert event.ctrl
+    assert event.shift
+
+
+def test_legacy_alt_prefixed_keys(parser):
+    ctrl = _feed(parser, "\x1b\x01")[0]
+    assert ctrl.key == "alt+ctrl+a"
+    assert ctrl.modifiers == ("alt", "ctrl")
+    assert ctrl.base_key == "a"
+
+    parser = type(parser)()
+    space = _feed(parser, "\x1b ")[0]
+    assert space.key == "alt+space"
+    assert space.character == " "
+
+    parser = type(parser)()
+    enter = _feed(parser, "\x1b\r")[0]
+    assert enter.key == "alt+enter"
+    assert enter.base_key == "enter"
+    assert enter.modifiers == ("alt",)
+
+    parser = type(parser)()
+    backspace = _feed(parser, "\x1b\x08")[0]
+    assert backspace.key == "alt+backspace"
+    assert backspace.base_key == "backspace"
+
+
+def test_key_defaults():
+    event = Key("a", "a")
+    assert event.phase == "press"
+    assert event.modifiers == ()
+    assert event.is_press
+    assert not event.is_repeat
+    assert not event.is_release
+    assert not event.shift
+    assert not event.alt
+    assert not event.ctrl
+    assert not event.super
+    assert not event.hyper
+    assert not event.meta

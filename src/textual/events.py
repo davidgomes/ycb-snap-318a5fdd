@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Type, TypeVar
+from typing import TYPE_CHECKING, Literal, Type, TypeVar
 
 import rich.repr
 from rich.style import Style
@@ -267,11 +267,37 @@ class Key(InputEvent):
     Args:
         key: The key that was pressed.
         character: A printable character or `None` if it is not printable.
+        phase: ``"press"``, ``"repeat"``, or ``"release"``. Defaults to ``"press"``.
+        modifiers: Active modifiers. Stored as a sorted tuple.
+        base_key: Unshifted key, when reported.
+        shifted_key: Shifted key name, when the terminal reports an alternate key.
+        base_layout_key: Key in the base PC-101 layout, when reported.
+        aliases: Additional key aliases, such as ``ctrl+plus``.
     """
 
-    __slots__ = ["key", "character", "aliases"]
+    __slots__ = [
+        "key",
+        "character",
+        "aliases",
+        "phase",
+        "modifiers",
+        "base_key",
+        "shifted_key",
+        "base_layout_key",
+    ]
 
-    def __init__(self, key: str, character: str | None) -> None:
+    def __init__(
+        self,
+        key: str,
+        character: str | None,
+        *,
+        phase: Literal["press", "repeat", "release"] = "press",
+        modifiers: tuple[str, ...] = (),
+        base_key: str | None = None,
+        shifted_key: str | None = None,
+        base_layout_key: str | None = None,
+        aliases: tuple[str, ...] | list[str] | None = None,
+    ) -> None:
         super().__init__()
         self.key = key
         """The key that was pressed."""
@@ -279,8 +305,23 @@ class Key(InputEvent):
             (key if len(key) == 1 else None) if character is None else character
         )
         """A printable character or ``None`` if it is not printable."""
+        self.phase: Literal["press", "repeat", "release"] = (
+            phase if phase in ("press", "repeat", "release") else "press"
+        )
+        """``press``, ``repeat``, or ``release``. Defaults to ``press``."""
+        self.modifiers: tuple[str, ...] = tuple(sorted(modifiers))
+        """Active modifiers as a sorted tuple."""
+        self.base_key = base_key
+        """Unshifted key, when known."""
+        self.shifted_key = shifted_key
+        """Shifted alternate key name, when reported."""
+        self.base_layout_key = base_layout_key
+        """Base-layout key name, when reported."""
         self.aliases: list[str] = _get_key_aliases(key)
         """The aliases for the key, including the key itself."""
+        for alias in aliases or ():
+            if alias not in self.aliases:
+                self.aliases.append(alias)
 
     def __rich_repr__(self) -> rich.repr.Result:
         yield "key", self.key
@@ -288,6 +329,11 @@ class Key(InputEvent):
         yield "name", self.name
         yield "is_printable", self.is_printable
         yield "aliases", self.aliases, [self.key]
+        yield "phase", self.phase, "press"
+        yield "modifiers", self.modifiers, ()
+        yield "base_key", self.base_key, None
+        yield "shifted_key", self.shifted_key, None
+        yield "base_layout_key", self.base_layout_key, None
 
     @property
     def name(self) -> str:
@@ -307,6 +353,51 @@ class Key(InputEvent):
             `True` if the key is printable.
         """
         return False if self.character is None else self.character.isprintable()
+
+    @property
+    def is_press(self) -> bool:
+        """Whether this event is a key press."""
+        return self.phase == "press"
+
+    @property
+    def is_repeat(self) -> bool:
+        """Whether this event is a key repeat."""
+        return self.phase == "repeat"
+
+    @property
+    def is_release(self) -> bool:
+        """Whether this event is a key release."""
+        return self.phase == "release"
+
+    @property
+    def shift(self) -> bool:
+        """Whether shift is active."""
+        return "shift" in self.modifiers
+
+    @property
+    def alt(self) -> bool:
+        """Whether alt is active."""
+        return "alt" in self.modifiers
+
+    @property
+    def ctrl(self) -> bool:
+        """Whether ctrl is active."""
+        return "ctrl" in self.modifiers
+
+    @property
+    def super(self) -> bool:
+        """Whether super is active."""
+        return "super" in self.modifiers
+
+    @property
+    def hyper(self) -> bool:
+        """Whether hyper is active."""
+        return "hyper" in self.modifiers
+
+    @property
+    def meta(self) -> bool:
+        """Whether meta is active."""
+        return "meta" in self.modifiers
 
 
 def _key_to_identifier(key: str) -> str:
