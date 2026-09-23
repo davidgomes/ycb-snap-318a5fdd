@@ -47,6 +47,9 @@ const (
 	OpIteratorValue               // Iterator value
 	OpBinaryOp                    // Binary operation
 	OpSuspend                     // Suspend VM
+	OpArrayElem                   // Array destructuring element
+	OpArrayRest                   // Array destructuring rest element
+	OpMapElem                     // Map destructuring element
 )
 
 // OpcodeNames are string representation of opcodes.
@@ -93,6 +96,9 @@ var OpcodeNames = [...]string{
 	OpIteratorValue: "ITVAL",
 	OpBinaryOp:      "BINARYOP",
 	OpSuspend:       "SUSPEND",
+	OpArrayElem:     "ARRELEM",
+	OpArrayRest:     "ARRREST",
+	OpMapElem:       "MAPELEM",
 }
 
 // OpcodeOperands is the number of operands.
@@ -139,6 +145,9 @@ var OpcodeOperands = [...][]int{
 	OpIteratorValue: {},
 	OpBinaryOp:      {1},
 	OpSuspend:       {},
+	OpArrayElem:     {2},
+	OpArrayRest:     {2},
+	OpMapElem:       {},
 }
 
 // ReadOperands reads operands from the bytecode.

@@ -646,32 +646,189 @@ func (p *Parser) parseIdentList() *IdentList {
 	}
 
 	var params []*Ident
+	var patterns []Expr
+	hasPattern := false
 	lparen := p.expect(token.LParen)
 	isVarArgs := false
 	if p.token != token.RParen {
-		if p.token == token.Ellipsis {
-			isVarArgs = true
-			p.next()
-		}
-
-		params = append(params, p.parseIdent())
-		for !isVarArgs && p.token == token.Comma {
-			p.next()
+		for {
 			if p.token == token.Ellipsis {
 				isVarArgs = true
 				p.next()
 			}
-			params = append(params, p.parseIdent())
+
+			var pattern Expr
+			if !isVarArgs &&
+				(p.token == token.LBrack || p.token == token.LBrace) {
+				pattern = p.parseParamPattern()
+				hasPattern = true
+				params = append(params,
+					&Ident{Name: "_", NamePos: pattern.Pos()})
+			} else {
+				params = append(params, p.parseIdent())
+			}
+			patterns = append(patterns, pattern)
+
+			if isVarArgs || p.token != token.Comma {
+				break
+			}
+			p.next()
 		}
+	}
+	if !hasPattern {
+		patterns = nil
 	}
 
 	rparen := p.expect(token.RParen)
 	return &IdentList{
-		LParen:  lparen,
-		RParen:  rparen,
-		VarArgs: isVarArgs,
-		List:    params,
+		LParen:   lparen,
+		RParen:   rparen,
+		VarArgs:  isVarArgs,
+		List:     params,
+		Patterns: patterns,
 	}
+}
+
+func (p *Parser) parseParamPattern() Expr {
+	if p.trace {
+		defer untracep(tracep(p, "ParamPattern"))
+	}
+
+	pos := p.pos
+	pattern, ok := p.parsePattern()
+	if !ok {
+		p.errorExpected(p.pos, "destructuring pattern")
+		return &BadExpr{From: pos, To: p.pos}
+	}
+	return pattern
+}
+
+// parsePattern parses an array or map destructuring pattern. It does not
+// report errors of its own; it returns false if the tokens do not form a valid
+// pattern, leaving the parser at the offending token.
+func (p *Parser) parsePattern() (Expr, bool) {
+	switch p.token {
+	case token.LBrack:
+		lbrack := p.pos
+		p.next()
+		p.exprLevel++
+		elements, ok := p.parsePatternElements(token.RBrack, false)
+		p.exprLevel--
+		if !ok {
+			return nil, false
+		}
+		rbrack := p.pos
+		p.next()
+		return &ArrayPattern{
+			Elements: elements,
+			LBrack:   lbrack,
+			RBrack:   rbrack,
+		}, true
+	case token.LBrace:
+		lbrace := p.pos
+		p.next()
+		p.exprLevel++
+		elements, ok := p.parsePatternElements(token.RBrace, true)
+		p.exprLevel--
+		if !ok {
+			return nil, false
+		}
+		rbrace := p.pos
+		p.next()
+		return &MapPattern{
+			LBrace:   lbrace,
+			Elements: elements,
+			RBrace:   rbrace,
+		}, true
+	}
+	return nil, false
+}
+
+func (p *Parser) parsePatternElements(
+	closing token.Token,
+	isMap bool,
+) ([]*PatternElement, bool) {
+	var elements []*PatternElement
+	for p.token != closing {
+		elt, ok := p.parsePatternElement(isMap)
+		if !ok {
+			return nil, false
+		}
+		elements = append(elements, elt)
+
+		if p.token == token.Comma {
+			p.next()
+			if p.token == closing {
+				// trailing commas are not allowed (same as literals)
+				return nil, false
+			}
+			continue
+		}
+		if p.token == token.Semicolon && p.tokenLit == "\n" {
+			p.next()
+		}
+		break
+	}
+	return elements, p.token == closing
+}
+
+func (p *Parser) parsePatternElement(isMap bool) (*PatternElement, bool) {
+	if p.token == token.Ellipsis {
+		pos := p.pos
+		p.next()
+		if p.token != token.Ident {
+			return nil, false
+		}
+		return &PatternElement{Ellipsis: pos, Target: p.parseIdent()}, true
+	}
+
+	elt := &PatternElement{}
+	if isMap {
+		keyTok, keyPos := p.token, p.pos
+		switch keyTok {
+		case token.Ident:
+			elt.Key = p.tokenLit
+		case token.String:
+			elt.Key, _ = strconv.Unquote(p.tokenLit)
+		default:
+			return nil, false
+		}
+		elt.KeyPos = keyPos
+		p.next()
+
+		if p.token == token.Colon {
+			p.next()
+			target, ok := p.parsePatternTarget()
+			if !ok {
+				return nil, false
+			}
+			elt.Target = target
+		} else if keyTok == token.Ident {
+			// shorthand: {x} is {x: x}
+			elt.Target = &Ident{Name: elt.Key, NamePos: keyPos}
+		} else {
+			return nil, false
+		}
+	} else {
+		target, ok := p.parsePatternTarget()
+		if !ok {
+			return nil, false
+		}
+		elt.Target = target
+	}
+
+	if p.token == token.Assign {
+		p.next()
+		elt.Default = p.parseExpr()
+	}
+	return elt, true
+}
+
+func (p *Parser) parsePatternTarget() (Expr, bool) {
+	if p.token == token.Ident {
+		return p.parseIdent(), true
+	}
+	return p.parsePattern()
 }
 
 func (p *Parser) parseStmt() (stmt Stmt) {
@@ -944,6 +1101,12 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 		defer untracep(tracep(p, "SimpleStmt"))
 	}
 
+	if p.token == token.LBrack || p.token == token.LBrace {
+		if s := p.parseDestructuringStmt(); s != nil {
+			return s
+		}
+	}
+
 	x := p.parseExprList()
 
 	switch p.token {
@@ -1019,6 +1182,68 @@ func (p *Parser) parseSimpleStmt(forIn bool) Stmt {
 		return s
 	}
 	return &ExprStmt{Expr: x[0]}
+}
+
+// parseDestructuringStmt parses a destructuring assignment. Patterns share
+// their syntax with array and map literals, so the pattern is parsed
+// speculatively: if it is not a valid pattern or it is not followed by ':=' or
+// '=', the parser state is restored and nil is returned.
+func (p *Parser) parseDestructuringStmt() Stmt {
+	if p.trace {
+		defer untracep(tracep(p, "DestructuringStmt"))
+	}
+
+	state := p.saveState()
+	pattern, ok := p.parsePattern()
+	if !ok || (p.token != token.Define && p.token != token.Assign) {
+		p.restoreState(state)
+		return nil
+	}
+
+	pos, tok := p.pos, p.token
+	p.next()
+	y := p.parseExprList()
+	return &AssignStmt{
+		LHS:      []Expr{pattern},
+		RHS:      y,
+		Token:    tok,
+		TokenPos: pos,
+	}
+}
+
+type parserState struct {
+	scanner   Scanner
+	pos       Pos
+	token     token.Token
+	tokenLit  string
+	exprLevel int
+	syncPos   Pos
+	syncCount int
+	numErrors int
+}
+
+func (p *Parser) saveState() parserState {
+	return parserState{
+		scanner:   *p.scanner,
+		pos:       p.pos,
+		token:     p.token,
+		tokenLit:  p.tokenLit,
+		exprLevel: p.exprLevel,
+		syncPos:   p.syncPos,
+		syncCount: p.syncCount,
+		numErrors: len(p.errors),
+	}
+}
+
+func (p *Parser) restoreState(s parserState) {
+	*p.scanner = s.scanner
+	p.pos = s.pos
+	p.token = s.token
+	p.tokenLit = s.tokenLit
+	p.exprLevel = s.exprLevel
+	p.syncPos = s.syncPos
+	p.syncCount = s.syncCount
+	p.errors = p.errors[:s.numErrors]
 }
 
 func (p *Parser) parseExprList() (list []Expr) {

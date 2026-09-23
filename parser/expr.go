@@ -39,6 +39,33 @@ func (e *ArrayLit) String() string {
 	return "[" + strings.Join(elements, ", ") + "]"
 }
 
+// ArrayPattern represents an array destructuring pattern.
+type ArrayPattern struct {
+	Elements []*PatternElement
+	LBrack   Pos
+	RBrack   Pos
+}
+
+func (e *ArrayPattern) exprNode() {}
+
+// Pos returns the position of first character belonging to the node.
+func (e *ArrayPattern) Pos() Pos {
+	return e.LBrack
+}
+
+// End returns the position of first character immediately after the node.
+func (e *ArrayPattern) End() Pos {
+	return e.RBrack + 1
+}
+
+func (e *ArrayPattern) String() string {
+	var elements []string
+	for _, m := range e.Elements {
+		elements = append(elements, m.String())
+	}
+	return "[" + strings.Join(elements, ", ") + "]"
+}
+
 // BadExpr represents a bad expression.
 type BadExpr struct {
 	From Pos
@@ -456,6 +483,33 @@ func (e *MapLit) String() string {
 	return "{" + strings.Join(elements, ", ") + "}"
 }
 
+// MapPattern represents a map destructuring pattern.
+type MapPattern struct {
+	LBrace   Pos
+	Elements []*PatternElement
+	RBrace   Pos
+}
+
+func (e *MapPattern) exprNode() {}
+
+// Pos returns the position of first character belonging to the node.
+func (e *MapPattern) Pos() Pos {
+	return e.LBrace
+}
+
+// End returns the position of first character immediately after the node.
+func (e *MapPattern) End() Pos {
+	return e.RBrace + 1
+}
+
+func (e *MapPattern) String() string {
+	var elements []string
+	for _, m := range e.Elements {
+		elements = append(elements, m.String())
+	}
+	return "{" + strings.Join(elements, ", ") + "}"
+}
+
 // ParenExpr represents a parenthesis wrapped expression.
 type ParenExpr struct {
 	Expr   Expr
@@ -477,6 +531,54 @@ func (e *ParenExpr) End() Pos {
 
 func (e *ParenExpr) String() string {
 	return "(" + e.Expr.String() + ")"
+}
+
+// PatternElement represents an element of an array or map destructuring
+// pattern.
+type PatternElement struct {
+	Key      string // map patterns only
+	KeyPos   Pos    // map patterns only
+	Ellipsis Pos    // valid for rest elements
+	Target   Expr   // *Ident, *ArrayPattern or *MapPattern
+	Default  Expr   // optional
+}
+
+// IsRest returns true if the element is a rest element.
+func (e *PatternElement) IsRest() bool {
+	return e.Ellipsis.IsValid()
+}
+
+// Pos returns the position of first character belonging to the node.
+func (e *PatternElement) Pos() Pos {
+	if e.Ellipsis.IsValid() {
+		return e.Ellipsis
+	}
+	if e.KeyPos.IsValid() {
+		return e.KeyPos
+	}
+	return e.Target.Pos()
+}
+
+// End returns the position of first character immediately after the node.
+func (e *PatternElement) End() Pos {
+	if e.Default != nil {
+		return e.Default.End()
+	}
+	return e.Target.End()
+}
+
+func (e *PatternElement) String() string {
+	if e.Ellipsis.IsValid() {
+		return "..." + e.Target.String()
+	}
+	s := e.Target.String()
+	if e.KeyPos.IsValid() {
+		s = e.Key + ": " + s
+	}
+	if e.Default != nil {
+		s += " = " + e.Default.String()
+	}
+	return s
 }
 
 // SelectorExpr represents a selector expression.

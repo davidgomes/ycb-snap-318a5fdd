@@ -389,11 +389,19 @@ func (c *Compiler) Compile(node parser.Node) error {
 	case *parser.FuncLit:
 		c.enterScope()
 
-		for _, p := range node.Type.Params.List {
-			s := c.symbolTable.Define(p.Name)
+		params := node.Type.Params
+		for i, p := range params.List {
+			name := p.Name
+			if params.Pattern(i) != nil {
+				name = paramPatternName(i)
+			}
+			s := c.symbolTable.Define(name)
 
 			// function arguments is not assigned directly.
 			s.LocalAssigned = true
+		}
+		if err := c.compileParamPatterns(params); err != nil {
+			return err
 		}
 
 		if err := c.Compile(node.Body); err != nil {
@@ -665,8 +673,14 @@ func (c *Compiler) compileAssign(
 	op token.Token,
 ) error {
 	numLHS, numRHS := len(lhs), len(rhs)
+	if numLHS == 1 && isPattern(lhs[0]) && op != token.Define {
+		return c.errorf(node, "cannot use destructuring with %s", op)
+	}
 	if numLHS > 1 || numRHS > 1 {
 		return c.errorf(node, "tuple assignment not allowed")
+	}
+	if isPattern(lhs[0]) {
+		return c.compileDestructuring(lhs[0], rhs[0])
 	}
 
 	// resolve and compile left-hand side
@@ -772,6 +786,149 @@ func (c *Compiler) compileAssign(
 	default:
 		panic(fmt.Errorf("invalid assignment variable scope: %s",
 			symbol.Scope))
+	}
+	return nil
+}
+
+func (c *Compiler) compileDestructuring(pattern, rhs parser.Expr) error {
+	if err := c.checkPattern(pattern); err != nil {
+		return err
+	}
+	if err := c.Compile(rhs); err != nil {
+		return err
+	}
+	return c.compilePattern(pattern)
+}
+
+func (c *Compiler) compileParamPatterns(params *parser.IdentList) error {
+	for i := range params.List {
+		pattern := params.Pattern(i)
+		if pattern == nil {
+			continue
+		}
+		if err := c.checkPattern(pattern); err != nil {
+			return err
+		}
+		symbol, _, _ := c.symbolTable.Resolve(paramPatternName(i), false)
+		c.emit(pattern, parser.OpGetLocal, symbol.Index)
+		if err := c.compilePattern(pattern); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkPattern validates the structure of a destructuring pattern.
+func (c *Compiler) checkPattern(pattern parser.Expr) error {
+	var elements []*parser.PatternElement
+	var isMap bool
+	switch pattern := pattern.(type) {
+	case *parser.ArrayPattern:
+		elements = pattern.Elements
+	case *parser.MapPattern:
+		elements, isMap = pattern.Elements, true
+	case *parser.Ident:
+		return nil
+	default:
+		return c.errorf(pattern, "invalid destructuring pattern")
+	}
+
+	for i, elt := range elements {
+		if elt.IsRest() {
+			if isMap {
+				return c.errorf(elt,
+					"rest element is not supported in map patterns")
+			}
+			if i != len(elements)-1 {
+				return c.errorf(elt, "rest element must be last")
+			}
+			continue
+		}
+		if err := c.checkPattern(elt.Target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// compilePattern binds the value on top of the stack to the pattern and pops
+// it.
+func (c *Compiler) compilePattern(pattern parser.Expr) error {
+	switch pattern := pattern.(type) {
+	case *parser.Ident:
+		return c.compilePatternIdent(pattern)
+	case *parser.ArrayPattern:
+		for i, elt := range pattern.Elements {
+			if elt.IsRest() {
+				c.emit(elt, parser.OpArrayRest, i)
+			} else {
+				c.emit(elt, parser.OpArrayElem, i)
+				if err := c.compilePatternDefault(elt); err != nil {
+					return err
+				}
+			}
+			if err := c.compilePattern(elt.Target); err != nil {
+				return err
+			}
+		}
+	case *parser.MapPattern:
+		for _, elt := range pattern.Elements {
+			if len(elt.Key) > MaxStringLen {
+				return c.error(elt, ErrStringLimit)
+			}
+			c.emit(elt, parser.OpConstant,
+				c.addConstant(&String{Value: elt.Key}))
+			c.emit(elt, parser.OpMapElem)
+			if err := c.compilePatternDefault(elt); err != nil {
+				return err
+			}
+			if err := c.compilePattern(elt.Target); err != nil {
+				return err
+			}
+		}
+	default:
+		return c.errorf(pattern, "invalid destructuring pattern")
+	}
+	c.emit(pattern, parser.OpPop)
+	return nil
+}
+
+// compilePatternDefault takes the element value and its "exists" flag from the
+// stack and leaves either the value or, if the element does not exist, the
+// lazily evaluated default value.
+func (c *Compiler) compilePatternDefault(elt *parser.PatternElement) error {
+	if elt.Default == nil {
+		c.emit(elt, parser.OpPop)
+		return nil
+	}
+
+	jumpDefault := c.emit(elt, parser.OpJumpFalsy, 0)
+	jumpEnd := c.emit(elt, parser.OpJump, 0)
+	c.changeOperand(jumpDefault, len(c.currentInstructions()))
+	c.emit(elt, parser.OpPop)
+	if err := c.Compile(elt.Default); err != nil {
+		return err
+	}
+	c.changeOperand(jumpEnd, len(c.currentInstructions()))
+	return nil
+}
+
+func (c *Compiler) compilePatternIdent(ident *parser.Ident) error {
+	if ident.Name == "_" {
+		c.emit(ident, parser.OpPop)
+		return nil
+	}
+
+	_, depth, exists := c.symbolTable.Resolve(ident.Name, false)
+	if depth == 0 && exists {
+		return c.errorf(ident, "'%s' redeclared in this block", ident.Name)
+	}
+	symbol := c.symbolTable.Define(ident.Name)
+	if symbol.Scope == ScopeGlobal {
+		c.emit(ident, parser.OpSetGlobal, symbol.Index)
+	} else {
+		c.emit(ident, parser.OpDefineLocal, symbol.Index)
+		symbol.LocalAssigned = true
 	}
 	return nil
 }
@@ -1352,6 +1509,21 @@ func resolveAssignLHS(
 		name = term.Name
 	}
 	return
+}
+
+func isPattern(expr parser.Expr) bool {
+	switch expr.(type) {
+	case *parser.ArrayPattern, *parser.MapPattern:
+		return true
+	}
+	return false
+}
+
+// paramPatternName returns the name of the local variable holding the
+// argument of a destructured parameter. It will not conflict with user
+// variables because ':' is not allowed in variable names.
+func paramPatternName(i int) string {
+	return fmt.Sprintf(":param%d", i)
 }
 
 func iterateInstructions(

@@ -867,6 +867,74 @@ func (v *VM) run() {
 			val := iterator.(Iterator).Value()
 			v.stack[v.sp] = val
 			v.sp++
+		case parser.OpArrayElem:
+			// [arr] -> [arr, value, exists]
+			v.ip += 2
+			idx := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
+			elements, ok := destructuringArray(v.stack[v.sp-1])
+			if !ok {
+				v.err = fmt.Errorf("cannot destructure %s as array",
+					v.stack[v.sp-1].TypeName())
+				return
+			}
+			var val Object = UndefinedValue
+			exists := FalseValue
+			if idx < len(elements) {
+				if elements[idx] != nil {
+					val = elements[idx]
+				}
+				exists = TrueValue
+			}
+			v.stack[v.sp] = val
+			v.stack[v.sp+1] = exists
+			v.sp += 2
+		case parser.OpArrayRest:
+			// [arr] -> [arr, rest]
+			v.ip += 2
+			idx := int(v.curInsts[v.ip]) | int(v.curInsts[v.ip-1])<<8
+			elements, ok := destructuringArray(v.stack[v.sp-1])
+			if !ok {
+				v.err = fmt.Errorf("cannot destructure %s as array",
+					v.stack[v.sp-1].TypeName())
+				return
+			}
+			rest := []Object{}
+			if idx < len(elements) {
+				rest = append(rest, elements[idx:]...)
+			}
+			var val Object = &Array{Value: rest}
+			v.allocs--
+			if v.allocs == 0 {
+				v.err = ErrObjectAllocLimit
+				return
+			}
+			v.stack[v.sp] = val
+			v.sp++
+		case parser.OpMapElem:
+			// [map, key] -> [map, value, exists]
+			key := v.stack[v.sp-1].(*String).Value
+			var kv map[string]Object
+			switch m := v.stack[v.sp-2].(type) {
+			case *Map:
+				kv = m.Value
+			case *ImmutableMap:
+				kv = m.Value
+			default:
+				v.err = fmt.Errorf("cannot destructure %s as map",
+					m.TypeName())
+				return
+			}
+			val, ok := kv[key]
+			if val == nil {
+				val = UndefinedValue
+			}
+			exists := FalseValue
+			if ok {
+				exists = TrueValue
+			}
+			v.stack[v.sp-1] = val
+			v.stack[v.sp] = exists
+			v.sp++
 		case parser.OpSuspend:
 			return
 		default:
@@ -879,6 +947,16 @@ func (v *VM) run() {
 // IsStackEmpty tests if the stack is empty or not.
 func (v *VM) IsStackEmpty() bool {
 	return v.sp == 0
+}
+
+func destructuringArray(o Object) ([]Object, bool) {
+	switch arr := o.(type) {
+	case *Array:
+		return arr.Value, true
+	case *ImmutableArray:
+		return arr.Value, true
+	}
+	return nil, false
 }
 
 func indexAssign(dst, src Object, selectors []Object) error {
